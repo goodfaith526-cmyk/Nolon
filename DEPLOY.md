@@ -87,19 +87,23 @@ The only shared resources are ports 80/443 (see below) and the host's CPU, RAM a
 ### Behind an existing proxy
 
 If nginx, Caddy or Traefik already owns ports 80/443, set the repository variable
-`STAGING_LOCAL_PORT` to a free local port, e.g. `8080` (check with `ss -tlnp | grep 8080`). The
-NOLON Caddy then listens only on `127.0.0.1:8080` (and `127.0.0.1:8081`, unused), serves plain
+`STAGING_LOCAL_PORT` to a free local port, e.g. `8090` (it and the next port must be free:
+`ss -tlnp | grep -E ':809[01] '` prints nothing). The
+NOLON Caddy then listens only on `127.0.0.1:8090` (and `127.0.0.1:8091`, unused), serves plain
 HTTP, and keeps doing the `/api` routing and basic auth. Your proxy terminates HTTPS for
 `STAGING_DOMAIN` and forwards to it.
 
-nginx (then `certbot --nginx -d staging.2-28-12-44.sslip.io` for the certificate):
+nginx: save as `/etc/nginx/sites-available/nolon-staging`, link it into `sites-enabled`, run
+`nginx -t`, then `systemctl reload nginx` and `certbot --nginx -d staging.2-28-12-44.sslip.io` for
+the certificate. Other sites are not touched.
 
 ```nginx
 server {
     listen 80;
     server_name staging.2-28-12-44.sslip.io;
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8090;
+        client_max_body_size 25m;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -111,7 +115,7 @@ Caddy (certificate is automatic):
 
 ```caddyfile
 staging.2-28-12-44.sslip.io {
-	reverse_proxy 127.0.0.1:8080
+	reverse_proxy 127.0.0.1:8090
 }
 ```
 
