@@ -61,7 +61,7 @@ services:
       - '${HTTPS_BIND:-443}:443/udp'
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?}
-      BASIC_AUTH: ${BASIC_AUTH:-off}
+      BASIC_AUTH: ${BASIC_AUTH:?BASIC_AUTH must be on or off}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
     volumes:
