@@ -30,14 +30,32 @@
     "customers": "Customers",
     "rates": "Rates",
     "quotations": "Quotations",
-    "bookings": "Bookings"
+    "bookings": "Bookings",
+    "menu": "Menu",
+    "closeMenu": "Close menu",
+    "commercial": "Commercial",
+    "admin": "Administration",
+    "allBranches": "All branches",
+    "switchLocale": "العربية"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
-    "roles": "Your roles",
-    "branches": "Your branches",
     "allBranches": "All branches",
-    "comingSoon": "Shipments and invoices will appear here as they are built."
+    "loadFailed": "Could not load the figures. Reload the page.",
+    "newCustomer": "New customer",
+    "newQuotation": "New quotation",
+    "newBooking": "New booking",
+    "customers": "Customers",
+    "approvedRates": "Approved rates",
+    "draftCount": "{count, plural, =0 {no drafts} one {# draft} other {# drafts}}",
+    "openQuotations": "Open quotations",
+    "approvedAwaiting": "{count, plural, =0 {none approved} one {# approved} other {# approved}}",
+    "confirmedBookings": "Confirmed bookings",
+    "recentQuotations": "Recent quotations",
+    "recentBookings": "Recent bookings",
+    "viewAll": "View all",
+    "noQuotations": "No quotations yet.",
+    "noBookings": "No bookings yet."
   },
   "Account": {
     "title": "Change password",

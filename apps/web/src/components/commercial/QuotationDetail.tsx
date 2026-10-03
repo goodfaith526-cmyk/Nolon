@@ -7,6 +7,7 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { failureStatus, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function QuotationDetail({ id }: { id: string }) {
@@ -76,7 +77,7 @@ export function QuotationDetail({ id }: { id: string }) {
         <h1>
           {t('quotation')} <span dir="ltr">{quotation.number}</span>
         </h1>
-        <strong>{te(`quotation_${status}`)}</strong>
+        <StatusBadge kind="quotation" status={status} />
       </div>
       <Notice notice={notice} />
       <div className="actions">

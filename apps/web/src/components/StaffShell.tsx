@@ -1,17 +1,43 @@
 'use client';
 
-import type { AuthMeResponse, Permission } from '@nolon/shared';
-import { useTranslations } from 'next-intl';
+import type { AuthMeResponse, Locale, Permission } from '@nolon/shared';
+import { useLocale, useTranslations } from 'next-intl';
+import Image from 'next/image';
 import { type ReactNode, createContext, use, useEffect, useState } from 'react';
+import logoAr from '@/assets/brand/logo-ar.webp';
+import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
+import { icons } from './Icons';
 
-const COMMERCIAL_LINKS = [
-  { href: '/customers', label: 'customers', permission: 'customers:view' },
-  { href: '/rates', label: 'rates', permission: 'rates:view' },
-  { href: '/quotations', label: 'quotations', permission: 'quotations:view' },
-  { href: '/bookings', label: 'bookings', permission: 'bookings:view' },
-] as const satisfies readonly { href: string; label: string; permission: Permission }[];
+interface NavLink {
+  href: string;
+  label: 'home' | 'customers' | 'rates' | 'quotations' | 'bookings' | 'users';
+  icon: keyof typeof icons;
+  permission?: Permission;
+}
+
+const NAV_SECTIONS: readonly { title?: 'commercial' | 'admin'; links: readonly NavLink[] }[] = [
+  { links: [{ href: '/dashboard', label: 'home', icon: 'home' }] },
+  {
+    title: 'commercial',
+    links: [
+      { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
+      { href: '/rates', label: 'rates', icon: 'rates', permission: 'rates:view' },
+      {
+        href: '/quotations',
+        label: 'quotations',
+        icon: 'quotations',
+        permission: 'quotations:view',
+      },
+      { href: '/bookings', label: 'bookings', icon: 'bookings', permission: 'bookings:view' },
+    ],
+  },
+  {
+    title: 'admin',
+    links: [{ href: '/users', label: 'users', icon: 'users', permission: 'users:view' }],
+  },
+];
 
 const MeContext = createContext<AuthMeResponse | null>(null);
 
@@ -32,6 +58,8 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const t = useTranslations('Shell');
   const router = useRouter();
   const pathname = usePathname();
+  const locale = useLocale();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -60,41 +88,100 @@ export function StaffShell({ children }: { children: ReactNode }) {
   }
 
   if (failed) return <p className="page error">{t('loadFailed')}</p>;
-  if (!me) return <p className="page muted">{t('loading')}</p>;
+  if (!me) return <p className="page muted loading">{t('loading')}</p>;
+
+  const otherLocale: Locale = locale === 'ar' ? 'en' : 'ar';
+  const isActive = (href: string) =>
+    href === '/dashboard' ? pathname === href : pathname.startsWith(href);
 
   return (
     <MeContext value={me}>
-      <header className="topbar">
-        <nav className="nav">
-          <Link href="/dashboard" className={pathname === '/dashboard' ? 'active' : ''}>
-            {t('home')}
+      <div className={menuOpen ? 'app menu-open' : 'app'}>
+        <aside className="sidebar" aria-label={t('menu')}>
+          <Link href="/dashboard" className="sidebar-logo" onClick={() => setMenuOpen(false)}>
+            <Image
+              src={locale === 'ar' ? logoAr : logoEn}
+              alt="NOLON"
+              width={150}
+              priority
+              unoptimized
+            />
           </Link>
-          {COMMERCIAL_LINKS.filter((l) => can(me, l.permission)).map((l) => (
+          <nav className="sidebar-nav">
+            {NAV_SECTIONS.map((section, index) => {
+              const links = section.links.filter((l) => !l.permission || can(me, l.permission));
+              if (links.length === 0) return null;
+              return (
+                <div key={section.title ?? index} className="nav-section">
+                  {section.title && <p className="nav-title">{t(section.title)}</p>}
+                  {links.map((l) => (
+                    <Link
+                      key={l.href}
+                      href={l.href}
+                      className={isActive(l.href) ? 'nav-link active' : 'nav-link'}
+                      aria-current={isActive(l.href) ? 'page' : undefined}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      {icons[l.icon]}
+                      <span>{t(l.label)}</span>
+                    </Link>
+                  ))}
+                </div>
+              );
+            })}
+          </nav>
+          <div className="sidebar-foot">
             <Link
-              key={l.href}
-              href={l.href}
-              className={pathname.startsWith(l.href) ? 'active' : ''}
+              href="/account"
+              className={isActive('/account') ? 'nav-link active' : 'nav-link'}
+              onClick={() => setMenuOpen(false)}
             >
-              {t(l.label)}
+              {icons.account}
+              <span>{t('account')}</span>
             </Link>
-          ))}
-          {can(me, 'users:view') && (
-            <Link href="/users" className={pathname === '/users' ? 'active' : ''}>
-              {t('users')}
-            </Link>
-          )}
-          <Link href="/account" className={pathname === '/account' ? 'active' : ''}>
-            {t('account')}
-          </Link>
-        </nav>
-        <div className="nav">
-          <span className="muted">{me.fullName}</span>
-          <button type="button" onClick={() => void signOut()}>
-            {t('signOut')}
-          </button>
+          </div>
+        </aside>
+        <button
+          type="button"
+          className="scrim"
+          aria-label={t('closeMenu')}
+          onClick={() => setMenuOpen(false)}
+        />
+        <div className="main">
+          <header className="topbar">
+            <button
+              type="button"
+              className="icon-button menu-button"
+              aria-label={t('menu')}
+              onClick={() => setMenuOpen(true)}
+            >
+              {icons.menu}
+            </button>
+            <div className="topbar-user">
+              <span className="avatar" aria-hidden="true">
+                {me.fullName.trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="topbar-name">
+                <strong>{me.fullName}</strong>
+                <span className="muted">
+                  {me.allBranches ? t('allBranches') : me.branches.map((b) => b.code).join(' · ')}
+                </span>
+              </span>
+            </div>
+            <div className="topbar-actions">
+              <Link href={pathname} locale={otherLocale} className="button ghost">
+                {icons.globe}
+                <span>{t('switchLocale')}</span>
+              </Link>
+              <button type="button" className="ghost" onClick={() => void signOut()}>
+                {icons.signOut}
+                <span>{t('signOut')}</span>
+              </button>
+            </div>
+          </header>
+          <main className="page">{children}</main>
         </div>
-      </header>
-      <main className="page">{children}</main>
+      </div>
     </MeContext>
   );
 }

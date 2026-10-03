@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function Rates() {
@@ -133,7 +134,9 @@ export function Rates() {
                   <td dir="ltr">
                     {r.validFrom} → {r.validTo ?? '∞'}
                   </td>
-                  <td>{te(`rate_${r.status}`)}</td>
+                  <td>
+                    <StatusBadge kind="rate" status={r.status} />
+                  </td>
                   <td>
                     <div className="actions">
                       {r.status === 'DRAFT' && can(me, 'rates:approve') && (

@@ -12,6 +12,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function Bookings() {
@@ -105,7 +106,9 @@ export function Bookings() {
                     })}
                   </td>
                   <td>{te(`mode_${b.mode}`)}</td>
-                  <td>{te(`booking_${b.status}`)}</td>
+                  <td>
+                    <StatusBadge kind="booking" status={b.status} />
+                  </td>
                 </tr>
               ))}
             </tbody>

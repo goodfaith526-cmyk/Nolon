@@ -12,8 +12,8 @@ export interface BranchSeed {
 }
 
 /**
- * Demo data for staging. Business modules add their own demo records here (customers, rates,
- * shipments) as their tables land; today the schema holds branches only.
+ * Demo data for staging: the branches. Customers, rates, quotations and bookings are in
+ * demo-commercial.ts.
  */
 export const DEMO_BRANCHES: readonly BranchSeed[] = [
   {

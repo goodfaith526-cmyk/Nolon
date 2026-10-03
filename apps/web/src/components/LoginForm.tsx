@@ -1,7 +1,10 @@
 'use client';
 
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
+import Image from 'next/image';
 import { type FormEvent, useState } from 'react';
+import logoAr from '@/assets/brand/logo-ar.webp';
+import logoEn from '@/assets/brand/logo-en.webp';
 import { useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
 import { field } from '@/lib/form';
@@ -9,6 +12,7 @@ import { field } from '@/lib/form';
 export function LoginForm() {
   const t = useTranslations('Login');
   const router = useRouter();
+  const locale = useLocale();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -33,6 +37,14 @@ export function LoginForm() {
   return (
     <main className="auth-page">
       <form className="card stack" onSubmit={(e) => void onSubmit(e)}>
+        <Image
+          src={locale === 'ar' ? logoAr : logoEn}
+          alt="NOLON"
+          className="auth-logo"
+          width={176}
+          priority
+          unoptimized
+        />
         <h1>{t('title')}</h1>
         <label className="field">
           <span>{t('email')}</span>
