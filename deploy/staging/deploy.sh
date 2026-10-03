@@ -6,6 +6,12 @@ cd "$(dirname "$0")"
 
 compose() { docker compose -f docker-compose.staging.yml "$@"; }
 
+# Staging is private unless .env says otherwise on purpose; refuse a missing or unknown mode.
+if ! grep -Eqx "BASIC_AUTH=(on|off)" .env; then
+  echo "BASIC_AUTH in .env must be exactly on or off" >&2
+  exit 1
+fi
+
 echo "==> Pulling images"
 compose --profile jobs pull --quiet
 

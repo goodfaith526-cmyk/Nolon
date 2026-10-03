@@ -1,7 +1,7 @@
 # Staging deployment
 
 Staging runs on one Hetzner server with Docker Compose: PostgreSQL (persistent volume), the API,
-the web app and Caddy (automatic HTTPS from Let's Encrypt, optional basic auth).
+the web app and Caddy (automatic HTTPS from Let's Encrypt, basic auth in front of everything).
 
 ```
 browser ──https──> caddy ──/api/*──> api:4000 ──> postgres
@@ -11,7 +11,9 @@ browser ──https──> caddy ──/api/*──> api:4000 ──> postgres
 ## How a deploy runs
 
 `.github/workflows/deploy-staging.yml` runs when CI passes on a push to `main` (or by hand:
-Actions > Deploy staging > Run workflow). It:
+Actions > Deploy staging > Run workflow, on `main` only and only for a commit CI passed on). CI
+also builds the three images and validates the Compose file, Caddyfile and workflows on every pull
+request, so deploy files are tested before they reach `main`. It:
 
 1. Builds three images and pushes them to GitHub Container Registry, tagged with the commit SHA:
    `api`, `web`, and `migrate` (Prisma CLI + the demo seed, used for one-off jobs).
@@ -143,14 +145,20 @@ file and run `ssh-keygen -lf thatfile`. The two `SHA256:...` fingerprints must b
 Do not take the key from `ssh-keyscan` or from an SSH session alone: those go over the same
 unverified network path the pin is meant to protect.
 
-### 4. Basic auth password hash (optional)
+### 4. Basic auth password hash (required)
 
 ```sh
 docker run --rm caddy:2-alpine caddy hash-password --plaintext 'THE-PASSWORD-YOU-WILL-GIVE-THE-CLIENT'
 ```
 
-Without both basic-auth secrets the site is public. `/api/v1/health` always stays open so the
-deploy job can check it.
+The deploy refuses to run without both basic-auth secrets, so staging is never public by
+accident. It also fails closed on the server: Caddy refuses to start unless `BASIC_AUTH` in `.env`
+is exactly `on` (with a user and hash) or `off`, and the deploy's health check requires the page to
+answer 401. `/api/v1/health` always stays open so the deploy job can check it.
+
+To run staging public on purpose, set the repository variable `STAGING_ALLOW_PUBLIC` to `true`.
+That alone turns basic auth off (the secrets can stay), and the health check then requires 200.
+Delete the variable to make staging private again.
 
 ### 5. GitHub secrets
 
@@ -163,8 +171,8 @@ Settings > Secrets and variables > Actions > **Secrets** > New repository secret
 | `STAGING_SSH_PRIVATE_KEY`   | Full content of `nolon-staging-deploy` (the private key) |
 | `STAGING_SSH_KNOWN_HOSTS`   | Output line of step 3                                    |
 | `STAGING_POSTGRES_PASSWORD` | Output of `openssl rand -hex 24` (letters/digits only)   |
-| `STAGING_BASIC_AUTH_USER`   | Optional, e.g. `nolon`                                   |
-| `STAGING_BASIC_AUTH_HASH`   | Optional, output of step 4 (starts with `$2a$`)          |
+| `STAGING_BASIC_AUTH_USER`   | e.g. `nolon`                                             |
+| `STAGING_BASIC_AUTH_HASH`   | Output of step 4 (starts with `$2a$`)                    |
 
 The PostgreSQL password is set when the database volume is first created. Changing the secret
 later does not change the database password; keep it stable.
