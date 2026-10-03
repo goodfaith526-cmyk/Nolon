@@ -181,6 +181,8 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
           BASIC_AUTH_USER: ${{ secrets.STAGING_BASIC_AUTH_USER }}
           BASIC_AUTH_HASH: ${{ secrets.STAGING_BASIC_AUTH_HASH }}
+          SEED_ADMIN_EMAIL: ${{ secrets.STAGING_SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
         run: |
           # Single quotes keep Compose from expanding the `$` signs inside the bcrypt hash.
           umask 077
@@ -198,6 +200,14 @@ jobs:
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
             echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
             echo "SEED_DEMO_DATA=true"
+            # Optional: the first Administrator. The seed creates it only if missing.
+            if [ -n "$SEED_ADMIN_EMAIL" ] && [ -n "$SEED_ADMIN_PASSWORD" ]; then
+              case "$SEED_ADMIN_PASSWORD" in
+                *"'"*) echo "::error::STAGING_SEED_ADMIN_PASSWORD must not contain a single quote"; exit 1 ;;
+              esac
+              echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
+              echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"
+            fi
             # Public only by explicit opt-in (STAGING_ALLOW_PUBLIC=true), whatever secrets exist.
             # Otherwise the secrets check above already required both values.
             if [ "$ALLOW_PUBLIC" = "true" ]; then

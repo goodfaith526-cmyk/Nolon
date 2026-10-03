@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
 import { normalizeEmail } from './email.js';
 import { EMAIL_RULE, FailureLimiter, IP_RULE } from './login-rate-limiter.js';
-import { timingDummyHash, verifyPassword } from './password.js';
+import { hashPassword, timingDummyHash, verifyPassword } from './password.js';
 import { hashSessionToken, newSessionToken } from './session-token.js';
 
 export type LoginResult =
@@ -129,6 +129,28 @@ export class AuthService {
       allBranches,
       allowedBranchIds,
     };
+  }
+
+  /**
+   * The signed-in user changes their own password. Other sessions of the user end; this one
+   * stays signed in.
+   */
+  async changePassword(
+    user: AuthUser,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<boolean> {
+    const row = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    if (!(await verifyPassword(currentPassword, row.passwordHash))) return false;
+    const passwordHash = await hashPassword(newPassword);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+      this.prisma.session.updateMany({
+        where: { userId: user.id, revokedAt: null, id: { not: user.sessionId } },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    return true;
   }
 
   async describe(user: AuthUser): Promise<AuthMeResponse> {

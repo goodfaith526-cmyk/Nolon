@@ -24,6 +24,16 @@ describe('loadEnv', () => {
     expect(env.LOGIN_IP_LIMIT_ENABLED).toBe(false);
   });
 
+  it('treats empty seed admin values as unset', () => {
+    const env = loadEnv({
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      SEED_ADMIN_EMAIL: '',
+      SEED_ADMIN_PASSWORD: '',
+    });
+    expect(env.SEED_ADMIN_EMAIL).toBeUndefined();
+    expect(env.SEED_ADMIN_PASSWORD).toBeUndefined();
+  });
+
   it('rejects a short seed admin password', () => {
     expect(() =>
       loadEnv({

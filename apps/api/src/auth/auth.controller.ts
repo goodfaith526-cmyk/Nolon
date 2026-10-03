@@ -11,7 +11,7 @@ import {
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { AuthMeResponse } from '@nolon/shared';
+import { MIN_PASSWORD_LENGTH, type AuthMeResponse } from '@nolon/shared';
 import type { CookieOptions, Request, Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from './auth-user.js';
@@ -22,6 +22,11 @@ import { SESSION_COOKIE, readCookie } from './session-token.js';
 const loginBody = z.object({
   email: z.string().trim().min(3).max(254),
   password: z.string().min(1).max(200),
+});
+
+const changePasswordBody = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(200),
 });
 
 const COOKIE_OPTIONS: CookieOptions = {
@@ -66,6 +71,21 @@ export class AuthController {
     const token = readCookie(req.headers.cookie, SESSION_COOKIE);
     if (token) await this.auth.logout(token);
     res.clearCookie(SESSION_COOKIE, COOKIE_OPTIONS);
+  }
+
+  @Post('password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async changePassword(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<void> {
+    const parsed = changePasswordBody.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(`New password needs at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
+    const ok = await this.auth.changePassword(
+      user,
+      parsed.data.currentPassword,
+      parsed.data.newPassword,
+    );
+    if (!ok) throw new BadRequestException('Current password is wrong');
   }
 
   @Get('me')
