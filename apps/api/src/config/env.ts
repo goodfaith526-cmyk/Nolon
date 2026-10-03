@@ -18,6 +18,11 @@ const envSchema = z.object({
         .map((origin) => origin.trim())
         .filter(Boolean),
     ),
+  /**
+   * Public address of the web app, used in tracking links and QR codes. Empty: the first
+   * CORS origin (the web app's own address in every deployment so far).
+   */
+  PUBLIC_WEB_URL: emptyAsUnset(z.string().url().optional()),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /**

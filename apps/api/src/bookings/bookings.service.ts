@@ -27,6 +27,7 @@ import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
+import { ShipmentsService } from '../shipments/shipments.service.js';
 import { cbmFromDimensions } from './cbm.js';
 
 export interface BookingFilters extends PageQuery {
@@ -34,7 +35,11 @@ export interface BookingFilters extends PageQuery {
   customerId?: string;
 }
 
-type BookingWithDetails = Booking & { items: BookingItem[]; customer: { name: string } };
+type BookingWithDetails = Booking & {
+  items: BookingItem[];
+  customer: { name: string };
+  shipment: { id: string; number: string } | null;
+};
 
 type Tx = Prisma.TransactionClient;
 
@@ -44,11 +49,12 @@ const MAX_VOLUME_CBM = dec('99999999.9999');
 const details = {
   items: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
+  shipment: { select: { id: true, number: true } },
 } satisfies Prisma.BookingInclude;
 
 /**
- * Bookings (annex B section 3): DRAFT → CONFIRMED → COMPLETED (when its shipment closes, group 3);
- * DRAFT or CONFIRMED → CANCELLED. Created directly or from an APPROVED quotation (at most one
+ * Bookings (annex B section 3): DRAFT → CONFIRMED → COMPLETED (when its shipment closes);
+ * DRAFT or CONFIRMED → CANCELLED. Confirming creates the booking's one shipment. Created directly or from an APPROVED quotation (at most one
  * booking per quotation). A booking belongs to its customer's branch.
  */
 @Injectable()
@@ -58,6 +64,7 @@ export class BookingsService {
     private readonly customers: CustomersService,
     private readonly quotations: QuotationsService,
     private readonly masterData: MasterDataService,
+    private readonly shipments: ShipmentsService,
   ) {}
 
   async list(user: AuthUser, filters: BookingFilters): Promise<Page<BookingSummaryDto>> {
@@ -146,7 +153,7 @@ export class BookingsService {
   }
 
   /**
-   * Confirmation is what will create the booking's shipment (group 3). Status and cargo lines are
+   * Confirmation creates the booking's shipment in the same transaction. Status and cargo lines are
    * checked under the booking row lock: a concurrent draft edit (which takes the same lock when it
    * changes the status row) either finishes first and is seen, or waits and then finds the booking
    * confirmed.
@@ -166,23 +173,31 @@ export class BookingsService {
         where: { id },
         data: { status: 'CONFIRMED', confirmedAt: new Date() },
       });
+      await this.shipments.createForBooking(tx, user, id);
     });
     return this.get(user, id);
   }
 
   /**
    * Annex B: cancellation is allowed before COMPLETED, provided the booking has no non-cancelled
-   * invoices. Invoices arrive with billing (group 4), which adds that check here.
+   * invoices. Invoices arrive with billing (group 4), which adds that check here. A confirmed
+   * booking has a shipment: it is cancelled through the shipment's rules (not once delivery has
+   * started, and only by a Branch Manager after loading), which cancels the booking in the same
+   * transaction.
    */
   async cancel(user: AuthUser, id: string, reason: string): Promise<BookingDto> {
     const existing = await this.findScoped(user, id);
-    if (existing.status !== 'DRAFT' && existing.status !== 'CONFIRMED') {
+    if (existing.status === 'DRAFT') {
+      await casStatus(this.prisma, id, ['DRAFT'], { status: 'CANCELLED', cancelReason: reason });
+    } else if (existing.status === 'CONFIRMED') {
+      await this.prisma.$transaction(async (tx) => {
+        if (!(await this.shipments.cancelForBooking(tx, user, id, reason))) {
+          await casStatus(tx, id, ['CONFIRMED'], { status: 'CANCELLED', cancelReason: reason });
+        }
+      });
+    } else {
       throw new ConflictException('Only a draft or confirmed booking can be cancelled');
     }
-    await casStatus(this.prisma, id, [existing.status], {
-      status: 'CANCELLED',
-      cancelReason: reason,
-    });
     return this.get(user, id);
   }
 
@@ -337,6 +352,8 @@ function toDto(b: BookingWithDetails): BookingDto {
     specialInstructions: b.specialInstructions,
     cancelReason: b.cancelReason,
     confirmedAt: b.confirmedAt?.toISOString() ?? null,
+    shipmentId: b.shipment?.id ?? null,
+    shipmentNumber: b.shipment?.number ?? null,
     items: b.items.map((i) => ({
       lineNo: i.lineNo,
       cargoType: i.cargoType,

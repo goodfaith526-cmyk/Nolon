@@ -5,11 +5,13 @@ import { ConfigModule } from './config/config.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MasterDataModule } from './master-data/master-data.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
 import { RatesModule } from './rates/rates.module.js';
+import { ShipmentsModule } from './shipments/shipments.module.js';
 import { UsersModule } from './users/users.module.js';
 
 // Business modules (customers, bookings, shipments, finance...) are added here, one per folder.
@@ -27,6 +29,8 @@ import { UsersModule } from './users/users.module.js';
     QuotationsModule,
     BookingsModule,
     DashboardModule,
+    ShipmentsModule,
+    DocumentsModule,
   ],
 })
 export class AppModule {}

@@ -12,12 +12,15 @@ import { icons } from './Icons';
 
 interface NavLink {
   href: string;
-  label: 'home' | 'customers' | 'rates' | 'quotations' | 'bookings' | 'users';
+  label: 'home' | 'customers' | 'rates' | 'quotations' | 'bookings' | 'shipments' | 'users';
   icon: keyof typeof icons;
   permission?: Permission;
 }
 
-const NAV_SECTIONS: readonly { title?: 'commercial' | 'admin'; links: readonly NavLink[] }[] = [
+const NAV_SECTIONS: readonly {
+  title?: 'commercial' | 'operations' | 'admin';
+  links: readonly NavLink[];
+}[] = [
   { links: [{ href: '/dashboard', label: 'home', icon: 'home' }] },
   {
     title: 'commercial',
@@ -32,6 +35,10 @@ const NAV_SECTIONS: readonly { title?: 'commercial' | 'admin'; links: readonly N
       },
       { href: '/bookings', label: 'bookings', icon: 'bookings', permission: 'bookings:view' },
     ],
+  },
+  {
+    title: 'operations',
+    links: [{ href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' }],
   },
   {
     title: 'admin',

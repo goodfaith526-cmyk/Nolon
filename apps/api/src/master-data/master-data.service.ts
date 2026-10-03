@@ -12,12 +12,17 @@ import type {
   LocationInput,
   MasterDataDto,
 } from '@nolon/shared';
-import type { ChargeType, ContainerType, Location } from '../generated/prisma/client.js';
+import type {
+  ChargeType,
+  ContainerType,
+  DocumentType,
+  Location,
+} from '../generated/prisma/client.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
- * Ports and cities, container types and charge types (plus the currency master, read through
+ * Ports and cities, container types, charge types and document types (plus the currency master, read through
  * here for the dropdowns). Other modules validate references through `requireLocation`,
  * `requireContainerType` and `requireChargeType`, never against constants.
  */
@@ -26,16 +31,18 @@ export class MasterDataService {
   constructor(private readonly prisma: PrismaService) {}
 
   async all(): Promise<MasterDataDto> {
-    const [locations, containerTypes, chargeTypes, currencies] = await Promise.all([
+    const [locations, containerTypes, chargeTypes, documentTypes, currencies] = await Promise.all([
       this.prisma.location.findMany({ orderBy: [{ countryCode: 'asc' }, { code: 'asc' }] }),
       this.prisma.containerType.findMany({ orderBy: { code: 'asc' } }),
       this.prisma.chargeType.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.documentType.findMany({ orderBy: { code: 'asc' } }),
       this.prisma.currency.findMany({ orderBy: { code: 'asc' } }),
     ]);
     return {
       locations: locations.map(toLocationDto),
       containerTypes: containerTypes.map(toCodeNameDto),
       chargeTypes: chargeTypes.map(toCodeNameDto),
+      documentTypes: documentTypes.map(toCodeNameDto),
       currencies: currencies.map((c): CurrencyDto => ({
         code: c.code,
         nameEn: c.nameEn,
@@ -85,6 +92,13 @@ export class MasterDataService {
     );
   }
 
+  async upsertDocumentType(input: CodeNameInput): Promise<CodeNameDto> {
+    const { code, ...fields } = input;
+    return toCodeNameDto(
+      await this.prisma.documentType.upsert({ where: { code }, create: input, update: fields }),
+    );
+  }
+
   /** 400 unless the location exists and is active. */
   async requireLocation(id: string): Promise<Location> {
     const location = await this.prisma.location.findUnique({ where: { id } });
@@ -112,6 +126,13 @@ export class MasterDataService {
     if (!type?.isActive) throw new BadRequestException(`Unknown or inactive charge type: ${code}`);
     return type;
   }
+
+  async requireDocumentType(code: string): Promise<DocumentType> {
+    const type = await this.prisma.documentType.findUnique({ where: { code } });
+    if (!type?.isActive)
+      throw new BadRequestException(`Unknown or inactive document type: ${code}`);
+    return type;
+  }
 }
 
 function toLocationDto(l: Location): LocationDto {
@@ -126,6 +147,6 @@ function toLocationDto(l: Location): LocationDto {
   };
 }
 
-function toCodeNameDto(t: ContainerType | ChargeType): CodeNameDto {
+function toCodeNameDto(t: ContainerType | ChargeType | DocumentType): CodeNameDto {
   return { code: t.code, nameEn: t.nameEn, nameAr: t.nameAr, isActive: t.isActive };
 }

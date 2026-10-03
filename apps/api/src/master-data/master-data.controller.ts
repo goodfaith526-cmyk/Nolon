@@ -40,6 +40,21 @@ const codeNameBody = (max: number) =>
     })
     .strict();
 
+/** Document type codes are words joined by underscores, e.g. COMMERCIAL_INVOICE. */
+const documentTypeBody = z
+  .object({
+    code: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z0-9]+(_[A-Z0-9]+)*$/)
+      .max(30),
+    nameEn: requiredText(200),
+    nameAr: requiredText(200),
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+
 @Controller('master-data')
 export class MasterDataController {
   constructor(private readonly masterData: MasterDataService) {}
@@ -69,6 +84,12 @@ export class MasterDataController {
   @RequirePermission('master_data:create', 'master_data:update')
   upsertContainerType(@Body() body: unknown): Promise<CodeNameDto> {
     return this.masterData.upsertContainerType(parse(codeNameBody(10), body));
+  }
+
+  @Put('document-types')
+  @RequirePermission('master_data:create', 'master_data:update')
+  upsertDocumentType(@Body() body: unknown): Promise<CodeNameDto> {
+    return this.masterData.upsertDocumentType(parse(documentTypeBody, body));
   }
 
   @Put('charge-types')
