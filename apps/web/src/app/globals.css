@@ -1,4 +1,9 @@
 :root {
+  /* NOLON brand colors, sampled from the logo. Use these tokens, not raw hex values. */
+  --brand-blue: #0a55a1;
+  --brand-orange: #f39531;
+  --brand-gray: #a9a9a9;
+
   --bg: #ffffff;
   --fg: #111827;
   --muted: #6b7280;
@@ -34,6 +39,18 @@ body {
   max-width: 40rem;
   margin-inline: auto;
   padding: 4rem 1rem;
+}
+
+.brand-logo {
+  margin: 0 0 1.5rem;
+  line-height: 0;
+}
+
+/* The logo has a white background, so it sits on a white plate in dark mode. */
+.brand-logo img {
+  max-inline-size: 100%;
+  block-size: auto;
+  border-radius: 0.75rem;
 }
 
 .muted {
