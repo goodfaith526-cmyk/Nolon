@@ -23,7 +23,7 @@ fi
 echo "==> Starting api, web and caddy"
 compose up -d --wait --remove-orphans api web caddy
 
-echo "==> Removing unused images"
-docker image prune -f >/dev/null
+echo "==> Removing old NOLON images (other projects' images are left alone)"
+docker image prune -af --filter label=com.nolon.stack=staging >/dev/null
 
 compose ps

@@ -31,6 +31,10 @@ jobs:
     env:
       # The only place the staging address is set. Override with the STAGING_DOMAIN variable.
       SITE_DOMAIN: ${{ vars.STAGING_DOMAIN || 'staging.2-28-12-44.sslip.io' }}
+      # Empty: our Caddy owns ports 80/443 and gets the certificate. A port number (e.g. 8080): the
+      # server already has a reverse proxy on 80/443, so Caddy listens on 127.0.0.1:<port> only and
+      # that proxy forwards SITE_DOMAIN to it (DEPLOY.md, "Behind an existing proxy").
+      LOCAL_PORT: ${{ vars.STAGING_LOCAL_PORT }}
       DEPLOY_DIR: nolon-staging
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +83,7 @@ jobs:
           file: apps/api/Dockerfile
           target: api
           push: true
+          labels: com.nolon.stack=staging
           tags: ${{ steps.images.outputs.api }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
@@ -90,6 +95,7 @@ jobs:
           file: apps/api/Dockerfile
           target: migrate
           push: true
+          labels: com.nolon.stack=staging
           tags: ${{ steps.images.outputs.migrate }}
           cache-from: |
             type=gha,scope=api
@@ -102,6 +108,7 @@ jobs:
           context: .
           file: apps/web/Dockerfile
           push: true
+          labels: com.nolon.stack=staging
           tags: ${{ steps.images.outputs.web }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
@@ -126,6 +133,13 @@ jobs:
           umask 077
           {
             echo "SITE_DOMAIN='$SITE_DOMAIN'"
+            if [ -n "$LOCAL_PORT" ]; then
+              echo "SITE_ADDRESS=':80'"
+              echo "HTTP_BIND='127.0.0.1:$LOCAL_PORT'"
+              echo "HTTPS_BIND='127.0.0.1:$((LOCAL_PORT + 1))'"
+            else
+              echo "SITE_ADDRESS='$SITE_DOMAIN'"
+            fi
             echo "API_IMAGE='${{ steps.images.outputs.api }}'"
             echo "MIGRATE_IMAGE='${{ steps.images.outputs.migrate }}'"
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"

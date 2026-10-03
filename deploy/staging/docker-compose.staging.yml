@@ -1,6 +1,8 @@
 # Staging stack on the Hetzner server. The deploy job copies this file, the Caddyfile,
 # deploy.sh and a generated .env into the deploy directory and runs deploy.sh.
 # Every ${VAR} below comes from that .env (see DEPLOY.md).
+# The project name keeps containers, the network and volumes prefixed `nolon-staging`, apart from
+# anything else running on the server.
 name: nolon-staging
 
 x-database-url: &database-url postgresql://nolon:${POSTGRES_PASSWORD:?}@postgres:5432/nolon?schema=public
@@ -51,12 +53,14 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Defaults publish 80/443 to the internet. Behind an existing proxy, the .env binds them to
+    # local ports instead (HTTP_BIND=127.0.0.1:8080, HTTPS_BIND=127.0.0.1:8443).
     ports:
-      - '80:80'
-      - '443:443'
-      - '443:443/udp'
+      - '${HTTP_BIND:-80}:80'
+      - '${HTTPS_BIND:-443}:443'
+      - '${HTTPS_BIND:-443}:443/udp'
     environment:
-      SITE_DOMAIN: ${SITE_DOMAIN:?}
+      SITE_ADDRESS: ${SITE_ADDRESS:?}
       BASIC_AUTH: ${BASIC_AUTH:-off}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}

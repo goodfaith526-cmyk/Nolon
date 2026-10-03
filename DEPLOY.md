@@ -41,10 +41,22 @@ This creates `nolon-staging-deploy` (private key, goes to a GitHub secret only) 
 
 ### 2. Server (once, as root)
 
-Ubuntu 24.04 is assumed.
+Ubuntu 24.04 is assumed. Nothing here deletes or changes existing users, files or containers.
+
+First check what is already there:
 
 ```sh
-curl -fsSL https://get.docker.com | sh
+docker --version; docker compose version
+ss -tlnp | grep -E ':80 |:443 '
+```
+
+- If Docker is already installed, **skip the `get.docker.com` line**: on a server with Docker it
+  may upgrade and restart the daemon, which briefly stops every running container. Compose v2
+  (`docker compose`, not `docker-compose`) is required.
+- If something already listens on 80/443, follow "Behind an existing proxy" below.
+
+```sh
+curl -fsSL https://get.docker.com | sh   # only if Docker is not installed
 adduser --disabled-password --gecos "" deploy
 usermod -aG docker deploy
 install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
@@ -55,10 +67,50 @@ chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/
 Firewall (Hetzner Cloud Firewall or `ufw`):
 
 - **80 and 443 (TCP) and 443 (UDP) open to everyone.** Let's Encrypt must reach port 80/443 to
-  issue the certificate.
+  issue the certificate. Leave existing rules for your other projects as they are.
 - **22 open to everyone, key-only.** GitHub-hosted runners have no fixed IP, so limiting SSH to
   your own IP breaks deploys. Turn off password login instead: in `/etc/ssh/sshd_config` set
   `PasswordAuthentication no`, then `systemctl reload ssh`.
+
+### Sharing the server with other projects
+
+The stack is isolated by its Compose project name `nolon-staging`: its containers, network and
+volumes are all prefixed with it, and files live only in `~deploy/nolon-staging`. `deploy.sh`
+removes only old NOLON images (label `com.nolon.stack=staging`), never other projects' images.
+The only shared resources are ports 80/443 (see below) and the host's CPU, RAM and disk.
+
+### Behind an existing proxy
+
+If nginx, Caddy or Traefik already owns ports 80/443, set the repository variable
+`STAGING_LOCAL_PORT` to a free local port, e.g. `8080` (check with `ss -tlnp | grep 8080`). The
+NOLON Caddy then listens only on `127.0.0.1:8080` (and `127.0.0.1:8081`, unused), serves plain
+HTTP, and keeps doing the `/api` routing and basic auth. Your proxy terminates HTTPS for
+`STAGING_DOMAIN` and forwards to it.
+
+nginx (then `certbot --nginx -d staging.2-28-12-44.sslip.io` for the certificate):
+
+```nginx
+server {
+    listen 80;
+    server_name staging.2-28-12-44.sslip.io;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Caddy (certificate is automatic):
+
+```caddyfile
+staging.2-28-12-44.sslip.io {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+### Docker group
 
 Note: members of the `docker` group are effectively root on the server. The `deploy` user exists
 so the key in GitHub can be revoked without touching root's access.
