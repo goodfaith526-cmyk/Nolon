@@ -41,5 +41,93 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  users UserBranch[]
+
   @@map("branches")
+}
+
+/// Fixed roles from the permissions annex (02a). Each role's permissions live in code
+/// (ROLE_PERMISSIONS in @nolon/shared), not in the database: there is no custom role editor.
+enum Role {
+  ADMINISTRATOR
+  MANAGEMENT
+  BRANCH_MANAGER
+  SALES
+  OPERATIONS
+  FINANCE
+  WAREHOUSE
+  CUSTOMS
+  DRIVER
+
+  @@map("role")
+}
+
+/// Staff user who signs in to the web app. A user can hold several roles and several branches;
+/// permissions add up across roles.
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  /// Stored lower-cased and trimmed; the sign-in lookup normalizes the same way.
+  email           String    @unique @db.VarChar(254)
+  fullName        String    @map("full_name") @db.VarChar(200)
+  /// scrypt hash in the form scrypt$N$r$p$salt$hash (base64). Never the plain password.
+  passwordHash    String    @map("password_hash")
+  /// "ar" or "en", one of LOCALES in @nolon/shared.
+  preferredLocale String    @default("ar") @map("preferred_locale") @db.VarChar(5)
+  isActive        Boolean   @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  roles    UserRole[]
+  branches UserBranch[]
+  sessions Session[]
+
+  @@map("users")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  role      Role
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, role])
+  @@map("user_roles")
+}
+
+/// Branches a user may work in. Administrator and Management see every branch through their
+/// role; every other role sees only the branches listed here.
+model UserBranch {
+  userId    String   @map("user_id") @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([userId, branchId])
+  @@index([branchId])
+  @@map("user_branches")
+}
+
+/// Server-side sign-in session. The browser holds a random token in an httpOnly cookie; only its
+/// SHA-256 hash is stored, so a database leak does not leak usable sessions. Sign-out sets
+/// revokedAt; expired and revoked sessions are rejected.
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  /// SHA-256 of the cookie token, hex.
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  ipAddress  String?   @map("ip_address") @db.VarChar(45)
+  userAgent  String?   @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
 }
