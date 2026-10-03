@@ -41,22 +41,27 @@ This creates `nolon-staging-deploy` (private key, goes to a GitHub secret only) 
 
 ### 2. Server (once, as root)
 
-Ubuntu 24.04 is assumed. Nothing here deletes or changes existing users, files or containers.
+Docker Engine and the Compose v2 plugin must already be installed. These steps do not install or
+change Docker, and nothing here deletes or changes existing users, files or containers.
 
 First check what is already there:
 
 ```sh
-docker --version; docker compose version
+docker --version && docker compose version && docker ps
 ss -tlnp | grep -E ':80 |:443 '
 ```
 
-- If Docker is already installed, **skip the `get.docker.com` line**: on a server with Docker it
-  may upgrade and restart the daemon, which briefly stops every running container. Compose v2
-  (`docker compose`, not `docker-compose`) is required.
+- All three Docker commands must succeed. `docker compose` (v2, with a space) is required; the old
+  `docker-compose` is not enough.
+- **Do not run the `get.docker.com` script on a server that already has Docker**, and never on a
+  server shared with other projects. It reconfigures the apt repository and reinstalls packages,
+  and if that fails the daemon stays down and every project's containers stop. If Docker or the
+  Compose plugin is missing, install it the way the rest of the server was set up (for Ubuntu,
+  Docker's apt repository: https://docs.docker.com/engine/install/ubuntu/), at a time when the
+  other projects can take a restart.
 - If something already listens on 80/443, follow "Behind an existing proxy" below.
 
 ```sh
-curl -fsSL https://get.docker.com | sh   # only if Docker is not installed
 adduser --disabled-password --gecos "" deploy
 usermod -aG docker deploy
 install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
