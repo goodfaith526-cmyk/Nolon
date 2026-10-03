@@ -115,13 +115,32 @@ jobs:
 
       - name: Set up SSH
         env:
+          SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
           SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Accepts known_hosts lines (`<host> ssh-ed25519 AAAA...`, from ssh-keyscan) or bare host
+          # public keys (`ssh-ed25519 AAAA... root@server`, from /etc/ssh/ssh_host_*_key.pub on the
+          # server). Bare keys are pinned to STAGING_SSH_HOST. Comment and blank lines are dropped.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' | while read -r line; do
+            case "$line" in
+              '' | '#'*) ;;
+              ssh-* | ecdsa-*) echo "$SSH_HOST $line" ;;
+              *) echo "$line" ;;
+            esac
+          done > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts > /dev/null; then
+            echo "::error::STAGING_SSH_KNOWN_HOSTS has no key for STAGING_SSH_HOST. On the server run: cat /etc/ssh/ssh_host_ed25519_key.pub and save that line as the secret (DEPLOY.md, step 3)."
+            exit 1
+          fi
+          # Fails here, with a clear message, if the pinned key is not the server's.
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "${{ secrets.STAGING_SSH_USER }}@$SSH_HOST" true; then
+            echo "::error::SSH to the server failed. 'Host key verification failed' means STAGING_SSH_KNOWN_HOSTS is not this server's key (DEPLOY.md, step 3); 'Permission denied' means STAGING_SSH_PRIVATE_KEY does not match /home/deploy/.ssh/authorized_keys."
+            exit 1
+          fi
 
       - name: Write server .env
         env:

@@ -124,14 +124,15 @@ staging.2-28-12-44.sslip.io {
 Note: members of the `docker` group are effectively root on the server. The `deploy` user exists
 so the key in GitHub can be revoked without touching root's access.
 
-### 3. Host key (on your PC)
+### 3. Host key (on the server)
 
 ```sh
-ssh-keyscan -t ed25519 2.28.12.44
+cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-The output line is the `STAGING_SSH_KNOWN_HOSTS` secret. It stops the deploy job from talking to
-a different machine pretending to be the server.
+Save that one line (it starts with `ssh-ed25519`) as the `STAGING_SSH_KNOWN_HOSTS` secret. It stops
+the deploy job from talking to a different machine pretending to be the server. A known_hosts line
+from `ssh-keyscan -t ed25519 2.28.12.44` (the line that does not start with `#`) works too.
 
 ### 4. Basic auth password hash (optional)
 
