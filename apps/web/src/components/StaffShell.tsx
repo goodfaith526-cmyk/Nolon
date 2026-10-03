@@ -6,6 +6,13 @@ import { type ReactNode, createContext, use, useEffect, useState } from 'react';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
 
+const COMMERCIAL_LINKS = [
+  { href: '/customers', label: 'customers', permission: 'customers:view' },
+  { href: '/rates', label: 'rates', permission: 'rates:view' },
+  { href: '/quotations', label: 'quotations', permission: 'quotations:view' },
+  { href: '/bookings', label: 'bookings', permission: 'bookings:view' },
+] as const satisfies readonly { href: string; label: string; permission: Permission }[];
+
 const MeContext = createContext<AuthMeResponse | null>(null);
 
 /** The signed-in user, as /auth/me returned it. Only inside StaffShell. */
@@ -62,6 +69,15 @@ export function StaffShell({ children }: { children: ReactNode }) {
           <Link href="/dashboard" className={pathname === '/dashboard' ? 'active' : ''}>
             {t('home')}
           </Link>
+          {COMMERCIAL_LINKS.filter((l) => can(me, l.permission)).map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className={pathname.startsWith(l.href) ? 'active' : ''}
+            >
+              {t(l.label)}
+            </Link>
+          ))}
           {can(me, 'users:view') && (
             <Link href="/users" className={pathname === '/users' ? 'active' : ''}>
               {t('users')}
