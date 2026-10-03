@@ -1,0 +1,38 @@
+# Reverse proxy for staging. Values come from the environment (docker-compose.staging.yml, DEPLOY.md).
+# SITE_ADDRESS is either the public domain (Caddy terminates HTTPS and gets the certificate itself;
+# ports 80/443 must be reachable) or `:80` when another proxy on the server terminates HTTPS and
+# forwards to this one on a local port.
+
+(basic_auth_on) {
+	# Everything is behind basic auth except the health check the deploy job calls.
+	@protected not path /api/v1/health
+	basic_auth @protected {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+}
+
+(basic_auth_off) {
+}
+
+{$SITE_ADDRESS} {
+	import basic_auth_{$BASIC_AUTH:off}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Staging must not show up in search engines.
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

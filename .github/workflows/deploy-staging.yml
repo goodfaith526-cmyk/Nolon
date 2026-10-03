@@ -1,0 +1,189 @@
+name: Deploy staging
+
+# Deploys main to the staging server after CI has passed on it. Can also be run by hand from the
+# Actions tab (Run workflow). Setup and required secrets: DEPLOY.md.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running deploy instead of cutting it off.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    name: Build images and deploy to staging
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://${{ vars.STAGING_DOMAIN || 'staging.2-28-12-44.sslip.io' }}
+    env:
+      # The only place the staging address is set. Override with the STAGING_DOMAIN variable.
+      SITE_DOMAIN: ${{ vars.STAGING_DOMAIN || 'staging.2-28-12-44.sslip.io' }}
+      # Empty: our Caddy owns ports 80/443 and gets the certificate. A port number (e.g. 8080): the
+      # server already has a reverse proxy on 80/443, so Caddy listens on 127.0.0.1:<port> only and
+      # that proxy forwards SITE_DOMAIN to it (DEPLOY.md, "Behind an existing proxy").
+      LOCAL_PORT: ${{ vars.STAGING_LOCAL_PORT }}
+      DEPLOY_DIR: nolon-staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit CI just passed on, not whatever main points to now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check required secrets
+        env:
+          SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+          POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+        run: |
+          missing=""
+          for name in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS POSTGRES_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing STAGING_${name/SSH_KEY/SSH_PRIVATE_KEY}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub secrets:$missing (see DEPLOY.md)"
+            exit 1
+          fi
+
+      - name: Image names
+        id: images
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sha="$(git rev-parse HEAD)"
+          echo "api=$prefix/api:$sha" >> "$GITHUB_OUTPUT"
+          echo "migrate=$prefix/migrate:$sha" >> "$GITHUB_OUTPUT"
+          echo "web=$prefix/web:$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: api
+          push: true
+          labels: com.nolon.stack=staging
+          tags: ${{ steps.images.outputs.api }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push migrate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: migrate
+          push: true
+          labels: com.nolon.stack=staging
+          tags: ${{ steps.images.outputs.migrate }}
+          cache-from: |
+            type=gha,scope=api
+            type=gha,scope=migrate
+          cache-to: type=gha,scope=migrate,mode=max
+
+      - name: Build and push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          labels: com.nolon.stack=staging
+          tags: ${{ steps.images.outputs.web }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Write server .env
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          BASIC_AUTH_USER: ${{ secrets.STAGING_BASIC_AUTH_USER }}
+          BASIC_AUTH_HASH: ${{ secrets.STAGING_BASIC_AUTH_HASH }}
+        run: |
+          # Single quotes keep Compose from expanding the `$` signs inside the bcrypt hash.
+          umask 077
+          {
+            echo "SITE_DOMAIN='$SITE_DOMAIN'"
+            if [ -n "$LOCAL_PORT" ]; then
+              echo "SITE_ADDRESS=':80'"
+              echo "HTTP_BIND='127.0.0.1:$LOCAL_PORT'"
+              echo "HTTPS_BIND='127.0.0.1:$((LOCAL_PORT + 1))'"
+            else
+              echo "SITE_ADDRESS='$SITE_DOMAIN'"
+            fi
+            echo "API_IMAGE='${{ steps.images.outputs.api }}'"
+            echo "MIGRATE_IMAGE='${{ steps.images.outputs.migrate }}'"
+            echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
+            echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
+            echo "SEED_DEMO_DATA=true"
+            if [ -n "$BASIC_AUTH_USER" ] && [ -n "$BASIC_AUTH_HASH" ]; then
+              echo "BASIC_AUTH=on"
+              echo "BASIC_AUTH_USER='$BASIC_AUTH_USER'"
+              echo "BASIC_AUTH_HASH='$BASIC_AUTH_HASH'"
+            else
+              echo "BASIC_AUTH=off"
+            fi
+          } > deploy/staging/.env
+
+      - name: Copy files and deploy
+        env:
+          SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh "$SSH_TARGET" "mkdir -p ~/$DEPLOY_DIR"
+          scp deploy/staging/docker-compose.staging.yml deploy/staging/Caddyfile \
+            deploy/staging/deploy.sh deploy/staging/.env "$SSH_TARGET:~/$DEPLOY_DIR/"
+          # The job token can pull this repo's images only while the job runs; log out afterwards.
+          printf '%s' "$GHCR_TOKEN" | ssh "$SSH_TARGET" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          status=0
+          ssh "$SSH_TARGET" "chmod 600 ~/$DEPLOY_DIR/.env && bash ~/$DEPLOY_DIR/deploy.sh" || status=$?
+          ssh "$SSH_TARGET" "docker logout ghcr.io" || true
+          exit "$status"
+
+      - name: Health check
+        run: |
+          # The first deploy waits for Let's Encrypt to issue the certificate.
+          curl --fail --silent --show-error --retry 20 --retry-delay 6 --retry-all-errors \
+            "https://$SITE_DOMAIN/api/v1/health"
+          echo
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' --retry 5 --retry-all-errors \
+            "https://$SITE_DOMAIN/ar")
+          echo "web /ar -> HTTP $code"
+          # 401 means the page is up behind basic auth.
+          [ "$code" = 200 ] || [ "$code" = 401 ]
+
+      - name: Show container logs on failure
+        if: failure()
+        env:
+          SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+        run: |
+          ssh "$SSH_TARGET" "cd ~/$DEPLOY_DIR && docker compose -f docker-compose.staging.yml ps -a && docker compose -f docker-compose.staging.yml logs --tail 80" || true
