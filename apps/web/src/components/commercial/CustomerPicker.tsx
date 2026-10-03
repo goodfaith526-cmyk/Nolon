@@ -17,11 +17,18 @@ export function CustomerPicker({
   const [q, setQ] = useState('');
   const [results, setResults] = useState<CustomerSummaryDto[]>([]);
 
+  const [failed, setFailed] = useState(false);
+
   async function search() {
-    const page = await api<Page<CustomerSummaryDto>>(
-      `/customers?pageSize=20&q=${encodeURIComponent(q)}`,
-    );
-    setResults(page.items.filter((c) => c.isActive));
+    setFailed(false);
+    try {
+      const page = await api<Page<CustomerSummaryDto>>(
+        `/customers?pageSize=20&q=${encodeURIComponent(q)}`,
+      );
+      setResults(page.items.filter((c) => c.isActive));
+    } catch {
+      setFailed(true);
+    }
   }
 
   if (value) {
@@ -56,6 +63,7 @@ export function CustomerPicker({
           {t('search')}
         </button>
       </div>
+      {failed && <p className="error">{t('failed')}</p>}
       {results.length > 0 && (
         <ul className="picker">
           {results.map((c) => (

@@ -284,3 +284,11 @@ textarea {
   color: var(--fg);
   min-block-size: 4rem;
 }
+
+/* Numbers, codes and phones are written LTR but stay aligned with the page direction. A
+   dir="ltr" cell would otherwise align left on Arabic pages. */
+html[dir='rtl'] td[dir='ltr'],
+html[dir='rtl'] th[dir='ltr'],
+html[dir='rtl'] dd[dir='ltr'] {
+  text-align: right;
+}
