@@ -59,6 +59,43 @@ jobs:
             exit 1
           fi
 
+      # Runs before any image is built, so a bad key or host fails in seconds.
+      - name: Set up and check SSH
+        id: ssh
+        env:
+          SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          install -m 700 -d ~/.ssh
+          # Keys copied on Windows carry CRLF line endings, which OpenSSH rejects ("error in libcrypto").
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null; then
+            echo "::error::STAGING_SSH_PRIVATE_KEY cannot be read as a private key. Paste the whole private key file (nolon-staging-deploy, not the .pub), from -----BEGIN OPENSSH PRIVATE KEY----- to -----END OPENSSH PRIVATE KEY-----, with its line breaks and no quotes."
+            exit 1
+          fi
+          # Accepts known_hosts lines (`<host> ssh-ed25519 AAAA...`) or bare host public keys
+          # (`ssh-ed25519 AAAA... root@server`); bare keys are pinned to STAGING_SSH_HOST. Comment and
+          # blank lines are dropped. Where the key must come from: DEPLOY.md, step 3.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' | while read -r line; do
+            case "$line" in
+              '' | '#'*) ;;
+              ssh-* | ecdsa-*) echo "$SSH_HOST $line" ;;
+              *) echo "$line" ;;
+            esac
+          done > ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts > /dev/null; then
+            echo "::error::STAGING_SSH_KNOWN_HOSTS has no key for STAGING_SSH_HOST (DEPLOY.md, step 3)."
+            exit 1
+          fi
+          # The key itself is valid at this point, so a failure here is the host key or authorized_keys.
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" true; then
+            echo "::error::SSH to the server failed. 'Host key verification failed': STAGING_SSH_KNOWN_HOSTS is not this server's key (DEPLOY.md, step 3). 'Permission denied': the public half of STAGING_SSH_PRIVATE_KEY is not in /home/deploy/.ssh/authorized_keys."
+            exit 1
+          fi
+
       - name: Image names
         id: images
         run: |
@@ -112,35 +149,6 @@ jobs:
           tags: ${{ steps.images.outputs.web }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
-
-      - name: Set up SSH
-        env:
-          SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
-          SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          # Accepts known_hosts lines (`<host> ssh-ed25519 AAAA...`, from ssh-keyscan) or bare host
-          # public keys (`ssh-ed25519 AAAA... root@server`, from /etc/ssh/ssh_host_*_key.pub on the
-          # server). Bare keys are pinned to STAGING_SSH_HOST. Comment and blank lines are dropped.
-          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' | while read -r line; do
-            case "$line" in
-              '' | '#'*) ;;
-              ssh-* | ecdsa-*) echo "$SSH_HOST $line" ;;
-              *) echo "$line" ;;
-            esac
-          done > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
-          if ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts > /dev/null; then
-            echo "::error::STAGING_SSH_KNOWN_HOSTS has no key for STAGING_SSH_HOST. On the server run: cat /etc/ssh/ssh_host_ed25519_key.pub and save that line as the secret (DEPLOY.md, step 3)."
-            exit 1
-          fi
-          # Fails here, with a clear message, if the pinned key is not the server's.
-          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "${{ secrets.STAGING_SSH_USER }}@$SSH_HOST" true; then
-            echo "::error::SSH to the server failed. 'Host key verification failed' means STAGING_SSH_KNOWN_HOSTS is not this server's key (DEPLOY.md, step 3); 'Permission denied' means STAGING_SSH_PRIVATE_KEY does not match /home/deploy/.ssh/authorized_keys."
-            exit 1
-          fi
 
       - name: Write server .env
         env:
@@ -201,7 +209,8 @@ jobs:
           [ "$code" = 200 ] || [ "$code" = 401 ]
 
       - name: Show container logs on failure
-        if: failure()
+        # Only when SSH works; otherwise it would just repeat the SSH error.
+        if: failure() && steps.ssh.outcome == 'success'
         env:
           SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
         run: |
