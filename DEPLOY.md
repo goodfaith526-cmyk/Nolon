@@ -152,8 +152,13 @@ docker run --rm caddy:2-alpine caddy hash-password --plaintext 'THE-PASSWORD-YOU
 ```
 
 The deploy refuses to run without both basic-auth secrets, so staging is never public by
-accident. `/api/v1/health` always stays open so the deploy job can check it. To run staging public
-on purpose, set the repository variable `STAGING_ALLOW_PUBLIC` to `true`.
+accident. It also fails closed on the server: Caddy refuses to start unless `BASIC_AUTH` in `.env`
+is exactly `on` (with a user and hash) or `off`, and the deploy's health check requires the page to
+answer 401. `/api/v1/health` always stays open so the deploy job can check it.
+
+To run staging public on purpose, set the repository variable `STAGING_ALLOW_PUBLIC` to `true`.
+That alone turns basic auth off (the secrets can stay), and the health check then requires 200.
+Delete the variable to make staging private again.
 
 ### 5. GitHub secrets
 

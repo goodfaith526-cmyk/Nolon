@@ -198,8 +198,9 @@ jobs:
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
             echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
             echo "SEED_DEMO_DATA=true"
-            # Public only by explicit opt-in; the secrets check above already required both values.
-            if [ "$ALLOW_PUBLIC" = "true" ] && { [ -z "$BASIC_AUTH_USER" ] || [ -z "$BASIC_AUTH_HASH" ]; }; then
+            # Public only by explicit opt-in (STAGING_ALLOW_PUBLIC=true), whatever secrets exist.
+            # Otherwise the secrets check above already required both values.
+            if [ "$ALLOW_PUBLIC" = "true" ]; then
               echo "BASIC_AUTH=off"
             else
               echo "BASIC_AUTH=on"
@@ -238,9 +239,13 @@ jobs:
           echo
           code=$(curl --silent --output /dev/null --write-out '%{http_code}' --retry 5 --retry-all-errors \
             "https://$SITE_DOMAIN/ar")
-          echo "web /ar -> HTTP $code"
-          # 401 means the page is up behind basic auth.
-          [ "$code" = 200 ] || [ "$code" = 401 ]
+          # Private (the default) must answer 401; 200 is accepted only when public was chosen.
+          if [ "$ALLOW_PUBLIC" = "true" ]; then expected=200; else expected=401; fi
+          echo "web /ar -> HTTP $code (expected $expected)"
+          if [ "$code" != "$expected" ]; then
+            echo "::error::https://$SITE_DOMAIN/ar answered $code, expected $expected"
+            exit 1
+          fi
 
       - name: Show container logs on failure
         # Only when SSH works; otherwise it would just repeat the SSH error.

@@ -3,11 +3,14 @@
 # ports 80/443 must be reachable) or `:80` when another proxy on the server terminates HTTPS and
 # forwards to this one on a local port.
 
+# BASIC_AUTH must be exactly `on` or `off`: any other value, or none, has no snippet to import and
+# Caddy refuses to start, so staging is never public by mistake. With `on`, an empty user or hash
+# also fails (the quotes keep empty values as empty tokens instead of dropping them).
 (basic_auth_on) {
 	# Everything is behind basic auth except the health check the deploy job calls.
 	@protected not path /api/v1/health
 	basic_auth @protected {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+		"{$BASIC_AUTH_USER}" "{$BASIC_AUTH_HASH}"
 	}
 }
 
@@ -15,7 +18,7 @@
 }
 
 {$SITE_ADDRESS} {
-	import basic_auth_{$BASIC_AUTH:off}
+	import basic_auth_{$BASIC_AUTH}
 
 	encode zstd gzip
 

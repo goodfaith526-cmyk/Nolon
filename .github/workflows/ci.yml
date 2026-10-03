@@ -112,21 +112,36 @@ jobs:
           WEB_IMAGE=web
           MIGRATE_IMAGE=migrate
           POSTGRES_PASSWORD=x
-          SITE_DOMAIN=staging.example.com'
+          SITE_DOMAIN=staging.example.com
+          BASIC_AUTH=on'
           printf '%s\n%s\n' "$base" 'SITE_ADDRESS=staging.example.com' > .env
           docker compose -f docker-compose.staging.yml --profile jobs config --quiet
+          # Without BASIC_AUTH the file must not resolve (never public by default).
+          grep -v '^BASIC_AUTH=' .env > .env.noauth && mv .env.noauth .env
+          if docker compose -f docker-compose.staging.yml --profile jobs config --quiet 2>/dev/null; then
+            echo "::error::compose accepted a missing BASIC_AUTH"; exit 1
+          fi
           printf '%s\n%s\n' "$base" 'SITE_ADDRESS=:80
           HTTP_BIND=127.0.0.1:8090
           HTTPS_BIND=127.0.0.1:8091' > .env
           docker compose -f docker-compose.staging.yml --profile jobs config --quiet
           rm .env
-      - name: Caddyfile is valid (basic auth on and off)
+      - name: Caddyfile is valid (basic auth on and off) and fails closed
         run: |
           hash=$(docker run --rm caddy:2-alpine caddy hash-password --plaintext ci-only)
-          for auth in on off; do
+          validate() {
             docker run --rm -v "$PWD/deploy/staging/Caddyfile:/etc/caddy/Caddyfile:ro" \
-              -e SITE_ADDRESS=:80 -e BASIC_AUTH="$auth" -e BASIC_AUTH_USER=ci -e BASIC_AUTH_HASH="$hash" \
+              -e SITE_ADDRESS=:80 "$@" \
               caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          }
+          validate -e BASIC_AUTH=on -e BASIC_AUTH_USER=ci -e BASIC_AUTH_HASH="$hash"
+          validate -e BASIC_AUTH=off
+          # A missing or unknown mode, or `on` without credentials, must be rejected.
+          for args in "" "-e BASIC_AUTH=yes" "-e BASIC_AUTH=on" "-e BASIC_AUTH=on -e BASIC_AUTH_USER=ci"; do
+            # shellcheck disable=SC2086 # $args is a list of docker flags
+            if validate $args >/dev/null 2>&1; then
+              echo "::error::Caddyfile accepted: ${args:-no BASIC_AUTH}"; exit 1
+            fi
           done
       - name: Workflows and deploy.sh pass actionlint (with shellcheck)
         run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
