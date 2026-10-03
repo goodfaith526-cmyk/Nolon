@@ -55,6 +55,7 @@ export const PERMISSION_MODULES = [
   'operational_reports',
   'dashboards',
   'alert_settings',
+  'master_data',
   'users',
   'audit_log',
 ] as const;
@@ -115,6 +116,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   operational_reports: 'FVVVVVVVN',
   dashboards: 'FVVVVVNNN',
   alert_settings: 'FNNNNNNNN',
+  // Not in annex A (proposed with the commercial cycle): ports, container types, charge types and
+  // currencies. Everyone reads them for dropdowns; only the Administrator changes them.
+  master_data: 'FVVVVVVVV',
   users: 'FNNNNNNNN',
   audit_log: 'VVVNNNNNN',
 };
