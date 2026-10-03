@@ -42,7 +42,11 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users UserBranch[]
+  users      UserBranch[]
+  customers  Customer[]
+  rateCards  RateCard[]
+  quotations Quotation[]
+  bookings   Booking[]
 
   @@map("branches")
 }
@@ -63,7 +67,11 @@ model Currency {
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branches Branch[]
+  branches             Branch[]
+  customersPreferred   Customer[]  @relation("CustomerPreferredCurrency")
+  customersCreditLimit Customer[]  @relation("CustomerCreditLimitCurrency")
+  rateCards            RateCard[]
+  quotations           Quotation[]
 
   @@map("currencies")
 }
@@ -103,6 +111,12 @@ model User {
   roles    UserRole[]
   branches UserBranch[]
   sessions Session[]
+
+  customersCreated  Customer[]  @relation("CustomerCreatedBy")
+  ratesCreated      RateCard[]  @relation("RateCreatedBy")
+  ratesApproved     RateCard[]  @relation("RateApprovedBy")
+  quotationsCreated Quotation[] @relation("QuotationCreatedBy")
+  bookingsCreated   Booking[]   @relation("BookingCreatedBy")
 
   @@map("users")
 }
@@ -152,4 +166,431 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Group 2: master data, customers, rates, quotations, bookings.
+// Branch-owned tables carry branch_id; services filter on the user's allowed branches.
+// Currency columns reference the currency master; services check the currency is active.
+// ---------------------------------------------------------------------------------------------
+
+/// Per-document running numbers (e.g. NOL-QT-2026-000001). Incremented inside the transaction that
+/// creates the document, so numbers are unique and gap-free under concurrency.
+model NumberSequence {
+  docType   String @map("doc_type") @db.VarChar(30)
+  /// "2026" for yearly sequences, "" for never-resetting ones.
+  periodKey String @default("") @map("period_key") @db.VarChar(10)
+  nextValue BigInt @default(1) @map("next_value")
+
+  @@id([docType, periodKey])
+  @@map("number_sequences")
+}
+
+enum LocationKind {
+  PORT
+  CITY
+  BORDER
+  OTHER
+
+  @@map("location_kind")
+}
+
+/// Ports, cities and border points used in routes. Master data the client extends.
+model Location {
+  id          String       @id @default(uuid()) @db.Uuid
+  /// UN/LOCODE where one exists (AEJEA, SAJED, SDPZU), otherwise an internal code.
+  code        String       @unique @db.VarChar(10)
+  kind        LocationKind
+  nameEn      String       @map("name_en")
+  nameAr      String       @map("name_ar")
+  /// ISO 3166-1 alpha-2.
+  countryCode String       @map("country_code") @db.Char(2)
+  isActive    Boolean      @default(true) @map("is_active")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  ratesFrom      RateCard[]  @relation("RateOrigin")
+  ratesTo        RateCard[]  @relation("RateDestination")
+  quotationsFrom Quotation[] @relation("QuotationOrigin")
+  quotationsTo   Quotation[] @relation("QuotationDestination")
+  bookingsFrom   Booking[]   @relation("BookingOrigin")
+  bookingsTo     Booking[]   @relation("BookingDestination")
+
+  @@map("locations")
+}
+
+/// 20GP, 40GP, 40HC, OTHER... Master data the client extends.
+model ContainerType {
+  code      String   @id @db.VarChar(10)
+  nameEn    String   @map("name_en")
+  nameAr    String   @map("name_ar")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  rates        RateCard[]
+  bookingItems BookingItem[]
+
+  @@map("container_types")
+}
+
+/// Freight, THC, documentation, customs... The kinds of charge on a rate or quotation line.
+model ChargeType {
+  code      String   @id @db.VarChar(20)
+  nameEn    String   @map("name_en")
+  nameAr    String   @map("name_ar")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  rates          RateCard[]
+  quotationLines QuotationLine[]
+
+  @@map("charge_types")
+}
+
+enum ShippingMode {
+  SEA
+  ROAD
+
+  @@map("shipping_mode")
+}
+
+enum LoadType {
+  FCL
+  LCL
+
+  @@map("load_type")
+}
+
+enum CargoType {
+  CONTAINER
+  PALLET
+  BARREL
+  GENERAL
+
+  @@map("cargo_type")
+}
+
+enum RateUnit {
+  PER_CONTAINER
+  PER_CBM
+  PER_KG
+  PER_PALLET
+  PER_BARREL
+  PER_PIECE
+  PER_SHIPMENT
+
+  @@map("rate_unit")
+}
+
+enum CustomerKind {
+  INDIVIDUAL
+  COMPANY
+
+  @@map("customer_kind")
+}
+
+/// A NOLON customer. Branch-owned: staff see the customers of their branches only.
+model Customer {
+  id                  String       @id @default(uuid()) @db.Uuid
+  /// NOL-CUS-000001
+  number              String       @unique @db.VarChar(30)
+  branchId            String       @map("branch_id") @db.Uuid
+  kind                CustomerKind
+  name                String       @db.VarChar(200)
+  companyName         String?      @map("company_name") @db.VarChar(200)
+  /// E.164, e.g. +249912345678.
+  phone               String       @db.VarChar(20)
+  whatsapp            String?      @db.VarChar(20)
+  email               String?      @db.VarChar(254)
+  countryCode         String?      @map("country_code") @db.Char(2)
+  city                String?      @db.VarChar(100)
+  address             String?
+  taxNumber           String?      @map("tax_number") @db.VarChar(50)
+  preferredCurrency   String?      @map("preferred_currency") @db.Char(3)
+  preferredLocale     String       @default("ar") @map("preferred_locale") @db.VarChar(5)
+  paymentTermsDays    Int          @default(0) @map("payment_terms_days")
+  creditLimit         Decimal?     @map("credit_limit") @db.Decimal(18, 4)
+  creditLimitCurrency String?      @map("credit_limit_currency") @db.Char(3)
+  notes               String?
+  isActive            Boolean      @default(true) @map("is_active")
+  createdById         String       @map("created_by_id") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch                 Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  preferredCurrencyRef   Currency?         @relation("CustomerPreferredCurrency", fields: [preferredCurrency], references: [code], onDelete: Restrict)
+  creditLimitCurrencyRef Currency?         @relation("CustomerCreditLimitCurrency", fields: [creditLimitCurrency], references: [code], onDelete: Restrict)
+  createdBy              User              @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  contacts               CustomerContact[]
+  parties                Party[]
+  quotations             Quotation[]
+  bookings               Booking[]
+
+  @@index([branchId])
+  @@index([phone])
+  @@map("customers")
+}
+
+/// A person authorized to act for a customer: inquire, receive cargo or receive documents.
+model CustomerContact {
+  id                  String   @id @default(uuid()) @db.Uuid
+  customerId          String   @map("customer_id") @db.Uuid
+  name                String   @db.VarChar(200)
+  position            String?  @db.VarChar(100)
+  phone               String   @db.VarChar(20)
+  email               String?  @db.VarChar(254)
+  idNumber            String?  @map("id_number") @db.VarChar(50)
+  canInquire          Boolean  @default(true) @map("can_inquire")
+  canReceiveCargo     Boolean  @default(false) @map("can_receive_cargo")
+  canReceiveDocuments Boolean  @default(false) @map("can_receive_documents")
+  isPrimary           Boolean  @default(false) @map("is_primary")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId])
+  @@index([phone])
+  @@map("customer_contacts")
+}
+
+/// Shipper / consignee / notify party. Separate from customers (scope 6); each entry belongs to
+/// one customer's address book.
+model Party {
+  id          String   @id @default(uuid()) @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  name        String   @db.VarChar(200)
+  companyName String?  @map("company_name") @db.VarChar(200)
+  phone       String?  @db.VarChar(20)
+  email       String?  @db.VarChar(254)
+  countryCode String?  @map("country_code") @db.Char(2)
+  city        String?  @db.VarChar(100)
+  address     String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  bookingsShipper   Booking[] @relation("BookingShipper")
+  bookingsConsignee Booking[] @relation("BookingConsignee")
+  bookingsNotify    Booking[] @relation("BookingNotify")
+
+  @@index([customerId])
+  @@map("parties")
+}
+
+enum RateStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("rate_status")
+}
+
+/// A selling rate for a route. Sales create and edit drafts; a Branch Manager (or anyone with
+/// rates:approve) approves. Only approved rates feed quotations. Approved rates are not edited:
+/// cancel and create a new one.
+model RateCard {
+  id                    String       @id @default(uuid()) @db.Uuid
+  branchId              String       @map("branch_id") @db.Uuid
+  originLocationId      String       @map("origin_location_id") @db.Uuid
+  destinationLocationId String       @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?    @map("load_type")
+  cargoType             CargoType    @map("cargo_type")
+  containerTypeCode     String?      @map("container_type_code") @db.VarChar(10)
+  chargeTypeCode        String       @default("FREIGHT") @map("charge_type_code") @db.VarChar(20)
+  unit                  RateUnit
+  price                 Decimal      @db.Decimal(18, 4)
+  minimumCharge         Decimal      @default(0) @map("minimum_charge") @db.Decimal(18, 4)
+  currency              String       @db.Char(3)
+  validFrom             DateTime     @map("valid_from") @db.Date
+  validTo               DateTime?    @map("valid_to") @db.Date
+  transitDays           Int?         @map("transit_days")
+  notes                 String?
+  status                RateStatus   @default(DRAFT)
+  approvedById          String?      @map("approved_by_id") @db.Uuid
+  approvedAt            DateTime?    @map("approved_at") @db.Timestamptz(3)
+  createdById           String       @map("created_by_id") @db.Uuid
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch         Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin         Location        @relation("RateOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination    Location        @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  containerType  ContainerType?  @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  chargeType     ChargeType      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  currencyRef    Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
+  approvedBy     User?           @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy      User            @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  quotationLines QuotationLine[]
+
+  @@index([branchId, status])
+  @@index([originLocationId, destinationLocationId, mode])
+  @@map("rate_cards")
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  EXPIRED
+
+  @@map("quotation_status")
+}
+
+/// Price offer to a customer (annex B section 2). Totals are computed by the service from the
+/// lines, rounded once, and stored.
+model Quotation {
+  id                    String          @id @default(uuid()) @db.Uuid
+  /// NOL-QT-2026-000001
+  number                String          @unique @db.VarChar(30)
+  branchId              String          @map("branch_id") @db.Uuid
+  customerId            String          @map("customer_id") @db.Uuid
+  originLocationId      String          @map("origin_location_id") @db.Uuid
+  destinationLocationId String          @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?       @map("load_type")
+  cargoType             CargoType       @map("cargo_type")
+  cargoDescription      String?         @map("cargo_description")
+  currency              String          @db.Char(3)
+  subtotal              Decimal         @default(0) @db.Decimal(18, 4)
+  discountTotal         Decimal         @default(0) @map("discount_total") @db.Decimal(18, 4)
+  total                 Decimal         @default(0) @db.Decimal(18, 4)
+  validUntil            DateTime        @map("valid_until") @db.Date
+  terms                 String?
+  status                QuotationStatus @default(DRAFT)
+  rejectionReason       String?         @map("rejection_reason")
+  sentAt                DateTime?       @map("sent_at") @db.Timestamptz(3)
+  decidedAt             DateTime?       @map("decided_at") @db.Timestamptz(3)
+  createdById           String          @map("created_by_id") @db.Uuid
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  origin      Location        @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location        @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currencyRef Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy   User            @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  lines       QuotationLine[]
+  booking     Booking?
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("quotations")
+}
+
+model QuotationLine {
+  id             String   @id @default(uuid()) @db.Uuid
+  quotationId    String   @map("quotation_id") @db.Uuid
+  lineNo         Int      @map("line_no") @db.SmallInt
+  chargeTypeCode String   @map("charge_type_code") @db.VarChar(20)
+  description    String?
+  rateCardId     String?  @map("rate_card_id") @db.Uuid
+  unit           RateUnit
+  quantity       Decimal  @db.Decimal(18, 4)
+  unitPrice      Decimal  @map("unit_price") @db.Decimal(18, 4)
+  /// From the rate card: the line is never charged less than this, before discount.
+  minimumCharge  Decimal  @default(0) @map("minimum_charge") @db.Decimal(18, 4)
+  discount       Decimal  @default(0) @db.Decimal(18, 4)
+  /// max(round(quantity * unitPrice), minimumCharge) - discount, rounded to the currency.
+  lineTotal      Decimal  @map("line_total") @db.Decimal(18, 4)
+
+  quotation  Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  chargeType ChargeType @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  rateCard   RateCard?  @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+
+  @@unique([quotationId, lineNo])
+  @@map("quotation_lines")
+}
+
+enum BookingStatus {
+  DRAFT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+
+  @@map("booking_status")
+}
+
+/// Optional services chosen on the booking; they decide which shipment stages exist (annex B).
+enum BookingService {
+  MAIN_FREIGHT
+  PICKUP
+  WAREHOUSE
+  CUSTOMS
+  INLAND_TRANSPORT
+  LAST_MILE
+
+  @@map("booking_service")
+}
+
+/// A booking (annex B section 3). Created from an approved quotation (at most one booking per
+/// quotation) or directly. A confirmed booking produces exactly one shipment (group 3).
+model Booking {
+  id                    String           @id @default(uuid()) @db.Uuid
+  /// NOL-BK-2026-000001
+  number                String           @unique @db.VarChar(30)
+  branchId              String           @map("branch_id") @db.Uuid
+  customerId            String           @map("customer_id") @db.Uuid
+  quotationId           String?          @unique @map("quotation_id") @db.Uuid
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?        @map("load_type")
+  cargoType             CargoType        @map("cargo_type")
+  cargoDescription      String?          @map("cargo_description")
+  services              BookingService[]
+  shipperId             String?          @map("shipper_id") @db.Uuid
+  consigneeId           String?          @map("consignee_id") @db.Uuid
+  notifyPartyId         String?          @map("notify_party_id") @db.Uuid
+  requestedDeparture    DateTime?        @map("requested_departure") @db.Date
+  specialInstructions   String?          @map("special_instructions")
+  status                BookingStatus    @default(DRAFT)
+  cancelReason          String?          @map("cancel_reason")
+  confirmedAt           DateTime?        @map("confirmed_at") @db.Timestamptz(3)
+  createdById           String           @map("created_by_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quotation   Quotation?    @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  origin      Location      @relation("BookingOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location      @relation("BookingDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  shipper     Party?        @relation("BookingShipper", fields: [shipperId], references: [id], onDelete: Restrict)
+  consignee   Party?        @relation("BookingConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
+  notifyParty Party?        @relation("BookingNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
+  createdBy   User          @relation("BookingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items       BookingItem[]
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("bookings")
+}
+
+/// One line of cargo: containers, pallets, barrels or general cargo.
+model BookingItem {
+  id                String    @id @default(uuid()) @db.Uuid
+  bookingId         String    @map("booking_id") @db.Uuid
+  lineNo            Int       @map("line_no") @db.SmallInt
+  cargoType         CargoType @map("cargo_type")
+  containerTypeCode String?   @map("container_type_code") @db.VarChar(10)
+  description       String?
+  quantity          Int
+  lengthCm          Decimal?  @map("length_cm") @db.Decimal(10, 2)
+  widthCm           Decimal?  @map("width_cm") @db.Decimal(10, 2)
+  heightCm          Decimal?  @map("height_cm") @db.Decimal(10, 2)
+  /// Total for the line.
+  weightKg          Decimal?  @map("weight_kg") @db.Decimal(12, 3)
+  /// Total for the line (CBM calculator output, or entered).
+  volumeCbm         Decimal?  @map("volume_cbm") @db.Decimal(12, 4)
+
+  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  containerType ContainerType? @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+
+  @@unique([bookingId, lineNo])
+  @@map("booking_items")
 }

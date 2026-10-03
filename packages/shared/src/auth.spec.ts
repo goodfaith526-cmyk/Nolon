@@ -73,6 +73,7 @@ describe('permission matrix (annex A)', () => {
     ['operational_reports', 'ك ع ع ع ع ع ع ع —'],
     ['dashboards', 'ك ع ع ع ع ع — — —'],
     ['alert_settings', 'ك — — — — — — — —'],
+    ['master_data', 'ك ع ع ع ع ع ع ع ع'],
     ['users', 'ك — — — — — — — —'],
     ['audit_log', 'ع ع ع — — — — — —'],
   ];

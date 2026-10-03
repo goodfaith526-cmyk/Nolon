@@ -1,0 +1,656 @@
+import type {
+  BookingDto,
+  CustomerDto,
+  MasterDataDto,
+  Page,
+  QuotationDto,
+  RateCardDto,
+} from '@nolon/shared';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { PrismaService } from '../src/prisma/prisma.service.js';
+import {
+  APP_ORIGIN,
+  type TestApp,
+  branchId,
+  createTestApp,
+  createUser,
+  deleteTestUsers,
+  signIn,
+} from './auth-test-app.js';
+
+/** Removes everything the test users created, so the users themselves can be deleted. */
+async function deleteCommercialTestData(prisma: PrismaService): Promise<void> {
+  const createdBy = { createdBy: { email: { startsWith: 'it-' } } };
+  await prisma.booking.deleteMany({ where: createdBy });
+  await prisma.quotation.deleteMany({ where: createdBy });
+  await prisma.rateCard.deleteMany({ where: createdBy });
+  const customers = { customer: createdBy };
+  await prisma.customerContact.deleteMany({ where: customers });
+  await prisma.party.deleteMany({ where: customers });
+  await prisma.customer.deleteMany({ where: createdBy });
+  await prisma.location.deleteMany({ where: { code: { startsWith: 'ZZ' } } });
+}
+
+const PAST = '2020-01-01';
+const FAR_FUTURE = '2099-12-31';
+
+describe('commercial cycle: customers, rates, quotations, bookings', () => {
+  let t: TestApp;
+  let dxb: string;
+  let jed: string;
+  let jebelAli: string;
+  let portSudan: string;
+  let jeddah: string;
+  const cookies: Record<
+    'admin' | 'salesDxb' | 'salesJed' | 'managerDxb' | 'opsDxb' | 'financeDxb' | 'driver',
+    string
+  > = {
+    admin: '',
+    salesDxb: '',
+    salesJed: '',
+    managerDxb: '',
+    opsDxb: '',
+    financeDxb: '',
+    driver: '',
+  };
+
+  const get = (path: string, cookie: string) =>
+    t.http().get(`/api/v1${path}`).set('Cookie', cookie);
+  const post = (path: string, cookie: string, body: object = {}) =>
+    t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+  const patch = (path: string, cookie: string, body: object) =>
+    t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+
+  function customerBody(branch: string, overrides: object = {}) {
+    return {
+      branchId: branch,
+      kind: 'COMPANY',
+      name: 'Al Noor Trading',
+      companyName: 'Al Noor Trading LLC',
+      phone: '+971501234567',
+      preferredCurrency: 'USD',
+      ...overrides,
+    };
+  }
+
+  function rateBody(branch: string, overrides: object = {}) {
+    return {
+      branchId: branch,
+      originLocationId: jebelAli,
+      destinationLocationId: portSudan,
+      mode: 'SEA',
+      loadType: 'FCL',
+      cargoType: 'CONTAINER',
+      containerTypeCode: '40HC',
+      unit: 'PER_CONTAINER',
+      price: '1250.50',
+      minimumCharge: '0',
+      currency: 'USD',
+      validFrom: PAST,
+      validTo: FAR_FUTURE,
+      ...overrides,
+    };
+  }
+
+  async function createCustomer(cookie: string, branch: string): Promise<CustomerDto> {
+    const res = await post('/customers', cookie, customerBody(branch)).expect(201);
+    return res.body as CustomerDto;
+  }
+
+  async function approvedRate(overrides: object = {}): Promise<RateCardDto> {
+    const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb, overrides)).expect(201))
+      .body as RateCardDto;
+    return (await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200))
+      .body as RateCardDto;
+  }
+
+  function quotationBody(customerId: string, lines: object[], overrides: object = {}) {
+    return {
+      customerId,
+      originLocationId: jebelAli,
+      destinationLocationId: portSudan,
+      mode: 'SEA',
+      loadType: 'FCL',
+      cargoType: 'CONTAINER',
+      currency: 'USD',
+      validUntil: FAR_FUTURE,
+      lines,
+      ...overrides,
+    };
+  }
+
+  async function approvedQuotation(customerId: string): Promise<QuotationDto> {
+    const rate = await approvedRate();
+    const q = (
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customerId, [{ rateCardId: rate.id, quantity: '1' }]),
+      ).expect(201)
+    ).body as QuotationDto;
+    await post(`/quotations/${q.id}/send`, cookies.salesDxb).expect(200);
+    return (await post(`/quotations/${q.id}/approve`, cookies.salesDxb).expect(200))
+      .body as QuotationDto;
+  }
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    dxb = await branchId(t.prisma, 'DXB');
+    jed = await branchId(t.prisma, 'JED');
+    const loc = async (code: string) =>
+      (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
+    jebelAli = await loc('AEJEA');
+    portSudan = await loc('SDPZU');
+    jeddah = await loc('SAJED');
+    const users = {
+      admin: await createUser(t.prisma, ['ADMINISTRATOR']),
+      salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
+      salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+      managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
+      opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
+      financeDxb: await createUser(t.prisma, ['FINANCE'], ['DXB']),
+      driver: await createUser(t.prisma, ['DRIVER'], ['DXB']),
+    };
+    for (const key of Object.keys(users) as (keyof typeof users)[]) {
+      cookies[key] = await signIn(t, users[key].email);
+    }
+  });
+
+  afterAll(async () => {
+    await deleteCommercialTestData(t.prisma);
+    await deleteTestUsers(t.prisma);
+    await t.close();
+  });
+
+  describe('master data', () => {
+    it('every signed-in user reads it, with the reference data from the migration', async () => {
+      const res = await get('/master-data', cookies.driver).expect(200);
+      const data = res.body as MasterDataDto;
+      expect(data.containerTypes.map((c) => c.code)).toEqual(
+        expect.arrayContaining(['20GP', '40GP', '40HC']),
+      );
+      expect(data.chargeTypes.map((c) => c.code)).toContain('FREIGHT');
+      expect(data.locations.map((l) => l.code)).toEqual(
+        expect.arrayContaining(['AEJEA', 'SAJED', 'SDPZU']),
+      );
+      expect(data.currencies.map((c) => c.code)).toContain('SDG');
+    });
+
+    it('only the Administrator adds a location; codes are unique', async () => {
+      const body = {
+        code: 'zzsua',
+        kind: 'PORT',
+        nameEn: 'Suakin',
+        nameAr: 'سواكن',
+        countryCode: 'SD',
+      };
+      await post('/master-data/locations', cookies.managerDxb, body).expect(403);
+      const res = await post('/master-data/locations', cookies.admin, body).expect(201);
+      expect((res.body as { code: string }).code).toBe('ZZSUA');
+      await post('/master-data/locations', cookies.admin, body).expect(409);
+    });
+
+    it('requires a session', async () => {
+      await t.http().get('/api/v1/master-data').expect(401);
+    });
+  });
+
+  describe('customers', () => {
+    it('creates a customer in the user’s branch with a running number', async () => {
+      const a = await createCustomer(cookies.salesDxb, dxb);
+      const b = await createCustomer(cookies.salesDxb, dxb);
+      expect(a.number).toMatch(/^NOL-CUS-\d{6}$/);
+      expect(b.number).not.toBe(a.number);
+      expect(a.branchId).toBe(dxb);
+      expect(a.preferredCurrency).toBe('USD');
+    });
+
+    it('refuses another branch: create 403, read 404, not listed', async () => {
+      await post('/customers', cookies.salesDxb, customerBody(jed)).expect(403);
+      const jedCustomer = await createCustomer(cookies.salesJed, jed);
+      await get(`/customers/${jedCustomer.id}`, cookies.salesDxb).expect(404);
+      await patch(`/customers/${jedCustomer.id}`, cookies.salesDxb, { name: 'x' }).expect(404);
+      const list = (
+        await get(`/customers?pageSize=100&q=${jedCustomer.number}`, cookies.salesDxb).expect(200)
+      ).body as Page<CustomerDto>;
+      expect(list.items).toHaveLength(0);
+      const own = (await get(`/customers?q=${jedCustomer.number}`, cookies.salesJed).expect(200))
+        .body as Page<CustomerDto>;
+      expect(own.items.map((c) => c.id)).toEqual([jedCustomer.id]);
+    });
+
+    it('enforces the permission matrix', async () => {
+      await get('/customers', cookies.driver).expect(403);
+      await get('/customers', cookies.opsDxb).expect(200);
+      await post('/customers', cookies.opsDxb, customerBody(dxb)).expect(403);
+      await post('/customers', cookies.financeDxb, customerBody(dxb)).expect(403);
+    });
+
+    it('validates phone format, currency and the credit limit pair', async () => {
+      await post('/customers', cookies.salesDxb, customerBody(dxb, { phone: '0501234567' })).expect(
+        400,
+      );
+      await post(
+        '/customers',
+        cookies.salesDxb,
+        customerBody(dxb, { preferredCurrency: 'XXX' }),
+      ).expect(400);
+      await post('/customers', cookies.salesDxb, customerBody(dxb, { creditLimit: '5000' })).expect(
+        400,
+      );
+      await post(
+        '/customers',
+        cookies.salesDxb,
+        customerBody(dxb, { creditLimit: '5000.5', creditLimitCurrency: 'AED' }),
+      ).expect(201);
+      await post('/customers', cookies.salesDxb, customerBody(dxb, { creditLimit: 5000 })).expect(
+        400,
+      );
+    });
+
+    it('keeps one primary contact and stores parties', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      const contact = { phone: '+249912345678', canReceiveCargo: true, isPrimary: true };
+      await post(`/customers/${c.id}/contacts`, cookies.salesDxb, { name: 'A', ...contact }).expect(
+        201,
+      );
+      const res = await post(`/customers/${c.id}/contacts`, cookies.salesDxb, {
+        name: 'B',
+        ...contact,
+      }).expect(201);
+      const contacts = (res.body as CustomerDto).contacts;
+      expect(contacts.filter((x) => x.isPrimary).map((x) => x.name)).toEqual(['B']);
+      const withParty = (
+        await post(`/customers/${c.id}/parties`, cookies.salesDxb, {
+          name: 'Consignee Co',
+          countryCode: 'SD',
+        }).expect(201)
+      ).body as CustomerDto;
+      expect(withParty.parties.map((p) => p.name)).toEqual(['Consignee Co']);
+    });
+  });
+
+  describe('rates', () => {
+    it('Sales drafts, the Branch Manager approves, the approved rate is frozen', async () => {
+      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
+        .body as RateCardDto;
+      expect(draft.status).toBe('DRAFT');
+      expect(draft.price).toBe('1250.5');
+      await post(`/rates/${draft.id}/approve`, cookies.salesDxb).expect(403);
+      await patch(`/rates/${draft.id}`, cookies.salesDxb, { price: '1300' }).expect(200);
+      const approved = (await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200))
+        .body as RateCardDto;
+      expect(approved.status).toBe('APPROVED');
+      expect(approved.price).toBe('1300');
+      await patch(`/rates/${draft.id}`, cookies.salesDxb, { price: '1' }).expect(409);
+      await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(409);
+    });
+
+    it('only roles with rates:cancel cancel a rate', async () => {
+      const rate = await approvedRate();
+      await post(`/rates/${rate.id}/cancel`, cookies.salesDxb).expect(403);
+      await post(`/rates/${rate.id}/cancel`, cookies.managerDxb).expect(403);
+      const res = await post(`/rates/${rate.id}/cancel`, cookies.admin).expect(200);
+      expect((res.body as RateCardDto).status).toBe('CANCELLED');
+    });
+
+    it('is branch-scoped and validates its references', async () => {
+      await post('/rates', cookies.salesDxb, rateBody(jed)).expect(403);
+      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
+        .body as RateCardDto;
+      await get(`/rates/${draft.id}`, cookies.salesJed).expect(404);
+      await post(
+        '/rates',
+        cookies.salesDxb,
+        rateBody(dxb, { destinationLocationId: jebelAli }),
+      ).expect(400);
+      await post('/rates', cookies.salesDxb, rateBody(dxb, { containerTypeCode: null })).expect(
+        400,
+      );
+      await post('/rates', cookies.salesDxb, rateBody(dxb, { mode: 'ROAD' })).expect(400);
+      await post('/rates', cookies.salesDxb, rateBody(dxb, { price: '-1' })).expect(400);
+      await post('/rates', cookies.salesDxb, rateBody(dxb, { price: 12.5 })).expect(400);
+      await post(
+        '/rates',
+        cookies.salesDxb,
+        rateBody(dxb, { validFrom: '2026-02-01', validTo: '2026-01-01' }),
+      ).expect(400);
+    });
+  });
+
+  describe('quotations', () => {
+    let customer: CustomerDto;
+
+    beforeAll(async () => {
+      customer = await createCustomer(cookies.salesDxb, dxb);
+    });
+
+    it('prices lines from approved rates with exact decimal totals and a minimum charge', async () => {
+      const container = await approvedRate({ price: '1250.50' });
+      const lcl = await approvedRate({
+        loadType: 'LCL',
+        cargoType: 'GENERAL',
+        containerTypeCode: null,
+        unit: 'PER_CBM',
+        price: '45.333',
+        minimumCharge: '150',
+      });
+      const res = await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [
+          { rateCardId: container.id, quantity: '2', discount: '0.5' },
+          { rateCardId: lcl.id, quantity: '1.25' }, // 56.67 < 150 → 150
+          { chargeTypeCode: 'DOCS', unit: 'PER_SHIPMENT', unitPrice: '35.10', quantity: '1' },
+        ]),
+      ).expect(201);
+      const q = res.body as QuotationDto;
+      expect(q.number).toMatch(/^NOL-QT-\d{4}-\d{6}$/);
+      expect(q.status).toBe('DRAFT');
+      expect(q.branchId).toBe(dxb);
+      expect(q.lines.map((l) => l.lineTotal)).toEqual(['2500.5', '150', '35.1']);
+      expect(q.subtotal).toBe('2686.1');
+      expect(q.discountTotal).toBe('0.5');
+      expect(q.total).toBe('2685.6');
+      expect(q.lines[0]?.unitPrice).toBe('1250.5');
+    });
+
+    it('ignores client-sent totals and prices on rate lines', async () => {
+      const rate = await approvedRate({ price: '100' });
+      const res = await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1', unitPrice: '1' }]),
+      ).expect(201);
+      expect((res.body as QuotationDto).total).toBe('100');
+      await post('/quotations', cookies.salesDxb, {
+        ...quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        total: '1',
+      }).expect(400);
+    });
+
+    it('refuses draft, foreign-branch, wrong-currency rates and oversized discounts', async () => {
+      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
+        .body as RateCardDto;
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: draft.id, quantity: '1' }]),
+      ).expect(400);
+
+      const jedRateDraft = (
+        await post('/rates', cookies.salesJed, rateBody(jed, { originLocationId: jeddah })).expect(
+          201,
+        )
+      ).body as RateCardDto;
+      await post(`/rates/${jedRateDraft.id}/approve`, cookies.admin).expect(200);
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: jedRateDraft.id, quantity: '1' }]),
+      ).expect(400);
+
+      const usd = await approvedRate();
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: usd.id, quantity: '1' }], { currency: 'AED' }),
+      ).expect(400);
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: usd.id, quantity: '1', discount: '5000' }]),
+      ).expect(400);
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: usd.id, quantity: '0' }]),
+      ).expect(400);
+    });
+
+    it('follows draft → sent → approved, and refuses edits after draft', async () => {
+      const rate = await approvedRate();
+      const q = (
+        await post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        ).expect(201)
+      ).body as QuotationDto;
+      await post(`/quotations/${q.id}/approve`, cookies.salesDxb).expect(409);
+      const edited = (
+        await patch(`/quotations/${q.id}`, cookies.salesDxb, {
+          ...quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '3' }]),
+          customerId: undefined,
+        }).expect(200)
+      ).body as QuotationDto;
+      expect(edited.total).toBe('3751.5');
+      await post(`/quotations/${q.id}/send`, cookies.salesDxb).expect(200);
+      await patch(`/quotations/${q.id}`, cookies.salesDxb, {
+        ...quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        customerId: undefined,
+      }).expect(409);
+      const approved = (await post(`/quotations/${q.id}/approve`, cookies.managerDxb).expect(200))
+        .body as QuotationDto;
+      expect(approved.status).toBe('APPROVED');
+      expect(approved.decidedAt).not.toBeNull();
+    });
+
+    it('records a rejection with its reason', async () => {
+      const rate = await approvedRate();
+      const q = (
+        await post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        ).expect(201)
+      ).body as QuotationDto;
+      await post(`/quotations/${q.id}/send`, cookies.salesDxb).expect(200);
+      await post(`/quotations/${q.id}/reject`, cookies.salesDxb, {}).expect(400);
+      const rejected = (
+        await post(`/quotations/${q.id}/reject`, cookies.salesDxb, {
+          reason: 'Too expensive',
+        }).expect(200)
+      ).body as QuotationDto;
+      expect(rejected.status).toBe('REJECTED');
+      expect(rejected.rejectionReason).toBe('Too expensive');
+    });
+
+    it('expires a quotation approved after its validity date', async () => {
+      const rate = await approvedRate();
+      const q = (
+        await post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        ).expect(201)
+      ).body as QuotationDto;
+      await post(`/quotations/${q.id}/send`, cookies.salesDxb).expect(200);
+      await t.prisma.quotation.update({
+        where: { id: q.id },
+        data: { validUntil: new Date(`${PAST}T00:00:00Z`) },
+      });
+      await post(`/quotations/${q.id}/approve`, cookies.salesDxb).expect(409);
+      const after = (await get(`/quotations/${q.id}`, cookies.salesDxb).expect(200))
+        .body as QuotationDto;
+      expect(after.status).toBe('EXPIRED');
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }], {
+          validUntil: PAST,
+        }),
+      ).expect(400);
+    });
+
+    it('is branch-scoped and follows the permission matrix', async () => {
+      const rate = await approvedRate();
+      const body = quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]);
+      await post('/quotations', cookies.salesJed, body).expect(404);
+      await post('/quotations', cookies.opsDxb, body).expect(403);
+      await post('/quotations', cookies.managerDxb, body).expect(403);
+      const q = (await post('/quotations', cookies.salesDxb, body).expect(201))
+        .body as QuotationDto;
+      await get(`/quotations/${q.id}`, cookies.salesJed).expect(404);
+      await get(`/quotations/${q.id}`, cookies.opsDxb).expect(200);
+      await get('/quotations', cookies.driver).expect(403);
+      await post(`/quotations/${q.id}/send`, cookies.salesDxb).expect(200);
+      await post(`/quotations/${q.id}/approve`, cookies.opsDxb).expect(403);
+      await post(`/quotations/${q.id}/approve`, cookies.salesJed).expect(404);
+    });
+  });
+
+  describe('bookings', () => {
+    let customer: CustomerDto;
+
+    beforeAll(async () => {
+      customer = await createCustomer(cookies.salesDxb, dxb);
+      customer = (
+        await post(`/customers/${customer.id}/parties`, cookies.salesDxb, {
+          name: 'Shipper',
+        }).expect(201)
+      ).body as CustomerDto;
+    });
+
+    it('turns an approved quotation into one booking, never two', async () => {
+      const q = await approvedQuotation(customer.id);
+      const shipperId = customer.parties[0]?.id;
+      const results = await Promise.all([
+        post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb, { shipperId }),
+        post(`/bookings/from-quotation/${q.id}`, cookies.opsDxb, { shipperId }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+      const booking = results.find((r) => r.status === 201)?.body as BookingDto;
+      expect(booking.number).toMatch(/^NOL-BK-\d{4}-\d{6}$/);
+      expect(booking.quotationId).toBe(q.id);
+      expect(booking.customerId).toBe(customer.id);
+      expect(booking.originLocationId).toBe(jebelAli);
+      expect(booking.services).toEqual(['MAIN_FREIGHT']);
+      expect(booking.shipperId).toBe(shipperId);
+      const quotation = (await get(`/quotations/${q.id}`, cookies.salesDxb).expect(200))
+        .body as QuotationDto;
+      expect(quotation.bookingId).toBe(booking.id);
+    });
+
+    it('refuses a quotation that is not approved', async () => {
+      const rate = await approvedRate();
+      const q = (
+        await post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        ).expect(201)
+      ).body as QuotationDto;
+      await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(409);
+    });
+
+    function directBooking(overrides: object = {}) {
+      return {
+        customerId: customer.id,
+        originLocationId: jeddah,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'LCL',
+        cargoType: 'PALLET',
+        services: ['MAIN_FREIGHT', 'CUSTOMS', 'CUSTOMS'],
+        items: [
+          {
+            cargoType: 'PALLET',
+            quantity: 10,
+            lengthCm: '120',
+            widthCm: '100',
+            heightCm: '150',
+            weightKg: '4500.5',
+          },
+          { cargoType: 'CONTAINER', containerTypeCode: '20GP', quantity: 1, volumeCbm: '33.2' },
+        ],
+        ...overrides,
+      };
+    }
+
+    it('creates a direct booking and computes CBM on the server', async () => {
+      const b = (await post('/bookings', cookies.opsDxb, directBooking()).expect(201))
+        .body as BookingDto;
+      expect(b.status).toBe('DRAFT');
+      expect(b.services).toEqual(['MAIN_FREIGHT', 'CUSTOMS']);
+      expect(b.items.map((i) => i.volumeCbm)).toEqual(['18', '33.2']);
+      expect(b.items[0]?.weightKg).toBe('4500.5');
+    });
+
+    it('validates parties, dimensions and container lines', async () => {
+      const other = await createCustomer(cookies.salesDxb, dxb);
+      const foreignParty = (
+        await post(`/customers/${other.id}/parties`, cookies.salesDxb, {
+          name: 'Not yours',
+        }).expect(201)
+      ).body as CustomerDto;
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        directBooking({ consigneeId: foreignParty.parties[0]?.id }),
+      ).expect(400);
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        directBooking({ items: [{ cargoType: 'PALLET', quantity: 1, lengthCm: '100' }] }),
+      ).expect(400);
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        directBooking({ items: [{ cargoType: 'CONTAINER', quantity: 1 }] }),
+      ).expect(400);
+      await post('/bookings', cookies.salesDxb, directBooking({ services: [] })).expect(400);
+      await post('/bookings', cookies.salesDxb, directBooking({ mode: 'ROAD' })).expect(400);
+    });
+
+    it('confirms with cargo only, cancels with a reason, and freezes after draft', async () => {
+      const empty = (
+        await post('/bookings', cookies.salesDxb, directBooking({ items: [] })).expect(201)
+      ).body as BookingDto;
+      await post(`/bookings/${empty.id}/confirm`, cookies.managerDxb).expect(400);
+
+      const b = (await post('/bookings', cookies.salesDxb, directBooking()).expect(201))
+        .body as BookingDto;
+      await post(`/bookings/${b.id}/confirm`, cookies.financeDxb).expect(403);
+      const confirmed = (await post(`/bookings/${b.id}/confirm`, cookies.managerDxb).expect(200))
+        .body as BookingDto;
+      expect(confirmed.status).toBe('CONFIRMED');
+      expect(confirmed.confirmedAt).not.toBeNull();
+      await patch(`/bookings/${b.id}`, cookies.salesDxb, {
+        ...directBooking(),
+        customerId: undefined,
+      }).expect(409);
+      await post(`/bookings/${b.id}/cancel`, cookies.salesDxb, {}).expect(400);
+      await post(`/bookings/${b.id}/cancel`, cookies.managerDxb, { reason: 'x' }).expect(403);
+      const cancelled = (
+        await post(`/bookings/${b.id}/cancel`, cookies.salesDxb, {
+          reason: 'Customer postponed',
+        }).expect(200)
+      ).body as BookingDto;
+      expect(cancelled.status).toBe('CANCELLED');
+      await post(`/bookings/${b.id}/cancel`, cookies.salesDxb, { reason: 'again' }).expect(409);
+    });
+
+    it('is branch-scoped and follows the permission matrix', async () => {
+      await post('/bookings', cookies.salesJed, directBooking()).expect(404);
+      await post('/bookings', cookies.financeDxb, directBooking()).expect(403);
+      const b = (await post('/bookings', cookies.salesDxb, directBooking()).expect(201))
+        .body as BookingDto;
+      await get(`/bookings/${b.id}`, cookies.salesJed).expect(404);
+      await get(`/bookings/${b.id}`, cookies.financeDxb).expect(200);
+      await get('/bookings', cookies.driver).expect(403);
+      const list = (await get('/bookings?pageSize=100', cookies.salesJed).expect(200))
+        .body as Page<BookingDto>;
+      expect(list.items.every((x) => x.branchId === jed)).toBe(true);
+    });
+  });
+
+  it('gives concurrent creations distinct numbers', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => post('/customers', cookies.salesDxb, customerBody(dxb))),
+    );
+    const numbers = results.map((r) => (r.body as CustomerDto).number);
+    expect(results.every((r) => r.status === 201)).toBe(true);
+    expect(new Set(numbers).size).toBe(8);
+  });
+});

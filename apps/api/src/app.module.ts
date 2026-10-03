@@ -1,13 +1,30 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module.js';
+import { BookingsModule } from './bookings/bookings.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
+import { CustomersModule } from './customers/customers.module.js';
 import { HealthModule } from './health/health.module.js';
+import { MasterDataModule } from './master-data/master-data.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { QuotationsModule } from './quotations/quotations.module.js';
+import { RatesModule } from './rates/rates.module.js';
 import { UsersModule } from './users/users.module.js';
 
 // Business modules (customers, bookings, shipments, finance...) are added here, one per folder.
 @Module({
-  imports: [ConfigModule, PrismaModule, AuthModule, UsersModule, HealthModule, CurrenciesModule],
+  imports: [
+    ConfigModule,
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    HealthModule,
+    CurrenciesModule,
+    MasterDataModule,
+    CustomersModule,
+    RatesModule,
+    QuotationsModule,
+    BookingsModule,
+  ],
 })
 export class AppModule {}
