@@ -30,14 +30,32 @@
     "customers": "العملاء",
     "rates": "الأسعار",
     "quotations": "عروض الأسعار",
-    "bookings": "الحجوزات"
+    "bookings": "الحجوزات",
+    "menu": "القائمة",
+    "closeMenu": "إغلاق القائمة",
+    "commercial": "التجاري",
+    "admin": "الإدارة",
+    "allBranches": "كل الفروع",
+    "switchLocale": "English"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
-    "roles": "أدوارك",
-    "branches": "فروعك",
     "allBranches": "كل الفروع",
-    "comingSoon": "ستظهر الشحنات والفواتير هنا عند بنائها."
+    "loadFailed": "تعذّر تحميل الأرقام. أعد تحميل الصفحة.",
+    "newCustomer": "عميل جديد",
+    "newQuotation": "عرض سعر جديد",
+    "newBooking": "حجز جديد",
+    "customers": "العملاء",
+    "approvedRates": "أسعار معتمدة",
+    "draftCount": "{count, plural, =0 {لا مسودات} one {مسودة واحدة} two {مسودتان} few {# مسودات} many {# مسودة} other {# مسودة}}",
+    "openQuotations": "عروض أسعار مفتوحة",
+    "approvedAwaiting": "{count, plural, =0 {لا عروض موافق عليها} one {عرض موافق عليه} two {عرضان موافق عليهما} few {# عروض موافق عليها} many {# عرضاً موافقاً عليه} other {# عرض موافق عليه}}",
+    "confirmedBookings": "حجوزات مؤكدة",
+    "recentQuotations": "آخر عروض الأسعار",
+    "recentBookings": "آخر الحجوزات",
+    "viewAll": "عرض الكل",
+    "noQuotations": "لا توجد عروض أسعار بعد.",
+    "noBookings": "لا توجد حجوزات بعد."
   },
   "Account": {
     "title": "تغيير كلمة المرور",

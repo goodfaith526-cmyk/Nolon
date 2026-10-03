@@ -4,6 +4,7 @@ import { BookingsModule } from './bookings/bookings.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MasterDataModule } from './master-data/master-data.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -25,6 +26,7 @@ import { UsersModule } from './users/users.module.js';
     RatesModule,
     QuotationsModule,
     BookingsModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

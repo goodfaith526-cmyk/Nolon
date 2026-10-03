@@ -4,6 +4,7 @@ import { normalizeEmail } from '../auth/email.js';
 import { hashPassword } from '../auth/password.js';
 import { loadEnv } from '../config/env.js';
 import { PrismaClient } from '../generated/prisma/client.js';
+import { seedDemoCommercial } from './demo-commercial.js';
 import { DEMO_BRANCHES } from './demo-data.js';
 
 /**
@@ -59,6 +60,8 @@ async function seed(): Promise<void> {
         );
       }
     }
+
+    await seedDemoCommercial(prisma);
   } finally {
     await prisma.$disconnect();
   }

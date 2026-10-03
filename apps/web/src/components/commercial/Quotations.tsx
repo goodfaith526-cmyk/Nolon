@@ -12,6 +12,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function Quotations() {
@@ -111,7 +112,9 @@ export function Quotations() {
                     {x.total} {x.currency}
                   </td>
                   <td dir="ltr">{x.validUntil}</td>
-                  <td>{te(`quotation_${x.status}`)}</td>
+                  <td>
+                    <StatusBadge kind="quotation" status={x.status} />
+                  </td>
                 </tr>
               ))}
             </tbody>
