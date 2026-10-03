@@ -38,7 +38,9 @@ another module's tables or internals.
    inside a migration, not only in application code. Corrections are made with a reversing
    entry. Never drop, disable or bypass these triggers.
 4. **No migration without review.** Migrations are generated with `pnpm db:migrate`, committed,
-   and reviewed by a human before merge (CODEOWNERS enforces it). Never edit or delete a
+   and reviewed by a human before merge. CODEOWNERS only requests that review; nothing blocks a
+   merge without it, so the reviewer must check for migrations in every PR. CI fails if a migration
+   already on `main` is modified or deleted. Never edit or delete a
    migration that is already on `main`; add a new one. Call out destructive or locking changes
    (drops, renames, type changes, new NOT NULL on existing tables) in the PR description.
 5. **No business logic in controllers or in Next.js.** Controllers parse, validate, authorize,
@@ -58,6 +60,9 @@ another module's tables or internals.
 - Every user-facing string goes in both `apps/web/messages/ar.json` and `en.json` (a test checks
   they have the same keys). Use logical CSS properties (`margin-inline`, `padding-inline-start`)
   so layouts work in RTL and LTR.
+- Master data the client can extend (currencies today; later ports, charge types, ...) lives in
+  database tables, never as closed lists or unions in code. Validate against the master through
+  its service (e.g. `CurrenciesService.requireActive`), not against constants.
 - Shipment status changes go through the shipment state machine; journal entries come from the
   auto-journal rules service. Neither is written ad hoc inside another module.
 - Writes that must succeed or fail together (e.g. an invoice and its journal entry) run in one
@@ -83,14 +88,14 @@ another module's tables or internals.
 
 ## Commands
 
-| Command                 | What it does                                          |
-| ----------------------- | ----------------------------------------------------- |
-| `pnpm db:up`            | Start local PostgreSQL (docker compose)               |
-| `pnpm db:migrate`       | Create/apply a migration from `schema.prisma` (dev)   |
-| `pnpm db:deploy`        | Apply committed migrations                            |
-| `pnpm db:check`         | Fail if `schema.prisma` and the database have drifted |
-| `pnpm dev`              | Run api (:4000) and web (:3000) in watch mode         |
-| `pnpm lint`             | ESLint (type-aware)                                   |
-| `pnpm typecheck`        | `tsc --noEmit` in every package                       |
-| `pnpm test`             | Unit tests (no database)                              |
-| `pnpm test:integration` | API integration tests against PostgreSQL              |
+| Command                 | What it does                                                  |
+| ----------------------- | ------------------------------------------------------------- |
+| `pnpm db:up`            | Start local PostgreSQL (docker compose)                       |
+| `pnpm db:migrate`       | Create/apply a migration from `schema.prisma` (dev)           |
+| `pnpm db:deploy`        | Apply committed migrations                                    |
+| `pnpm db:check`         | Fail if `schema.prisma` and the database have drifted         |
+| `pnpm dev`              | Watch shared, api (:4000) and web (:3000); restarts on change |
+| `pnpm lint`             | ESLint (type-aware)                                           |
+| `pnpm typecheck`        | `tsc --noEmit` in every package                               |
+| `pnpm test`             | Unit tests (no database)                                      |
+| `pnpm test:integration` | API integration tests against PostgreSQL                      |

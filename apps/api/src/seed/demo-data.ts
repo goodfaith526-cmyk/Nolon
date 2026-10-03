@@ -6,6 +6,7 @@ export interface BranchSeed {
   nameAr: string;
   countryCode: string;
   city: string;
+  /** Must exist in the `currencies` master table (foreign key). */
   defaultCurrency: CurrencyCode;
   timezone: string;
 }
