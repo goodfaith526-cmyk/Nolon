@@ -33,6 +33,8 @@ services:
       # First Administrator, created by the seed only if missing (GitHub secrets, see DEPLOY.md).
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      # The seed fails (and so the deploy) if no active Administrator exists afterwards.
+      SEED_REQUIRE_ADMIN: 'true'
     depends_on:
       postgres:
         condition: service_healthy

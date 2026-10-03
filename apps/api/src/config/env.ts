@@ -33,6 +33,11 @@ const envSchema = z.object({
   /** Seed only: the first Administrator, created if missing. Never committed. Empty = unset. */
   SEED_ADMIN_EMAIL: emptyAsUnset(z.string().email().optional()),
   SEED_ADMIN_PASSWORD: emptyAsUnset(z.string().min(12).max(200).optional()),
+  /** Seed only: fail when no active Administrator exists after seeding (staging sets it). */
+  SEED_REQUIRE_ADMIN: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

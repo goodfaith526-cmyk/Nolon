@@ -2,6 +2,7 @@
 
 import {
   LOCALES,
+  MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   ROLES,
   type Locale,
@@ -14,7 +15,11 @@ import { ApiError, api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { can, useMe } from './StaffShell';
 
-type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; user: UserSummary };
+type Mode =
+  | { kind: 'list' }
+  | { kind: 'create' }
+  | { kind: 'edit'; user: UserSummary }
+  | { kind: 'reset'; user: UserSummary };
 
 export function UsersAdmin() {
   const t = useTranslations('Users');
@@ -80,17 +85,6 @@ export function UsersAdmin() {
     );
   }
 
-  function resetPassword(user: UserSummary) {
-    const password = window.prompt(
-      t('promptNewPassword', { name: user.fullName, min: MIN_PASSWORD_LENGTH }),
-    );
-    if (!password) return;
-    void run(
-      () => api(`/users/${user.id}/password`, { method: 'POST', body: { password } }),
-      t('passwordReset'),
-    );
-  }
-
   return (
     <section className="stack">
       <div className="row">
@@ -108,7 +102,21 @@ export function UsersAdmin() {
         </p>
       )}
 
-      {mode.kind !== 'list' && (
+      {mode.kind === 'reset' && (
+        <ResetPasswordForm
+          key={mode.user.id}
+          user={mode.user}
+          onCancel={() => setMode({ kind: 'list' })}
+          onSubmit={(password) =>
+            run(
+              () => api(`/users/${mode.user.id}/password`, { method: 'POST', body: { password } }),
+              t('passwordReset'),
+            )
+          }
+        />
+      )}
+
+      {(mode.kind === 'create' || mode.kind === 'edit') && (
         <UserForm
           key={mode.kind === 'edit' ? mode.user.id : 'new'}
           user={mode.kind === 'edit' ? mode.user : undefined}
@@ -160,7 +168,7 @@ export function UsersAdmin() {
                         <button type="button" onClick={() => setMode({ kind: 'edit', user })}>
                           {t('edit')}
                         </button>
-                        <button type="button" onClick={() => resetPassword(user)}>
+                        <button type="button" onClick={() => setMode({ kind: 'reset', user })}>
                           {t('resetPassword')}
                         </button>
                         {user.id !== me.id && (
@@ -244,6 +252,7 @@ function UserForm({
                 type="password"
                 autoComplete="new-password"
                 minLength={MIN_PASSWORD_LENGTH}
+                maxLength={MAX_PASSWORD_LENGTH}
                 required
               />
             </label>
@@ -301,6 +310,76 @@ function UserForm({
           {t('save')}
         </button>
         <button type="button" onClick={onCancel}>
+          {t('cancel')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** In-app reset with a masked, confirmed password (never window.prompt). */
+function ResetPasswordForm({
+  user,
+  onCancel,
+  onSubmit,
+}: {
+  user: UserSummary;
+  onCancel: () => void;
+  onSubmit: (password: string) => Promise<void>;
+}) {
+  const t = useTranslations('Users');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const password = field(form, 'password');
+    if (password !== field(form, 'confirmPassword')) {
+      setError(t('passwordMismatch'));
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    await onSubmit(password);
+    setBusy(false);
+  }
+
+  return (
+    <form className="card stack narrow" onSubmit={(e) => void submit(e)}>
+      <h2>{t('resetTitle', { name: user.fullName })}</h2>
+      <label className="field">
+        <span>{t('password', { min: MIN_PASSWORD_LENGTH })}</span>
+        <input
+          name="password"
+          type="password"
+          autoComplete="new-password"
+          minLength={MIN_PASSWORD_LENGTH}
+          maxLength={MAX_PASSWORD_LENGTH}
+          required
+        />
+      </label>
+      <label className="field">
+        <span>{t('confirmPassword')}</span>
+        <input
+          name="confirmPassword"
+          type="password"
+          autoComplete="new-password"
+          minLength={MIN_PASSWORD_LENGTH}
+          maxLength={MAX_PASSWORD_LENGTH}
+          required
+        />
+      </label>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {t('resetPassword')}
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy}>
           {t('cancel')}
         </button>
       </div>

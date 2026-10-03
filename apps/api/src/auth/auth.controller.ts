@@ -11,7 +11,7 @@ import {
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
-import { MIN_PASSWORD_LENGTH, type AuthMeResponse } from '@nolon/shared';
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type AuthMeResponse } from '@nolon/shared';
 import type { CookieOptions, Request, Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from './auth-user.js';
@@ -21,12 +21,12 @@ import { SESSION_COOKIE, readCookie } from './session-token.js';
 
 const loginBody = z.object({
   email: z.string().trim().min(3).max(254),
-  password: z.string().min(1).max(200),
+  password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
 });
 
 const changePasswordBody = z.object({
-  currentPassword: z.string().min(1).max(200),
-  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(200),
+  currentPassword: z.string().min(1).max(MAX_PASSWORD_LENGTH),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
 });
 
 const COOKIE_OPTIONS: CookieOptions = {

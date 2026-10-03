@@ -10,13 +10,19 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { LOCALES, MIN_PASSWORD_LENGTH, ROLES, type UserSummary } from '@nolon/shared';
+import {
+  LOCALES,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  ROLES,
+  type UserSummary,
+} from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { UsersService } from './users.service.js';
 
-const password = z.string().min(MIN_PASSWORD_LENGTH).max(200);
+const password = z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH);
 const roles = z.array(z.enum(ROLES)).min(1).max(ROLES.length);
 const branchIds = z.array(z.uuid()).max(50);
 

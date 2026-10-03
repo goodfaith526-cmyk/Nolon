@@ -8,6 +8,7 @@ import {
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
+import { lockCredentials } from './credential-lock.js';
 import { normalizeEmail } from './email.js';
 import { EMAIL_RULE, FailureLimiter, IP_RULE } from './login-rate-limiter.js';
 import { hashPassword, timingDummyHash, verifyPassword } from './password.js';
@@ -61,22 +62,45 @@ export class AuthService {
       return { ok: false, reason: 'invalid' };
     }
 
+    const issued = await this.issueSession(user.id, user.passwordHash, ctx);
+    if (!issued) {
+      // The password was reset or the account deactivated between the check and now.
+      this.logger.warn(`Sign-in for ${normalized} lost a race with a credential change`);
+      return { ok: false, reason: 'invalid' };
+    }
     this.emailLimiter.reset(emailKey);
+    return { ok: true, ...issued };
+  }
+
+  /**
+   * Creates a session only if the user is still active and still has the password hash that was
+   * verified (`verifiedHash`), checked under the user row lock. A concurrent password reset or
+   * deactivation either commits first (and this returns null) or waits for this transaction and
+   * then revokes the new session with the others.
+   */
+  async issueSession(
+    userId: string,
+    verifiedHash: string,
+    ctx: LoginContext,
+  ): Promise<{ token: string; expiresAt: Date } | null> {
     const token = newSessionToken();
     const expiresAt = new Date(Date.now() + this.env.SESSION_TTL_HOURS * 60 * 60 * 1000);
-    await this.prisma.$transaction([
-      this.prisma.session.create({
+    const created = await this.prisma.$transaction(async (tx) => {
+      const current = await lockCredentials(tx, userId);
+      if (!current?.isActive || current.passwordHash !== verifiedHash) return false;
+      await tx.session.create({
         data: {
-          userId: user.id,
+          userId,
           tokenHash: hashSessionToken(token),
           expiresAt,
           ipAddress: ctx.ip?.slice(0, 45) ?? null,
           userAgent: ctx.userAgent?.slice(0, 500) ?? null,
         },
-      }),
-      this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
-    ]);
-    return { ok: true, token, expiresAt };
+      });
+      await tx.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+      return true;
+    });
+    return created ? { token, expiresAt } : null;
   }
 
   /** Revokes the session behind this token, if any. Idempotent. */
@@ -142,15 +166,29 @@ export class AuthService {
   ): Promise<boolean> {
     const row = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     if (!(await verifyPassword(currentPassword, row.passwordHash))) return false;
-    const passwordHash = await hashPassword(newPassword);
-    await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
-      this.prisma.session.updateMany({
+    return this.applyPasswordChange(user, row.passwordHash, await hashPassword(newPassword));
+  }
+
+  /**
+   * Writes the new hash only if the stored hash is still the one the current password was checked
+   * against (compare-and-set under the user row lock), so a concurrent admin reset is never
+   * overwritten. Ends the user's other sessions in the same transaction.
+   */
+  async applyPasswordChange(
+    user: AuthUser,
+    verifiedHash: string,
+    newHash: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await lockCredentials(tx, user.id);
+      if (!current?.isActive || current.passwordHash !== verifiedHash) return false;
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
+      await tx.session.updateMany({
         where: { userId: user.id, revokedAt: null, id: { not: user.sessionId } },
         data: { revokedAt: new Date() },
-      }),
-    ]);
-    return true;
+      });
+      return true;
+    });
   }
 
   async describe(user: AuthUser): Promise<AuthMeResponse> {

@@ -80,13 +80,15 @@
     "activated": "User activated.",
     "passwordReset": "Password reset. The user was signed out everywhere.",
     "confirmDeactivate": "Deactivate {name}? They will be signed out at once.",
-    "promptNewPassword": "New password for {name} (at least {min} characters):",
     "emailTaken": "A user with this email already exists.",
     "lastAdmin": "There must always be at least one active Administrator.",
     "cannotDeactivateSelf": "You cannot deactivate your own account.",
     "branchRequired": "Choose at least one role and one branch (unless the role sees all branches).",
     "invalidInput": "Check the fields and try again.",
-    "failed": "Something went wrong. Try again."
+    "failed": "Something went wrong. Try again.",
+    "resetTitle": "Reset password for {name}",
+    "confirmPassword": "Confirm password",
+    "passwordMismatch": "The two passwords do not match."
   },
   "Roles": {
     "ADMINISTRATOR": "Administrator",

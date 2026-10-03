@@ -1,6 +1,6 @@
 'use client';
 
-import { MIN_PASSWORD_LENGTH } from '@nolon/shared';
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { ApiError, api } from '@/lib/api';
@@ -51,6 +51,7 @@ export function ChangePasswordForm() {
           type="password"
           autoComplete="new-password"
           minLength={MIN_PASSWORD_LENGTH}
+          maxLength={MAX_PASSWORD_LENGTH}
           required
         />
       </label>

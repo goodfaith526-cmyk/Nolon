@@ -12,6 +12,7 @@ import {
   type UserSummary,
 } from '@nolon/shared';
 import { normalizeEmail } from '../auth/email.js';
+import { lockCredentials } from '../auth/credential-lock.js';
 import { hashPassword } from '../auth/password.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -84,6 +85,7 @@ export class UsersService {
 
   async update(id: string, input: UpdateUserRequest): Promise<UserSummary> {
     return this.prisma.$transaction(async (tx) => {
+      await lockAdministratorSet(tx);
       const current = await findOrThrow(tx, id);
       const roles = input.roles ?? current.roles.map((r) => r.role);
       const branchIds = input.branchIds ?? current.branches.map((b) => b.branchId);
@@ -119,7 +121,8 @@ export class UsersService {
       throw new BadRequestException('You cannot deactivate your own account');
     }
     return this.prisma.$transaction(async (tx) => {
-      await findOrThrow(tx, id);
+      await lockAdministratorSet(tx);
+      if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       await tx.user.update({ where: { id }, data: { isActive } });
       if (!isActive) {
         await revokeSessions(tx, id);
@@ -133,7 +136,7 @@ export class UsersService {
   async resetPassword(id: string, password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
     await this.prisma.$transaction(async (tx) => {
-      await findOrThrow(tx, id);
+      if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       await tx.user.update({ where: { id }, data: { passwordHash } });
       await revokeSessions(tx, id);
     });
@@ -161,6 +164,17 @@ async function assertBranchesExist(tx: Tx, branchIds: readonly string[]): Promis
   const ids = unique(branchIds);
   const found = await tx.branch.count({ where: { id: { in: ids } } });
   if (found !== ids.length) throw new BadRequestException('Unknown branch');
+}
+
+/**
+ * Serializes every change that can remove an active Administrator (role change, deactivation).
+ * Without it, two concurrent READ COMMITTED transactions could each demote a different admin,
+ * each still counting the other, and leave none. Transaction-scoped: released at commit/rollback.
+ */
+const ADMIN_SET_LOCK_KEY = 74_201_001;
+
+async function lockAdministratorSet(tx: Tx): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADMIN_SET_LOCK_KEY})`;
 }
 
 async function assertActiveAdministratorRemains(tx: Tx): Promise<void> {

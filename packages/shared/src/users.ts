@@ -4,6 +4,9 @@ import type { Locale } from './locales.js';
 /** Minimum length for staff passwords (sign-in, user creation, password reset). */
 export const MIN_PASSWORD_LENGTH = 12;
 
+/** Upper bound, so a huge input cannot make password hashing expensive. */
+export const MAX_PASSWORD_LENGTH = 200;
+
 /** One row of GET /users. */
 export interface UserSummary {
   id: string;

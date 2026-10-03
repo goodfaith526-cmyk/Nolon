@@ -173,7 +173,7 @@ Settings > Secrets and variables > Actions > **Secrets** > New repository secret
 | `STAGING_POSTGRES_PASSWORD`   | Output of `openssl rand -hex 24` (letters/digits only)   |
 | `STAGING_BASIC_AUTH_USER`     | e.g. `nolon`                                             |
 | `STAGING_BASIC_AUTH_HASH`     | Output of step 4 (starts with `$2a$`)                    |
-| `STAGING_SEED_ADMIN_EMAIL`    | Email of the first NOLON Administrator                   |
+| `STAGING_SEED_ADMIN_EMAIL`    | Email of the first NOLON Administrator (required)        |
 | `STAGING_SEED_ADMIN_PASSWORD` | At least 12 characters, no single quote `'`              |
 
 The PostgreSQL password is set when the database volume is first created. Changing the secret

@@ -48,6 +48,17 @@ async function seed(): Promise<void> {
         console.log('Seed admin created.');
       }
     }
+
+    if (env.SEED_REQUIRE_ADMIN) {
+      const admins = await prisma.user.count({
+        where: { isActive: true, roles: { some: { role: 'ADMINISTRATOR' } } },
+      });
+      if (admins === 0) {
+        throw new Error(
+          'No active Administrator: set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (see DEPLOY.md).',
+        );
+      }
+    }
   } finally {
     await prisma.$disconnect();
   }
