@@ -66,20 +66,26 @@ export class DocumentsService {
     const contentType = detectContentType(input.data);
     if (!contentType)
       throw new BadRequestException('Only PDF, JPEG, PNG and WebP files are accepted');
-    const document = await this.prisma.document.create({
-      data: {
-        branchId: shipment.branchId,
-        shipmentId,
-        typeCode: input.typeCode,
-        fileName: cleanFileName(input.fileName),
-        contentType,
-        sizeBytes: input.data.length,
-        sha256: createHash('sha256').update(input.data).digest('hex'),
-        note: input.note,
-        uploadedById: user.id,
-        content: { create: { data: new Uint8Array(input.data) } },
-      },
-      include: { uploadedBy: { select: { fullName: true } } },
+    const document = await this.prisma.$transaction(async (tx) => {
+      // Re-checked under the shipment lock: a cancel that commits meanwhile is seen here.
+      if ((await this.shipments.lockForChildWrite(tx, shipmentId)) === 'CANCELLED') {
+        throw new ConflictException('A cancelled shipment does not take new documents');
+      }
+      return tx.document.create({
+        data: {
+          branchId: shipment.branchId,
+          shipmentId,
+          typeCode: input.typeCode,
+          fileName: cleanFileName(input.fileName),
+          contentType,
+          sizeBytes: input.data.length,
+          sha256: createHash('sha256').update(input.data).digest('hex'),
+          note: input.note,
+          uploadedById: user.id,
+          content: { create: { data: new Uint8Array(input.data) } },
+        },
+        include: { uploadedBy: { select: { fullName: true } } },
+      });
     });
     return toDto(document);
   }

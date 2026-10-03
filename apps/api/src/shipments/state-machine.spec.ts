@@ -11,12 +11,17 @@ import {
   revertTarget,
 } from './state-machine.js';
 
-function walk(shape: ShipmentShape, path: ShipmentStatus[]): void {
+/** Walks the path; statuses before `from` (e.g. an earlier sea leg) count as passed. */
+function walk(shape: ShipmentShape, path: ShipmentStatus[], passed: ShipmentStatus[] = []): void {
+  const visited = new Set<ShipmentStatus>(passed);
   for (let i = 1; i < path.length; i++) {
     const from = path[i - 1] as ShipmentStatus;
-    expect(nextStatuses(from, shape), `${from} → ${path[i]}`).toContain(path[i]);
+    visited.add(from);
+    expect(nextStatuses(from, shape, visited), `${from} → ${path[i]}`).toContain(path[i]);
   }
 }
+
+const passed = (...statuses: ShipmentStatus[]) => new Set<ShipmentStatus>(statuses);
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 3, 10, minute));
 const event = (
@@ -107,48 +112,68 @@ describe('shipment state machine: annex B section 5 paths', () => {
   });
 
   it('F: partial delivery in batches', () => {
-    walk({ mode: 'SEA', loadType: 'FCL', services: ['MAIN_FREIGHT', 'LAST_MILE'] }, [
-      'ARRIVED_PORT',
-      'OUT_FOR_DELIVERY',
-      'PARTIALLY_DELIVERED',
-      'OUT_FOR_DELIVERY',
-      'PARTIALLY_DELIVERED',
-      'PARTIALLY_DELIVERED',
-      'DELIVERED',
-      'CLOSED',
-    ]);
+    walk(
+      { mode: 'SEA', loadType: 'FCL', services: ['MAIN_FREIGHT', 'LAST_MILE'] },
+      [
+        'ARRIVED_PORT',
+        'OUT_FOR_DELIVERY',
+        'PARTIALLY_DELIVERED',
+        'OUT_FOR_DELIVERY',
+        'PARTIALLY_DELIVERED',
+        'PARTIALLY_DELIVERED',
+        'DELIVERED',
+        'CLOSED',
+      ],
+      ['CREATED', 'LOADED', 'DEPARTED'],
+    );
   });
 });
 
 describe('shipment state machine: services decide the stages', () => {
   it('hides stages whose service was not booked', () => {
     const portToPort: ShipmentShape = { mode: 'SEA', loadType: 'FCL', services: ['MAIN_FREIGHT'] };
-    expect(nextStatuses('CREATED', portToPort)).toEqual(['LOADED']);
-    expect(nextStatuses('ARRIVED_PORT', portToPort)).toEqual(['PARTIALLY_DELIVERED', 'DELIVERED']);
+    expect(nextStatuses('CREATED', portToPort, passed('CREATED'))).toEqual(['LOADED']);
+    expect(
+      nextStatuses('ARRIVED_PORT', portToPort, passed('CREATED', 'LOADED', 'ARRIVED_PORT')),
+    ).toEqual(['PARTIALLY_DELIVERED', 'DELIVERED']);
   });
 
   it('allows consolidation for LCL only', () => {
     const services: BookingService[] = ['MAIN_FREIGHT', 'WAREHOUSE'];
+    const visited = passed('CREATED', 'RECEIVED_ORIGIN_WAREHOUSE');
     expect(
-      nextStatuses('RECEIVED_ORIGIN_WAREHOUSE', { mode: 'SEA', loadType: 'LCL', services }),
+      nextStatuses(
+        'RECEIVED_ORIGIN_WAREHOUSE',
+        { mode: 'SEA', loadType: 'LCL', services },
+        visited,
+      ),
     ).toContain('CONSOLIDATED');
     expect(
-      nextStatuses('RECEIVED_ORIGIN_WAREHOUSE', { mode: 'SEA', loadType: 'FCL', services }),
+      nextStatuses(
+        'RECEIVED_ORIGIN_WAREHOUSE',
+        { mode: 'SEA', loadType: 'FCL', services },
+        visited,
+      ),
     ).not.toContain('CONSOLIDATED');
   });
 
   it('never offers sea statuses on a road shipment', () => {
     expect(
-      nextStatuses('CREATED', { mode: 'ROAD', loadType: null, services: ['MAIN_FREIGHT'] }),
+      nextStatuses(
+        'CREATED',
+        { mode: 'ROAD', loadType: null, services: ['MAIN_FREIGHT'] },
+        passed('CREATED'),
+      ),
     ).toEqual(['TRIP_SCHEDULED']);
   });
 
   it('offers nothing after the end and nothing while on hold', () => {
     const shape: ShipmentShape = { mode: 'SEA', loadType: 'FCL', services: ['MAIN_FREIGHT'] };
-    expect(nextStatuses('CLOSED', shape)).toEqual([]);
-    expect(nextStatuses('CANCELLED', shape)).toEqual([]);
-    expect(nextStatuses('ON_HOLD', shape)).toEqual([]);
-    expect(nextStatuses('DELIVERED', shape)).toEqual(['CLOSED']);
+    const all = passed('CREATED', 'LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED');
+    expect(nextStatuses('CLOSED', shape, all)).toEqual([]);
+    expect(nextStatuses('CANCELLED', shape, all)).toEqual([]);
+    expect(nextStatuses('ON_HOLD', shape, all)).toEqual([]);
+    expect(nextStatuses('DELIVERED', shape, all)).toEqual(['CLOSED']);
   });
 
   it('can reach DELIVERED and CLOSED for every mode, load type and set of services', () => {
@@ -160,25 +185,30 @@ describe('shipment state machine: services decide the stages', () => {
       shapes.push({ mode: 'SEA', loadType: 'LCL', services });
     }
     for (const shape of shapes) {
-      const seen = new Set<ShipmentStatus>(['CREATED']);
-      const queue: ShipmentStatus[] = ['CREATED'];
+      // States are (status, statuses passed): what is offered depends on both.
+      const key = (status: ShipmentStatus, visited: ReadonlySet<ShipmentStatus>) =>
+        `${status}|${[...visited].sort().join(',')}`;
+      const start = passed('CREATED');
+      const seen = new Set([key('CREATED', start)]);
+      const queue: [ShipmentStatus, Set<ShipmentStatus>][] = [['CREATED', start]];
+      let closed = false;
       while (queue.length > 0) {
-        const current = queue.shift() as ShipmentStatus;
-        for (const next of nextStatuses(current, shape)) {
-          if (!seen.has(next)) {
-            seen.add(next);
-            queue.push(next);
-          }
-        }
+        const [current, visited] = queue.shift() as [ShipmentStatus, Set<ShipmentStatus>];
+        const options = nextStatuses(current, shape, visited);
         // No active status may be a dead end.
         if (current !== 'CLOSED') {
-          expect(
-            nextStatuses(current, shape).length,
-            `${current} ${JSON.stringify(shape)}`,
-          ).toBeGreaterThan(0);
+          expect(options.length, `${current} ${JSON.stringify(shape)}`).toBeGreaterThan(0);
+        }
+        for (const next of options) {
+          if (next === 'CLOSED') closed = true;
+          const after = new Set(visited).add(next);
+          if (!seen.has(key(next, after))) {
+            seen.add(key(next, after));
+            queue.push([next, after]);
+          }
         }
       }
-      expect(seen.has('CLOSED'), JSON.stringify(shape)).toBe(true);
+      expect(closed, JSON.stringify(shape)).toBe(true);
     }
   });
 });
@@ -225,6 +255,30 @@ describe('shipment history replay', () => {
     expect(revertTarget(held)).toBeNull();
   });
 
+  it('undoes repeated statuses one step at a time', () => {
+    const events = [
+      event('CREATED', 'CREATED', 0),
+      event('STATUS', 'OUT_FOR_DELIVERY', 1),
+      event('STATUS', 'PARTIALLY_DELIVERED', 2),
+      event('STATUS', 'PARTIALLY_DELIVERED', 3),
+    ];
+    const before = replayHistory(events);
+    expect(revertTarget(before)).toBe('PARTIALLY_DELIVERED');
+    const after = replayHistory([...events, event('REVERT', 'PARTIALLY_DELIVERED', 4)]);
+    expect(after.map((e) => e.status)).toEqual([
+      'CREATED',
+      'OUT_FOR_DELIVERY',
+      'PARTIALLY_DELIVERED',
+    ]);
+    expect(after.at(-1)?.occurredAt).toEqual(at(2));
+    const again = replayHistory([
+      ...events,
+      event('REVERT', 'PARTIALLY_DELIVERED', 4),
+      event('REVERT', 'OUT_FOR_DELIVERY', 5),
+    ]);
+    expect(again.map((e) => e.status)).toEqual(['CREATED', 'OUT_FOR_DELIVERY']);
+  });
+
   it('knows when the cargo has been loaded', () => {
     const before = replayHistory([
       event('CREATED', 'CREATED', 0),
@@ -260,14 +314,89 @@ describe('shipment history replay', () => {
 describe('shipment state machine: starting at the destination', () => {
   it('starts with customs, storage or delivery only when NOLON does not carry the cargo', () => {
     expect(
-      nextStatuses('CREATED', { mode: 'SEA', loadType: 'FCL', services: ['CUSTOMS'] }),
+      nextStatuses(
+        'CREATED',
+        { mode: 'SEA', loadType: 'FCL', services: ['CUSTOMS'] },
+        passed('CREATED'),
+      ),
     ).toEqual(['CUSTOMS_IN_PROGRESS']);
     expect(
-      nextStatuses('CREATED', {
-        mode: 'SEA',
-        loadType: 'FCL',
-        services: ['MAIN_FREIGHT', 'CUSTOMS', 'WAREHOUSE', 'LAST_MILE'],
-      }),
+      nextStatuses(
+        'CREATED',
+        {
+          mode: 'SEA',
+          loadType: 'FCL',
+          services: ['MAIN_FREIGHT', 'CUSTOMS', 'WAREHOUSE', 'LAST_MILE'],
+        },
+        passed('CREATED'),
+      ),
     ).toEqual(['RECEIVED_ORIGIN_WAREHOUSE', 'LOADED']);
+  });
+});
+
+describe('shipment state machine: booked stages cannot be skipped', () => {
+  const sea = (services: BookingService[], loadType: 'FCL' | 'LCL' = 'FCL'): ShipmentShape => ({
+    mode: 'SEA',
+    loadType,
+    services: ['MAIN_FREIGHT', ...services],
+  });
+  const arrived = passed('CREATED', 'LOADED', 'DEPARTED', 'ARRIVED_PORT');
+
+  it('customs and last mile booked: no delivery straight from the port', () => {
+    const shape = sea(['CUSTOMS', 'LAST_MILE']);
+    expect(nextStatuses('ARRIVED_PORT', shape, arrived)).toEqual(['CUSTOMS_IN_PROGRESS']);
+    const cleared = new Set(arrived).add('CUSTOMS_IN_PROGRESS').add('CUSTOMS_CLEARED');
+    expect(nextStatuses('CUSTOMS_CLEARED', shape, cleared)).toEqual(['OUT_FOR_DELIVERY']);
+  });
+
+  it('pickup comes first', () => {
+    expect(nextStatuses('CREATED', sea(['PICKUP', 'WAREHOUSE']), passed('CREATED'))).toEqual([
+      'PICKUP_SCHEDULED',
+    ]);
+  });
+
+  it('an LCL shipment is consolidated before loading', () => {
+    const visited = passed('CREATED', 'RECEIVED_ORIGIN_WAREHOUSE');
+    expect(nextStatuses('RECEIVED_ORIGIN_WAREHOUSE', sea(['WAREHOUSE'], 'LCL'), visited)).toEqual([
+      'CONSOLIDATED',
+    ]);
+    expect(nextStatuses('CREATED', sea([], 'LCL'), passed('CREATED'))).toEqual(['CONSOLIDATED']);
+  });
+
+  it('inland transport follows the sea leg and comes before delivery', () => {
+    const shape = sea(['INLAND_TRANSPORT']);
+    expect(nextStatuses('CREATED', shape, passed('CREATED'))).toEqual(['LOADED']);
+    expect(nextStatuses('ARRIVED_PORT', shape, arrived)).toEqual(['TRIP_SCHEDULED']);
+  });
+
+  it('warehousing booked: stored before the last mile or delivery', () => {
+    const shape = sea(['WAREHOUSE', 'LAST_MILE']);
+    expect(nextStatuses('ARRIVED_PORT', shape, arrived)).toEqual([
+      'RECEIVED_DESTINATION_WAREHOUSE',
+    ]);
+    const stored = new Set(arrived).add('RECEIVED_DESTINATION_WAREHOUSE');
+    expect(nextStatuses('RECEIVED_DESTINATION_WAREHOUSE', shape, stored)).toEqual([
+      'OUT_FOR_DELIVERY',
+    ]);
+  });
+
+  it('keeps optional steps: in transit, further road legs, partial deliveries', () => {
+    expect(nextStatuses('DEPARTED', sea([]), passed('CREATED', 'LOADED'))).toEqual([
+      'IN_TRANSIT',
+      'ARRIVED_PORT',
+    ]);
+    const road: ShipmentShape = { mode: 'ROAD', loadType: null, services: ['MAIN_FREIGHT'] };
+    expect(
+      nextStatuses(
+        'ROAD_ARRIVED',
+        road,
+        passed('CREATED', 'TRIP_SCHEDULED', 'ROAD_DEPARTED', 'ROAD_ARRIVED'),
+      ),
+    ).toEqual(['TRIP_SCHEDULED', 'PARTIALLY_DELIVERED', 'DELIVERED']);
+    const delivering = passed('CREATED', 'LOADED', 'ARRIVED_PORT', 'PARTIALLY_DELIVERED');
+    expect(nextStatuses('PARTIALLY_DELIVERED', sea([]), delivering)).toEqual([
+      'PARTIALLY_DELIVERED',
+      'DELIVERED',
+    ]);
   });
 });

@@ -19,14 +19,29 @@ const FORWARD: Record<ShipmentStatus, readonly ShipmentStatus[]> = {
   CREATED: [
     'PICKUP_SCHEDULED',
     'RECEIVED_ORIGIN_WAREHOUSE',
+    'CONSOLIDATED',
     'LOADED',
     'TRIP_SCHEDULED',
     'CUSTOMS_IN_PROGRESS',
     'RECEIVED_DESTINATION_WAREHOUSE',
     'OUT_FOR_DELIVERY',
   ],
-  PICKUP_SCHEDULED: ['RECEIVED_ORIGIN_WAREHOUSE', 'LOADED', 'TRIP_SCHEDULED'],
-  RECEIVED_ORIGIN_WAREHOUSE: ['CONSOLIDATED', 'LOADED', 'TRIP_SCHEDULED'],
+  PICKUP_SCHEDULED: [
+    'RECEIVED_ORIGIN_WAREHOUSE',
+    'CONSOLIDATED',
+    'LOADED',
+    'TRIP_SCHEDULED',
+    'CUSTOMS_IN_PROGRESS',
+    'RECEIVED_DESTINATION_WAREHOUSE',
+    'OUT_FOR_DELIVERY',
+  ],
+  RECEIVED_ORIGIN_WAREHOUSE: [
+    'CONSOLIDATED',
+    'LOADED',
+    'TRIP_SCHEDULED',
+    'CUSTOMS_IN_PROGRESS',
+    'OUT_FOR_DELIVERY',
+  ],
   CONSOLIDATED: ['LOADED'],
   LOADED: ['DEPARTED'],
   DEPARTED: ['IN_TRANSIT', 'ARRIVED_PORT'],
@@ -107,13 +122,20 @@ export interface ShipmentShape {
 }
 
 /**
- * Destination stages a shipment may start with, but only when NOLON does not carry it (no main
- * freight or inland transport booked): customs clearance, storage or final delivery only.
+ * Destination stages a shipment may go to straight from the origin side (created, picked up,
+ * stored), but only when NOLON does not carry it (no main freight or inland transport booked):
+ * customs clearance, storage or final delivery only.
  */
 const DESTINATION_ONLY_STARTS: readonly ShipmentStatus[] = [
   'CUSTOMS_IN_PROGRESS',
   'RECEIVED_DESTINATION_WAREHOUSE',
   'OUT_FOR_DELIVERY',
+];
+
+const ORIGIN_SIDE: readonly ShipmentStatus[] = [
+  'CREATED',
+  'PICKUP_SCHEDULED',
+  'RECEIVED_ORIGIN_WAREHOUSE',
 ];
 
 /** Annex B: the services chosen on the booking decide which stages exist. */
@@ -126,7 +148,8 @@ export function stageApplies(status: ShipmentStatus, shipment: ShipmentShape): b
     case 'RECEIVED_DESTINATION_WAREHOUSE':
       return has('WAREHOUSE');
     case 'CONSOLIDATED':
-      return shipment.loadType === 'LCL';
+      // Groupage into a container NOLON ships: LCL sea freight only.
+      return shipment.loadType === 'LCL' && shipment.mode === 'SEA' && has('MAIN_FREIGHT');
     case 'CUSTOMS_IN_PROGRESS':
     case 'CUSTOMS_CLEARED':
       return has('CUSTOMS');
@@ -142,17 +165,72 @@ export function stageApplies(status: ShipmentStatus, shipment: ShipmentShape): b
 }
 
 /**
- * Forward statuses reachable from `status` for this shipment. When none of the stage statuses
- * apply (a stage the booking's services leave out), delivery is offered so no shipment is
- * stranded; every combination of services can reach DELIVERED (see the spec).
+ * Booked stages are never skipped. A status is offered only once every stage the booking
+ * requires before it is done, judged on the statuses the shipment has actually passed
+ * (`visited`, from the replayed history):
+ * - pickup comes first;
+ * - an LCL sea shipment is consolidated before loading;
+ * - inland trips follow the sea leg (inland transport is the destination leg, from the port);
+ * - customs on a sea shipment starts once it has arrived at the port;
+ * - the destination warehouse, last mile and delivery wait for the sea leg, a road leg, and
+ *   customs clearance, when booked; last mile and delivery also wait for a warehouse receipt
+ *   when warehousing is booked, and delivery for the last mile when it is booked.
+ * Optional steps stay optional: in-transit updates, further road legs and partial deliveries.
  */
-export function nextStatuses(status: ShipmentStatus, shipment: ShipmentShape): ShipmentStatus[] {
+function prerequisitesMet(
+  next: ShipmentStatus,
+  shipment: ShipmentShape,
+  visited: ReadonlySet<ShipmentStatus>,
+): boolean {
+  const has = (service: BookingService) => shipment.services.includes(service);
+  const seaLeg = shipment.mode === 'SEA' && has('MAIN_FREIGHT');
+  const roadLeg = stageApplies('TRIP_SCHEDULED', shipment);
+  if (has('PICKUP') && next !== 'PICKUP_SCHEDULED' && !visited.has('PICKUP_SCHEDULED')) {
+    return false;
+  }
+  if (next === 'LOADED' && stageApplies('CONSOLIDATED', shipment)) {
+    return visited.has('CONSOLIDATED');
+  }
+  if (next === 'TRIP_SCHEDULED' || next === 'CUSTOMS_IN_PROGRESS') {
+    return !seaLeg || visited.has('ARRIVED_PORT');
+  }
+  if (
+    next === 'RECEIVED_DESTINATION_WAREHOUSE' ||
+    next === 'OUT_FOR_DELIVERY' ||
+    DELIVERY_STATUSES.includes(next)
+  ) {
+    if (seaLeg && !visited.has('ARRIVED_PORT')) return false;
+    if (roadLeg && !visited.has('ROAD_ARRIVED')) return false;
+    if (has('CUSTOMS') && !visited.has('CUSTOMS_CLEARED')) return false;
+  }
+  if (next === 'OUT_FOR_DELIVERY' || DELIVERY_STATUSES.includes(next)) {
+    const stored =
+      visited.has('RECEIVED_ORIGIN_WAREHOUSE') || visited.has('RECEIVED_DESTINATION_WAREHOUSE');
+    if (has('WAREHOUSE') && !stored) return false;
+  }
+  if (DELIVERY_STATUSES.includes(next) && has('LAST_MILE')) {
+    return visited.has('OUT_FOR_DELIVERY');
+  }
+  return true;
+}
+
+/**
+ * Forward statuses reachable from `status` for this shipment, given the statuses it has passed.
+ * When none of the stage statuses apply (a stage the booking's services leave out), delivery is
+ * offered so no shipment is stranded; every combination of services can reach DELIVERED (see
+ * the spec).
+ */
+export function nextStatuses(
+  status: ShipmentStatus,
+  shipment: ShipmentShape,
+  visited: ReadonlySet<ShipmentStatus>,
+): ShipmentStatus[] {
   const carried =
     shipment.services.includes('MAIN_FREIGHT') || shipment.services.includes('INLAND_TRANSPORT');
   const candidates = FORWARD[status].filter(
     (next) =>
       stageApplies(next, shipment) &&
-      !(status === 'CREATED' && carried && DESTINATION_ONLY_STARTS.includes(next)),
+      !(ORIGIN_SIDE.includes(status) && carried && DESTINATION_ONLY_STARTS.includes(next)),
   );
   const canMove = !FINISHED.includes(status) && status !== 'ON_HOLD' && status !== 'DELIVERED';
   if (canMove && candidates.every((next) => DELIVERY_STATUSES.includes(next))) {
@@ -160,7 +238,12 @@ export function nextStatuses(status: ShipmentStatus, shipment: ShipmentShape): S
       if (!candidates.includes(next)) candidates.push(next);
     }
   }
-  return candidates;
+  return candidates.filter((next) => prerequisitesMet(next, shipment, visited));
+}
+
+/** The statuses a shipment has passed, for nextStatuses. */
+export function visitedStatuses(path: readonly HistoryEntry[]): Set<ShipmentStatus> {
+  return new Set(path.map((entry) => entry.status));
 }
 
 /**
@@ -242,7 +325,9 @@ export function replayHistory(events: readonly HistoryEvent[]): HistoryEntry[] {
         if (path.at(-1)?.status === 'ON_HOLD') path.pop();
         break;
       case 'REVERT':
-        while (path.length > 1 && path.at(-1)?.status !== event.status) path.pop();
+        // A revert undoes exactly the current step (revertTarget is the entry before it), so
+        // repeated statuses, such as several partial deliveries, are undone one at a time.
+        if (path.length > 1) path.pop();
         break;
       default:
         path.push(entry);

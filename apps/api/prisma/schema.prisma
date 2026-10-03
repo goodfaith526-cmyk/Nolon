@@ -42,13 +42,14 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users      UserBranch[]
-  customers  Customer[]
-  rateCards  RateCard[]
-  quotations Quotation[]
-  bookings   Booking[]
-  shipments  Shipment[]
-  documents  Document[]
+  users          UserBranch[]
+  customers      Customer[]
+  rateCards      RateCard[]
+  quotations     Quotation[]
+  bookings       Booking[]
+  shipments      Shipment[]
+  shipmentEvents ShipmentEvent[]
+  documents      Document[]
 
   @@map("branches")
 }
@@ -798,6 +799,7 @@ model ShipmentEvent {
   createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
   shipment Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
   location Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
   user     User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
 

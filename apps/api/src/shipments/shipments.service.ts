@@ -45,6 +45,7 @@ import {
   permissionForTransition,
   replayHistory,
   revertTarget,
+  visitedStatuses,
 } from './state-machine.js';
 
 export interface ShipmentFilters extends PageQuery {
@@ -226,7 +227,7 @@ export class ShipmentsService {
     const etd = input.etd === undefined ? fromDbDateOrNull(existing.etd) : input.etd;
     const eta = input.eta === undefined ? fromDbDateOrNull(existing.eta) : input.eta;
     if (etd && eta && eta < etd) throw new BadRequestException('ETA cannot be before ETD');
-    const data: Prisma.ShipmentUncheckedUpdateManyInput = {
+    const data: Prisma.ShipmentUncheckedUpdateInput = {
       cargoDescription: input.cargoDescription,
       services,
       shipperId: input.shipperId,
@@ -239,12 +240,23 @@ export class ShipmentsService {
       etd: input.etd === undefined ? undefined : input.etd && toDbDate(input.etd),
       eta: input.eta === undefined ? undefined : input.eta && toDbDate(input.eta),
     };
-    // Only while still active: a concurrent close or cancel wins and this edit is refused.
-    const { count } = await this.prisma.shipment.updateMany({
-      where: { id, status: { notIn: ['CLOSED', 'CANCELLED'] } },
-      data,
+    await this.prisma.$transaction(async (tx) => {
+      // Under the row lock, so a concurrent status change, close or cancel is seen.
+      const status = await this.lockStatus(tx, id);
+      if (!isActive(status)) {
+        throw new ConflictException('A closed or cancelled shipment cannot be edited');
+      }
+      // The services decide which stages the shipment must pass. Once it has left CREATED they
+      // are fixed, so no booked or in-progress stage can be removed to skip it.
+      const changed =
+        services !== undefined &&
+        (services.length !== existing.services.length ||
+          services.some((service) => !existing.services.includes(service)));
+      if (changed && status !== 'CREATED') {
+        throw new ConflictException('Services can change only before the shipment moves');
+      }
+      await tx.shipment.update({ where: { id }, data });
     });
-    if (count === 0) throw new ConflictException('Shipment changed meanwhile; reload and retry');
     return this.get(user, id);
   }
 
@@ -260,8 +272,8 @@ export class ShipmentsService {
       throw new BadRequestException('The time of a status change cannot be in the future');
     }
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEvent(user, id, (shipment) => {
-      if (!nextStatuses(shipment.status, shipment).includes(input.status)) {
+    await this.applyEvent(user, id, (shipment, path) => {
+      if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(input.status)) {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
       requireAny(user, permissionForTransition(input.status));
@@ -379,16 +391,19 @@ export class ShipmentsService {
     id: string,
     input: ShipmentContainerInput,
   ): Promise<ShipmentDto> {
-    const shipment = await this.findEditable(user, id);
+    await this.findEditable(user, id);
     await this.masterData.requireContainerType(input.containerTypeCode);
     try {
-      await this.prisma.shipmentContainer.create({
-        data: {
-          shipmentId: shipment.id,
-          containerNumber: input.containerNumber,
-          sealNumber: input.sealNumber ?? null,
-          containerTypeCode: input.containerTypeCode,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockActive(tx, id);
+        await tx.shipmentContainer.create({
+          data: {
+            shipmentId: id,
+            containerNumber: input.containerNumber,
+            sealNumber: input.sealNumber ?? null,
+            containerTypeCode: input.containerTypeCode,
+          },
+        });
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -408,15 +423,18 @@ export class ShipmentsService {
     await this.findEditable(user, id);
     await this.masterData.requireContainerType(input.containerTypeCode);
     try {
-      const { count } = await this.prisma.shipmentContainer.updateMany({
-        where: { id: containerId, shipmentId: id },
-        data: {
-          containerNumber: input.containerNumber,
-          sealNumber: input.sealNumber ?? null,
-          containerTypeCode: input.containerTypeCode,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockActive(tx, id);
+        const { count } = await tx.shipmentContainer.updateMany({
+          where: { id: containerId, shipmentId: id },
+          data: {
+            containerNumber: input.containerNumber,
+            sealNumber: input.sealNumber ?? null,
+            containerTypeCode: input.containerTypeCode,
+          },
+        });
+        if (count === 0) throw new NotFoundException('Container not found');
       });
-      if (count === 0) throw new NotFoundException('Container not found');
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictException('This container is already on the shipment');
@@ -428,10 +446,13 @@ export class ShipmentsService {
 
   async removeContainer(user: AuthUser, id: string, containerId: string): Promise<ShipmentDto> {
     await this.findEditable(user, id);
-    const { count } = await this.prisma.shipmentContainer.deleteMany({
-      where: { id: containerId, shipmentId: id },
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockActive(tx, id);
+      const { count } = await tx.shipmentContainer.deleteMany({
+        where: { id: containerId, shipmentId: id },
+      });
+      if (count === 0) throw new NotFoundException('Container not found');
     });
-    if (count === 0) throw new NotFoundException('Container not found');
     return this.get(user, id);
   }
 
@@ -523,6 +544,35 @@ export class ShipmentsService {
       },
     });
     if (event.after) await event.after(tx);
+  }
+
+  /**
+   * For other modules writing under a shipment (documents): takes a share lock on the shipment
+   * row inside the caller's transaction and returns its status. Status changes take the row lock
+   * exclusively, so a cancel either commits first and is seen here, or waits for this write.
+   */
+  async lockForChildWrite(tx: Tx, id: string): Promise<ShipmentStatus> {
+    const rows = await tx.$queryRaw<{ status: ShipmentStatus }[]>`
+      SELECT "status"::text AS "status" FROM "shipments" WHERE "id" = ${id}::uuid FOR SHARE`;
+    const row = rows[0];
+    if (!row) throw new NotFoundException('Shipment not found');
+    return row.status;
+  }
+
+  /** Row lock and current status, inside the caller's transaction. */
+  private async lockStatus(tx: Tx, id: string): Promise<ShipmentStatus> {
+    const rows = await tx.$queryRaw<{ status: ShipmentStatus }[]>`
+      SELECT "status"::text AS "status" FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`;
+    const row = rows[0];
+    if (!row) throw new NotFoundException('Shipment not found');
+    return row.status;
+  }
+
+  /** Locks the shipment for a write to its containers; 409 once it is closed or cancelled. */
+  private async lockActive(tx: Tx, id: string): Promise<void> {
+    if (!isActive(await this.lockStatus(tx, id))) {
+      throw new ConflictException('A closed or cancelled shipment cannot be edited');
+    }
   }
 
   private scope(user: AuthUser): Prisma.ShipmentWhereInput {
@@ -640,7 +690,7 @@ function actionsFor(
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
   return {
-    transitions: nextStatuses(s.status, s).filter((next) =>
+    transitions: nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
       permissionForTransition(next).some(has),
     ),
     canHold: canUpdate && canHold(s.status),
