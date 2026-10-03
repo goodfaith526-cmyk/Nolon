@@ -5,7 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CargoType,
   CreateRateCardRequest,
+  LoadType,
   Page,
   RateCardDto,
   RateCardInput,
@@ -21,6 +23,18 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+/** What a quotation line's rate must match. */
+export interface RatePricingContext {
+  branchId: string;
+  onDate: string;
+  currency: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  cargoType: CargoType;
+}
 
 export interface RateFilters extends PageQuery {
   status?: RateStatus;
@@ -104,25 +118,31 @@ export class RatesService {
   }
 
   /**
-   * For quotation lines: an APPROVED rate of this branch, valid on `onDate` (YYYY-MM-DD, branch
-   * time), in this currency. 400 otherwise.
+   * For quotation lines: an APPROVED rate of the quotation's branch, valid on `onDate`
+   * (YYYY-MM-DD, branch time), that prices exactly this quotation: same currency, route, mode,
+   * load type and cargo type. 400 on any mismatch.
    */
-  async requireUsableRate(
-    rateId: string,
-    branchId: string,
-    currency: string,
-    onDate: string,
-  ): Promise<RateCard> {
-    const rate = await this.prisma.rateCard.findFirst({ where: { id: rateId, branchId } });
+  async requireUsableRate(rateId: string, context: RatePricingContext): Promise<RateCard> {
+    const rate = await this.prisma.rateCard.findFirst({
+      where: { id: rateId, branchId: context.branchId },
+    });
     if (!rate || rate.status !== 'APPROVED') {
       throw new BadRequestException('Rate is not an approved rate of this branch');
     }
-    const day = toDbDate(onDate);
+    const day = toDbDate(context.onDate);
     if (rate.validFrom > day || (rate.validTo !== null && rate.validTo < day)) {
       throw new BadRequestException('Rate is not valid today');
     }
-    if (rate.currency !== currency) {
-      throw new BadRequestException('Rate currency differs from the quotation currency');
+    const mismatches = [
+      rate.currency !== context.currency && 'currency',
+      rate.originLocationId !== context.originLocationId && 'origin',
+      rate.destinationLocationId !== context.destinationLocationId && 'destination',
+      rate.mode !== context.mode && 'mode',
+      rate.loadType !== context.loadType && 'load type',
+      rate.cargoType !== context.cargoType && 'cargo type',
+    ].filter((m): m is string => typeof m === 'string');
+    if (mismatches.length > 0) {
+      throw new BadRequestException(`Rate does not match the quotation: ${mismatches.join(', ')}`);
     }
     return rate;
   }

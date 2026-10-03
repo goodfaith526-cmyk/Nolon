@@ -38,6 +38,9 @@ type BookingWithDetails = Booking & { items: BookingItem[]; customer: { name: st
 
 type Tx = Prisma.TransactionClient;
 
+/** Largest value `booking_items.volume_cbm` (Decimal(12, 4)) holds. */
+const MAX_VOLUME_CBM = dec('99999999.9999');
+
 const details = {
   items: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
@@ -142,16 +145,28 @@ export class BookingsService {
     return this.get(user, id);
   }
 
-  /** Confirmation is what will create the booking's shipment (group 3). */
+  /**
+   * Confirmation is what will create the booking's shipment (group 3). Status and cargo lines are
+   * checked under the booking row lock: a concurrent draft edit (which takes the same lock when it
+   * changes the status row) either finishes first and is seen, or waits and then finds the booking
+   * confirmed.
+   */
   async confirm(user: AuthUser, id: string): Promise<BookingDto> {
-    const existing = await this.findScoped(user, id);
-    if (existing.status !== 'DRAFT') {
-      throw new ConflictException('Only a draft booking can be confirmed');
-    }
-    if (existing.items.length === 0) {
-      throw new BadRequestException('Add at least one cargo line before confirming');
-    }
-    await casStatus(this.prisma, id, ['DRAFT'], { status: 'CONFIRMED', confirmedAt: new Date() });
+    await this.findScoped(user, id);
+    await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ status: string }[]>`
+        SELECT "status"::text AS "status" FROM "bookings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      if (rows[0]?.status !== 'DRAFT') {
+        throw new ConflictException('Only a draft booking can be confirmed');
+      }
+      if ((await tx.bookingItem.count({ where: { bookingId: id } })) === 0) {
+        throw new BadRequestException('Add at least one cargo line before confirming');
+      }
+      await tx.booking.update({
+        where: { id },
+        data: { status: 'CONFIRMED', confirmedAt: new Date() },
+      });
+    });
     return this.get(user, id);
   }
 
@@ -264,6 +279,9 @@ export class BookingsService {
         : item.volumeCbm
           ? dec(item.volumeCbm)
           : null;
+    if (volumeCbm?.gt(MAX_VOLUME_CBM)) {
+      throw new BadRequestException('Volume is too large; check the dimensions and quantity');
+    }
     return {
       cargoType: item.cargoType,
       containerTypeCode: item.containerTypeCode ?? null,

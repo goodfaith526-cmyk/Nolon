@@ -23,17 +23,21 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
-import {
-  dateString,
-  optionalText,
-  pageQuery,
-  parse,
-  quantity as positiveDecimal,
-  requiredText,
-} from '../common/validation.js';
+import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { BookingsService } from './bookings.service.js';
 
-const measure = z.string().regex(/^\d{1,8}(\.\d{1,3})?$/, 'Invalid measurement');
+/**
+ * One schema per column, matching its precision and scale, so out-of-range input is a 400 and
+ * never overflows or is silently rounded by PostgreSQL.
+ */
+const decimalColumn = (integerDigits: number, scale: number, positive: boolean) =>
+  z
+    .string()
+    .regex(new RegExp(`^\\d{1,${integerDigits}}(\\.\\d{1,${scale}})?$`), 'Invalid measurement')
+    .refine((v) => !positive || /[1-9]/.test(v), 'Must be positive');
+const dimensionCm = decimalColumn(8, 2, true); // Decimal(10, 2)
+const weightKg = decimalColumn(9, 3, false); // Decimal(12, 3)
+const volumeCbm = decimalColumn(8, 4, false); // Decimal(12, 4)
 
 const itemBody = z
   .object({
@@ -41,11 +45,11 @@ const itemBody = z
     containerTypeCode: z.string().trim().toUpperCase().max(10).nullish(),
     description: optionalText(500),
     quantity: z.number().int().min(1).max(100_000),
-    lengthCm: positiveDecimal.nullish(),
-    widthCm: positiveDecimal.nullish(),
-    heightCm: positiveDecimal.nullish(),
-    weightKg: measure.nullish(),
-    volumeCbm: measure.nullish(),
+    lengthCm: dimensionCm.nullish(),
+    widthCm: dimensionCm.nullish(),
+    heightCm: dimensionCm.nullish(),
+    weightKg: weightKg.nullish(),
+    volumeCbm: volumeCbm.nullish(),
   })
   .strict();
 

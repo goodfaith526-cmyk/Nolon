@@ -39,6 +39,9 @@ type QuotationWithDetails = Quotation & {
 
 type Tx = Prisma.TransactionClient;
 
+/** Largest amount a Decimal(18, 4) column holds. */
+const MAX_AMOUNT = dec('99999999999999.9999');
+
 const details = {
   lines: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
@@ -223,12 +226,16 @@ export class QuotationsService {
     const resolved = [];
     for (const line of input.lines) {
       if (line.rateCardId) {
-        const rate = await this.rates.requireUsableRate(
-          line.rateCardId,
+        const rate = await this.rates.requireUsableRate(line.rateCardId, {
           branchId,
-          input.currency,
-          today,
-        );
+          onDate: today,
+          currency: input.currency,
+          originLocationId: input.originLocationId,
+          destinationLocationId: input.destinationLocationId,
+          mode: input.mode,
+          loadType: input.loadType ?? null,
+          cargoType: input.cargoType,
+        });
         resolved.push({
           rateCardId: rate.id,
           chargeTypeCode: rate.chargeTypeCode,
@@ -265,6 +272,10 @@ export class QuotationsService {
     } catch (error) {
       if (error instanceof DiscountExceedsLineError) throw new BadRequestException(error.message);
       throw error;
+    }
+    // Every line amount is at most the subtotal, so one check keeps all of them in Decimal(18, 4).
+    if (amounts.subtotal.gt(MAX_AMOUNT)) {
+      throw new BadRequestException('Amounts are too large');
     }
 
     return {

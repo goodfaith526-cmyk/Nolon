@@ -31,6 +31,18 @@ async function deleteCommercialTestData(prisma: PrismaService): Promise<void> {
   await prisma.location.deleteMany({ where: { code: { startsWith: 'ZZ' } } });
 }
 
+/** Waits until some session is blocked on a row lock (the request under test reached the lock). */
+async function waitForLockWaiter(prisma: PrismaService): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*) AS "n" FROM pg_stat_activity
+      WHERE "datname" = current_database() AND "wait_event_type" = 'Lock'`;
+    if ((rows[0]?.n ?? 0n) > 0n) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('No request waited on the lock');
+}
+
 const PAST = '2020-01-01';
 const FAR_FUTURE = '2099-12-31';
 
@@ -270,6 +282,31 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     });
   });
 
+  describe('customer contacts under concurrency', () => {
+    it('keeps exactly one primary when two primaries are added at once', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      const add = (name: string) =>
+        post(`/customers/${c.id}/contacts`, cookies.salesDxb, {
+          name,
+          phone: '+249912345678',
+          isPrimary: true,
+        });
+      const results = await Promise.all([add('A'), add('B'), add('C'), add('D')]);
+      expect(results.map((r) => r.status)).toEqual([201, 201, 201, 201]);
+      const primaries = await t.prisma.customerContact.count({
+        where: { customerId: c.id, isPrimary: true },
+      });
+      expect(primaries).toBe(1);
+    });
+
+    it('refuses a second primary at the database level', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      const data = { customerId: c.id, name: 'X', phone: '+249912345678', isPrimary: true };
+      await t.prisma.customerContact.create({ data });
+      await expect(t.prisma.customerContact.create({ data })).rejects.toThrow();
+    });
+  });
+
   describe('rates', () => {
     it('Sales drafts, the Branch Manager approves, the approved rate is frozen', async () => {
       const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
@@ -327,11 +364,8 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
 
     it('prices lines from approved rates with exact decimal totals and a minimum charge', async () => {
       const container = await approvedRate({ price: '1250.50' });
-      const lcl = await approvedRate({
-        loadType: 'LCL',
-        cargoType: 'GENERAL',
-        containerTypeCode: null,
-        unit: 'PER_CBM',
+      const thc = await approvedRate({
+        chargeTypeCode: 'THC',
         price: '45.333',
         minimumCharge: '150',
       });
@@ -340,7 +374,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         cookies.salesDxb,
         quotationBody(customer.id, [
           { rateCardId: container.id, quantity: '2', discount: '0.5' },
-          { rateCardId: lcl.id, quantity: '1.25' }, // 56.67 < 150 → 150
+          { rateCardId: thc.id, quantity: '1.25' }, // 56.67 < 150 → 150
           { chargeTypeCode: 'DOCS', unit: 'PER_SHIPMENT', unitPrice: '35.10', quantity: '1' },
         ]),
       ).expect(201);
@@ -367,6 +401,57 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         ...quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]),
         total: '1',
       }).expect(400);
+    });
+
+    it('refuses a rate for another route, mode, load or cargo type', async () => {
+      const lines = (rateCardId: string) => [{ rateCardId, quantity: '1' }];
+      const otherRoute = await approvedRate({ originLocationId: jeddah });
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, lines(otherRoute.id)),
+      ).expect(400);
+      const lcl = await approvedRate({ loadType: 'LCL' });
+      await post('/quotations', cookies.salesDxb, quotationBody(customer.id, lines(lcl.id))).expect(
+        400,
+      );
+      const road = await approvedRate({ mode: 'ROAD', loadType: null });
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, lines(road.id)),
+      ).expect(400);
+      const pallets = await approvedRate({
+        cargoType: 'PALLET',
+        containerTypeCode: null,
+        unit: 'PER_PALLET',
+      });
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, lines(pallets.id)),
+      ).expect(400);
+      // The same rate is accepted by a quotation that matches it.
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, lines(road.id), { mode: 'ROAD', loadType: null }),
+      ).expect(201);
+    });
+
+    it('rejects amounts that would not fit the database columns', async () => {
+      await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [
+          {
+            chargeTypeCode: 'OTHER',
+            unit: 'PER_SHIPMENT',
+            unitPrice: '99999999999999',
+            quantity: '2',
+          },
+        ]),
+      ).expect(400);
     });
 
     it('refuses draft, foreign-branch, wrong-currency rates and oversized discounts', async () => {
@@ -601,6 +686,72 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       ).expect(400);
       await post('/bookings', cookies.salesDxb, directBooking({ services: [] })).expect(400);
       await post('/bookings', cookies.salesDxb, directBooking({ mode: 'ROAD' })).expect(400);
+    });
+
+    it('rejects measurements that would overflow or be rounded by the database', async () => {
+      const item = (fields: object) =>
+        directBooking({ items: [{ cargoType: 'PALLET', quantity: 1, ...fields }] });
+      const dims = { lengthCm: '100', widthCm: '100', heightCm: '100' };
+      await post('/bookings', cookies.salesDxb, item({ ...dims, lengthCm: '100.123' })).expect(400);
+      await post('/bookings', cookies.salesDxb, item({ ...dims, lengthCm: '123456789' })).expect(
+        400,
+      );
+      await post('/bookings', cookies.salesDxb, item({ ...dims, lengthCm: '0' })).expect(400);
+      await post('/bookings', cookies.salesDxb, item({ weightKg: '1.1234' })).expect(400);
+      await post('/bookings', cookies.salesDxb, item({ volumeCbm: '1.12345' })).expect(400);
+      await post('/bookings', cookies.salesDxb, item({ volumeCbm: '123456789' })).expect(400);
+      // Valid per column, but the computed volume does not fit Decimal(12, 4).
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        item({ lengthCm: '99999999', widthCm: '99999999', heightCm: '99999999' }),
+      ).expect(400);
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        item({ ...dims, weightKg: '999999999.999' }),
+      ).expect(201);
+    });
+
+    it('requires services in the database: NULL and empty are refused', async () => {
+      const b = (await post('/bookings', cookies.salesDxb, directBooking()).expect(201))
+        .body as BookingDto;
+      await expect(
+        t.prisma.$executeRaw`UPDATE "bookings" SET "services" = NULL WHERE "id" = ${b.id}::uuid`,
+      ).rejects.toThrow();
+      await expect(
+        t.prisma.$executeRaw`UPDATE "bookings" SET "services" = '{}' WHERE "id" = ${b.id}::uuid`,
+      ).rejects.toThrow();
+    });
+
+    it('does not confirm a booking whose cargo lines a concurrent edit removes', async () => {
+      const b = (await post('/bookings', cookies.salesDxb, directBooking()).expect(201))
+        .body as BookingDto;
+      // A draft edit in progress: it holds the booking row and has removed every cargo line, but
+      // has not committed yet.
+      let finishEdit: () => void = () => undefined;
+      const editDone = new Promise<void>((resolve) => {
+        finishEdit = resolve;
+      });
+      const edit = t.prisma.$transaction(
+        async (tx) => {
+          await tx.booking.updateMany({ where: { id: b.id, status: 'DRAFT' }, data: {} });
+          await tx.$executeRaw`UPDATE "bookings" SET "updated_at" = now() WHERE "id" = ${b.id}::uuid`;
+          await tx.bookingItem.deleteMany({ where: { bookingId: b.id } });
+          await editDone;
+        },
+        { timeout: 20_000 },
+      );
+      const confirm = post(`/bookings/${b.id}/confirm`, cookies.managerDxb).then((r) => r);
+      await waitForLockWaiter(t.prisma);
+      finishEdit();
+      await edit;
+      const res = await confirm;
+      expect(res.status).toBe(400);
+      const after = (await get(`/bookings/${b.id}`, cookies.salesDxb).expect(200))
+        .body as BookingDto;
+      expect(after.status).toBe('DRAFT');
+      expect(after.items).toHaveLength(0);
     });
 
     it('confirms with cargo only, cancels with a reason, and freezes after draft', async () => {

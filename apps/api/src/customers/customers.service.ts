@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type {
   ContactInput,
   CreateCustomerRequest,
@@ -14,6 +19,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Customer, CustomerContact, Party, Prisma } from '../generated/prisma/client.js';
@@ -104,9 +110,12 @@ export class CustomersService {
 
   async addContact(user: AuthUser, customerId: string, input: ContactInput): Promise<CustomerDto> {
     const customer = await this.findScoped(user, customerId);
-    await this.prisma.$transaction(async (tx) => {
+    await this.writeContacts(customer.id, async (tx) => {
       if (input.isPrimary) {
-        await tx.customerContact.updateMany({ where: { customerId }, data: { isPrimary: false } });
+        await tx.customerContact.updateMany({
+          where: { customerId: customer.id },
+          data: { isPrimary: false },
+        });
       }
       await tx.customerContact.create({ data: { ...input, customerId: customer.id } });
     });
@@ -123,16 +132,37 @@ export class CustomersService {
     if (!customer.contacts.some((c) => c.id === contactId)) {
       throw new NotFoundException('Contact not found');
     }
-    await this.prisma.$transaction(async (tx) => {
+    await this.writeContacts(customer.id, async (tx) => {
       if (input.isPrimary) {
         await tx.customerContact.updateMany({
-          where: { customerId, id: { not: contactId } },
+          where: { customerId: customer.id, id: { not: contactId } },
           data: { isPrimary: false },
         });
       }
       await tx.customerContact.update({ where: { id: contactId }, data: input });
     });
     return this.get(user, customer.id);
+  }
+
+  /**
+   * Contact changes of one customer run one at a time (customer row lock), so moving the primary
+   * flag is never interleaved. A unique partial index backs the one-primary rule in the database.
+   */
+  private async writeContacts(
+    customerId: string,
+    write: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customerId}::uuid FOR UPDATE`;
+        await write(tx);
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('A customer has only one primary contact');
+      }
+      throw error;
+    }
   }
 
   async addParty(user: AuthUser, customerId: string, input: PartyInput): Promise<CustomerDto> {

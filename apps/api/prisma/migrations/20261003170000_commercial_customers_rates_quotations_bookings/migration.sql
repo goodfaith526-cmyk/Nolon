@@ -229,7 +229,7 @@ CREATE TABLE "bookings" (
     "load_type" "load_type",
     "cargo_type" "cargo_type" NOT NULL,
     "cargo_description" TEXT,
-    "services" "booking_service"[],
+    "services" "booking_service"[] NOT NULL,
     "shipper_id" UUID,
     "consignee_id" UUID,
     "notify_party_id" UUID,
@@ -436,6 +436,9 @@ ALTER TABLE "customers" ADD CONSTRAINT "customers_payment_terms_check" CHECK ("p
 ALTER TABLE "customers" ADD CONSTRAINT "customers_credit_limit_check" CHECK (
     ("credit_limit" IS NULL AND "credit_limit_currency" IS NULL)
     OR ("credit_limit" >= 0 AND "credit_limit_currency" IS NOT NULL));
+-- At most one primary contact per customer. The service also serializes contact changes per
+-- customer (row lock), so concurrent requests queue instead of failing on this index.
+CREATE UNIQUE INDEX "customer_contacts_one_primary_idx" ON "customer_contacts" ("customer_id") WHERE "is_primary";
 ALTER TABLE "customer_contacts" ADD CONSTRAINT "customer_contacts_phone_e164_check" CHECK ("phone" ~ '^\+[1-9][0-9]{6,14}$');
 ALTER TABLE "parties" ADD CONSTRAINT "parties_phone_e164_check" CHECK ("phone" IS NULL OR "phone" ~ '^\+[1-9][0-9]{6,14}$');
 
@@ -459,6 +462,7 @@ ALTER TABLE "quotation_lines" ADD CONSTRAINT "quotation_lines_amounts_check" CHE
 
 ALTER TABLE "bookings" ADD CONSTRAINT "bookings_route_check" CHECK ("origin_location_id" <> "destination_location_id");
 ALTER TABLE "bookings" ADD CONSTRAINT "bookings_load_type_check" CHECK (("mode" = 'SEA') OR ("load_type" IS NULL));
+-- NOT NULL is on the column above: a CHECK on NULL passes, so it alone would not reject NULL.
 ALTER TABLE "bookings" ADD CONSTRAINT "bookings_services_check" CHECK (cardinality("services") >= 1);
 ALTER TABLE "booking_items" ADD CONSTRAINT "booking_items_amounts_check" CHECK (
     "line_no" >= 1 AND "quantity" > 0
