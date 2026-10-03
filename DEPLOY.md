@@ -124,15 +124,24 @@ staging.2-28-12-44.sslip.io {
 Note: members of the `docker` group are effectively root on the server. The `deploy` user exists
 so the key in GitHub can be revoked without touching root's access.
 
-### 3. Host key (on the server)
+### 3. Host key (from the Hetzner Console only)
+
+The host key pins the server so the deploy job cannot be tricked into talking to another machine.
+It must come from a trusted channel: open **Hetzner Cloud Console > the server > Console** (the
+web console, not an SSH session) and run:
 
 ```sh
 cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Save that one line (it starts with `ssh-ed25519`) as the `STAGING_SSH_KNOWN_HOSTS` secret. It stops
-the deploy job from talking to a different machine pretending to be the server. A known_hosts line
-from `ssh-keyscan -t ed25519 2.28.12.44` (the line that does not start with `#`) works too.
+Save that line (it starts with `ssh-ed25519`) as the `STAGING_SSH_KNOWN_HOSTS` secret.
+
+If the secret already holds a key, verify it instead: in the same web console run
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, then on your PC save the secret's value to a
+file and run `ssh-keygen -lf thatfile`. The two `SHA256:...` fingerprints must be identical.
+
+Do not take the key from `ssh-keyscan` or from an SSH session alone: those go over the same
+unverified network path the pin is meant to protect.
 
 ### 4. Basic auth password hash (optional)
 
