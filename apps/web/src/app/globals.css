@@ -1,0 +1,41 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f19;
+    --fg: #f3f4f6;
+    --muted: #9ca3af;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Tahoma,
+    Arial,
+    sans-serif;
+}
+
+/* Use logical properties (margin-inline, padding-inline...) so layouts flip correctly in RTL. */
+.home {
+  max-width: 40rem;
+  margin-inline: auto;
+  padding: 4rem 1rem;
+}
+
+.muted {
+  color: var(--muted);
+}

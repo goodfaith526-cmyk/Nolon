@@ -1,0 +1,5 @@
+# Database schema and migrations need the owner's review (AGENTS.md rule 4).
+/apps/api/prisma/ @goodfaith526-cmyk
+# Rules for AI agents.
+/AGENTS.md @goodfaith526-cmyk
+/CLAUDE.md @goodfaith526-cmyk

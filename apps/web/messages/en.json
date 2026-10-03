@@ -1,0 +1,12 @@
+{
+  "Metadata": {
+    "title": "NOLON",
+    "description": "NOLON logistics and shipping management system"
+  },
+  "Home": {
+    "title": "NOLON",
+    "subtitle": "Logistics and shipping management",
+    "status": "The environment is running. Operational modules are being built.",
+    "switchLocale": "العربية"
+  }
+}

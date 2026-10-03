@@ -1,0 +1,36 @@
+{
+  "name": "nolon",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:shared": "pnpm --filter @nolon/shared build",
+    "dev": "pnpm build:shared && pnpm -r --parallel --filter \"./apps/*\" dev",
+    "lint": "pnpm build:shared && eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "test": "pnpm build:shared && pnpm -r test",
+    "test:integration": "pnpm build:shared && pnpm --filter @nolon/api test:integration",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @nolon/api prisma:migrate:dev",
+    "db:deploy": "pnpm --filter @nolon/api prisma:migrate:deploy",
+    "db:check": "pnpm --filter @nolon/api prisma:check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@next/eslint-plugin-next": "^16.3.8",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0"
+  }
+}
