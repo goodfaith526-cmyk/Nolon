@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isBranchCode, isCurrencyCode, isLocale, localeDirection } from './index.js';
+import { isBranchCode, isCurrencyCodeFormat, isLocale, localeDirection } from './index.js';
 
 describe('shared constants', () => {
   it('accepts only known branch codes', () => {
@@ -10,9 +10,12 @@ describe('shared constants', () => {
     expect(isBranchCode(1)).toBe(false);
   });
 
-  it('accepts only supported currencies', () => {
-    expect(isCurrencyCode('SDG')).toBe(true);
-    expect(isCurrencyCode('GBP')).toBe(false);
+  it('checks only the shape of a currency code, not whether it exists', () => {
+    expect(isCurrencyCodeFormat('SDG')).toBe(true);
+    expect(isCurrencyCodeFormat('GBP')).toBe(true);
+    expect(isCurrencyCodeFormat('sdg')).toBe(false);
+    expect(isCurrencyCodeFormat('US')).toBe(false);
+    expect(isCurrencyCodeFormat(840)).toBe(false);
   });
 
   it('maps locales to text direction', () => {

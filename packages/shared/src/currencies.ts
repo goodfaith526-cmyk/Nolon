@@ -1,9 +1,12 @@
 /** Base reporting currency. All functional amounts roll up to this. */
-export const BASE_CURRENCY = 'USD' as const;
+export const BASE_CURRENCY = 'USD';
 
-export const CURRENCY_CODES = ['USD', 'AED', 'SAR', 'SDG', 'EUR'] as const;
-
-export type CurrencyCode = (typeof CURRENCY_CODES)[number];
+/**
+ * ISO 4217 code (e.g. "SDG"). The set of currencies is master data in the `currencies` table and
+ * can grow without a deploy, so this is deliberately an open string: whether a code is usable is
+ * decided by the API against that table, not by this package.
+ */
+export type CurrencyCode = string;
 
 /**
  * Money crosses the API boundary as a decimal string (e.g. "1250.50"), never as a JS number,
@@ -16,6 +19,7 @@ export interface Money {
   currency: CurrencyCode;
 }
 
-export function isCurrencyCode(value: unknown): value is CurrencyCode {
-  return typeof value === 'string' && (CURRENCY_CODES as readonly string[]).includes(value);
+/** Shape check only (three uppercase letters). It does not mean the currency exists. */
+export function isCurrencyCodeFormat(value: unknown): value is CurrencyCode {
+  return typeof value === 'string' && /^[A-Z]{3}$/.test(value);
 }

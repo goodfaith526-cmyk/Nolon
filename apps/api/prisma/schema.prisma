@@ -33,8 +33,9 @@ model Branch {
   /// ISO 3166-1 alpha-2.
   countryCode     String   @map("country_code") @db.Char(2)
   city            String
-  /// ISO 4217, one of CURRENCY_CODES in @nolon/shared.
+  /// ISO 4217 code; must exist in the currencies master.
   defaultCurrency String   @map("default_currency") @db.Char(3)
+  currency        Currency @relation(fields: [defaultCurrency], references: [code], onUpdate: Restrict, onDelete: Restrict)
   /// IANA time zone, e.g. Asia/Dubai.
   timezone        String
   isActive        Boolean  @default(true) @map("is_active")
@@ -42,4 +43,25 @@ model Branch {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("branches")
+}
+
+/// Currency master. Users add currencies here (no code change or deploy). The initial set
+/// (USD, AED, SAR, SDG, EUR) is inserted by the migration that creates the table, because
+/// branches reference it in every environment. Deactivate a currency; never delete one that is
+/// in use (foreign keys restrict it).
+model Currency {
+  /// ISO 4217, e.g. SDG.
+  code          String   @id @db.Char(3)
+  nameEn        String   @map("name_en")
+  nameAr        String   @map("name_ar")
+  symbol        String?  @db.VarChar(8)
+  /// Minor units used when rounding amounts in this currency (ISO 4217 exponent, e.g. 2).
+  decimalPlaces Int      @default(2) @map("decimal_places") @db.SmallInt
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branches Branch[]
+
+  @@map("currencies")
 }
