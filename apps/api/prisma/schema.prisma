@@ -1,0 +1,24 @@
+// Database schema. Rules (see AGENTS.md):
+// - Money columns are Decimal (@db.Decimal(18, 4)), never Float.
+// - Branch-owned tables carry branch_id and every query filters on it.
+// - Immutability of posted journal entries is enforced by triggers in raw SQL migrations.
+// - Every migration is reviewed by a human before merge.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Key/value system settings. Foundation table only: business tables arrive with their modules.
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("system_settings")
+}

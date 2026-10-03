@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  database:
+    name: Migrations and integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nolon
+          POSTGRES_PASSWORD: nolon
+          POSTGRES_DB: nolon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nolon -d nolon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://nolon:nolon@localhost:5432/nolon?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Existing migrations are not modified
+        if: github.event_name == 'pull_request'
+        run: |
+          changed=$(git diff --name-only --diff-filter=MDR "origin/${{ github.base_ref }}...HEAD" -- apps/api/prisma/migrations)
+          if [ -n "$changed" ]; then
+            echo "::error::Migrations already on ${{ github.base_ref }} were modified or deleted. Add a new migration instead:"
+            echo "$changed"
+            exit 1
+          fi
+      - name: Apply migrations to an empty database
+        run: pnpm db:deploy
+      - name: Schema matches migrations (no drift)
+        run: pnpm db:check
+      - run: pnpm test:integration

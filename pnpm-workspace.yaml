@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+onlyBuiltDependencies:
+  - '@prisma/engines'
+  - prisma
+
+# Prebuilt binaries are used; their install scripts are not needed.
+ignoredBuiltDependencies:
+  - '@parcel/watcher'
+  - '@swc/core'
