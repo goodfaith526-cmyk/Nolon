@@ -1,7 +1,8 @@
 name: Deploy staging
 
 # Deploys main to the staging server after CI has passed on it. Can also be run by hand from the
-# Actions tab (Run workflow). Setup and required secrets: DEPLOY.md.
+# Actions tab (Run workflow), from main only and only for a commit CI passed on. Setup and
+# required secrets: DEPLOY.md.
 on:
   workflow_run:
     workflows: [CI]
@@ -17,12 +18,13 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  actions: read # to check CI passed on the commit of a manual run
 
 jobs:
   deploy:
     name: Build images and deploy to staging
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     environment:
@@ -36,8 +38,11 @@ jobs:
       # that proxy forwards SITE_DOMAIN to it (DEPLOY.md, "Behind an existing proxy").
       LOCAL_PORT: ${{ vars.STAGING_LOCAL_PORT }}
       DEPLOY_DIR: nolon-staging
+      # Staging holds client data and is private by default. Set this repository variable to
+      # `true` only to deliberately run it without basic auth.
+      ALLOW_PUBLIC: ${{ vars.STAGING_ALLOW_PUBLIC }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The commit CI just passed on, not whatever main points to now.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -49,13 +54,32 @@ jobs:
           SSH_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
           POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          BASIC_AUTH_USER: ${{ secrets.STAGING_BASIC_AUTH_USER }}
+          BASIC_AUTH_HASH: ${{ secrets.STAGING_BASIC_AUTH_HASH }}
         run: |
           missing=""
           for name in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS POSTGRES_PASSWORD; do
             [ -n "${!name}" ] || missing="$missing STAGING_${name/SSH_KEY/SSH_PRIVATE_KEY}"
           done
+          if [ "$ALLOW_PUBLIC" != "true" ]; then
+            [ -n "$BASIC_AUTH_USER" ] || missing="$missing STAGING_BASIC_AUTH_USER"
+            [ -n "$BASIC_AUTH_HASH" ] || missing="$missing STAGING_BASIC_AUTH_HASH"
+          fi
           if [ -n "$missing" ]; then
             echo "::error::Missing GitHub secrets:$missing (see DEPLOY.md)"
+            exit 1
+          fi
+
+      - name: Check CI passed on this commit (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          ok=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" \
+            --status success --limit 1 --json databaseId --jq length)
+          if [ "$ok" != 1 ]; then
+            echo "::error::CI has not passed on $sha. Deploy only commits that are green on main."
             exit 1
           fi
 
@@ -101,20 +125,22 @@ jobs:
         run: |
           prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
           sha="$(git rev-parse HEAD)"
-          echo "api=$prefix/api:$sha" >> "$GITHUB_OUTPUT"
-          echo "migrate=$prefix/migrate:$sha" >> "$GITHUB_OUTPUT"
-          echo "web=$prefix/web:$sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "api=$prefix/api:$sha"
+            echo "migrate=$prefix/migrate:$sha"
+            echo "web=$prefix/web:$sha"
+          } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push api
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/api/Dockerfile
@@ -126,7 +152,7 @@ jobs:
           cache-to: type=gha,scope=api,mode=max
 
       - name: Build and push migrate
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/api/Dockerfile
@@ -140,7 +166,7 @@ jobs:
           cache-to: type=gha,scope=migrate,mode=max
 
       - name: Build and push web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/web/Dockerfile
@@ -172,12 +198,13 @@ jobs:
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
             echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
             echo "SEED_DEMO_DATA=true"
-            if [ -n "$BASIC_AUTH_USER" ] && [ -n "$BASIC_AUTH_HASH" ]; then
+            # Public only by explicit opt-in; the secrets check above already required both values.
+            if [ "$ALLOW_PUBLIC" = "true" ] && { [ -z "$BASIC_AUTH_USER" ] || [ -z "$BASIC_AUTH_HASH" ]; }; then
+              echo "BASIC_AUTH=off"
+            else
               echo "BASIC_AUTH=on"
               echo "BASIC_AUTH_USER='$BASIC_AUTH_USER'"
               echo "BASIC_AUTH_HASH='$BASIC_AUTH_HASH'"
-            else
-              echo "BASIC_AUTH=off"
             fi
           } > deploy/staging/.env
 
@@ -186,14 +213,21 @@ jobs:
           SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ssh "$SSH_TARGET" "mkdir -p ~/$DEPLOY_DIR"
+          # Commands are built here on the runner and run on the server, in the deploy user's home.
+          # shellcheck disable=SC2029 # expanding on the runner is the point
+          remote() { ssh "$SSH_TARGET" "$1"; }
+          dir="$DEPLOY_DIR"
+          # Private directory first, then the secrets file created with mode 600 from the start, so no
+          # other user on the shared server can read it, not even for a moment.
+          remote "umask 077 && mkdir -p $dir && chmod 700 $dir"
+          remote "umask 077 && cat > $dir/.env.tmp && mv $dir/.env.tmp $dir/.env" < deploy/staging/.env
           scp deploy/staging/docker-compose.staging.yml deploy/staging/Caddyfile \
-            deploy/staging/deploy.sh deploy/staging/.env "$SSH_TARGET:~/$DEPLOY_DIR/"
+            deploy/staging/deploy.sh "$SSH_TARGET:$dir/"
           # The job token can pull this repo's images only while the job runs; log out afterwards.
-          printf '%s' "$GHCR_TOKEN" | ssh "$SSH_TARGET" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
           status=0
-          ssh "$SSH_TARGET" "chmod 600 ~/$DEPLOY_DIR/.env && bash ~/$DEPLOY_DIR/deploy.sh" || status=$?
-          ssh "$SSH_TARGET" "docker logout ghcr.io" || true
+          remote "bash $dir/deploy.sh" || status=$?
+          remote "docker logout ghcr.io" || true
           exit "$status"
 
       - name: Health check
@@ -214,4 +248,6 @@ jobs:
         env:
           SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
         run: |
+          # $DEPLOY_DIR is meant to expand here, on the runner.
+          # shellcheck disable=SC2029
           ssh "$SSH_TARGET" "cd ~/$DEPLOY_DIR && docker compose -f docker-compose.staging.yml ps -a && docker compose -f docker-compose.staging.yml logs --tail 80" || true
