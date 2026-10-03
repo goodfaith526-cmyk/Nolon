@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "build": "prisma generate && tsc -p tsconfig.build.json",
-    "dev": "nest start --watch",
+    "dev": "tsc -p tsconfig.build.json && concurrently --kill-others --names tsc,api \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -36,6 +36,7 @@
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
+    "concurrently": "^10.0.5",
     "prisma": "7.10.0",
     "supertest": "^7.0.0",
     "typescript": "~6.0.3",

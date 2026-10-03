@@ -1,0 +1,26 @@
+# Check out every text file with LF on all platforms (including Git for Windows with
+# core.autocrlf=true), so Prettier and shell scripts behave the same everywhere.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary files: never touch line endings or diff as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.eot  binary
+*.zip  binary
+*.gz   binary
+*.xlsx binary
+*.docx binary

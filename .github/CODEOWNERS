@@ -1,4 +1,6 @@
-# Database schema and migrations need the owner's review (AGENTS.md rule 4).
+# Requests the owner's review on these paths. This does not block merging by itself: that needs
+# a branch ruleset with "Require review from Code Owners" and a reviewer other than the author.
+# Database schema and migrations (AGENTS.md rule 4).
 /apps/api/prisma/ @goodfaith526-cmyk
 # Rules for AI agents.
 /AGENTS.md @goodfaith526-cmyk
