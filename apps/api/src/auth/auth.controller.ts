@@ -78,7 +78,9 @@ export class AuthController {
   async changePassword(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<void> {
     const parsed = changePasswordBody.safeParse(body);
     if (!parsed.success) {
-      throw new BadRequestException(`New password needs at least ${MIN_PASSWORD_LENGTH} characters`);
+      throw new BadRequestException(
+        `New password needs at least ${MIN_PASSWORD_LENGTH} characters`,
+      );
     }
     const ok = await this.auth.changePassword(
       user,

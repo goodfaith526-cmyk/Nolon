@@ -56,3 +56,168 @@ body {
 .muted {
   color: var(--muted);
 }
+
+/* Staff app: sign-in, shell, forms and tables. Logical properties only (RTL and LTR). */
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-block-size: 100vh;
+  padding-inline: 1rem;
+}
+
+.card {
+  inline-size: 100%;
+  max-inline-size: 56rem;
+  padding: 1.5rem;
+  border: 1px solid var(--brand-gray);
+  border-radius: 0.75rem;
+}
+
+.auth-page .card,
+.narrow {
+  max-inline-size: 26rem;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+input,
+select,
+button,
+.button {
+  font: inherit;
+  padding-block: 0.5rem;
+  padding-inline: 0.75rem;
+  border: 1px solid var(--brand-gray);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+button,
+.button {
+  cursor: pointer;
+  display: inline-block;
+  text-decoration: none;
+}
+
+.primary {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+  color: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+fieldset {
+  border: 1px solid var(--brand-gray);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+.checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+.success {
+  color: #15803d;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.75rem;
+  padding-inline: 1.5rem;
+  border-block-end: 3px solid var(--brand-orange);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nav a {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.nav a.active {
+  color: var(--brand-blue);
+  font-weight: 600;
+}
+
+.page {
+  max-inline-size: 72rem;
+  margin-inline: auto;
+  padding-block: 2rem;
+  padding-inline: 1.5rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  inline-size: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: start;
+  padding-block: 0.5rem;
+  padding-inline: 0.75rem;
+  border-block-end: 1px solid var(--brand-gray);
+  vertical-align: top;
+}
+
+tr.inactive td {
+  color: var(--muted);
+}
