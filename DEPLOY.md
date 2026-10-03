@@ -164,18 +164,23 @@ Delete the variable to make staging private again.
 
 Settings > Secrets and variables > Actions > **Secrets** > New repository secret:
 
-| Secret                      | Value                                                    |
-| --------------------------- | -------------------------------------------------------- |
-| `STAGING_SSH_HOST`          | Server IP, e.g. `2.28.12.44`                             |
-| `STAGING_SSH_USER`          | `deploy`                                                 |
-| `STAGING_SSH_PRIVATE_KEY`   | Full content of `nolon-staging-deploy` (the private key) |
-| `STAGING_SSH_KNOWN_HOSTS`   | Output line of step 3                                    |
-| `STAGING_POSTGRES_PASSWORD` | Output of `openssl rand -hex 24` (letters/digits only)   |
-| `STAGING_BASIC_AUTH_USER`   | e.g. `nolon`                                             |
-| `STAGING_BASIC_AUTH_HASH`   | Output of step 4 (starts with `$2a$`)                    |
+| Secret                        | Value                                                    |
+| ----------------------------- | -------------------------------------------------------- |
+| `STAGING_SSH_HOST`            | Server IP, e.g. `2.28.12.44`                             |
+| `STAGING_SSH_USER`            | `deploy`                                                 |
+| `STAGING_SSH_PRIVATE_KEY`     | Full content of `nolon-staging-deploy` (the private key) |
+| `STAGING_SSH_KNOWN_HOSTS`     | Output line of step 3                                    |
+| `STAGING_POSTGRES_PASSWORD`   | Output of `openssl rand -hex 24` (letters/digits only)   |
+| `STAGING_BASIC_AUTH_USER`     | e.g. `nolon`                                             |
+| `STAGING_BASIC_AUTH_HASH`     | Output of step 4 (starts with `$2a$`)                    |
+| `STAGING_SEED_ADMIN_EMAIL`    | Email of the first NOLON Administrator (required)        |
+| `STAGING_SEED_ADMIN_PASSWORD` | At least 12 characters, no single quote `'`              |
 
 The PostgreSQL password is set when the database volume is first created. Changing the secret
 later does not change the database password; keep it stable.
+
+The seed creates the Administrator only when no user has that email. Changing the secrets later
+does not change an existing user or password; sign in and change it in the app.
 
 ### 6. First deploy
 

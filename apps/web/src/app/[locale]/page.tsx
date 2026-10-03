@@ -30,6 +30,11 @@ export default function HomePage({ params }: { params: Promise<{ locale: string 
       </h1>
       <p>{t('subtitle')}</p>
       <p className="muted">{t('status')}</p>
+      <p>
+        <Link href="/login" className="button primary">
+          {t('signIn')}
+        </Link>
+      </p>
       <Link href="/" locale={otherLocale}>
         {t('switchLocale')}
       </Link>

@@ -30,6 +30,11 @@ services:
     environment:
       DATABASE_URL: *database-url
       ALLOW_DEMO_SEED: 'true'
+      # First Administrator, created by the seed only if missing (GitHub secrets, see DEPLOY.md).
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      # The seed fails (and so the deploy) if no active Administrator exists afterwards.
+      SEED_REQUIRE_ADMIN: 'true'
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,6 +45,9 @@ services:
     environment:
       DATABASE_URL: *database-url
       CORS_ORIGINS: https://${SITE_DOMAIN:?}
+      # Until Caddy trusts the host nginx and passes the real client IP, every sign-in reaches the
+      # API from one address, so only the per-email limit is on (docs/plans/01-auth-and-permissions.md S1).
+      LOGIN_IP_LIMIT_ENABLED: 'false'
     depends_on:
       postgres:
         condition: service_healthy

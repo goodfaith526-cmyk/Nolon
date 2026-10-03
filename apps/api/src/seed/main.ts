@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { normalizeEmail } from '../auth/email.js';
+import { hashPassword } from '../auth/password.js';
 import { loadEnv } from '../config/env.js';
 import { PrismaClient } from '../generated/prisma/client.js';
 import { DEMO_BRANCHES } from './demo-data.js';
@@ -26,6 +28,37 @@ async function seed(): Promise<void> {
       ),
     );
     console.log(`Seeded ${DEMO_BRANCHES.length} branches.`);
+
+    // First Administrator, from env only. Created when missing; an existing user (and their
+    // password) is never changed by the seed.
+    if (env.SEED_ADMIN_EMAIL && env.SEED_ADMIN_PASSWORD) {
+      const email = normalizeEmail(env.SEED_ADMIN_EMAIL);
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) {
+        console.log('Seed admin already exists; left unchanged.');
+      } else {
+        await prisma.user.create({
+          data: {
+            email,
+            fullName: 'Administrator',
+            passwordHash: await hashPassword(env.SEED_ADMIN_PASSWORD),
+            roles: { create: [{ role: 'ADMINISTRATOR' }] },
+          },
+        });
+        console.log('Seed admin created.');
+      }
+    }
+
+    if (env.SEED_REQUIRE_ADMIN) {
+      const admins = await prisma.user.count({
+        where: { isActive: true, roles: { some: { role: 'ADMINISTRATOR' } } },
+      });
+      if (admins === 0) {
+        throw new Error(
+          'No active Administrator: set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (see DEPLOY.md).',
+        );
+      }
+    }
   } finally {
     await prisma.$disconnect();
   }
