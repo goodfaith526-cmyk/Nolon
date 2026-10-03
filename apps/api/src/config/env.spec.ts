@@ -7,6 +7,30 @@ describe('loadEnv', () => {
     expect(env.PORT).toBe(4000);
     expect(env.NODE_ENV).toBe('development');
     expect(env.CORS_ORIGINS).toEqual([]);
+    expect(env.SESSION_TTL_HOURS).toBe(12);
+    expect(env.TRUST_PROXY_HOPS).toBe(0);
+    expect(env.LOGIN_IP_LIMIT_ENABLED).toBe(true);
+  });
+
+  it('parses the auth settings', () => {
+    const env = loadEnv({
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      SESSION_TTL_HOURS: '8',
+      TRUST_PROXY_HOPS: '2',
+      LOGIN_IP_LIMIT_ENABLED: 'false',
+    });
+    expect(env.SESSION_TTL_HOURS).toBe(8);
+    expect(env.TRUST_PROXY_HOPS).toBe(2);
+    expect(env.LOGIN_IP_LIMIT_ENABLED).toBe(false);
+  });
+
+  it('rejects a short seed admin password', () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+        SEED_ADMIN_PASSWORD: 'short',
+      }),
+    ).toThrow(/SEED_ADMIN_PASSWORD/);
   });
 
   it('splits CORS origins', () => {
