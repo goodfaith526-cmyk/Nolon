@@ -22,3 +22,24 @@ model SystemSetting {
 
   @@map("system_settings")
 }
+
+/// Operating branch (DXB, JED, PTS, ATB, KRT). Root of branch scoping: branch-owned tables
+/// reference it. Codes must match BRANCH_CODES in @nolon/shared.
+model Branch {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique @db.VarChar(10)
+  nameEn          String   @map("name_en")
+  nameAr          String   @map("name_ar")
+  /// ISO 3166-1 alpha-2.
+  countryCode     String   @map("country_code") @db.Char(2)
+  city            String
+  /// ISO 4217, one of CURRENCY_CODES in @nolon/shared.
+  defaultCurrency String   @map("default_currency") @db.Char(3)
+  /// IANA time zone, e.g. Asia/Dubai.
+  timezone        String
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("branches")
+}

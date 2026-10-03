@@ -1,0 +1,37 @@
+# Reverse proxy for staging. Caddy obtains and renews the HTTPS certificate for SITE_DOMAIN on
+# its own (ports 80 and 443 must be reachable from the internet).
+# Values come from the environment (see docker-compose.staging.yml and DEPLOY.md).
+
+(basic_auth_on) {
+	# Everything is behind basic auth except the health check the deploy job calls.
+	@protected not path /api/v1/health
+	basic_auth @protected {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+}
+
+(basic_auth_off) {
+}
+
+{$SITE_DOMAIN} {
+	import basic_auth_{$BASIC_AUTH:off}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Staging must not show up in search engines.
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

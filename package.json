@@ -20,6 +20,7 @@
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @nolon/api prisma:migrate:dev",
     "db:deploy": "pnpm --filter @nolon/api prisma:migrate:deploy",
+    "db:seed": "pnpm build:shared && pnpm --filter @nolon/api build && pnpm --filter @nolon/api seed",
     "db:check": "pnpm --filter @nolon/api prisma:check"
   },
   "devDependencies": {

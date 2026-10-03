@@ -14,7 +14,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:check": "prisma validate && prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code"
+    "prisma:check": "prisma validate && prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",
+    "seed": "node dist/seed/main.js"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",

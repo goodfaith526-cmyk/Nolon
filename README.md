@@ -19,6 +19,7 @@ pnpm install
 cp .env.example apps/api/.env
 pnpm db:up                              # PostgreSQL 16 on localhost:5432
 pnpm db:deploy                          # apply migrations
+pnpm db:seed                            # optional: demo data (the 5 branches)
 pnpm dev                                # api on :4000, web on :3000
 ```
 
@@ -34,3 +35,7 @@ pnpm db:check && pnpm test:integration
 
 CI runs the same on every pull request. Changes reach `main` only through a reviewed PR with
 green CI.
+
+## Staging
+
+Every push to `main` that passes CI is deployed to the staging server. Setup: [DEPLOY.md](./DEPLOY.md).
