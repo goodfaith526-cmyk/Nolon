@@ -135,6 +135,7 @@ const addShipmentBody = z.object({ shipmentId: z.uuid() }).strict();
 
 const expenseBody = z
   .object({
+    requestId: z.uuid(),
     expenseDate: dateString,
     description: requiredText(200),
     amount,

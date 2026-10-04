@@ -5,13 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { TripExpenseRequest } from '@nolon/shared';
-import { randomUUID } from 'node:crypto';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { toDbDate, todayIn } from '../common/dates.js';
 import { dec, roundMoney } from '../common/money.js';
+import { isUniqueViolation } from '../common/prisma-errors.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { JournalEntry, Prisma, Trip } from '../generated/prisma/client.js';
@@ -82,7 +82,12 @@ export class TripCostsService {
     );
   }
 
-  /** Rule 10: records an expense of an own-vehicle trip and posts its entry. */
+  /**
+   * Rule 10: records an expense of an own-vehicle trip and posts its entry. The client's
+   * `requestId` becomes the expense id, so a retry or a double submit of the same form (they
+   * queue on the trip lock) finds the first expense and posts nothing more. The currency is
+   * share-locked and checked inside the transaction, so a concurrent deactivation is seen.
+   */
   async addExpense(user: AuthUser, tripId: string, input: TripExpenseRequest): Promise<void> {
     forbidDriverOnly(user, 'pay trip expenses');
     const existing = await this.findScoped(user, tripId);
@@ -91,65 +96,79 @@ export class TripCostsService {
         "An external trip's cost is its agreed amount, accrued on completion",
       );
     }
-    const currency = await this.currencies.requireActive(input.currency);
-    const amount = dec(input.amount);
-    if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
-      throw new BadRequestException(
-        `Amount must be positive with ${currency.decimalPlaces} decimal places`,
-      );
-    }
-    const fxRate = await this.fxRates.resolve(currency.code, input.expenseDate, input.fxRate);
-    const expenseId = randomUUID();
-    await this.prisma.$transaction(async (tx) => {
-      const trip = await lockTrip(tx, tripId);
-      if (!takesExpenses(trip.status)) {
-        throw new ConflictException('A cancelled trip takes no expenses');
-      }
-      await this.accounts.requireCash(tx, input.cashAccountId, trip.branchId, currency.code);
-      const shipmentIds = (
-        await tx.tripShipment.findMany({ where: { tripId }, select: { shipmentId: true } })
-      ).map((l) => l.shipmentId);
-      const shares = await this.split(tx, amount, currency.decimalPlaces, shipmentIds);
-      const year = input.expenseDate.slice(0, 4);
-      const number = formatDocumentNumber(
-        'TEX',
-        await nextSequenceValue(tx, 'TRIP_EXPENSE', year),
-        year,
-      );
-      const entry = await this.autoJournal.tripExpensePosted(
-        tx,
-        {
-          sourceId: expenseId,
-          number,
-          tripNumber: trip.number,
-          branchId: trip.branchId,
-          entryDate: input.expenseDate,
-          currency: currency.code,
-          fxRate,
-          amount,
-          description: input.description,
-          cashAccountId: input.cashAccountId,
-          shares,
-        },
-        user.id,
-      );
-      await tx.tripExpense.create({
-        data: {
-          id: expenseId,
-          number,
-          branchId: trip.branchId,
-          tripId,
-          expenseDate: toDbDate(input.expenseDate),
-          description: input.description,
-          amount,
-          currency: currency.code,
-          fxRate,
-          cashAccountId: input.cashAccountId,
-          journalEntryId: entry.id,
-          createdById: user.id,
-        },
+    const expenseId = input.requestId;
+    const fxRate = await this.fxRates.resolve(input.currency, input.expenseDate, input.fxRate);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const trip = await lockTrip(tx, tripId);
+        const done = await tx.tripExpense.findUnique({
+          where: { id: expenseId },
+          select: { tripId: true },
+        });
+        if (done) {
+          if (done.tripId !== tripId) throw duplicateRequest();
+          return;
+        }
+        if (!takesExpenses(trip.status)) {
+          throw new ConflictException('A cancelled trip takes no expenses');
+        }
+        const currency = await this.currencies.requireActiveInTx(tx, input.currency);
+        const amount = dec(input.amount);
+        if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
+          throw new BadRequestException(
+            `Amount must be positive with ${currency.decimalPlaces} decimal places`,
+          );
+        }
+        await this.accounts.requireCash(tx, input.cashAccountId, trip.branchId, currency.code);
+        const shipmentIds = (
+          await tx.tripShipment.findMany({ where: { tripId }, select: { shipmentId: true } })
+        ).map((l) => l.shipmentId);
+        const shares = await this.split(tx, amount, currency.decimalPlaces, shipmentIds);
+        const year = input.expenseDate.slice(0, 4);
+        const number = formatDocumentNumber(
+          'TEX',
+          await nextSequenceValue(tx, 'TRIP_EXPENSE', year),
+          year,
+        );
+        const entry = await this.autoJournal.tripExpensePosted(
+          tx,
+          {
+            sourceId: expenseId,
+            number,
+            tripNumber: trip.number,
+            branchId: trip.branchId,
+            entryDate: input.expenseDate,
+            currency: currency.code,
+            fxRate,
+            amount,
+            description: input.description,
+            cashAccountId: input.cashAccountId,
+            shares,
+          },
+          user.id,
+        );
+        await tx.tripExpense.create({
+          data: {
+            id: expenseId,
+            number,
+            branchId: trip.branchId,
+            tripId,
+            expenseDate: toDbDate(input.expenseDate),
+            description: input.description,
+            amount,
+            currency: currency.code,
+            fxRate,
+            cashAccountId: input.cashAccountId,
+            journalEntryId: entry.id,
+            createdById: user.id,
+          },
+        });
       });
-    });
+    } catch (error) {
+      // The same request id on another trip: the two trips' locks do not serialize them.
+      if (isUniqueViolation(error)) throw duplicateRequest();
+      throw error;
+    }
   }
 
   /** Cancels a trip expense: posts the reversing entry, dated today in the trip's branch. */
@@ -218,4 +237,8 @@ export class TripCostsService {
     if (!trip) throw new NotFoundException('Trip not found');
     return trip;
   }
+}
+
+function duplicateRequest(): ConflictException {
+  return new ConflictException('This request id was already used for another expense');
 }

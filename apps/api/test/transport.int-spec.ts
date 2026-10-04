@@ -951,6 +951,7 @@ describe('inland transport: trip costs in the books', () => {
     expect(trip.actions.canAddExpense).toBe(true);
     expect(trip.cashAccounts.map((a) => a.id)).toContain(cashSdg.id);
     const expense = {
+      requestId: randomUUID(),
       expenseDate: `${year}-04-02`,
       description: 'Road fees',
       amount: '1000',
@@ -1052,6 +1053,7 @@ describe('inland transport: trip costs in the books', () => {
     expect(trip).toMatchObject({ vehicleLabel: 'KH 4455', carrierName: carrier.name });
     expect(trip.actions.canAddExpense).toBe(false);
     await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+      requestId: randomUUID(),
       expenseDate: `${year}-04-02`,
       description: 'x',
       amount: '1',
@@ -1112,6 +1114,75 @@ describe('inland transport: trip costs in the books', () => {
     expect(accruals).toBe(1);
   });
 
+  it('an expense request sent twice posts once; its id cannot be reused on another trip', async () => {
+    const a = await shipment('1', null);
+    const trip = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: driver.id }, [
+      a,
+    ]);
+    const other = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: driver.id }, [
+      await shipment('1', null),
+    ]);
+    const expense = {
+      requestId: randomUUID(),
+      expenseDate: `${year}-04-02`,
+      description: 'Fuel',
+      amount: '250',
+      currency: 'SDG',
+      cashAccountId: cashSdg.id,
+    };
+    const send = () =>
+      post(`/trips/${trip.id}/expenses`, cookies.opsPts, expense).then((r) => r.status);
+    // Two submits of the same form queue on the trip lock; the second finds the first expense.
+    const { pending } = await t.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "trips" WHERE "id" = ${trip.id}::uuid FOR UPDATE`;
+      const requests = Promise.all([send(), send()]);
+      await waitForLockWaiters(t.prisma, 2);
+      return { pending: requests };
+    });
+    expect(await pending).toEqual([201, 201]);
+    // A retry after the first one committed changes nothing either.
+    expect(await send()).toBe(201);
+    const expenses = await t.prisma.tripExpense.findMany({ where: { tripId: trip.id } });
+    expect(expenses.map((e) => e.id)).toEqual([expense.requestId]);
+    expect(
+      await t.prisma.journalEntry.count({
+        where: { source: 'TRIP_EXPENSE', sourceId: expense.requestId },
+      }),
+    ).toBe(1);
+    await post(`/trips/${other.id}/expenses`, cookies.opsPts, expense).expect(409);
+    await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+      ...expense,
+      requestId: 'not-a-uuid',
+    }).expect(400);
+    expect(await t.prisma.tripExpense.count({ where: { tripId: other.id } })).toBe(0);
+  });
+
+  it('an expense waiting on its currency being deactivated is refused (400)', async () => {
+    const a = await shipment('1', null);
+    const trip = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: driver.id }, [
+      a,
+    ]);
+    try {
+      const { pending } = await t.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`UPDATE "currencies" SET "is_active" = false WHERE "code" = 'SDG'`;
+        const request = post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+          requestId: randomUUID(),
+          expenseDate: `${year}-04-02`,
+          description: 'Tolls',
+          amount: '100',
+          currency: 'SDG',
+          cashAccountId: cashSdg.id,
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await pending).toBe(400);
+      expect(await t.prisma.tripExpense.count({ where: { tripId: trip.id } })).toBe(0);
+    } finally {
+      await t.prisma.currency.update({ where: { code: 'SDG' }, data: { isActive: true } });
+    }
+  });
+
   it('posted expenses fix the shipments of a trip until they are cancelled (409)', async () => {
     const a = await shipment('1', null);
     const b = await shipment('1', null);
@@ -1122,6 +1193,7 @@ describe('inland transport: trip costs in the books', () => {
     ]);
     const withExpense = (
       await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+        requestId: randomUUID(),
         expenseDate: `${year}-04-01`,
         description: 'Loading crew',
         amount: '500',

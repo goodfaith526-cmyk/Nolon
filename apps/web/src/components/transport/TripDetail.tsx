@@ -41,6 +41,8 @@ export function TripDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [addingExpense, setAddingExpense] = useState(false);
+  // One id per expense form: a retry of the same submit cannot post the expense twice.
+  const [expenseRequestId, setExpenseRequestId] = useState('');
   const [expenseAccount, setExpenseAccount] = useState('');
   const [cancelExpenseId, setCancelExpenseId] = useState<string | null>(null);
   const [pod, setPod] = useState<{
@@ -160,6 +162,7 @@ export function TripDetail({ id }: { id: string }) {
     const account = trip.cashAccounts.find((c) => c.id === field(f, 'cashAccountId'));
     if (!account) return;
     const body: TripExpenseRequest = {
+      requestId: expenseRequestId,
       expenseDate: field(f, 'expenseDate'),
       description: field(f, 'description').trim(),
       amount: field(f, 'amount').trim(),
@@ -448,7 +451,14 @@ export function TripDetail({ id }: { id: string }) {
               <p className="muted">{t('expensesHint')}</p>
             </div>
             {a.canAddExpense && !addingExpense && (
-              <button type="button" className="primary" onClick={() => setAddingExpense(true)}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  setExpenseRequestId(crypto.randomUUID());
+                  setAddingExpense(true);
+                }}
+              >
                 {t('addExpense')}
               </button>
             )}
