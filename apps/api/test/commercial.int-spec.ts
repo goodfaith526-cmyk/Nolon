@@ -7,7 +7,6 @@ import type {
   RateCardDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { PrismaService } from '../src/prisma/prisma.service.js';
 import {
   APP_ORIGIN,
   type TestApp,
@@ -17,31 +16,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-
-/** Removes everything the test users created, so the users themselves can be deleted. */
-async function deleteCommercialTestData(prisma: PrismaService): Promise<void> {
-  const createdBy = { createdBy: { email: { startsWith: 'it-' } } };
-  await prisma.booking.deleteMany({ where: createdBy });
-  await prisma.quotation.deleteMany({ where: createdBy });
-  await prisma.rateCard.deleteMany({ where: createdBy });
-  const customers = { customer: createdBy };
-  await prisma.customerContact.deleteMany({ where: customers });
-  await prisma.party.deleteMany({ where: customers });
-  await prisma.customer.deleteMany({ where: createdBy });
-  await prisma.location.deleteMany({ where: { code: { startsWith: 'ZZ' } } });
-}
-
-/** Waits until some session is blocked on a row lock (the request under test reached the lock). */
-async function waitForLockWaiter(prisma: PrismaService): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const rows = await prisma.$queryRaw<{ n: bigint }[]>`
-      SELECT count(*) AS "n" FROM pg_stat_activity
-      WHERE "datname" = current_database() AND "wait_event_type" = 'Lock'`;
-    if ((rows[0]?.n ?? 0n) > 0n) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('No request waited on the lock');
-}
+import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
 
 const PAST = '2020-01-01';
 const FAR_FUTURE = '2099-12-31';

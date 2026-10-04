@@ -93,11 +93,12 @@ export interface CurrencyDto extends CodeNameDto {
   decimalPlaces: number;
 }
 
-/** GET /master-data: everything the commercial screens need for their dropdowns. */
+/** GET /master-data: everything the commercial and shipment screens need for their dropdowns. */
 export interface MasterDataDto {
   locations: LocationDto[];
   containerTypes: CodeNameDto[];
   chargeTypes: CodeNameDto[];
+  documentTypes: CodeNameDto[];
   currencies: CurrencyDto[];
 }
 
@@ -393,6 +394,9 @@ export interface BookingDto extends BookingSummaryDto {
   specialInstructions: string | null;
   cancelReason: string | null;
   confirmedAt: string | null;
+  /** Created when the booking is confirmed. */
+  shipmentId: string | null;
+  shipmentNumber: string | null;
   items: BookingItemDto[];
 }
 

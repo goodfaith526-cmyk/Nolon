@@ -7,9 +7,9 @@ export function StatusBadge({
   kind,
   status,
 }: {
-  kind: 'rate' | 'quotation' | 'booking';
+  kind: 'rate' | 'quotation' | 'booking' | 'shipment';
   status: string;
 }) {
   const te = useTranslations('Enums');
-  return <span className={`badge badge-${status}`}>{te(`${kind}_${status}`)}</span>;
+  return <span className={`badge badge-${kind} badge-${status}`}>{te(`${kind}_${status}`)}</span>;
 }

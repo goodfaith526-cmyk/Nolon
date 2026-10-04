@@ -42,11 +42,14 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users      UserBranch[]
-  customers  Customer[]
-  rateCards  RateCard[]
-  quotations Quotation[]
-  bookings   Booking[]
+  users          UserBranch[]
+  customers      Customer[]
+  rateCards      RateCard[]
+  quotations     Quotation[]
+  bookings       Booking[]
+  shipments      Shipment[]
+  shipmentEvents ShipmentEvent[]
+  documents      Document[]
 
   @@map("branches")
 }
@@ -112,11 +115,15 @@ model User {
   branches UserBranch[]
   sessions Session[]
 
-  customersCreated  Customer[]  @relation("CustomerCreatedBy")
-  ratesCreated      RateCard[]  @relation("RateCreatedBy")
-  ratesApproved     RateCard[]  @relation("RateApprovedBy")
-  quotationsCreated Quotation[] @relation("QuotationCreatedBy")
-  bookingsCreated   Booking[]   @relation("BookingCreatedBy")
+  customersCreated  Customer[]      @relation("CustomerCreatedBy")
+  ratesCreated      RateCard[]      @relation("RateCreatedBy")
+  ratesApproved     RateCard[]      @relation("RateApprovedBy")
+  quotationsCreated Quotation[]     @relation("QuotationCreatedBy")
+  bookingsCreated   Booking[]       @relation("BookingCreatedBy")
+  shipmentsCreated  Shipment[]      @relation("ShipmentCreatedBy")
+  shipmentEvents    ShipmentEvent[]
+  documentsUploaded Document[]      @relation("DocumentUploadedBy")
+  documentsDeleted  Document[]      @relation("DocumentDeletedBy")
 
   @@map("users")
 }
@@ -209,12 +216,16 @@ model Location {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  ratesFrom      RateCard[]  @relation("RateOrigin")
-  ratesTo        RateCard[]  @relation("RateDestination")
-  quotationsFrom Quotation[] @relation("QuotationOrigin")
-  quotationsTo   Quotation[] @relation("QuotationDestination")
-  bookingsFrom   Booking[]   @relation("BookingOrigin")
-  bookingsTo     Booking[]   @relation("BookingDestination")
+  ratesFrom      RateCard[]      @relation("RateOrigin")
+  ratesTo        RateCard[]      @relation("RateDestination")
+  quotationsFrom Quotation[]     @relation("QuotationOrigin")
+  quotationsTo   Quotation[]     @relation("QuotationDestination")
+  bookingsFrom   Booking[]       @relation("BookingOrigin")
+  bookingsTo     Booking[]       @relation("BookingDestination")
+  shipmentsFrom  Shipment[]      @relation("ShipmentOrigin")
+  shipmentsTo    Shipment[]      @relation("ShipmentDestination")
+  shipmentsAt    Shipment[]      @relation("ShipmentCurrentLocation")
+  events         ShipmentEvent[]
 
   @@map("locations")
 }
@@ -227,8 +238,10 @@ model ContainerType {
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  rates        RateCard[]
-  bookingItems BookingItem[]
+  rates              RateCard[]
+  bookingItems       BookingItem[]
+  shipmentItems      ShipmentItem[]
+  shipmentContainers ShipmentContainer[]
 
   @@map("container_types")
 }
@@ -325,6 +338,7 @@ model Customer {
   parties                Party[]
   quotations             Quotation[]
   bookings               Booking[]
+  shipments              Shipment[]
 
   @@index([branchId])
   @@index([phone])
@@ -370,10 +384,13 @@ model Party {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  bookingsShipper   Booking[] @relation("BookingShipper")
-  bookingsConsignee Booking[] @relation("BookingConsignee")
-  bookingsNotify    Booking[] @relation("BookingNotify")
+  customer           Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  bookingsShipper    Booking[]  @relation("BookingShipper")
+  bookingsConsignee  Booking[]  @relation("BookingConsignee")
+  bookingsNotify     Booking[]  @relation("BookingNotify")
+  shipmentsShipper   Shipment[] @relation("ShipmentShipper")
+  shipmentsConsignee Shipment[] @relation("ShipmentConsignee")
+  shipmentsNotify    Shipment[] @relation("ShipmentNotify")
 
   @@index([customerId])
   @@map("parties")
@@ -565,6 +582,7 @@ model Booking {
   notifyParty Party?        @relation("BookingNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
   createdBy   User          @relation("BookingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   items       BookingItem[]
+  shipment    Shipment?
 
   @@index([branchId, status])
   @@index([customerId])
@@ -593,4 +611,255 @@ model BookingItem {
 
   @@unique([bookingId, lineNo])
   @@map("booking_items")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Group 3: shipments, tracking events, documents (annex B section 4).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Internal shipment statuses (annex B section 4). Transitions live in shipments/state-machine.ts.
+ */
+enum ShipmentStatus {
+  CREATED
+  PICKUP_SCHEDULED
+  RECEIVED_ORIGIN_WAREHOUSE
+  CONSOLIDATED
+  LOADED
+  DEPARTED
+  IN_TRANSIT
+  ARRIVED_PORT
+  TRIP_SCHEDULED
+  ROAD_DEPARTED
+  ROAD_IN_TRANSIT
+  ROAD_ARRIVED
+  CUSTOMS_IN_PROGRESS
+  CUSTOMS_CLEARED
+  RECEIVED_DESTINATION_WAREHOUSE
+  OUT_FOR_DELIVERY
+  PARTIALLY_DELIVERED
+  DELIVERED
+  CLOSED
+  ON_HOLD
+  CANCELLED
+
+  @@map("shipment_status")
+}
+
+/**
+ * Who recorded a status change (annex B: user / API / system).
+ */
+enum EventSource {
+  USER
+  API
+  SYSTEM
+
+  @@map("event_source")
+}
+
+enum ShipmentEventKind {
+  CREATED
+  STATUS
+  HOLD
+  RESUME
+  REVERT
+  CANCEL
+
+  @@map("shipment_event_kind")
+}
+
+/**
+ * One shipment per confirmed booking (annex B section 6). Inherits customer, parties, route and
+ * services from the booking; parties, services and transport details can be edited afterwards.
+ * Status changes go through ShipmentsService only, which writes a ShipmentEvent for each.
+ */
+model Shipment {
+  id                    String           @id @default(uuid()) @db.Uuid
+  /// NOL-SHP-2026-000001
+  number                String           @unique @db.VarChar(30)
+  branchId              String           @map("branch_id") @db.Uuid
+  customerId            String           @map("customer_id") @db.Uuid
+  bookingId             String           @unique @map("booking_id") @db.Uuid
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?        @map("load_type")
+  cargoType             CargoType        @map("cargo_type")
+  cargoDescription      String?          @map("cargo_description")
+  services              BookingService[]
+  shipperId             String?          @map("shipper_id") @db.Uuid
+  consigneeId           String?          @map("consignee_id") @db.Uuid
+  notifyPartyId         String?          @map("notify_party_id") @db.Uuid
+  status                ShipmentStatus   @default(CREATED)
+  /// Set while ON_HOLD: the status a resume returns to.
+  statusBeforeHold      ShipmentStatus?  @map("status_before_hold")
+  holdReason            String?          @map("hold_reason")
+  cancelReason          String?          @map("cancel_reason")
+  /// Last location recorded on a status change (city or port; shown on public tracking).
+  currentLocationId     String?          @map("current_location_id") @db.Uuid
+  carrierName           String?          @map("carrier_name") @db.VarChar(200)
+  vesselName            String?          @map("vessel_name") @db.VarChar(200)
+  voyageNumber          String?          @map("voyage_number") @db.VarChar(50)
+  /// Bill of lading (sea) or consignment note (road) number.
+  blNumber              String?          @map("bl_number") @db.VarChar(50)
+  etd                   DateTime?        @db.Date
+  eta                   DateTime?        @db.Date
+  /// Random secret in the public tracking link and QR code. Never derived from the number.
+  trackingToken         String           @unique @map("tracking_token") @db.VarChar(64)
+  createdById           String           @map("created_by_id") @db.Uuid
+  closedAt              DateTime?        @map("closed_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch          Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer        Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  booking         Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  origin          Location            @relation("ShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination     Location            @relation("ShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currentLocation Location?           @relation("ShipmentCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
+  shipper         Party?              @relation("ShipmentShipper", fields: [shipperId], references: [id], onDelete: Restrict)
+  consignee       Party?              @relation("ShipmentConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
+  notifyParty     Party?              @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
+  createdBy       User                @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items           ShipmentItem[]
+  containers      ShipmentContainer[]
+  events          ShipmentEvent[]
+  documents       Document[]
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("shipments")
+}
+
+/**
+ * Cargo lines, copied from the booking when the shipment is created.
+ */
+model ShipmentItem {
+  id                String    @id @default(uuid()) @db.Uuid
+  shipmentId        String    @map("shipment_id") @db.Uuid
+  lineNo            Int       @map("line_no") @db.SmallInt
+  cargoType         CargoType @map("cargo_type")
+  containerTypeCode String?   @map("container_type_code") @db.VarChar(10)
+  description       String?
+  quantity          Int
+  lengthCm          Decimal?  @map("length_cm") @db.Decimal(10, 2)
+  widthCm           Decimal?  @map("width_cm") @db.Decimal(10, 2)
+  heightCm          Decimal?  @map("height_cm") @db.Decimal(10, 2)
+  weightKg          Decimal?  @map("weight_kg") @db.Decimal(12, 3)
+  volumeCbm         Decimal?  @map("volume_cbm") @db.Decimal(12, 4)
+
+  shipment      Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  containerType ContainerType? @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+
+  @@unique([shipmentId, lineNo])
+  @@map("shipment_items")
+}
+
+/**
+ * A container carrying (part of) the shipment: number, seal and type.
+ */
+model ShipmentContainer {
+  id                String   @id @default(uuid()) @db.Uuid
+  shipmentId        String   @map("shipment_id") @db.Uuid
+  /// ISO 6346, e.g. MSCU1234565 (owner code, serial, check digit).
+  containerNumber   String   @map("container_number") @db.VarChar(11)
+  sealNumber        String?  @map("seal_number") @db.VarChar(30)
+  containerTypeCode String   @map("container_type_code") @db.VarChar(10)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment      Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  containerType ContainerType @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+
+  @@unique([shipmentId, containerNumber])
+  @@map("shipment_containers")
+}
+
+/**
+ * Tracking history: one row per status change, hold, resume, revert or cancellation, with time,
+ * branch, location, user, source and note (annex B section 4). Rows are only ever inserted; the
+ * id orders them.
+ */
+model ShipmentEvent {
+  id         BigInt            @id @default(autoincrement())
+  shipmentId String            @map("shipment_id") @db.Uuid
+  kind       ShipmentEventKind
+  /// The shipment's status after this event.
+  status     ShipmentStatus
+  fromStatus ShipmentStatus?   @map("from_status")
+  /// When it happened (may be entered after the fact); the row's id gives the recording order.
+  occurredAt DateTime          @map("occurred_at") @db.Timestamptz(3)
+  branchId   String            @map("branch_id") @db.Uuid
+  locationId String?           @map("location_id") @db.Uuid
+  userId     String?           @map("user_id") @db.Uuid
+  source     EventSource
+  note       String?
+  /// Mandatory for hold, revert and cancel.
+  reason     String?
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([shipmentId, id])
+  @@map("shipment_events")
+}
+
+/**
+ * BL, commercial invoice, packing list, customs, POD, photo... Master data the client extends.
+ */
+model DocumentType {
+  code      String   @id @db.VarChar(30)
+  nameEn    String   @map("name_en")
+  nameAr    String   @map("name_ar")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  documents Document[]
+
+  @@map("document_types")
+}
+
+/**
+ * A file attached to a shipment. The bytes live in document_contents so listing documents never
+ * loads them. Deleting is soft (deletedAt), so the record of who uploaded what remains.
+ */
+model Document {
+  id           String    @id @default(uuid()) @db.Uuid
+  branchId     String    @map("branch_id") @db.Uuid
+  shipmentId   String    @map("shipment_id") @db.Uuid
+  typeCode     String    @map("type_code") @db.VarChar(30)
+  /// Original file name, for display and download only.
+  fileName     String    @map("file_name") @db.VarChar(255)
+  /// Detected from the file's content, never taken from the upload headers.
+  contentType  String    @map("content_type") @db.VarChar(100)
+  sizeBytes    Int       @map("size_bytes")
+  sha256       String    @db.Char(64)
+  note         String?
+  uploadedById String    @map("uploaded_by_id") @db.Uuid
+  uploadedAt   DateTime  @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById  String?   @map("deleted_by_id") @db.Uuid
+
+  branch     Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment   Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  type       DocumentType     @relation(fields: [typeCode], references: [code], onDelete: Restrict)
+  uploadedBy User             @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  deletedBy  User?            @relation("DocumentDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+  content    DocumentContent?
+
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("documents")
+}
+
+model DocumentContent {
+  documentId String @id @map("document_id") @db.Uuid
+  data       Bytes
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_contents")
 }

@@ -621,6 +621,38 @@ tr.inactive td {
   color: var(--warn);
 }
 
+/* Shipments: in progress is blue, held is amber, delivered and closed are green. Cancelled is
+   red through .badge-CANCELLED above. */
+.badge-shipment,
+.badge-public {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.badge-shipment.badge-CREATED,
+.badge-public.badge-REGISTERED {
+  background: var(--neutral-soft);
+  color: var(--muted);
+}
+
+.badge-shipment.badge-ON_HOLD,
+.badge-public.badge-ON_HOLD {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.badge-shipment.badge-DELIVERED,
+.badge-shipment.badge-CLOSED,
+.badge-public.badge-DELIVERED {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-shipment.badge-CANCELLED {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
 /* ---------------------------------------------------------------------------------------------
    Dashboard.
    --------------------------------------------------------------------------------------------- */
@@ -800,4 +832,145 @@ html[dir='rtl'] td[dir='ltr'],
 html[dir='rtl'] th[dir='ltr'],
 html[dir='rtl'] dd[dir='ltr'] {
   text-align: right;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Shipments: timeline, tracking share, inset forms.
+   --------------------------------------------------------------------------------------------- */
+
+.details.flat {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+form.line.inset {
+  padding: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-alt);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding-block: 0.5rem;
+  padding-inline: 1.25rem;
+}
+
+.timeline-item {
+  position: relative;
+  padding-block: 0.25rem 1rem;
+  padding-inline-start: 1.25rem;
+  border-inline-start: 2px solid var(--border);
+}
+
+.timeline-item:last-child {
+  border-inline-start-color: transparent;
+}
+
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: -0.4375rem;
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--brand-blue);
+}
+
+.timeline-item:first-child::before {
+  background: var(--brand-blue);
+}
+
+.timeline-item.kind-HOLD::before,
+.timeline-item.kind-RESUME::before,
+.timeline-item.kind-REVERT::before {
+  border-color: var(--warn);
+}
+
+.timeline-item.kind-CANCEL::before {
+  border-color: var(--bad);
+}
+
+.timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block-end: 0.25rem;
+}
+
+.tracking-share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1.25rem;
+  padding: 1.25rem;
+}
+
+.tracking-share img {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.tracking-share .stack {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+}
+
+.track-page {
+  max-inline-size: 44rem;
+  margin-inline: auto;
+  padding-block: 1.5rem 3rem;
+  padding-inline: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.track-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.track-logo {
+  block-size: auto;
+  max-inline-size: 9rem;
+}
+
+.track-summary h1 {
+  margin: 0;
+}
+
+.track-summary .badge {
+  align-self: flex-start;
+  font-size: 0.9375rem;
+}
+
+.track-route {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: var(--brand-blue-soft);
+}
+
+.track-route > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
+.track-arrow {
+  font-size: 1.5rem;
+  color: var(--brand-orange);
 }

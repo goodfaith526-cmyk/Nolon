@@ -93,6 +93,11 @@ export function BookingDetail({ id }: { id: string }) {
             {t('openQuotation')}
           </Link>
         )}
+        {booking.shipmentId && can(me, 'shipments:view') && (
+          <Link href={`/shipments/${booking.shipmentId}`} className="button">
+            {t('openShipment')} <span dir="ltr">{booking.shipmentNumber}</span>
+          </Link>
+        )}
       </div>
       {cancelling && (
         <form
