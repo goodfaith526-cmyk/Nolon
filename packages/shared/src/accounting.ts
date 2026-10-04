@@ -390,14 +390,21 @@ export type StatementLineKind = (typeof STATEMENT_LINE_KINDS)[number];
 
 /** One posted entry on the customer's receivable and advance accounts, in one currency. */
 export interface CustomerStatementLineDto {
-  entryId: string;
-  entryNumber: string;
+  /**
+   * The journal entry. Null, with `detailsHidden`, for an entry with no invoice or receipt behind
+   * it (a manual entry or its reversal) when the user may not view journal entries.
+   */
+  entryId: string | null;
+  entryNumber: string | null;
   date: DateString;
   kind: StatementLineKind;
   /** The invoice or receipt the entry came from (or that it reversed), when there is one. */
   documentId: string | null;
   documentNumber: string | null;
+  /** The entry's description, or a fixed generic one when `detailsHidden`. */
   description: string;
+  /** The entry's number, id and text are withheld; its amounts are shown. */
+  detailsHidden: boolean;
   debit: DecimalString;
   credit: DecimalString;
   /** Running balance after this line: debit - credit, positive when the customer owes. */

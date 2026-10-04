@@ -1302,7 +1302,7 @@
     "bookingNote": "We confirm your booking on the terms above. Please quote the booking number in all correspondence.",
     "shipmentSheetTitle": "Shipment sheet",
     "labelsCount": "{count, plural, one {# label} other {# labels}} of {total} packages",
-    "labelsTruncated": "Only the first {count} labels are laid out. Print the rest one cargo line at a time.",
+    "labelsTruncated": "Labels are laid out {count} at a time.",
     "noPackages": "The cargo lines have no packages to label.",
     "package": "Package",
     "lineWeight": "Line {line} weight:",
@@ -1324,7 +1324,7 @@
     "totalUsd": "Total (USD)",
     "statementTitle": "Statement of account",
     "statementEmpty": "No posted invoices or receipts for this customer up to this date.",
-    "statementNote": "Posted invoices and receipts only. Amounts are in each currency; a negative balance is a credit (an advance) in the customer's favour.",
+    "statementNote": "Posted entries only: invoices, receipts and their cancellations, and any other posted entry on the customer's account. Amounts are in each currency; a negative balance is a credit (an advance) in the customer's favour.",
     "period": "From {from} to {to}",
     "from": "From",
     "to": "To",
@@ -1363,6 +1363,8 @@
     "printStatement": "Statement of account",
     "printDeliveryNote": "Delivery note",
     "printNote": "Print note",
-    "reportFilters": "Filters"
+    "reportFilters": "Filters",
+    "labelsNext": "Next labels, from package {from}",
+    "hiddenEntry": "Accounting entry"
   }
 }

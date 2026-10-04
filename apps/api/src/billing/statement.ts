@@ -15,13 +15,14 @@ export interface StatementOpening {
 
 /** One posted entry on the customer's accounts in the period, in one currency, in date order. */
 export interface StatementMovement {
-  entryId: string;
-  number: string;
+  entryId: string | null;
+  number: string | null;
   entryDate: string;
   kind: StatementLineKind;
   documentId: string | null;
   documentNumber: string | null;
   description: string;
+  detailsHidden: boolean;
   currency: string;
   debit: Decimal;
   credit: Decimal;
@@ -76,6 +77,7 @@ export function buildStatementSections(
           documentId: m.documentId,
           documentNumber: m.documentNumber,
           description: m.description,
+          detailsHidden: m.detailsHidden,
           debit: m.debit.toFixed(),
           credit: m.credit.toFixed(),
           balance: balance.toFixed(),

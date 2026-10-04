@@ -7,6 +7,9 @@ import { CustomersService } from '../customers/customers.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { buildStatementSections, statementKind } from './statement.js';
 
+/** What a statement says of an entry whose details the user may not see. */
+export const HIDDEN_ENTRY_DESCRIPTION = 'Accounting entry';
+
 export interface StatementQuery {
   customerId: string;
   from: string;
@@ -77,19 +80,24 @@ export class CustomerStatementService {
       ...receipts.map((r): [string, string | null] => [r.id, r.number]),
     ]);
 
+    // An entry with no invoice or receipt behind it (a manual entry, or its reversal) is only
+    // shown in full to users who may view journal entries: its text and number are theirs.
+    const seesJournals = user.permissions.has('manual_journals:view');
     const sections = buildStatementSections(
       opening,
       movements.map((m) => {
         const document = documentOf(m);
         const known = document.id !== null && numbers.has(document.id);
+        const hidden = !known && !seesJournals;
         return {
-          entryId: m.entryId,
-          number: m.number,
+          entryId: hidden ? null : m.entryId,
+          number: hidden ? null : m.number,
           entryDate: m.entryDate,
           kind: statementKind(m.source, m.reversedSource),
           documentId: known ? document.id : null,
           documentNumber: known && document.id !== null ? (numbers.get(document.id) ?? null) : null,
-          description: m.description,
+          description: hidden ? HIDDEN_ENTRY_DESCRIPTION : m.description,
+          detailsHidden: hidden,
           currency: m.currency,
           debit: m.debit,
           credit: m.credit,

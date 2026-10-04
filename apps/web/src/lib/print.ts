@@ -19,32 +19,37 @@ export interface PackageLabel<T extends LabelLine> {
 }
 
 /**
- * One label per package, in cargo-line order: a line of quantity 3 gives three labels. Each label
- * is numbered across the whole shipment ("4 of 10"). With `onlyLine`, only that line's labels
- * (still numbered across the shipment). At most `max` labels are laid out; `truncated` says some
- * were left out.
+ * One label per package, in cargo-line order: a line of quantity 3 gives three labels, numbered
+ * across the whole shipment ("4 of 10"); `total` is the shipment's package count as the API gave
+ * it. With `onlyLine`, only that line's labels (still numbered across the shipment). Labels start
+ * at package `from` (default 1) and at most `max` are laid out in one batch; when more remain,
+ * `nextFrom` is the package number the next batch starts at (null when this batch is the last).
  */
 export function packageLabels<T extends LabelLine>(
   lines: readonly T[],
-  options: { onlyLine?: number; max?: number } = {},
-): { labels: PackageLabel<T>[]; total: number; truncated: boolean } {
+  total: number,
+  options: { onlyLine?: number; from?: number; max?: number } = {},
+): { labels: PackageLabel<T>[]; nextFrom: number | null } {
   const max = options.max ?? MAX_LABELS;
-  const total = lines.reduce((n, l) => n + Math.max(0, l.quantity), 0);
+  const from = Math.max(1, options.from ?? 1);
   const labels: PackageLabel<T>[] = [];
   let index = 0;
-  let truncated = false;
   for (const line of lines) {
-    for (let i = 0; i < Math.max(0, line.quantity); i++) {
+    const count = Math.max(0, line.quantity);
+    const wanted = options.onlyLine === undefined || line.lineNo === options.onlyLine;
+    // Lines entirely before the batch, or not printed, only move the numbering on.
+    if (!wanted || index + count < from) {
+      index += count;
+      continue;
+    }
+    for (let i = 0; i < count; i++) {
       index += 1;
-      if (options.onlyLine !== undefined && line.lineNo !== options.onlyLine) continue;
-      if (labels.length >= max) {
-        truncated = true;
-        continue;
-      }
+      if (index < from) continue;
+      if (labels.length === max) return { labels, nextFrom: index };
       labels.push({ index, total, line });
     }
   }
-  return { labels, total, truncated };
+  return { labels, nextFrom: null };
 }
 
 /** The first day of the year of a yyyy-mm-dd date. */

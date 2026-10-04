@@ -328,16 +328,16 @@ export function StatementPrint({
                     <Money value={section.openingBalance} />
                   </td>
                 </tr>
-                {section.lines.map((l) => (
-                  <tr key={l.entryId}>
+                {section.lines.map((l, i) => (
+                  <tr key={l.entryId ?? `hidden-${i}`}>
                     <td dir="ltr">{l.date}</td>
                     <td>
                       {t(`kind_${l.kind}`)}
                       <div dir="ltr" className="muted">
-                        {l.documentNumber ?? l.entryNumber}
+                        {l.documentNumber ?? l.entryNumber ?? '—'}
                       </div>
                     </td>
-                    <td>{l.description}</td>
+                    <td>{l.detailsHidden ? t('hiddenEntry') : l.description}</td>
                     <td className="num">{l.debit === '0' ? '' : <Money value={l.debit} />}</td>
                     <td className="num">{l.credit === '0' ? '' : <Money value={l.credit} />}</td>
                     <td className="num">

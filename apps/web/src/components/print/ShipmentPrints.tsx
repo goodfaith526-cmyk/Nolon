@@ -4,6 +4,7 @@ import type { ShipmentDto, ShipmentPodsDto, ShipmentWarehouseDto } from '@nolon/
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { Link } from '@/i18n/navigation';
 import { packageLabels } from '@/lib/print';
 import { useRecord } from '../finance/common';
 import { can, useMe } from '../StaffShell';
@@ -121,7 +122,15 @@ export function ShipmentSheetPrint({ id }: { id: string }) {
  * Printout 4: package labels, one per package (pallet, barrel, piece) on a 100 × 150 mm label,
  * numbered across the shipment, with the tracking QR code. `line` prints one cargo line only.
  */
-export function PackageLabelsPrint({ id, line }: { id: string; line?: number }) {
+export function PackageLabelsPrint({
+  id,
+  line,
+  from,
+}: {
+  id: string;
+  line?: number;
+  from?: number;
+}) {
   const tp = useTranslations('Print');
   const te = useTranslations('Enums');
   const master = useMasterData();
@@ -129,21 +138,32 @@ export function PackageLabelsPrint({ id, line }: { id: string; line?: number }) 
   const { record: s, notice } = useRecord<ShipmentDto>(`/shipments/${id}`);
   const qr = useQrSrc(s?.id ?? null);
   if (!s) return <PrintPending notice={notice} />;
-  const { labels, total, truncated } = packageLabels(s.items, { onlyLine: line });
+  const total = s.packages;
+  const { labels, nextFrom } = packageLabels(s.items, total, { onlyLine: line, from });
+  const nextHref =
+    nextFrom === null
+      ? null
+      : `/print/shipments/${id}/labels?${new URLSearchParams({
+          ...(line === undefined ? {} : { line: String(line) }),
+          from: String(nextFrom),
+        }).toString()}`;
   const location = (locationId: string) => {
     const l = master?.locations.find((x) => x.id === locationId);
     return l ? { code: l.code, name: name(l) } : { code: '…', name: '' };
   };
-  const from = location(s.originLocationId);
-  const to = location(s.destinationLocationId);
+  const origin = location(s.originLocationId);
+  const destination = location(s.destinationLocationId);
   return (
     <>
       <PageStyle size="100mm 150mm" margin="0" />
       <PrintToolbar back={`/shipments/${id}`} ready={master !== null && qr !== null}>
         <span>{tp('labelsCount', { count: labels.length, total })}</span>
       </PrintToolbar>
-      {truncated && (
-        <p className="error no-print">{tp('labelsTruncated', { count: labels.length })}</p>
+      {nextHref && (
+        <p className="error no-print">
+          {tp('labelsTruncated', { count: labels.length })}{' '}
+          <Link href={nextHref}>{tp('labelsNext', { from: nextFrom ?? 0 })}</Link>
+        </p>
       )}
       {labels.length === 0 && <p className="muted no-print">{tp('noPackages')}</p>}
       <div className="labels">
@@ -154,11 +174,13 @@ export function PackageLabelsPrint({ id, line }: { id: string; line?: number }) 
               <span dir="ltr">{s.number}</span>
             </div>
             <div className="label-route" dir="ltr">
-              <span>{from.code}</span>
+              <span>{origin.code}</span>
               <span aria-hidden="true">→</span>
-              <span>{to.code}</span>
+              <span>{destination.code}</span>
             </div>
-            <div className="label-places">{tp('routeNames', { from: from.name, to: to.name })}</div>
+            <div className="label-places">
+              {tp('routeNames', { from: origin.name, to: destination.name })}
+            </div>
             <div className="label-count">
               <span>{tp('package')}</span>
               <strong dir="ltr">

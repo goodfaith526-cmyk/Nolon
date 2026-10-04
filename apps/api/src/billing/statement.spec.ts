@@ -17,6 +17,7 @@ function movement(
     documentId: null,
     documentNumber: null,
     description: number,
+    detailsHidden: false,
     currency,
     debit: dec(debit),
     credit: dec(credit),
