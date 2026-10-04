@@ -226,13 +226,31 @@ export function arAgingSheets(
   const bucketColumns = AGING_BUCKETS.map((b) => amount(t(b)));
   const summary: SheetSpec = {
     name: t('byCustomer'),
-    columns: [text(t('customer'), 36), ...bucketColumns, amount(t('totalUsd'))],
+    columns: [
+      text(t('customer'), 36),
+      ...bucketColumns,
+      amount(t('totalUsd')),
+      amount(t('advancesUsd')),
+      amount(t('netUsd')),
+    ],
     rows: [
       ...r.customers.map((c) => ({
-        cells: [c.customerName, ...AGING_BUCKETS.map((b) => c.amounts[b]), c.amounts.total],
+        cells: [
+          c.customerName,
+          ...AGING_BUCKETS.map((b) => c.amounts[b]),
+          c.amounts.total,
+          c.advancesUsd,
+          c.netUsd,
+        ],
       })),
       {
-        cells: [t('total'), ...AGING_BUCKETS.map((b) => r.totals[b]), r.totals.total],
+        cells: [
+          t('total'),
+          ...AGING_BUCKETS.map((b) => r.totals[b]),
+          r.totals.total,
+          r.totalAdvancesUsd,
+          r.netUsd,
+        ],
         bold: true,
       },
     ],

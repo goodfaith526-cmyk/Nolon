@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
-  ArAgingCustomerDto,
+  AgingAmountsDto,
   ArAgingDto,
   ArAgingInvoiceDto,
   InvoicesReceiptsDto,
@@ -20,6 +20,11 @@ import { AgingTotals, agingBucket, daysPastDue } from './aging.js';
  * approved invoices and receipts whose journal entries are POSTED count, in the report's branches
  * (the requested one, checked against the user's, or all of the user's).
  */
+/** AR aging from the invoices alone; the reports module adds the customers' advances. */
+export type InvoiceAging = Omit<ArAgingDto, 'customers' | 'totalAdvancesUsd' | 'netUsd'> & {
+  customers: { customerId: string; customerName: string; amounts: AgingAmountsDto }[];
+};
+
 @Injectable()
 export class BillingReportsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -34,7 +39,7 @@ export class BillingReportsService {
     asOf: string,
     branchId?: string,
     customerId?: string,
-  ): Promise<ArAgingDto> {
+  ): Promise<InvoiceAging> {
     const branchIds = reportBranchIds(user, branchId);
     const at = toDbDate(asOf);
     const onlyCustomer = customerId
@@ -116,7 +121,7 @@ export class BillingReportsService {
         bucket,
       };
     });
-    const customers: ArAgingCustomerDto[] = [...byCustomer].map(([id, c]) => ({
+    const customers = [...byCustomer].map(([id, c]) => ({
       customerId: id,
       customerName: c.name,
       amounts: c.totals.toDto(),
@@ -132,8 +137,9 @@ export class BillingReportsService {
   }
 
   /**
-   * Approved invoices dated in the period and receipts dated in it (cancelled ones included and
-   * marked; the received total leaves them out). A receipt's USD value is its cash line's, the
+   * Approved invoices dated in the period and receipts dated in it. A receipt is shown cancelled,
+   * and left out of the received total, only when its cancellation entry is posted and dated on or
+   * before the end of the period (as in AR aging): a later cancellation does not rewrite the past. A receipt's USD value is its cash line's, the
    * amount at the receipt's rate.
    */
   async invoicesAndReceipts(
@@ -169,6 +175,7 @@ export class BillingReportsService {
           branch: { select: { code: true } },
           customer: { select: { name: true } },
           cashAccount: { select: { code: true } },
+          cancelJournal: { select: { status: true, entryDate: true } },
         },
         orderBy: [{ receiptDate: 'asc' }, { number: 'asc' }],
       }),
@@ -184,7 +191,10 @@ export class BillingReportsService {
       amount: r.amount.toFixed(),
       amountUsd: toUsd(r.amount, r.fxRate, r.currency),
       cashAccountCode: r.cashAccount.code,
-      status: r.status,
+      status:
+        r.cancelJournal?.status === 'POSTED' && r.cancelJournal.entryDate <= toDbDate(to)
+          ? ('CANCELLED' as const)
+          : ('POSTED' as const),
     }));
     return {
       from,

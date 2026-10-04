@@ -43,6 +43,9 @@ describe('financial reports', () => {
   let pts: string;
   let jed: string;
   let customer: CustomerDto;
+  /** A customer whose only dealing is an unallocated receipt (an advance). */
+  let advanceCustomer: CustomerDto;
+  let cashAdvance: AccountDto;
   let cashUsd: AccountDto;
   let cashSdg: AccountDto;
   let accounts: Map<string, AccountDto>;
@@ -210,6 +213,7 @@ describe('financial reports', () => {
       ).body as AccountDto;
     cashUsd = await cash(`R${suffix}U`, 'USD');
     cashSdg = await cash(`R${suffix}S`, 'SDG');
+    cashAdvance = await cash(`R${suffix}A`, 'USD');
     const list = (await get('/accounting/accounts', cookies.financePts).expect(200))
       .body as AccountDto[];
     accounts = new Map(list.map((a) => [a.code, a]));
@@ -280,6 +284,25 @@ describe('financial reports', () => {
     await post(`/receipts/${receipts.r3.id}/cancel`, cookies.financePts, {
       reason: 'Bounced',
     }).expect(200);
+
+    // An advance: 70 USD received from another customer, allocated to nothing.
+    advanceCustomer = (
+      await post('/customers', cookies.salesPts, {
+        branchId: pts,
+        kind: 'COMPANY',
+        name: `Ledger Advance ${year} ${randomUUID().slice(0, 4)}`,
+        phone: '+249912000445',
+        preferredCurrency: 'USD',
+      }).expect(201)
+    ).body as CustomerDto;
+    await post('/receipts', cookies.financePts, {
+      customerId: advanceCustomer.id,
+      receiptDate: d('03-25'),
+      currency: 'USD',
+      amount: '70',
+      cashAccountId: cashAdvance.id,
+      allocations: [],
+    }).expect(201);
 
     // Cost: an external carrier trip of 400 USD for S1 and S2, shared by volume (250 / 150),
     // completed on 20 February: accrued transport costs (rule 11).
@@ -409,8 +432,9 @@ describe('financial reports', () => {
       expect(row(after.assets, cashUsd.code)).toBe('450');
       expect(row(after.assets, cashSdg.code)).toBe('600');
       expect(change((r) => row(r.liabilities, '2300'))).toBe('400');
-      expect(change((r) => r.totalAssetsUsd)).toBe('2350');
-      expect(change((r) => r.totalLiabilitiesUsd)).toBe('400');
+      expect(change((r) => r.totalAssetsUsd)).toBe('2420');
+      expect(change((r) => r.totalLiabilitiesUsd)).toBe('470');
+      expect(change((r) => row(r.liabilities, '2200'))).toBe('70');
       expect(change((r) => r.unclosedEarningsUsd)).toBe('1950');
       expect(change((r) => r.totalEquityUsd)).toBe('1950');
     });
@@ -472,11 +496,16 @@ describe('financial reports', () => {
     });
 
     it('another branch sees no lines; unknown accounts are 404; Sales is 403', async () => {
-      const jedView = await report<GeneralLedgerDto>(
+      // A PTS cash account is PTS's: for JED it is as unknown as a random id.
+      await get(
         `/reports/general-ledger?${yearQuery()}&accountIds=${cashUsd.id}`,
         cookies.financeJed,
+      ).expect(404);
+      const jedView = await report<GeneralLedgerDto>(
+        `/reports/general-ledger?${yearQuery()}&accountIds=${account('1200').id}`,
+        cookies.financeJed,
       );
-      expect(jedView.accounts[0]).toMatchObject({ openingUsd: '0', lines: [], closingUsd: '0' });
+      expect(jedView.accounts[0]?.lines.map((l) => l.branchCode)).not.toContain('PTS');
       await get(
         `/reports/general-ledger?${yearQuery()}&accountIds=${randomUUID()}`,
         cookies.financePts,
@@ -511,6 +540,41 @@ describe('financial reports', () => {
         over90: '0',
         total: '1300',
       });
+      expect(r.customers[0]).toMatchObject({ advancesUsd: '0', netUsd: '1300' });
+      expect(r).toMatchObject({ totalAdvancesUsd: '0', netUsd: '1300' });
+    });
+
+    it('shows unapplied advances and nets them, also for a customer with only an advance', async () => {
+      const before = await report<ArAgingDto>(
+        `/reports/ar-aging?asOf=${d('03-24')}&customerId=${advanceCustomer.id}`,
+      );
+      expect(before.customers).toEqual([]);
+      const r = await report<ArAgingDto>(
+        `/reports/ar-aging?asOf=${d('03-31')}&branchId=${pts}&customerId=${advanceCustomer.id}`,
+      );
+      expect(r.invoices).toEqual([]);
+      expect(r.customers).toEqual([
+        {
+          customerId: advanceCustomer.id,
+          customerName: advanceCustomer.name,
+          amounts: {
+            current: '0',
+            days1to30: '0',
+            days31to60: '0',
+            days61to90: '0',
+            over90: '0',
+            total: '0',
+          },
+          advancesUsd: '70',
+          netUsd: '-70',
+        },
+      ]);
+      expect(r).toMatchObject({ totalAdvancesUsd: '70', netUsd: '-70' });
+      const jedView = await report<ArAgingDto>(
+        `/reports/ar-aging?asOf=${d('03-31')}&customerId=${advanceCustomer.id}`,
+        cookies.financeJed,
+      );
+      expect(jedView.customers).toEqual([]);
     });
 
     it('receipts count from their date and stop counting once cancelled', async () => {
@@ -616,9 +680,18 @@ describe('financial reports', () => {
       expect(r.receipts.map((x) => [x.number, x.amount, x.amountUsd, x.status])).toEqual([
         [receipts.r1.number, '400', '400', 'POSTED'],
         [receipts.r2.number, '300000', '600', 'POSTED'],
-        [receipts.r3.number, '100', '100', 'CANCELLED'],
+        // Cancelled today, after this period: it still counts in it.
+        [receipts.r3.number, '100', '100', 'POSTED'],
       ]);
       expect(r.totalInvoicedUsd).toBe('2300');
+      expect(r.totalReceivedUsd).toBe('1100');
+    });
+
+    it('a receipt cancelled within the period is marked and left out of the total', async () => {
+      const r = await report<InvoicesReceiptsDto>(
+        `/reports/invoices-receipts?from=${d('01-01')}&to=2999-12-31&customerId=${customer.id}`,
+      );
+      expect(r.receipts.find((x) => x.receiptId === receipts.r3.id)?.status).toBe('CANCELLED');
       expect(r.totalReceivedUsd).toBe('1000');
     });
 
@@ -663,6 +736,8 @@ describe('financial reports', () => {
         closingUsd: '600',
       });
       expect(sdg.fx).toMatchObject({ gainUsd: '100', lossUsd: '0', netUsd: '100' });
+      // The FX section follows the chosen account: no difference on receipts into the USD cash.
+      expect(usd.fx).toEqual({ gainUsd: '0', lossUsd: '0', netUsd: '0', lines: [] });
       expect(sdg.fx.lines).toEqual([
         expect.objectContaining({ entryDate: d('03-05'), amountUsd: '100', branchCode: 'PTS' }),
       ]);
@@ -674,12 +749,16 @@ describe('financial reports', () => {
     });
 
     it('another branch sees nothing of PTS cash; 403 for its branch or without permission', async () => {
-      const jedView = await report<CashMovementDto>(
+      await get(
         `/reports/cash-movement?${yearQuery()}&accountId=${cashUsd.id}`,
         cookies.financeJed,
+      ).expect(404);
+      const jedView = await report<CashMovementDto>(
+        `/reports/cash-movement?${yearQuery()}`,
+        cookies.financeJed,
       );
-      expect(jedView.accounts).toEqual([]);
-      expect(jedView.fx.lines).toEqual([]);
+      expect(jedView.accounts.map((a) => a.accountId)).not.toContain(cashUsd.id);
+      expect(jedView.fx.lines.map((l) => l.branchCode)).not.toContain('PTS');
       await get(`/reports/cash-movement?${yearQuery()}&branchId=${pts}`, cookies.financeJed).expect(
         403,
       );
@@ -724,6 +803,86 @@ describe('financial reports', () => {
         cookies.financeJed,
       ).expect(403);
       await get(`/reports/open-accruals?asOf=${d('12-31')}`, cookies.salesPts).expect(403);
+    });
+  });
+
+  describe('accounts of other branches', () => {
+    it('another branch’s cash account is not offered and is 404 in the reports', async () => {
+      const dxbCash = (
+        await post('/accounting/accounts', cookies.admin, {
+          code: `R${randomUUID().slice(0, 6).toUpperCase()}D`,
+          nameEn: 'Report test cash DXB',
+          nameAr: 'نقدية اختبار دبي',
+          type: 'ASSET',
+          isPostable: true,
+          isCash: true,
+          currency: 'AED',
+          branchId: await branchId(t.prisma, 'DXB'),
+        }).expect(201)
+      ).body as AccountDto;
+      const jedList = await report<ReportAccountOptionDto[]>(
+        '/reports/accounts',
+        cookies.financeJed,
+      );
+      const ids = jedList.map((a) => a.accountId);
+      expect(ids).not.toContain(dxbCash.id);
+      expect(ids).toContain(account('1200').id);
+      const adminList = await report<ReportAccountOptionDto[]>('/reports/accounts', cookies.admin);
+      expect(adminList.map((a) => a.accountId)).toContain(dxbCash.id);
+      await get(
+        `/reports/cash-movement?${yearQuery()}&accountId=${dxbCash.id}`,
+        cookies.financeJed,
+      ).expect(404);
+      await get(
+        `/reports/general-ledger?${yearQuery()}&accountIds=${dxbCash.id}`,
+        cookies.financeJed,
+      ).expect(404);
+      await get(
+        `/reports/cash-movement?${yearQuery()}&accountId=${dxbCash.id}`,
+        cookies.admin,
+      ).expect(200);
+    });
+  });
+
+  describe('history survives a remap of the posting roles', () => {
+    it('open accruals and realized FX keep the accounts they were posted to', async () => {
+      const suffix = randomUUID().slice(0, 6).toUpperCase();
+      const newAccount = async (code: string, type: string) =>
+        (
+          await post('/accounting/accounts', cookies.admin, {
+            code,
+            nameEn: `Report remap ${type}`,
+            nameAr: 'حساب اختبار إعادة الربط',
+            type,
+            isPostable: true,
+          }).expect(201)
+        ).body as AccountDto;
+      const accrued = await newAccount(`R${suffix}L`, 'LIABILITY');
+      const gain = await newAccount(`R${suffix}G`, 'REVENUE');
+      const map = (role: string, accountId: string) =>
+        t
+          .http()
+          .put(`/api/v1/accounting/settings/mappings/${role}`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', cookies.admin)
+          .send({ accountId })
+          .expect(200);
+      await map('ACCRUED_TRANSPORT', accrued.id);
+      await map('FX_GAIN', gain.id);
+      try {
+        const accruals = await report<OpenAccrualsDto>(
+          `/reports/open-accruals?asOf=${d('12-31')}&branchId=${pts}`,
+        );
+        expect(accruals.accruedAccount?.code).toBe(accrued.code);
+        expect(accruals.trips.find((x) => x.tripId === trip.id)?.balanceUsd).toBe('400');
+        const cash = await report<CashMovementDto>(
+          `/reports/cash-movement?${yearQuery()}&accountId=${cashSdg.id}`,
+        );
+        expect(cash.fx).toMatchObject({ gainUsd: '100', netUsd: '100' });
+      } finally {
+        await map('ACCRUED_TRANSPORT', account('2300').id);
+        await map('FX_GAIN', account('4900').id);
+      }
     });
   });
 

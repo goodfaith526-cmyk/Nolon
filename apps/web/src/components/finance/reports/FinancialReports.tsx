@@ -170,6 +170,7 @@ export function GeneralLedger() {
     >
       {(r) => (
         <div className="stack">
+          <p className="muted">{t('generalLedgerOpeningNote')}</p>
           {r.accounts.map((a) => (
             <ReportTable key={a.accountId} title={`${a.code} · ${name(a)}`}>
               <thead>
@@ -253,17 +254,21 @@ export function ArAging() {
                   <th key={b}>{t(`bucket_${b}`)}</th>
                 ))}
                 <th>{t('totalUsd')}</th>
+                <th>{t('advancesUsd')}</th>
+                <th>{t('netUsd')}</th>
               </tr>
             </thead>
             <tbody>
-              {r.customers.length === 0 && <EmptyRow columns={7} text={t('nothingOpen')} />}
+              {r.customers.length === 0 && <EmptyRow columns={9} text={t('nothingOpen')} />}
               {r.customers.map((c) => (
                 <tr key={c.customerId}>
                   <td>{c.customerName}</td>
                   {AGING_BUCKETS.map((b) => (
                     <AmountCell key={b} value={c.amounts[b]} />
                   ))}
-                  <AmountCell value={c.amounts.total} strong />
+                  <AmountCell value={c.amounts.total} />
+                  <AmountCell value={c.advancesUsd} />
+                  <AmountCell value={c.netUsd} strong />
                 </tr>
               ))}
               <tr className="subtotal">
@@ -271,7 +276,9 @@ export function ArAging() {
                 {AGING_BUCKETS.map((b) => (
                   <AmountCell key={b} value={r.totals[b]} />
                 ))}
-                <AmountCell value={r.totals.total} strong />
+                <AmountCell value={r.totals.total} />
+                <AmountCell value={r.totalAdvancesUsd} />
+                <AmountCell value={r.netUsd} strong />
               </tr>
             </tbody>
           </ReportTable>

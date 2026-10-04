@@ -23,6 +23,7 @@ import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { FX_DIFFERENCE_LINE } from './auto-journal.service.js';
 import { naturalBalance, sum } from './report-math.js';
 
 /** Revenue and cost of one shipment from its journal lines (shipment dimension). */
@@ -32,9 +33,9 @@ export interface ShipmentResult {
   costUsd: Decimal;
 }
 
-/** Accrued transport still open for one trip (null: lines that come from no trip). */
+/** Accrued transport still open for one trip. */
 export interface TripAccrual {
-  tripId: string | null;
+  tripId: string;
   currency: string;
   balance: Decimal;
   balanceUsd: Decimal;
@@ -56,6 +57,17 @@ interface AccountRow {
 /** `l."branch_id" IN (...)`: the line's own branch, among the report's branches. */
 function lineBranchIn(branchIds: readonly string[]): Prisma.Sql {
   return Prisma.sql`l."branch_id" IN (${Prisma.join(branchIds.map((id) => Prisma.sql`${id}::uuid`))})`;
+}
+
+/**
+ * Accounts a user may name in a report filter: the chart is global, but a cash or bank account
+ * tied to a branch belongs to that branch (AGENTS.md rule 2). Another branch's cash account is
+ * treated like an unknown id.
+ */
+function visibleAccount(user: AuthUser): Prisma.AccountWhereInput {
+  return {
+    OR: [{ isCash: false }, { branchId: null }, { branchId: { in: [...user.allowedBranchIds] } }],
+  };
 }
 
 function account(row: AccountRow): ReportAccountDto {
@@ -86,9 +98,9 @@ export class LedgerReportsService {
    * The postable accounts, for the account filters of the reports (the chart is global master
    * data; users who may read reports but not the chart still pick accounts here).
    */
-  async accountOptions(): Promise<ReportAccountOptionDto[]> {
+  async accountOptions(user: AuthUser): Promise<ReportAccountOptionDto[]> {
     const accounts = await this.prisma.account.findMany({
-      where: { isPostable: true },
+      where: { isPostable: true, ...visibleAccount(user) },
       select: {
         id: true,
         code: true,
@@ -237,7 +249,7 @@ export class LedgerReportsService {
     const branchIds = reportBranchIds(user, branchId);
     const ids = [...new Set(accountIds)];
     const accounts = await this.prisma.account.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, ...visibleAccount(user) },
       select: { id: true, code: true, nameEn: true, nameAr: true, type: true },
       orderBy: { code: 'asc' },
     });
@@ -331,8 +343,9 @@ export class LedgerReportsService {
 
   /**
    * Cash and bank accounts (isCash): opening, money in (debits), money out (credits) and closing,
-   * in the account's currency and in USD; plus the realized exchange differences of the period,
-   * the lines on the accounts mapped to FX_GAIN and FX_LOSS. `accountId` must be a cash account.
+   * in the account's currency and in USD; plus the realized exchange differences of the period
+   * (receipts into the chosen account only, when one is chosen). `accountId` must be a cash
+   * account the user may see (404 otherwise, like an unknown id).
    */
   async cashMovement(
     user: AuthUser,
@@ -342,14 +355,22 @@ export class LedgerReportsService {
   ): Promise<CashMovementDto> {
     const branchIds = reportBranchIds(user, branchId);
     if (accountId) {
-      const found = await this.prisma.account.findFirst({ where: { id: accountId, isCash: true } });
+      const found = await this.prisma.account.findFirst({
+        where: { id: accountId, isCash: true, ...visibleAccount(user) },
+      });
       if (!found) throw new NotFoundException('Cash or bank account not found');
     }
     const from = toDbDate(period.from);
     const to = toDbDate(period.to);
     const onlyAccount = accountId ? Prisma.sql`AND a."id" = ${accountId}::uuid` : Prisma.empty;
-    const [gain, loss] = await Promise.all([this.mapped('FX_GAIN'), this.mapped('FX_LOSS')]);
-    const fxIds = [gain, loss].flatMap((a) => (a ? [a.accountId] : []));
+    // Realized FX: the exchange-difference lines of receipt entries and of their reversals, on
+    // whatever revenue (gain) or expense (loss) account they were posted to at the time. With an
+    // account chosen, only the receipts into that account.
+    const onlyReceiptsInto = accountId
+      ? Prisma.sql`AND EXISTS (
+          SELECT 1 FROM "journal_lines" c
+          WHERE c."entry_id" = e."id" AND c."account_id" = ${accountId}::uuid)`
+      : Prisma.empty;
     const [rows, fxRows] =
       branchIds.length === 0
         ? [[], []]
@@ -383,31 +404,34 @@ export class LedgerReportsService {
                 ${onlyAccount}
               GROUP BY a."id"
               ORDER BY a."code"`,
-            fxIds.length === 0
-              ? Promise.resolve([])
-              : this.prisma.$queryRaw<
-                  {
-                    entryId: string;
-                    entryNumber: string;
-                    entryDate: Date;
-                    description: string;
-                    branchCode: string;
-                    accountId: string;
-                    netCreditUsd: Decimal;
-                  }[]
-                >`
-                  SELECT e."id" AS "entryId", e."number" AS "entryNumber", e."entry_date" AS "entryDate",
-                         e."description", b."code" AS "branchCode", l."account_id" AS "accountId",
-                         sum(l."credit_usd" - l."debit_usd") AS "netCreditUsd"
-                  FROM "journal_lines" l
-                  JOIN "journal_entries" e ON e."id" = l."entry_id"
-                  JOIN "branches" b ON b."id" = l."branch_id"
-                  WHERE e."status" = 'POSTED'
-                    AND e."entry_date" BETWEEN ${from} AND ${to}
-                    AND l."account_id" IN (${Prisma.join(fxIds.map((id) => Prisma.sql`${id}::uuid`))})
-                    AND ${lineBranchIn(branchIds)}
-                  GROUP BY e."id", b."code", l."account_id"
-                  ORDER BY e."entry_date", e."number"`,
+            this.prisma.$queryRaw<
+              {
+                entryId: string;
+                entryNumber: string;
+                entryDate: Date;
+                description: string;
+                branchCode: string;
+                accountType: AccountType;
+                netCreditUsd: Decimal;
+              }[]
+            >`
+              SELECT e."id" AS "entryId", e."number" AS "entryNumber", e."entry_date" AS "entryDate",
+                     e."description", b."code" AS "branchCode", a."type"::text AS "accountType",
+                     sum(l."credit_usd" - l."debit_usd") AS "netCreditUsd"
+              FROM "journal_lines" l
+              JOIN "journal_entries" e ON e."id" = l."entry_id"
+              LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+              JOIN "accounts" a ON a."id" = l."account_id"
+              JOIN "branches" b ON b."id" = l."branch_id"
+              WHERE e."status" = 'POSTED'
+                AND e."entry_date" BETWEEN ${from} AND ${to}
+                AND (e."source" = 'RECEIPT' OR o."source" = 'RECEIPT')
+                AND l."description" = ${FX_DIFFERENCE_LINE}
+                AND a."type" IN ('REVENUE', 'EXPENSE')
+                AND ${lineBranchIn(branchIds)}
+                ${onlyReceiptsInto}
+              GROUP BY e."id", b."code", a."type"
+              ORDER BY e."entry_date", e."number"`,
           ]);
     const accounts: CashAccountMovementDto[] = rows.map((r) => {
       const opening = dec(r.opening);
@@ -435,8 +459,8 @@ export class LedgerReportsService {
     const fxLines = new Map<string, FxDifferenceLineDto & { amount: Decimal }>();
     for (const r of fxRows) {
       const net = dec(r.netCreditUsd);
-      // A gain account's credits are gains; a loss account's debits are losses.
-      if (r.accountId === gain?.accountId) gainUsd = gainUsd.plus(net);
+      // Credits to a revenue account are gains; debits to an expense account are losses.
+      if (r.accountType === 'REVENUE') gainUsd = gainUsd.plus(net);
       else lossUsd = lossUsd.minus(net);
       const key = `${r.entryId}/${r.branchCode}`;
       const line = fxLines.get(key) ?? {
@@ -507,45 +531,114 @@ export class LedgerReportsService {
   }
 
   /**
-   * The accrued transport account (ACCRUED_TRANSPORT) as of a date, per trip: the accrual entries
-   * of rule 11 (source TRIP_ACCRUAL) and their reversals, credit - debit. Lines from anything else
-   * (manual entries) come back with tripId null. Trips whose accrual nets to zero are left out.
+   * Accrued transport costs as of a date. Per trip: the accrued line of each rule 11 entry (source
+   * TRIP_ACCRUAL, its liability line without a shipment) and of its reversal, credit - debit, on
+   * whatever account it was posted to, so a remap of ACCRUED_TRANSPORT hides nothing. `otherUsd`
+   * is what else sits on the account mapped today (manual entries). Zero balances are left out.
    */
   async openTripAccruals(
     user: AuthUser,
     asOf: string,
     branchId?: string,
-  ): Promise<{ account: ReportAccountDto | null; trips: TripAccrual[]; totalUsd: Decimal }> {
+  ): Promise<{ account: ReportAccountDto | null; trips: TripAccrual[]; otherUsd: Decimal }> {
     const branchIds = reportBranchIds(user, branchId);
     const accrued = await this.mapped('ACCRUED_TRANSPORT');
-    if (!accrued || branchIds.length === 0) return { account: accrued, trips: [], totalUsd: ZERO };
+    if (branchIds.length === 0) return { account: accrued, trips: [], otherUsd: ZERO };
+    const at = toDbDate(asOf);
+    const [rows, other] = await Promise.all([
+      this.prisma.$queryRaw<
+        { tripId: string; currency: string; balance: Decimal; balanceUsd: Decimal }[]
+      >`
+        SELECT CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE o."source_id" END AS "tripId",
+               l."currency",
+               sum(l."credit" - l."debit") AS "balance",
+               sum(l."credit_usd" - l."debit_usd") AS "balanceUsd"
+        FROM "journal_lines" l
+        JOIN "journal_entries" e ON e."id" = l."entry_id"
+        LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+        JOIN "accounts" a ON a."id" = l."account_id"
+        WHERE e."status" = 'POSTED'
+          AND e."entry_date" <= ${at}
+          AND (e."source" = 'TRIP_ACCRUAL' OR o."source" = 'TRIP_ACCRUAL')
+          AND l."shipment_id" IS NULL
+          AND a."type" = 'LIABILITY'
+          AND ${lineBranchIn(branchIds)}
+        GROUP BY 1, 2
+        HAVING sum(l."credit_usd" - l."debit_usd") <> 0 OR sum(l."credit" - l."debit") <> 0`,
+      accrued
+        ? this.prisma.$queryRaw<{ balanceUsd: Decimal | null }[]>`
+            SELECT sum(l."credit_usd" - l."debit_usd") AS "balanceUsd"
+            FROM "journal_lines" l
+            JOIN "journal_entries" e ON e."id" = l."entry_id"
+            LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+            WHERE e."status" = 'POSTED'
+              AND e."entry_date" <= ${at}
+              AND l."account_id" = ${accrued.accountId}::uuid
+              AND e."source" <> 'TRIP_ACCRUAL'
+              AND o."source" IS DISTINCT FROM 'TRIP_ACCRUAL'
+              AND ${lineBranchIn(branchIds)}`
+        : Promise.resolve([]),
+    ]);
+    const otherValue = other[0]?.balanceUsd;
+    return {
+      account: accrued,
+      trips: rows.map((r) => ({
+        tripId: r.tripId,
+        currency: r.currency,
+        balance: dec(r.balance),
+        balanceUsd: dec(r.balanceUsd),
+      })),
+      otherUsd: otherValue === null || otherValue === undefined ? ZERO : dec(otherValue),
+    };
+  }
+
+  /**
+   * Unapplied customer advances as of a date, per customer, credit - debit in USD: the liability
+   * lines of receipt entries and their reversals (the part of a receipt not allocated to an
+   * invoice), wherever they were posted, plus any other line carrying the customer on the account
+   * mapped to CUSTOMER_ADVANCES today.
+   */
+  async customerAdvances(
+    user: AuthUser,
+    asOf: string,
+    branchId?: string,
+    customerId?: string,
+  ): Promise<{ customerId: string; customerName: string; amountUsd: Decimal }[]> {
+    const branchIds = reportBranchIds(user, branchId);
+    if (branchIds.length === 0) return [];
+    const advances = await this.mapped('CUSTOMER_ADVANCES');
+    const onMapped = advances
+      ? Prisma.sql`OR l."account_id" = ${advances.accountId}::uuid`
+      : Prisma.empty;
+    const onlyCustomer = customerId
+      ? Prisma.sql`AND l."customer_id" = ${customerId}::uuid`
+      : Prisma.empty;
     const rows = await this.prisma.$queryRaw<
-      { tripId: string | null; currency: string; balance: Decimal; balanceUsd: Decimal }[]
+      { customerId: string; customerName: string; amountUsd: Decimal }[]
     >`
-      SELECT CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id"
-                  WHEN o."source" = 'TRIP_ACCRUAL' THEN o."source_id" END AS "tripId",
-             l."currency",
-             sum(l."credit" - l."debit") AS "balance",
-             sum(l."credit_usd" - l."debit_usd") AS "balanceUsd"
+      SELECT l."customer_id" AS "customerId", c."name" AS "customerName",
+             sum(l."credit_usd" - l."debit_usd") AS "amountUsd"
       FROM "journal_lines" l
       JOIN "journal_entries" e ON e."id" = l."entry_id"
       LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+      JOIN "accounts" a ON a."id" = l."account_id"
+      JOIN "customers" c ON c."id" = l."customer_id"
       WHERE e."status" = 'POSTED'
         AND e."entry_date" <= ${toDbDate(asOf)}
-        AND l."account_id" = ${accrued.accountId}::uuid
+        AND (((e."source" = 'RECEIPT' OR o."source" = 'RECEIPT') AND a."type" = 'LIABILITY')
+             ${onMapped})
         AND ${lineBranchIn(branchIds)}
-      GROUP BY 1, 2
-      HAVING sum(l."credit_usd" - l."debit_usd") <> 0 OR sum(l."credit" - l."debit") <> 0`;
-    const trips = rows.map((r) => ({
-      tripId: r.tripId,
-      currency: r.currency,
-      balance: dec(r.balance),
-      balanceUsd: dec(r.balanceUsd),
-    }));
-    return { account: accrued, trips, totalUsd: sum(trips.map((t) => t.balanceUsd)) };
+        ${onlyCustomer}
+      GROUP BY l."customer_id", c."name"
+      HAVING sum(l."credit_usd" - l."debit_usd") <> 0`;
+    return rows.map((r) => ({ ...r, amountUsd: dec(r.amountUsd) }));
   }
 
-  /** Debit - credit of the account mapped to `role`, as of a date, in the report's branches. */
+  /**
+   * Debit - credit of the account mapped to `role`, as of a date, in the report's branches. Used
+   * for CONSOLIDATION_CLEARING: nothing posts to it yet (consolidation is not built) and the
+   * mapping keeps no history, so the account mapped today is the only one known.
+   */
   async roleBalance(
     user: AuthUser,
     role: PostingRole,

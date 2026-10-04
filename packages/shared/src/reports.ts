@@ -169,6 +169,10 @@ export interface ArAgingCustomerDto {
   customerId: string;
   customerName: string;
   amounts: AgingAmountsDto;
+  /** Unapplied advances (receipts not allocated to an invoice), USD, as of the date. */
+  advancesUsd: DecimalString;
+  /** Open invoices less advances. */
+  netUsd: DecimalString;
 }
 
 /** Open approved invoices as of a date, per customer and bucket, in USD. */
@@ -179,6 +183,8 @@ export interface ArAgingDto {
   customers: ArAgingCustomerDto[];
   invoices: ArAgingInvoiceDto[];
   totals: AgingAmountsDto;
+  totalAdvancesUsd: DecimalString;
+  netUsd: DecimalString;
 }
 
 // ---- 5. Shipment profitability ----------------------------------------------------------------
@@ -343,9 +349,9 @@ export interface OpenAccrualsDto {
   trips: AccrualTripDto[];
   /** The trips' accrued balances added up. */
   tripsTotalUsd: DecimalString;
-  /** Balance of accrued transport lines that do not come from a trip (manual entries). */
+  /** What else sits on the accrued transport account mapped today (manual entries). */
   otherAccruedUsd: DecimalString;
-  /** Credit - debit of the accrued transport account. */
+  /** The trips' accruals plus the other accrued balance. */
   accruedTotalUsd: DecimalString;
   /** The CONSOLIDATION_CLEARING account, or null when the role is not mapped. */
   clearingAccount: ReportAccountDto | null;

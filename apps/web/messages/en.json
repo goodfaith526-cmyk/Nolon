@@ -1092,6 +1092,9 @@
     "trip": "Trip",
     "carrier": "Carrier",
     "completedOn": "Completed on",
-    "accrued": "Accrued"
+    "accrued": "Accrued",
+    "advancesUsd": "Unapplied advances (USD)",
+    "netUsd": "Net (USD)",
+    "generalLedgerOpeningNote": "Opening balances of revenue and expense accounts are cumulative from the first entry: closing a period does not post closing entries, so the year's profit is not moved to equity."
   }
 }

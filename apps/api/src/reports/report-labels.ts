@@ -72,6 +72,8 @@ const LABELS = {
   amount: { en: 'Amount', ar: 'المبلغ' },
   outstanding: { en: 'Outstanding', ar: 'المتبقي' },
   outstandingUsd: { en: 'Outstanding (USD)', ar: 'المتبقي (دولار)' },
+  advancesUsd: { en: 'Unapplied advances (USD)', ar: 'دفعات مقدمة غير مخصصة (دولار)' },
+  netUsd: { en: 'Net (USD)', ar: 'الصافي (دولار)' },
   daysPastDue: { en: 'Days past due', ar: 'أيام التأخير' },
   bucket: { en: 'Bucket', ar: 'الفئة' },
   shipment: { en: 'Shipment', ar: 'الشحنة' },

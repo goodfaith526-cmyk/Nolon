@@ -56,8 +56,8 @@ export class ReportsController {
 
   @Get('accounts')
   @RequirePermission('financial_reports:view')
-  accounts(): Promise<ReportAccountOptionDto[]> {
-    return this.reports.accountOptions();
+  accounts(@CurrentUser() user: AuthUser): Promise<ReportAccountOptionDto[]> {
+    return this.reports.accountOptions(user);
   }
 
   @Get('trial-balance/export')

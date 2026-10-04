@@ -24,6 +24,7 @@ import { CustomersService } from '../customers/customers.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripsService } from '../transport/trips.service.js';
+import { withAdvances } from './ar-aging.js';
 import { buildWorkbook } from './excel.js';
 import { addAmounts, byCustomer, byRoute, NO_AMOUNTS, profitFigures } from './profitability.js';
 import {
@@ -84,8 +85,8 @@ export class ReportsService {
     private readonly trips: TripsService,
   ) {}
 
-  accountOptions(): Promise<ReportAccountOptionDto[]> {
-    return this.ledger.accountOptions();
+  accountOptions(user: AuthUser): Promise<ReportAccountOptionDto[]> {
+    return this.ledger.accountOptions(user);
   }
 
   trialBalance(user: AuthUser, q: AsOfQuery): Promise<TrialBalanceDto> {
@@ -107,8 +108,13 @@ export class ReportsService {
     return this.ledger.generalLedger(user, q, q.accountIds, q.branchId);
   }
 
-  arAging(user: AuthUser, q: AsOfQuery & { customerId?: string }): Promise<ArAgingDto> {
-    return this.billing.arAging(user, q.asOf, q.branchId, q.customerId);
+  /** Open invoices by age (billing) with each customer's unapplied advances (ledger). */
+  async arAging(user: AuthUser, q: AsOfQuery & { customerId?: string }): Promise<ArAgingDto> {
+    const [aging, advances] = await Promise.all([
+      this.billing.arAging(user, q.asOf, q.branchId, q.customerId),
+      this.ledger.customerAdvances(user, q.asOf, q.branchId, q.customerId),
+    ]);
+    return withAdvances(aging, advances);
   }
 
   invoicesReceipts(
@@ -176,13 +182,21 @@ export class ReportsService {
       this.ledger.openTripAccruals(user, q.asOf, q.branchId),
       this.ledger.roleBalance(user, 'CONSOLIDATION_CLEARING', q.asOf, q.branchId),
     ]);
-    const tripIds = accrued.trips.flatMap((a) => (a.tripId ? [a.tripId] : []));
-    const info = new Map((await this.trips.accrualSummaries(user, tripIds)).map((t) => [t.id, t]));
+    const info = new Map(
+      (
+        await this.trips.accrualSummaries(
+          user,
+          accrued.trips.map((a) => a.tripId),
+        )
+      ).map((t) => [t.id, t]),
+    );
     const trips = accrued.trips.flatMap((a) => {
-      const trip = a.tripId ? info.get(a.tripId) : undefined;
+      const trip = info.get(a.tripId);
       return trip ? [{ accrual: a, trip }] : [];
     });
     const tripsTotal = sum(trips.map((x) => x.accrual.balanceUsd));
+    // A trip the user cannot open (none, as lines follow the trip's branch) counts as "other".
+    const accruedTotal = sum(accrued.trips.map((a) => a.balanceUsd)).plus(accrued.otherUsd);
     return {
       asOf: q.asOf,
       branchId: q.branchId ?? null,
@@ -200,8 +214,8 @@ export class ReportsService {
           balanceUsd: accrual.balanceUsd.toFixed(),
         })),
       tripsTotalUsd: tripsTotal.toFixed(),
-      otherAccruedUsd: accrued.totalUsd.minus(tripsTotal).toFixed(),
-      accruedTotalUsd: accrued.totalUsd.toFixed(),
+      otherAccruedUsd: accruedTotal.minus(tripsTotal).toFixed(),
+      accruedTotalUsd: accruedTotal.toFixed(),
       clearingAccount: clearing.account,
       clearingBalanceUsd: clearing.balanceUsd.toFixed(),
     };
