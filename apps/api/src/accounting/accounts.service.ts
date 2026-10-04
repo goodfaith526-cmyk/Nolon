@@ -163,9 +163,26 @@ export class AccountsService {
     return account;
   }
 
-  /** Share-locks every account of an entry's lines (in id order) and checks each is usable. */
-  async lockForPosting(tx: Tx, ids: readonly string[]): Promise<void> {
-    for (const id of [...new Set(ids)].sort()) await this.requirePostable(tx, id);
+  /**
+   * Share-locks every account of an entry's lines (in id order) and checks each is usable. A
+   * reversal reuses the accounts of the entry it reverses, which may since have been retired, so
+   * it only needs them postable: a posted entry stays correctable after its account is closed.
+   */
+  async lockForPosting(
+    tx: Tx,
+    ids: readonly string[],
+    options: { reversal?: boolean } = {},
+  ): Promise<void> {
+    for (const id of [...new Set(ids)].sort()) {
+      if (!options.reversal) {
+        await this.requirePostable(tx, id);
+        continue;
+      }
+      const account = await this.lockAccount(tx, id, 'SHARE');
+      if (!account.isPostable) {
+        throw new BadRequestException(`Account ${account.code} is a header account`);
+      }
+    }
   }
 
   /** A cash or bank account usable by the branch, in the given currency. */

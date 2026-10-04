@@ -506,6 +506,7 @@ CREATE TRIGGER "journal_entries_guard"
 CREATE FUNCTION "journal_lines_guard"() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     v_status "journal_status";
+    v_reversal_of UUID;
     v_active BOOLEAN;
     v_postable BOOLEAN;
 BEGIN
@@ -516,7 +517,8 @@ BEGIN
         END IF;
     END IF;
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        SELECT "status" INTO v_status FROM "journal_entries" WHERE "id" = NEW."entry_id" FOR SHARE;
+        SELECT "status", "reversal_of_id" INTO v_status, v_reversal_of
+            FROM "journal_entries" WHERE "id" = NEW."entry_id" FOR SHARE;
         IF v_status = 'POSTED' THEN
             RAISE EXCEPTION 'Lines cannot be added to a posted journal entry';
         END IF;
@@ -525,8 +527,17 @@ BEGIN
         -- made inactive or a header, and an account never changes meaning under a new line.
         SELECT "is_active", "is_postable" INTO v_active, v_postable
             FROM "accounts" WHERE "id" = NEW."account_id" FOR SHARE;
-        IF NOT v_active OR NOT v_postable THEN
-            RAISE EXCEPTION 'Journal lines post only to active, postable accounts';
+        IF NOT v_postable THEN
+            RAISE EXCEPTION 'Journal lines post only to postable accounts';
+        END IF;
+        -- An inactive account takes no new postings, except a reversal of an entry that used it:
+        -- posted entries stay correctable after their account is retired.
+        IF NOT v_active AND NOT (
+            v_reversal_of IS NOT NULL AND EXISTS (
+                SELECT 1 FROM "journal_lines"
+                WHERE "entry_id" = v_reversal_of AND "account_id" = NEW."account_id")
+        ) THEN
+            RAISE EXCEPTION 'Journal lines post only to active accounts';
         END IF;
         RETURN NEW;
     END IF;

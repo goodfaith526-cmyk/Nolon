@@ -1017,6 +1017,93 @@ describe('accounting: journals, invoices, receipts, periods', () => {
       expect(await t.prisma.journalLine.count({ where: { accountId: fresh.id } })).toBe(0);
     });
 
+    it('an entry stays reversible after its account is retired', async () => {
+      const newAccount = async (body: object) =>
+        (
+          await post('/accounting/accounts', cookies.admin, {
+            code: `T${randomUUID().slice(0, 6).toUpperCase()}`,
+            nameAr: 'حساب يُغلق',
+            isPostable: true,
+            ...body,
+          }).expect(201)
+        ).body as AccountDto;
+      const retire = (a: AccountDto) =>
+        patch(`/accounting/accounts/${a.id}`, cookies.admin, {
+          code: a.code,
+          nameEn: a.nameEn,
+          nameAr: a.nameAr,
+          type: a.type,
+          parentId: a.parentId,
+          isPostable: true,
+          isCash: a.isCash,
+          currency: a.currency,
+          branchId: a.branchId,
+          isActive: false,
+        }).expect(200);
+
+      // A manual entry on an expense account that is later closed.
+      const expense = await newAccount({
+        nameEn: 'Retired expense',
+        type: 'EXPENSE',
+        parentId: account('6000').id,
+      });
+      const draft = (
+        await post('/accounting/journals', cookies.financePts, {
+          branchId: pts,
+          entryDate: d('12-01'),
+          description: 'Before retiring',
+          lines: [
+            { accountId: expense.id, currency: 'USD', debit: '5' },
+            { accountId: cashUsd.id, currency: 'USD', credit: '5' },
+          ],
+        }).expect(201)
+      ).body as JournalEntryDto;
+      await post(`/accounting/journals/${draft.id}/post`, cookies.financePts).expect(200);
+      await retire(expense);
+      await post('/accounting/journals', cookies.financePts, {
+        branchId: pts,
+        entryDate: d('12-02'),
+        description: 'New posting to a retired account',
+        lines: [
+          { accountId: expense.id, currency: 'USD', debit: '5' },
+          { accountId: cashUsd.id, currency: 'USD', credit: '5' },
+        ],
+      }).expect(400);
+      const reversal = (
+        await post(`/accounting/journals/${draft.id}/reverse`, cookies.financePts, {
+          entryDate: d('12-02'),
+          reason: 'Correction after closing the account',
+        }).expect(200)
+      ).body as JournalEntryDto;
+      expect(reversal.lines.some((l) => l.accountId === expense.id)).toBe(true);
+
+      // A receipt whose cash account is later closed can still be cancelled.
+      const cash = await newAccount({
+        nameEn: 'Retired till (USD)',
+        type: 'ASSET',
+        isCash: true,
+        currency: 'USD',
+        branchId: pts,
+      });
+      const receipt = (
+        await post('/receipts', cookies.financePts, {
+          customerId: customer.id,
+          receiptDate: d('12-03'),
+          currency: 'USD',
+          amount: '20',
+          cashAccountId: cash.id,
+          allocations: [],
+        }).expect(201)
+      ).body as ReceiptDto;
+      await retire(cash);
+      const cancelled = (
+        await post(`/receipts/${receipt.id}/cancel`, cookies.financePts, {
+          reason: 'Entered twice',
+        }).expect(200)
+      ).body as ReceiptDto;
+      expect(cancelled.status).toBe('CANCELLED');
+    });
+
     it('a receipt clears the receivable the invoice was posted to, after a remap', async () => {
       const original = account('1200');
       const invoice = await approvedInvoice(d('11-01'));

@@ -164,16 +164,23 @@ export class JournalService {
         createdById: header.userId,
       },
     });
-    await this.writeLines(tx, entry.id, lines);
+    await this.writeLines(tx, entry.id, lines, { reversal: reversalOfId !== null });
     return entry;
   }
 
-  async writeLines(tx: Tx, entryId: string, lines: readonly PreparedLine[]): Promise<void> {
+  async writeLines(
+    tx: Tx,
+    entryId: string,
+    lines: readonly PreparedLine[],
+    options: { reversal?: boolean } = {},
+  ): Promise<void> {
     // 400 rather than the database trigger's error when an account is inactive or a header; the
-    // share locks also keep the accounts from changing until this entry commits.
+    // share locks also keep the accounts from changing until this entry commits. A reversal's
+    // lines are the reversed entry's own accounts, which stay usable for it once retired.
     await this.accounts.lockForPosting(
       tx,
       lines.map((line) => line.accountId),
+      options,
     );
     await tx.journalLine.createMany({
       data: lines.map((line, index) => ({
