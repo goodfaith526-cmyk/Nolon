@@ -9,7 +9,14 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate } from '../common/dates.js';
-import { type AuditQuery, andIf, overLimit, sqlDate, uuidList } from '../common/report-sql.js';
+import {
+  type AuditQuery,
+  andIf,
+  auditEntityFilter,
+  overLimit,
+  sqlDate,
+  uuidList,
+} from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -242,6 +249,7 @@ export class TripReportsService {
       WHERE x."branch_id" IN ${uuidList(branchIds)}
         AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
+        ${auditEntityFilter(q)}
       ORDER BY x."at" DESC
       LIMIT ${q.limit + 1}`;
     return rows.map((r) => ({ ...r, at: r.at.toISOString() }));

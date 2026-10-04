@@ -1,4 +1,4 @@
-import type { AuditLogEntryDto } from '@nolon/shared';
+import type { AuditEntity, AuditLogEntryDto } from '@nolon/shared';
 import { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -34,9 +34,19 @@ export interface AuditQuery {
   to: string;
   branchId?: string;
   userId?: string;
+  /**
+   * Only this kind of record. A source holding several kinds filters on it in its SQL, before its
+   * row limit, so the newest rows of other kinds cannot crowd out the wanted ones.
+   */
+  entity?: AuditEntity;
   /** Newest first; a source returns at most limit + 1 rows. */
   limit: number;
 }
 
 /** An audit entry whose reference is its shipment's number, filled in through the shipments module. */
 export type ShipmentAuditEntry = Omit<AuditLogEntryDto, 'reference'> & { shipmentId: string };
+
+/** `AND x."entity" = ...` when the audit query asks for one kind of record. */
+export function auditEntityFilter(q: AuditQuery): Prisma.Sql {
+  return andIf(q.entity, (e) => Prisma.sql`x."entity" = ${e}`);
+}

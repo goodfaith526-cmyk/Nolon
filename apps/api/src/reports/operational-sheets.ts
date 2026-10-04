@@ -244,8 +244,17 @@ export function salesConversionSheets(ctx: ExportContext, r: SalesConversionDto)
 
 export function customerActivitySheets(ctx: ExportContext, r: CustomerActivityDto): WorkbookSpec {
   const t = opsTranslator(ctx.locale);
+  // Invoices and revenue only for users who may see them (r.revenueShown).
+  const money = (invoices: number | null, revenue: string | null) =>
+    r.revenueShown ? [invoices ?? 0, revenue ?? '0'] : [];
   const rows: RowSpec[] = r.customers.map((c) => ({
-    cells: [c.customerName, c.shipments, c.volumeCbm, c.weightKg, c.invoices, c.revenueUsd],
+    cells: [
+      c.customerName,
+      c.shipments,
+      c.volumeCbm,
+      c.weightKg,
+      ...money(c.invoices, c.revenueUsd),
+    ],
   }));
   rows.push({
     cells: [
@@ -253,15 +262,14 @@ export function customerActivitySheets(ctx: ExportContext, r: CustomerActivityDt
       r.totals.shipments,
       r.totals.volumeCbm,
       r.totals.weightKg,
-      r.totals.invoices,
-      r.totals.revenueUsd,
+      ...money(r.totals.invoices, r.totals.revenueUsd),
     ],
     bold: true,
   });
   return book(
     ctx,
     'customerActivity',
-    [period(t, r.from, r.to), t('revenueNote')],
+    r.revenueShown ? [period(t, r.from, r.to), t('revenueNote')] : [period(t, r.from, r.to)],
     [
       {
         name: t('customerActivity'),
@@ -270,8 +278,9 @@ export function customerActivitySheets(ctx: ExportContext, r: CustomerActivityDt
           col(t('shipmentCount'), 'integer', 12),
           col(t('volumeCbm'), 'amount'),
           col(t('weightKg'), 'amount'),
-          col(t('invoices'), 'integer', 12),
-          col(t('revenueUsd'), 'amount'),
+          ...(r.revenueShown
+            ? [col(t('invoices'), 'integer', 12), col(t('revenueUsd'), 'amount')]
+            : []),
         ],
         rows,
       },

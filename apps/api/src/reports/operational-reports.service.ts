@@ -262,11 +262,15 @@ export class OperationalReportsService {
     };
   }
 
-  /** Report 4: shipments and cargo (shipments module) with revenue (billing) per customer. */
+  /**
+   * Report 4: shipments and cargo (shipments module) per customer, with their revenue (billing)
+   * only for users who may see financial reports, as on the dashboards.
+   */
   async customerActivity(user: AuthUser, q: CustomerPeriod): Promise<CustomerActivityDto> {
+    const revenueShown = user.permissions.has('financial_reports:view');
     const [activity, revenue] = await Promise.all([
       this.shipmentReports.activityByCustomer(user, q),
-      this.billing.revenueByCustomer(user, q),
+      revenueShown ? this.billing.revenueByCustomer(user, q) : Promise.resolve([]),
     ]);
     const rows = new Map<
       string,
@@ -308,18 +312,20 @@ export class OperationalReportsService {
       to: q.to,
       branchId: q.branchId ?? null,
       customerId: q.customerId ?? null,
+      revenueShown,
       customers: list.map((r) => ({
         ...r,
         volumeCbm: r.volumeCbm.toFixed(),
         weightKg: r.weightKg.toFixed(),
-        revenueUsd: r.revenueUsd.toFixed(),
+        invoices: revenueShown ? r.invoices : null,
+        revenueUsd: revenueShown ? r.revenueUsd.toFixed() : null,
       })),
       totals: {
         shipments: list.reduce((n, r) => n + r.shipments, 0),
         volumeCbm: sum(list.map((r) => r.volumeCbm)).toFixed(),
         weightKg: sum(list.map((r) => r.weightKg)).toFixed(),
-        invoices: list.reduce((n, r) => n + r.invoices, 0),
-        revenueUsd: sum(list.map((r) => r.revenueUsd)).toFixed(),
+        invoices: revenueShown ? list.reduce((n, r) => n + r.invoices, 0) : null,
+        revenueUsd: revenueShown ? sum(list.map((r) => r.revenueUsd)).toFixed() : null,
       },
     };
   }
@@ -480,7 +486,8 @@ export class OperationalReportsService {
 
   /**
    * Report 10: who changed what and when, newest first, from the records that keep it (see
-   * AUDIT_ENTITIES). Each source returns its newest rows; the merged list is cut at the limit.
+   * AUDIT_ENTITIES). Each source returns its newest rows of the wanted kind (filtered in its SQL,
+   * before its limit); the merged list is cut at the limit.
    */
   async auditLog(user: AuthUser, q: AuditLogQuery): Promise<AuditLogDto> {
     reportBranchIds(user, q.branchId);
@@ -489,6 +496,7 @@ export class OperationalReportsService {
       to: q.to,
       branchId: q.branchId,
       userId: q.userId,
+      entity: q.entity,
       limit: LIMIT,
     };
     const wants = (...entities: AuditEntity[]) => !q.entity || entities.includes(q.entity);
@@ -497,7 +505,7 @@ export class OperationalReportsService {
       await Promise.all([
         wants('SHIPMENT') ? this.shipmentReports.auditEntries(user, aq) : none,
         wants('WAREHOUSE_MOVEMENT') ? this.warehouse.auditEntries(user, aq) : none,
-        wants('CUSTOMS') ? this.customs.auditEntries(user, aq) : Promise.resolve([]),
+        wants('CUSTOMS') ? this.customs.auditEntries(user, aq) : none,
         wants('JOURNAL_ENTRY') ? this.ledger.auditEntries(user, aq) : none,
         wants('INVOICE', 'RECEIPT') ? this.billing.auditEntries(user, aq) : none,
         wants('TRIP', 'TRIP_EXPENSE', 'POD') ? this.trips.auditEntries(user, aq) : none,
@@ -512,9 +520,7 @@ export class OperationalReportsService {
       ...billing,
       ...transport,
       ...documents,
-    ]
-      .filter((e) => !q.entity || e.entity === q.entity)
-      .sort((a, b) => b.at.localeCompare(a.at));
+    ].sort((a, b) => b.at.localeCompare(a.at));
     const users = new Map<string, string>();
     const entries = merged.slice(0, LIMIT);
     for (const e of entries) if (e.userId && e.userName) users.set(e.userId, e.userName);

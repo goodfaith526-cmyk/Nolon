@@ -145,9 +145,12 @@ export interface CustomerActivityRowDto extends ReportCustomerRefDto {
   /** Their cargo lines' volume and weight. */
   volumeCbm: DecimalString;
   weightKg: DecimalString;
-  /** Approved invoices dated in the period, with their posted entries. */
-  invoices: number;
-  revenueUsd: DecimalString;
+  /**
+   * Approved invoices dated in the period, with their posted entries. Null (with revenueUsd) when
+   * the user may not see financial reports (financial_reports:view).
+   */
+  invoices: number | null;
+  revenueUsd: DecimalString | null;
 }
 
 export interface CustomerActivityDto {
@@ -155,6 +158,8 @@ export interface CustomerActivityDto {
   to: string;
   branchId: string | null;
   customerId: string | null;
+  /** Whether invoices and revenue are included (financial_reports:view). */
+  revenueShown: boolean;
   customers: CustomerActivityRowDto[];
   totals: Omit<CustomerActivityRowDto, 'customerId' | 'customerName'>;
 }

@@ -1,33 +1,36 @@
-import type {
-  AccountDto,
-  AuditLogDto,
-  BookingDto,
-  BranchDashboardDto,
-  CarrierDto,
-  CustomerActivityDto,
-  CustomerDto,
-  CustomerInvoiceDto,
-  CustomsFilesDto,
-  DriverDto,
-  LateShipmentsDto,
-  ManagementDashboardDto,
-  QuotationDto,
-  SalesConversionDto,
-  ShipmentsReportDto,
-  TripDto,
-  TripsReportDto,
-  VehicleDto,
-  WarehouseDto,
-  WarehouseMovementDto,
-  WarehouseMovementsDto,
-  WarehouseOnHandDto,
+import {
+  ROLE_PERMISSIONS,
+  type AccountDto,
+  type AuditLogDto,
+  type BookingDto,
+  type BranchDashboardDto,
+  type CarrierDto,
+  type CustomerActivityDto,
+  type CustomerDto,
+  type CustomerInvoiceDto,
+  type CustomsFilesDto,
+  type DriverDto,
+  type LateShipmentsDto,
+  type ManagementDashboardDto,
+  type QuotationDto,
+  type SalesConversionDto,
+  type ShipmentsReportDto,
+  type TripDto,
+  type TripsReportDto,
+  type VehicleDto,
+  type WarehouseDto,
+  type WarehouseMovementDto,
+  type WarehouseMovementsDto,
+  type WarehouseOnHandDto,
 } from '@nolon/shared';
 import ExcelJS from 'exceljs';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { daysBetween, todayIn } from '../src/common/dates.js';
+import type { AuthUser } from '../src/auth/auth-user.js';
 import { Prisma } from '../src/generated/prisma/client.js';
+import { TripReportsService } from '../src/transport/trip-reports.service.js';
 import {
   APP_ORIGIN,
   LEDGER_PREFIX,
@@ -74,7 +77,11 @@ describe('operational reports and dashboards', () => {
   };
   const numbers = new Map<string, string>();
   const movementNumbers: string[] = [];
-  const ids = { ops: '', warehouse: '', customs: '' };
+  const ids = { ops: '', warehouse: '', customs: '', manager: '' };
+  let dxb: string;
+  /** June: a cancelled, an approved and a draft invoice of customer 2 (revenue counts one). */
+  const june = () => `from=${d('06-01')}&to=${d('06-30')}`;
+  const tz: Record<'late' | 'onTime' | 'unknown', string> = { late: '', onTime: '', unknown: '' };
   const year = randomInt(1800, 1900);
   const d = (monthDay: string) => `${year}-${monthDay}`;
   const at = (monthDay: string, time = '10:00:00') => `${year}-${monthDay}T${time}+03:00`;
@@ -273,6 +280,7 @@ describe('operational reports and dashboards', () => {
     t = await createTestApp();
     pts = await branchId(t.prisma, 'PTS');
     jed = await branchId(t.prisma, 'JED');
+    dxb = await branchId(t.prisma, 'DXB');
     const loc = async (code: string) =>
       (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
     portSudan = await loc('SDPZU');
@@ -293,6 +301,7 @@ describe('operational reports and dashboards', () => {
     ids.ops = users.opsPts.id;
     ids.warehouse = users.warehousePts.id;
     ids.customs = users.customsPts.id;
+    ids.manager = users.managerPts.id;
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
     }
@@ -454,6 +463,45 @@ describe('operational reports and dashboards', () => {
       ],
     );
 
+    // June invoices for customer 2: S5's cancelled (an approved invoice is corrected by a credit
+    // note, so only a draft can be cancelled), T1's approved (77), T2's still a draft.
+    const cancelled = await invoice(s.s5, d('06-10'), d('06-10'), '500');
+    await post(`/customer-invoices/${cancelled.id}/cancel`, cookies.financePts, {
+      reason: 'Wrong customer',
+    }).expect(200);
+    const approved = await invoice(s.t1, d('06-12'), d('06-12'), '77');
+    await post(`/customer-invoices/${approved.id}/approve`, cookies.financePts).expect(200);
+    await invoice(s.t2, d('06-14'), d('06-14'), '33');
+
+    // Dubai (UTC+4), ETAs in July: delivered at 22:00 UTC on its ETA (02:00 the next day in
+    // Dubai: late), at 19:30 UTC on its ETA (23:30 in Dubai: on time), and one marked delivered
+    // with no delivery recorded (its day unknown: neither late nor open).
+    const inDubai = async (eta: string, deliveredAt: string | null) => {
+      const id = await shipment(c2, khartoum, '1', '1', '07-01', d(eta));
+      await t.prisma.shipment.update({
+        where: { id },
+        data: { branchId: dxb, status: 'DELIVERED' },
+      });
+      if (deliveredAt) {
+        await t.prisma.shipmentEvent.create({
+          data: {
+            shipmentId: id,
+            kind: 'STATUS',
+            status: 'DELIVERED',
+            fromStatus: 'CREATED',
+            occurredAt: new Date(deliveredAt),
+            branchId: dxb,
+            userId: ids.ops,
+            source: 'USER',
+          },
+        });
+      }
+      return id;
+    };
+    tz.late = await inDubai('07-10', `${d('07-10')}T22:00:00Z`);
+    tz.onTime = await inDubai('07-11', `${d('07-11')}T19:30:00Z`);
+    tz.unknown = await inDubai('07-12', null);
+
     // Due in and out of PTS today: S5.
     const today = new Date(`${ptsToday()}T00:00:00Z`);
     await t.prisma.shipment.update({ where: { id: s.s5 }, data: { eta: today, etd: today } });
@@ -554,6 +602,27 @@ describe('operational reports and dashboards', () => {
       expect(r.averageDaysLate).toBe(average.toFixed(1));
       await get(`/reports/late-shipments?${march()}&branchId=${pts}`, cookies.opsJed).expect(403);
       await get(`/reports/late-shipments?${march()}`, cookies.driver).expect(403);
+      const jedView = await report<LateShipmentsDto>(
+        `/reports/late-shipments?${march()}&customerId=${c1.id}`,
+        cookies.opsJed,
+      );
+      expect(jedView).toMatchObject({ withEta: 0, late: 0, shipments: [] });
+      await get(`/reports/late-shipments/export?${march()}&branchId=${pts}`, cookies.opsJed).expect(
+        403,
+      );
+      await get(`/reports/late-shipments/export?${march()}`, cookies.driver).expect(403);
+    });
+
+    it('takes the delivery day in the branch’s time zone, and never guesses an unknown one', async () => {
+      const r = await report<LateShipmentsDto>(
+        `/reports/late-shipments?from=${d('07-01')}&to=${d('07-31')}&branchId=${dxb}&customerId=${c2.id}`,
+        cookies.admin,
+      );
+      expect(r).toMatchObject({ withEta: 3, late: 1, openLate: 0, deliveredLate: 1 });
+      expect(r.shipments.map((x) => [x.shipmentId, x.deliveredOn, x.daysLate])).toEqual([
+        [tz.late, d('07-11'), 1],
+      ]);
+      expect(r.averageDaysLate).toBe('1.0');
     });
   });
 
@@ -579,6 +648,16 @@ describe('operational reports and dashboards', () => {
       expect(branch).toMatchObject({ id: pts, code: 'PTS', ...expected });
       await get(`/reports/sales-conversion?${march()}&branchId=${pts}`, cookies.opsJed).expect(403);
       await get(`/reports/sales-conversion?${march()}`, cookies.driver).expect(403);
+      const jedView = await report<SalesConversionDto>(
+        `/reports/sales-conversion?${march()}&customerId=${c1.id}`,
+        cookies.opsJed,
+      );
+      expect(jedView.totals).toMatchObject({ quotationsSent: 0, bookingsCreated: 0 });
+      expect(jedView.branches.map((b) => b.id)).toEqual([jed]);
+      await get(
+        `/reports/sales-conversion/export?${march()}&branchId=${pts}`,
+        cookies.opsJed,
+      ).expect(403);
     });
   });
 
@@ -586,7 +665,9 @@ describe('operational reports and dashboards', () => {
     it('adds shipments, cargo and approved invoice revenue per customer', async () => {
       const r = await report<CustomerActivityDto>(
         `/reports/customer-activity?${march()}&customerId=${c1.id}`,
+        cookies.managerPts,
       );
+      expect(r.revenueShown).toBe(true);
       const row = {
         customerId: c1.id,
         customerName: c1.name,
@@ -606,10 +687,65 @@ describe('operational reports and dashboards', () => {
       });
       const jedView = await report<CustomerActivityDto>(
         `/reports/customer-activity?${march()}&customerId=${c1.id}`,
-        cookies.opsJed,
+        cookies.managerJed,
       );
       expect(jedView.customers).toEqual([]);
+      await get(`/reports/customer-activity?${march()}&branchId=${pts}`, cookies.managerJed).expect(
+        403,
+      );
       await get(`/reports/customer-activity?${march()}`, cookies.driver).expect(403);
+    });
+
+    it('counts neither a cancelled nor a draft invoice', async () => {
+      const r = await report<CustomerActivityDto>(
+        `/reports/customer-activity?${june()}&customerId=${c2.id}`,
+        cookies.managerPts,
+      );
+      expect(r.customers).toEqual([
+        {
+          customerId: c2.id,
+          customerName: c2.name,
+          shipments: 0,
+          volumeCbm: '0',
+          weightKg: '0',
+          invoices: 1,
+          revenueUsd: '77',
+        },
+      ]);
+    });
+
+    it('leaves out invoices and revenue without financial_reports:view, in the export too', async () => {
+      for (const cookie of [cookies.opsPts, cookies.warehousePts, cookies.customsPts]) {
+        const r = await report<CustomerActivityDto>(
+          `/reports/customer-activity?${march()}&customerId=${c1.id}`,
+          cookie,
+        );
+        expect(r.revenueShown).toBe(false);
+        expect(r.customers).toEqual([
+          {
+            customerId: c1.id,
+            customerName: c1.name,
+            shipments: 3,
+            volumeCbm: '9',
+            weightKg: '180',
+            invoices: null,
+            revenueUsd: null,
+          },
+        ]);
+        expect(r.totals).toMatchObject({ invoices: null, revenueUsd: null });
+      }
+      const path = `/reports/customer-activity/export?${march()}&customerId=${c1.id}&locale=en`;
+      const hidden = await workbookValues(
+        await get(path, cookies.warehousePts).buffer(true).parse(binary).expect(200),
+      );
+      expect(hidden).toContain(c1.name);
+      expect(hidden).not.toContain('Revenue (USD)');
+      expect(hidden).not.toContain(1250.5);
+      const shown = await workbookValues(
+        await get(path, cookies.managerPts).buffer(true).parse(binary).expect(200),
+      );
+      expect(shown).toContain('Revenue (USD)');
+      expect(shown).toContain(1250.5);
     });
   });
 
@@ -688,6 +824,9 @@ describe('operational reports and dashboards', () => {
       );
       expect(jedView.files.some((f) => f.shipmentId === s.s1)).toBe(false);
       await get(`/reports/customs-files?${march()}`, cookies.driver).expect(403);
+      await get(`/reports/customs-files/export?${march()}&branchId=${pts}`, cookies.opsJed).expect(
+        403,
+      );
     });
   });
 
@@ -799,6 +938,48 @@ describe('operational reports and dashboards', () => {
       expect(none.entries).toEqual([]);
     });
 
+    it('filters a source on the wanted kind in its SQL, before the source’s limit', async () => {
+      // A new trip by the operations user today: newer than their trip expenses.
+      const shipmentId = await shipment(c2, khartoum, '1', '1', '08-01');
+      await post('/trips', cookies.opsPts, {
+        branchId: pts,
+        originLocationId: portSudan,
+        destinationLocationId: khartoum,
+        shipmentIds: [shipmentId],
+        kind: 'EXTERNAL',
+        carrierId: carrier.id,
+        agreedCost: '10',
+        currency: 'USD',
+      }).expect(201);
+      const manager: AuthUser = {
+        id: ids.manager,
+        email: 'manager@example.test',
+        fullName: 'Manager',
+        preferredLocale: 'en',
+        sessionId: randomUUID(),
+        roles: ['BRANCH_MANAGER'],
+        permissions: ROLE_PERMISSIONS.BRANCH_MANAGER,
+        allBranches: false,
+        allowedBranchIds: [pts],
+      };
+      const trips = t.app.get(TripReportsService);
+      const q = { from: ptsToday(), to: ptsToday(), userId: ids.ops, limit: 1 };
+      const newest = await trips.auditEntries(manager, q);
+      expect(newest[0]?.entity).toBe('TRIP');
+      const expenses = await trips.auditEntries(manager, { ...q, entity: 'TRIP_EXPENSE' });
+      expect(expenses.map((e) => [e.entity, e.action])).toEqual([
+        ['TRIP_EXPENSE', 'CREATED'],
+        ['TRIP_EXPENSE', 'CREATED'],
+      ]);
+      const r = await report<AuditLogDto>(
+        `/reports/audit-log?${today()}&userId=${ids.ops}&entity=TRIP_EXPENSE`,
+        cookies.managerPts,
+      );
+      expect(r.entries).toHaveLength(2);
+      expect(r.entries.every((e) => e.entity === 'TRIP_EXPENSE')).toBe(true);
+      expect(r.truncated).toBe(false);
+    });
+
     it('needs audit_log:view and stays in the user’s branches', async () => {
       await get(`/reports/audit-log?${today()}`, cookies.opsPts).expect(403);
       await get(`/reports/audit-log/export?${today()}`, cookies.opsPts).expect(403);
@@ -819,6 +1000,63 @@ describe('operational reports and dashboards', () => {
       expect(values).toContain('سجل التدقيق');
       expect(values).toContain(movementNumbers[0]);
       expect(values).toContain('استلام بضاعة');
+    });
+  });
+
+  describe('module permissions', () => {
+    const paths = {
+      shipments: `/reports/shipments?${march()}`,
+      late: `/reports/late-shipments?${march()}`,
+      conversion: `/reports/sales-conversion?${march()}`,
+      activity: `/reports/customer-activity?${march()}`,
+      onHand: '/reports/warehouse-on-hand',
+      movements: `/reports/warehouse-movements?${march()}`,
+      customs: `/reports/customs-files?${march()}`,
+      trips: `/reports/trips?${may()}`,
+      audit: `/reports/audit-log?${march()}`,
+    };
+    const exportOf = (path: string) => path.replace(/^(\/reports\/[a-z-]+)/, '$1/export');
+
+    it('a warehouse user reads neither quotations, customs files nor the audit log', async () => {
+      const expected: Record<keyof typeof paths, number> = {
+        shipments: 200,
+        late: 200,
+        conversion: 403,
+        activity: 200,
+        onHand: 200,
+        movements: 200,
+        customs: 403,
+        trips: 200,
+        audit: 403,
+      };
+      for (const [key, status] of Object.entries(expected) as [keyof typeof paths, number][]) {
+        await get(paths[key], cookies.warehousePts).expect(status);
+        await get(exportOf(paths[key]), cookies.warehousePts)
+          .buffer(true)
+          .parse(binary)
+          .expect(status);
+      }
+    });
+
+    it('a customs user reads neither quotations, trips nor the audit log', async () => {
+      const expected: Record<keyof typeof paths, number> = {
+        shipments: 200,
+        late: 200,
+        conversion: 403,
+        activity: 200,
+        onHand: 200,
+        movements: 200,
+        customs: 200,
+        trips: 403,
+        audit: 403,
+      };
+      for (const [key, status] of Object.entries(expected) as [keyof typeof paths, number][]) {
+        await get(paths[key], cookies.customsPts).expect(status);
+        await get(exportOf(paths[key]), cookies.customsPts)
+          .buffer(true)
+          .parse(binary)
+          .expect(status);
+      }
     });
   });
 

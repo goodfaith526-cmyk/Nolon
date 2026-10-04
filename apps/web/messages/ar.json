@@ -1230,7 +1230,8 @@
     "action_POSTED": "ترحيل",
     "action_APPROVED": "اعتماد",
     "action_UPLOADED": "رفع",
-    "action_DELETED": "حذف"
+    "action_DELETED": "حذف",
+    "warehouseScope": "تشمل الأرقام شحنات فروعك، في أي مستودع كانت."
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",

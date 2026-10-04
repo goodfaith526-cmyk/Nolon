@@ -45,26 +45,42 @@ import {
 
 const BACK = '/operational-reports';
 
+type OpsTitle =
+  | 'shipments'
+  | 'late'
+  | 'conversion'
+  | 'activity'
+  | 'onHand'
+  | 'movements'
+  | 'customs'
+  | 'trips'
+  | 'audit';
+
+/**
+ * What each report needs, as the API checks it: operational_reports:view and the view permission
+ * of the module that owns the records (the audit log: audit_log:view).
+ */
+const REPORT_PERMISSIONS: Record<OpsTitle, readonly Permission[]> = {
+  shipments: ['operational_reports:view', 'shipments:view'],
+  late: ['operational_reports:view', 'shipments:view'],
+  conversion: ['operational_reports:view', 'quotations:view', 'bookings:view'],
+  activity: ['operational_reports:view', 'shipments:view', 'customers:view'],
+  onHand: ['operational_reports:view', 'warehouse:view'],
+  movements: ['operational_reports:view', 'warehouse:view'],
+  customs: ['operational_reports:view', 'customs:view'],
+  trips: ['operational_reports:view', 'transport_trips:view'],
+  audit: ['audit_log:view'],
+};
+
 /** The report page frame for an operational report: same filters and export as the others. */
 function OpsReport<T>({
   id,
-  permission = 'operational_reports:view',
   title,
   filters,
   children,
 }: {
   id: ReportId;
-  permission?: Permission;
-  title:
-    | 'shipments'
-    | 'late'
-    | 'conversion'
-    | 'activity'
-    | 'onHand'
-    | 'movements'
-    | 'customs'
-    | 'trips'
-    | 'audit';
+  title: OpsTitle;
   filters: FilterSet;
   children: (report: T) => ReactNode;
 }) {
@@ -72,7 +88,7 @@ function OpsReport<T>({
   return (
     <ReportView<T>
       id={id}
-      permission={permission}
+      permission={REPORT_PERMISSIONS[title]}
       title={t(title)}
       hint={t(`${title}Hint`)}
       filters={filters}
@@ -422,12 +438,18 @@ export function CustomerActivityReport() {
                 <th>{tr('shipmentCount')}</th>
                 <th>{t('volumeCbm')}</th>
                 <th>{t('weightKg')}</th>
-                <th>{tr('invoices')}</th>
-                <th>{tr('revenueUsd')}</th>
+                {r.revenueShown && (
+                  <>
+                    <th>{tr('invoices')}</th>
+                    <th>{tr('revenueUsd')}</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
-              {r.customers.length === 0 && <EmptyRow columns={6} text={t('none')} />}
+              {r.customers.length === 0 && (
+                <EmptyRow columns={r.revenueShown ? 6 : 4} text={t('none')} />
+              )}
               {r.customers.map((c) => (
                 <tr key={c.customerId}>
                   <td>
@@ -436,8 +458,12 @@ export function CustomerActivityReport() {
                   <td dir="ltr">{c.shipments}</td>
                   <AmountCell value={c.volumeCbm} />
                   <AmountCell value={c.weightKg} />
-                  <td dir="ltr">{c.invoices}</td>
-                  <AmountCell value={c.revenueUsd} />
+                  {r.revenueShown && (
+                    <>
+                      <td dir="ltr">{dash(c.invoices)}</td>
+                      <AmountCell value={c.revenueUsd} />
+                    </>
+                  )}
                 </tr>
               ))}
               <tr className="subtotal">
@@ -445,12 +471,16 @@ export function CustomerActivityReport() {
                 <td dir="ltr">{r.totals.shipments}</td>
                 <AmountCell value={r.totals.volumeCbm} strong />
                 <AmountCell value={r.totals.weightKg} strong />
-                <td dir="ltr">{r.totals.invoices}</td>
-                <AmountCell value={r.totals.revenueUsd} strong />
+                {r.revenueShown && (
+                  <>
+                    <td dir="ltr">{dash(r.totals.invoices)}</td>
+                    <AmountCell value={r.totals.revenueUsd} strong />
+                  </>
+                )}
               </tr>
             </tbody>
           </ReportTable>
-          <p className="muted">{t('revenueNote')}</p>
+          {r.revenueShown && <p className="muted">{t('revenueNote')}</p>}
         </div>
       )}
     </OpsReport>
@@ -492,6 +522,7 @@ export function WarehouseOnHandReport() {
               { label: t('weightKg'), value: r.totals.weightKg },
             ]}
           />
+          <p className="muted">{t('warehouseScope')}</p>
           <Truncated shown={r.truncated} />
           <ReportTable>
             <thead>
@@ -558,16 +589,17 @@ export function WarehouseMovementsReport() {
               { label: t('releasedPackages'), value: r.releases.packages },
             ]}
           />
+          <p className="muted">{t('warehouseScope')}</p>
           <Truncated shown={r.truncated} />
           <ReportTable>
             <thead>
               <tr>
-                <th>{tr('number')}</th>
-                <th>{t('kind')}</th>
-                <th>{t('occurredAt')}</th>
-                <th>{t('warehouse')}</th>
                 <th>{tr('shipment')}</th>
                 <th>{tr('customer')}</th>
+                <th>{t('kind')}</th>
+                <th>{t('occurredAt')}</th>
+                <th>{tr('number')}</th>
+                <th>{t('warehouse')}</th>
                 <th>{t('packages')}</th>
                 <th>{t('weightKg')}</th>
                 <th>{t('recordedBy')}</th>
@@ -577,16 +609,16 @@ export function WarehouseMovementsReport() {
               {r.movements.length === 0 && <EmptyRow columns={9} text={t('none')} />}
               {r.movements.map((m) => (
                 <tr key={m.movementId}>
-                  <td dir="ltr">{m.number}</td>
+                  <ShipmentLink id={m.shipmentId} number={m.shipmentNumber} />
+                  <td>{m.customerName}</td>
                   <td>
                     <span className={`badge badge-movement badge-${m.kind}`}>
                       {te(`movement_${m.kind}`)}
                     </span>
                   </td>
                   <td>{time.format(new Date(m.occurredAt))}</td>
+                  <td dir="ltr">{m.number}</td>
                   <td dir="ltr">{m.warehouseCode}</td>
-                  <ShipmentLink id={m.shipmentId} number={m.shipmentNumber} />
-                  <td>{m.customerName}</td>
                   <td dir="ltr">{m.packages}</td>
                   <AmountCell value={m.weightKg} />
                   <td>{m.createdByName}</td>
@@ -818,7 +850,6 @@ export function AuditLogReport() {
   return (
     <OpsReport<AuditLogDto>
       id="audit-log"
-      permission="audit_log:view"
       title="audit"
       filters={{ dates: 'period', extras: [entity] }}
     >
@@ -863,29 +894,16 @@ export function AuditLogReport() {
   );
 }
 
-const REPORTS: readonly {
-  href: string;
-  title:
-    | 'shipments'
-    | 'late'
-    | 'conversion'
-    | 'activity'
-    | 'onHand'
-    | 'movements'
-    | 'customs'
-    | 'trips'
-    | 'audit';
-  permission: Permission;
-}[] = [
-  { href: '/shipments', title: 'shipments', permission: 'operational_reports:view' },
-  { href: '/late-shipments', title: 'late', permission: 'operational_reports:view' },
-  { href: '/sales-conversion', title: 'conversion', permission: 'operational_reports:view' },
-  { href: '/customer-activity', title: 'activity', permission: 'operational_reports:view' },
-  { href: '/warehouse-on-hand', title: 'onHand', permission: 'operational_reports:view' },
-  { href: '/warehouse-movements', title: 'movements', permission: 'operational_reports:view' },
-  { href: '/customs-files', title: 'customs', permission: 'operational_reports:view' },
-  { href: '/trips', title: 'trips', permission: 'operational_reports:view' },
-  { href: '/audit-log', title: 'audit', permission: 'audit_log:view' },
+const REPORTS: readonly { href: string; title: OpsTitle }[] = [
+  { href: '/shipments', title: 'shipments' },
+  { href: '/late-shipments', title: 'late' },
+  { href: '/sales-conversion', title: 'conversion' },
+  { href: '/customer-activity', title: 'activity' },
+  { href: '/warehouse-on-hand', title: 'onHand' },
+  { href: '/warehouse-movements', title: 'movements' },
+  { href: '/customs-files', title: 'customs' },
+  { href: '/trips', title: 'trips' },
+  { href: '/audit-log', title: 'audit' },
 ];
 
 /** The operational reports the user may open. */
@@ -893,7 +911,7 @@ export function OperationalReportsIndex() {
   const t = useTranslations('OpsReports');
   const tc = useTranslations('Common');
   const me = useMe();
-  const reports = REPORTS.filter((r) => can(me, r.permission));
+  const reports = REPORTS.filter((r) => REPORT_PERMISSIONS[r.title].every((p) => can(me, p)));
   if (reports.length === 0) return <p className="error">{tc('noAccess')}</p>;
   return (
     <section className="stack">

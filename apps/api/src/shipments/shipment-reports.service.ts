@@ -61,13 +61,20 @@ const ROUTE_JOINS = Prisma.sql`
 /** The day a timestamp falls on in the shipment's branch (alias b). */
 const localDay = (column: Prisma.Sql) => Prisma.sql`(${column} AT TIME ZONE b."timezone")::date`;
 
-/** The last time a delivered or closed shipment was delivered (alias s, b); else null. */
+/** Whether the shipment has been delivered (alias s). */
+const IS_DELIVERED = Prisma.sql`s."status" IN ('DELIVERED', 'CLOSED')`;
+
+/**
+ * The day a delivered or closed shipment was delivered (alias s, b): its last DELIVERED event,
+ * else the day it was closed. Null when not delivered, or delivered on a day nothing recorded
+ * (never guessed from the last update, which any later edit moves).
+ */
 const DELIVERED_ON = Prisma.sql`
-  CASE WHEN s."status" IN ('DELIVERED', 'CLOSED') THEN
+  CASE WHEN ${IS_DELIVERED} THEN
     ${localDay(Prisma.sql`coalesce(
       (SELECT max(e."occurred_at") FROM "shipment_events" e
         WHERE e."shipment_id" = s."id" AND e."status" = 'DELIVERED'),
-      s."closed_at", s."updated_at")`)}
+      s."closed_at")`)}
   END`;
 
 function route(r: LocationColumns): { origin: ReportLocationDto; destination: ReportLocationDto } {
@@ -224,7 +231,7 @@ export class ShipmentReportsService {
         SELECT s."id" AS "shipmentId", s."number", b."code" AS "branchCode",
                s."customer_id" AS "customerId", c."name" AS "customerName",
                s."mode"::text AS "mode", s."status"::text AS "status", ${ROUTE_COLUMNS},
-               s."eta", ${DELIVERED_ON} AS "deliveredOn",
+               s."eta", ${IS_DELIVERED} AS "delivered", ${DELIVERED_ON} AS "deliveredOn",
                (now() AT TIME ZONE b."timezone")::date AS "today"
         FROM "shipments" s
         JOIN "branches" b ON b."id" = s."branch_id"
@@ -234,6 +241,13 @@ export class ShipmentReportsService {
           AND s."status" <> 'CANCELLED'
           AND s."eta" BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
           ${andIf(q.customerId, (id) => Prisma.sql`s."customer_id" = ${id}::uuid`)}
+      ),
+      late AS (
+        SELECT *,
+               CASE WHEN NOT "delivered" AND "today" > "eta" THEN "today" - "eta"
+                    WHEN "deliveredOn" > "eta" THEN "deliveredOn" - "eta"
+               END AS "daysLate"
+        FROM base
       )`;
     const [totals, rows] = await Promise.all([
       this.prisma.$queryRaw<
@@ -241,17 +255,16 @@ export class ShipmentReportsService {
       >`
         ${base}
         SELECT count(*)::int AS "withEta",
-               count(*) FILTER (WHERE "deliveredOn" IS NULL AND "today" > "eta")::int AS "openLate",
-               count(*) FILTER (WHERE "deliveredOn" > "eta")::int AS "deliveredLate",
-               coalesce(sum(coalesce("deliveredOn", "today") - "eta")
-                 FILTER (WHERE coalesce("deliveredOn", "today") > "eta"), 0)::int AS "totalDaysLate"
-        FROM base`,
+               count(*) FILTER (WHERE NOT "delivered" AND "daysLate" IS NOT NULL)::int AS "openLate",
+               count(*) FILTER (WHERE "delivered" AND "daysLate" IS NOT NULL)::int AS "deliveredLate",
+               coalesce(sum("daysLate"), 0)::int AS "totalDaysLate"
+        FROM late`,
       this.prisma.$queryRaw<
         (ShipmentColumns & { eta: Date; deliveredOn: Date | null; today: Date })[]
       >`
         ${base}
-        SELECT * FROM base
-        WHERE coalesce("deliveredOn", "today") > "eta"
+        SELECT * FROM late
+        WHERE "daysLate" IS NOT NULL
         ORDER BY "eta", "number"
         LIMIT ${limit + 1}`,
     ]);
@@ -367,22 +380,24 @@ export class ShipmentReportsService {
   ): Promise<{ inbound: DashboardShipmentRefDto[]; outbound: DashboardShipmentRefDto[] }> {
     const [only] = reportBranchIds(user, branchId);
     if (!only) return { inbound: [], outbound: [] };
-    const rows = await this.prisma.$queryRaw<
-      (ShipmentColumns & { inbound: boolean; outbound: boolean })[]
-    >`
+    // Each list has its own limit, so a busy day one way cannot crowd out the other.
+    const due = (column: Prisma.Sql) => this.prisma.$queryRaw<ShipmentColumns[]>`
       SELECT s."id" AS "shipmentId", s."number", b."code" AS "branchCode",
              s."customer_id" AS "customerId", c."name" AS "customerName",
-             s."mode"::text AS "mode", s."status"::text AS "status", ${ROUTE_COLUMNS},
-             s."eta" = ${sqlDate(day)} AS "inbound", s."etd" = ${sqlDate(day)} AS "outbound"
+             s."mode"::text AS "mode", s."status"::text AS "status", ${ROUTE_COLUMNS}
       FROM "shipments" s
       JOIN "branches" b ON b."id" = s."branch_id"
       JOIN "customers" c ON c."id" = s."customer_id"
       ${ROUTE_JOINS}
       WHERE s."branch_id" = ${only}::uuid
         AND s."status" <> 'CANCELLED'
-        AND (s."eta" = ${sqlDate(day)} OR s."etd" = ${sqlDate(day)})
+        AND ${column} = ${sqlDate(day)}
       ORDER BY s."number"
-      LIMIT ${limit * 2}`;
+      LIMIT ${limit}`;
+    const [inbound, outbound] = await Promise.all([
+      due(Prisma.sql`s."eta"`),
+      due(Prisma.sql`s."etd"`),
+    ]);
     const ref = (r: ShipmentColumns): DashboardShipmentRefDto => ({
       shipmentId: r.shipmentId,
       number: r.number,
@@ -390,16 +405,7 @@ export class ShipmentReportsService {
       status: r.status,
       ...route(r),
     });
-    return {
-      inbound: rows
-        .filter((r) => r.inbound)
-        .slice(0, limit)
-        .map(ref),
-      outbound: rows
-        .filter((r) => r.outbound)
-        .slice(0, limit)
-        .map(ref),
-    };
+    return { inbound: inbound.map(ref), outbound: outbound.map(ref) };
   }
 
   /** Audit log: the shipment events recorded in the period (status changes, holds, ...). */

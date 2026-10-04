@@ -66,6 +66,7 @@ export class WarehouseReportsService {
                row_number() OVER w AS "rn",
                sum(${SIGNED_PACKAGES}) OVER w AS "running"
         FROM "warehouse_movements" m
+        -- Scoped by the shipment's branch (rule 2), not the warehouse's: these are your branches' shipments.
         WHERE m."branch_id" IN ${uuidList(branchIds)}
           ${andIf(warehouseId, (id) => Prisma.sql`m."warehouse_id" = ${id}::uuid`)}
         WINDOW w AS (PARTITION BY m."shipment_id", m."warehouse_id"

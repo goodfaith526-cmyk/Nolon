@@ -12,7 +12,13 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec } from '../common/money.js';
-import { type AuditQuery, andIf, sqlDate, uuidList } from '../common/report-sql.js';
+import {
+  type AuditQuery,
+  andIf,
+  auditEntityFilter,
+  sqlDate,
+  uuidList,
+} from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgingTotals, agingBucket, daysPastDue } from './aging.js';
@@ -306,6 +312,7 @@ export class BillingReportsService {
       WHERE x."branch_id" IN ${uuidList(branchIds)}
         AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
+        ${auditEntityFilter(q)}
       ORDER BY x."at" DESC
       LIMIT ${q.limit + 1}`;
     return rows.map((r) => ({ ...r, at: r.at.toISOString(), status: null }));

@@ -64,21 +64,23 @@ const exportQuery = z.object({ locale: z.enum(LOCALES).optional() });
 
 /**
  * Operational reports (annex D section 3), each as JSON and as an Excel download (`/export`,
- * headers in `locale`, else the user's language). All need operational_reports:view; the audit log
- * needs audit_log:view. Branches come from the user (branch-scope.ts).
+ * headers in `locale`, else the user's language). Each needs operational_reports:view and the view
+ * permission of the module that owns its records (so a warehouse user does not read customs files,
+ * nor a customs user trips); the audit log needs audit_log:view. Customer activity carries
+ * revenue only for financial_reports:view. Branches come from the user (branch-scope.ts).
  */
 @Controller('reports')
 export class OperationalReportsController {
   constructor(private readonly reports: OperationalReportsService) {}
 
   @Get('shipments')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view')
   shipments(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ShipmentsReportDto> {
     return this.reports.shipmentsByStatus(user, parse(shipmentsQuery, query));
   }
 
   @Get('shipments/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view')
   exportShipments(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -91,13 +93,13 @@ export class OperationalReportsController {
   }
 
   @Get('late-shipments')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view')
   lateShipments(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<LateShipmentsDto> {
     return this.reports.lateShipments(user, parse(customerPeriod, query));
   }
 
   @Get('late-shipments/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view')
   exportLateShipments(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -110,7 +112,7 @@ export class OperationalReportsController {
   }
 
   @Get('sales-conversion')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'quotations:view', 'bookings:view')
   salesConversion(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -119,7 +121,7 @@ export class OperationalReportsController {
   }
 
   @Get('sales-conversion/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'quotations:view', 'bookings:view')
   exportSalesConversion(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -132,7 +134,7 @@ export class OperationalReportsController {
   }
 
   @Get('customer-activity')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view', 'customers:view')
   customerActivity(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -141,7 +143,7 @@ export class OperationalReportsController {
   }
 
   @Get('customer-activity/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'shipments:view', 'customers:view')
   exportCustomerActivity(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -154,7 +156,7 @@ export class OperationalReportsController {
   }
 
   @Get('warehouse-on-hand')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'warehouse:view')
   warehouseOnHand(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -163,7 +165,7 @@ export class OperationalReportsController {
   }
 
   @Get('warehouse-on-hand/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'warehouse:view')
   exportWarehouseOnHand(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -176,7 +178,7 @@ export class OperationalReportsController {
   }
 
   @Get('warehouse-movements')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'warehouse:view')
   warehouseMovements(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -185,7 +187,7 @@ export class OperationalReportsController {
   }
 
   @Get('warehouse-movements/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'warehouse:view')
   exportWarehouseMovements(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -198,13 +200,13 @@ export class OperationalReportsController {
   }
 
   @Get('customs-files')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'customs:view')
   customsFiles(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<CustomsFilesDto> {
     return this.reports.customsFiles(user, parse(customsQuery, query));
   }
 
   @Get('customs-files/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'customs:view')
   exportCustomsFiles(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
@@ -217,13 +219,13 @@ export class OperationalReportsController {
   }
 
   @Get('trips')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'transport_trips:view')
   trips(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<TripsReportDto> {
     return this.reports.tripsReport(user, parse(tripsQuery, query));
   }
 
   @Get('trips/export')
-  @RequirePermission('operational_reports:view')
+  @RequirePermission('operational_reports:view', 'transport_trips:view')
   exportTrips(
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,

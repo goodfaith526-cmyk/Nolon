@@ -1230,7 +1230,8 @@
     "action_POSTED": "Posted",
     "action_APPROVED": "Approved",
     "action_UPLOADED": "Uploaded",
-    "action_DELETED": "Deleted"
+    "action_DELETED": "Deleted",
+    "warehouseScope": "Figures cover your branches' shipments, in whichever warehouse they are held."
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",

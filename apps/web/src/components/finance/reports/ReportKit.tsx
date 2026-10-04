@@ -103,7 +103,8 @@ export function ReportView<T>({
   children,
 }: {
   id: ReportId;
-  permission: Permission;
+  /** Every permission the report needs. */
+  permission: Permission | readonly Permission[];
   title: string;
   hint: string;
   filters: FilterSet;
@@ -135,7 +136,9 @@ export function ReportView<T>({
   const customers = useCustomerOptions(Boolean(set.customer) && can(me, 'customers:view'));
   const accounts = useAccountOptions(Boolean(set.accounts || set.cashAccount));
 
-  const allowed = can(me, permission);
+  const allowed = (typeof permission === 'string' ? [permission] : permission).every((p) =>
+    can(me, p),
+  );
   const ready = !set.accounts || filters.accountIds.length > 0;
   const query = reportQuery(set, filters);
 
