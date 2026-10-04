@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AccountType,
+  AuditLogEntryDto,
   BalanceSheetDto,
   BalanceSheetRowDto,
   BranchAmountsDto,
@@ -21,6 +22,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
+import type { AuditQuery } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { FX_DIFFERENCE_LINE } from './auto-journal.service.js';
@@ -53,6 +55,9 @@ interface AccountRow {
   nameAr: string;
   type: AccountType;
 }
+
+/** Most entry ids per query (bound parameters are limited). */
+const ENTRY_CHUNK = 1000;
 
 /** `l."branch_id" IN (...)`: the line's own branch, among the report's branches. */
 function lineBranchIn(branchIds: readonly string[]): Prisma.Sql {
@@ -661,6 +666,80 @@ export class LedgerReportsService {
       account: mapped,
       balanceUsd: value === null || value === undefined ? ZERO : dec(value),
     };
+  }
+
+  /**
+   * The cost (expense accounts, debit - credit, in USD) posted by each of `entryIds`, net of its
+   * posted reversal, from lines in the report's branches. Keyed by the original entry's id; entries
+   * that are not posted are left out.
+   */
+  async entryCostsUsd(
+    user: AuthUser,
+    entryIds: readonly string[],
+    branchId?: string,
+  ): Promise<Map<string, Decimal>> {
+    const branchIds = reportBranchIds(user, branchId);
+    const costs = new Map<string, Decimal>();
+    if (branchIds.length === 0 || entryIds.length === 0) return costs;
+    for (let i = 0; i < entryIds.length; i += ENTRY_CHUNK) {
+      const ids = Prisma.join(
+        entryIds.slice(i, i + ENTRY_CHUNK).map((id) => Prisma.sql`${id}::uuid`),
+      );
+      const rows = await this.prisma.$queryRaw<{ entryId: string; costUsd: Decimal }[]>`
+        SELECT coalesce(e."reversal_of_id", e."id") AS "entryId",
+               sum(l."debit_usd" - l."credit_usd") AS "costUsd"
+        FROM "journal_lines" l
+        JOIN "journal_entries" e ON e."id" = l."entry_id"
+        JOIN "accounts" a ON a."id" = l."account_id"
+        WHERE e."status" = 'POSTED'
+          AND (e."id" IN (${ids}) OR e."reversal_of_id" IN (${ids}))
+          AND a."type" = 'EXPENSE'
+          AND ${lineBranchIn(branchIds)}
+        GROUP BY 1`;
+      for (const r of rows) costs.set(r.entryId, dec(r.costUsd));
+    }
+    return costs;
+  }
+
+  /** Audit log: journal entries created and posted in the period (days in the entry's branch). */
+  async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<
+      {
+        at: Date;
+        branchCode: string;
+        userId: string;
+        userName: string;
+        action: 'CREATED' | 'POSTED';
+        reference: string;
+        detail: string;
+      }[]
+    >`
+      WITH events AS (
+        SELECT e."branch_id", e."created_at" AS "at", e."created_by_id" AS "user_id",
+               'CREATED' AS "action", e."number" AS "reference", e."description" AS "detail"
+        FROM "journal_entries" e
+        UNION ALL
+        SELECT e."branch_id", e."posted_at", e."posted_by_id", 'POSTED', e."number", e."description"
+        FROM "journal_entries" e WHERE e."posted_at" IS NOT NULL AND e."posted_by_id" IS NOT NULL
+      )
+      SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
+             x."action", x."reference", x."detail"
+      FROM events x
+      JOIN "branches" b ON b."id" = x."branch_id"
+      JOIN "users" u ON u."id" = x."user_id"
+      WHERE x."branch_id" IN (${Prisma.join(branchIds.map((id) => Prisma.sql`${id}::uuid`))})
+        AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${q.from}::date AND ${q.to}::date
+        ${q.userId ? Prisma.sql`AND x."user_id" = ${q.userId}::uuid` : Prisma.empty}
+      ORDER BY x."at" DESC
+      LIMIT ${q.limit + 1}`;
+    return rows.map((r) => ({
+      ...r,
+      at: r.at.toISOString(),
+      entity: 'JOURNAL_ENTRY',
+      status: null,
+    }));
   }
 
   private async mapped(role: PostingRole): Promise<ReportAccountDto | null> {

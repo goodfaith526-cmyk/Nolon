@@ -4,6 +4,7 @@ import {
   type WarehouseMovementKind,
   type WarehouseReceiptStatus,
 } from '@nolon/shared';
+import { daysBetween } from '../common/dates.js';
 import { type Decimal, ZERO } from '../common/money.js';
 
 /**
@@ -111,4 +112,13 @@ export function defaultReceiptStatus(
   options: readonly WarehouseReceiptStatus[],
 ): WarehouseReceiptStatus | null {
   return options.length === 1 ? (options[0] ?? null) : null;
+}
+
+/**
+ * Days goods have been held: from the day the current holding started (the first receipt after
+ * the warehouse last held nothing for the shipment) to today, both in the branch's calendar.
+ * Received today is 0 days.
+ */
+export function daysHeld(heldSince: string, today: string): number {
+  return Math.max(daysBetween(heldSince, today), 0);
 }

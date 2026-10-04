@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
   AgingAmountsDto,
+  AuditLogEntryDto,
   ArAgingDto,
   ArAgingInvoiceDto,
   InvoicesReceiptsDto,
@@ -11,6 +12,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec } from '../common/money.js';
+import { type AuditQuery, andIf, sqlDate, uuidList } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgingTotals, agingBucket, daysPastDue } from './aging.js';
@@ -220,5 +222,92 @@ export class BillingReportsService {
         receiptRows.filter((r) => r.status === 'POSTED').map((r) => r.amountUsd),
       ).toFixed(),
     };
+  }
+
+  /**
+   * Revenue per customer: approved invoices dated in the period whose entries are posted, in USD
+   * at their own rate, most revenue first.
+   */
+  async revenueByCustomer(
+    user: AuthUser,
+    q: { from: string; to: string; branchId?: string; customerId?: string },
+    limit?: number,
+  ): Promise<
+    { customerId: string; customerName: string; invoices: number; revenueUsd: Decimal }[]
+  > {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<
+      { customerId: string; customerName: string; invoices: number; revenueUsd: Decimal }[]
+    >`
+      SELECT i."customer_id" AS "customerId", c."name" AS "customerName",
+             count(*)::int AS "invoices", sum(i."total_usd") AS "revenueUsd"
+      FROM "customer_invoices" i
+      JOIN "journal_entries" ie ON ie."id" = i."journal_entry_id" AND ie."status" = 'POSTED'
+      JOIN "customers" c ON c."id" = i."customer_id"
+      WHERE i."status" = 'APPROVED'
+        AND i."branch_id" IN ${uuidList(branchIds)}
+        AND i."invoice_date" BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+        ${andIf(q.customerId, (id) => Prisma.sql`i."customer_id" = ${id}::uuid`)}
+      GROUP BY i."customer_id", c."name"
+      ORDER BY sum(i."total_usd") DESC, c."name"
+      ${limit === undefined ? Prisma.empty : Prisma.sql`LIMIT ${limit}`}`;
+    return rows.map((r) => ({ ...r, revenueUsd: dec(r.revenueUsd) }));
+  }
+
+  /**
+   * Audit log: invoices created, approved and cancelled, receipts created and cancelled, recorded
+   * in the period (days in the document's branch), newest first. A draft invoice has no number
+   * yet ("—"). An invoice cancellation does not record who did it.
+   */
+  async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<
+      {
+        at: Date;
+        branchCode: string;
+        userId: string | null;
+        userName: string | null;
+        entity: 'INVOICE' | 'RECEIPT';
+        action: 'CREATED' | 'APPROVED' | 'CANCELLED';
+        reference: string;
+        detail: string | null;
+      }[]
+    >`
+      WITH events AS (
+        SELECT i."branch_id", i."created_at" AS "at", i."created_by_id" AS "user_id",
+               'INVOICE' AS "entity", 'CREATED' AS "action",
+               coalesce(i."number", '—') AS "reference", NULL AS "detail"
+        FROM "customer_invoices" i
+        UNION ALL
+        SELECT i."branch_id", i."approved_at", i."approved_by_id", 'INVOICE', 'APPROVED',
+               i."number", NULL
+        FROM "customer_invoices" i WHERE i."approved_at" IS NOT NULL
+        UNION ALL
+        SELECT i."branch_id", i."cancelled_at", NULL, 'INVOICE', 'CANCELLED',
+               coalesce(i."number", '—'), i."cancel_reason"
+        FROM "customer_invoices" i
+        WHERE i."cancelled_at" IS NOT NULL
+        UNION ALL
+        SELECT r."branch_id", r."created_at", r."created_by_id", 'RECEIPT', 'CREATED',
+               r."number", NULL
+        FROM "receipts" r
+        UNION ALL
+        SELECT r."branch_id", r."cancelled_at", r."cancelled_by_id", 'RECEIPT', 'CANCELLED',
+               r."number", r."cancel_reason"
+        FROM "receipts" r WHERE r."cancelled_at" IS NOT NULL
+      )
+      SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
+             x."entity", x."action", x."reference", x."detail"
+      FROM events x
+      JOIN "branches" b ON b."id" = x."branch_id"
+      LEFT JOIN "users" u ON u."id" = x."user_id"
+      WHERE x."branch_id" IN ${uuidList(branchIds)}
+        AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+        ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
+      ORDER BY x."at" DESC
+      LIMIT ${q.limit + 1}`;
+    return rows.map((r) => ({ ...r, at: r.at.toISOString(), status: null }));
   }
 }

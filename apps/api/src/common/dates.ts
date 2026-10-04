@@ -30,3 +30,8 @@ export function todayIn(timeZone: string, now: Date = new Date()): string {
     day: '2-digit',
   }).format(now);
 }
+
+/** Whole calendar days from one YYYY-MM-DD date to another (negative when `to` is earlier). */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((toDbDate(to).getTime() - toDbDate(from).getTime()) / 86_400_000);
+}

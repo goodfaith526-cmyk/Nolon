@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res, StreamableFile } from '@nestjs/common';
+import { Controller, Get, Query, Res, type StreamableFile } from '@nestjs/common';
 import {
   LEDGER_MAX_ACCOUNTS,
   LOCALES,
@@ -17,7 +17,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { dateString, parse } from '../common/validation.js';
-import { XLSX_CONTENT_TYPE } from './excel.js';
+import { xlsxDownload } from './excel-response.js';
 import { type ReportFile, type ReportRequest, ReportsService } from './reports.service.js';
 
 const branch = { branchId: z.uuid().optional() };
@@ -242,12 +242,6 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     const { locale } = parse(exportQuery, query);
     const file: ReportFile = await this.reports.export(user, request, locale);
-    res.set({
-      'Content-Type': XLSX_CONTENT_TYPE,
-      'Content-Disposition': `attachment; filename="${file.fileName}"`,
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'private, no-store',
-    });
-    return new StreamableFile(file.data);
+    return xlsxDownload(res, file);
   }
 }

@@ -2,6 +2,7 @@
 
 import type {
   CustomerSummaryDto,
+  OperationalReport,
   Page,
   Permission,
   ReportAccountOptionDto,
@@ -28,16 +29,28 @@ export type ReportId =
   | 'shipment-profitability'
   | 'invoices-receipts'
   | 'cash-movement'
-  | 'open-accruals';
+  | 'open-accruals'
+  | OperationalReport;
+
+/** A report's own select filter (status, warehouse, vehicle...), sent as `name=value`. */
+export interface ExtraFilter {
+  name: string;
+  label: string;
+  /** The empty choice: no filter. */
+  all: string;
+  options: readonly { value: string; label: string }[];
+}
 
 /** Which filters a report has besides the branch. */
 export interface FilterSet {
-  dates: 'period' | 'asOf';
+  /** A period, a single date, or none (a report of now). */
+  dates: 'period' | 'asOf' | 'none';
   customer?: boolean;
   /** One or more accounts (general ledger). */
   accounts?: boolean;
   /** One optional cash or bank account. */
   cashAccount?: boolean;
+  extras?: readonly ExtraFilter[];
 }
 
 export interface Filters {
@@ -47,6 +60,8 @@ export interface Filters {
   branchId: string;
   customerId: string;
   accountIds: string[];
+  /** Values of the report's own filters, by name. */
+  extra: Readonly<Record<string, string>>;
 }
 
 /** The query string the API takes for these filters (without the locale). */
@@ -55,13 +70,17 @@ export function reportQuery(set: FilterSet, f: Filters): string {
   if (set.dates === 'period') {
     q.set('from', f.from);
     q.set('to', f.to);
-  } else {
+  } else if (set.dates === 'asOf') {
     q.set('asOf', f.asOf);
   }
   if (f.branchId) q.set('branchId', f.branchId);
   if (set.customer && f.customerId) q.set('customerId', f.customerId);
   if (set.accounts) q.set('accountIds', f.accountIds.join(','));
   if (set.cashAccount && f.accountIds[0]) q.set('accountId', f.accountIds[0]);
+  for (const extra of set.extras ?? []) {
+    const value = f.extra[extra.name];
+    if (value) q.set(extra.name, value);
+  }
   return q.toString();
 }
 
@@ -80,6 +99,7 @@ export function ReportView<T>({
   title,
   hint,
   filters: set,
+  back,
   children,
 }: {
   id: ReportId;
@@ -87,6 +107,8 @@ export function ReportView<T>({
   title: string;
   hint: string;
   filters: FilterSet;
+  /** The list this report is opened from (default: the financial reports). */
+  back?: { href: string; label: string };
   children: (report: T, filters: Filters) => ReactNode;
 }) {
   const t = useTranslations('Reports');
@@ -105,6 +127,7 @@ export function ReportView<T>({
       branchId: me.allBranches ? '' : (me.branches[0]?.id ?? ''),
       customerId: '',
       accountIds: [],
+      extra: {},
     };
   });
   const [report, setReport] = useState<{ query: string; data: T } | null>(null);
@@ -147,6 +170,7 @@ export function ReportView<T>({
       accountIds: form
         .getAll('accountId')
         .filter((v): v is string => typeof v === 'string' && v !== ''),
+      extra: Object.fromEntries((set.extras ?? []).map((x) => [x.name, field(form, x.name)])),
     });
   }
 
@@ -158,8 +182,8 @@ export function ReportView<T>({
     <section className="stack report">
       <div className="page-head">
         <div>
-          <Link href="/reports" className="back-link">
-            {t('allReports')}
+          <Link href={back?.href ?? '/reports'} className="back-link">
+            {back?.label ?? t('allReports')}
           </Link>
           <h1>{title}</h1>
           <p className="muted">{hint}</p>
@@ -183,12 +207,12 @@ export function ReportView<T>({
               <input type="date" name="to" required defaultValue={filters.to} />
             </label>
           </>
-        ) : (
+        ) : set.dates === 'asOf' ? (
           <label className="field">
             <span>{t('asOf')}</span>
             <input type="date" name="asOf" required defaultValue={filters.asOf} />
           </label>
-        )}
+        ) : null}
         <label className="field">
           <span>{t('branch')}</span>
           <select name="branchId" defaultValue={filters.branchId}>
@@ -226,6 +250,19 @@ export function ReportView<T>({
             </select>
           </label>
         )}
+        {set.extras?.map((x) => (
+          <label key={x.name} className="field">
+            <span>{x.label}</span>
+            <select name={x.name} defaultValue={filters.extra[x.name] ?? ''}>
+              <option value="">{x.all}</option>
+              {x.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
         {set.accounts && (
           <label className="field wide">
             <span>{t('accounts')}</span>
@@ -270,6 +307,26 @@ function useCustomerOptions(enabled: boolean): CustomerSummaryDto[] | null {
     };
   }, [enabled]);
   return customers;
+}
+
+/** A list the API gives (warehouses, vehicles...), for a filter; null until loaded or when off. */
+export function useApiList<T>(path: string, enabled: boolean): T[] | null {
+  const [list, setList] = useState<T[] | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    api<T[]>(path)
+      .then((items) => {
+        if (!cancelled) setList(items);
+      })
+      .catch(() => {
+        // Without the list the filter offers only "all"; the report itself still runs.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, enabled]);
+  return list;
 }
 
 function useAccountOptions(enabled: boolean): ReportAccountOptionDto[] | null {

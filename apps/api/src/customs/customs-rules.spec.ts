@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
-import { clearanceProblem, feeTotals, isValidFeeAmount } from './customs-rules.js';
+import {
+  clearanceDays,
+  clearanceProblem,
+  daysOpen,
+  feeTotals,
+  isValidFeeAmount,
+} from './customs-rules.js';
 
 describe('clearanceProblem', () => {
   it('accepts a file in progress and a cleared file with its date', () => {
@@ -42,5 +48,24 @@ describe('fees', () => {
       ['SDG', '1000.3'],
       ['USD', '50'],
     ]);
+  });
+});
+
+describe('clearance time', () => {
+  it('a cleared file took the days from submission to clearance', () => {
+    expect(clearanceDays('2026-10-01', '2026-10-01')).toBe(0);
+    expect(clearanceDays('2026-10-01', '2026-10-04')).toBe(3);
+    expect(clearanceDays('2026-09-28', '2026-10-03')).toBe(5);
+  });
+
+  it('is unknown without both dates', () => {
+    expect(clearanceDays(null, '2026-10-04')).toBeNull();
+    expect(clearanceDays('2026-10-01', null)).toBeNull();
+  });
+
+  it('an open file counts from submission, else from when it was opened, to today', () => {
+    expect(daysOpen(null, '2026-10-01', '2026-09-20', '2026-10-05')).toBe(4);
+    expect(daysOpen(null, null, '2026-09-20', '2026-10-05')).toBe(15);
+    expect(daysOpen('2026-10-03', '2026-10-01', '2026-09-20', '2026-10-05')).toBeNull();
   });
 });
