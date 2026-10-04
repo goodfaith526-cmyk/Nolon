@@ -35,3 +35,13 @@ export async function api<T = void>(
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+/** A text resource of the API (an SVG QR code), or null when it cannot be read. */
+export async function apiText(path: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/v1${path}`, { credentials: 'same-origin' });
+    return res.ok ? await res.text() : null;
+  } catch {
+    return null;
+  }
+}

@@ -186,4 +186,11 @@ export const icons = {
       <path d="M8 14h3v3H8z" />
     </Icon>
   ),
+  print: (
+    <Icon>
+      <path d="M7 8V3h10v5" />
+      <rect x="3" y="8" width="18" height="9" rx="2" />
+      <path d="M7 14h10v7H7z" />
+    </Icon>
+  ),
 } as const;

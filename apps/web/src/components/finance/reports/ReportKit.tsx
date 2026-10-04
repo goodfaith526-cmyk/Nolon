@@ -114,6 +114,7 @@ export function ReportView<T>({
 }) {
   const t = useTranslations('Reports');
   const tc = useTranslations('Common');
+  const tp = useTranslations('Print');
   const me = useMe();
   const locale = useLocale();
   const name = useLocalName();
@@ -180,6 +181,10 @@ export function ReportView<T>({
   const shown = report?.query === query ? report.data : null;
   const exportHref = `/api/v1/reports/${id}/export?${query}&locale=${locale}`;
   const accountChoices = (accounts ?? []).filter((a) => !set.cashAccount || a.isCash);
+  const branchLabel = (id: string) => {
+    const branch = me.branches.find((b) => b.id === id);
+    return branch ? `${branch.code} · ${name(branch)}` : t('allBranches');
+  };
 
   return (
     <section className="stack report">
@@ -192,11 +197,57 @@ export function ReportView<T>({
           <p className="muted">{hint}</p>
         </div>
         {ready && (
-          <a className="button" href={exportHref} download>
-            {t('exportExcel')}
-          </a>
+          <div className="actions">
+            <button type="button" onClick={() => window.print()}>
+              {tp('printPdf')}
+            </button>
+            <a className="button" href={exportHref} download>
+              {t('exportExcel')}
+            </a>
+          </div>
         )}
       </div>
+      <ReportPrintHead
+        entries={[
+          ...(set.dates === 'period'
+            ? ([
+                [t('from'), filters.from],
+                [t('to'), filters.to],
+              ] as const)
+            : set.dates === 'asOf'
+              ? ([[t('asOf'), filters.asOf]] as const)
+              : []),
+          [t('branch'), branchLabel(filters.branchId)],
+          ...(set.customer
+            ? ([
+                [
+                  t('customer'),
+                  customers?.find((c) => c.id === filters.customerId)?.name ??
+                    (filters.customerId ? '…' : t('allCustomers')),
+                ],
+              ] as const)
+            : []),
+          ...(set.accounts || set.cashAccount
+            ? ([
+                [
+                  set.cashAccount ? t('cashAccount') : t('accounts'),
+                  filters.accountIds.length === 0
+                    ? t('allCashAccounts')
+                    : filters.accountIds
+                        .map((id) => accountChoices.find((a) => a.accountId === id)?.code ?? '…')
+                        .join(', '),
+                ],
+              ] as const)
+            : []),
+          ...(set.extras ?? []).map(
+            (x) =>
+              [
+                x.label,
+                x.options.find((o) => o.value === filters.extra[x.name])?.label ?? x.all,
+              ] as const,
+          ),
+        ]}
+      />
       <Notice notice={notice} />
       <form className="row report-filters" onSubmit={onSubmit}>
         {set.dates === 'period' ? (
@@ -290,6 +341,34 @@ export function ReportView<T>({
         children(shown, filters)
       )}
     </section>
+  );
+}
+
+/**
+ * On paper only: the company, the filters the report was run with (as a header, since the filter
+ * form is not printed), who printed it and when, and A4 landscape pages.
+ */
+export function ReportPrintHead({ entries }: { entries: readonly (readonly [string, string])[] }) {
+  const tp = useTranslations('Print');
+  const locale = useLocale();
+  const me = useMe();
+  const [printedAt] = useState(() =>
+    new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date()),
+  );
+  return (
+    <div className="print-only report-print-head">
+      <style>{'@media print { @page { size: A4 landscape; margin: 10mm; } }'}</style>
+      <strong>{tp('company')}</strong>
+      <dl aria-label={tp('reportFilters')}>
+        {entries.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd dir="auto">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="muted">{tp('printedBy', { name: me.fullName, at: printedAt })}</p>
+    </div>
   );
 }
 

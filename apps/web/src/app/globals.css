@@ -1404,3 +1404,542 @@ tr.subtotal td {
 .panels .table-scroll td:not([dir='ltr']) {
   white-space: normal;
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Printouts (/print/...): an A4 document on screen and on paper. Print colors are fixed (black
+   on white, whatever the screen theme). Logical properties only, so Arabic and English both lay
+   out from their own side.
+   --------------------------------------------------------------------------------------------- */
+
+.print-root {
+  --doc-fg: #111827;
+  --doc-muted: #4b5563;
+  --doc-line: #d1d5db;
+  --doc-head: #f3f4f6;
+  color-scheme: light;
+  min-block-size: 100vh;
+  padding-block: 1rem 2rem;
+  padding-inline: 1rem;
+  background: #e5e7eb;
+  color: var(--doc-fg);
+}
+
+.print-root .muted {
+  color: var(--doc-muted);
+}
+
+.print-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  max-inline-size: 210mm;
+  margin-inline: auto;
+  margin-block-end: 1rem;
+}
+
+.print-toolbar .row {
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  inline-size: 210mm;
+  max-inline-size: 100%;
+  min-block-size: 297mm;
+  margin-inline: auto;
+  padding-block: 12mm;
+  padding-inline: 12mm;
+  background: #ffffff;
+  color: var(--doc-fg);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.15);
+  font-size: 10pt;
+  line-height: 1.45;
+}
+
+.watermark {
+  position: absolute;
+  inset-block-start: 40%;
+  inset-inline: 0;
+  text-align: center;
+  font-size: 64pt;
+  font-weight: 800;
+  color: rgb(185 28 28 / 0.12);
+  transform: rotate(-24deg);
+  pointer-events: none;
+}
+
+.doc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6mm;
+  padding-block-end: 4mm;
+  border-block-end: 2px solid var(--brand-blue);
+}
+
+.doc-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2mm;
+}
+
+.doc-brand img {
+  inline-size: 42mm;
+  block-size: auto;
+}
+
+.doc-title {
+  flex: 1;
+  text-align: center;
+}
+
+.doc-title h1 {
+  font-size: 16pt;
+  color: var(--brand-blue);
+}
+
+.doc-title p {
+  margin: 0;
+}
+
+.doc-number {
+  font-weight: 700;
+  font-size: 11pt;
+}
+
+.doc-qr {
+  margin: 0;
+  text-align: center;
+  font-size: 7pt;
+  color: var(--doc-muted);
+}
+
+.doc-qr img {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+}
+
+.doc-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4mm;
+  padding-block-start: 4mm;
+}
+
+.doc-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6mm;
+}
+
+.doc-party {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-block: 2mm;
+  padding-inline: 3mm;
+  border: 1px solid var(--doc-line);
+  border-radius: 2mm;
+}
+
+.doc-section h2 {
+  margin-block-end: 2mm;
+  padding-block-end: 1mm;
+  border-block-end: 1px solid var(--doc-line);
+  font-size: 11pt;
+  color: var(--brand-blue);
+}
+
+.doc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5mm 6mm;
+  margin: 0;
+}
+
+.doc-fields > div {
+  display: grid;
+  grid-template-columns: 35mm 1fr;
+  gap: 2mm;
+  break-inside: avoid;
+}
+
+.doc-fields dt {
+  color: var(--doc-muted);
+}
+
+.doc-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.doc-columns .doc-fields {
+  grid-template-columns: 1fr;
+  align-content: start;
+}
+
+.doc-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: 9pt;
+}
+
+.doc-table th,
+.doc-table td {
+  padding-block: 1.5mm;
+  padding-inline: 2mm;
+  border: 1px solid var(--doc-line);
+  vertical-align: top;
+  text-align: start;
+  white-space: normal;
+}
+
+.doc-table [dir='ltr'] {
+  white-space: nowrap;
+}
+
+.doc-table tbody tr:last-child td {
+  border-block-end: 1px solid var(--doc-line);
+}
+
+.doc-table th {
+  background: var(--doc-head);
+  color: var(--doc-fg);
+  font-size: 8.5pt;
+}
+
+.doc-table.compact th,
+.doc-table.compact td {
+  padding-inline: 1.2mm;
+  font-size: 8pt;
+}
+
+.doc-table .num {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.doc-table tr.subtotal td,
+.doc-table tfoot td {
+  background: var(--doc-head);
+  font-weight: 600;
+}
+
+.doc-table tr.grand td {
+  font-weight: 700;
+}
+
+.doc-table .qr-cell {
+  inline-size: 18mm;
+}
+
+.doc-table .qr-cell .doc-qr figcaption {
+  display: none;
+}
+
+.doc-table .sign-cell {
+  min-inline-size: 22mm;
+}
+
+.doc-totals {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  gap: 1mm 8mm;
+  margin-block: 2mm 0;
+}
+
+.doc-totals dt {
+  color: var(--doc-muted);
+}
+
+.doc-totals dd {
+  margin: 0;
+  text-align: end;
+}
+
+.doc-totals .grand {
+  font-size: 11pt;
+  font-weight: 700;
+  color: var(--doc-fg);
+}
+
+.doc-amount {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block: 3mm;
+  padding-inline: 4mm;
+  border: 2px solid var(--brand-blue);
+  border-radius: 2mm;
+  font-size: 13pt;
+}
+
+.signatures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(45mm, 1fr));
+  gap: 6mm;
+  margin-block-start: auto;
+  padding-block-start: 6mm;
+  break-inside: avoid;
+}
+
+.signature-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4mm;
+  padding: 3mm;
+  border: 1px solid var(--doc-line);
+  border-radius: 2mm;
+  min-block-size: 30mm;
+}
+
+.signature-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 2mm;
+  margin-block-start: 3mm;
+  break-inside: avoid;
+}
+
+.signature-capture img {
+  max-inline-size: 70mm;
+  max-block-size: 35mm;
+  border-block-end: 1px solid var(--doc-fg);
+}
+
+.doc-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-block-start: 6mm;
+  padding-block-start: 2mm;
+  border-block-start: 1px solid var(--doc-line);
+  font-size: 8pt;
+  color: var(--doc-muted);
+}
+
+/* Package labels: 100 x 150 mm, one per printed page. */
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 3mm;
+  inline-size: 100mm;
+  block-size: 150mm;
+  padding: 6mm;
+  overflow: hidden;
+  background: #ffffff;
+  color: #000000;
+  border: 1px dashed var(--doc-line);
+  font-size: 11pt;
+}
+
+.label-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-block-end: 2mm;
+  border-block-end: 2px solid #000000;
+  font-size: 13pt;
+  font-weight: 700;
+}
+
+.label-route {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3mm;
+  font-size: 22pt;
+  font-weight: 800;
+}
+
+.label-places {
+  text-align: center;
+}
+
+.label-count {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-block: 2mm;
+  border-block: 2px solid #000000;
+}
+
+.label-count strong {
+  font-size: 26pt;
+}
+
+.label-body {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 3mm;
+  overflow-wrap: anywhere;
+}
+
+/* Shown only on paper (report filters as a header). */
+.print-only {
+  display: none;
+}
+
+@media print {
+  body,
+  .print-root {
+    background: #ffffff;
+    color: #000000;
+  }
+
+  .no-print,
+  .print-toolbar {
+    display: none !important;
+  }
+
+  .print-root {
+    min-block-size: 0;
+    padding: 0;
+  }
+
+  .sheet {
+    inline-size: auto;
+    /* A little under the printable height, so a one-page document stays one page. */
+    min-block-size: 262mm;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .labels {
+    display: block;
+  }
+
+  .label {
+    block-size: 148mm;
+    border: none;
+    break-after: page;
+  }
+
+  .label:last-child {
+    break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-row-group;
+  }
+
+  tr,
+  img,
+  .doc-fields > div,
+  .doc-party,
+  .doc-amount,
+  .doc-totals {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2 {
+    break-after: avoid;
+  }
+
+  /* Report pages: the table alone, with its filters as a header. */
+  .app {
+    display: block;
+  }
+
+  .sidebar,
+  .topbar,
+  .scrim,
+  .report-filters,
+  .report .page-head .button,
+  .report .page-head button,
+  .report .back-link,
+  .report-actions {
+    display: none !important;
+  }
+
+  .page {
+    max-inline-size: none;
+    padding: 0;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  .report {
+    color: #000000;
+    font-size: 9pt;
+  }
+
+  .report .panel,
+  .report .table-scroll {
+    overflow: visible;
+    border: none;
+    box-shadow: none;
+    background: #ffffff;
+  }
+
+  .report th,
+  .report td {
+    padding-block: 1mm;
+    padding-inline: 1.5mm;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #000000;
+    white-space: normal;
+  }
+
+  .report td[dir='ltr'] {
+    white-space: nowrap;
+  }
+
+  .report tbody tr:last-child td {
+    border-block-end: 1px solid #d1d5db;
+  }
+
+  .report-print-head {
+    margin-block-end: 3mm;
+    padding-block-end: 2mm;
+    border-block-end: 2px solid var(--brand-blue);
+  }
+
+  .report-print-head dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1mm 6mm;
+    margin: 0;
+  }
+
+  .report-print-head dl div {
+    display: flex;
+    gap: 2mm;
+  }
+
+  .report-print-head dd {
+    margin: 0;
+    font-weight: 600;
+  }
+}
+
+@media (max-width: 720px) {
+  .doc-columns,
+  .doc-fields {
+    grid-template-columns: 1fr;
+  }
+}

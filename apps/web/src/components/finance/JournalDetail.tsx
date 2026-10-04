@@ -11,6 +11,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useBranchCode, useRecord } from './common';
+import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'post' | 'delete' | 'reverse' | null;
 
@@ -97,6 +98,7 @@ export function JournalDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       <div className="actions">
+        <PrintLink href={`/journals/${j.id}`} />
         {j.actions.canEdit && (
           <Link href={`/accounting/journals/${id}/edit`} className="button">
             {tc('edit')}

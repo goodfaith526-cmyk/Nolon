@@ -10,6 +10,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { StatusBadge } from '../StatusBadge';
 import { PodForm } from './PodForm';
 import { TripKindLabel, useDateTime } from './common';
+import { PrintLink } from '../print/PrintLink';
 
 /** The shipment's trips: one per road leg, in order. */
 export function ShipmentTrips({ shipmentId }: { shipmentId: string }) {
@@ -103,6 +104,7 @@ export function ShipmentPods({
   onShipmentChanged: () => void;
 }) {
   const t = useTranslations('Transport');
+  const tp = useTranslations('Print');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
   const dateTime = useDateTime();
@@ -185,6 +187,11 @@ export function ShipmentPods({
                         <StatusBadge kind="shipment" status={p.statusApplied} />
                       </div>
                     )}
+                    <PrintLink
+                      href={`/shipments/${shipmentId}/pods/${p.id}`}
+                      label={tp('printDeliveryNote')}
+                      small
+                    />
                   </td>
                   <td>
                     {dateTime(p.deliveredAt)}

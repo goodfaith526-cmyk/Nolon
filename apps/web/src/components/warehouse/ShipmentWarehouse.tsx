@@ -19,6 +19,7 @@ import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { StatusBadge } from '../StatusBadge';
+import { PrintLink } from '../print/PrintLink';
 
 type Form = 'receipt' | 'release' | null;
 
@@ -68,6 +69,7 @@ export function ShipmentWarehouse({
   const t = useTranslations('Warehouse');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Print');
   const locale = useLocale();
   const localName = useLocalName();
   const failure = useFailureText();
@@ -454,6 +456,11 @@ export function ShipmentWarehouse({
                       {te(`movement_${m.kind}`)}
                     </span>
                   </div>
+                  <PrintLink
+                    href={`/shipments/${shipmentId}/movements/${m.id}`}
+                    label={tp('printNote')}
+                    small
+                  />
                 </td>
                 <td>
                   {dateTime.format(new Date(m.occurredAt))}

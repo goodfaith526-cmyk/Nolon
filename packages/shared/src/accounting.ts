@@ -1,4 +1,5 @@
 import type { CurrencyCode, DecimalString } from './currencies.js';
+import type { DateString } from './commercial.js';
 
 // The reporting currency every journal entry balances in is BASE_CURRENCY (currencies.ts).
 
@@ -368,4 +369,63 @@ export interface TrialBalanceDto {
   rows: TrialBalanceRowDto[];
   totalDebitUsd: DecimalString;
   totalCreditUsd: DecimalString;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Customer statement of account (annex D printout 12)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What a statement line is: an approved invoice, a receipt, a receipt's cancellation (its
+ * reversing entry), another reversal, or any other posted entry on the customer's accounts.
+ */
+export const STATEMENT_LINE_KINDS = [
+  'INVOICE',
+  'RECEIPT',
+  'RECEIPT_CANCELLATION',
+  'REVERSAL',
+  'OTHER',
+] as const;
+export type StatementLineKind = (typeof STATEMENT_LINE_KINDS)[number];
+
+/** One posted entry on the customer's receivable and advance accounts, in one currency. */
+export interface CustomerStatementLineDto {
+  entryId: string;
+  entryNumber: string;
+  date: DateString;
+  kind: StatementLineKind;
+  /** The invoice or receipt the entry came from (or that it reversed), when there is one. */
+  documentId: string | null;
+  documentNumber: string | null;
+  description: string;
+  debit: DecimalString;
+  credit: DecimalString;
+  /** Running balance after this line: debit - credit, positive when the customer owes. */
+  balance: DecimalString;
+}
+
+/** The statement in one currency: amounts are in that currency. */
+export interface CustomerStatementSectionDto {
+  currency: CurrencyCode;
+  /** Balance of the posted lines dated before `from`. */
+  openingBalance: DecimalString;
+  totalDebit: DecimalString;
+  totalCredit: DecimalString;
+  closingBalance: DecimalString;
+  /** USD carrying value of the closing balance. */
+  closingBalanceUsd: DecimalString;
+  lines: CustomerStatementLineDto[];
+}
+
+/** GET /customer-statements/:customerId?from&to[&branchId]. */
+export interface CustomerStatementDto {
+  customerId: string;
+  customerNumber: string;
+  customerName: string;
+  customerBranchId: string;
+  branchId: string | null;
+  from: DateString;
+  to: DateString;
+  /** One per currency the customer dealt in, by currency code. */
+  sections: CustomerStatementSectionDto[];
 }

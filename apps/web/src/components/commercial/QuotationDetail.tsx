@@ -9,6 +9,7 @@ import { failureStatus, useLocalName, useLocationName, useMasterData } from '@/l
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
+import { PrintLink } from '../print/PrintLink';
 
 export function QuotationDetail({ id }: { id: string }) {
   const t = useTranslations('Quotations');
@@ -81,6 +82,7 @@ export function QuotationDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       <div className="actions">
+        <PrintLink href={`/quotations/${id}`} />
         {status === 'DRAFT' && can(me, 'quotations:update') && (
           <>
             <Link href={`/quotations/${id}/edit`} className="button">

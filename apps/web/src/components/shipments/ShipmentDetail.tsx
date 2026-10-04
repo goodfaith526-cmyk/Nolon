@@ -22,6 +22,7 @@ import { ShipmentContainers } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
+import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -36,6 +37,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Print');
   const locale = useLocale();
   const me = useMe();
   const master = useMasterData();
@@ -214,6 +216,8 @@ export function ShipmentDetail({ id }: { id: string }) {
         <Link href={`/bookings/${s.bookingId}`} className="button">
           {t('openBooking')}
         </Link>
+        <PrintLink href={`/shipments/${s.id}`} label={tp('printShipmentSheet')} />
+        <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
       </div>
 
       {panel === 'status' && (

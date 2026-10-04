@@ -11,6 +11,7 @@ import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useRecord } from './common';
 import { InvoiceNumber } from './Invoices';
+import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'approve' | 'cancel' | null;
 
@@ -73,6 +74,7 @@ export function InvoiceDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       <div className="actions">
+        <PrintLink href={`/invoices/${inv.id}`} />
         {inv.actions.canEdit && (
           <Link href={`/invoices/${id}/edit`} className="button">
             {tc('edit')}

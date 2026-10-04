@@ -23,6 +23,7 @@ import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { PodForm } from './PodForm';
 import { TripKindLabel, toIso, useDateTime } from './common';
+import { PrintLink } from '../print/PrintLink';
 
 /** One trip: its progress, shipments (with POD), and its costs. The API decides every action. */
 export function TripDetail({ id }: { id: string }) {
@@ -225,9 +226,12 @@ export function TripDetail({ id }: { id: string }) {
             <TripKindLabel kind={trip.kind} />
           </p>
         </div>
-        <Link href="/trips" className="button">
-          {tc('back')}
-        </Link>
+        <div className="actions">
+          <PrintLink href={`/trips/${trip.id}`} />
+          <Link href="/trips" className="button">
+            {tc('back')}
+          </Link>
+        </div>
       </div>
       <Notice notice={notice} />
 

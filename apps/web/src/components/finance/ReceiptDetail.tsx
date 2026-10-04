@@ -10,6 +10,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useRecord } from './common';
+import { PrintLink } from '../print/PrintLink';
 
 export function ReceiptDetail({ id }: { id: string }) {
   const t = useTranslations('Receipts');
@@ -60,6 +61,7 @@ export function ReceiptDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       <div className="actions">
+        <PrintLink href={`/receipts/${r.id}`} />
         {r.actions.canCancel && (
           <button type="button" onClick={() => setCancelling(true)}>
             {t('cancel')}
