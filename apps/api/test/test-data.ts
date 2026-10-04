@@ -5,6 +5,16 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   const createdBy = { createdBy: { email: { startsWith: 'it-' } } };
   // Confirmed bookings have shipments (and maybe documents, warehouse movements and customs
   // records), which restrict deleting them.
+  // Trips and PODs (inland transport); fleet records of the tests are named ZZ...
+  await prisma.podPhoto.deleteMany({ where: { pod: { shipment: createdBy } } });
+  await prisma.proofOfDelivery.deleteMany({ where: { shipment: createdBy } });
+  await prisma.tripShipment.deleteMany({
+    where: { OR: [{ shipment: createdBy }, { trip: createdBy }] },
+  });
+  await prisma.trip.deleteMany({ where: createdBy });
+  await prisma.vehicle.deleteMany({ where: { plateNumber: { startsWith: 'ZZ' } } });
+  await prisma.driver.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
+  await prisma.carrier.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
   await prisma.warehouseMovementPhoto.deleteMany({ where: { movement: { shipment: createdBy } } });
   await prisma.warehouseMovement.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsFee.deleteMany({ where: { shipment: createdBy } });

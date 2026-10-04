@@ -97,6 +97,35 @@ export const icons = {
       <path d="M7 16.5h10" />
     </Icon>
   ),
+  truck: (
+    <Icon>
+      <path d="M2.5 6h11v10h-11z" />
+      <path d="M13.5 9.5h4l3 3.5v3h-7" />
+      <circle cx="6.5" cy="17.5" r="1.8" />
+      <circle cx="17" cy="17.5" r="1.8" />
+    </Icon>
+  ),
+  vehicle: (
+    <Icon>
+      <path d="M4 16V9l2.5-4h11L20 9v7" />
+      <path d="M3 16h18v2H3z" />
+      <circle cx="7.5" cy="12.5" r="1" />
+      <circle cx="16.5" cy="12.5" r="1" />
+    </Icon>
+  ),
+  driver: (
+    <Icon>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M12 14v6.5M10.2 11 4 9.5M13.8 11 20 9.5" />
+    </Icon>
+  ),
+  carrier: (
+    <Icon>
+      <path d="M3 20V8l6-3v15M9 9h12v11H3" />
+      <path d="M12.5 13h2M16.5 13h2M12.5 16.5h2M16.5 16.5h2" />
+    </Icon>
+  ),
   ship: (
     <Icon>
       <path d="M3 17c1.5 1.3 3 2 4.5 2S10.5 18.3 12 17c1.5 1.3 3 2 4.5 2s3-.7 4.5-2" />

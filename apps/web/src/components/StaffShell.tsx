@@ -20,6 +20,10 @@ interface NavLink {
     | 'bookings'
     | 'shipments'
     | 'warehouses'
+    | 'trips'
+    | 'vehicles'
+    | 'drivers'
+    | 'carriers'
     | 'invoices'
     | 'receipts'
     | 'journals'
@@ -55,6 +59,25 @@ const NAV_SECTIONS: readonly {
     title: 'operations',
     links: [
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
+      { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
+      {
+        href: '/transport/vehicles',
+        label: 'vehicles',
+        icon: 'vehicle',
+        permission: 'transport_fleet:view',
+      },
+      {
+        href: '/transport/drivers',
+        label: 'drivers',
+        icon: 'driver',
+        permission: 'transport_fleet:view',
+      },
+      {
+        href: '/transport/carriers',
+        label: 'carriers',
+        icon: 'carrier',
+        permission: 'transport_fleet:view',
+      },
       {
         href: '/warehouses',
         label: 'warehouses',

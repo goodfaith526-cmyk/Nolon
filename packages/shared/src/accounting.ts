@@ -57,7 +57,14 @@ export type PeriodStatus = (typeof PERIOD_STATUSES)[number];
 export const JOURNAL_STATUSES = ['DRAFT', 'POSTED'] as const;
 export type JournalStatus = (typeof JOURNAL_STATUSES)[number];
 
-export const JOURNAL_SOURCES = ['MANUAL', 'CUSTOMER_INVOICE', 'RECEIPT', 'REVERSAL'] as const;
+export const JOURNAL_SOURCES = [
+  'MANUAL',
+  'CUSTOMER_INVOICE',
+  'RECEIPT',
+  'REVERSAL',
+  'TRIP_EXPENSE',
+  'TRIP_ACCRUAL',
+] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
 export const INVOICE_STATUSES = ['DRAFT', 'APPROVED', 'CANCELLED'] as const;

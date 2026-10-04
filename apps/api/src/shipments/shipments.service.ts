@@ -474,6 +474,59 @@ export class ShipmentsService {
     });
   }
 
+  /**
+   * For inland transport: the shipments among `ids` the user may see, with what a trip shows of
+   * them (number, customer, status, destination, packages, weight and volume of the cargo lines).
+   */
+  async tripSummaries(
+    user: AuthUser,
+    ids: readonly string[],
+  ): Promise<
+    {
+      id: string;
+      number: string;
+      customerName: string;
+      status: ShipmentStatus;
+      destinationLocationId: string;
+      items: {
+        quantity: number;
+        weightKg: Prisma.Decimal | null;
+        volumeCbm: Prisma.Decimal | null;
+      }[];
+    }[]
+  > {
+    if (ids.length === 0) return [];
+    const shipments = await this.prisma.shipment.findMany({
+      where: { id: { in: [...ids] }, ...this.scope(user) },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        destinationLocationId: true,
+        customer: { select: { name: true } },
+        items: { select: { quantity: true, weightKg: true, volumeCbm: true } },
+      },
+    });
+    return shipments.map(({ customer, ...rest }) => ({ ...rest, customerName: customer.name }));
+  }
+
+  /**
+   * For trip costs, inside the posting transaction: the cargo lines' weight and volume of the
+   * trip's shipments (the caller holds the trip lock and has checked access to the trip).
+   */
+  async cargoMeasuresInTx(
+    tx: Tx,
+    ids: readonly string[],
+  ): Promise<
+    { id: string; items: { weightKg: Prisma.Decimal | null; volumeCbm: Prisma.Decimal | null }[] }[]
+  > {
+    return tx.shipment.findMany({
+      where: { id: { in: [...ids] } },
+      select: { id: true, items: { select: { weightKg: true, volumeCbm: true } } },
+      orderBy: { id: 'asc' },
+    });
+  }
+
   async cancelForBooking(
     tx: Tx,
     user: AuthUser,
@@ -695,10 +748,26 @@ export class ShipmentsService {
     }
   }
 
+  /**
+   * Branch scope (AGENTS.md rule 2). A Driver (annex A, own trips) sees only the shipments carried
+   * on trips assigned to them (their driver record is linked to their user), cancelled trips
+   * excepted; trip and shipment both in one of their branches.
+   */
   private scope(user: AuthUser): Prisma.ShipmentWhereInput {
-    // A Driver sees only shipments on their own trips; trips arrive with inland transport
-    // (group 5), so until then a Driver-only user sees none.
-    if (limitedToOwnTrips(user, 'shipments')) return { id: { in: [] } };
+    if (limitedToOwnTrips(user, 'shipments')) {
+      return {
+        ...branchScope(user),
+        tripLinks: {
+          some: {
+            trip: {
+              ...branchScope(user),
+              status: { not: 'CANCELLED' },
+              driver: { userId: user.id },
+            },
+          },
+        },
+      };
+    }
     return branchScope(user);
   }
 
