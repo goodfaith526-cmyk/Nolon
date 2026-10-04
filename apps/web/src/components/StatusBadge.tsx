@@ -16,7 +16,8 @@ export function StatusBadge({
     | 'payment'
     | 'journal'
     | 'receipt'
-    | 'period';
+    | 'period'
+    | 'customs';
   status: string;
 }) {
   const te = useTranslations('Enums');

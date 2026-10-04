@@ -8,5 +8,6 @@ import { DocumentsService } from './documents.service.js';
   imports: [ShipmentsModule, MasterDataModule],
   controllers: [DocumentsController],
   providers: [DocumentsService],
+  exports: [DocumentsService],
 })
 export class DocumentsModule {}

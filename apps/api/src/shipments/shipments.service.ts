@@ -182,6 +182,43 @@ export class ShipmentsService {
   }
 
   /**
+   * For modules working under a shipment (warehouse): the shipment's branch and status, the
+   * packages on its cargo lines, and the statuses this user may move it to now. 404 unless the
+   * user may see the shipment.
+   */
+  async childContext(
+    user: AuthUser,
+    id: string,
+  ): Promise<{
+    id: string;
+    branchId: string;
+    status: ShipmentStatus;
+    packages: number;
+    transitions: ShipmentStatus[];
+  }> {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id, ...this.scope(user) },
+      include: {
+        items: { select: { quantity: true } },
+        events: { orderBy: { id: 'asc' } },
+      },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found');
+    const has = (permission: Permission) => user.permissions.has(permission);
+    return {
+      id: shipment.id,
+      branchId: shipment.branchId,
+      status: shipment.status,
+      packages: shipment.items.reduce((sum, item) => sum + item.quantity, 0),
+      transitions: nextStatuses(
+        shipment.status,
+        shipment,
+        visitedStatuses(replayHistory(shipment.events)),
+      ).filter((next) => permissionForTransition(next).some(has)),
+    };
+  }
+
+  /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
    * customer, parties, route, services and cargo lines are copied from the booking.
    */
@@ -409,6 +446,34 @@ export class ShipmentsService {
    * booking's transaction; the shipment's cancellation then cancels the booking. Returns false
    * when the booking has no shipment (confirmed before shipments existed).
    */
+  /**
+   * For other modules (a warehouse receipt), inside their transaction: moves the shipment to
+   * `status` through the state machine when that move is allowed now, and records the event like
+   * any status change. Returns false, changing nothing, when the state machine does not allow it.
+   * 403 when it is allowed but the user lacks the permission for it.
+   */
+  async advanceInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    status: ShipmentStatus,
+    options: { occurredAt: Date; note: string | null },
+  ): Promise<boolean> {
+    return this.applyEventInTx(tx, user, id, (shipment, path) => {
+      if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
+        return null;
+      }
+      requireAny(user, permissionForTransition(status));
+      return {
+        kind: 'STATUS',
+        status,
+        occurredAt: options.occurredAt,
+        note: options.note,
+        update: { status },
+      };
+    });
+  }
+
   async cancelForBooking(
     tx: Tx,
     user: AuthUser,
@@ -546,10 +611,16 @@ export class ShipmentsService {
 
   /**
    * Locks the shipment row, replays its history, asks `plan` for the event (which throws when the
-   * change is not allowed), then updates the shipment and records the event. Concurrent changes
-   * to the same shipment queue on the lock and each sees the result of the one before.
+   * change is not allowed, or returns null to change nothing), then updates the shipment and
+   * records the event. Concurrent changes to the same shipment queue on the lock and each sees the
+   * result of the one before. Returns whether an event was recorded.
    */
-  private async applyEventInTx(tx: Tx, user: AuthUser, id: string, plan: Planner): Promise<void> {
+  private async applyEventInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    plan: NullablePlanner,
+  ): Promise<boolean> {
     await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`;
     const shipment = await tx.shipment.findUniqueOrThrow({
       where: { id },
@@ -557,6 +628,7 @@ export class ShipmentsService {
     });
     const path = replayHistory(shipment.events);
     const event = plan(shipment, path);
+    if (!event) return false;
     const occurredAt = event.occurredAt ?? new Date();
     await tx.shipment.update({
       where: { id },
@@ -581,16 +653,27 @@ export class ShipmentsService {
       },
     });
     if (event.after) await event.after(tx);
+    return true;
   }
 
   /**
-   * For other modules writing under a shipment (documents): takes a share lock on the shipment
-   * row inside the caller's transaction and returns its status. Status changes take the row lock
-   * exclusively, so a cancel either commits first and is seen here, or waits for this write.
+   * For other modules writing under a shipment (documents, warehouse, customs): locks the
+   * shipment row inside the caller's transaction and returns its status. Status changes take the
+   * row lock exclusively, so a cancel either commits first and is seen here, or waits for this
+   * write. The default share lock lets child writes run side by side; `exclusive` also queues
+   * them behind each other, for writes that check a running total (warehouse releases) or may
+   * change the status in the same transaction (warehouse receipts).
    */
-  async lockForChildWrite(tx: Tx, id: string): Promise<ShipmentStatus> {
-    const rows = await tx.$queryRaw<{ status: ShipmentStatus }[]>`
-      SELECT "status"::text AS "status" FROM "shipments" WHERE "id" = ${id}::uuid FOR SHARE`;
+  async lockForChildWrite(
+    tx: Tx,
+    id: string,
+    options: { exclusive?: boolean } = {},
+  ): Promise<ShipmentStatus> {
+    const rows = options.exclusive
+      ? await tx.$queryRaw<{ status: ShipmentStatus }[]>`
+          SELECT "status"::text AS "status" FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`
+      : await tx.$queryRaw<{ status: ShipmentStatus }[]>`
+          SELECT "status"::text AS "status" FROM "shipments" WHERE "id" = ${id}::uuid FOR SHARE`;
     const row = rows[0];
     if (!row) throw new NotFoundException('Shipment not found');
     return row.status;
@@ -708,6 +791,9 @@ interface PlannedEvent {
 }
 
 type Planner = (shipment: LockedShipment, path: HistoryEntry[]) => PlannedEvent;
+
+/** A planner that may decline: null records nothing. */
+type NullablePlanner = (shipment: LockedShipment, path: HistoryEntry[]) => PlannedEvent | null;
 
 function requireAny(user: AuthUser, permissions: readonly Permission[]): void {
   if (!permissions.some((p) => user.permissions.has(p))) {

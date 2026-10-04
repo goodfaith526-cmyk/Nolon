@@ -56,6 +56,13 @@ model Branch {
   invoices       CustomerInvoice[]
   receipts       Receipt[]
 
+  warehouses         Warehouse[]
+  storageLocations   StorageLocation[]
+  warehouseMovements WarehouseMovement[]
+  movementPhotos     WarehouseMovementPhoto[]
+  customsClearances  CustomsClearance[]
+  customsFees        CustomsFee[]
+
   @@map("branches")
 }
 
@@ -85,6 +92,7 @@ model Currency {
   journalLines         JournalLine[]
   invoices             CustomerInvoice[]
   receipts             Receipt[]
+  customsFees          CustomsFee[]
 
   @@map("currencies")
 }
@@ -142,6 +150,10 @@ model User {
   invoicesApproved  CustomerInvoice[] @relation("InvoiceApprovedBy")
   receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
   receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
+
+  warehouseMovements WarehouseMovement[] @relation("WarehouseMovementCreatedBy")
+  customsUpdated     CustomsClearance[]  @relation("CustomsUpdatedBy")
+  customsFeesCreated CustomsFee[]        @relation("CustomsFeeCreatedBy")
 
   @@map("users")
 }
@@ -751,6 +763,9 @@ model Shipment {
   documents       Document[]
   journalLines    JournalLine[]
   invoices        CustomerInvoice[]
+  movements       WarehouseMovement[]
+  customs         CustomsClearance?
+  customsFees     CustomsFee[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -868,12 +883,13 @@ model Document {
   deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
   deletedById  String?   @map("deleted_by_id") @db.Uuid
 
-  branch     Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment   Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  type       DocumentType     @relation(fields: [typeCode], references: [code], onDelete: Restrict)
-  uploadedBy User             @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
-  deletedBy  User?            @relation("DocumentDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+  branch     Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment   Shipment                @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  type       DocumentType            @relation(fields: [typeCode], references: [code], onDelete: Restrict)
+  uploadedBy User                    @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  deletedBy  User?                   @relation("DocumentDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
   content    DocumentContent?
+  movement   WarehouseMovementPhoto?
 
   @@index([shipmentId])
   @@index([branchId])
@@ -1251,4 +1267,193 @@ model ReceiptAllocation {
   @@unique([receiptId, invoiceId])
   @@index([invoiceId])
   @@map("receipt_allocations")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Group 5a: warehouse (scope 10) and customs (scope 11).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A warehouse of a branch. Master data each branch extends (warehouses and their storage
+ * locations are rows, not code). Deactivate instead of deleting: movements reference it.
+ */
+model Warehouse {
+  id        String   @id @default(uuid()) @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  /// Short code, unique across branches, e.g. PTS-MAIN.
+  code      String   @unique @db.VarChar(20)
+  nameEn    String   @map("name_en") @db.VarChar(200)
+  nameAr    String   @map("name_ar") @db.VarChar(200)
+  address   String?  @db.VarChar(500)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch           Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  storageLocations StorageLocation[]
+  movements        WarehouseMovement[]
+
+  @@index([branchId])
+  @@map("warehouses")
+}
+
+/**
+ * A simple storage location inside a warehouse (zone, row or bay: free code). Carries the
+ * warehouse's branch.
+ */
+model StorageLocation {
+  id          String   @id @default(uuid()) @db.Uuid
+  branchId    String   @map("branch_id") @db.Uuid
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  code        String   @db.VarChar(20)
+  name        String?  @db.VarChar(200)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch    Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse           @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  movements WarehouseMovement[]
+
+  @@unique([warehouseId, code])
+  @@index([branchId])
+  @@map("storage_locations")
+}
+
+enum WarehouseMovementKind {
+  /// Goods received: issues a goods received note (GRN).
+  RECEIPT
+  /// Goods released: issues a goods release note.
+  RELEASE
+
+  @@map("warehouse_movement_kind")
+}
+
+enum GoodsCondition {
+  GOOD
+  DAMAGED
+
+  @@map("goods_condition")
+}
+
+/**
+ * The warehouse movement log of a shipment: one row per goods receipt or release, full or
+ * partial. Rows are only inserted. What a warehouse holds for a shipment is the sum of its
+ * receipts minus its releases; ShipmentsService.lockForChildWrite serializes the writes, so a
+ * release never takes out more than is held. branch_id is the shipment's branch (the record
+ * belongs to the shipment's file); the warehouse carries its own branch.
+ */
+model WarehouseMovement {
+  id                String                @id @default(uuid()) @db.Uuid
+  /// NOL-GRN-2026-000001 (receipt) or NOL-GRL-2026-000001 (release).
+  number            String                @unique @db.VarChar(30)
+  kind              WarehouseMovementKind
+  branchId          String                @map("branch_id") @db.Uuid
+  shipmentId        String                @map("shipment_id") @db.Uuid
+  warehouseId       String                @map("warehouse_id") @db.Uuid
+  storageLocationId String?               @map("storage_location_id") @db.Uuid
+  /// Number of packages (pieces, pallets, containers) received or released.
+  packages          Int
+  weightKg          Decimal?              @map("weight_kg") @db.Decimal(12, 3)
+  /// Required on receipts.
+  condition         GoodsCondition?
+  /// Who delivered the goods (receipt) or collected them (release).
+  partyName         String?               @map("party_name") @db.VarChar(200)
+  note              String?
+  occurredAt        DateTime              @map("occurred_at") @db.Timestamptz(3)
+  /// The shipment status this receipt moved the shipment to, through the state machine.
+  statusApplied     ShipmentStatus?       @map("status_applied")
+  createdById       String                @map("created_by_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch          Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment        Shipment                 @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  warehouse       Warehouse                @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  storageLocation StorageLocation?         @relation(fields: [storageLocationId], references: [id], onDelete: Restrict)
+  createdBy       User                     @relation("WarehouseMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  photos          WarehouseMovementPhoto[]
+
+  @@index([shipmentId, warehouseId])
+  @@index([warehouseId])
+  @@index([branchId])
+  @@map("warehouse_movements")
+}
+
+/**
+ * Photos of a movement. Each is a shipment document (type PHOTO) in the documents module.
+ */
+model WarehouseMovementPhoto {
+  movementId String @map("movement_id") @db.Uuid
+  /// One movement per photo.
+  documentId String @unique @map("document_id") @db.Uuid
+  branchId   String @map("branch_id") @db.Uuid
+
+  movement WarehouseMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  document Document          @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  branch   Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([movementId, documentId])
+  @@index([branchId])
+  @@map("warehouse_movement_photos")
+}
+
+enum CustomsStatus {
+  PENDING
+  SUBMITTED
+  INSPECTION
+  HELD
+  CLEARED
+
+  @@map("customs_status")
+}
+
+/**
+ * The customs file of a shipment (scope 11): one per shipment. Its status is the clearance's
+ * own; the shipment's CUSTOMS_IN_PROGRESS / CUSTOMS_CLEARED statuses stay with the state machine.
+ */
+model CustomsClearance {
+  id                String        @id @default(uuid()) @db.Uuid
+  branchId          String        @map("branch_id") @db.Uuid
+  shipmentId        String        @unique @map("shipment_id") @db.Uuid
+  status            CustomsStatus @default(PENDING)
+  /// Declaration or file number at customs.
+  declarationNumber String?       @map("declaration_number") @db.VarChar(50)
+  brokerName        String?       @map("broker_name") @db.VarChar(200)
+  submittedOn       DateTime?     @map("submitted_on") @db.Date
+  clearedOn         DateTime?     @map("cleared_on") @db.Date
+  note              String?
+  updatedById       String        @map("updated_by_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment  Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  updatedBy User     @relation("CustomsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@index([branchId])
+  @@map("customs_clearances")
+}
+
+/**
+ * Customs fees paid for a shipment, in their currency. Recorded only: no journal entry yet.
+ * They become supplier costs with the supplier bills (group 4b).
+ */
+model CustomsFee {
+  id          String   @id @default(uuid()) @db.Uuid
+  branchId    String   @map("branch_id") @db.Uuid
+  shipmentId  String   @map("shipment_id") @db.Uuid
+  description String   @db.VarChar(200)
+  amount      Decimal  @db.Decimal(18, 4)
+  currency    String   @db.Char(3)
+  note        String?
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  currencyRef Currency @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  createdBy   User     @relation("CustomsFeeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("customs_fees")
 }

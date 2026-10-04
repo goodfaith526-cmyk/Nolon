@@ -6,6 +6,7 @@ import { BookingsModule } from './bookings/bookings.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
+import { CustomsModule } from './customs/customs.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -15,6 +16,7 @@ import { QuotationsModule } from './quotations/quotations.module.js';
 import { RatesModule } from './rates/rates.module.js';
 import { ShipmentsModule } from './shipments/shipments.module.js';
 import { UsersModule } from './users/users.module.js';
+import { WarehouseModule } from './warehouse/warehouse.module.js';
 
 // Business modules (customers, bookings, shipments, finance...) are added here, one per folder.
 @Module({
@@ -35,6 +37,8 @@ import { UsersModule } from './users/users.module.js';
     DocumentsModule,
     AccountingModule,
     BillingModule,
+    WarehouseModule,
+    CustomsModule,
   ],
 })
 export class AppModule {}
