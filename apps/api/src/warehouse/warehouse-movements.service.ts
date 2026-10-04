@@ -26,8 +26,8 @@ import { isActive } from '../shipments/state-machine.js';
 import {
   canRelease,
   defaultReceiptStatus,
-  onHandPackages,
   receiptStatusOptions,
+  releasableAt,
   totalsByWarehouse,
 } from './warehouse-rules.js';
 import { type MovementWarehouse, WarehousesService } from './warehouses.service.js';
@@ -68,7 +68,8 @@ export interface PhotoUpload {
  * the shipment (404 when the user cannot see it) and the warehouse (404 when it is not in one of
  * the user's branches). Every write locks the shipment row exclusively
  * (ShipmentsService.lockForChildWrite), so receipts and releases of one shipment run one after
- * another and a release always sees every movement before it.
+ * another and a release always sees every movement before it. The warehouse row is share-locked
+ * in the same transaction (WarehousesService.requireForMovement).
  */
 @Injectable()
 export class WarehouseMovementsService {
@@ -141,18 +142,19 @@ export class WarehouseMovementsService {
     if (!isActive(shipment.status)) {
       throw new ConflictException('A closed or cancelled shipment cannot receive goods');
     }
-    const warehouse = await this.warehouses.requireForMovement(
-      user,
-      input.warehouseId,
-      input.storageLocationId ?? null,
-      'receipt',
-    );
     const occurredAt = occurredAtOf(input.occurredAt);
     const id = await this.prisma.$transaction(async (tx) => {
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (!isActive(status)) {
         throw new ConflictException('A closed or cancelled shipment cannot receive goods');
       }
+      const warehouse = await this.warehouses.requireForMovement(
+        tx,
+        user,
+        input.warehouseId,
+        input.storageLocationId ?? null,
+        'receipt',
+      );
       const number = await this.nextNumber(tx, 'RECEIPT', warehouse);
       const applied = input.shipmentStatus
         ? await this.shipments.advanceInTx(tx, user, shipmentId, input.shipmentStatus, {
@@ -198,26 +200,34 @@ export class WarehouseMovementsService {
     if (shipment.status === 'CLOSED') {
       throw new ConflictException('A closed shipment cannot release goods');
     }
-    const warehouse = await this.warehouses.requireForMovement(
-      user,
-      input.warehouseId,
-      null,
-      'release',
-    );
     const occurredAt = occurredAtOf(input.occurredAt);
     const id = await this.prisma.$transaction(async (tx) => {
       // Exclusive: a concurrent release of the same shipment waits here, then sees this one.
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (status === 'CLOSED')
         throw new ConflictException('A closed shipment cannot release goods');
+      const warehouse = await this.warehouses.requireForMovement(
+        tx,
+        user,
+        input.warehouseId,
+        null,
+        'release',
+      );
       const held = await tx.warehouseMovement.findMany({
         where: { shipmentId, warehouseId: warehouse.id, ...branchScope(user) },
-        select: { kind: true, warehouseId: true, packages: true, weightKg: true },
+        select: {
+          kind: true,
+          warehouseId: true,
+          packages: true,
+          weightKg: true,
+          occurredAt: true,
+          createdAt: true,
+        },
       });
-      const onHand = onHandPackages(held, warehouse.id);
-      if (!canRelease(onHand, input.packages)) {
+      const releasable = releasableAt(held, warehouse.id, occurredAt);
+      if (!canRelease(releasable, input.packages)) {
         throw new ConflictException(
-          `Cannot release ${input.packages} packages: ${onHand} held in this warehouse`,
+          `Cannot release ${input.packages} packages: at most ${releasable} can leave this warehouse at that time`,
         );
       }
       const number = await this.nextNumber(tx, 'RELEASE', warehouse);

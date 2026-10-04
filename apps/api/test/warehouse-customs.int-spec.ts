@@ -364,6 +364,81 @@ describe('warehouse and customs', () => {
       await release(cancelled.id, cookies.warehouseDxb, { packages: 3 }).expect(201);
     });
 
+    it('a backdated release cannot take goods received after its date (409)', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+      await receive(s.id, cookies.warehouseDxb, { packages: 5, occurredAt: daysAgo(3) }).expect(
+        201,
+      );
+      await receive(s.id, cookies.warehouseDxb, { packages: 5, occurredAt: daysAgo(1) }).expect(
+        201,
+      );
+      // Ten are held today, but only five were there two days ago.
+      await release(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: daysAgo(2) }).expect(
+        409,
+      );
+      await release(s.id, cookies.warehouseDxb, { packages: 10, occurredAt: daysAgo(4) }).expect(
+        409,
+      );
+      await release(s.id, cookies.warehouseDxb, { packages: 5, occurredAt: daysAgo(2) }).expect(
+        201,
+      );
+      // Those five are gone from day 2 on, so a release dated before them finds nothing left.
+      await release(s.id, cookies.warehouseDxb, {
+        packages: 1,
+        occurredAt: daysAgo(2.5),
+      }).expect(409);
+      await release(s.id, cookies.warehouseDxb, { packages: 5 }).expect(201);
+      expect((await view(s.id)).balances[0]?.onHandPackages).toBe(0);
+    });
+
+    it('a receipt waiting on a warehouse or location being deactivated is refused', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const closing = (
+        await post('/warehouses', cookies.warehouseDxb, {
+          branchId: dxb,
+          code: 'ZZ-DXB-CLOSING',
+          nameEn: 'Closing store',
+          nameAr: 'مستودع يُغلق',
+        }).expect(201)
+      ).body as WarehouseDto;
+      const withShelf = (
+        await post(`/warehouses/${closing.id}/locations`, cookies.warehouseDxb, {
+          code: 'A1',
+        }).expect(201)
+      ).body as WarehouseDto;
+      const shelf = withShelf.storageLocations[0];
+      if (!shelf) throw new Error('Location not created');
+
+      // The location is deactivated and committed while the receipt waits on its row.
+      const first = await t.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          UPDATE "storage_locations" SET "is_active" = false WHERE "id" = ${shelf.id}::uuid`;
+        const request = receive(s.id, cookies.warehouseDxb, {
+          warehouseId: closing.id,
+          storageLocationId: shelf.id,
+          packages: 1,
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await first.pending).toBe(400);
+
+      // Then the warehouse itself.
+      const second = await t.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          UPDATE "warehouses" SET "is_active" = false WHERE "id" = ${closing.id}::uuid`;
+        const request = receive(s.id, cookies.warehouseDxb, {
+          warehouseId: closing.id,
+          packages: 1,
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await second.pending).toBe(400);
+      expect(await t.prisma.warehouseMovement.count({ where: { shipmentId: s.id } })).toBe(0);
+    });
+
     it('a receipt waiting on a concurrent cancel sees it and is refused', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT']);
       const { pending } = await t.prisma.$transaction(async (tx) => {

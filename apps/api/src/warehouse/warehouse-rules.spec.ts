@@ -5,7 +5,9 @@ import {
   canRelease,
   defaultReceiptStatus,
   onHandPackages,
+  type TimedMovement,
   receiptStatusOptions,
+  releasableAt,
   totalsByWarehouse,
 } from './warehouse-rules.js';
 
@@ -72,6 +74,45 @@ describe('canRelease: release <= received - released', () => {
     expect(canRelease(onHand, -1)).toBe(false);
     expect(canRelease(onHand, 1.5)).toBe(false);
     expect(canRelease(0, 1)).toBe(false);
+  });
+});
+
+describe('releasableAt: the running balance never goes below zero', () => {
+  const at = (day: number) => new Date(Date.UTC(2026, 9, day));
+  const timed = (m: MovementAmounts, day: number, createdDay = 20): TimedMovement => ({
+    ...m,
+    occurredAt: at(day),
+    createdAt: at(createdDay),
+  });
+
+  it('a backdated release cannot take goods received after its date', () => {
+    const movements = [timed(receipt('A', 10), 10)];
+    expect(releasableAt(movements, 'A', at(1))).toBe(0);
+    expect(releasableAt(movements, 'A', at(10))).toBe(10);
+    expect(releasableAt(movements, 'A', at(12))).toBe(10);
+  });
+
+  it('a release before a later release keeps enough for it', () => {
+    const movements = [
+      timed(receipt('A', 5), 1),
+      timed(release('A', 5), 3),
+      timed(receipt('A', 5), 5),
+      timed(receipt('B', 50), 1),
+    ];
+    expect(releasableAt(movements, 'A', at(2))).toBe(0);
+    expect(releasableAt(movements, 'A', at(4))).toBe(0);
+    expect(releasableAt(movements, 'A', at(6))).toBe(5);
+  });
+
+  it('orders movements at the same time by when they were recorded', () => {
+    const movements = [timed(release('A', 4), 2, 21), timed(receipt('A', 4), 2, 20)];
+    expect(releasableAt(movements, 'A', at(2))).toBe(0);
+    expect(releasableAt(movements, 'A', at(3))).toBe(0);
+    expect(releasableAt([timed(receipt('A', 4), 2)], 'A', at(2))).toBe(4);
+  });
+
+  it('a warehouse with no movements has nothing to release', () => {
+    expect(releasableAt([], 'A', at(1))).toBe(0);
   });
 });
 

@@ -57,6 +57,39 @@ export function onHandPackages(movements: readonly MovementAmounts[], warehouseI
   return totalsByWarehouse(movements).get(warehouseId)?.onHandPackages ?? 0;
 }
 
+export interface TimedMovement extends MovementAmounts {
+  occurredAt: Date;
+  createdAt: Date;
+}
+
+/**
+ * Most packages a release dated `at` can take from the warehouse: the running balance, in log
+ * order (occurredAt, then createdAt), must not go below zero at that time or at any later
+ * movement. A backdated release therefore cannot take goods received after its date. The new
+ * release goes after the movements with the same time.
+ */
+export function releasableAt(
+  movements: readonly TimedMovement[],
+  warehouseId: string,
+  at: Date,
+): number {
+  const ordered = movements
+    .filter((m) => m.warehouseId === warehouseId)
+    .sort(
+      (a, b) =>
+        a.occurredAt.getTime() - b.occurredAt.getTime() ||
+        a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+  let balance = 0;
+  let releasable: number | null = null;
+  for (const m of ordered) {
+    if (releasable === null && m.occurredAt.getTime() > at.getTime()) releasable = balance;
+    balance += m.kind === 'RECEIPT' ? m.packages : -m.packages;
+    if (releasable !== null) releasable = Math.min(releasable, balance);
+  }
+  return Math.max(releasable ?? balance, 0);
+}
+
 /** A release is allowed only for at least one package and no more than is on hand. */
 export function canRelease(onHand: number, packages: number): boolean {
   return Number.isInteger(packages) && packages > 0 && packages <= onHand;

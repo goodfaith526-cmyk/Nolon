@@ -18,6 +18,8 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { Prisma, StorageLocation } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+type Tx = Prisma.TransactionClient;
+
 const withLocations = {
   storageLocations: { orderBy: { code: 'asc' } },
 } satisfies Prisma.WarehouseInclude;
@@ -127,18 +129,26 @@ export class WarehousesService {
   }
 
   /**
-   * For movements: the warehouse (and storage location) when the user may use it. 404 when it is
+   * For movements, inside the movement's transaction: the warehouse (and storage location) when
+   * the user may use it. Both rows are share-locked first, so a concurrent deactivation either
+   * waits for the movement to commit or commits first and is seen here. 404 when the warehouse is
    * not in one of the user's branches; 400 when a receipt names an inactive warehouse or
    * location, or a location of another warehouse. A release may use an inactive warehouse, so
    * goods still there can leave.
    */
   async requireForMovement(
+    tx: Tx,
     user: AuthUser,
     warehouseId: string,
     storageLocationId: string | null,
     purpose: 'receipt' | 'release',
   ): Promise<MovementWarehouse> {
-    const warehouse = await this.prisma.warehouse.findFirst({
+    await tx.$queryRaw`SELECT 1 FROM "warehouses" WHERE "id" = ${warehouseId}::uuid FOR SHARE`;
+    if (storageLocationId) {
+      await tx.$queryRaw`
+        SELECT 1 FROM "storage_locations" WHERE "id" = ${storageLocationId}::uuid FOR SHARE`;
+    }
+    const warehouse = await tx.warehouse.findFirst({
       where: { id: warehouseId, ...branchScope(user) },
       include: { branch: { select: { timezone: true } }, storageLocations: true },
     });
