@@ -253,7 +253,7 @@ export class InvoicesService {
         year,
       );
       const totalUsd = toUsd(invoice.total, invoice.fxRate, invoice.currency);
-      const entry = await this.autoJournal.customerInvoiceApproved(
+      const { entry, receivableAccountId } = await this.autoJournal.customerInvoiceApproved(
         tx,
         { ...invoice, number, totalUsd },
         user.id,
@@ -265,6 +265,7 @@ export class InvoicesService {
           number,
           totalUsd,
           journalEntryId: entry.id,
+          receivableAccountId,
           approvedAt: new Date(),
           approvedById: user.id,
         },

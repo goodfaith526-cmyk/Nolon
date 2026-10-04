@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   CONTROL_ROLES,
+  ROLE_ACCOUNT_TYPES,
   type AccountDto,
   type AccountInput,
   type AccountingSettingsDto,
@@ -42,7 +43,7 @@ export class AccountsService {
   }
 
   async create(input: AccountInput): Promise<AccountDto> {
-    const data = await this.validate(input, null);
+    const data = await this.validate(this.prisma, input, null);
     try {
       const account = await this.prisma.account.create({ data });
       return toDto(account, await this.controlAccountIds(this.prisma));
@@ -52,12 +53,18 @@ export class AccountsService {
     }
   }
 
+  /**
+   * Edits an account under its row lock. Journal lines hold the account FOR SHARE while they are
+   * written, and mappings take the same share lock, so the checks below count every line and
+   * posting rule that can exist when the update commits (the database re-checks lines too).
+   */
   async update(id: string, input: AccountInput): Promise<AccountDto> {
-    const existing = await this.prisma.account.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('Account not found');
-    const data = await this.validate(input, existing);
     try {
-      const account = await this.prisma.account.update({ where: { id }, data });
+      const account = await this.prisma.$transaction(async (tx) => {
+        const existing = await this.lockAccount(tx, id, 'UPDATE');
+        const data = await this.validate(tx, input, existing);
+        return tx.account.update({ where: { id }, data });
+      });
       return toDto(account, await this.controlAccountIds(this.prisma));
     } catch (error) {
       if (isUniqueViolation(error)) throw new ConflictException('Account code already exists');
@@ -76,13 +83,22 @@ export class AccountsService {
     };
   }
 
+  /** Points a posting role at an account of the role's type (ROLE_ACCOUNT_TYPES). */
   async setMapping(role: PostingRole, accountId: string): Promise<AccountingSettingsDto> {
-    const account = await this.requirePostable(this.prisma, accountId);
-    if (account.isCash) throw new BadRequestException('A cash or bank account cannot be mapped');
-    await this.prisma.accountMapping.upsert({
-      where: { role },
-      create: { role, accountId },
-      update: { accountId },
+    await this.prisma.$transaction(async (tx) => {
+      const account = await this.lockAccount(tx, accountId, 'SHARE');
+      requireUsable(account);
+      if (account.isCash) throw new BadRequestException('A cash or bank account cannot be mapped');
+      if (account.type !== ROLE_ACCOUNT_TYPES[role]) {
+        throw new BadRequestException(
+          `${role} posts to a ${ROLE_ACCOUNT_TYPES[role]} account, not ${account.type}`,
+        );
+      }
+      await tx.accountMapping.upsert({
+        where: { role },
+        create: { role, accountId },
+        update: { accountId },
+      });
     });
     return this.settings();
   }
@@ -92,20 +108,23 @@ export class AccountsService {
     if (input.isReimbursable && input.revenueAccountId) {
       throw new BadRequestException('A reimbursable charge posts to the reimbursable account');
     }
-    if (input.revenueAccountId) {
-      const account = await this.requirePostable(this.prisma, input.revenueAccountId);
-      if (account.type !== 'REVENUE') {
-        throw new BadRequestException('Charge types post to a revenue account');
-      }
-    }
     const fields = {
       revenueAccountId: input.revenueAccountId,
       isReimbursable: input.isReimbursable,
     };
-    await this.prisma.chargeTypePosting.upsert({
-      where: { chargeTypeCode: input.chargeTypeCode },
-      create: { chargeTypeCode: input.chargeTypeCode, ...fields },
-      update: fields,
+    await this.prisma.$transaction(async (tx) => {
+      if (input.revenueAccountId) {
+        const account = await this.lockAccount(tx, input.revenueAccountId, 'SHARE');
+        requireUsable(account);
+        if (account.type !== 'REVENUE') {
+          throw new BadRequestException('Charge types post to a revenue account');
+        }
+      }
+      await tx.chargeTypePosting.upsert({
+        where: { chargeTypeCode: input.chargeTypeCode },
+        create: { chargeTypeCode: input.chargeTypeCode, ...fields },
+        update: fields,
+      });
     });
     return this.settings();
   }
@@ -134,14 +153,19 @@ export class AccountsService {
     return result;
   }
 
+  /**
+   * An active, postable account, read under a share lock: inside a transaction it is held until
+   * commit, so the account cannot be deactivated or reclassified under the write that uses it.
+   */
   async requirePostable(tx: Tx, id: string): Promise<Account> {
-    const account = await tx.account.findUnique({ where: { id } });
-    if (!account) throw new BadRequestException('Unknown account');
-    if (!account.isActive) throw new BadRequestException(`Account ${account.code} is inactive`);
-    if (!account.isPostable) {
-      throw new BadRequestException(`Account ${account.code} is a header account`);
-    }
+    const account = await this.lockAccount(tx, id, 'SHARE');
+    requireUsable(account);
     return account;
+  }
+
+  /** Share-locks every account of an entry's lines (in id order) and checks each is usable. */
+  async lockForPosting(tx: Tx, ids: readonly string[]): Promise<void> {
+    for (const id of [...new Set(ids)].sort()) await this.requirePostable(tx, id);
   }
 
   /** A cash or bank account usable by the branch, in the given currency. */
@@ -157,22 +181,47 @@ export class AccountsService {
     return account;
   }
 
-  /** Accounts mapped to a control role: invoices and receipts post there, manual entries not. */
+  /**
+   * Accounts mapped to a control role, plus every receivable account an approved invoice was
+   * posted to (it is still cleared there after a remap): documents post there, manual entries not.
+   */
   async controlAccountIds(tx: Tx): Promise<Set<string>> {
-    const mappings = await tx.accountMapping.findMany({
-      where: { role: { in: [...CONTROL_ROLES] } },
-    });
-    return new Set(mappings.map((m) => m.accountId));
+    const [mappings, snapshots] = await Promise.all([
+      tx.accountMapping.findMany({ where: { role: { in: [...CONTROL_ROLES] } } }),
+      tx.customerInvoice.findMany({
+        where: { receivableAccountId: { not: null } },
+        distinct: ['receivableAccountId'],
+        select: { receivableAccountId: true },
+      }),
+    ]);
+    const ids = new Set(mappings.map((m) => m.accountId));
+    for (const s of snapshots) if (s.receivableAccountId) ids.add(s.receivableAccountId);
+    return ids;
   }
 
-  private async validate(input: AccountInput, existing: Account | null) {
+  private async lockAccount(tx: Tx, id: string, mode: 'UPDATE' | 'SHARE'): Promise<Account> {
+    const rows =
+      mode === 'UPDATE'
+        ? await tx.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "accounts" WHERE "id" = ${id}::uuid FOR UPDATE`
+        : await tx.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "accounts" WHERE "id" = ${id}::uuid FOR SHARE`;
+    if (rows.length === 0) {
+      if (mode === 'UPDATE') throw new NotFoundException('Account not found');
+      throw new BadRequestException('Unknown account');
+    }
+    return tx.account.findUniqueOrThrow({ where: { id } });
+  }
+
+  private async validate(tx: Tx, input: AccountInput, existing: Account | null) {
     const isCash = input.isCash ?? false;
     if (isCash) {
+      if (input.type !== 'ASSET') throw new BadRequestException('A cash account is an asset');
       if (!input.isPostable) throw new BadRequestException('A cash account is postable');
       if (!input.currency) throw new BadRequestException('A cash account needs a currency');
       await this.currencies.requireActive(input.currency);
       if (input.branchId) {
-        const branch = await this.prisma.branch.findUnique({ where: { id: input.branchId } });
+        const branch = await tx.branch.findUnique({ where: { id: input.branchId } });
         if (!branch) throw new BadRequestException('Unknown branch');
       }
     } else if (input.currency || input.branchId) {
@@ -180,18 +229,18 @@ export class AccountsService {
     }
     const parentId = input.parentId ?? null;
     if (parentId) {
-      const parent = await this.prisma.account.findUnique({ where: { id: parentId } });
+      const parent = await tx.account.findUnique({ where: { id: parentId } });
       if (!parent) throw new BadRequestException('Unknown parent account');
       if (parent.isPostable) throw new BadRequestException('The parent must be a header account');
       if (parent.type !== input.type) {
         throw new BadRequestException('An account has the same type as its parent');
       }
-      if (existing && (await this.isDescendant(parentId, existing.id))) {
+      if (existing && (await this.isDescendant(tx, parentId, existing.id))) {
         throw new BadRequestException('An account cannot sit under itself');
       }
     }
     if (existing) {
-      await this.checkChange(existing, input, isCash);
+      await this.checkChange(tx, existing, input, isCash);
     }
     return {
       code: input.code,
@@ -207,12 +256,19 @@ export class AccountsService {
     };
   }
 
-  /** Changes that would rewrite what posted entries mean are refused once an account is used. */
-  private async checkChange(existing: Account, input: AccountInput, isCash: boolean) {
-    const [lines, children, mapped] = await Promise.all([
-      this.prisma.journalLine.count({ where: { accountId: existing.id } }),
-      this.prisma.account.count({ where: { parentId: existing.id } }),
-      this.prisma.accountMapping.count({ where: { accountId: existing.id } }),
+  /**
+   * Changes that would rewrite what posted entries mean are refused once an account is used, and
+   * an account a posting rule or an approved invoice depends on stays active, postable and of its type.
+   */
+  private async checkChange(tx: Tx, existing: Account, input: AccountInput, isCash: boolean) {
+    const [lines, children, mapped, charged, approvedInvoices] = await Promise.all([
+      tx.journalLine.count({ where: { accountId: existing.id } }),
+      tx.account.count({ where: { parentId: existing.id } }),
+      tx.accountMapping.count({ where: { accountId: existing.id } }),
+      tx.chargeTypePosting.count({ where: { revenueAccountId: existing.id } }),
+      tx.customerInvoice.count({
+        where: { receivableAccountId: existing.id, status: 'APPROVED' },
+      }),
     ]);
     if (lines > 0) {
       const changed =
@@ -229,22 +285,34 @@ export class AccountsService {
     if (input.isPostable && children > 0) {
       throw new ConflictException('An account with sub-accounts stays a header account');
     }
-    if (mapped > 0 && (!input.isPostable || input.isActive === false || isCash)) {
-      throw new ConflictException('This account is used by a posting rule; remap it first');
+    const depended = mapped + charged + approvedInvoices > 0;
+    const unusable =
+      !input.isPostable || input.isActive === false || isCash || input.type !== existing.type;
+    if (depended && unusable) {
+      throw new ConflictException(
+        'Posting rules or approved invoices use this account; remap them first',
+      );
     }
   }
 
-  private async isDescendant(candidateId: string, ancestorId: string): Promise<boolean> {
+  private async isDescendant(tx: Tx, candidateId: string, ancestorId: string): Promise<boolean> {
     let current: string | null = candidateId;
     for (let depth = 0; current && depth < 50; depth++) {
       if (current === ancestorId) return true;
-      const row: { parentId: string | null } | null = await this.prisma.account.findUnique({
+      const row: { parentId: string | null } | null = await tx.account.findUnique({
         where: { id: current },
         select: { parentId: true },
       });
       current = row?.parentId ?? null;
     }
     return false;
+  }
+}
+
+function requireUsable(account: Account): void {
+  if (!account.isActive) throw new BadRequestException(`Account ${account.code} is inactive`);
+  if (!account.isPostable) {
+    throw new BadRequestException(`Account ${account.code} is a header account`);
   }
 }
 

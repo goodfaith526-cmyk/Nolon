@@ -22,6 +22,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { waitForLockWaiter } from './test-data.js';
 
 /**
  * Accounting: invoices, receipts, manual journals, periods and the database guards on posted
@@ -884,6 +885,200 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         ...body,
         nameEn: 'Renamed',
       }).expect(200);
+    });
+
+    it('posting roles map only to accounts of their type; cash accounts are assets', async () => {
+      const mapping = (role: string, accountId: string) =>
+        put(`/accounting/settings/mappings/${role}`, cookies.admin, { accountId });
+      await mapping('RECEIVABLE', account('4100').id).expect(400);
+      await mapping('CUSTOMER_ADVANCES', account('6100').id).expect(400);
+      await mapping('FX_GAIN', account('1300').id).expect(400);
+      await mapping('RECEIVABLE', cashSdg.id).expect(400);
+      // Mapping a role to its own account again is accepted.
+      await mapping('FX_GAIN', account('4900').id).expect(200);
+      await put('/accounting/settings/charge-types/CUSTOMS', cookies.admin, {
+        revenueAccountId: account('5100').id,
+        isReimbursable: false,
+      }).expect(400);
+      await post('/accounting/accounts', cookies.admin, {
+        code: `T${randomUUID().slice(0, 6).toUpperCase()}`,
+        nameEn: 'Not an asset',
+        nameAr: 'ليس أصلاً',
+        type: 'EXPENSE',
+        isPostable: true,
+        isCash: true,
+        currency: 'SDG',
+      }).expect(400);
+    });
+
+    it('an account a posting rule uses stays active, postable and of its type', async () => {
+      // 4200 is the CUSTOMS charge type's revenue account (not a role mapping).
+      const customs = account('4200');
+      const body = {
+        code: customs.code,
+        nameEn: customs.nameEn,
+        nameAr: customs.nameAr,
+        type: customs.type,
+        parentId: customs.parentId,
+        isPostable: true,
+      };
+      await patch(`/accounting/accounts/${customs.id}`, cookies.admin, {
+        ...body,
+        isActive: false,
+      }).expect(409);
+      // The database refuses reclassifying an account with lines, whatever the application does.
+      await expect(
+        t.prisma
+          .$executeRaw`UPDATE "accounts" SET "type" = 'LIABILITY' WHERE "id" = ${account('4100').id}::uuid`,
+      ).rejects.toThrow(/has journal lines/);
+    });
+
+    it('an account edit waits for a line being written to it, then sees the line', async () => {
+      const code = `T${randomUUID().slice(0, 6).toUpperCase()}`;
+      const fresh = (
+        await post('/accounting/accounts', cookies.admin, {
+          code,
+          nameEn: 'Fresh expense',
+          nameAr: 'مصروف جديد',
+          type: 'EXPENSE',
+          parentId: account('6000').id,
+          isPostable: true,
+        }).expect(201)
+      ).body as AccountDto;
+      const draft = (
+        await post('/accounting/journals', cookies.financePts, {
+          branchId: pts,
+          entryDate: d('07-01'),
+          description: 'Draft holding a line',
+          lines: [
+            { accountId: account('6100').id, currency: 'USD', debit: '1' },
+            { accountId: cashUsd.id, currency: 'USD', credit: '1' },
+          ],
+        }).expect(201)
+      ).body as JournalEntryDto;
+      const { pending } = await t.prisma.$transaction(async (tx) => {
+        // The line trigger share-locks the account until this transaction commits.
+        await tx.journalLine.create({
+          data: {
+            entryId: draft.id,
+            lineNo: 3,
+            accountId: fresh.id,
+            branchId: pts,
+            currency: 'USD',
+            fxRate: 1,
+            debit: 1,
+            credit: 0,
+            debitUsd: 1,
+            creditUsd: 0,
+          },
+        });
+        const request = patch(`/accounting/accounts/${fresh.id}`, cookies.admin, {
+          code,
+          nameEn: 'Fresh expense',
+          nameAr: 'مصروف جديد',
+          type: 'EXPENSE',
+          parentId: account('6000').id,
+          isPostable: false,
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await pending).toBe(409);
+      await del(`/accounting/journals/${draft.id}`, cookies.financePts).expect(204);
+    });
+
+    it('a line waits for an account being deactivated, then is refused', async () => {
+      const code = `T${randomUUID().slice(0, 6).toUpperCase()}`;
+      const fresh = (
+        await post('/accounting/accounts', cookies.admin, {
+          code,
+          nameEn: 'Closing expense',
+          nameAr: 'مصروف يُغلق',
+          type: 'EXPENSE',
+          parentId: account('6000').id,
+          isPostable: true,
+        }).expect(201)
+      ).body as AccountDto;
+      const { pending } = await t.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`UPDATE "accounts" SET "is_active" = false WHERE "id" = ${fresh.id}::uuid`;
+        const request = post('/accounting/journals', cookies.financePts, {
+          branchId: pts,
+          entryDate: d('07-02'),
+          description: 'Too late',
+          lines: [
+            { accountId: fresh.id, currency: 'USD', debit: '1' },
+            { accountId: cashUsd.id, currency: 'USD', credit: '1' },
+          ],
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await pending).toBe(400);
+      expect(await t.prisma.journalLine.count({ where: { accountId: fresh.id } })).toBe(0);
+    });
+
+    it('a receipt clears the receivable the invoice was posted to, after a remap', async () => {
+      const original = account('1200');
+      const invoice = await approvedInvoice(d('11-01'));
+      const other = (
+        await post('/accounting/accounts', cookies.admin, {
+          code: `T${randomUUID().slice(0, 6).toUpperCase()}`,
+          nameEn: 'Second receivable',
+          nameAr: 'ذمم مدينة ثانية',
+          type: 'ASSET',
+          parentId: account('1000').id,
+          isPostable: true,
+        }).expect(201)
+      ).body as AccountDto;
+      await put('/accounting/settings/mappings/RECEIVABLE', cookies.admin, {
+        accountId: other.id,
+      }).expect(200);
+      try {
+        // The old receivable still holds an open invoice, so it stays a control account.
+        const list = (await get('/accounting/accounts', cookies.financePts).expect(200))
+          .body as AccountDto[];
+        expect(list.find((a) => a.id === original.id)?.isControl).toBe(true);
+        await patch(`/accounting/accounts/${original.id}`, cookies.admin, {
+          code: original.code,
+          nameEn: original.nameEn,
+          nameAr: original.nameAr,
+          type: original.type,
+          parentId: original.parentId,
+          isPostable: true,
+          isActive: false,
+        }).expect(409);
+        const receipt = (
+          await post('/receipts', cookies.financePts, {
+            customerId: customer.id,
+            receiptDate: d('11-02'),
+            currency: 'SDG',
+            fxRate: '600',
+            amount: invoice.total,
+            cashAccountId: cashSdg.id,
+            allocations: [{ invoiceId: invoice.id, amount: invoice.total }],
+          }).expect(201)
+        ).body as ReceiptDto;
+        const entry = await journal(receipt.journalEntryId);
+        const credited = entry.lines.filter((l) => l.creditUsd !== '0');
+        expect(credited.map((l) => l.accountId)).toEqual([original.id]);
+        expect(entry.lines.some((l) => l.accountId === other.id)).toBe(false);
+        const paid = (await get(`/customer-invoices/${invoice.id}`, cookies.financePts).expect(200))
+          .body as CustomerInvoiceDto;
+        expect(paid.paymentStatus).toBe('PAID');
+        // The original receivable nets to zero for this invoice's shipment.
+        const lines = await t.prisma.journalLine.findMany({
+          where: { accountId: original.id, shipmentId: invoice.shipmentId },
+        });
+        const net = lines.reduce(
+          (sum, l) => sum.plus(l.debitUsd).minus(l.creditUsd),
+          new Prisma.Decimal(0),
+        );
+        expect(net.toFixed()).toBe('0');
+      } finally {
+        await put('/accounting/settings/mappings/RECEIVABLE', cookies.admin, {
+          accountId: original.id,
+        }).expect(200);
+      }
     });
 
     it('the trial balance balances and shows this year’s movements', async () => {

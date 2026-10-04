@@ -167,6 +167,7 @@ export class ReceiptsService {
           cashAccountId: input.cashAccountId,
           allocations: allocations.map((a) => ({
             invoiceNumber: a.invoice.number ?? '',
+            receivableAccountId: requireReceivable(a.invoice),
             shipmentId: a.invoice.shipmentId,
             invoiceFxRate: a.invoice.fxRate,
             amount: a.amount,
@@ -273,6 +274,7 @@ interface LockedInvoice {
   customerId: string;
   shipmentId: string;
   status: string;
+  receivableAccountId: string | null;
   currency: string;
   fxRate: Prisma.Decimal;
   total: Prisma.Decimal;
@@ -286,6 +288,7 @@ async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string,
   const rows = await tx.$queryRaw<LockedInvoice[]>`
     SELECT "id", "number", "customer_id" AS "customerId", "shipment_id" AS "shipmentId",
            "status"::text AS "status", "currency", "fx_rate" AS "fxRate", "total",
+           "receivable_account_id" AS "receivableAccountId",
            "total_usd" AS "totalUsd", "paid_amount" AS "paidAmount", "paid_usd" AS "paidUsd"
     FROM "customer_invoices"
     WHERE "id" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
@@ -347,4 +350,12 @@ function toDto(r: ReceiptWithDetails, user: AuthUser): ReceiptDto {
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     actions: { canCancel: r.status === 'POSTED' && user.permissions.has('receipts:cancel') },
   };
+}
+
+/** Every approved invoice keeps the receivable account it was posted to (a database check). */
+function requireReceivable(invoice: LockedInvoice): string {
+  if (!invoice.receivableAccountId) {
+    throw new Error(`Invoice ${invoice.number ?? invoice.id} has no receivable account`);
+  }
+  return invoice.receivableAccountId;
 }

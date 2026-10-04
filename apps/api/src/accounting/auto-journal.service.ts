@@ -33,9 +33,10 @@ export interface ReceiptForPosting {
   fxRate: Decimal;
   amount: Decimal;
   cashAccountId: string;
-  /** Each in the receipt currency, at the invoice's own rate. */
+  /** Each in the receipt currency, at the invoice's own rate, against its own receivable. */
   allocations: readonly {
     invoiceNumber: string;
+    receivableAccountId: string;
     shipmentId: string;
     invoiceFxRate: Decimal;
     amount: Decimal;
@@ -57,14 +58,15 @@ export class AutoJournalService {
 
   /**
    * Rule 1 and 2, customer invoice approved: debit the receivable with the total; credit each
-   * charge's revenue account (or the reimbursable clearing account).
+   * charge's revenue account (or the reimbursable clearing account). Returns the receivable
+   * account used, which the invoice keeps: its receipts clear it there even after a remap.
    */
   async customerInvoiceApproved(
     tx: Tx,
     invoice: InvoiceForPosting,
     userId: string,
-  ): Promise<JournalEntry> {
-    const receivable = await this.accounts.roleAccount(tx, 'RECEIVABLE');
+  ): Promise<{ entry: JournalEntry; receivableAccountId: string }> {
+    const receivableAccountId = await this.accounts.roleAccount(tx, 'RECEIVABLE');
     const revenueByCharge = await this.accounts.revenueAccounts(
       tx,
       invoice.lines.map((l) => l.chargeTypeCode),
@@ -86,7 +88,7 @@ export class AutoJournalService {
     const lines: LineSpec[] = [
       {
         ...common,
-        accountId: receivable,
+        accountId: receivableAccountId,
         side: 'DEBIT',
         amount: invoice.total,
         amountUsd: invoice.totalUsd,
@@ -99,7 +101,7 @@ export class AutoJournalService {
         amount,
       })),
     ];
-    return this.journal.post(
+    const entry = await this.journal.post(
       tx,
       {
         branchId: invoice.branchId,
@@ -111,19 +113,17 @@ export class AutoJournalService {
       },
       lines,
     );
+    return { entry, receivableAccountId };
   }
 
   /**
-   * Rules 3 and 4, receipt recorded: debit the cash account; credit the receivable of each
-   * invoice paid at the invoice's own USD value, and the customer advances account with the rest.
+   * Rules 3 and 4, receipt recorded: debit the cash account; credit the receivable each invoice
+   * was posted to (not the role's current account) at the invoice's own USD value, and the customer advances account with the rest.
    * The USD difference between the cash received and the receivable cleared is the realized
    * exchange gain or loss (annex C section 3); when every rate is the same, it is only rounding.
    */
   async receiptRecorded(tx: Tx, receipt: ReceiptForPosting, userId: string): Promise<JournalEntry> {
-    const [receivable, advances] = await Promise.all([
-      this.accounts.roleAccount(tx, 'RECEIVABLE'),
-      this.accounts.roleAccount(tx, 'CUSTOMER_ADVANCES'),
-    ]);
+    const advances = await this.accounts.roleAccount(tx, 'CUSTOMER_ADVANCES');
     const common = {
       branchId: receipt.branchId,
       currency: receipt.currency,
@@ -146,7 +146,7 @@ export class AutoJournalService {
     for (const a of receipt.allocations) {
       lines.push({
         ...common,
-        accountId: receivable,
+        accountId: a.receivableAccountId,
         fxRate: a.invoiceFxRate,
         shipmentId: a.shipmentId,
         side: 'CREDIT',

@@ -28,6 +28,26 @@ export const POSTING_ROLES = [
 ] as const;
 export type PostingRole = (typeof POSTING_ROLES)[number];
 
+/**
+ * The account type each posting role must map to, so automatic entries land in the right section
+ * of the statements. Clearing accounts are balance-sheet accounts: reimbursable costs and the
+ * consolidated container are assets until recharged, accrued transport is a liability until billed.
+ */
+export const ROLE_ACCOUNT_TYPES: Readonly<Record<PostingRole, AccountType>> = {
+  RECEIVABLE: 'ASSET',
+  PAYABLE: 'LIABILITY',
+  CUSTOMER_ADVANCES: 'LIABILITY',
+  DEFAULT_REVENUE: 'REVENUE',
+  DEFAULT_COST: 'EXPENSE',
+  REIMBURSABLE: 'ASSET',
+  CONSOLIDATION_CLEARING: 'ASSET',
+  ACCRUED_TRANSPORT: 'LIABILITY',
+  FX_GAIN: 'REVENUE',
+  FX_LOSS: 'EXPENSE',
+  ROUNDING: 'EXPENSE',
+  OPENING_EQUITY: 'EQUITY',
+};
+
 /** Subledger accounts: only invoices, receipts and payments post to them, never manual entries. */
 export const CONTROL_ROLES: readonly PostingRole[] = ['RECEIVABLE', 'PAYABLE', 'CUSTOMER_ADVANCES'];
 

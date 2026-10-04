@@ -2,6 +2,7 @@
 
 import {
   POSTING_ROLES,
+  ROLE_ACCOUNT_TYPES,
   type AccountDto,
   type AccountingSettingsDto,
   type PostingRole,
@@ -102,11 +103,14 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
                       aria-label={te(`postingRole_${role}`)}
                     >
                       <option value="">{t('notMapped')}</option>
-                      {postable.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {label(a)}
-                        </option>
-                      ))}
+                      {/* Dropdown narrowing only; the API checks the role's account type. */}
+                      {postable
+                        .filter((a) => !a.isCash && a.type === ROLE_ACCOUNT_TYPES[role])
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {label(a)}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   {canUpdate && (

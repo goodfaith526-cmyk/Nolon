@@ -169,6 +169,12 @@ export class JournalService {
   }
 
   async writeLines(tx: Tx, entryId: string, lines: readonly PreparedLine[]): Promise<void> {
+    // 400 rather than the database trigger's error when an account is inactive or a header; the
+    // share locks also keep the accounts from changing until this entry commits.
+    await this.accounts.lockForPosting(
+      tx,
+      lines.map((line) => line.accountId),
+    );
     await tx.journalLine.createMany({
       data: lines.map((line, index) => ({
         entryId,

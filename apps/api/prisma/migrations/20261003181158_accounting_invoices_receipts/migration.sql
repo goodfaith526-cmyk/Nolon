@@ -143,6 +143,7 @@ CREATE TABLE "customer_invoices" (
     "paid_usd" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "notes" TEXT,
     "journal_entry_id" UUID,
+    "receivable_account_id" UUID,
     "created_by_id" UUID NOT NULL,
     "approved_by_id" UUID,
     "approved_at" TIMESTAMPTZ(3),
@@ -352,6 +353,9 @@ ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_currency_fkey"
 ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_journal_entry_id_fkey" FOREIGN KEY ("journal_entry_id") REFERENCES "journal_entries"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_receivable_account_id_fkey" FOREIGN KEY ("receivable_account_id") REFERENCES "accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -397,10 +401,10 @@ ALTER TABLE "receipt_allocations" ADD CONSTRAINT "receipt_allocations_invoice_id
 -- defence. The services check the same rules first and return readable errors.
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_code_check" CHECK ("code" ~ '^[0-9A-Z][0-9A-Z.-]{0,19}$');
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_parent_check" CHECK ("parent_id" IS NULL OR "parent_id" <> "id");
--- A cash or bank account is postable and holds exactly one currency; other accounts have no
--- currency and no branch of their own (the branch is a dimension on each journal line).
+-- A cash or bank account is a postable asset and holds exactly one currency; other accounts have
+-- no currency and no branch of their own (the branch is a dimension on each journal line).
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_cash_check" CHECK (
-    ("is_cash" AND "is_postable" AND "currency" IS NOT NULL)
+    ("is_cash" AND "type" = 'ASSET' AND "is_postable" AND "currency" IS NOT NULL)
     OR (NOT "is_cash" AND "currency" IS NULL AND "branch_id" IS NULL));
 ALTER TABLE "fiscal_periods" ADD CONSTRAINT "fiscal_periods_month_check" CHECK ("month" BETWEEN 1 AND 12 AND "start_date" <= "end_date");
 ALTER TABLE "fiscal_periods" ADD CONSTRAINT "fiscal_periods_closed_check" CHECK (("status" = 'CLOSED') = ("closed_at" IS NOT NULL));
@@ -425,8 +429,8 @@ ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_amounts_check"
 -- A draft has no number and no entry; an approved invoice has both. Numbers are given on approval,
 -- so approved invoices are numbered without gaps.
 ALTER TABLE "customer_invoices" ADD CONSTRAINT "customer_invoices_status_check" CHECK (
-    ("status" <> 'DRAFT' OR ("number" IS NULL AND "journal_entry_id" IS NULL AND "approved_at" IS NULL))
-    AND ("status" <> 'APPROVED' OR ("number" IS NOT NULL AND "journal_entry_id" IS NOT NULL AND "approved_at" IS NOT NULL AND "approved_by_id" IS NOT NULL))
+    ("status" <> 'DRAFT' OR ("number" IS NULL AND "journal_entry_id" IS NULL AND "receivable_account_id" IS NULL AND "approved_at" IS NULL))
+    AND ("status" <> 'APPROVED' OR ("number" IS NOT NULL AND "journal_entry_id" IS NOT NULL AND "receivable_account_id" IS NOT NULL AND "approved_at" IS NOT NULL AND "approved_by_id" IS NOT NULL))
     AND (("status" = 'CANCELLED') = ("cancelled_at" IS NOT NULL AND "cancel_reason" IS NOT NULL)));
 ALTER TABLE "customer_invoice_lines" ADD CONSTRAINT "customer_invoice_lines_amounts_check" CHECK (
     "quantity" > 0 AND "unit_price" >= 0 AND "line_total" >= 0);
@@ -502,6 +506,8 @@ CREATE TRIGGER "journal_entries_guard"
 CREATE FUNCTION "journal_lines_guard"() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     v_status "journal_status";
+    v_active BOOLEAN;
+    v_postable BOOLEAN;
 BEGIN
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
         SELECT "status" INTO v_status FROM "journal_entries" WHERE "id" = OLD."entry_id" FOR SHARE;
@@ -514,6 +520,14 @@ BEGIN
         IF v_status = 'POSTED' THEN
             RAISE EXCEPTION 'Lines cannot be added to a posted journal entry';
         END IF;
+        -- The share lock waits for a concurrent change to the account (accounts_guard below) and
+        -- holds it off until this line commits, so a line never lands on an account that is being
+        -- made inactive or a header, and an account never changes meaning under a new line.
+        SELECT "is_active", "is_postable" INTO v_active, v_postable
+            FROM "accounts" WHERE "id" = NEW."account_id" FOR SHARE;
+        IF NOT v_active OR NOT v_postable THEN
+            RAISE EXCEPTION 'Journal lines post only to active, postable accounts';
+        END IF;
         RETURN NEW;
     END IF;
     RETURN OLD;
@@ -523,6 +537,26 @@ $$;
 CREATE TRIGGER "journal_lines_guard"
     BEFORE INSERT OR UPDATE OR DELETE ON "journal_lines"
     FOR EACH ROW EXECUTE FUNCTION "journal_lines_guard"();
+
+-- Once an account has journal lines, what those lines mean is fixed: its type, its kind (cash or
+-- not, header or postable) and its currency cannot change. Updating the row locks it, so a line
+-- being written (which holds the account FOR SHARE) commits first and is counted here.
+CREATE FUNCTION "accounts_guard"() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (NEW."type" IS DISTINCT FROM OLD."type"
+        OR NEW."is_cash" IS DISTINCT FROM OLD."is_cash"
+        OR NEW."currency" IS DISTINCT FROM OLD."currency"
+        OR (OLD."is_postable" AND NOT NEW."is_postable"))
+       AND EXISTS (SELECT 1 FROM "journal_lines" WHERE "account_id" = OLD."id") THEN
+        RAISE EXCEPTION 'Account % has journal lines: its type, kind and currency cannot change', OLD."code";
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "accounts_guard"
+    BEFORE UPDATE ON "accounts"
+    FOR EACH ROW EXECUTE FUNCTION "accounts_guard"();
 
 -- TRUNCATE skips row triggers, so it is refused outright on both tables.
 CREATE FUNCTION "journal_truncate_guard"() RETURNS trigger LANGUAGE plpgsql AS $$

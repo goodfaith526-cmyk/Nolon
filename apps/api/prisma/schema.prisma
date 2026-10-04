@@ -933,6 +933,7 @@ model Account {
   chargeTypes  ChargeTypePosting[]
   journalLines JournalLine[]
   receipts     Receipt[]
+  invoices     CustomerInvoice[] @relation("InvoiceReceivable")
 
   @@map("accounts")
 }
@@ -1141,6 +1142,9 @@ model CustomerInvoice {
   paidUsd        Decimal       @default(0) @map("paid_usd") @db.Decimal(18, 4)
   notes          String?
   journalEntryId String?       @unique @map("journal_entry_id") @db.Uuid
+  /// The receivable account debited on approval; receipts clear the invoice there, even after
+  /// the RECEIVABLE role is remapped.
+  receivableAccountId String?   @map("receivable_account_id") @db.Uuid
   createdById    String        @map("created_by_id") @db.Uuid
   approvedById   String?       @map("approved_by_id") @db.Uuid
   approvedAt     DateTime?     @map("approved_at") @db.Timestamptz(3)
@@ -1154,6 +1158,7 @@ model CustomerInvoice {
   shipment     Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   currencyRef  Currency              @relation(fields: [currency], references: [code], onDelete: Restrict)
   journalEntry JournalEntry?         @relation("InvoiceJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  receivableAccount Account?         @relation("InvoiceReceivable", fields: [receivableAccountId], references: [id], onDelete: Restrict)
   createdBy    User                  @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   approvedBy   User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   lines        CustomerInvoiceLine[]
