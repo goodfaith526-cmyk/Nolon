@@ -28,6 +28,10 @@ interface NavLink {
     | 'receipts'
     | 'journals'
     | 'trialBalance'
+    | 'reports'
+    | 'operationalReports'
+    | 'managementDashboard'
+    | 'branchDashboard'
     | 'chartOfAccounts'
     | 'fxRates'
     | 'periods'
@@ -40,7 +44,23 @@ const NAV_SECTIONS: readonly {
   title?: 'commercial' | 'operations' | 'finance' | 'admin';
   links: readonly NavLink[];
 }[] = [
-  { links: [{ href: '/dashboard', label: 'home', icon: 'home' }] },
+  {
+    links: [
+      { href: '/dashboard', label: 'home', icon: 'home' },
+      {
+        href: '/dashboard/management',
+        label: 'managementDashboard',
+        icon: 'balance',
+        permission: 'dashboards:view',
+      },
+      {
+        href: '/dashboard/branch',
+        label: 'branchDashboard',
+        icon: 'calendar',
+        permission: 'dashboards:view',
+      },
+    ],
+  },
   {
     title: 'commercial',
     links: [
@@ -84,6 +104,12 @@ const NAV_SECTIONS: readonly {
         icon: 'warehouse',
         permission: 'warehouse:view',
       },
+      {
+        href: '/operational-reports',
+        label: 'operationalReports',
+        icon: 'report',
+        permission: 'operational_reports:view',
+      },
     ],
   },
   {
@@ -106,6 +132,12 @@ const NAV_SECTIONS: readonly {
         href: '/accounting/trial-balance',
         label: 'trialBalance',
         icon: 'balance',
+        permission: 'financial_reports:view',
+      },
+      {
+        href: '/reports',
+        label: 'reports',
+        icon: 'report',
         permission: 'financial_reports:view',
       },
       {

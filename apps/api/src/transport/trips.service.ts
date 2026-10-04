@@ -180,6 +180,43 @@ export class TripsService {
     });
   }
 
+  /**
+   * For the open accruals report: the trips among `ids` the user may see, with their branch,
+   * carrier and the day they were completed (in the trip's branch).
+   */
+  async accrualSummaries(
+    user: AuthUser,
+    ids: readonly string[],
+  ): Promise<
+    {
+      id: string;
+      number: string;
+      branchCode: string;
+      carrierName: string | null;
+      completedOn: string | null;
+    }[]
+  > {
+    if (ids.length === 0) return [];
+    const trips = await this.prisma.trip.findMany({
+      where: { id: { in: [...ids] }, ...tripScope(user) },
+      select: {
+        id: true,
+        number: true,
+        completedAt: true,
+        branch: { select: { code: true, timezone: true } },
+        carrier: { select: { name: true } },
+      },
+      orderBy: { number: 'asc' },
+    });
+    return trips.map((t) => ({
+      id: t.id,
+      number: t.number,
+      branchCode: t.branch.code,
+      carrierName: t.carrier?.name ?? null,
+      completedOn: t.completedAt ? todayIn(t.branch.timezone, t.completedAt) : null,
+    }));
+  }
+
   async create(user: AuthUser, input: TripInput): Promise<TripDto> {
     forbidDriverOnly(user, 'plan trips');
     assertBranchAccess(user, input.branchId);

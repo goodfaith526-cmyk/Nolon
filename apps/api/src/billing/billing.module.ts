@@ -6,6 +6,7 @@ import { MasterDataModule } from '../master-data/master-data.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { InvoicesController, ReceiptsController } from './billing.controller.js';
+import { BillingReportsService } from './billing-reports.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
@@ -19,6 +20,7 @@ import { ReceiptsService } from './receipts.service.js';
     ShipmentsModule,
   ],
   controllers: [InvoicesController, ReceiptsController],
-  providers: [InvoicesService, ReceiptsService],
+  providers: [InvoicesService, ReceiptsService, BillingReportsService],
+  exports: [BillingReportsService],
 })
 export class BillingModule {}

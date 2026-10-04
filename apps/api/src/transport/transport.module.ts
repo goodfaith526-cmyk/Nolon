@@ -14,6 +14,7 @@ import {
   TripsController,
 } from './transport.controller.js';
 import { TripsService } from './trips.service.js';
+import { TripReportsService } from './trip-reports.service.js';
 
 /** Inland transport (scope 12): fleet, trips, trip costs and proof of delivery. */
 @Module({
@@ -26,6 +27,7 @@ import { TripsService } from './trips.service.js';
     UsersModule,
   ],
   controllers: [FleetController, TripsController, ShipmentTransportController],
-  providers: [FleetService, TripsService, TripCostsService, PodService],
+  providers: [TripReportsService, FleetService, TripsService, TripCostsService, PodService],
+  exports: [TripReportsService, TripsService],
 })
 export class TransportModule {}

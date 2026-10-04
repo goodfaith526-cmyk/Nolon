@@ -1,4 +1,5 @@
 import type { CustomsClearanceRequest, CurrencyCode } from '@nolon/shared';
+import { daysBetween } from '../common/dates.js';
 import { type Decimal, ZERO, roundMoney } from '../common/money.js';
 
 /** Customs rules (scope 11), as pure functions. */
@@ -31,4 +32,24 @@ export function feeTotals(
     totals.set(fee.currency, (totals.get(fee.currency) ?? ZERO).plus(fee.amount));
   }
   return [...totals].map(([currency, amount]) => ({ currency, amount }));
+}
+
+/** Days from submission to clearance of a cleared file; null until both dates are known. */
+export function clearanceDays(submittedOn: string | null, clearedOn: string | null): number | null {
+  if (!submittedOn || !clearedOn) return null;
+  return Math.max(daysBetween(submittedOn, clearedOn), 0);
+}
+
+/**
+ * Days a file not yet cleared has been open: since its submission, or since it was opened when it
+ * has not been submitted; null for a cleared file.
+ */
+export function daysOpen(
+  clearedOn: string | null,
+  submittedOn: string | null,
+  openedOn: string,
+  today: string,
+): number | null {
+  if (clearedOn) return null;
+  return Math.max(daysBetween(submittedOn ?? openedOn, today), 0);
 }

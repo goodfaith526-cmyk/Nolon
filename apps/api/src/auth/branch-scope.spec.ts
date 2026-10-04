@@ -1,7 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import type { AuthUser } from './auth-user.js';
-import { assertBranchAccess, branchScope, canAccessBranch } from './branch-scope.js';
+import {
+  assertBranchAccess,
+  branchScope,
+  canAccessBranch,
+  reportBranchIds,
+} from './branch-scope.js';
 
 const user: AuthUser = {
   id: 'u',
@@ -31,5 +36,13 @@ describe('branch scope', () => {
     const none = { ...user, allowedBranchIds: [] };
     expect(branchScope(none)).toEqual({ branchId: { in: [] } });
     expect(canAccessBranch(none, 'dxb')).toBe(false);
+  });
+
+  it("a report covers the requested branch only when it is the user's, else all of theirs", () => {
+    const two = { ...user, allowedBranchIds: ['dxb', 'pts'] };
+    expect(reportBranchIds(two)).toEqual(['dxb', 'pts']);
+    expect(reportBranchIds(two, 'pts')).toEqual(['pts']);
+    expect(() => reportBranchIds(two, 'krt')).toThrow(ForbiddenException);
+    expect(reportBranchIds({ ...user, allowedBranchIds: [] })).toEqual([]);
   });
 });

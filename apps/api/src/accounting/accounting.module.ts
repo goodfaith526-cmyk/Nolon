@@ -6,6 +6,7 @@ import { AccountsService } from './accounts.service.js';
 import { AutoJournalService } from './auto-journal.service.js';
 import { FxRatesService } from './fx-rates.service.js';
 import { JournalService } from './journal.service.js';
+import { LedgerReportsService } from './ledger-reports.service.js';
 import { ManualJournalsService } from './manual-journals.service.js';
 import { PeriodsService } from './periods.service.js';
 import { TrialBalanceService } from './trial-balance.service.js';
@@ -21,7 +22,15 @@ import { TrialBalanceService } from './trial-balance.service.js';
     ManualJournalsService,
     AutoJournalService,
     TrialBalanceService,
+    LedgerReportsService,
   ],
-  exports: [AccountsService, FxRatesService, PeriodsService, AutoJournalService],
+  exports: [
+    AccountsService,
+    FxRatesService,
+    PeriodsService,
+    AutoJournalService,
+    TrialBalanceService,
+    LedgerReportsService,
+  ],
 })
 export class AccountingModule {}

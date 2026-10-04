@@ -45,6 +45,13 @@ export interface ReceiptForPosting {
   }[];
 }
 
+/**
+ * Description of the line that books a receipt's realized exchange difference (annex C section 3).
+ * Reports find realized FX by it, inside receipt entries and their reversals, so a later remap of
+ * FX_GAIN or FX_LOSS does not hide earlier differences.
+ */
+export const FX_DIFFERENCE_LINE = 'Realized exchange difference';
+
 /** A trip cost and how it is shared between the trip's shipments (rules 10 and 11). */
 export interface TripCostForPosting {
   /** The expense (rule 10) or the trip (rule 11) the entry is made from. */
@@ -245,7 +252,7 @@ export class AutoJournalService {
         side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
         amount: difference.abs(),
         amountUsd: difference.abs(),
-        description: sameRate ? 'Rounding' : 'Realized exchange difference',
+        description: sameRate ? 'Rounding' : FX_DIFFERENCE_LINE,
       });
     }
     return this.journal.post(

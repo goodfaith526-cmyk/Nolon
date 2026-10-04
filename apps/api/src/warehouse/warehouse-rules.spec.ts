@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import {
+  daysHeld,
   type MovementAmounts,
   canRelease,
   defaultReceiptStatus,
@@ -132,5 +133,18 @@ describe('receipt statuses', () => {
     expect(
       defaultReceiptStatus(['RECEIVED_ORIGIN_WAREHOUSE', 'RECEIVED_DESTINATION_WAREHOUSE']),
     ).toBeNull();
+  });
+});
+
+describe('daysHeld', () => {
+  it('counts whole days from the day the holding started to today', () => {
+    expect(daysHeld('2026-05-01', '2026-05-01')).toBe(0);
+    expect(daysHeld('2026-05-01', '2026-05-02')).toBe(1);
+    expect(daysHeld('2026-04-20', '2026-05-10')).toBe(20);
+    expect(daysHeld('2027-12-30', '2028-01-02')).toBe(3);
+  });
+
+  it('never goes below zero (a receipt dated ahead in another time zone)', () => {
+    expect(daysHeld('2026-05-03', '2026-05-02')).toBe(0);
   });
 });

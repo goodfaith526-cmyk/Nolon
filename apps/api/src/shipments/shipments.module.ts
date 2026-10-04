@@ -6,11 +6,12 @@ import { PublicTrackingController } from './public-tracking.controller.js';
 import { PublicTrackingService } from './public-tracking.service.js';
 import { ShipmentsController } from './shipments.controller.js';
 import { ShipmentsService } from './shipments.service.js';
+import { ShipmentReportsService } from './shipment-reports.service.js';
 
 @Module({
   imports: [CustomersModule, MasterDataModule, BookingLifecycleModule],
   controllers: [ShipmentsController, PublicTrackingController],
-  providers: [ShipmentsService, PublicTrackingService],
-  exports: [ShipmentsService],
+  providers: [ShipmentReportsService, ShipmentsService, PublicTrackingService],
+  exports: [ShipmentReportsService, ShipmentsService],
 })
 export class ShipmentsModule {}
