@@ -21,3 +21,16 @@ export function assertBranchAccess(user: AuthUser, branchId: string): void {
     throw new ForbiddenException('No access to this branch');
   }
 }
+
+/**
+ * The branches a report covers: the one requested (403 when it is not one of the user's) or every
+ * branch the user may see. Cross-branch figures therefore exist only for users whose roles or
+ * assignments give them several branches.
+ */
+export function reportBranchIds(user: AuthUser, branchId?: string | null): string[] {
+  if (branchId) {
+    assertBranchAccess(user, branchId);
+    return [branchId];
+  }
+  return [...user.allowedBranchIds];
+}

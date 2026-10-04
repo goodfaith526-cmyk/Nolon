@@ -27,5 +27,6 @@ import { TripsService } from './trips.service.js';
   ],
   controllers: [FleetController, TripsController, ShipmentTransportController],
   providers: [FleetService, TripsService, TripCostsService, PodService],
+  exports: [TripsService],
 })
 export class TransportModule {}

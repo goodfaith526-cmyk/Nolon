@@ -14,6 +14,7 @@ import { MasterDataModule } from './master-data/master-data.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
 import { RatesModule } from './rates/rates.module.js';
+import { ReportsModule } from './reports/reports.module.js';
 import { ShipmentsModule } from './shipments/shipments.module.js';
 import { TransportModule } from './transport/transport.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -41,6 +42,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     WarehouseModule,
     CustomsModule,
     TransportModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

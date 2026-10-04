@@ -1,7 +1,7 @@
 'use client';
 
 import type { TrialBalanceDto } from '@nolon/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
@@ -17,6 +17,7 @@ export function TrialBalance() {
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
   const me = useMe();
+  const locale = useLocale();
   const name = useLocalName();
   const failure = useFailureText();
   // Users limited to their branches pick one of them; "all" is for all-branch roles.
@@ -49,6 +50,13 @@ export function TrialBalance() {
     <section className="stack">
       <div className="row">
         <h1>{t('title')}</h1>
+        <a
+          className="button"
+          href={`/api/v1/reports/trial-balance/export?asOf=${filter.asOf}${filter.branchId ? `&branchId=${filter.branchId}` : ''}&locale=${locale}`}
+          download
+        >
+          {t('exportExcel')}
+        </a>
       </div>
       <p className="muted">{t('hint')}</p>
       <Notice notice={notice} />

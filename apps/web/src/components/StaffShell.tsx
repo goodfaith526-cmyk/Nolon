@@ -28,6 +28,7 @@ interface NavLink {
     | 'receipts'
     | 'journals'
     | 'trialBalance'
+    | 'reports'
     | 'chartOfAccounts'
     | 'fxRates'
     | 'periods'
@@ -106,6 +107,12 @@ const NAV_SECTIONS: readonly {
         href: '/accounting/trial-balance',
         label: 'trialBalance',
         icon: 'balance',
+        permission: 'financial_reports:view',
+      },
+      {
+        href: '/reports',
+        label: 'reports',
+        icon: 'report',
         permission: 'financial_reports:view',
       },
       {

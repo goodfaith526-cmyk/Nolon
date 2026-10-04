@@ -173,6 +173,12 @@ export const icons = {
       <path d="M4 8h14l-3-3M20 16H6l3 3" />
     </Icon>
   ),
+  report: (
+    <Icon>
+      <path d="M4 20h16" />
+      <path d="M6 16v-5M10 16V6M14 16v-8M18 16v-3" />
+    </Icon>
+  ),
   calendar: (
     <Icon>
       <rect x="3" y="5" width="18" height="16" rx="2" />

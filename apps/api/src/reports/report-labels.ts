@@ -1,0 +1,138 @@
+import type { AgingBucket, Locale } from '@nolon/shared';
+
+/** Column headers and captions of the Excel exports, in the request's language. */
+const LABELS = {
+  // Report titles
+  trialBalance: { en: 'Trial balance', ar: 'ميزان المراجعة' },
+  incomeStatement: { en: 'Income statement', ar: 'قائمة الدخل' },
+  balanceSheet: { en: 'Balance sheet', ar: 'الميزانية العمومية' },
+  generalLedger: { en: 'General ledger', ar: 'دفتر الأستاذ العام' },
+  arAging: { en: 'Customer receivables aging', ar: 'أعمار ديون العملاء' },
+  profitability: { en: 'Shipment profitability', ar: 'ربحية الشحنات' },
+  invoicesReceipts: { en: 'Invoices and receipts', ar: 'الفواتير والمقبوضات' },
+  cashMovement: { en: 'Cash and bank movement', ar: 'حركة النقدية والبنوك' },
+  openAccruals: { en: 'Open accruals', ar: 'الاستحقاقات المفتوحة' },
+  // Filters
+  period: { en: 'Period', ar: 'الفترة' },
+  asOf: { en: 'As of', ar: 'حتى تاريخ' },
+  branch: { en: 'Branch', ar: 'الفرع' },
+  allBranches: { en: 'All my branches', ar: 'كل فروعي' },
+  customerFilter: { en: 'Customer', ar: 'العميل' },
+  amountsInUsd: {
+    en: 'Amounts in USD unless a column names another currency. Posted entries only.',
+    ar: 'المبالغ بالدولار الأمريكي ما لم يذكر العمود عملة أخرى. القيود المرحّلة فقط.',
+  },
+  // Sheets
+  byCustomer: { en: 'By customer', ar: 'حسب العميل' },
+  invoices: { en: 'Invoices', ar: 'الفواتير' },
+  receipts: { en: 'Receipts', ar: 'المقبوضات' },
+  shipments: { en: 'Shipments', ar: 'الشحنات' },
+  customers: { en: 'Customers', ar: 'العملاء' },
+  routes: { en: 'Routes', ar: 'المسارات' },
+  accounts: { en: 'Accounts', ar: 'الحسابات' },
+  fxDifferences: { en: 'FX differences', ar: 'فروقات العملة' },
+  trips: { en: 'Trips', ar: 'الرحلات' },
+  summary: { en: 'Summary', ar: 'الملخص' },
+  // Columns
+  code: { en: 'Code', ar: 'الرمز' },
+  account: { en: 'Account', ar: 'الحساب' },
+  type: { en: 'Type', ar: 'النوع' },
+  total: { en: 'Total', ar: 'الإجمالي' },
+  debitUsd: { en: 'Debit (USD)', ar: 'مدين (دولار)' },
+  creditUsd: { en: 'Credit (USD)', ar: 'دائن (دولار)' },
+  balanceUsd: { en: 'Balance (USD)', ar: 'الرصيد (دولار)' },
+  debit: { en: 'Debit', ar: 'مدين' },
+  credit: { en: 'Credit', ar: 'دائن' },
+  revenue: { en: 'Revenue', ar: 'الإيرادات' },
+  expenses: { en: 'Expenses', ar: 'المصروفات' },
+  totalRevenue: { en: 'Total revenue', ar: 'إجمالي الإيرادات' },
+  totalExpenses: { en: 'Total expenses', ar: 'إجمالي المصروفات' },
+  netIncome: { en: 'Net income', ar: 'صافي الدخل' },
+  assets: { en: 'Assets', ar: 'الأصول' },
+  liabilities: { en: 'Liabilities', ar: 'الالتزامات' },
+  equity: { en: 'Equity', ar: 'حقوق الملكية' },
+  totalAssets: { en: 'Total assets', ar: 'إجمالي الأصول' },
+  totalLiabilities: { en: 'Total liabilities', ar: 'إجمالي الالتزامات' },
+  totalEquity: { en: 'Total equity', ar: 'إجمالي حقوق الملكية' },
+  unclosedEarnings: { en: 'Profit not yet closed', ar: 'أرباح لم تُقفل بعد' },
+  totalLiabilitiesAndEquity: {
+    en: 'Total liabilities and equity',
+    ar: 'إجمالي الالتزامات وحقوق الملكية',
+  },
+  date: { en: 'Date', ar: 'التاريخ' },
+  entry: { en: 'Entry', ar: 'القيد' },
+  description: { en: 'Description', ar: 'البيان' },
+  currency: { en: 'Currency', ar: 'العملة' },
+  openingBalance: { en: 'Opening balance', ar: 'الرصيد الافتتاحي' },
+  closingBalance: { en: 'Closing balance', ar: 'الرصيد الختامي' },
+  number: { en: 'Number', ar: 'الرقم' },
+  customer: { en: 'Customer', ar: 'العميل' },
+  invoiceDate: { en: 'Invoice date', ar: 'تاريخ الفاتورة' },
+  dueDate: { en: 'Due date', ar: 'تاريخ الاستحقاق' },
+  amount: { en: 'Amount', ar: 'المبلغ' },
+  outstanding: { en: 'Outstanding', ar: 'المتبقي' },
+  outstandingUsd: { en: 'Outstanding (USD)', ar: 'المتبقي (دولار)' },
+  daysPastDue: { en: 'Days past due', ar: 'أيام التأخير' },
+  bucket: { en: 'Bucket', ar: 'الفئة' },
+  shipment: { en: 'Shipment', ar: 'الشحنة' },
+  origin: { en: 'Origin', ar: 'المنشأ' },
+  destination: { en: 'Destination', ar: 'الوجهة' },
+  revenueUsd: { en: 'Revenue (USD)', ar: 'الإيرادات (دولار)' },
+  costUsd: { en: 'Cost (USD)', ar: 'التكاليف (دولار)' },
+  marginUsd: { en: 'Margin (USD)', ar: 'الهامش (دولار)' },
+  marginPercent: { en: 'Margin %', ar: 'نسبة الهامش %' },
+  shipmentCount: { en: 'Shipments', ar: 'عدد الشحنات' },
+  totalUsd: { en: 'Total (USD)', ar: 'الإجمالي (دولار)' },
+  amountUsd: { en: 'Amount (USD)', ar: 'المبلغ (دولار)' },
+  receiptDate: { en: 'Receipt date', ar: 'تاريخ القبض' },
+  cashAccount: { en: 'Cash or bank account', ar: 'حساب النقدية أو البنك' },
+  status: { en: 'Status', ar: 'الحالة' },
+  posted: { en: 'Posted', ar: 'مرحّل' },
+  cancelled: { en: 'Cancelled', ar: 'ملغى' },
+  opening: { en: 'Opening', ar: 'الافتتاحي' },
+  inflow: { en: 'In', ar: 'المقبوض' },
+  outflow: { en: 'Out', ar: 'المدفوع' },
+  closing: { en: 'Closing', ar: 'الختامي' },
+  openingUsd: { en: 'Opening (USD)', ar: 'الافتتاحي (دولار)' },
+  inflowUsd: { en: 'In (USD)', ar: 'المقبوض (دولار)' },
+  outflowUsd: { en: 'Out (USD)', ar: 'المدفوع (دولار)' },
+  closingUsd: { en: 'Closing (USD)', ar: 'الختامي (دولار)' },
+  fxGain: { en: 'Realized FX gains', ar: 'أرباح فروقات العملة المحققة' },
+  fxLoss: { en: 'Realized FX losses', ar: 'خسائر فروقات العملة المحققة' },
+  fxNet: { en: 'Net FX difference', ar: 'صافي فروقات العملة' },
+  trip: { en: 'Trip', ar: 'الرحلة' },
+  carrier: { en: 'Carrier', ar: 'الناقل' },
+  completedOn: { en: 'Completed on', ar: 'تاريخ الإكمال' },
+  accruedBalance: { en: 'Accrued', ar: 'المستحق' },
+  accruedTotal: { en: 'Accrued transport costs', ar: 'تكاليف النقل المستحقة' },
+  otherAccrued: { en: 'Other accrued (not from a trip)', ar: 'مستحقات أخرى (ليست من رحلة)' },
+  clearingBalance: {
+    en: 'Consolidated container clearing balance',
+    ar: 'رصيد الحساب الوسيط للحاويات المجمّعة',
+  },
+  item: { en: 'Item', ar: 'البند' },
+  // Aging buckets
+  current: { en: 'Current', ar: 'غير مستحق' },
+  days1to30: { en: '1-30 days', ar: '1-30 يوماً' },
+  days31to60: { en: '31-60 days', ar: '31-60 يوماً' },
+  days61to90: { en: '61-90 days', ar: '61-90 يوماً' },
+  over90: { en: 'Over 90 days', ar: 'أكثر من 90 يوماً' },
+  // Account types
+  ASSET: { en: 'Asset', ar: 'أصول' },
+  LIABILITY: { en: 'Liability', ar: 'التزامات' },
+  EQUITY: { en: 'Equity', ar: 'حقوق ملكية' },
+  REVENUE: { en: 'Revenue', ar: 'إيرادات' },
+  EXPENSE: { en: 'Expense', ar: 'مصروفات' },
+} as const satisfies Record<string, Record<Locale, string>>;
+
+export type LabelKey = keyof typeof LABELS;
+
+export type Translate = (key: LabelKey) => string;
+
+export function translator(locale: Locale): Translate {
+  return (key) => LABELS[key][locale];
+}
+
+export function bucketLabel(t: Translate, bucket: AgingBucket): string {
+  return t(bucket);
+}

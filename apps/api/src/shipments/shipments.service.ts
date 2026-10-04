@@ -511,6 +511,47 @@ export class ShipmentsService {
   }
 
   /**
+   * For the profitability report: the shipments among `ids` the user may see (optionally of one
+   * customer), with their branch, customer and route.
+   */
+  async reportSummaries(
+    user: AuthUser,
+    ids: readonly string[],
+    customerId?: string,
+  ): Promise<
+    {
+      id: string;
+      number: string;
+      branchCode: string;
+      customerId: string;
+      customerName: string;
+      origin: { id: string; code: string; nameEn: string; nameAr: string };
+      destination: { id: string; code: string; nameEn: string; nameAr: string };
+    }[]
+  > {
+    if (ids.length === 0) return [];
+    const location = { select: { id: true, code: true, nameEn: true, nameAr: true } };
+    const shipments = await this.prisma.shipment.findMany({
+      where: { id: { in: [...ids] }, ...(customerId ? { customerId } : {}), ...this.scope(user) },
+      select: {
+        id: true,
+        number: true,
+        customerId: true,
+        branch: { select: { code: true } },
+        customer: { select: { name: true } },
+        origin: location,
+        destination: location,
+      },
+      orderBy: { number: 'asc' },
+    });
+    return shipments.map(({ branch, customer, ...rest }) => ({
+      ...rest,
+      branchCode: branch.code,
+      customerName: customer.name,
+    }));
+  }
+
+  /**
    * For trip costs, inside the posting transaction: the cargo lines' weight and volume of the
    * trip's shipments (the caller holds the trip lock and has checked access to the trip).
    */
