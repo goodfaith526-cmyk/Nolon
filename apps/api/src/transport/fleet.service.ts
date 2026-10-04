@@ -211,7 +211,10 @@ export class FleetService {
   // ---- Carriers ------------------------------------------------------------------------------
 
   async listCarriers(): Promise<CarrierDto[]> {
-    const carriers = await this.prisma.carrier.findMany({ orderBy: { name: 'asc' } });
+    const carriers = await this.prisma.carrier.findMany({
+      orderBy: { name: 'asc' },
+      include: withSupplier,
+    });
     return carriers.map(toCarrierDto);
   }
 
@@ -220,6 +223,7 @@ export class FleetService {
       return toCarrierDto(
         await this.prisma.carrier.create({
           data: { name: input.name, phone: input.phone ?? null },
+          include: withSupplier,
         }),
       );
     } catch (error) {
@@ -236,6 +240,7 @@ export class FleetService {
         await this.prisma.carrier.update({
           where: { id },
           data: { name: input.name, phone: input.phone, isActive: input.isActive },
+          include: withSupplier,
         }),
       );
     } catch (error) {
@@ -253,6 +258,29 @@ export class FleetService {
     const carrier = await tx.carrier.findUnique({ where: { id } });
     if (!carrier?.isActive) throw new BadRequestException('Choose an active carrier');
     return carrier;
+  }
+
+  /**
+   * For payables, inside its transaction (the caller has checked and locked the supplier): links
+   * a carrier to the supplier whose bills settle its trips (annex C rule 11a), or unlinks it from
+   * `unlinkFrom` (404 when it is not linked to that supplier).
+   */
+  async setCarrierSupplier(
+    tx: Tx,
+    carrierId: string,
+    link: { supplierId: string } | { unlinkFrom: string },
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "carriers" WHERE "id" = ${carrierId}::uuid FOR UPDATE`;
+    if (rows.length === 0) throw new NotFoundException('Carrier not found');
+    if ('unlinkFrom' in link) {
+      const carrier = await tx.carrier.findUniqueOrThrow({ where: { id: carrierId } });
+      if (carrier.supplierId !== link.unlinkFrom) {
+        throw new NotFoundException('The carrier is not linked to this supplier');
+      }
+    }
+    const supplierId = 'supplierId' in link ? link.supplierId : null;
+    await tx.carrier.update({ where: { id: carrierId }, data: { supplierId } });
   }
 
   // -------------------------------------------------------------------------------------------
@@ -297,6 +325,15 @@ function toDriverDto(d: DriverWithUser): DriverDto {
   };
 }
 
-function toCarrierDto(c: Carrier): CarrierDto {
-  return { id: c.id, name: c.name, phone: c.phone, isActive: c.isActive };
+const withSupplier = { supplier: { select: { name: true } } } satisfies Prisma.CarrierInclude;
+
+function toCarrierDto(c: Carrier & { supplier: { name: string } | null }): CarrierDto {
+  return {
+    id: c.id,
+    name: c.name,
+    phone: c.phone,
+    supplierId: c.supplierId,
+    supplierName: c.supplier?.name ?? null,
+    isActive: c.isActive,
+  };
 }

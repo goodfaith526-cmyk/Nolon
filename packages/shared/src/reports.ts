@@ -14,6 +14,7 @@ export const FINANCIAL_REPORTS = [
   'balance-sheet',
   'general-ledger',
   'ar-aging',
+  'ap-aging',
   'shipment-profitability',
   'invoices-receipts',
   'cash-movement',
@@ -185,6 +186,43 @@ export interface ArAgingDto {
   totals: AgingAmountsDto;
   totalAdvancesUsd: DecimalString;
   netUsd: DecimalString;
+}
+
+// ---- 6. AP aging -------------------------------------------------------------------------------
+
+export interface ApAgingBillDto {
+  billId: string;
+  number: string;
+  supplierReference: string | null;
+  branchCode: string;
+  supplierId: string;
+  supplierName: string;
+  billDate: string;
+  dueDate: string;
+  currency: CurrencyCode;
+  total: DecimalString;
+  /** In the bill currency: total less the payments allocated to it up to the date. */
+  outstanding: DecimalString;
+  /** USD carrying value still open. */
+  outstandingUsd: DecimalString;
+  daysPastDue: number;
+  bucket: AgingBucket;
+}
+
+export interface ApAgingSupplierDto {
+  supplierId: string;
+  supplierName: string;
+  amounts: AgingAmountsDto;
+}
+
+/** Open approved supplier bills as of a date, per supplier and bucket, in USD. */
+export interface ApAgingDto {
+  asOf: string;
+  branchId: string | null;
+  supplierId: string | null;
+  suppliers: ApAgingSupplierDto[];
+  bills: ApAgingBillDto[];
+  totals: AgingAmountsDto;
 }
 
 // ---- 5. Shipment profitability ----------------------------------------------------------------

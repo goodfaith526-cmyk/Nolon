@@ -1,6 +1,6 @@
 'use client';
 
-import type { JournalEntryDto } from '@nolon/shared';
+import type { JournalEntryDto, JournalSource, Permission } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
@@ -14,6 +14,16 @@ import { Money, useBranchCode, useRecord } from './common';
 import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'post' | 'delete' | 'reverse' | null;
+
+/** The page of each source document a journal entry can link to, and the permission it needs. */
+const SOURCE_PAGES: Partial<Record<JournalSource, { path: string; permission: Permission }>> = {
+  CUSTOMER_INVOICE: { path: '/invoices', permission: 'customer_invoices:view' },
+  RECEIPT: { path: '/receipts', permission: 'receipts:view' },
+  CREDIT_NOTE: { path: '/credit-notes', permission: 'credit_notes:view' },
+  SUPPLIER_BILL: { path: '/supplier-bills', permission: 'suppliers:view' },
+  SUPPLIER_PAYMENT: { path: '/supplier-payments', permission: 'supplier_payments:view' },
+  EXPENSE: { path: '/expenses', permission: 'expenses:view' },
+};
 
 export function JournalDetail({ id }: { id: string }) {
   const t = useTranslations('Journals');
@@ -78,12 +88,9 @@ export function JournalDetail({ id }: { id: string }) {
 
   const j = entry;
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  const source = SOURCE_PAGES[j.source];
   const sourceLink =
-    j.sourceId && j.source === 'CUSTOMER_INVOICE' && can(me, 'customer_invoices:view')
-      ? `/invoices/${j.sourceId}`
-      : j.sourceId && j.source === 'RECEIPT' && can(me, 'receipts:view')
-        ? `/receipts/${j.sourceId}`
-        : null;
+    j.sourceId && source && can(me, source.permission) ? `${source.path}/${j.sourceId}` : null;
 
   return (
     <section className="stack">

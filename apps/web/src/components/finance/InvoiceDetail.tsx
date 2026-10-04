@@ -1,19 +1,21 @@
 'use client';
 
-import type { CustomerInvoiceDto } from '@nolon/shared';
+import type { CreateCreditNoteRequest, CreditNoteDto, CustomerInvoiceDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
-import { Link } from '@/i18n/navigation';
+import { type FormEvent, useState } from 'react';
+import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
+import { CreditNoteFields, creditNoteFields } from './CreditNoteDetail';
+import { CreditNoteNumber } from './CreditNotes';
 import { Money, useRecord } from './common';
 import { InvoiceNumber } from './Invoices';
 import { PrintLink } from '../print/PrintLink';
 
-type Panel = 'approve' | 'cancel' | null;
+type Panel = 'approve' | 'cancel' | 'credit' | null;
 
 export function InvoiceDetail({ id }: { id: string }) {
   const t = useTranslations('Invoices');
@@ -22,6 +24,8 @@ export function InvoiceDetail({ id }: { id: string }) {
   const master = useMasterData();
   const name = useLocalName();
   const failure = useFailureText();
+  const router = useRouter();
+  const [creditRequestId] = useState(() => crypto.randomUUID());
   const {
     record: invoice,
     notice: loadNotice,
@@ -51,6 +55,24 @@ export function InvoiceDetail({ id }: { id: string }) {
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createCreditNote(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const body: CreateCreditNoteRequest = {
+      ...creditNoteFields(new FormData(e.currentTarget)),
+      requestId: creditRequestId,
+      invoiceId: id,
+    };
+    setBusy(true);
+    setNotice(null);
+    try {
+      const note = await api<CreditNoteDto>('/credit-notes', { method: 'POST', body });
+      router.push(`/credit-notes/${note.id}`);
+    } catch (err) {
+      setNotice({ ok: false, text: failure(err) });
       setBusy(false);
     }
   }
@@ -90,7 +112,12 @@ export function InvoiceDetail({ id }: { id: string }) {
             {t('cancel')}
           </button>
         )}
-        {can(me, 'shipments:view') && (
+        {inv.actions.canCreditNote && can(me, 'credit_notes:create') && (
+          <button type="button" onClick={() => setPanel('credit')}>
+            {t('newCreditNote')}
+          </button>
+        )}
+        {inv.shipmentId && can(me, 'shipments:view') && (
           <Link href={`/shipments/${inv.shipmentId}`} className="button">
             {t('openShipment')} <span dir="ltr">{inv.shipmentNumber}</span>
           </Link>
@@ -144,11 +171,35 @@ export function InvoiceDetail({ id }: { id: string }) {
         </form>
       )}
 
+      {panel === 'credit' && (
+        <form className="card stack" onSubmit={(e) => void createCreditNote(e)}>
+          <p>{t('creditNoteHint')}</p>
+          <CreditNoteFields currency={inv.currency} defaultDate={inv.invoiceDate} />
+          <div className="actions">
+            <button type="submit" className="primary" disabled={busy}>
+              {t('saveCreditNote')}
+            </button>
+            <button type="button" onClick={() => setPanel(null)}>
+              {tc('back')}
+            </button>
+          </div>
+        </form>
+      )}
+
       <dl className="details">
         <dt>{t('customer')}</dt>
         <dd>{inv.customerName}</dd>
-        <dt>{t('shipment')}</dt>
-        <dd dir="ltr">{inv.shipmentNumber}</dd>
+        {inv.isOpening ? (
+          <>
+            <dt>{t('openingReference')}</dt>
+            <dd dir="ltr">{inv.reference}</dd>
+          </>
+        ) : (
+          <>
+            <dt>{t('shipment')}</dt>
+            <dd dir="ltr">{inv.shipmentNumber}</dd>
+          </>
+        )}
         <dt>{t('invoiceDate')}</dt>
         <dd dir="ltr">{inv.invoiceDate}</dd>
         <dt>{t('dueDate')}</dt>
@@ -223,6 +274,10 @@ export function InvoiceDetail({ id }: { id: string }) {
         <dd dir="ltr">
           <Money value={inv.paidAmount} currency={inv.currency} />
         </dd>
+        <dt>{t('credited')}</dt>
+        <dd dir="ltr">
+          <Money value={inv.creditedAmount} currency={inv.currency} />
+        </dd>
         <dt>{t('balance')}</dt>
         <dd dir="ltr">
           <strong>
@@ -261,6 +316,46 @@ export function InvoiceDetail({ id }: { id: string }) {
                   </td>
                   <td>
                     <StatusBadge kind="receipt" status={p.cancelled ? 'CANCELLED' : 'POSTED'} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2>{t('creditNotes')}</h2>
+      {inv.creditNotes.length === 0 ? (
+        <p className="muted">{t('noCreditNotes')}</p>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{t('creditNote')}</th>
+                <th>{t('creditDate')}</th>
+                <th>{t('amount')}</th>
+                <th>{tc('status')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inv.creditNotes.map((n) => (
+                <tr key={n.creditNoteId} className={n.status === 'CANCELLED' ? 'inactive' : ''}>
+                  <td className="nowrap">
+                    {can(me, 'credit_notes:view') ? (
+                      <Link href={`/credit-notes/${n.creditNoteId}`}>
+                        <CreditNoteNumber number={n.number} />
+                      </Link>
+                    ) : (
+                      <CreditNoteNumber number={n.number} />
+                    )}
+                  </td>
+                  <td dir="ltr">{n.creditDate}</td>
+                  <td dir="ltr">
+                    <Money value={n.amount} currency={inv.currency} />
+                  </td>
+                  <td>
+                    <StatusBadge kind="creditNote" status={n.status} />
                   </td>
                 </tr>
               ))}

@@ -9,8 +9,10 @@ import { CustomersModule } from './customers/customers.module.js';
 import { CustomsModule } from './customs/customs.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
+import { ExpensesModule } from './expenses/expenses.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MasterDataModule } from './master-data/master-data.module.js';
+import { PayablesModule } from './payables/payables.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
 import { RatesModule } from './rates/rates.module.js';
@@ -42,6 +44,8 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     WarehouseModule,
     CustomsModule,
     TransportModule,
+    PayablesModule,
+    ExpensesModule,
     ReportsModule,
   ],
 })

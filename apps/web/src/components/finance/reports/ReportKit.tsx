@@ -26,6 +26,7 @@ export type ReportId =
   | 'balance-sheet'
   | 'general-ledger'
   | 'ar-aging'
+  | 'ap-aging'
   | 'shipment-profitability'
   | 'invoices-receipts'
   | 'cash-movement'

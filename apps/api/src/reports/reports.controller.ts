@@ -2,6 +2,7 @@ import { Controller, Get, Query, Res, type StreamableFile } from '@nestjs/common
 import {
   LEDGER_MAX_ACCOUNTS,
   LOCALES,
+  type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
   type CashMovementDto,
@@ -30,6 +31,7 @@ const afterTo = { message: 'from is after to', path: ['to'] };
 
 const asOfQuery = z.object({ asOf: dateString, ...branch });
 const agingQuery = asOfQuery.extend(customer);
+const apAgingQuery = asOfQuery.extend({ supplierId: z.uuid().optional() });
 const plainPeriod = periodBase.refine(fromNotAfterTo, afterTo);
 const customerPeriod = periodBase.extend(customer).refine(fromNotAfterTo, afterTo);
 const ledgerQuery = periodBase
@@ -149,6 +151,25 @@ export class ReportsController {
     return this.download(user, query, res, {
       report: 'ar-aging',
       query: parse(agingQuery, query),
+    });
+  }
+
+  @Get('ap-aging')
+  @RequirePermission('financial_reports:view')
+  apAging(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ApAgingDto> {
+    return this.reports.apAging(user, parse(apAgingQuery, query));
+  }
+
+  @Get('ap-aging/export')
+  @RequirePermission('financial_reports:view')
+  exportApAging(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    return this.download(user, query, res, {
+      report: 'ap-aging',
+      query: parse(apAgingQuery, query),
     });
   }
 

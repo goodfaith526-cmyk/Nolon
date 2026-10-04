@@ -13,6 +13,7 @@ const REPORTS: readonly {
     | 'balanceSheet'
     | 'generalLedger'
     | 'arAging'
+    | 'apAging'
     | 'profitability'
     | 'invoicesReceipts'
     | 'cashMovement'
@@ -32,6 +33,7 @@ const REPORTS: readonly {
   },
   { href: '/reports/general-ledger', title: 'generalLedger', permission: 'financial_reports:view' },
   { href: '/reports/ar-aging', title: 'arAging', permission: 'financial_reports:view' },
+  { href: '/reports/ap-aging', title: 'apAging', permission: 'financial_reports:view' },
   {
     href: '/reports/shipment-profitability',
     title: 'profitability',

@@ -1,5 +1,6 @@
 import {
   AGING_BUCKETS,
+  type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
   type BalanceSheetRowDto,
@@ -569,4 +570,64 @@ export function openAccrualsSheets(ctx: ExportContext, r: OpenAccrualsDto): Work
     ],
   };
   return workbook(ctx, 'openAccruals', asOfLine(t, r.asOf), [trips, summary]);
+}
+
+export function apAgingSheets(
+  ctx: ExportContext,
+  r: ApAgingDto,
+  supplierName: string | null,
+): WorkbookSpec {
+  const t = translator(ctx.locale);
+  const summary: SheetSpec = {
+    name: t('bySupplier'),
+    columns: [
+      text(t('supplier'), 36),
+      ...AGING_BUCKETS.map((b) => amount(t(b))),
+      amount(t('totalUsd')),
+    ],
+    rows: [
+      ...r.suppliers.map((s) => ({
+        cells: [s.supplierName, ...AGING_BUCKETS.map((b) => s.amounts[b]), s.amounts.total],
+      })),
+      {
+        cells: [t('total'), ...AGING_BUCKETS.map((b) => r.totals[b]), r.totals.total],
+        bold: true,
+      },
+    ],
+  };
+  const bills: SheetSpec = {
+    name: t('bills'),
+    columns: [
+      text(t('number'), 22),
+      text(t('supplierReference'), 18),
+      text(t('branch'), 8),
+      text(t('supplier'), 30),
+      date(t('billDate')),
+      date(t('dueDate')),
+      text(t('currency'), 8),
+      amount(t('total')),
+      amount(t('outstanding')),
+      amount(t('outstandingUsd')),
+      { header: t('daysPastDue'), kind: 'integer' },
+      text(t('bucket'), 14),
+    ],
+    rows: r.bills.map((b) => ({
+      cells: [
+        b.number,
+        b.supplierReference ?? '',
+        b.branchCode,
+        b.supplierName,
+        b.billDate,
+        b.dueDate,
+        b.currency,
+        b.total,
+        b.outstanding,
+        b.outstandingUsd,
+        b.daysPastDue,
+        t(b.bucket),
+      ],
+    })),
+  };
+  const extra = supplierName ? [`${t('supplierFilter')}: ${supplierName}`] : [];
+  return workbook(ctx, 'apAging', asOfLine(t, r.asOf), [summary, bills], extra);
 }

@@ -30,6 +30,9 @@ export interface LineSpec {
   amountUsd?: Decimal;
   shipmentId?: string | null;
   customerId?: string | null;
+  supplierId?: string | null;
+  /** Accrued transport lines (rules 11 and 11a): the trip the accrual belongs to. */
+  tripId?: string | null;
   description?: string | null;
 }
 

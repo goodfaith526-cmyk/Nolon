@@ -75,6 +75,9 @@ export interface CarrierDto {
   id: string;
   name: string;
   phone: string | null;
+  /** The supplier whose bills settle this carrier's trips (annex C rule 11a). */
+  supplierId: string | null;
+  supplierName: string | null;
   isActive: boolean;
 }
 
@@ -83,6 +86,7 @@ export interface CarrierInput {
   phone?: string | null;
 }
 
+/** The supplier link is set from the supplier (PUT /suppliers/:id/carriers/:carrierId). */
 export interface CarrierUpdateRequest {
   name?: string;
   phone?: string | null;

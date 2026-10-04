@@ -71,6 +71,11 @@ model Branch {
   pods         ProofOfDelivery[]
   podPhotos    PodPhoto[]
 
+  creditNotes      CreditNote[]
+  supplierBills    SupplierBill[]
+  supplierPayments SupplierPayment[]
+  expenses         Expense[]
+
   @@map("branches")
 }
 
@@ -103,6 +108,9 @@ model Currency {
   customsFees          CustomsFee[]
   trips                Trip[]
   tripExpenses         TripExpense[]
+  supplierBills        SupplierBill[]
+  supplierPayments     SupplierPayment[]
+  expenses             Expense[]
 
   @@map("currencies")
 }
@@ -170,6 +178,18 @@ model User {
   tripExpensesCreated   TripExpense[]     @relation("TripExpenseCreatedBy")
   tripExpensesCancelled TripExpense[]     @relation("TripExpenseCancelledBy")
   podsCreated           ProofOfDelivery[] @relation("PodCreatedBy")
+
+  creditNotesCreated       CreditNote[]      @relation("CreditNoteCreatedBy")
+  creditNotesApproved      CreditNote[]      @relation("CreditNoteApprovedBy")
+  suppliersCreated         Supplier[]        @relation("SupplierCreatedBy")
+  supplierBillsCreated     SupplierBill[]    @relation("SupplierBillCreatedBy")
+  supplierBillsApproved    SupplierBill[]    @relation("SupplierBillApprovedBy")
+  supplierBillsCancelled   SupplierBill[]    @relation("SupplierBillCancelledBy")
+  supplierPaymentsCreated  SupplierPayment[] @relation("SupplierPaymentCreatedBy")
+  supplierPaymentsCanceled SupplierPayment[] @relation("SupplierPaymentCancelledBy")
+  expensesCreated          Expense[]         @relation("ExpenseCreatedBy")
+  expensesApproved         Expense[]         @relation("ExpenseApprovedBy")
+  expensesCancelled        Expense[]         @relation("ExpenseCancelledBy")
 
   @@map("users")
 }
@@ -306,6 +326,7 @@ model ChargeType {
   quotationLines QuotationLine[]
   posting        ChargeTypePosting?
   invoiceLines   CustomerInvoiceLine[]
+  billLines      SupplierBillLine[]
 
   @@map("charge_types")
 }
@@ -392,6 +413,7 @@ model Customer {
   journalLines           JournalLine[]
   invoices               CustomerInvoice[]
   receipts               Receipt[]
+  creditNotes            CreditNote[]
 
   @@index([branchId])
   @@index([phone])
@@ -786,6 +808,7 @@ model Shipment {
   customsFees     CustomsFee[]
   tripLinks       TripShipment[]
   pods            ProofOfDelivery[]
+  billLines       SupplierBillLine[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -968,11 +991,17 @@ model Account {
   currencyRef  Currency?           @relation(fields: [currency], references: [code], onDelete: Restrict)
   branch       Branch?             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   mappings     AccountMapping[]
-  chargeTypes  ChargeTypePosting[]
+  chargeTypes  ChargeTypePosting[] @relation("ChargeTypeRevenue")
   journalLines JournalLine[]
   receipts     Receipt[]
   invoices     CustomerInvoice[]   @relation("InvoiceReceivable")
   tripExpenses TripExpense[]
+
+  costChargeTypes   ChargeTypePosting[] @relation("ChargeTypeCost")
+  supplierBills     SupplierBill[]      @relation("BillPayable")
+  supplierPayments  SupplierPayment[]
+  expenseCategories ExpenseCategory[]
+  expenses          Expense[]
 
   @@map("accounts")
 }
@@ -1006,17 +1035,20 @@ model AccountMapping {
   @@map("account_mappings")
 }
 
-/// Revenue account of each charge type on a customer invoice (annex C rule 1). Reimbursable
-/// charges (duties paid for the customer) post to the REIMBURSABLE clearing account (rule 2).
-/// A charge type with no row posts to DEFAULT_REVENUE.
+/// Revenue account of each charge type on a customer invoice (annex C rule 1), and cost account of
+/// the same charge on a supplier bill (rule 7). Reimbursable charges (duties paid for the customer)
+/// post to the REIMBURSABLE clearing account on both sides (rules 2 and 8). A charge type with no
+/// row, or no account set, posts to DEFAULT_REVENUE and DEFAULT_COST.
 model ChargeTypePosting {
   chargeTypeCode   String   @id @map("charge_type_code") @db.VarChar(20)
   revenueAccountId String?  @map("revenue_account_id") @db.Uuid
+  costAccountId    String?  @map("cost_account_id") @db.Uuid
   isReimbursable   Boolean  @default(false) @map("is_reimbursable")
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   chargeType     ChargeType @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
-  revenueAccount Account?   @relation(fields: [revenueAccountId], references: [id], onDelete: Restrict)
+  revenueAccount Account?   @relation("ChargeTypeRevenue", fields: [revenueAccountId], references: [id], onDelete: Restrict)
+  costAccount    Account?   @relation("ChargeTypeCost", fields: [costAccountId], references: [id], onDelete: Restrict)
 
   @@map("charge_type_postings")
 }
@@ -1077,6 +1109,11 @@ enum JournalSource {
   REVERSAL
   TRIP_EXPENSE
   TRIP_ACCRUAL
+  CREDIT_NOTE
+  SUPPLIER_BILL
+  SUPPLIER_PAYMENT
+  EXPENSE
+  OPENING_BALANCE
 
   @@map("journal_source")
 }
@@ -1103,19 +1140,26 @@ model JournalEntry {
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch            Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  period            FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  reversalOf        JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy        JournalEntry?    @relation("JournalReversal")
-  createdBy         User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  postedBy          User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
-  lines             JournalLine[]
-  invoice           CustomerInvoice? @relation("InvoiceJournal")
-  receipt           Receipt?         @relation("ReceiptJournal")
-  receiptCancel     Receipt?         @relation("ReceiptCancelJournal")
-  tripExpense       TripExpense?     @relation("TripExpenseJournal")
-  tripExpenseCancel TripExpense?     @relation("TripExpenseCancelJournal")
-  tripAccrual       Trip?            @relation("TripAccrualJournal")
+  branch                Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  period                FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  reversalOf            JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy            JournalEntry?    @relation("JournalReversal")
+  createdBy             User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedBy              User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  lines                 JournalLine[]
+  invoice               CustomerInvoice? @relation("InvoiceJournal")
+  receipt               Receipt?         @relation("ReceiptJournal")
+  receiptCancel         Receipt?         @relation("ReceiptCancelJournal")
+  tripExpense           TripExpense?     @relation("TripExpenseJournal")
+  tripExpenseCancel     TripExpense?     @relation("TripExpenseCancelJournal")
+  tripAccrual           Trip?            @relation("TripAccrualJournal")
+  creditNote            CreditNote?      @relation("CreditNoteJournal")
+  supplierBill          SupplierBill?    @relation("SupplierBillJournal")
+  supplierBillCancel    SupplierBill?    @relation("SupplierBillCancelJournal")
+  supplierPayment       SupplierPayment? @relation("SupplierPaymentJournal")
+  supplierPaymentCancel SupplierPayment? @relation("SupplierPaymentCancelJournal")
+  expense               Expense?         @relation("ExpenseJournal")
+  expenseCancel         Expense?         @relation("ExpenseCancelJournal")
 
   @@index([branchId, entryDate])
   @@index([source, sourceId])
@@ -1123,8 +1167,8 @@ model JournalEntry {
 }
 
 /// One side of a journal entry. Each line is a debit or a credit, in its own currency at its
-/// own rate, with the USD amount the entry balances on. Branch, shipment and customer are the
-/// analysis dimensions.
+/// own rate, with the USD amount the entry balances on. Branch, shipment, customer, supplier and
+/// trip are the analysis dimensions.
 model JournalLine {
   id          String  @id @default(uuid()) @db.Uuid
   entryId     String  @map("entry_id") @db.Uuid
@@ -1133,6 +1177,10 @@ model JournalLine {
   branchId    String  @map("branch_id") @db.Uuid
   shipmentId  String? @map("shipment_id") @db.Uuid
   customerId  String? @map("customer_id") @db.Uuid
+  /// Payables lines: the supplier owed or paid.
+  supplierId  String? @map("supplier_id") @db.Uuid
+  /// Accrued transport lines a carrier bill clears (rule 11a): the trip they belong to.
+  tripId      String? @map("trip_id") @db.Uuid
   description String?
   currency    String  @db.Char(3)
   /// Units of `currency` per 1 USD.
@@ -1147,12 +1195,16 @@ model JournalLine {
   branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Restrict)
   shipment    Shipment?    @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  supplier    Supplier?    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  trip        Trip?        @relation(fields: [tripId], references: [id], onDelete: Restrict)
   currencyRef Currency     @relation(fields: [currency], references: [code], onDelete: Restrict)
 
   @@unique([entryId, lineNo])
   @@index([accountId])
   @@index([customerId])
   @@index([shipmentId])
+  @@index([supplierId])
+  @@index([tripId])
   @@map("journal_lines")
 }
 
@@ -1165,15 +1217,21 @@ enum InvoiceStatus {
 }
 
 /// Customer invoice for one shipment. Approval posts its journal entry (annex C rules 1-2) and
-/// gives it its number; a draft has none. Paid amounts are kept in the invoice currency and as
-/// the USD carrying value already relieved, so the last payment clears the balance exactly.
+/// gives it its number; a draft has none. Paid and credited amounts are kept in the invoice
+/// currency and as the USD carrying value already relieved, so the last payment or credit note
+/// clears the balance exactly. An opening item (isOpening) is a customer's open invoice brought
+/// in at go-live (rule 15): approved when recorded, with no shipment and no lines.
 model CustomerInvoice {
   id                  String        @id @default(uuid()) @db.Uuid
-  /// NOL-INV-2026-000001, set on approval.
+  /// NOL-INV-2026-000001, set on approval (NOL-OBI-2026-000001 for an opening item).
   number              String?       @unique @db.VarChar(30)
   branchId            String        @map("branch_id") @db.Uuid
   customerId          String        @map("customer_id") @db.Uuid
-  shipmentId          String        @map("shipment_id") @db.Uuid
+  /// Null only for an opening item.
+  shipmentId          String?       @map("shipment_id") @db.Uuid
+  isOpening           Boolean       @default(false) @map("is_opening")
+  /// Opening items: the invoice's number in the previous system.
+  reference           String?       @db.VarChar(50)
   currency            String        @db.Char(3)
   /// Units of `currency` per 1 USD on the invoice date.
   fxRate              Decimal       @map("fx_rate") @db.Decimal(18, 8)
@@ -1184,6 +1242,9 @@ model CustomerInvoice {
   totalUsd            Decimal       @default(0) @map("total_usd") @db.Decimal(18, 4)
   paidAmount          Decimal       @default(0) @map("paid_amount") @db.Decimal(18, 4)
   paidUsd             Decimal       @default(0) @map("paid_usd") @db.Decimal(18, 4)
+  /// Approved credit notes against the invoice (rule 6).
+  creditedAmount      Decimal       @default(0) @map("credited_amount") @db.Decimal(18, 4)
+  creditedUsd         Decimal       @default(0) @map("credited_usd") @db.Decimal(18, 4)
   notes               String?
   journalEntryId      String?       @unique @map("journal_entry_id") @db.Uuid
   /// The receivable account debited on approval; receipts clear the invoice there, even after
@@ -1199,7 +1260,7 @@ model CustomerInvoice {
 
   branch            Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer          Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  shipment          Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  shipment          Shipment?             @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   currencyRef       Currency              @relation(fields: [currency], references: [code], onDelete: Restrict)
   journalEntry      JournalEntry?         @relation("InvoiceJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
   receivableAccount Account?              @relation("InvoiceReceivable", fields: [receivableAccountId], references: [id], onDelete: Restrict)
@@ -1207,6 +1268,7 @@ model CustomerInvoice {
   approvedBy        User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   lines             CustomerInvoiceLine[]
   allocations       ReceiptAllocation[]
+  creditNotes       CreditNote[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -1532,14 +1594,17 @@ model Driver {
 
 /// External carrier (hired trucks). Master data shared by all branches.
 model Carrier {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @unique @db.VarChar(200)
-  phone     String?  @db.VarChar(20)
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @unique @db.VarChar(200)
+  phone      String?  @db.VarChar(20)
+  /// The supplier whose bills settle this carrier's trips (rule 11a).
+  supplierId String?  @map("supplier_id") @db.Uuid
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  trips Trip[]
+  supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  trips    Trip[]
 
   @@map("carriers")
 }
@@ -1586,6 +1651,8 @@ model Trip {
   externalDriver        String?    @map("external_driver") @db.VarChar(200)
   /// Rule 11: the accrual posted when the external trip is completed.
   accrualEntryId        String?    @unique @map("accrual_entry_id") @db.Uuid
+  /// Rule 11a: the approved carrier bill that cleared the accrual (null again if it is cancelled).
+  carrierBillId         String?    @map("carrier_bill_id") @db.Uuid
   notes                 String?
   cancelReason          String?    @map("cancel_reason")
   cancelledAt           DateTime?  @map("cancelled_at") @db.Timestamptz(3)
@@ -1593,15 +1660,18 @@ model Trip {
   createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch       Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin       Location          @relation("TripOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination  Location          @relation("TripDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  vehicle      Vehicle?          @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
-  driver       Driver?           @relation(fields: [driverId], references: [id], onDelete: Restrict)
-  carrier      Carrier?          @relation(fields: [carrierId], references: [id], onDelete: Restrict)
-  currencyRef  Currency?         @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
-  accrualEntry JournalEntry?     @relation("TripAccrualJournal", fields: [accrualEntryId], references: [id], onDelete: Restrict)
-  createdBy    User              @relation("TripCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  branch       Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin       Location           @relation("TripOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination  Location           @relation("TripDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  vehicle      Vehicle?           @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driver       Driver?            @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  carrier      Carrier?           @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  currencyRef  Currency?          @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  accrualEntry JournalEntry?      @relation("TripAccrualJournal", fields: [accrualEntryId], references: [id], onDelete: Restrict)
+  carrierBill  SupplierBill?      @relation("TripCarrierBill", fields: [carrierBillId], references: [id], onDelete: Restrict)
+  billLines    SupplierBillLine[]
+  journalLines JournalLine[]
+  createdBy    User               @relation("TripCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   shipments    TripShipment[]
   expenses     TripExpense[]
   pods         ProofOfDelivery[]
@@ -1717,4 +1787,314 @@ model PodPhoto {
   @@id([podId, documentId])
   @@index([branchId])
   @@map("pod_photos")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Group 4b: credit notes, payables (suppliers, bills, payments), general expenses, opening
+// balances (scope 13, annex C rules 6, 7, 9, 11a, 12 and 15).
+// ---------------------------------------------------------------------------------------------
+
+enum CreditNoteStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("credit_note_status")
+}
+
+/// A credit note against an approved customer invoice (rule 6), for all or part of its open
+/// amount, in the invoice's currency and at its rate. Approval posts the reversing entry: debit
+/// the invoice's revenue accounts in proportion, credit its receivable.
+model CreditNote {
+  id             String           @id @default(uuid()) @db.Uuid
+  /// NOL-CN-2026-000001, set on approval.
+  number         String?          @unique @db.VarChar(30)
+  /// The invoice's branch.
+  branchId       String           @map("branch_id") @db.Uuid
+  invoiceId      String           @map("invoice_id") @db.Uuid
+  customerId     String           @map("customer_id") @db.Uuid
+  creditDate     DateTime         @map("credit_date") @db.Date
+  /// In the invoice currency.
+  amount         Decimal          @db.Decimal(18, 4)
+  /// The USD carrying value of the invoice it cleared, set on approval.
+  amountUsd      Decimal?         @map("amount_usd") @db.Decimal(18, 4)
+  reason         String
+  status         CreditNoteStatus @default(DRAFT)
+  journalEntryId String?          @unique @map("journal_entry_id") @db.Uuid
+  createdById    String           @map("created_by_id") @db.Uuid
+  approvedById   String?          @map("approved_by_id") @db.Uuid
+  approvedAt     DateTime?        @map("approved_at") @db.Timestamptz(3)
+  cancelReason   String?          @map("cancel_reason")
+  cancelledAt    DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch       Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  invoice      CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry?   @relation("CreditNoteJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  createdBy    User            @relation("CreditNoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy   User?           @relation("CreditNoteApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@index([branchId, status])
+  @@index([invoiceId])
+  @@map("credit_notes")
+}
+
+/// A supplier: shipping line, carrier, customs broker, warehouse... Master data shared by all
+/// branches (like carriers); its bills and payments are branch-owned. Deactivate, never delete.
+model Supplier {
+  id               String   @id @default(uuid()) @db.Uuid
+  /// NOL-SUP-000001
+  number           String   @unique @db.VarChar(30)
+  name             String   @db.VarChar(200)
+  /// E.164.
+  phone            String?  @db.VarChar(20)
+  email            String?  @db.VarChar(254)
+  taxNumber        String?  @map("tax_number") @db.VarChar(50)
+  paymentTermsDays Int      @default(0) @map("payment_terms_days")
+  notes            String?
+  isActive         Boolean  @default(true) @map("is_active")
+  createdById      String   @map("created_by_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy    User              @relation("SupplierCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  carriers     Carrier[]
+  bills        SupplierBill[]
+  payments     SupplierPayment[]
+  journalLines JournalLine[]
+
+  @@map("suppliers")
+}
+
+enum SupplierBillStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("supplier_bill_status")
+}
+
+/// A supplier's bill (accounts payable), in one branch and currency. Edited as a DRAFT; approval
+/// numbers it and posts its entry (rules 7, 8, 11a, 12): debit each line's cost, clearing or
+/// expense account, credit the payable. An approved bill with no payment can be cancelled, which
+/// posts the reversing entry. An opening item (isOpening) is an open bill brought in at go-live
+/// (rule 15): approved when recorded, with no lines.
+model SupplierBill {
+  id                   String             @id @default(uuid()) @db.Uuid
+  /// NOL-SB-2026-000001, set on approval (NOL-OBS-2026-000001 for an opening item).
+  number               String?            @unique @db.VarChar(30)
+  branchId             String             @map("branch_id") @db.Uuid
+  supplierId           String             @map("supplier_id") @db.Uuid
+  /// The supplier's own invoice number.
+  supplierReference    String?            @map("supplier_reference") @db.VarChar(50)
+  isOpening            Boolean            @default(false) @map("is_opening")
+  currency             String             @db.Char(3)
+  fxRate               Decimal            @map("fx_rate") @db.Decimal(18, 8)
+  billDate             DateTime           @map("bill_date") @db.Date
+  dueDate              DateTime           @map("due_date") @db.Date
+  status               SupplierBillStatus @default(DRAFT)
+  total                Decimal            @default(0) @db.Decimal(18, 4)
+  totalUsd             Decimal            @default(0) @map("total_usd") @db.Decimal(18, 4)
+  paidAmount           Decimal            @default(0) @map("paid_amount") @db.Decimal(18, 4)
+  paidUsd              Decimal            @default(0) @map("paid_usd") @db.Decimal(18, 4)
+  notes                String?
+  journalEntryId       String?            @unique @map("journal_entry_id") @db.Uuid
+  cancelJournalEntryId String?            @unique @map("cancel_journal_entry_id") @db.Uuid
+  /// The payable account credited on approval; payments clear the bill there.
+  payableAccountId     String?            @map("payable_account_id") @db.Uuid
+  createdById          String             @map("created_by_id") @db.Uuid
+  approvedById         String?            @map("approved_by_id") @db.Uuid
+  approvedAt           DateTime?          @map("approved_at") @db.Timestamptz(3)
+  cancelReason         String?            @map("cancel_reason")
+  cancelledAt          DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById        String?            @map("cancelled_by_id") @db.Uuid
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch         Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier       Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  currencyRef    Currency                    @relation(fields: [currency], references: [code], onDelete: Restrict)
+  journalEntry   JournalEntry?               @relation("SupplierBillJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal  JournalEntry?               @relation("SupplierBillCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  payableAccount Account?                    @relation("BillPayable", fields: [payableAccountId], references: [id], onDelete: Restrict)
+  createdBy      User                        @relation("SupplierBillCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy     User?                       @relation("SupplierBillApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  cancelledBy    User?                       @relation("SupplierBillCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  lines          SupplierBillLine[]
+  allocations    SupplierPaymentAllocation[]
+  trips          Trip[]                      @relation("TripCarrierBill")
+
+  @@index([branchId, status])
+  @@index([supplierId])
+  @@map("supplier_bills")
+}
+
+enum SupplierBillLineKind {
+  /// A cost of one shipment by charge type (rule 7; reimbursable charges rule 8).
+  SHIPMENT_COST
+  /// A carrier's charge for a completed external trip, clearing its accrual (rule 11a).
+  TRIP
+  /// A general expense by category (rule 12).
+  EXPENSE
+
+  @@map("supplier_bill_line_kind")
+}
+
+model SupplierBillLine {
+  id                  String               @id @default(uuid()) @db.Uuid
+  billId              String               @map("bill_id") @db.Uuid
+  lineNo              Int                  @map("line_no") @db.SmallInt
+  kind                SupplierBillLineKind
+  chargeTypeCode      String?              @map("charge_type_code") @db.VarChar(20)
+  shipmentId          String?              @map("shipment_id") @db.Uuid
+  tripId              String?              @map("trip_id") @db.Uuid
+  expenseCategoryCode String?              @map("expense_category_code") @db.VarChar(20)
+  description         String?
+  /// In the bill currency, rounded to its minor units.
+  amount              Decimal              @db.Decimal(18, 4)
+
+  bill            SupplierBill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  chargeType      ChargeType?      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  shipment        Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  trip            Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryCode], references: [code], onDelete: Restrict)
+
+  @@unique([billId, lineNo])
+  @@index([shipmentId])
+  @@index([tripId])
+  @@map("supplier_bill_lines")
+}
+
+enum SupplierPaymentStatus {
+  POSTED
+  CANCELLED
+
+  @@map("supplier_payment_status")
+}
+
+/// Money paid to a supplier from a cash or bank account (rule 9), allocated in full to approved
+/// bills of the supplier, branch and currency. Recording it posts the entry with any realized
+/// exchange difference (annex C section 3); cancelling posts the reversing entry.
+model SupplierPayment {
+  id                   String                @id @default(uuid()) @db.Uuid
+  /// NOL-SP-2026-000001
+  number               String                @unique @db.VarChar(30)
+  branchId             String                @map("branch_id") @db.Uuid
+  supplierId           String                @map("supplier_id") @db.Uuid
+  paymentDate          DateTime              @map("payment_date") @db.Date
+  currency             String                @db.Char(3)
+  fxRate               Decimal               @map("fx_rate") @db.Decimal(18, 8)
+  amount               Decimal               @db.Decimal(18, 4)
+  cashAccountId        String                @map("cash_account_id") @db.Uuid
+  reference            String?               @db.VarChar(100)
+  notes                String?
+  status               SupplierPaymentStatus @default(POSTED)
+  journalEntryId       String                @unique @map("journal_entry_id") @db.Uuid
+  cancelJournalEntryId String?               @unique @map("cancel_journal_entry_id") @db.Uuid
+  cancelReason         String?               @map("cancel_reason")
+  cancelledAt          DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById        String?               @map("cancelled_by_id") @db.Uuid
+  createdById          String                @map("created_by_id") @db.Uuid
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch        Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier      Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  currencyRef   Currency                    @relation(fields: [currency], references: [code], onDelete: Restrict)
+  cashAccount   Account                     @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry                @relation("SupplierPaymentJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal JournalEntry?               @relation("SupplierPaymentCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy     User                        @relation("SupplierPaymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy   User?                       @relation("SupplierPaymentCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  allocations   SupplierPaymentAllocation[]
+
+  @@index([branchId, paymentDate])
+  @@index([supplierId])
+  @@map("supplier_payments")
+}
+
+/// Part of a payment applied to one bill. `relievedUsd` is the bill's USD carrying value it
+/// cleared; the difference from the payment's USD value is the realized exchange difference.
+model SupplierPaymentAllocation {
+  id          String  @id @default(uuid()) @db.Uuid
+  paymentId   String  @map("payment_id") @db.Uuid
+  billId      String  @map("bill_id") @db.Uuid
+  amount      Decimal @db.Decimal(18, 4)
+  relievedUsd Decimal @map("relieved_usd") @db.Decimal(18, 4)
+
+  payment SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  bill    SupplierBill    @relation(fields: [billId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, billId])
+  @@index([billId])
+  @@map("supplier_payment_allocations")
+}
+
+/// Kinds of general expense (rent, utilities, office...) and the expense account each posts to
+/// (rule 12). Master data the client extends; deactivate, never delete.
+model ExpenseCategory {
+  code      String   @id @db.VarChar(20)
+  nameEn    String   @map("name_en") @db.VarChar(200)
+  nameAr    String   @map("name_ar") @db.VarChar(200)
+  accountId String   @map("account_id") @db.Uuid
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  account   Account            @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  expenses  Expense[]
+  billLines SupplierBillLine[]
+
+  @@map("expense_categories")
+}
+
+enum ExpenseStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("expense_status")
+}
+
+/// A general expense (not tied to a shipment) paid from a cash or bank account (rule 12). Edited
+/// as a DRAFT; approval numbers it and posts its entry: debit the category's account, credit the
+/// cash account. An approved expense is cancelled by the reversing entry.
+model Expense {
+  id                   String        @id @default(uuid()) @db.Uuid
+  /// NOL-EXP-2026-000001, set on approval.
+  number               String?       @unique @db.VarChar(30)
+  branchId             String        @map("branch_id") @db.Uuid
+  expenseDate          DateTime      @map("expense_date") @db.Date
+  categoryCode         String        @map("category_code") @db.VarChar(20)
+  description          String        @db.VarChar(200)
+  amount               Decimal       @db.Decimal(18, 4)
+  currency             String        @db.Char(3)
+  fxRate               Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  cashAccountId        String        @map("cash_account_id") @db.Uuid
+  reference            String?       @db.VarChar(100)
+  status               ExpenseStatus @default(DRAFT)
+  journalEntryId       String?       @unique @map("journal_entry_id") @db.Uuid
+  cancelJournalEntryId String?       @unique @map("cancel_journal_entry_id") @db.Uuid
+  createdById          String        @map("created_by_id") @db.Uuid
+  approvedById         String?       @map("approved_by_id") @db.Uuid
+  approvedAt           DateTime?     @map("approved_at") @db.Timestamptz(3)
+  cancelReason         String?       @map("cancel_reason")
+  cancelledAt          DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById        String?       @map("cancelled_by_id") @db.Uuid
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  category      ExpenseCategory @relation(fields: [categoryCode], references: [code], onDelete: Restrict)
+  currencyRef   Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
+  cashAccount   Account         @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry?   @relation("ExpenseJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal JournalEntry?   @relation("ExpenseCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy     User            @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy    User?           @relation("ExpenseApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  cancelledBy   User?           @relation("ExpenseCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  @@index([branchId, expenseDate])
+  @@map("expenses")
 }

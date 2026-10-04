@@ -55,6 +55,7 @@ const details = {
       account: { select: { code: true, nameEn: true, nameAr: true } },
       shipment: { select: { number: true } },
       customer: { select: { name: true } },
+      supplier: { select: { name: true } },
     },
   },
   createdBy: { select: { fullName: true } },
@@ -67,6 +68,13 @@ const details = {
   tripExpense: { select: { number: true } },
   tripExpenseCancel: { select: { number: true } },
   tripAccrual: { select: { number: true } },
+  creditNote: { select: { number: true } },
+  supplierBill: { select: { number: true } },
+  supplierBillCancel: { select: { number: true } },
+  supplierPayment: { select: { number: true } },
+  supplierPaymentCancel: { select: { number: true } },
+  expense: { select: { number: true } },
+  expenseCancel: { select: { number: true } },
 } satisfies Prisma.JournalEntryInclude;
 
 type EntryWithDetails = Prisma.JournalEntryGetPayload<{ include: typeof details }>;
@@ -193,6 +201,8 @@ export class JournalService {
         branchId: line.branchId,
         shipmentId: line.shipmentId ?? null,
         customerId: line.customerId ?? null,
+        supplierId: line.supplierId ?? null,
+        tripId: line.tripId ?? null,
         description: line.description ?? null,
         currency: line.currency,
         fxRate: line.fxRate,
@@ -281,6 +291,8 @@ export function toPrepared(line: JournalLine): PreparedLine {
     amountUsd: isDebit ? line.debitUsd : line.creditUsd,
     shipmentId: line.shipmentId,
     customerId: line.customerId,
+    supplierId: line.supplierId,
+    tripId: line.tripId,
     description: line.description,
   };
 }
@@ -318,6 +330,13 @@ function toDto(e: EntryWithDetails, user: AuthUser): JournalEntryDto {
       e.tripExpense?.number ??
       e.tripExpenseCancel?.number ??
       e.tripAccrual?.number ??
+      e.creditNote?.number ??
+      e.supplierBill?.number ??
+      e.supplierBillCancel?.number ??
+      e.supplierPayment?.number ??
+      e.supplierPaymentCancel?.number ??
+      e.expense?.number ??
+      e.expenseCancel?.number ??
       null,
     reversalOfNumber: e.reversalOf?.number ?? null,
     reversedByNumber: e.reversedBy?.number ?? null,
@@ -335,6 +354,8 @@ function toDto(e: EntryWithDetails, user: AuthUser): JournalEntryDto {
       shipmentNumber: l.shipment?.number ?? null,
       customerId: l.customerId,
       customerName: l.customer?.name ?? null,
+      supplierId: l.supplierId,
+      supplierName: l.supplier?.name ?? null,
       description: l.description,
       currency: l.currency,
       fxRate: l.fxRate.toFixed(),

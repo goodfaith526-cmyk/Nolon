@@ -40,7 +40,9 @@ export class BillingReportsService {
   /**
    * Open approved invoices as of a date: the total less the receipts allocated to it that were
    * dated on or before the date and not cancelled by then (a cancellation counts from its
-   * reversing entry's date). Buckets are on the USD carrying value still open.
+   * reversing entry's date), and less the credit notes approved against it dated on or before the
+   * date. Opening items count from their opening entry's date. Buckets are on the USD carrying
+   * value still open.
    */
   async arAging(
     user: AuthUser,
@@ -71,33 +73,46 @@ export class BillingReportsService {
               outstandingUsd: Decimal;
             }[]
           >`
+            WITH paid AS (
+              SELECT a."invoice_id", sum(a."amount") AS "amount", sum(a."relieved_usd") AS "usd"
+              FROM "receipt_allocations" a
+              JOIN "receipts" r ON r."id" = a."receipt_id"
+              JOIN "journal_entries" re ON re."id" = r."journal_entry_id" AND re."status" = 'POSTED'
+              WHERE r."receipt_date" <= ${at}
+                AND NOT EXISTS (
+                  SELECT 1 FROM "journal_entries" ce
+                  WHERE ce."id" = r."cancel_journal_entry_id" AND ce."status" = 'POSTED'
+                    AND ce."entry_date" <= ${at})
+              GROUP BY a."invoice_id"
+            ), credited AS (
+              SELECT n."invoice_id", sum(n."amount") AS "amount", sum(n."amount_usd") AS "usd"
+              FROM "credit_notes" n
+              JOIN "journal_entries" ne ON ne."id" = n."journal_entry_id" AND ne."status" = 'POSTED'
+              WHERE n."status" = 'APPROVED' AND n."credit_date" <= ${at}
+              GROUP BY n."invoice_id"
+            ), open AS (
+              SELECT i."id",
+                     i."total" - coalesce(p."amount", 0) - coalesce(k."amount", 0) AS "outstanding",
+                     i."total_usd" - coalesce(p."usd", 0) - coalesce(k."usd", 0) AS "outstandingUsd"
+              FROM "customer_invoices" i
+              LEFT JOIN paid p ON p."invoice_id" = i."id"
+              LEFT JOIN credited k ON k."invoice_id" = i."id"
+            )
             SELECT i."id" AS "invoiceId", i."number", b."code" AS "branchCode",
                    i."customer_id" AS "customerId", c."name" AS "customerName",
                    i."invoice_date" AS "invoiceDate", i."due_date" AS "dueDate", i."currency",
-                   i."total",
-                   i."total" - coalesce(sum(a."amount") FILTER (WHERE r."id" IS NOT NULL), 0) AS "outstanding",
-                   i."total_usd" - coalesce(sum(a."relieved_usd") FILTER (WHERE r."id" IS NOT NULL), 0) AS "outstandingUsd"
+                   i."total", o."outstanding", o."outstandingUsd"
             FROM "customer_invoices" i
             JOIN "journal_entries" ie ON ie."id" = i."journal_entry_id" AND ie."status" = 'POSTED'
+            JOIN open o ON o."id" = i."id"
             JOIN "branches" b ON b."id" = i."branch_id"
             JOIN "customers" c ON c."id" = i."customer_id"
-            LEFT JOIN "receipt_allocations" a ON a."invoice_id" = i."id"
-            LEFT JOIN "receipts" r ON r."id" = a."receipt_id"
-              AND r."receipt_date" <= ${at}
-              AND EXISTS (
-                SELECT 1 FROM "journal_entries" re
-                WHERE re."id" = r."journal_entry_id" AND re."status" = 'POSTED')
-              AND NOT EXISTS (
-                SELECT 1 FROM "journal_entries" ce
-                WHERE ce."id" = r."cancel_journal_entry_id" AND ce."status" = 'POSTED'
-                  AND ce."entry_date" <= ${at})
             WHERE i."status" = 'APPROVED'
               AND i."invoice_date" <= ${at}
+              AND ie."entry_date" <= ${at}
               AND i."branch_id" IN (${Prisma.join(branchIds.map((id) => Prisma.sql`${id}::uuid`))})
               ${onlyCustomer}
-            GROUP BY i."id", b."code", c."name"
-            HAVING i."total" - coalesce(sum(a."amount") FILTER (WHERE r."id" IS NOT NULL), 0) <> 0
-                OR i."total_usd" - coalesce(sum(a."relieved_usd") FILTER (WHERE r."id" IS NOT NULL), 0) <> 0
+              AND (o."outstanding" <> 0 OR o."outstandingUsd" <> 0)
             ORDER BY c."name", i."due_date", i."number"`;
     const totals = new AgingTotals();
     const byCustomer = new Map<string, { name: string; totals: AgingTotals }>();
@@ -168,6 +183,8 @@ export class BillingReportsService {
         where: {
           ...common,
           status: 'APPROVED',
+          // Opening items were invoiced before go-live, not in a period of this system.
+          isOpening: false,
           invoiceDate: { gte: toDbDate(from), lte: toDbDate(to) },
         },
         include: {
@@ -217,7 +234,7 @@ export class BillingReportsService {
         branchCode: i.branch.code,
         customerId: i.customerId,
         customerName: i.customer.name,
-        shipmentNumber: i.shipment.number,
+        shipmentNumber: i.shipment?.number ?? '',
         currency: i.currency,
         total: i.total.toFixed(),
         totalUsd: i.totalUsd.toFixed(),
@@ -252,6 +269,7 @@ export class BillingReportsService {
       JOIN "journal_entries" ie ON ie."id" = i."journal_entry_id" AND ie."status" = 'POSTED'
       JOIN "customers" c ON c."id" = i."customer_id"
       WHERE i."status" = 'APPROVED'
+        AND NOT i."is_opening"
         AND i."branch_id" IN ${uuidList(branchIds)}
         AND i."invoice_date" BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.customerId, (id) => Prisma.sql`i."customer_id" = ${id}::uuid`)}

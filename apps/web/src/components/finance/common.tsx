@@ -66,3 +66,63 @@ export function useAccounts(): { accounts: AccountDto[] | null; status: number |
   const { record, status } = useRecord<AccountDto[]>('/accounting/accounts');
   return { accounts: record, status };
 }
+
+/** A cancel (or similar) panel that asks for a reason before it calls `onSubmit`. */
+export function ReasonForm({
+  hint,
+  label,
+  submitLabel,
+  backLabel,
+  busy,
+  onSubmit,
+  onBack,
+}: {
+  hint?: string;
+  label: string;
+  submitLabel: string;
+  backLabel: string;
+  busy: boolean;
+  onSubmit: (reason: string) => void;
+  onBack: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  return (
+    <form
+      className="card stack"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(reason);
+      }}
+    >
+      {hint && <p>{hint}</p>}
+      <label className="field">
+        {label}
+        <textarea required value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
+      <div className="actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {submitLabel}
+        </button>
+        <button type="button" onClick={onBack}>
+          {backLabel}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Cash and bank accounts a document of `branchId` in `currency` may use (dropdown narrowing). */
+export function cashAccountsFor(
+  accounts: AccountDto[] | null,
+  branchId: string,
+  currency: string,
+): AccountDto[] {
+  return (accounts ?? []).filter(
+    (a) =>
+      a.isCash &&
+      a.isActive &&
+      a.isPostable &&
+      a.currency === currency &&
+      (a.branchId === null || a.branchId === branchId),
+  );
+}

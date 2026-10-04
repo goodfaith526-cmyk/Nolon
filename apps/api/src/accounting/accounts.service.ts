@@ -105,11 +105,14 @@ export class AccountsService {
 
   async setChargeTypePosting(input: ChargeTypePostingDto): Promise<AccountingSettingsDto> {
     await this.masterData.requireChargeType(input.chargeTypeCode);
-    if (input.isReimbursable && input.revenueAccountId) {
+    // Omitted: the cost account stays as it is (a reimbursable charge has none).
+    const costAccountId = input.isReimbursable ? null : input.costAccountId;
+    if (input.isReimbursable && (input.revenueAccountId || input.costAccountId)) {
       throw new BadRequestException('A reimbursable charge posts to the reimbursable account');
     }
     const fields = {
       revenueAccountId: input.revenueAccountId,
+      ...(costAccountId === undefined ? {} : { costAccountId }),
       isReimbursable: input.isReimbursable,
     };
     await this.prisma.$transaction(async (tx) => {
@@ -118,6 +121,13 @@ export class AccountsService {
         requireUsable(account);
         if (account.type !== 'REVENUE') {
           throw new BadRequestException('Charge types post to a revenue account');
+        }
+      }
+      if (costAccountId) {
+        const account = await this.lockAccount(tx, costAccountId, 'SHARE');
+        requireUsable(account);
+        if (account.type !== 'EXPENSE') {
+          throw new BadRequestException('Supplier charges post to an expense account');
         }
       }
       await tx.chargeTypePosting.upsert({
@@ -149,6 +159,26 @@ export class AccountsService {
       if (posting?.isReimbursable) result.set(code, await this.roleAccount(tx, 'REIMBURSABLE'));
       else if (posting?.revenueAccountId) result.set(code, posting.revenueAccountId);
       else result.set(code, await this.roleAccount(tx, 'DEFAULT_REVENUE'));
+    }
+    return result;
+  }
+
+  /**
+   * Cost account of each charge type on a supplier bill (annex C rules 7-8): the reimbursable
+   * clearing account for reimbursable charges, the charge type's cost account, or DEFAULT_COST.
+   */
+  async costAccounts(tx: Tx, chargeTypeCodes: readonly string[]): Promise<Map<string, string>> {
+    const codes = [...new Set(chargeTypeCodes)];
+    const postings = await tx.chargeTypePosting.findMany({
+      where: { chargeTypeCode: { in: codes } },
+    });
+    const byCode = new Map(postings.map((p) => [p.chargeTypeCode, p]));
+    const result = new Map<string, string>();
+    for (const code of codes) {
+      const posting = byCode.get(code);
+      if (posting?.isReimbursable) result.set(code, await this.roleAccount(tx, 'REIMBURSABLE'));
+      else if (posting?.costAccountId) result.set(code, posting.costAccountId);
+      else result.set(code, await this.roleAccount(tx, 'DEFAULT_COST'));
     }
     return result;
   }
@@ -217,19 +247,26 @@ export class AccountsService {
 
   /**
    * Accounts mapped to a control role, plus every receivable account an approved invoice was
-   * posted to (it is still cleared there after a remap): documents post there, manual entries not.
+   * posted to and every payable account an approved bill was posted to (they are still cleared
+   * there after a remap): documents post there, manual entries not.
    */
   async controlAccountIds(tx: Tx): Promise<Set<string>> {
-    const [mappings, snapshots] = await Promise.all([
+    const [mappings, snapshots, bills] = await Promise.all([
       tx.accountMapping.findMany({ where: { role: { in: [...CONTROL_ROLES] } } }),
       tx.customerInvoice.findMany({
         where: { receivableAccountId: { not: null } },
         distinct: ['receivableAccountId'],
         select: { receivableAccountId: true },
       }),
+      tx.supplierBill.findMany({
+        where: { payableAccountId: { not: null } },
+        distinct: ['payableAccountId'],
+        select: { payableAccountId: true },
+      }),
     ]);
     const ids = new Set(mappings.map((m) => m.accountId));
     for (const s of snapshots) if (s.receivableAccountId) ids.add(s.receivableAccountId);
+    for (const b of bills) if (b.payableAccountId) ids.add(b.payableAccountId);
     return ids;
   }
 
@@ -295,15 +332,20 @@ export class AccountsService {
    * an account a posting rule or an approved invoice depends on stays active, postable and of its type.
    */
   private async checkChange(tx: Tx, existing: Account, input: AccountInput, isCash: boolean) {
-    const [lines, children, mapped, charged, approvedInvoices] = await Promise.all([
-      tx.journalLine.count({ where: { accountId: existing.id } }),
-      tx.account.count({ where: { parentId: existing.id } }),
-      tx.accountMapping.count({ where: { accountId: existing.id } }),
-      tx.chargeTypePosting.count({ where: { revenueAccountId: existing.id } }),
-      tx.customerInvoice.count({
-        where: { receivableAccountId: existing.id, status: 'APPROVED' },
-      }),
-    ]);
+    const [lines, children, mapped, charged, approvedInvoices, approvedBills, categories] =
+      await Promise.all([
+        tx.journalLine.count({ where: { accountId: existing.id } }),
+        tx.account.count({ where: { parentId: existing.id } }),
+        tx.accountMapping.count({ where: { accountId: existing.id } }),
+        tx.chargeTypePosting.count({
+          where: { OR: [{ revenueAccountId: existing.id }, { costAccountId: existing.id }] },
+        }),
+        tx.customerInvoice.count({
+          where: { receivableAccountId: existing.id, status: 'APPROVED' },
+        }),
+        tx.supplierBill.count({ where: { payableAccountId: existing.id, status: 'APPROVED' } }),
+        tx.expenseCategory.count({ where: { accountId: existing.id } }),
+      ]);
     if (lines > 0) {
       const changed =
         input.type !== existing.type ||
@@ -319,12 +361,12 @@ export class AccountsService {
     if (input.isPostable && children > 0) {
       throw new ConflictException('An account with sub-accounts stays a header account');
     }
-    const depended = mapped + charged + approvedInvoices > 0;
+    const depended = mapped + charged + approvedInvoices + approvedBills + categories > 0;
     const unusable =
       !input.isPostable || input.isActive === false || isCash || input.type !== existing.type;
     if (depended && unusable) {
       throw new ConflictException(
-        'Posting rules or approved invoices use this account; remap them first',
+        'Posting rules, expense categories or approved invoices and bills use this account; remap them first',
       );
     }
   }
@@ -370,11 +412,13 @@ function toDto(a: Account, controlIds: ReadonlySet<string>): AccountDto {
 function toPostingDto(p: {
   chargeTypeCode: string;
   revenueAccountId: string | null;
+  costAccountId: string | null;
   isReimbursable: boolean;
 }): ChargeTypePostingDto {
   return {
     chargeTypeCode: p.chargeTypeCode,
     revenueAccountId: p.revenueAccountId,
+    costAccountId: p.costAccountId,
     isReimbursable: p.isReimbursable,
   };
 }
