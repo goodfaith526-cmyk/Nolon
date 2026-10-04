@@ -137,6 +137,37 @@ export class ShipmentsService {
     return shipment;
   }
 
+  /**
+   * For billing: what an invoice for this shipment starts from. 404 unless the user may see the
+   * shipment.
+   */
+  async billingSource(
+    user: AuthUser,
+    id: string,
+  ): Promise<{
+    id: string;
+    number: string;
+    branchId: string;
+    customerId: string;
+    status: ShipmentStatus;
+    quotationId: string | null;
+  }> {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id, ...this.scope(user) },
+      select: {
+        id: true,
+        number: true,
+        branchId: true,
+        customerId: true,
+        status: true,
+        booking: { select: { quotationId: true } },
+      },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found');
+    const { booking, ...rest } = shipment;
+    return { ...rest, quotationId: booking.quotationId };
+  }
+
   /** For other modules (documents): 404 unless the user may see the shipment. */
   async requireAccessible(
     user: AuthUser,

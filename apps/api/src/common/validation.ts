@@ -50,3 +50,9 @@ export const pageQuery = z.object({
 });
 
 export type PageQuery = z.infer<typeof pageQuery>;
+
+/** Exchange rate: units of a currency per 1 USD, positive, at most 8 decimal places. */
+export const fxRate = z
+  .string()
+  .regex(/^\d{1,10}(\.\d{1,8})?$/, 'Invalid exchange rate')
+  .refine((v) => /[1-9]/.test(v), 'Exchange rate must be positive');

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AccountingModule } from './accounting/accounting.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { BillingModule } from './billing/billing.module.js';
 import { BookingsModule } from './bookings/bookings.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
@@ -31,6 +33,8 @@ import { UsersModule } from './users/users.module.js';
     DashboardModule,
     ShipmentsModule,
     DocumentsModule,
+    AccountingModule,
+    BillingModule,
   ],
 })
 export class AppModule {}

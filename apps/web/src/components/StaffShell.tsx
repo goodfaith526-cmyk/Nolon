@@ -12,13 +12,27 @@ import { icons } from './Icons';
 
 interface NavLink {
   href: string;
-  label: 'home' | 'customers' | 'rates' | 'quotations' | 'bookings' | 'shipments' | 'users';
+  label:
+    | 'home'
+    | 'customers'
+    | 'rates'
+    | 'quotations'
+    | 'bookings'
+    | 'shipments'
+    | 'invoices'
+    | 'receipts'
+    | 'journals'
+    | 'trialBalance'
+    | 'chartOfAccounts'
+    | 'fxRates'
+    | 'periods'
+    | 'users';
   icon: keyof typeof icons;
   permission?: Permission;
 }
 
 const NAV_SECTIONS: readonly {
-  title?: 'commercial' | 'operations' | 'admin';
+  title?: 'commercial' | 'operations' | 'finance' | 'admin';
   links: readonly NavLink[];
 }[] = [
   { links: [{ href: '/dashboard', label: 'home', icon: 'home' }] },
@@ -39,6 +53,48 @@ const NAV_SECTIONS: readonly {
   {
     title: 'operations',
     links: [{ href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' }],
+  },
+  {
+    title: 'finance',
+    links: [
+      {
+        href: '/invoices',
+        label: 'invoices',
+        icon: 'invoice',
+        permission: 'customer_invoices:view',
+      },
+      { href: '/receipts', label: 'receipts', icon: 'receipt', permission: 'receipts:view' },
+      {
+        href: '/accounting/journals',
+        label: 'journals',
+        icon: 'journal',
+        permission: 'manual_journals:view',
+      },
+      {
+        href: '/accounting/trial-balance',
+        label: 'trialBalance',
+        icon: 'balance',
+        permission: 'financial_reports:view',
+      },
+      {
+        href: '/accounting/accounts',
+        label: 'chartOfAccounts',
+        icon: 'accounts',
+        permission: 'chart_of_accounts:view',
+      },
+      {
+        href: '/accounting/fx-rates',
+        label: 'fxRates',
+        icon: 'exchange',
+        permission: 'fx_rates:view',
+      },
+      {
+        href: '/accounting/periods',
+        label: 'periods',
+        icon: 'calendar',
+        permission: 'chart_of_accounts:view',
+      },
+    ],
   },
   {
     title: 'admin',

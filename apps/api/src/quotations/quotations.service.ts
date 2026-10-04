@@ -94,6 +94,39 @@ export class QuotationsService {
     return toDto(await this.findScoped(user, id));
   }
 
+  /**
+   * For billing: the agreed currency and lines of the quotation a shipment was booked from. The
+   * caller has already checked access to the shipment.
+   */
+  async invoiceSource(id: string): Promise<{
+    currency: string;
+    lines: {
+      chargeTypeCode: string;
+      description: string | null;
+      quantity: Prisma.Decimal;
+      unitPrice: Prisma.Decimal;
+      lineTotal: Prisma.Decimal;
+      unit: string;
+    }[];
+  } | null> {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: { lines: { orderBy: { lineNo: 'asc' } } },
+    });
+    if (!quotation) return null;
+    return {
+      currency: quotation.currency,
+      lines: quotation.lines.map((l) => ({
+        chargeTypeCode: l.chargeTypeCode,
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        lineTotal: l.lineTotal,
+        unit: l.unit,
+      })),
+    };
+  }
+
   async create(user: AuthUser, input: CreateQuotationRequest): Promise<QuotationDto> {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     const branchId = customer.branchId;

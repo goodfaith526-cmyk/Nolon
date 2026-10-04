@@ -50,6 +50,11 @@ model Branch {
   shipments      Shipment[]
   shipmentEvents ShipmentEvent[]
   documents      Document[]
+  accounts       Account[]
+  journalEntries JournalEntry[]
+  journalLines   JournalLine[]
+  invoices       CustomerInvoice[]
+  receipts       Receipt[]
 
   @@map("branches")
 }
@@ -71,10 +76,15 @@ model Currency {
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branches             Branch[]
-  customersPreferred   Customer[]  @relation("CustomerPreferredCurrency")
-  customersCreditLimit Customer[]  @relation("CustomerCreditLimitCurrency")
+  customersPreferred   Customer[]        @relation("CustomerPreferredCurrency")
+  customersCreditLimit Customer[]        @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
   quotations           Quotation[]
+  accounts             Account[]
+  fxRates              FxRate[]
+  journalLines         JournalLine[]
+  invoices             CustomerInvoice[]
+  receipts             Receipt[]
 
   @@map("currencies")
 }
@@ -115,15 +125,23 @@ model User {
   branches UserBranch[]
   sessions Session[]
 
-  customersCreated  Customer[]      @relation("CustomerCreatedBy")
-  ratesCreated      RateCard[]      @relation("RateCreatedBy")
-  ratesApproved     RateCard[]      @relation("RateApprovedBy")
-  quotationsCreated Quotation[]     @relation("QuotationCreatedBy")
-  bookingsCreated   Booking[]       @relation("BookingCreatedBy")
-  shipmentsCreated  Shipment[]      @relation("ShipmentCreatedBy")
+  customersCreated  Customer[]        @relation("CustomerCreatedBy")
+  ratesCreated      RateCard[]        @relation("RateCreatedBy")
+  ratesApproved     RateCard[]        @relation("RateApprovedBy")
+  quotationsCreated Quotation[]       @relation("QuotationCreatedBy")
+  bookingsCreated   Booking[]         @relation("BookingCreatedBy")
+  shipmentsCreated  Shipment[]        @relation("ShipmentCreatedBy")
   shipmentEvents    ShipmentEvent[]
-  documentsUploaded Document[]      @relation("DocumentUploadedBy")
-  documentsDeleted  Document[]      @relation("DocumentDeletedBy")
+  documentsUploaded Document[]        @relation("DocumentUploadedBy")
+  documentsDeleted  Document[]        @relation("DocumentDeletedBy")
+  periodsClosed     FiscalPeriod[]    @relation("PeriodClosedBy")
+  fxRatesCreated    FxRate[]          @relation("FxRateCreatedBy")
+  journalsCreated   JournalEntry[]    @relation("JournalCreatedBy")
+  journalsPosted    JournalEntry[]    @relation("JournalPostedBy")
+  invoicesCreated   CustomerInvoice[] @relation("InvoiceCreatedBy")
+  invoicesApproved  CustomerInvoice[] @relation("InvoiceApprovedBy")
+  receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
+  receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
 
   @@map("users")
 }
@@ -256,6 +274,8 @@ model ChargeType {
 
   rates          RateCard[]
   quotationLines QuotationLine[]
+  posting        ChargeTypePosting?
+  invoiceLines   CustomerInvoiceLine[]
 
   @@map("charge_types")
 }
@@ -339,6 +359,9 @@ model Customer {
   quotations             Quotation[]
   bookings               Booking[]
   shipments              Shipment[]
+  journalLines           JournalLine[]
+  invoices               CustomerInvoice[]
+  receipts               Receipt[]
 
   @@index([branchId])
   @@index([phone])
@@ -726,6 +749,8 @@ model Shipment {
   containers      ShipmentContainer[]
   events          ShipmentEvent[]
   documents       Document[]
+  journalLines    JournalLine[]
+  invoices        CustomerInvoice[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -862,4 +887,368 @@ model DocumentContent {
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@map("document_contents")
+}
+
+// -------------------------------------------------------------------------------------------------
+// Accounting (scope section 13, annex C). Amounts are kept in the document currency and in USD,
+// the reporting currency. Posted journal entries are immutable: triggers in the migration
+// 20261003181158_accounting_invoices_receipts reject any change to a posted entry or its lines.
+// -------------------------------------------------------------------------------------------------
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+
+  @@map("account_type")
+}
+
+/// Chart of accounts. Header accounts (isPostable false) group others; only postable accounts
+/// take journal lines. Cash and bank accounts (isCash) hold one currency and may belong to one
+/// branch. Deactivate an account; never delete one that has lines (foreign keys restrict it).
+model Account {
+  id         String      @id @default(uuid()) @db.Uuid
+  code       String      @unique @db.VarChar(20)
+  nameEn     String      @map("name_en") @db.VarChar(200)
+  nameAr     String      @map("name_ar") @db.VarChar(200)
+  type       AccountType
+  parentId   String?     @map("parent_id") @db.Uuid
+  isPostable Boolean     @default(true) @map("is_postable")
+  isCash     Boolean     @default(false) @map("is_cash")
+  /// Cash and bank accounts only: the one currency the account holds.
+  currency   String?     @db.Char(3)
+  /// Cash and bank accounts only: the branch that uses it (null: any branch).
+  branchId   String?     @map("branch_id") @db.Uuid
+  isActive   Boolean     @default(true) @map("is_active")
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  parent       Account?            @relation("AccountTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Account[]           @relation("AccountTree")
+  currencyRef  Currency?           @relation(fields: [currency], references: [code], onDelete: Restrict)
+  branch       Branch?             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  mappings     AccountMapping[]
+  chargeTypes  ChargeTypePosting[]
+  journalLines JournalLine[]
+  receipts     Receipt[]
+  invoices     CustomerInvoice[] @relation("InvoiceReceivable")
+
+  @@map("accounts")
+}
+
+/// The accounts the automatic entries post to (annex C section 4). The accountant changes the
+/// mapping from the settings; the code only knows the roles.
+enum PostingRole {
+  RECEIVABLE
+  PAYABLE
+  CUSTOMER_ADVANCES
+  DEFAULT_REVENUE
+  DEFAULT_COST
+  REIMBURSABLE
+  CONSOLIDATION_CLEARING
+  ACCRUED_TRANSPORT
+  FX_GAIN
+  FX_LOSS
+  ROUNDING
+  OPENING_EQUITY
+
+  @@map("posting_role")
+}
+
+model AccountMapping {
+  role      PostingRole @id
+  accountId String      @map("account_id") @db.Uuid
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@map("account_mappings")
+}
+
+/// Revenue account of each charge type on a customer invoice (annex C rule 1). Reimbursable
+/// charges (duties paid for the customer) post to the REIMBURSABLE clearing account (rule 2).
+/// A charge type with no row posts to DEFAULT_REVENUE.
+model ChargeTypePosting {
+  chargeTypeCode   String   @id @map("charge_type_code") @db.VarChar(20)
+  revenueAccountId String?  @map("revenue_account_id") @db.Uuid
+  isReimbursable   Boolean  @default(false) @map("is_reimbursable")
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  chargeType     ChargeType @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  revenueAccount Account?   @relation(fields: [revenueAccountId], references: [id], onDelete: Restrict)
+
+  @@map("charge_type_postings")
+}
+
+enum PeriodStatus {
+  OPEN
+  CLOSED
+
+  @@map("period_status")
+}
+
+/// Monthly accounting period. Created on first use; nothing posts into a closed period.
+model FiscalPeriod {
+  id         String       @id @default(uuid()) @db.Uuid
+  year       Int          @db.SmallInt
+  month      Int          @db.SmallInt
+  startDate  DateTime     @map("start_date") @db.Date
+  endDate    DateTime     @map("end_date") @db.Date
+  status     PeriodStatus @default(OPEN)
+  closedAt   DateTime?    @map("closed_at") @db.Timestamptz(3)
+  closedById String?      @map("closed_by_id") @db.Uuid
+
+  closedBy User?          @relation("PeriodClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  entries  JournalEntry[]
+
+  @@unique([year, month])
+  @@map("fiscal_periods")
+}
+
+/// Daily exchange rate: units of the currency per 1 USD (e.g. SDG 600). USD itself has no row.
+model FxRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  currency    String   @db.Char(3)
+  rateDate    DateTime @map("rate_date") @db.Date
+  rate        Decimal  @db.Decimal(18, 8)
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  currencyRef Currency @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy   User     @relation("FxRateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([currency, rateDate])
+  @@map("fx_rates")
+}
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+
+  @@map("journal_status")
+}
+
+enum JournalSource {
+  MANUAL
+  CUSTOMER_INVOICE
+  RECEIPT
+  REVERSAL
+
+  @@map("journal_source")
+}
+
+/// Journal entry. Lines are written while it is a DRAFT; posting is one update to POSTED, which
+/// the database accepts only if the entry balances in USD and its period is open. A posted
+/// entry is corrected by a reversing entry (reversalOfId), never edited or deleted.
+model JournalEntry {
+  id           String        @id @default(uuid()) @db.Uuid
+  /// NOL-JE-2026-000001
+  number       String        @unique @db.VarChar(30)
+  branchId     String        @map("branch_id") @db.Uuid
+  entryDate    DateTime      @map("entry_date") @db.Date
+  periodId     String        @map("period_id") @db.Uuid
+  description  String
+  source       JournalSource
+  /// The invoice or receipt the entry was made from (null for manual entries and reversals).
+  sourceId     String?       @map("source_id") @db.Uuid
+  status       JournalStatus @default(DRAFT)
+  reversalOfId String?       @unique @map("reversal_of_id") @db.Uuid
+  createdById  String        @map("created_by_id") @db.Uuid
+  postedById   String?       @map("posted_by_id") @db.Uuid
+  postedAt     DateTime?     @map("posted_at") @db.Timestamptz(3)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch        Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  period        FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  reversalOf    JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy    JournalEntry?    @relation("JournalReversal")
+  createdBy     User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedBy      User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  lines         JournalLine[]
+  invoice       CustomerInvoice? @relation("InvoiceJournal")
+  receipt       Receipt?         @relation("ReceiptJournal")
+  receiptCancel Receipt?         @relation("ReceiptCancelJournal")
+
+  @@index([branchId, entryDate])
+  @@index([source, sourceId])
+  @@map("journal_entries")
+}
+
+/// One side of a journal entry. Each line is a debit or a credit, in its own currency at its
+/// own rate, with the USD amount the entry balances on. Branch, shipment and customer are the
+/// analysis dimensions.
+model JournalLine {
+  id          String  @id @default(uuid()) @db.Uuid
+  entryId     String  @map("entry_id") @db.Uuid
+  lineNo      Int     @map("line_no") @db.SmallInt
+  accountId   String  @map("account_id") @db.Uuid
+  branchId    String  @map("branch_id") @db.Uuid
+  shipmentId  String? @map("shipment_id") @db.Uuid
+  customerId  String? @map("customer_id") @db.Uuid
+  description String?
+  currency    String  @db.Char(3)
+  /// Units of `currency` per 1 USD.
+  fxRate      Decimal @map("fx_rate") @db.Decimal(18, 8)
+  debit       Decimal @default(0) @db.Decimal(18, 4)
+  credit      Decimal @default(0) @db.Decimal(18, 4)
+  debitUsd    Decimal @default(0) @map("debit_usd") @db.Decimal(18, 4)
+  creditUsd   Decimal @default(0) @map("credit_usd") @db.Decimal(18, 4)
+
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment?    @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  currencyRef Currency     @relation(fields: [currency], references: [code], onDelete: Restrict)
+
+  @@unique([entryId, lineNo])
+  @@index([accountId])
+  @@index([customerId])
+  @@index([shipmentId])
+  @@map("journal_lines")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("invoice_status")
+}
+
+/// Customer invoice for one shipment. Approval posts its journal entry (annex C rules 1-2) and
+/// gives it its number; a draft has none. Paid amounts are kept in the invoice currency and as
+/// the USD carrying value already relieved, so the last payment clears the balance exactly.
+model CustomerInvoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  /// NOL-INV-2026-000001, set on approval.
+  number         String?       @unique @db.VarChar(30)
+  branchId       String        @map("branch_id") @db.Uuid
+  customerId     String        @map("customer_id") @db.Uuid
+  shipmentId     String        @map("shipment_id") @db.Uuid
+  currency       String        @db.Char(3)
+  /// Units of `currency` per 1 USD on the invoice date.
+  fxRate         Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  invoiceDate    DateTime      @map("invoice_date") @db.Date
+  dueDate        DateTime      @map("due_date") @db.Date
+  status         InvoiceStatus @default(DRAFT)
+  total          Decimal       @default(0) @db.Decimal(18, 4)
+  totalUsd       Decimal       @default(0) @map("total_usd") @db.Decimal(18, 4)
+  paidAmount     Decimal       @default(0) @map("paid_amount") @db.Decimal(18, 4)
+  paidUsd        Decimal       @default(0) @map("paid_usd") @db.Decimal(18, 4)
+  notes          String?
+  journalEntryId String?       @unique @map("journal_entry_id") @db.Uuid
+  /// The receivable account debited on approval; receipts clear the invoice there, even after
+  /// the RECEIVABLE role is remapped.
+  receivableAccountId String?   @map("receivable_account_id") @db.Uuid
+  createdById    String        @map("created_by_id") @db.Uuid
+  approvedById   String?       @map("approved_by_id") @db.Uuid
+  approvedAt     DateTime?     @map("approved_at") @db.Timestamptz(3)
+  cancelReason   String?       @map("cancel_reason")
+  cancelledAt    DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch       Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  shipment     Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  currencyRef  Currency              @relation(fields: [currency], references: [code], onDelete: Restrict)
+  journalEntry JournalEntry?         @relation("InvoiceJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  receivableAccount Account?         @relation("InvoiceReceivable", fields: [receivableAccountId], references: [id], onDelete: Restrict)
+  createdBy    User                  @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy   User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  lines        CustomerInvoiceLine[]
+  allocations  ReceiptAllocation[]
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@index([shipmentId])
+  @@map("customer_invoices")
+}
+
+model CustomerInvoiceLine {
+  id             String  @id @default(uuid()) @db.Uuid
+  invoiceId      String  @map("invoice_id") @db.Uuid
+  lineNo         Int     @map("line_no") @db.SmallInt
+  chargeTypeCode String  @map("charge_type_code") @db.VarChar(20)
+  description    String?
+  quantity       Decimal @db.Decimal(18, 4)
+  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+  /// round(quantity * unitPrice) to the currency's minor units.
+  lineTotal      Decimal @map("line_total") @db.Decimal(18, 4)
+
+  invoice    CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  chargeType ChargeType      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+
+  @@unique([invoiceId, lineNo])
+  @@map("customer_invoice_lines")
+}
+
+enum ReceiptStatus {
+  POSTED
+  CANCELLED
+
+  @@map("receipt_status")
+}
+
+/// Money received from a customer into a cash or bank account (annex C rules 3-4). Recording it
+/// posts the entry; the part not allocated to invoices is a customer advance. Cancelling posts a
+/// reversing entry and gives the allocated amounts back to the invoices.
+model Receipt {
+  id                   String        @id @default(uuid()) @db.Uuid
+  /// NOL-RC-2026-000001
+  number               String        @unique @db.VarChar(30)
+  branchId             String        @map("branch_id") @db.Uuid
+  customerId           String        @map("customer_id") @db.Uuid
+  receiptDate          DateTime      @map("receipt_date") @db.Date
+  currency             String        @db.Char(3)
+  fxRate               Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  amount               Decimal       @db.Decimal(18, 4)
+  cashAccountId        String        @map("cash_account_id") @db.Uuid
+  reference            String?       @db.VarChar(100)
+  notes                String?
+  status               ReceiptStatus @default(POSTED)
+  journalEntryId       String        @unique @map("journal_entry_id") @db.Uuid
+  cancelJournalEntryId String?       @unique @map("cancel_journal_entry_id") @db.Uuid
+  cancelReason         String?       @map("cancel_reason")
+  cancelledAt          DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById        String?       @map("cancelled_by_id") @db.Uuid
+  createdById          String        @map("created_by_id") @db.Uuid
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch        Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  currencyRef   Currency            @relation(fields: [currency], references: [code], onDelete: Restrict)
+  cashAccount   Account             @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry        @relation("ReceiptJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal JournalEntry?       @relation("ReceiptCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy     User                @relation("ReceiptCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy   User?               @relation("ReceiptCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  allocations   ReceiptAllocation[]
+
+  @@index([branchId, receiptDate])
+  @@index([customerId])
+  @@map("receipts")
+}
+
+/// Part of a receipt applied to one invoice, in their shared currency. `relievedUsd` is the USD
+/// carrying value of the invoice it cleared, at the invoice rate; the difference from the
+/// receipt's USD value is the realized exchange difference.
+model ReceiptAllocation {
+  id          String  @id @default(uuid()) @db.Uuid
+  receiptId   String  @map("receipt_id") @db.Uuid
+  invoiceId   String  @map("invoice_id") @db.Uuid
+  amount      Decimal @db.Decimal(18, 4)
+  relievedUsd Decimal @map("relieved_usd") @db.Decimal(18, 4)
+
+  receipt Receipt         @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  invoice CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, invoiceId])
+  @@index([invoiceId])
+  @@map("receipt_allocations")
 }
