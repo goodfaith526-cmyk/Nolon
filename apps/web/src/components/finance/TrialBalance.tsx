@@ -10,12 +10,14 @@ import { todayString } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { Money } from './common';
+import { ReportPrintHead } from './reports/ReportKit';
 
 /** Trial balance in USD, as of a date, for one branch or all the user may see. */
 export function TrialBalance() {
   const t = useTranslations('TrialBalance');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Print');
   const me = useMe();
   const locale = useLocale();
   const name = useLocalName();
@@ -37,6 +39,8 @@ export function TrialBalance() {
 
   useEffect(load, [load]);
 
+  const shownBranch = me.branches.find((b) => b.id === filter.branchId);
+
   if (!can(me, 'financial_reports:view')) return <p className="error">{tc('noAccess')}</p>;
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -47,20 +51,34 @@ export function TrialBalance() {
   }
 
   return (
-    <section className="stack">
+    <section className="stack report">
       <div className="row">
         <h1>{t('title')}</h1>
-        <a
-          className="button"
-          href={`/api/v1/reports/trial-balance/export?asOf=${filter.asOf}${filter.branchId ? `&branchId=${filter.branchId}` : ''}&locale=${locale}`}
-          download
-        >
-          {t('exportExcel')}
-        </a>
+        <div className="actions report-actions">
+          <button type="button" onClick={() => window.print()}>
+            {tp('printPdf')}
+          </button>
+          <a
+            className="button"
+            href={`/api/v1/reports/trial-balance/export?asOf=${filter.asOf}${filter.branchId ? `&branchId=${filter.branchId}` : ''}&locale=${locale}`}
+            download
+          >
+            {t('exportExcel')}
+          </a>
+        </div>
       </div>
       <p className="muted">{t('hint')}</p>
+      <ReportPrintHead
+        entries={[
+          [t('asOf'), filter.asOf],
+          [
+            t('branch'),
+            shownBranch ? `${shownBranch.code} · ${name(shownBranch)}` : t('allBranches'),
+          ],
+        ]}
+      />
       <Notice notice={notice} />
-      <form className="row" onSubmit={onSubmit}>
+      <form className="row no-print" onSubmit={onSubmit}>
         <label className="field inline">
           {t('asOf')}
           <input type="date" name="asOf" required defaultValue={filter.asOf} />

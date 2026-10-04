@@ -5,7 +5,12 @@ import { CustomersModule } from '../customers/customers.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
-import { InvoicesController, ReceiptsController } from './billing.controller.js';
+import {
+  CustomerStatementsController,
+  InvoicesController,
+  ReceiptsController,
+} from './billing.controller.js';
+import { CustomerStatementService } from './customer-statement.service.js';
 import { BillingReportsService } from './billing-reports.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
@@ -19,8 +24,8 @@ import { ReceiptsService } from './receipts.service.js';
     QuotationsModule,
     ShipmentsModule,
   ],
-  controllers: [InvoicesController, ReceiptsController],
-  providers: [InvoicesService, ReceiptsService, BillingReportsService],
+  controllers: [InvoicesController, ReceiptsController, CustomerStatementsController],
+  providers: [InvoicesService, ReceiptsService, BillingReportsService, CustomerStatementService],
   exports: [BillingReportsService],
 })
 export class BillingModule {}

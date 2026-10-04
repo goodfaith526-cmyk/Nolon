@@ -147,6 +147,8 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       expect(s.services).toEqual(['MAIN_FREIGHT', 'CUSTOMS']);
       expect(s.consigneeId).toBe(customer.parties[0]?.id);
       expect(s.items).toHaveLength(1);
+      // Packages on the cargo lines, which the package labels number up to.
+      expect(s.packages).toBe(2);
       expect(s.items[0]).toMatchObject({
         containerTypeCode: '40HC',
         quantity: 2,

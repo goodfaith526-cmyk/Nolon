@@ -15,6 +15,7 @@ import {
   RECEIPT_STATUSES,
   type CustomerInvoiceDto,
   type CustomerInvoiceSummaryDto,
+  type CustomerStatementDto,
   type Page,
   type ReceiptDto,
   type ReceiptSummaryDto,
@@ -33,6 +34,7 @@ import {
   quantity,
   requiredText,
 } from '../common/validation.js';
+import { CustomerStatementService } from './customer-statement.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
@@ -78,6 +80,9 @@ const createReceiptBody = z
     notes: optionalText(2000),
     allocations: z.array(z.object({ invoiceId: z.uuid(), amount }).strict()).max(100),
   })
+  .strict();
+const statementQuery = z
+  .object({ from: dateString, to: dateString, branchId: z.uuid().optional() })
   .strict();
 const receiptListQuery = pageQuery.extend({
   status: z.enum(RECEIPT_STATUSES).optional(),
@@ -175,5 +180,21 @@ export class ReceiptsController {
     @Body() body: unknown,
   ): Promise<ReceiptDto> {
     return this.receipts.cancel(user, id, parse(reasonBody, body).reason);
+  }
+}
+
+@Controller('customer-statements')
+export class CustomerStatementsController {
+  constructor(private readonly statements: CustomerStatementService) {}
+
+  /** Statement of account: the customer's invoices and receipts (it shows both). */
+  @Get(':customerId')
+  @RequirePermission('customer_invoices:view', 'receipts:view')
+  get(
+    @CurrentUser() user: AuthUser,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+    @Query() query: unknown,
+  ): Promise<CustomerStatementDto> {
+    return this.statements.statement(user, { customerId, ...parse(statementQuery, query) });
   }
 }

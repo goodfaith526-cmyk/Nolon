@@ -43,6 +43,31 @@ export interface TripAccrual {
   balanceUsd: Decimal;
 }
 
+/** A customer's balance on its own accounts before a statement period, in one currency. */
+export interface CustomerOpening {
+  currency: string;
+  balance: Decimal;
+  balanceUsd: Decimal;
+}
+
+/** One posted entry's lines on a customer's own accounts, in one currency. */
+export interface CustomerMovement {
+  entryId: string;
+  number: string;
+  entryDate: string;
+  description: string;
+  source: JournalSource;
+  sourceId: string | null;
+  /** The source of the entry a reversal reverses (null for other entries). */
+  reversedSource: JournalSource | null;
+  reversedSourceId: string | null;
+  currency: string;
+  debit: Decimal;
+  credit: Decimal;
+  debitUsd: Decimal;
+  creditUsd: Decimal;
+}
+
 export interface Period {
   from: string;
   to: string;
@@ -637,6 +662,109 @@ export class LedgerReportsService {
       GROUP BY l."customer_id", c."name"
       HAVING sum(l."credit_usd" - l."debit_usd") <> 0`;
     return rows.map((r) => ({ ...r, amountUsd: dec(r.amountUsd) }));
+  }
+
+  /**
+   * Posted lines carrying the customer on its own accounts, in the report's branches: the
+   * receivable accounts its invoices were posted to (`receivableAccountIds`, which billing keeps),
+   * the accounts mapped to RECEIVABLE and CUSTOMER_ADVANCES today, and the liability lines of
+   * receipt entries and their reversals (advances, wherever they were posted, as in
+   * `customerAdvances`). Lines dated before `from` are summed per currency (the opening); lines
+   * from `from` to `to` are summed per entry and currency, in date and entry-number order.
+   */
+  async customerAccountLines(
+    user: AuthUser,
+    q: {
+      customerId: string;
+      receivableAccountIds: readonly string[];
+      from: string;
+      to: string;
+      branchId?: string;
+    },
+  ): Promise<{ opening: CustomerOpening[]; movements: CustomerMovement[] }> {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return { opening: [], movements: [] };
+    const [receivable, advances] = await Promise.all([
+      this.mapped('RECEIVABLE'),
+      this.mapped('CUSTOMER_ADVANCES'),
+    ]);
+    const accountIds = [
+      ...new Set(
+        [...q.receivableAccountIds, receivable?.accountId, advances?.accountId].filter(
+          (id): id is string => id !== undefined,
+        ),
+      ),
+    ];
+    const onAccounts =
+      accountIds.length === 0
+        ? Prisma.sql`FALSE`
+        : Prisma.sql`l."account_id" IN (${Prisma.join(accountIds.map((id) => Prisma.sql`${id}::uuid`))})`;
+    const customerLines = Prisma.sql`
+      FROM "journal_lines" l
+      JOIN "journal_entries" e ON e."id" = l."entry_id"
+      LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+      JOIN "accounts" a ON a."id" = l."account_id"
+      WHERE e."status" = 'POSTED'
+        AND l."customer_id" = ${q.customerId}::uuid
+        AND (${onAccounts}
+             OR ((e."source" = 'RECEIPT' OR o."source" = 'RECEIPT') AND a."type" = 'LIABILITY'))
+        AND ${lineBranchIn(branchIds)}`;
+    const [opening, movements] = await Promise.all([
+      this.prisma.$queryRaw<
+        { currency: string; balance: Decimal; balanceUsd: Decimal }[]
+      >`SELECT l."currency", sum(l."debit" - l."credit") AS "balance",
+               sum(l."debit_usd" - l."credit_usd") AS "balanceUsd"
+        ${customerLines}
+          AND e."entry_date" < ${toDbDate(q.from)}
+        GROUP BY l."currency"`,
+      this.prisma.$queryRaw<
+        {
+          entryId: string;
+          number: string;
+          entryDate: Date;
+          description: string;
+          source: JournalSource;
+          sourceId: string | null;
+          reversedSource: JournalSource | null;
+          reversedSourceId: string | null;
+          currency: string;
+          debit: Decimal;
+          credit: Decimal;
+          debitUsd: Decimal;
+          creditUsd: Decimal;
+        }[]
+      >`SELECT e."id" AS "entryId", e."number", e."entry_date" AS "entryDate", e."description",
+               e."source", e."source_id" AS "sourceId", o."source" AS "reversedSource",
+               o."source_id" AS "reversedSourceId", l."currency",
+               sum(l."debit") AS "debit", sum(l."credit") AS "credit",
+               sum(l."debit_usd") AS "debitUsd", sum(l."credit_usd") AS "creditUsd"
+        ${customerLines}
+          AND e."entry_date" BETWEEN ${toDbDate(q.from)} AND ${toDbDate(q.to)}
+        GROUP BY e."id", o."id", l."currency"
+        ORDER BY e."entry_date", e."number", l."currency"`,
+    ]);
+    return {
+      opening: opening.map((r) => ({
+        currency: r.currency,
+        balance: dec(r.balance),
+        balanceUsd: dec(r.balanceUsd),
+      })),
+      movements: movements.map((r) => ({
+        entryId: r.entryId,
+        number: r.number,
+        entryDate: fromDbDate(r.entryDate),
+        description: r.description,
+        source: r.source,
+        sourceId: r.sourceId,
+        reversedSource: r.reversedSource,
+        reversedSourceId: r.reversedSourceId,
+        currency: r.currency,
+        debit: dec(r.debit),
+        credit: dec(r.credit),
+        debitUsd: dec(r.debitUsd),
+        creditUsd: dec(r.creditUsd),
+      })),
+    };
   }
 
   /**

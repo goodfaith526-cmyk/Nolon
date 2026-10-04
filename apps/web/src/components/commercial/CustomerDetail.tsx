@@ -9,12 +9,14 @@ import { useLocalName } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
+import { PrintLink } from '../print/PrintLink';
 
 type Mode = 'view' | 'edit' | 'contact' | 'party';
 
 export function CustomerDetail({ id }: { id: string }) {
   const t = useTranslations('Customers');
   const tc = useTranslations('Common');
+  const tp = useTranslations('Print');
   const me = useMe();
   const name = useLocalName();
   const failure = useFailureText();
@@ -95,23 +97,33 @@ export function CustomerDetail({ id }: { id: string }) {
             {customer.number}
           </span>
         </h1>
-        {canEdit && mode === 'view' && (
+        {mode === 'view' && (
           <div className="actions">
-            <button type="button" onClick={() => setMode('edit')}>
-              {tc('edit')}
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                void post(
-                  `/customers/${customer.id}/${customer.isActive ? 'deactivate' : 'activate'}`,
-                  undefined,
-                  tc('saved'),
-                )
-              }
-            >
-              {customer.isActive ? tc('deactivate') : tc('activate')}
-            </button>
+            {can(me, 'customer_invoices:view') && can(me, 'receipts:view') && (
+              <PrintLink
+                href={`/customers/${customer.id}/statement`}
+                label={tp('printStatement')}
+              />
+            )}
+            {canEdit && (
+              <>
+                <button type="button" onClick={() => setMode('edit')}>
+                  {tc('edit')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void post(
+                      `/customers/${customer.id}/${customer.isActive ? 'deactivate' : 'activate'}`,
+                      undefined,
+                      tc('saved'),
+                    )
+                  }
+                >
+                  {customer.isActive ? tc('deactivate') : tc('activate')}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

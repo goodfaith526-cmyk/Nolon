@@ -166,9 +166,10 @@ const NAV_SECTIONS: readonly {
   },
 ];
 
-const MeContext = createContext<AuthMeResponse | null>(null);
+/** The signed-in user; provided by StaffShell and by the printouts' PrintShell. */
+export const MeContext = createContext<AuthMeResponse | null>(null);
 
-/** The signed-in user, as /auth/me returned it. Only inside StaffShell. */
+/** The signed-in user, as /auth/me returned it. Only inside StaffShell or PrintShell. */
 export function useMe(): AuthMeResponse {
   const me = use(MeContext);
   if (!me) throw new Error('useMe outside StaffShell');

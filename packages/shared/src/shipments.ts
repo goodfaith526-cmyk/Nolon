@@ -164,6 +164,8 @@ export interface ShipmentDto extends ShipmentSummaryDto {
   etd: DateString | null;
   trackingToken: string;
   closedAt: string | null;
+  /** Packages on all cargo lines (the sum of their quantities): what the labels number up to. */
+  packages: number;
   items: ShipmentItemDto[];
   containers: ShipmentContainerDto[];
   events: ShipmentEventDto[];

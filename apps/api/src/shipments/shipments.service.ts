@@ -869,6 +869,7 @@ export class ShipmentsService {
       etd: fromDbDateOrNull(s.etd),
       trackingToken: s.trackingToken,
       closedAt: s.closedAt?.toISOString() ?? null,
+      packages: s.items.reduce((n, i) => n + i.quantity, 0),
       items: s.items.map((i) => ({
         lineNo: i.lineNo,
         cargoType: i.cargoType,

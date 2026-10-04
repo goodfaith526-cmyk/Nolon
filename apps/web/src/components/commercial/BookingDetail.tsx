@@ -9,6 +9,7 @@ import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
+import { PrintLink } from '../print/PrintLink';
 
 export function BookingDetail({ id }: { id: string }) {
   const t = useTranslations('Bookings');
@@ -69,6 +70,7 @@ export function BookingDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       <div className="actions">
+        <PrintLink href={`/bookings/${id}`} />
         {status === 'DRAFT' && can(me, 'bookings:update') && (
           <Link href={`/bookings/${id}/edit`} className="button">
             {tc('edit')}
