@@ -198,6 +198,23 @@ export class AccountsService {
     return account;
   }
 
+  /** Active cash and bank accounts a document of `branchId` may use (the branch's or shared). */
+  async cashAccountsFor(
+    branchId: string,
+  ): Promise<{ id: string; code: string; nameEn: string; nameAr: string; currency: string }[]> {
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        isCash: true,
+        isActive: true,
+        isPostable: true,
+        OR: [{ branchId: null }, { branchId }],
+      },
+      orderBy: { code: 'asc' },
+      select: { id: true, code: true, nameEn: true, nameAr: true, currency: true },
+    });
+    return accounts.flatMap((a) => (a.currency ? [{ ...a, currency: a.currency }] : []));
+  }
+
   /**
    * Accounts mapped to a control role, plus every receivable account an approved invoice was
    * posted to (it is still cleared there after a remap): documents post there, manual entries not.

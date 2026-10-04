@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { isCurrencyCodeFormat, type CurrencyCode } from '@nolon/shared';
-import type { Currency } from '../generated/prisma/client.js';
+import type { Currency, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
@@ -28,6 +28,35 @@ export class CurrenciesService {
     if (!currency?.isActive) {
       throw new BadRequestException(`Unknown or inactive currency: ${code}`);
     }
+    return currency;
+  }
+
+  /**
+   * Like requireActive, inside the caller's transaction with the currency row share-locked: a
+   * concurrent deactivation either commits first and is seen here, or waits for the caller.
+   */
+  async requireActiveInTx(tx: Prisma.TransactionClient, code: CurrencyCode): Promise<Currency> {
+    if (isCurrencyCodeFormat(code)) {
+      await tx.$queryRaw`SELECT 1 FROM "currencies" WHERE "code" = ${code} FOR SHARE`;
+    }
+    const currency = isCurrencyCodeFormat(code)
+      ? await tx.currency.findUnique({ where: { code } })
+      : null;
+    if (!currency?.isActive) {
+      throw new BadRequestException(`Unknown or inactive currency: ${code}`);
+    }
+    return currency;
+  }
+
+  /**
+   * A currency an amount was already recorded in, active or not: settling or posting that amount
+   * later must not depend on whether the currency is still offered for new documents.
+   */
+  async requireRecorded(code: CurrencyCode): Promise<Currency> {
+    const currency = isCurrencyCodeFormat(code)
+      ? await this.prisma.currency.findUnique({ where: { code } })
+      : null;
+    if (!currency) throw new BadRequestException(`Unknown currency: ${code}`);
     return currency;
   }
 }

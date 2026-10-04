@@ -19,6 +19,7 @@ import { ShipmentInvoices } from '../finance/ShipmentInvoices';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { ShipmentContainers } from './ShipmentContainers';
+import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
 
@@ -448,6 +449,8 @@ export function ShipmentDetail({ id }: { id: string }) {
       </div>
 
       <ShipmentContainers shipment={s} onChange={setShipment} />
+      {can(me, 'transport_trips:view') && <ShipmentTrips shipmentId={s.id} />}
+      {can(me, 'pod:view') && <ShipmentPods shipment={s} onShipmentChanged={load} />}
       {can(me, 'warehouse:view') && <ShipmentWarehouse shipment={s} onShipmentChanged={load} />}
       {can(me, 'customs:view') && <ShipmentCustoms shipment={s} onShipmentChange={setShipment} />}
       {can(me, 'documents:view') && <ShipmentDocuments shipmentId={s.id} />}

@@ -63,6 +63,14 @@ model Branch {
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
 
+  vehicles     Vehicle[]
+  drivers      Driver[]
+  trips        Trip[]
+  tripLinks    TripShipment[]
+  tripExpenses TripExpense[]
+  pods         ProofOfDelivery[]
+  podPhotos    PodPhoto[]
+
   @@map("branches")
 }
 
@@ -93,6 +101,8 @@ model Currency {
   invoices             CustomerInvoice[]
   receipts             Receipt[]
   customsFees          CustomsFee[]
+  trips                Trip[]
+  tripExpenses         TripExpense[]
 
   @@map("currencies")
 }
@@ -154,6 +164,12 @@ model User {
   warehouseMovements WarehouseMovement[] @relation("WarehouseMovementCreatedBy")
   customsUpdated     CustomsClearance[]  @relation("CustomsUpdatedBy")
   customsFeesCreated CustomsFee[]        @relation("CustomsFeeCreatedBy")
+
+  driverProfile         Driver?
+  tripsCreated          Trip[]            @relation("TripCreatedBy")
+  tripExpensesCreated   TripExpense[]     @relation("TripExpenseCreatedBy")
+  tripExpensesCancelled TripExpense[]     @relation("TripExpenseCancelledBy")
+  podsCreated           ProofOfDelivery[] @relation("PodCreatedBy")
 
   @@map("users")
 }
@@ -256,6 +272,8 @@ model Location {
   shipmentsTo    Shipment[]      @relation("ShipmentDestination")
   shipmentsAt    Shipment[]      @relation("ShipmentCurrentLocation")
   events         ShipmentEvent[]
+  tripsFrom      Trip[]          @relation("TripOrigin")
+  tripsTo        Trip[]          @relation("TripDestination")
 
   @@map("locations")
 }
@@ -766,6 +784,8 @@ model Shipment {
   movements       WarehouseMovement[]
   customs         CustomsClearance?
   customsFees     CustomsFee[]
+  tripLinks       TripShipment[]
+  pods            ProofOfDelivery[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -890,6 +910,8 @@ model Document {
   deletedBy  User?                   @relation("DocumentDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
   content    DocumentContent?
   movement   WarehouseMovementPhoto?
+  podSigned  ProofOfDelivery?        @relation("PodSignature")
+  podPhoto   PodPhoto?
 
   @@index([shipmentId])
   @@index([branchId])
@@ -949,7 +971,8 @@ model Account {
   chargeTypes  ChargeTypePosting[]
   journalLines JournalLine[]
   receipts     Receipt[]
-  invoices     CustomerInvoice[] @relation("InvoiceReceivable")
+  invoices     CustomerInvoice[]   @relation("InvoiceReceivable")
+  tripExpenses TripExpense[]
 
   @@map("accounts")
 }
@@ -1052,6 +1075,8 @@ enum JournalSource {
   CUSTOMER_INVOICE
   RECEIPT
   REVERSAL
+  TRIP_EXPENSE
+  TRIP_ACCRUAL
 
   @@map("journal_source")
 }
@@ -1078,16 +1103,19 @@ model JournalEntry {
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch        Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  period        FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  reversalOf    JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy    JournalEntry?    @relation("JournalReversal")
-  createdBy     User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  postedBy      User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
-  lines         JournalLine[]
-  invoice       CustomerInvoice? @relation("InvoiceJournal")
-  receipt       Receipt?         @relation("ReceiptJournal")
-  receiptCancel Receipt?         @relation("ReceiptCancelJournal")
+  branch            Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  period            FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  reversalOf        JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy        JournalEntry?    @relation("JournalReversal")
+  createdBy         User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedBy          User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  lines             JournalLine[]
+  invoice           CustomerInvoice? @relation("InvoiceJournal")
+  receipt           Receipt?         @relation("ReceiptJournal")
+  receiptCancel     Receipt?         @relation("ReceiptCancelJournal")
+  tripExpense       TripExpense?     @relation("TripExpenseJournal")
+  tripExpenseCancel TripExpense?     @relation("TripExpenseCancelJournal")
+  tripAccrual       Trip?            @relation("TripAccrualJournal")
 
   @@index([branchId, entryDate])
   @@index([source, sourceId])
@@ -1140,45 +1168,45 @@ enum InvoiceStatus {
 /// gives it its number; a draft has none. Paid amounts are kept in the invoice currency and as
 /// the USD carrying value already relieved, so the last payment clears the balance exactly.
 model CustomerInvoice {
-  id             String        @id @default(uuid()) @db.Uuid
+  id                  String        @id @default(uuid()) @db.Uuid
   /// NOL-INV-2026-000001, set on approval.
-  number         String?       @unique @db.VarChar(30)
-  branchId       String        @map("branch_id") @db.Uuid
-  customerId     String        @map("customer_id") @db.Uuid
-  shipmentId     String        @map("shipment_id") @db.Uuid
-  currency       String        @db.Char(3)
+  number              String?       @unique @db.VarChar(30)
+  branchId            String        @map("branch_id") @db.Uuid
+  customerId          String        @map("customer_id") @db.Uuid
+  shipmentId          String        @map("shipment_id") @db.Uuid
+  currency            String        @db.Char(3)
   /// Units of `currency` per 1 USD on the invoice date.
-  fxRate         Decimal       @map("fx_rate") @db.Decimal(18, 8)
-  invoiceDate    DateTime      @map("invoice_date") @db.Date
-  dueDate        DateTime      @map("due_date") @db.Date
-  status         InvoiceStatus @default(DRAFT)
-  total          Decimal       @default(0) @db.Decimal(18, 4)
-  totalUsd       Decimal       @default(0) @map("total_usd") @db.Decimal(18, 4)
-  paidAmount     Decimal       @default(0) @map("paid_amount") @db.Decimal(18, 4)
-  paidUsd        Decimal       @default(0) @map("paid_usd") @db.Decimal(18, 4)
-  notes          String?
-  journalEntryId String?       @unique @map("journal_entry_id") @db.Uuid
+  fxRate              Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  invoiceDate         DateTime      @map("invoice_date") @db.Date
+  dueDate             DateTime      @map("due_date") @db.Date
+  status              InvoiceStatus @default(DRAFT)
+  total               Decimal       @default(0) @db.Decimal(18, 4)
+  totalUsd            Decimal       @default(0) @map("total_usd") @db.Decimal(18, 4)
+  paidAmount          Decimal       @default(0) @map("paid_amount") @db.Decimal(18, 4)
+  paidUsd             Decimal       @default(0) @map("paid_usd") @db.Decimal(18, 4)
+  notes               String?
+  journalEntryId      String?       @unique @map("journal_entry_id") @db.Uuid
   /// The receivable account debited on approval; receipts clear the invoice there, even after
   /// the RECEIVABLE role is remapped.
-  receivableAccountId String?   @map("receivable_account_id") @db.Uuid
-  createdById    String        @map("created_by_id") @db.Uuid
-  approvedById   String?       @map("approved_by_id") @db.Uuid
-  approvedAt     DateTime?     @map("approved_at") @db.Timestamptz(3)
-  cancelReason   String?       @map("cancel_reason")
-  cancelledAt    DateTime?     @map("cancelled_at") @db.Timestamptz(3)
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  receivableAccountId String?       @map("receivable_account_id") @db.Uuid
+  createdById         String        @map("created_by_id") @db.Uuid
+  approvedById        String?       @map("approved_by_id") @db.Uuid
+  approvedAt          DateTime?     @map("approved_at") @db.Timestamptz(3)
+  cancelReason        String?       @map("cancel_reason")
+  cancelledAt         DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch       Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  shipment     Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  currencyRef  Currency              @relation(fields: [currency], references: [code], onDelete: Restrict)
-  journalEntry JournalEntry?         @relation("InvoiceJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
-  receivableAccount Account?         @relation("InvoiceReceivable", fields: [receivableAccountId], references: [id], onDelete: Restrict)
-  createdBy    User                  @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  approvedBy   User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  lines        CustomerInvoiceLine[]
-  allocations  ReceiptAllocation[]
+  branch            Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer          Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  shipment          Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  currencyRef       Currency              @relation(fields: [currency], references: [code], onDelete: Restrict)
+  journalEntry      JournalEntry?         @relation("InvoiceJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  receivableAccount Account?              @relation("InvoiceReceivable", fields: [receivableAccountId], references: [id], onDelete: Restrict)
+  createdBy         User                  @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy        User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  lines             CustomerInvoiceLine[]
+  allocations       ReceiptAllocation[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -1456,4 +1484,237 @@ model CustomsFee {
   @@index([shipmentId])
   @@index([branchId])
   @@map("customs_fees")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Inland transport (scope 12): fleet, trips, trip costs, proof of delivery
+// ---------------------------------------------------------------------------------------------
+
+/// An owned vehicle of a branch.
+model Vehicle {
+  id          String   @id @default(uuid()) @db.Uuid
+  branchId    String   @map("branch_id") @db.Uuid
+  /// Stored upper-cased and trimmed.
+  plateNumber String   @unique @map("plate_number") @db.VarChar(30)
+  /// Free text the client extends (flatbed, 40ft trailer...).
+  vehicleType String   @map("vehicle_type") @db.VarChar(100)
+  capacityKg  Decimal? @map("capacity_kg") @db.Decimal(12, 3)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  trips  Trip[]
+
+  @@index([branchId])
+  @@map("vehicles")
+}
+
+/// A driver of a branch, optionally linked to the user account (DRIVER role) that sees their trips.
+model Driver {
+  id            String   @id @default(uuid()) @db.Uuid
+  branchId      String   @map("branch_id") @db.Uuid
+  name          String   @db.VarChar(200)
+  phone         String?  @db.VarChar(20)
+  licenseNumber String?  @map("license_number") @db.VarChar(50)
+  userId        String?  @unique @map("user_id") @db.Uuid
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  trips  Trip[]
+
+  @@index([branchId])
+  @@map("drivers")
+}
+
+/// External carrier (hired trucks). Master data shared by all branches.
+model Carrier {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(200)
+  phone     String?  @db.VarChar(20)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  trips Trip[]
+
+  @@map("carriers")
+}
+
+enum TripKind {
+  OWN
+  EXTERNAL
+
+  @@map("trip_kind")
+}
+
+enum TripStatus {
+  PLANNED
+  DEPARTED
+  ARRIVED
+  COMPLETED
+  CANCELLED
+
+  @@map("trip_status")
+}
+
+model Trip {
+  id                    String     @id @default(uuid()) @db.Uuid
+  /// NOL-TRP-2026-000001
+  number                String     @unique @db.VarChar(30)
+  branchId              String     @map("branch_id") @db.Uuid
+  kind                  TripKind
+  status                TripStatus @default(PLANNED)
+  originLocationId      String     @map("origin_location_id") @db.Uuid
+  destinationLocationId String     @map("destination_location_id") @db.Uuid
+  plannedDeparture      DateTime?  @map("planned_departure") @db.Timestamptz(3)
+  plannedArrival        DateTime?  @map("planned_arrival") @db.Timestamptz(3)
+  actualDeparture       DateTime?  @map("actual_departure") @db.Timestamptz(3)
+  actualArrival         DateTime?  @map("actual_arrival") @db.Timestamptz(3)
+  completedAt           DateTime?  @map("completed_at") @db.Timestamptz(3)
+  /// Own trips.
+  vehicleId             String?    @map("vehicle_id") @db.Uuid
+  driverId              String?    @map("driver_id") @db.Uuid
+  /// External trips: the carrier, the agreed cost and the truck and driver as written.
+  carrierId             String?    @map("carrier_id") @db.Uuid
+  agreedCost            Decimal?   @map("agreed_cost") @db.Decimal(18, 4)
+  currency              String?    @db.Char(3)
+  externalVehicle       String?    @map("external_vehicle") @db.VarChar(100)
+  externalDriver        String?    @map("external_driver") @db.VarChar(200)
+  /// Rule 11: the accrual posted when the external trip is completed.
+  accrualEntryId        String?    @unique @map("accrual_entry_id") @db.Uuid
+  notes                 String?
+  cancelReason          String?    @map("cancel_reason")
+  cancelledAt           DateTime?  @map("cancelled_at") @db.Timestamptz(3)
+  createdById           String     @map("created_by_id") @db.Uuid
+  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch       Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin       Location          @relation("TripOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination  Location          @relation("TripDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  vehicle      Vehicle?          @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driver       Driver?           @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  carrier      Carrier?          @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  currencyRef  Currency?         @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  accrualEntry JournalEntry?     @relation("TripAccrualJournal", fields: [accrualEntryId], references: [id], onDelete: Restrict)
+  createdBy    User              @relation("TripCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  shipments    TripShipment[]
+  expenses     TripExpense[]
+  pods         ProofOfDelivery[]
+
+  @@index([branchId, status])
+  @@index([driverId])
+  @@map("trips")
+}
+
+/// A shipment carried on a trip (one road leg of the shipment).
+model TripShipment {
+  tripId     String   @map("trip_id") @db.Uuid
+  shipmentId String   @map("shipment_id") @db.Uuid
+  /// The trip's branch.
+  branchId   String   @map("branch_id") @db.Uuid
+  addedAt    DateTime @default(now()) @map("added_at") @db.Timestamptz(3)
+
+  trip     Trip     @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([tripId, shipmentId])
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("trip_shipments")
+}
+
+enum TripExpenseStatus {
+  POSTED
+  CANCELLED
+
+  @@map("trip_expense_status")
+}
+
+/// Rule 10: an expense of an own-vehicle trip, paid from a cash or bank account.
+model TripExpense {
+  id                   String            @id @default(uuid()) @db.Uuid
+  /// NOL-TEX-2026-000001
+  number               String            @unique @db.VarChar(30)
+  branchId             String            @map("branch_id") @db.Uuid
+  tripId               String            @map("trip_id") @db.Uuid
+  expenseDate          DateTime          @map("expense_date") @db.Date
+  description          String            @db.VarChar(200)
+  amount               Decimal           @db.Decimal(18, 4)
+  currency             String            @db.Char(3)
+  fxRate               Decimal           @map("fx_rate") @db.Decimal(18, 8)
+  cashAccountId        String            @map("cash_account_id") @db.Uuid
+  status               TripExpenseStatus @default(POSTED)
+  journalEntryId       String            @unique @map("journal_entry_id") @db.Uuid
+  cancelJournalEntryId String?           @unique @map("cancel_journal_entry_id") @db.Uuid
+  cancelReason         String?           @map("cancel_reason")
+  cancelledAt          DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById        String?           @map("cancelled_by_id") @db.Uuid
+  createdById          String            @map("created_by_id") @db.Uuid
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  trip          Trip          @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  currencyRef   Currency      @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  cashAccount   Account       @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry  @relation("TripExpenseJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal JournalEntry? @relation("TripExpenseCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy     User          @relation("TripExpenseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy   User?         @relation("TripExpenseCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  @@index([tripId])
+  @@index([branchId])
+  @@map("trip_expenses")
+}
+
+/// Proof of delivery: one per delivery (or partial delivery batch) of a shipment.
+model ProofOfDelivery {
+  id                  String          @id @default(uuid()) @db.Uuid
+  /// NOL-POD-2026-000001
+  number              String          @unique @db.VarChar(30)
+  /// The shipment's branch.
+  branchId            String          @map("branch_id") @db.Uuid
+  shipmentId          String          @map("shipment_id") @db.Uuid
+  tripId              String?         @map("trip_id") @db.Uuid
+  recipientName       String          @map("recipient_name") @db.VarChar(200)
+  recipientCapacity   String          @map("recipient_capacity") @db.VarChar(100)
+  deliveredAt         DateTime        @map("delivered_at") @db.Timestamptz(3)
+  packages            Int?
+  note                String?
+  statusApplied       ShipmentStatus? @map("status_applied")
+  /// The on-screen signature, a PNG shipment document of type POD.
+  signatureDocumentId String          @unique @map("signature_document_id") @db.Uuid
+  createdById         String          @map("created_by_id") @db.Uuid
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment  Shipment   @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  trip      Trip?      @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  signature Document   @relation("PodSignature", fields: [signatureDocumentId], references: [id], onDelete: Restrict)
+  createdBy User       @relation("PodCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  photos    PodPhoto[]
+
+  @@index([shipmentId])
+  @@index([tripId])
+  @@index([branchId])
+  @@map("proofs_of_delivery")
+}
+
+model PodPhoto {
+  podId      String @map("pod_id") @db.Uuid
+  documentId String @unique @map("document_id") @db.Uuid
+  branchId   String @map("branch_id") @db.Uuid
+
+  pod      ProofOfDelivery @relation(fields: [podId], references: [id], onDelete: Restrict)
+  document Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  branch   Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([podId, documentId])
+  @@index([branchId])
+  @@map("pod_photos")
 }

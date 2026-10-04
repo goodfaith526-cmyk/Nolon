@@ -51,6 +51,44 @@ function toSummary(user: UserRow): UserSummary {
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * For fleet master data: active users with the DRIVER role who work in one of `branchIds`, to
+   * link to a driver record.
+   */
+  driverUsers(
+    branchIds: readonly string[],
+  ): Promise<{ id: string; fullName: string; email: string }[]> {
+    return this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        roles: { some: { role: 'DRIVER' } },
+        branches: { some: { branchId: { in: [...branchIds] } } },
+      },
+      select: { id: true, fullName: true, email: true },
+      orderBy: { fullName: 'asc' },
+    });
+  }
+
+  /**
+   * 400 unless `id` is an active user with the DRIVER role who works in `branchId`: the user a
+   * driver record of that branch may be linked to.
+   */
+  async requireDriverUser(id: string, branchId: string): Promise<{ id: string; fullName: string }> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        isActive: true,
+        roles: { some: { role: 'DRIVER' } },
+        branches: { some: { branchId } },
+      },
+      select: { id: true, fullName: true },
+    });
+    if (!user) {
+      throw new BadRequestException('Link an active user with the Driver role in this branch');
+    }
+    return user;
+  }
+
   async list(): Promise<UserSummary[]> {
     const users = await this.prisma.user.findMany({
       include: USER_INCLUDE,

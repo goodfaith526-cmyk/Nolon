@@ -1,5 +1,6 @@
 import { BASE_CURRENCY } from '@nolon/shared';
 import { type Decimal, ZERO, dec, roundMoney } from '../common/money.js';
+import { Prisma } from '../generated/prisma/client.js';
 
 /**
  * Journal arithmetic, in one place (AGENTS.md rule 1: rounding is explicit and done once). Every
@@ -109,4 +110,39 @@ export function prepareLines(
 /** The lines of a reversing entry: same amounts and rates, sides swapped. */
 export function reverseLines(lines: readonly PreparedLine[]): PreparedLine[] {
   return lines.map((line) => ({ ...line, side: line.side === 'DEBIT' ? 'CREDIT' : 'DEBIT' }));
+}
+
+/**
+ * Splits `total` (in a currency with `decimalPlaces` minor units) in proportion to `weights`,
+ * exactly: each share is rounded down to the minor unit, and the units left over go one each to
+ * the largest remainders (the earlier share on a tie). The shares always add up to `total`. With
+ * no positive weight, the total is split equally.
+ */
+export function splitAmount(
+  total: Decimal,
+  weights: readonly Decimal[],
+  decimalPlaces: number,
+): Decimal[] {
+  if (weights.length === 0) throw new InvalidLineError('Nothing to split the amount over');
+  if (total.lt(0)) throw new InvalidLineError('Only a positive amount is split');
+  if (weights.some((w) => w.lt(0))) throw new InvalidLineError('Split weights cannot be negative');
+  if (!roundMoney(total, decimalPlaces).eq(total)) {
+    throw new InvalidLineError('The amount to split has more decimals than its currency');
+  }
+  const sum = weights.reduce((acc, w) => acc.plus(w), ZERO);
+  const basis = sum.gt(0) ? weights : weights.map(() => dec(1));
+  const basisSum = sum.gt(0) ? sum : dec(weights.length);
+  const exact = basis.map((w) => total.times(w).div(basisSum));
+  const shares = exact.map((x) => x.toDecimalPlaces(decimalPlaces, Prisma.Decimal.ROUND_DOWN));
+  const unit = dec(1).div(dec(10).pow(decimalPlaces));
+  let left = total.minus(shares.reduce((acc, x) => acc.plus(x), ZERO));
+  const byRemainder = exact
+    .map((x, index) => ({ index, remainder: x.minus(shares[index] ?? ZERO) }))
+    .sort((a, b) => b.remainder.comparedTo(a.remainder) || a.index - b.index);
+  for (const { index } of byRemainder) {
+    if (!left.gt(0)) break;
+    shares[index] = (shares[index] ?? ZERO).plus(unit);
+    left = left.minus(unit);
+  }
+  return shares;
 }

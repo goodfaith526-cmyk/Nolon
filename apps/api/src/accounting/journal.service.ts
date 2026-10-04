@@ -64,6 +64,9 @@ const details = {
   invoice: { select: { number: true } },
   receipt: { select: { number: true } },
   receiptCancel: { select: { number: true } },
+  tripExpense: { select: { number: true } },
+  tripExpenseCancel: { select: { number: true } },
+  tripAccrual: { select: { number: true } },
 } satisfies Prisma.JournalEntryInclude;
 
 type EntryWithDetails = Prisma.JournalEntryGetPayload<{ include: typeof details }>;
@@ -308,7 +311,14 @@ function toDto(e: EntryWithDetails, user: AuthUser): JournalEntryDto {
   const can = (p: 'update' | 'approve' | 'cancel') => user.permissions.has(`manual_journals:${p}`);
   return {
     ...toSummary(e, e.lines, e.reversedBy?.id ?? null),
-    sourceNumber: e.invoice?.number ?? e.receipt?.number ?? e.receiptCancel?.number ?? null,
+    sourceNumber:
+      e.invoice?.number ??
+      e.receipt?.number ??
+      e.receiptCancel?.number ??
+      e.tripExpense?.number ??
+      e.tripExpenseCancel?.number ??
+      e.tripAccrual?.number ??
+      null,
     reversalOfNumber: e.reversalOf?.number ?? null,
     reversedByNumber: e.reversedBy?.number ?? null,
     createdByName: e.createdBy.fullName,
