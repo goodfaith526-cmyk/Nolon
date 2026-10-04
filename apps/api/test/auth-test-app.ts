@@ -86,13 +86,17 @@ export async function branchId(prisma: PrismaService, code: string): Promise<str
   return branch.id;
 }
 
-/** Creates an active user with the given roles and branch codes; returns id and email. */
+/**
+ * Creates an active user with the given roles and branch codes; returns id and email. Users with
+ * the default prefix are deleted by deleteTestUsers; LEDGER_PREFIX users are kept (see there).
+ */
 export async function createUser(
   prisma: PrismaService,
   roles: Role[],
   branchCodes: string[] = [],
+  prefix = 'it-',
 ): Promise<{ id: string; email: string }> {
-  const email = `it-${randomUUID()}@nolon.test`;
+  const email = `${prefix}${randomUUID()}@nolon.test`;
   const branchIds = await Promise.all(branchCodes.map((code) => branchId(prisma, code)));
   const user = await prisma.user.create({
     data: {
@@ -105,6 +109,13 @@ export async function createUser(
   });
   return { id: user.id, email };
 }
+
+/**
+ * Prefix for users of the accounting tests. Their posted journal entries can never be deleted
+ * (AGENTS.md rule 3), so neither can the users, customers and shipments those entries reference:
+ * they stay in the test database, outside what the other suites clean up.
+ */
+export const LEDGER_PREFIX = 'ledger-it-';
 
 export async function deleteTestUsers(prisma: PrismaService): Promise<void> {
   await prisma.user.deleteMany({ where: { email: { startsWith: 'it-' } } });

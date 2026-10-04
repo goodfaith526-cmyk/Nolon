@@ -1,0 +1,112 @@
+import { BASE_CURRENCY } from '@nolon/shared';
+import { type Decimal, ZERO, dec, roundMoney } from '../common/money.js';
+
+/**
+ * Journal arithmetic, in one place (AGENTS.md rule 1: rounding is explicit and done once). Every
+ * line is converted to USD, the reporting currency, rounded to cents; an entry balances when its
+ * USD debits equal its USD credits. The few cents that per-line rounding leaves are booked to the
+ * rounding account; anything larger is an unbalanced entry.
+ */
+
+/** USD minor units. */
+export const USD_DECIMALS = 2;
+
+/** Per line, the most that rounding to cents can leave: one cent. */
+const ROUNDING_PER_LINE = dec('0.01');
+
+export type Side = 'DEBIT' | 'CREDIT';
+
+export interface LineSpec {
+  accountId: string;
+  branchId: string;
+  currency: string;
+  /** Units of `currency` per 1 USD; 1 for USD. */
+  fxRate: Decimal;
+  side: Side;
+  /** In `currency`, already rounded to its minor units. Positive. */
+  amount: Decimal;
+  /** Set when the USD value is not amount / rate, e.g. the receivable a payment clears. */
+  amountUsd?: Decimal;
+  shipmentId?: string | null;
+  customerId?: string | null;
+  description?: string | null;
+}
+
+export interface PreparedLine extends LineSpec {
+  amountUsd: Decimal;
+}
+
+export class UnbalancedEntryError extends Error {
+  constructor(
+    readonly debitUsd: Decimal,
+    readonly creditUsd: Decimal,
+  ) {
+    super(
+      `Entry is unbalanced: debit ${debitUsd.toFixed()} USD, credit ${creditUsd.toFixed()} USD`,
+    );
+  }
+}
+
+export class InvalidLineError extends Error {}
+
+export function toUsd(amount: Decimal, fxRate: Decimal, currency: string): Decimal {
+  if (currency === BASE_CURRENCY) return amount;
+  return roundMoney(amount.div(fxRate), USD_DECIMALS);
+}
+
+export function totals(lines: readonly PreparedLine[]): { debitUsd: Decimal; creditUsd: Decimal } {
+  let debitUsd = ZERO;
+  let creditUsd = ZERO;
+  for (const line of lines) {
+    if (line.side === 'DEBIT') debitUsd = debitUsd.plus(line.amountUsd);
+    else creditUsd = creditUsd.plus(line.amountUsd);
+  }
+  return { debitUsd, creditUsd };
+}
+
+/**
+ * Converts each line to USD and balances the entry. When USD debits and credits differ by no more
+ * than one cent per line, a line on the rounding account (in the entry's branch) takes up the
+ * difference; a larger difference throws UnbalancedEntryError.
+ */
+export function prepareLines(
+  lines: readonly LineSpec[],
+  rounding: { accountId: string; branchId: string },
+): PreparedLine[] {
+  if (lines.length < 2) throw new InvalidLineError('An entry needs at least two lines');
+  const prepared = lines.map((line): PreparedLine => {
+    if (!line.amount.gt(0)) throw new InvalidLineError('Line amounts must be positive');
+    if (!line.fxRate.gt(0)) throw new InvalidLineError('Exchange rates must be positive');
+    if (line.currency === BASE_CURRENCY && !line.fxRate.eq(1)) {
+      throw new InvalidLineError('USD lines have rate 1');
+    }
+    const amountUsd = line.amountUsd ?? toUsd(line.amount, line.fxRate, line.currency);
+    if (line.currency === BASE_CURRENCY && !amountUsd.eq(line.amount)) {
+      throw new InvalidLineError('A USD line has the same amount in USD');
+    }
+    if (amountUsd.lt(0)) throw new InvalidLineError('USD amounts cannot be negative');
+    return { ...line, amountUsd };
+  });
+  const { debitUsd, creditUsd } = totals(prepared);
+  const difference = debitUsd.minus(creditUsd);
+  if (difference.isZero()) return prepared;
+  if (difference.abs().gt(ROUNDING_PER_LINE.times(prepared.length))) {
+    throw new UnbalancedEntryError(debitUsd, creditUsd);
+  }
+  prepared.push({
+    accountId: rounding.accountId,
+    branchId: rounding.branchId,
+    currency: BASE_CURRENCY,
+    fxRate: dec(1),
+    side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
+    amount: difference.abs(),
+    amountUsd: difference.abs(),
+    description: 'Rounding',
+  });
+  return prepared;
+}
+
+/** The lines of a reversing entry: same amounts and rates, sides swapped. */
+export function reverseLines(lines: readonly PreparedLine[]): PreparedLine[] {
+  return lines.map((line) => ({ ...line, side: line.side === 'DEBIT' ? 'CREDIT' : 'DEBIT' }));
+}

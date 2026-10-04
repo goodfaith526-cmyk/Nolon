@@ -7,7 +7,16 @@ export function StatusBadge({
   kind,
   status,
 }: {
-  kind: 'rate' | 'quotation' | 'booking' | 'shipment';
+  kind:
+    | 'rate'
+    | 'quotation'
+    | 'booking'
+    | 'shipment'
+    | 'invoice'
+    | 'payment'
+    | 'journal'
+    | 'receipt'
+    | 'period';
   status: string;
 }) {
   const te = useTranslations('Enums');

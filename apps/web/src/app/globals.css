@@ -653,6 +653,28 @@ tr.inactive td {
   color: var(--bad);
 }
 
+/* Finance: posted and paid are green, partly paid is blue, unpaid is amber. Drafts and closed
+   periods stay neutral; cancelled is red through .badge-CANCELLED above. */
+.badge-POSTED,
+.badge-PAID,
+.badge-period.badge-OPEN,
+.badge-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-PARTIAL,
+.badge-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.badge-UNPAID,
+.badge-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 /* ---------------------------------------------------------------------------------------------
    Dashboard.
    --------------------------------------------------------------------------------------------- */
@@ -973,4 +995,59 @@ form.line.inset {
 .track-arrow {
   font-size: 1.5rem;
   color: var(--brand-orange);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Finance: amounts, totals, account tree.
+   --------------------------------------------------------------------------------------------- */
+
+td.nowrap {
+  white-space: nowrap;
+}
+
+.money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.panel-body {
+  margin: 0;
+  padding-block: 0.75rem;
+  padding-inline: 1rem;
+}
+
+.line .field.grow {
+  flex: 1 1 14rem;
+}
+
+.amount-input {
+  inline-size: 9rem;
+}
+
+tfoot th {
+  border-block-start: 2px solid var(--border);
+  color: var(--fg);
+  font-size: 0.9375rem;
+}
+
+.details.totals {
+  align-self: flex-end;
+  min-inline-size: min(22rem, 100%);
+}
+
+.tree-name {
+  display: inline-block;
+}
+
+.tree-name.heading {
+  font-weight: 600;
+}
+
+td .actions,
+.panel-head .actions {
+  flex-wrap: nowrap;
+}
+
+td select {
+  max-inline-size: 24rem;
 }

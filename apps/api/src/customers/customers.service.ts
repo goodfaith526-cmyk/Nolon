@@ -189,6 +189,13 @@ export class CustomersService {
    * For quotations and bookings: the customer must be in the user's branches (404 otherwise, so
    * other branches' customers are not revealed) and active (400).
    */
+  /** For other modules: 404 unless the customer is in one of the user's branches. */
+  async requireCustomer(user: AuthUser, id: string): Promise<Customer> {
+    const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    return customer;
+  }
+
   async requireActiveCustomer(user: AuthUser, id: string): Promise<Customer> {
     const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
     if (!customer) throw new NotFoundException('Customer not found');

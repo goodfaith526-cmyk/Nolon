@@ -14,6 +14,7 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
+import { ShipmentInvoices } from '../finance/ShipmentInvoices';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { ShipmentContainers } from './ShipmentContainers';
@@ -446,6 +447,7 @@ export function ShipmentDetail({ id }: { id: string }) {
 
       <ShipmentContainers shipment={s} onChange={setShipment} />
       {can(me, 'documents:view') && <ShipmentDocuments shipmentId={s.id} />}
+      {can(me, 'customer_invoices:view') && <ShipmentInvoices shipmentId={s.id} />}
     </section>
   );
 }
