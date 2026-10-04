@@ -4,10 +4,11 @@ import {
   type PodStatus,
   type ShipmentStatus,
   type TripMove,
+  type TripExpenseRequest,
   type TripStatus,
 } from '@nolon/shared';
 import { splitAmount } from '../accounting/journal-math.js';
-import { type Decimal, ZERO } from '../common/money.js';
+import { type Decimal, ZERO, dec } from '../common/money.js';
 
 /**
  * Inland transport rules (scope 12, annex B and annex C rules 10-11). Pure functions: the
@@ -187,4 +188,36 @@ export function podStatusOptions(transitions: readonly ShipmentStatus[]): PodSta
 export function defaultPodStatus(options: readonly PodStatus[]): PodStatus | null {
   if (options.includes('DELIVERED')) return 'DELIVERED';
   return options[0] ?? null;
+}
+
+/** A trip expense as stored, for comparing a repeated request with it. */
+export interface StoredExpenseRequest {
+  tripId: string;
+  expenseDate: string;
+  description: string;
+  amount: Decimal;
+  currency: string;
+  fxRate: Decimal;
+  cashAccountId: string;
+}
+
+/**
+ * Whether a request reusing an expense's request id is an exact retry of it: same trip, date,
+ * description, amount, currency and cash account, and the same rate when one was entered (a
+ * request without a rate took the table's rate, whatever the table says today).
+ */
+export function sameExpenseRequest(
+  stored: StoredExpenseRequest,
+  tripId: string,
+  input: TripExpenseRequest,
+): boolean {
+  return (
+    stored.tripId === tripId &&
+    stored.expenseDate === input.expenseDate &&
+    stored.description === input.description &&
+    stored.amount.eq(dec(input.amount)) &&
+    stored.currency === input.currency &&
+    stored.cashAccountId === input.cashAccountId &&
+    (input.fxRate === null || input.fxRate === undefined || stored.fxRate.eq(dec(input.fxRate)))
+  );
 }

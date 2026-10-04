@@ -1114,7 +1114,7 @@ describe('inland transport: trip costs in the books', () => {
     expect(accruals).toBe(1);
   });
 
-  it('an expense request sent twice posts once; its id cannot be reused on another trip', async () => {
+  it('an expense request sent twice posts once; its id cannot be reused for another expense', async () => {
     const a = await shipment('1', null);
     const trip = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: driver.id }, [
       a,
@@ -1149,6 +1149,12 @@ describe('inland transport: trip costs in the books', () => {
         where: { source: 'TRIP_EXPENSE', sourceId: expense.requestId },
       }),
     ).toBe(1);
+    // The same id with anything changed is refused, never answered with the first expense.
+    for (const change of [{ amount: '260' }, { description: 'Diesel' }, { fxRate: '610' }]) {
+      await post(`/trips/${trip.id}/expenses`, cookies.opsPts, { ...expense, ...change }).expect(
+        409,
+      );
+    }
     await post(`/trips/${other.id}/expenses`, cookies.opsPts, expense).expect(409);
     await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
       ...expense,

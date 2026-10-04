@@ -11,6 +11,7 @@ import {
   splitTripCost,
   tripMoves,
   tripTakesPod,
+  sameExpenseRequest,
 } from './transport-rules.js';
 
 const m = (shipmentId: string, cbm: string | null, kg: string | null) => ({
@@ -175,5 +176,45 @@ describe('tripTakesPod', () => {
     expect(tripTakesPod('DEPARTED')).toBe(true);
     expect(tripTakesPod('ARRIVED')).toBe(true);
     expect(tripTakesPod('COMPLETED')).toBe(true);
+  });
+});
+
+describe('sameExpenseRequest: an exact retry reuses its id, anything else does not', () => {
+  const stored = {
+    tripId: 'T',
+    expenseDate: '2026-04-02',
+    description: 'Fuel',
+    amount: dec('250'),
+    currency: 'SDG',
+    fxRate: dec('600'),
+    cashAccountId: 'C',
+  };
+  const input = {
+    requestId: 'R',
+    expenseDate: '2026-04-02',
+    description: 'Fuel',
+    amount: '250.00',
+    currency: 'SDG',
+    cashAccountId: 'C',
+  };
+
+  it('matches the same request, with or without the rate it used', () => {
+    expect(sameExpenseRequest(stored, 'T', input)).toBe(true);
+    expect(sameExpenseRequest(stored, 'T', { ...input, fxRate: null })).toBe(true);
+    expect(sameExpenseRequest(stored, 'T', { ...input, fxRate: '600.0' })).toBe(true);
+  });
+
+  it('refuses any changed field, or another trip', () => {
+    expect(sameExpenseRequest(stored, 'U', input)).toBe(false);
+    for (const change of [
+      { expenseDate: '2026-04-03' },
+      { description: 'Tolls' },
+      { amount: '251' },
+      { currency: 'USD' },
+      { cashAccountId: 'D' },
+      { fxRate: '610' },
+    ]) {
+      expect(sameExpenseRequest(stored, 'T', { ...input, ...change })).toBe(false);
+    }
   });
 });

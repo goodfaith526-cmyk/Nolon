@@ -9,7 +9,7 @@ import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { toDbDate, todayIn } from '../common/dates.js';
+import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dec, roundMoney } from '../common/money.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
@@ -18,7 +18,13 @@ import type { JournalEntry, Prisma, Trip } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { forbidDriverOnly, lockTrip, tripScope } from './trip-scope.js';
-import { type CostShare, measuresOf, splitTripCost, takesExpenses } from './transport-rules.js';
+import {
+  type CostShare,
+  measuresOf,
+  sameExpenseRequest,
+  splitTripCost,
+  takesExpenses,
+} from './transport-rules.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -97,22 +103,32 @@ export class TripCostsService {
       );
     }
     const expenseId = input.requestId;
-    const fxRate = await this.fxRates.resolve(input.currency, input.expenseDate, input.fxRate);
     try {
       await this.prisma.$transaction(async (tx) => {
         const trip = await lockTrip(tx, tripId);
         const done = await tx.tripExpense.findUnique({
           where: { id: expenseId },
-          select: { tripId: true },
+          select: {
+            tripId: true,
+            expenseDate: true,
+            description: true,
+            amount: true,
+            currency: true,
+            fxRate: true,
+            cashAccountId: true,
+          },
         });
         if (done) {
-          if (done.tripId !== tripId) throw duplicateRequest();
+          // An exact retry gets the first result; anything else reusing the id is refused.
+          const stored = { ...done, expenseDate: fromDbDate(done.expenseDate) };
+          if (!sameExpenseRequest(stored, tripId, input)) throw duplicateRequest();
           return;
         }
         if (!takesExpenses(trip.status)) {
           throw new ConflictException('A cancelled trip takes no expenses');
         }
         const currency = await this.currencies.requireActiveInTx(tx, input.currency);
+        const fxRate = await this.fxRates.resolve(currency.code, input.expenseDate, input.fxRate);
         const amount = dec(input.amount);
         if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
           throw new BadRequestException(
@@ -240,5 +256,7 @@ export class TripCostsService {
 }
 
 function duplicateRequest(): ConflictException {
-  return new ConflictException('This request id was already used for another expense');
+  return new ConflictException(
+    'This request id was already used for a different expense: send a new id for a new expense',
+  );
 }
