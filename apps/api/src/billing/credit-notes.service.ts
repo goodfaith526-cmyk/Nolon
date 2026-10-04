@@ -100,13 +100,16 @@ export class CreditNotesService {
 
   /**
    * A draft against an approved invoice of the user's branches. The client's `requestId` becomes
-   * the credit note's id, so a retry of the same request returns the first draft.
+   * the credit note's id, so an exact retry returns the first draft; anything else reusing the id
+   * is refused.
    */
   async create(user: AuthUser, input: CreateCreditNoteRequest): Promise<CreditNoteDto> {
     const invoice = await this.prisma.customerInvoice.findFirst({
       where: { id: input.invoiceId, ...branchScope(user) },
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
+    const done = await this.prisma.creditNote.findUnique({ where: { id: input.requestId } });
+    if (done) return this.retry(user, done, input);
     if (invoice.status !== 'APPROVED') {
       throw new ConflictException('Only an approved invoice takes a credit note');
     }
@@ -126,12 +129,34 @@ export class CreditNotesService {
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.prisma.creditNote.findUnique({ where: { id: input.requestId } });
-      if (existing?.invoiceId !== invoice.id || existing.createdById !== user.id) {
-        throw new ConflictException('This request id was already used: send a new id');
-      }
+      const raced = await this.prisma.creditNote.findUnique({ where: { id: input.requestId } });
+      if (!raced) throw error;
+      return this.retry(user, raced, input);
     }
     return this.get(user, input.requestId);
+  }
+
+  /** An exact retry returns the credit note the request created; any other reuse is a 409. */
+  private retry(
+    user: AuthUser,
+    existing: {
+      id: string;
+      invoiceId: string;
+      createdById: string;
+      creditDate: Date;
+      amount: Decimal;
+      reason: string;
+    },
+    input: CreateCreditNoteRequest,
+  ): Promise<CreditNoteDto> {
+    const same =
+      existing.invoiceId === input.invoiceId &&
+      existing.createdById === user.id &&
+      fromDbDate(existing.creditDate) === input.creditDate &&
+      existing.amount.eq(dec(input.amount)) &&
+      existing.reason === input.reason;
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return this.get(user, existing.id);
   }
 
   async update(user: AuthUser, id: string, input: CreditNoteInput): Promise<CreditNoteDto> {
@@ -206,6 +231,7 @@ export class CreditNotesService {
           shipmentId: invoice.shipmentId,
           invoiceNumber: invoice.number ?? '',
           invoiceEntryId: invoice.journalEntryId,
+          isOpening: invoice.isOpening,
           receivableAccountId: invoice.receivableAccountId,
           currency: invoice.currency,
           fxRate: invoice.fxRate,

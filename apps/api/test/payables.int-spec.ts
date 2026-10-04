@@ -8,10 +8,13 @@ import type {
   CreditNoteDto,
   CustomerDto,
   CustomerInvoiceDto,
+  CustomerStatementDto,
   ExpenseCategoryDto,
   ExpenseDto,
+  AccountingSettingsDto,
   JournalEntryDto,
   OpenAccrualsDto,
+  ReceiptDto,
   SupplierBillDto,
   SupplierDto,
   SupplierPaymentDto,
@@ -31,6 +34,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { waitForLockWaiter } from './test-data.js';
 
 /**
  * Group 4b: credit notes, suppliers and their bills (rule 11a clearing of trip accruals),
@@ -40,6 +44,7 @@ import {
 describe('credit notes, payables, expenses and opening balances', () => {
   let t: TestApp;
   let pts: string;
+  let jed: string;
   let portSudan: string;
   let khartoum: string;
   let customer: CustomerDto;
@@ -47,6 +52,8 @@ describe('credit notes, payables, expenses and opening balances', () => {
   let supplier: SupplierDto;
   let cashSdg: AccountDto;
   let cashUsd: AccountDto;
+  /** An SDG cash account of Jeddah: another branch's. */
+  let cashJed: AccountDto;
   let accounts: Map<string, AccountDto>;
   const year = randomInt(1901, 2000);
   const d = (monthDay: string) => `${year}-${monthDay}`;
@@ -202,9 +209,45 @@ describe('credit notes, payables, expenses and opening balances', () => {
     res.on('end', () => done(null, Buffer.concat(chunks)));
   };
 
+  /**
+   * Starts the requests while a test transaction holds the row of `table` locked, waits until
+   * each is blocked on that lock, then releases it: they run against each other deterministically.
+   * Returns their statuses, sorted.
+   */
+  async function whileLocked(
+    table: 'customer_invoices' | 'credit_notes' | 'supplier_bills',
+    id: string,
+    requests: (() => Promise<Response>)[],
+  ): Promise<number[]> {
+    const { pending } = await t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM ${Prisma.raw(`"${table}"`)} WHERE "id" = ${id}::uuid FOR UPDATE`;
+        const started = Promise.all(requests.map((request) => request()));
+        await waitForLockWaiter(t.prisma, requests.length);
+        return { pending: started };
+      },
+      { timeout: 15_000 },
+    );
+    return (await pending).map((r) => r.status).sort();
+  }
+
+  const creditNoteDraft = async (invoiceId: string, amount: string, creditDate = d('03-20')) =>
+    (
+      await post('/credit-notes', cookies.financePts, {
+        requestId: randomUUID(),
+        invoiceId,
+        creditDate,
+        amount,
+        reason: 'Allowance',
+      }).expect(201)
+    ).body as CreditNoteDto;
+
+  const invoiceRow = (id: string) => t.prisma.customerInvoice.findUniqueOrThrow({ where: { id } });
+
   beforeAll(async () => {
     t = await createTestApp();
     pts = await branchId(t.prisma, 'PTS');
+    jed = await branchId(t.prisma, 'JED');
     const loc = async (code: string) =>
       (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
     portSudan = await loc('SDPZU');
@@ -252,6 +295,18 @@ describe('credit notes, payables, expenses and opening balances', () => {
         isPostable: true,
         isCash: true,
         currency: 'USD',
+      }).expect(201)
+    ).body as AccountDto;
+    cashJed = (
+      await post('/accounting/accounts', cookies.admin, {
+        code: `T${suffix}J`,
+        nameEn: 'Test cash JED (SDG)',
+        nameAr: 'نقدية اختبار جدة',
+        type: 'ASSET',
+        isPostable: true,
+        isCash: true,
+        currency: 'SDG',
+        branchId: jed,
       }).expect(201)
     ).body as AccountDto;
     const list = (await get('/accounting/accounts', cookies.financePts).expect(200))
@@ -400,6 +455,161 @@ describe('credit notes, payables, expenses and opening balances', () => {
       expect(cancelled.status).toBe('CANCELLED');
       await post(`/credit-notes/${draft.id}/approve`, cookies.managerPts).expect(409);
     });
+    it('a credit note id is not reused with another body; an exact retry returns the draft', async () => {
+      const invoice = await approvedInvoice();
+      const note = {
+        requestId: randomUUID(),
+        invoiceId: invoice.id,
+        creditDate: d('03-20'),
+        amount: '100',
+        reason: 'Allowance',
+      };
+      const draft = (await post('/credit-notes', cookies.financePts, note).expect(201))
+        .body as CreditNoteDto;
+      await post('/credit-notes', cookies.financePts, { ...note, amount: '101' }).expect(409);
+      await post('/credit-notes', cookies.financePts, { ...note, reason: 'Other' }).expect(409);
+      await post('/credit-notes', cookies.financePts, {
+        ...note,
+        creditDate: d('03-21'),
+      }).expect(409);
+      const retry = (await post('/credit-notes', cookies.financePts, note).expect(201))
+        .body as CreditNoteDto;
+      expect(retry.id).toBe(draft.id);
+    });
+
+    it('the credit note that closes an invoice after cent-rounded receipts balances', async () => {
+      // SAR 10,000 at 3.75 is 2,666.67 USD; nine receipts of SAR 1,000 clear 266.67 each
+      // (2,400.03), so the last SAR 1,000 has 266.64 USD left against 266.67 at the rate.
+      const cashSar = (
+        await post('/accounting/accounts', cookies.admin, {
+          code: `T${randomUUID().slice(0, 6).toUpperCase()}R`,
+          nameEn: 'Test cash PTS (SAR)',
+          nameAr: 'نقدية اختبار ريال',
+          type: 'ASSET',
+          isPostable: true,
+          isCash: true,
+          currency: 'SAR',
+          branchId: pts,
+        }).expect(201)
+      ).body as AccountDto;
+      const draft = (
+        await post('/customer-invoices', cookies.financePts, {
+          shipmentId: await shipment(),
+        }).expect(201)
+      ).body as CustomerInvoiceDto;
+      await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
+        currency: 'SAR',
+        fxRate: '3.75',
+        invoiceDate: d('03-10'),
+        dueDate: d('03-10'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '10000' }],
+      }).expect(200);
+      const invoice = (
+        await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200)
+      ).body as CustomerInvoiceDto;
+      expect(invoice.totalUsd).toBe('2666.67');
+      for (let i = 0; i < 9; i++) {
+        const receipt = (
+          await post('/receipts', cookies.financePts, {
+            customerId: customer.id,
+            receiptDate: d('03-15'),
+            currency: 'SAR',
+            fxRate: '3.75',
+            amount: '1000',
+            cashAccountId: cashSar.id,
+            allocations: [{ invoiceId: invoice.id, amount: '1000' }],
+          }).expect(201)
+        ).body as ReceiptDto;
+        expect(receipt.allocations[0]?.relievedUsd).toBe('266.67');
+      }
+      const note = await creditNoteDraft(invoice.id, '1000');
+      const approved = (
+        await post(`/credit-notes/${note.id}/approve`, cookies.managerPts).expect(200)
+      ).body as CreditNoteDto;
+      expect(approved).toMatchObject({ amountUsd: '266.64', invoiceBalance: '0' });
+      const entry = await journal(approved.journalEntryId ?? '');
+      balanced(entry);
+      expect(lineOf(entry, account('1200').id)).toMatchObject({
+        credit: '1000',
+        creditUsd: '266.64',
+      });
+      const revenue = entry.lines.filter((l) => l.currency === 'SAR' && l.debit !== '0');
+      expect(sum(revenue.map((l) => l.debitUsd))).toBe('266.67');
+      const rounding = entry.lines.filter((l) => l.description === 'Rounding');
+      expect(rounding).toEqual([expect.objectContaining({ currency: 'USD', creditUsd: '0.03' })]);
+      const row = await invoiceRow(invoice.id);
+      expect(row.paidUsd.plus(row.creditedUsd).toFixed()).toBe('2666.67');
+      expect(row.paidAmount.plus(row.creditedAmount).toFixed()).toBe('10000');
+    });
+
+    it('two drafts that each fit but together exceed the invoice: the second approval fails', async () => {
+      // Sequentially: 1,000,000.50 open, 600,000 approved, then 600,000 more is refused.
+      const invoice = await approvedInvoice();
+      const first = await creditNoteDraft(invoice.id, '600000');
+      const second = await creditNoteDraft(invoice.id, '600000');
+      await post(`/credit-notes/${first.id}/approve`, cookies.managerPts).expect(200);
+      await post(`/credit-notes/${second.id}/approve`, cookies.managerPts).expect(400);
+      expect((await invoiceRow(invoice.id)).creditedAmount.toFixed()).toBe('600000');
+
+      // Concurrently: both approvals queue on the invoice; one posts, the other is refused.
+      const other = await approvedInvoice();
+      const a = await creditNoteDraft(other.id, '600000');
+      const b = await creditNoteDraft(other.id, '600000');
+      const statuses = await whileLocked('customer_invoices', other.id, [
+        () => post(`/credit-notes/${a.id}/approve`, cookies.managerPts),
+        () => post(`/credit-notes/${b.id}/approve`, cookies.managerPts),
+      ]);
+      expect(statuses).toEqual([200, 400]);
+      expect((await invoiceRow(other.id)).creditedAmount.toFixed()).toBe('600000');
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'CREDIT_NOTE', sourceId: { in: [a.id, b.id] } },
+        }),
+      ).toBe(1);
+    });
+
+    it('a credit note approval racing a receipt never relieves more than the invoice', async () => {
+      const invoice = await approvedInvoice();
+      const note = await creditNoteDraft(invoice.id, '600000');
+      const statuses = await whileLocked('customer_invoices', invoice.id, [
+        () => post(`/credit-notes/${note.id}/approve`, cookies.managerPts),
+        () =>
+          post('/receipts', cookies.financePts, {
+            customerId: customer.id,
+            receiptDate: d('03-25'),
+            currency: 'SDG',
+            fxRate: '600',
+            amount: '600000',
+            cashAccountId: cashSdg.id,
+            allocations: [{ invoiceId: invoice.id, amount: '600000' }],
+          }),
+      ]);
+      // Whichever ran first succeeded (200 approve, 201 receipt); the other was refused cleanly.
+      expect(statuses).toHaveLength(2);
+      expect(statuses[1]).toBe(400);
+      expect([200, 201]).toContain(statuses[0]);
+      const row = await invoiceRow(invoice.id);
+      expect(row.paidAmount.plus(row.creditedAmount).toFixed()).toBe('600000');
+      expect(row.paidUsd.plus(row.creditedUsd).toFixed()).toBe('1000');
+    });
+
+    it('a credit note is approved once, sequentially or concurrently', async () => {
+      const invoice = await approvedInvoice();
+      const once = await creditNoteDraft(invoice.id, '100');
+      await post(`/credit-notes/${once.id}/approve`, cookies.managerPts).expect(200);
+      await post(`/credit-notes/${once.id}/approve`, cookies.managerPts).expect(409);
+
+      const twice = await creditNoteDraft(invoice.id, '100');
+      const statuses = await whileLocked('credit_notes', twice.id, [
+        () => post(`/credit-notes/${twice.id}/approve`, cookies.managerPts),
+        () => post(`/credit-notes/${twice.id}/approve`, cookies.managerPts),
+      ]);
+      expect(statuses).toEqual([200, 409]);
+      expect(
+        await t.prisma.journalEntry.count({ where: { source: 'CREDIT_NOTE', sourceId: twice.id } }),
+      ).toBe(1);
+      expect((await invoiceRow(invoice.id)).creditedAmount.toFixed()).toBe('200');
+    });
   });
 
   describe('suppliers and bills', () => {
@@ -479,6 +689,15 @@ describe('credit notes, payables, expenses and opening balances', () => {
       // Operations enters bills (E) but cannot approve them.
       const draft = (await post('/supplier-bills', cookies.opsPts, body).expect(201))
         .body as SupplierBillDto;
+      // An exact retry returns the draft; the id with another body is refused.
+      const retry = (await post('/supplier-bills', cookies.opsPts, body).expect(201))
+        .body as SupplierBillDto;
+      expect(retry.id).toBe(draft.id);
+      await post('/supplier-bills', cookies.opsPts, {
+        ...body,
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '101' }],
+      }).expect(409);
+      await post('/supplier-bills', cookies.opsPts, { ...body, dueDate: d('05-11') }).expect(409);
       await post(`/supplier-bills/${draft.id}/approve`, cookies.opsPts).expect(403);
       const cancelled = (
         await post(`/supplier-bills/${draft.id}/cancel`, cookies.financePts, {
@@ -486,6 +705,84 @@ describe('credit notes, payables, expenses and opening balances', () => {
         }).expect(200)
       ).body as SupplierBillDto;
       expect(cancelled).toMatchObject({ status: 'CANCELLED', cancelJournalEntryId: null });
+    });
+    it('shipment costs and trips are of the bill branch; a cancelled shipment is refused', async () => {
+      const ptsShipment = await shipment();
+      const jedBill = {
+        requestId: randomUUID(),
+        supplierId: supplier.id,
+        branchId: jed,
+        currency: 'SDG',
+        fxRate: '600',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+      };
+      await post('/supplier-bills', cookies.admin, {
+        ...jedBill,
+        lines: [
+          {
+            kind: 'SHIPMENT_COST',
+            shipmentId: ptsShipment,
+            chargeTypeCode: 'CUSTOMS',
+            amount: '1',
+          },
+        ],
+      }).expect(400);
+      const ptsTrip = await completedExternalTrip();
+      await post('/supplier-bills', cookies.admin, {
+        ...jedBill,
+        lines: [{ kind: 'TRIP', tripId: ptsTrip.id, amount: '1' }],
+      }).expect(400);
+
+      // The shipment is cancelled after the draft: approval checks it again and refuses.
+      const doomed = await shipment();
+      const draft = (
+        await post('/supplier-bills', cookies.financePts, {
+          ...jedBill,
+          branchId: pts,
+          lines: [
+            { kind: 'SHIPMENT_COST', shipmentId: doomed, chargeTypeCode: 'CUSTOMS', amount: '1' },
+          ],
+        }).expect(201)
+      ).body as SupplierBillDto;
+      await post(`/shipments/${doomed}/cancel`, cookies.opsPts, {
+        reason: 'Customer withdrew',
+      }).expect(200);
+      await post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).expect(400);
+      const after = (await get(`/supplier-bills/${draft.id}`, cookies.financePts).expect(200))
+        .body as SupplierBillDto;
+      expect(after).toMatchObject({ status: 'DRAFT', journalEntryId: null });
+    });
+
+    it('a bill is approved once, sequentially or concurrently', async () => {
+      const draft = async () =>
+        (
+          await post('/supplier-bills', cookies.financePts, {
+            requestId: randomUUID(),
+            supplierId: supplier.id,
+            branchId: pts,
+            currency: 'SDG',
+            fxRate: '600',
+            billDate: d('04-10'),
+            dueDate: d('05-10'),
+            lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '600' }],
+          }).expect(201)
+        ).body as SupplierBillDto;
+      const once = await draft();
+      await post(`/supplier-bills/${once.id}/approve`, cookies.financePts).expect(200);
+      await post(`/supplier-bills/${once.id}/approve`, cookies.financePts).expect(409);
+
+      const twice = await draft();
+      const statuses = await whileLocked('supplier_bills', twice.id, [
+        () => post(`/supplier-bills/${twice.id}/approve`, cookies.financePts),
+        () => post(`/supplier-bills/${twice.id}/approve`, cookies.financePts),
+      ]);
+      expect(statuses).toEqual([200, 409]);
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'SUPPLIER_BILL', sourceId: twice.id },
+        }),
+      ).toBe(1);
     });
   });
 
@@ -576,6 +873,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
       await post('/supplier-payments', cookies.financePts, {
         ...body,
         cashAccountId: cashUsd.id,
+      }).expect(400);
+      // Another branch's cash account.
+      await post('/supplier-payments', cookies.financePts, {
+        ...body,
+        requestId: randomUUID(),
+        cashAccountId: cashJed.id,
       }).expect(400);
 
       payment = (await post('/supplier-payments', cookies.financePts, body).expect(201))
@@ -722,12 +1025,15 @@ describe('credit notes, payables, expenses and opening balances', () => {
       await post('/expenses', cookies.driverPts, input).expect(403);
       await post('/expenses', cookies.financeJed, input).expect(403);
       await post('/expenses', cookies.opsPts, { ...input, cashAccountId: cashUsd.id }).expect(400);
+      await post('/expenses', cookies.opsPts, { ...input, cashAccountId: cashJed.id }).expect(400);
       await post('/expenses', cookies.opsPts, { ...input, categoryCode: 'NOPE' }).expect(400);
 
       const draft = (await post('/expenses', cookies.opsPts, input).expect(201)).body as ExpenseDto;
       expect(draft).toMatchObject({ status: 'DRAFT', number: null, fxRate: '600' });
       const retry = (await post('/expenses', cookies.opsPts, input).expect(201)).body as ExpenseDto;
       expect(retry.id).toBe(draft.id);
+      await post('/expenses', cookies.opsPts, { ...input, amount: '120001' }).expect(409);
+      await post('/expenses', cookies.opsPts, { ...input, description: 'Other' }).expect(409);
       await get(`/expenses/${draft.id}`, cookies.financeJed).expect(404);
       await post(`/expenses/${draft.id}/approve`, cookies.opsPts).expect(403);
 
@@ -806,6 +1112,19 @@ describe('credit notes, payables, expenses and opening balances', () => {
         await post('/accounting/opening-balances', cookies.financePts, request).expect(201)
       ).body as JournalEntryDto;
       expect(again.id).toBe(entry.id);
+      // The id with other lines, branch-wide text or date is refused.
+      await post('/accounting/opening-balances', cookies.financePts, {
+        ...request,
+        lines: [{ accountId: cashSdg.id, currency: 'SDG', fxRate: '600', debit: '600001' }],
+      }).expect(409);
+      await post('/accounting/opening-balances', cookies.financePts, {
+        ...request,
+        description: 'Other',
+      }).expect(409);
+      await post('/accounting/opening-balances', cookies.financePts, {
+        ...request,
+        entryDate: d('01-02'),
+      }).expect(409);
     });
 
     it('customer and supplier open items post against opening equity and show in aging', async () => {
@@ -842,6 +1161,29 @@ describe('credit notes, payables, expenses and opening balances', () => {
         ).expect(200)
       ).body as ArAgingDto;
       expect(arAging.invoices.map((i) => i.invoiceId)).toContain(invoice.id);
+      // An exact retry returns the item; the id with another body is refused, and an open
+      // item's id does not stand for an opening accounts entry.
+      const sameItem = (
+        await post('/customer-invoices/opening', cookies.financePts, customerItem).expect(201)
+      ).body as CustomerInvoiceDto;
+      expect(sameItem.id).toBe(invoice.id);
+      for (const change of [
+        { reference: 'OLD-INV-2' },
+        { amount: '300001' },
+        { dueDate: d('02-28') },
+        { entryDate: d('01-02') },
+      ]) {
+        await post('/customer-invoices/opening', cookies.financePts, {
+          ...customerItem,
+          ...change,
+        }).expect(409);
+      }
+      await post('/accounting/opening-balances', cookies.financePts, {
+        requestId: customerItem.requestId,
+        branchId: pts,
+        entryDate: d('01-01'),
+        lines: [{ accountId: cashSdg.id, currency: 'SDG', fxRate: '600', debit: '600000' }],
+      }).expect(409);
 
       const supplierItem = {
         requestId: randomUUID(),
@@ -870,6 +1212,17 @@ describe('credit notes, payables, expenses and opening balances', () => {
         await post('/supplier-bills/opening', cookies.financePts, supplierItem).expect(201)
       ).body as SupplierBillDto;
       expect(retry.id).toBe(openingBill.id);
+      for (const change of [
+        { reference: 'OLD-BILL-2' },
+        { amount: '60001' },
+        { dueDate: d('02-28') },
+        { currency: 'USD', amount: '100' },
+      ]) {
+        await post('/supplier-bills/opening', cookies.financePts, {
+          ...supplierItem,
+          ...change,
+        }).expect(409);
+      }
       const apAging = (
         await get(
           `/reports/ap-aging?asOf=${d('01-15')}&supplierId=${supplier.id}`,
@@ -877,6 +1230,59 @@ describe('credit notes, payables, expenses and opening balances', () => {
         ).expect(200)
       ).body as ApAgingDto;
       expect(apAging.bills.map((b) => b.billId)).toEqual([openingBill.id]);
+    });
+
+    it('a credit note on an opening item debits revenue; both show on the statement', async () => {
+      const item = (
+        await post('/customer-invoices/opening', cookies.financePts, {
+          requestId: randomUUID(),
+          customerId: customer.id,
+          entryDate: d('01-01'),
+          reference: 'OLD-INV-9',
+          invoiceDate: d('01-01'),
+          dueDate: d('01-31'),
+          currency: 'SDG',
+          amount: '300000',
+        }).expect(201)
+      ).body as CustomerInvoiceDto;
+      const draft = await creditNoteDraft(item.id, '100000', d('02-01'));
+      const note = (await post(`/credit-notes/${draft.id}/approve`, cookies.managerPts).expect(200))
+        .body as CreditNoteDto;
+      expect(note).toMatchObject({ amountUsd: '166.67', invoiceBalance: '200000' });
+
+      const settings = (await get('/accounting/settings', cookies.admin).expect(200))
+        .body as AccountingSettingsDto;
+      const revenue = settings.mappings.find((m) => m.role === 'DEFAULT_REVENUE')?.accountId;
+      if (!revenue) throw new Error('No DEFAULT_REVENUE account');
+      const entry = await journal(note.journalEntryId ?? '');
+      balanced(entry);
+      expect(lineOf(entry, revenue)).toMatchObject({ debit: '100000', debitUsd: '166.67' });
+      expect(lineOf(entry, account('1200').id)).toMatchObject({
+        credit: '100000',
+        creditUsd: '166.67',
+      });
+      expect(entry.lines.filter((l) => l.accountId === account('3100').id)).toHaveLength(0);
+
+      // Sales may not view journal entries, yet both lines show with their kind and number.
+      const statement = (
+        await get(
+          `/customer-statements/${customer.id}?from=${d('01-01')}&to=${d('12-31')}`,
+          cookies.salesPts,
+        ).expect(200)
+      ).body as CustomerStatementDto;
+      const lines = statement.sections.flatMap((section) => section.lines);
+      expect(lines.find((l) => l.documentId === item.id)).toMatchObject({
+        kind: 'OPENING_BALANCE',
+        documentNumber: item.number,
+        detailsHidden: false,
+        debit: '300000',
+      });
+      expect(lines.find((l) => l.documentId === draft.id)).toMatchObject({
+        kind: 'CREDIT_NOTE',
+        documentNumber: note.number,
+        detailsHidden: false,
+        credit: '100000',
+      });
     });
   });
 });

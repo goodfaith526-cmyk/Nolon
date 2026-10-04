@@ -182,6 +182,20 @@ export class ShipmentsService {
   }
 
   /**
+   * For a cost booked on the shipment inside another module's transaction (a supplier bill's
+   * approval): the shipment's branch and status under a share lock, so it cannot be cancelled or
+   * moved until that transaction ends. The caller has checked access to the shipment.
+   */
+  async lockForCostInTx(tx: Tx, id: string): Promise<{ branchId: string; status: ShipmentStatus }> {
+    const rows = await tx.$queryRaw<{ branchId: string; status: ShipmentStatus }[]>`
+      SELECT "branch_id"::text AS "branchId", "status"::text AS "status"
+      FROM "shipments" WHERE "id" = ${id}::uuid FOR SHARE`;
+    const row = rows[0];
+    if (!row) throw new NotFoundException('Shipment not found');
+    return row;
+  }
+
+  /**
    * For modules working under a shipment (warehouse): the shipment's branch and status, the
    * packages on its cargo lines, and the statuses this user may move it to now. 404 unless the
    * user may see the shipment.

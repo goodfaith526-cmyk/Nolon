@@ -15,6 +15,7 @@ import type {
   SupplierBillStatus,
   SupplierBillSummaryDto,
 } from '@nolon/shared';
+import { BASE_CURRENCY } from '@nolon/shared';
 import { AutoJournalService, type BillLineForPosting } from '../accounting/auto-journal.service.js';
 import { ExpenseCategoriesService } from '../accounting/expense-categories.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -27,7 +28,7 @@ import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js'
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
-import { Prisma } from '../generated/prisma/client.js';
+import { Prisma, type SupplierBill } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -138,9 +139,15 @@ export class SupplierBillsService {
 
   /**
    * A draft bill in one of the user's branches. The client's `requestId` becomes the bill's id, so
-   * a retry of the same request returns the first draft.
+   * an exact retry returns the first draft; anything else reusing the id is refused.
    */
   async create(user: AuthUser, input: CreateSupplierBillRequest): Promise<SupplierBillDto> {
+    assertBranchAccess(user, input.branchId);
+    const done = await this.prisma.supplierBill.findUnique({
+      where: { id: input.requestId },
+      include: { lines: { orderBy: { lineNo: 'asc' } } },
+    });
+    if (done) return this.retry(user, done, input);
     const supplier = await this.suppliers.requireSupplier(input.supplierId);
     if (!supplier.isActive) throw new BadRequestException('The supplier is inactive');
     const draft = await this.checkDraft(user, input);
@@ -156,14 +163,51 @@ export class SupplierBillsService {
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.prisma.supplierBill.findUnique({
+      const raced = await this.prisma.supplierBill.findUnique({
         where: { id: input.requestId },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
-      if (existing?.supplierId !== supplier.id || existing.createdById !== user.id) {
-        throw new ConflictException('This request id was already used: send a new id');
-      }
+      if (!raced) throw error;
+      return this.retry(user, raced, input);
     }
     return this.get(user, input.requestId);
+  }
+
+  /** An exact retry returns the bill the request created; any other reuse is a 409. */
+  private retry(
+    user: AuthUser,
+    existing: Prisma.SupplierBillGetPayload<{ include: { lines: true } }>,
+    input: CreateSupplierBillRequest,
+  ): Promise<SupplierBillDto> {
+    const same =
+      !existing.isOpening &&
+      existing.supplierId === input.supplierId &&
+      existing.createdById === user.id &&
+      existing.branchId === input.branchId &&
+      existing.currency === input.currency &&
+      sameRate(existing.fxRate, input.currency, input.fxRate) &&
+      fromDbDate(existing.billDate) === input.billDate &&
+      fromDbDate(existing.dueDate) === input.dueDate &&
+      existing.supplierReference === (input.supplierReference ?? null) &&
+      existing.notes === (input.notes ?? null) &&
+      existing.lines.length === input.lines.length &&
+      existing.lines.every((line, index) => {
+        const sent = input.lines[index];
+        return (
+          sent !== undefined &&
+          line.kind === sent.kind &&
+          line.amount.eq(dec(sent.amount)) &&
+          line.description === (sent.description ?? null) &&
+          (sent.kind !== 'SHIPMENT_COST' ||
+            (line.shipmentId === (sent.shipmentId ?? null) &&
+              line.chargeTypeCode === (sent.chargeTypeCode ?? null))) &&
+          (sent.kind !== 'TRIP' || line.tripId === (sent.tripId ?? null)) &&
+          (sent.kind !== 'EXPENSE' ||
+            line.expenseCategoryCode === (sent.expenseCategoryCode ?? null))
+        );
+      });
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return this.get(user, existing.id);
   }
 
   /** Drafts only; the lines are replaced as a whole. */
@@ -211,7 +255,7 @@ export class SupplierBillsService {
       const lines: (BillLineForPosting & { description: string | null })[] = [];
       for (const line of bill.lines) {
         lines.push({
-          ...(await this.postingLine(tx, line, trips)),
+          ...(await this.postingLine(tx, line, trips, bill.branchId)),
           description: line.description,
         });
       }
@@ -318,6 +362,8 @@ export class SupplierBillsService {
       throw new BadRequestException('The opening entry is dated before the bill');
     }
     const amount = dec(input.amount);
+    const done = await this.prisma.supplierBill.findUnique({ where: { id: input.requestId } });
+    if (done) return this.openingRetry(user, done, input);
     try {
       await this.prisma.$transaction(async (tx) => {
         await this.suppliers.requireActiveInTx(tx, input.supplierId);
@@ -372,17 +418,40 @@ export class SupplierBillsService {
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.prisma.supplierBill.findUnique({
-        where: { id: input.requestId },
-      });
-      const same =
-        existing?.isOpening === true &&
-        existing.supplierId === input.supplierId &&
-        existing.createdById === user.id &&
-        existing.total.eq(amount);
-      if (!same) throw new ConflictException('This request id was already used: send a new id');
+      const raced = await this.prisma.supplierBill.findUnique({ where: { id: input.requestId } });
+      if (!raced) throw error;
+      return this.openingRetry(user, raced, input);
     }
     return this.get(user, input.requestId);
+  }
+
+  /** An exact retry returns the opening item the request recorded; any other reuse is a 409. */
+  private async openingRetry(
+    user: AuthUser,
+    existing: SupplierBill,
+    input: OpeningSupplierItemRequest,
+  ): Promise<SupplierBillDto> {
+    const entry = existing.journalEntryId
+      ? await this.prisma.journalEntry.findUnique({
+          where: { id: existing.journalEntryId },
+          select: { entryDate: true },
+        })
+      : null;
+    const same =
+      existing.isOpening &&
+      entry !== null &&
+      existing.supplierId === input.supplierId &&
+      existing.createdById === user.id &&
+      existing.branchId === input.branchId &&
+      existing.currency === input.currency &&
+      sameRate(existing.fxRate, input.currency, input.fxRate) &&
+      fromDbDate(entry.entryDate) === input.entryDate &&
+      fromDbDate(existing.billDate) === input.billDate &&
+      fromDbDate(existing.dueDate) === input.dueDate &&
+      existing.supplierReference === input.reference &&
+      existing.total.eq(dec(input.amount));
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return this.get(user, existing.id);
   }
 
   /** Inside the approval: what a stored line posts to, with its references checked again. */
@@ -397,8 +466,17 @@ export class SupplierBillsService {
       amount: Decimal;
     },
     trips: Map<string, { number: string; accrualEntryId: string }>,
+    branchId: string,
   ): Promise<BillLineForPosting> {
     if (line.kind === 'SHIPMENT_COST' && line.chargeTypeCode && line.shipmentId) {
+      // Under a share lock: the shipment stays in the bill's branch and is not cancelled meanwhile.
+      const shipment = await this.shipments.lockForCostInTx(tx, line.shipmentId);
+      if (shipment.branchId !== branchId) {
+        throw new BadRequestException('A shipment on the bill is of another branch');
+      }
+      if (shipment.status === 'CANCELLED') {
+        throw new BadRequestException('A shipment on the bill is cancelled');
+      }
       return {
         kind: 'SHIPMENT_COST',
         chargeTypeCode: line.chargeTypeCode,
@@ -460,7 +538,13 @@ export class SupplierBillsService {
         if (!line.shipmentId || !line.chargeTypeCode) {
           throw new BadRequestException(`${label}: a shipment cost needs a shipment and a charge`);
         }
-        await this.shipments.requireAccessible(user, line.shipmentId);
+        const shipment = await this.shipments.requireAccessible(user, line.shipmentId);
+        if (shipment.branchId !== input.branchId) {
+          throw new BadRequestException(`${label}: the shipment is of another branch`);
+        }
+        if (shipment.status === 'CANCELLED') {
+          throw new BadRequestException(`${label}: the shipment is cancelled`);
+        }
         await this.masterData.requireChargeType(line.chargeTypeCode);
         lines.push({ ...base, shipmentId: line.shipmentId, chargeTypeCode: line.chargeTypeCode });
       } else if (line.kind === 'TRIP') {
@@ -503,6 +587,11 @@ export class SupplierBillsService {
     if (!bill) throw new NotFoundException('Supplier bill not found');
     return bill;
   }
+}
+
+/** A rate the request named is the rate the document has (USD is always 1). */
+function sameRate(stored: Decimal, currency: string, sent: string | null | undefined): boolean {
+  return currency === BASE_CURRENCY || !sent || stored.eq(dec(sent));
 }
 
 function checkAmount(amount: Decimal, decimals: number, label = 'Amount'): void {

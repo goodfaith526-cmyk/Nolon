@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import type { JournalEntryDto, OpeningAccountsRequest } from '@nolon/shared';
+import { BASE_CURRENCY, type JournalEntryDto, type OpeningAccountsRequest } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess } from '../auth/branch-scope.js';
+import { fromDbDate } from '../common/dates.js';
 import { dec, roundMoney } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -40,7 +41,7 @@ export class OpeningBalancesService {
     const entryId = await this.prisma.$transaction(async (tx) => {
       const done = await previous(tx, input.requestId);
       if (done) {
-        if (done.branchId !== input.branchId || done.createdById !== user.id) {
+        if (!sameRequest(done, input, user.id)) {
           throw new ConflictException('This request id was already used for another entry');
         }
         return done.id;
@@ -110,14 +111,42 @@ export class OpeningBalancesService {
   }
 }
 
+type PreviousEntry = Prisma.JournalEntryGetPayload<{ include: { lines: true } }>;
+
 /** The entry an earlier request with this id posted, after waiting for any in flight. */
-async function previous(
-  tx: Tx,
-  requestId: string,
-): Promise<{ id: string; branchId: string; createdById: string } | null> {
+async function previous(tx: Tx, requestId: string): Promise<PreviousEntry | null> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`;
   return tx.journalEntry.findFirst({
     where: { source: 'OPENING_BALANCE', sourceId: requestId },
-    select: { id: true, branchId: true, createdById: true },
+    include: { lines: { orderBy: { lineNo: 'asc' } } },
   });
+}
+
+/**
+ * Whether the entry found is the one this exact request posted: an opening-accounts entry (an open
+ * item's entry shares the source and id but carries a customer or supplier on its lines) with the
+ * same branch, author, date, text and lines, the opening equity line after them.
+ */
+function sameRequest(done: PreviousEntry, input: OpeningAccountsRequest, userId: string): boolean {
+  if (done.lines.some((l) => l.customerId !== null || l.supplierId !== null)) return false;
+  const extra = done.lines.length - input.lines.length;
+  return (
+    done.branchId === input.branchId &&
+    done.createdById === userId &&
+    fromDbDate(done.entryDate) === input.entryDate &&
+    done.description === (input.description ?? 'Opening balances') &&
+    (extra === 0 || extra === 1) &&
+    input.lines.every((sent, index) => {
+      const line = done.lines[index];
+      return (
+        line !== undefined &&
+        line.accountId === sent.accountId &&
+        line.currency === sent.currency &&
+        line.debit.eq(dec(sent.debit ?? '0')) &&
+        line.credit.eq(dec(sent.credit ?? '0')) &&
+        (sent.currency === BASE_CURRENCY || !sent.fxRate || line.fxRate.eq(dec(sent.fxRate))) &&
+        line.description === (sent.description ?? null)
+      );
+    })
+  );
 }

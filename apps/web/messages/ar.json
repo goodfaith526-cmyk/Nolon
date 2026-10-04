@@ -1390,6 +1390,8 @@
     "kind_INVOICE": "فاتورة",
     "kind_RECEIPT": "سند قبض",
     "kind_RECEIPT_CANCELLATION": "إلغاء سند قبض",
+    "kind_CREDIT_NOTE": "إشعار دائن",
+    "kind_OPENING_BALANCE": "رصيد افتتاحي",
     "kind_REVERSAL": "قيد عكسي",
     "kind_OTHER": "قيد",
     "signForNolon": "عن نولون",

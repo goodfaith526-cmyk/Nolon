@@ -27,10 +27,12 @@ function movement(
 }
 
 describe('statementKind', () => {
-  it('names invoices, receipts and their cancellations', () => {
+  it('names invoices, receipts, their cancellations, credit notes and opening items', () => {
     expect(statementKind('CUSTOMER_INVOICE', null)).toBe('INVOICE');
     expect(statementKind('RECEIPT', null)).toBe('RECEIPT');
     expect(statementKind('REVERSAL', 'RECEIPT')).toBe('RECEIPT_CANCELLATION');
+    expect(statementKind('CREDIT_NOTE', null)).toBe('CREDIT_NOTE');
+    expect(statementKind('OPENING_BALANCE', null)).toBe('OPENING_BALANCE');
     expect(statementKind('REVERSAL', 'MANUAL')).toBe('REVERSAL');
     expect(statementKind('MANUAL', null)).toBe('OTHER');
   });

@@ -410,12 +410,15 @@ export interface TrialBalanceDto {
 
 /**
  * What a statement line is: an approved invoice, a receipt, a receipt's cancellation (its
- * reversing entry), another reversal, or any other posted entry on the customer's accounts.
+ * reversing entry), a credit note, an open invoice brought in at go-live, another reversal, or any
+ * other posted entry on the customer's accounts.
  */
 export const STATEMENT_LINE_KINDS = [
   'INVOICE',
   'RECEIPT',
   'RECEIPT_CANCELLATION',
+  'CREDIT_NOTE',
+  'OPENING_BALANCE',
   'REVERSAL',
   'OTHER',
 ] as const;
@@ -431,7 +434,10 @@ export interface CustomerStatementLineDto {
   entryNumber: string | null;
   date: DateString;
   kind: StatementLineKind;
-  /** The invoice or receipt the entry came from (or that it reversed), when there is one. */
+  /**
+   * The invoice, receipt, credit note or opening item the entry came from (or that it reversed),
+   * when there is one.
+   */
   documentId: string | null;
   documentNumber: string | null;
   /** The entry's description, or a fixed generic one when `detailsHidden`. */

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import type { CustomerStatementDto } from '@nolon/shared';
+import type { CustomerStatementDto, JournalSource } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
@@ -22,7 +22,7 @@ export interface StatementQuery {
  * receivable and advance accounts from the ledger, as of `to`, with the opening balance before
  * `from` and a running balance, per currency, in the user's branches (or the one requested).
  * Drafts never count; a cancelled receipt shows as the receipt and, on its own date, its
- * reversing entry.
+ * reversing entry. Credit notes and opening items show with their own kind and number.
  */
 @Injectable()
 export class CustomerStatementService {
@@ -57,31 +57,47 @@ export class CustomerStatementService {
       m.source === 'REVERSAL'
         ? { source: m.reversedSource, id: m.reversedSourceId }
         : { source: m.source, id: m.sourceId };
-    const idsOf = (source: 'CUSTOMER_INVOICE' | 'RECEIPT') => [
+    const idsOf = (...sources: JournalSource[]) => [
       ...new Set(
         movements
           .map(documentOf)
-          .filter((d) => d.source === source && d.id !== null)
+          .filter((d) => d.source !== null && sources.includes(d.source) && d.id !== null)
           .map((d) => d.id as string),
       ),
     ];
-    const [invoices, receipts] = await Promise.all([
+    // An opening item (rule 15) is an invoice: its entry's source id is the invoice's id.
+    const [invoices, openingItems, receipts, creditNotes] = await Promise.all([
       this.prisma.customerInvoice.findMany({
         where: { ...inBranches, id: { in: idsOf('CUSTOMER_INVOICE') }, customerId: customer.id },
+        select: { id: true, number: true },
+      }),
+      this.prisma.customerInvoice.findMany({
+        where: {
+          ...inBranches,
+          id: { in: idsOf('OPENING_BALANCE') },
+          customerId: customer.id,
+          isOpening: true,
+        },
         select: { id: true, number: true },
       }),
       this.prisma.receipt.findMany({
         where: { ...inBranches, id: { in: idsOf('RECEIPT') }, customerId: customer.id },
         select: { id: true, number: true },
       }),
+      this.prisma.creditNote.findMany({
+        where: { ...inBranches, id: { in: idsOf('CREDIT_NOTE') }, customerId: customer.id },
+        select: { id: true, number: true },
+      }),
     ]);
-    const numbers = new Map<string, string | null>([
-      ...invoices.map((i): [string, string | null] => [i.id, i.number]),
-      ...receipts.map((r): [string, string | null] => [r.id, r.number]),
-    ]);
+    const numbers = new Map<string, string | null>(
+      [...invoices, ...openingItems, ...receipts, ...creditNotes].map(
+        (d): [string, string | null] => [d.id, d.number],
+      ),
+    );
 
-    // An entry with no invoice or receipt behind it (a manual entry, or its reversal) is only
-    // shown in full to users who may view journal entries: its text and number are theirs.
+    // An entry with no invoice, receipt, credit note or opening item behind it (a manual entry, or
+    // its reversal) is only shown in full to users who may view journal entries: its text and
+    // number are theirs.
     const seesJournals = user.permissions.has('manual_journals:view');
     const sections = buildStatementSections(
       opening,

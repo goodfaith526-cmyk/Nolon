@@ -37,6 +37,8 @@ export function statementKind(
 ): StatementLineKind {
   if (source === 'CUSTOMER_INVOICE') return 'INVOICE';
   if (source === 'RECEIPT') return 'RECEIPT';
+  if (source === 'CREDIT_NOTE') return 'CREDIT_NOTE';
+  if (source === 'OPENING_BALANCE') return 'OPENING_BALANCE';
   if (source === 'REVERSAL')
     return reversedSource === 'RECEIPT' ? 'RECEIPT_CANCELLATION' : 'REVERSAL';
   return 'OTHER';

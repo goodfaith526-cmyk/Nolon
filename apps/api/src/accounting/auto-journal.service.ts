@@ -78,6 +78,11 @@ export interface CreditNoteForPosting {
   invoiceNumber: string;
   /** The invoice's entry: its revenue lines are the accounts the credit note debits. */
   invoiceEntryId: string;
+  /**
+   * An opening item (rule 15): its entry credited opening equity, but an allowance granted after
+   * go-live is a current-period P&L item, so the credit note debits the DEFAULT_REVENUE account.
+   */
+  isOpening: boolean;
   receivableAccountId: string;
   currency: string;
   /** The invoice's rate. */
@@ -452,33 +457,16 @@ export class AutoJournalService {
   /**
    * Rule 6, credit note approved: debit the revenue (or reimbursable) accounts the invoice
    * credited, sharing the amount in proportion to what each received, at the invoice's rate;
-   * credit the invoice's own receivable with the USD carrying value cleared. A full credit note
-   * mirrors the invoice exactly.
+   * credit the invoice's own receivable with the USD carrying value cleared. A credit note on an
+   * opening item debits the DEFAULT_REVENUE account instead. The carrying value cleared can differ
+   * from the debits at the invoice rate by the cents earlier partial settlements rounded; that
+   * difference is booked to the rounding account explicitly, as a receipt does.
    */
   async creditNoteApproved(
     tx: Tx,
     note: CreditNoteForPosting,
     userId: string,
   ): Promise<JournalEntry> {
-    const invoiceLines = await tx.journalLine.findMany({
-      where: {
-        entryId: note.invoiceEntryId,
-        credit: { gt: 0 },
-        currency: note.currency,
-        NOT: { accountId: note.receivableAccountId },
-      },
-      orderBy: { lineNo: 'asc' },
-    });
-    // The rounding line of an invoice entry is in USD at rate 1; only charge lines remain.
-    const revenue = invoiceLines.filter(
-      (l) => l.fxRate.eq(note.fxRate) && l.description !== 'Rounding',
-    );
-    if (revenue.length === 0) throw new Error(`Invoice ${note.invoiceNumber} has no revenue lines`);
-    const shares = splitAmount(
-      note.amount,
-      revenue.map((l) => l.credit),
-      note.currencyDecimals,
-    );
     const common = {
       branchId: note.branchId,
       currency: note.currency,
@@ -487,11 +475,44 @@ export class AutoJournalService {
       shipmentId: note.shipmentId,
     };
     const lines: LineSpec[] = [];
-    revenue.forEach((line, index) => {
-      const amount = shares[index] ?? ZERO;
-      if (amount.isZero()) return;
-      lines.push({ ...common, accountId: line.accountId, side: 'DEBIT', amount });
-    });
+    if (note.isOpening) {
+      lines.push({
+        ...common,
+        accountId: await this.accounts.roleAccount(tx, 'DEFAULT_REVENUE'),
+        side: 'DEBIT',
+        amount: note.amount,
+      });
+    } else {
+      const invoiceLines = await tx.journalLine.findMany({
+        where: {
+          entryId: note.invoiceEntryId,
+          credit: { gt: 0 },
+          currency: note.currency,
+          NOT: { accountId: note.receivableAccountId },
+        },
+        orderBy: { lineNo: 'asc' },
+      });
+      // The rounding line of an invoice entry is in USD at rate 1; only charge lines remain.
+      const revenue = invoiceLines.filter(
+        (l) => l.fxRate.eq(note.fxRate) && l.description !== 'Rounding',
+      );
+      if (revenue.length === 0) {
+        throw new Error(`Invoice ${note.invoiceNumber} has no revenue lines`);
+      }
+      const shares = splitAmount(
+        note.amount,
+        revenue.map((l) => l.credit),
+        note.currencyDecimals,
+      );
+      revenue.forEach((line, index) => {
+        const amount = shares[index] ?? ZERO;
+        if (amount.isZero()) return;
+        lines.push({ ...common, accountId: line.accountId, side: 'DEBIT', amount });
+      });
+    }
+    let debitUsd = ZERO;
+    for (const line of lines)
+      debitUsd = debitUsd.plus(toUsd(line.amount, line.fxRate, line.currency));
     lines.push({
       ...common,
       accountId: note.receivableAccountId,
@@ -500,6 +521,20 @@ export class AutoJournalService {
       amountUsd: note.relievedUsd,
       description: note.invoiceNumber,
     });
+    const difference = debitUsd.minus(note.relievedUsd);
+    if (!difference.isZero()) {
+      lines.push({
+        branchId: note.branchId,
+        customerId: note.customerId,
+        accountId: await this.accounts.roleAccount(tx, 'ROUNDING'),
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
+        amount: difference.abs(),
+        amountUsd: difference.abs(),
+        description: 'Rounding',
+      });
+    }
     return this.journal.post(
       tx,
       {

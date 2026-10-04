@@ -13,6 +13,7 @@ import type {
   ExpenseSummaryDto,
   Page,
 } from '@nolon/shared';
+import { BASE_CURRENCY } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { ExpenseCategoriesService } from '../accounting/expense-categories.service.js';
@@ -26,7 +27,7 @@ import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js'
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
+import type { Expense, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export interface ExpenseFilters extends PageQuery {
@@ -95,12 +96,14 @@ export class ExpensesService {
   }
 
   /**
-   * A draft expense in one of the user's branches. The client's `requestId` becomes its id, so a
-   * retry of the same request returns the first draft.
+   * A draft expense in one of the user's branches. The client's `requestId` becomes its id, so an
+   * exact retry returns the first draft; anything else reusing the id is refused.
    */
   async create(user: AuthUser, input: CreateExpenseRequest): Promise<ExpenseDto> {
     forbidDriver(user);
     assertBranchAccess(user, input.branchId);
+    const done = await this.prisma.expense.findUnique({ where: { id: input.requestId } });
+    if (done) return this.retry(user, done, input);
     const fields = await this.checkDraft(input, input.branchId);
     try {
       await this.prisma.expense.create({
@@ -108,12 +111,34 @@ export class ExpensesService {
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.prisma.expense.findUnique({ where: { id: input.requestId } });
-      if (existing?.branchId !== input.branchId || existing.createdById !== user.id) {
-        throw new ConflictException('This request id was already used: send a new id');
-      }
+      const raced = await this.prisma.expense.findUnique({ where: { id: input.requestId } });
+      if (!raced) throw error;
+      return this.retry(user, raced, input);
     }
     return this.get(user, input.requestId);
+  }
+
+  /** An exact retry returns the expense the request created; any other reuse is a 409. */
+  private retry(
+    user: AuthUser,
+    existing: Expense,
+    input: CreateExpenseRequest,
+  ): Promise<ExpenseDto> {
+    const same =
+      existing.branchId === input.branchId &&
+      existing.createdById === user.id &&
+      fromDbDate(existing.expenseDate) === input.expenseDate &&
+      existing.categoryCode === input.categoryCode &&
+      existing.description === input.description &&
+      existing.currency === input.currency &&
+      (input.currency === BASE_CURRENCY ||
+        !input.fxRate ||
+        existing.fxRate.eq(dec(input.fxRate))) &&
+      existing.amount.eq(dec(input.amount)) &&
+      existing.cashAccountId === input.cashAccountId &&
+      existing.reference === (input.reference ?? null);
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return this.get(user, existing.id);
   }
 
   /** Drafts only. */

@@ -1390,6 +1390,8 @@
     "kind_INVOICE": "Invoice",
     "kind_RECEIPT": "Receipt",
     "kind_RECEIPT_CANCELLATION": "Receipt cancelled",
+    "kind_CREDIT_NOTE": "Credit note",
+    "kind_OPENING_BALANCE": "Opening balance",
     "kind_REVERSAL": "Reversal",
     "kind_OTHER": "Entry",
     "signForNolon": "For NOLON",

@@ -13,6 +13,7 @@ import type {
   Page,
   PaymentStatus,
 } from '@nolon/shared';
+import { BASE_CURRENCY } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
@@ -221,11 +222,25 @@ export class InvoicesService {
     existing: CustomerInvoice,
     input: OpeningCustomerItemRequest,
   ): Promise<CustomerInvoiceDto> {
+    const entry = existing.journalEntryId
+      ? await this.prisma.journalEntry.findUnique({
+          where: { id: existing.journalEntryId },
+          select: { entryDate: true },
+        })
+      : null;
     const same =
       existing.isOpening &&
+      entry !== null &&
       existing.customerId === input.customerId &&
       existing.createdById === user.id &&
       existing.currency === input.currency &&
+      (input.currency === BASE_CURRENCY ||
+        !input.fxRate ||
+        existing.fxRate.eq(dec(input.fxRate))) &&
+      fromDbDate(entry.entryDate) === input.entryDate &&
+      fromDbDate(existing.invoiceDate) === input.invoiceDate &&
+      fromDbDate(existing.dueDate) === input.dueDate &&
+      existing.reference === input.reference &&
       existing.total.eq(dec(input.amount));
     if (!same) {
       throw new ConflictException('This request id was already used: send a new id');
