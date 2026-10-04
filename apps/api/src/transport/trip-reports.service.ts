@@ -81,6 +81,26 @@ const TRIP_JOINS = Prisma.sql`
   LEFT JOIN "vehicles" v ON v."id" = t."vehicle_id"
   LEFT JOIN "drivers" dr ON dr."id" = t."driver_id"`;
 
+/** The entries carrying a trip's cost: its expenses and its accrual. */
+const COST_ENTRY_IDS = Prisma.sql`
+  array_remove(
+    array_append(
+      coalesce((SELECT array_agg(x."journal_entry_id"::text) FROM "trip_expenses" x
+                WHERE x."trip_id" = t."id"), ARRAY[]::text[]),
+      t."accrual_entry_id"::text),
+    NULL)`;
+
+/** What the report's totals and groups need from every matching trip. */
+export interface TripSummaryRow {
+  vehicleId: string | null;
+  vehicle: string | null;
+  driverId: string | null;
+  driver: string | null;
+  carrierId: string | null;
+  carrierName: string | null;
+  costEntryIds: string[];
+}
+
 /** The trip's day: its departure (actual, else planned), else its creation, in its branch. */
 const TRIP_DAY = Prisma.sql`
   (coalesce(t."actual_departure", t."planned_departure", t."created_at") AT TIME ZONE b."timezone")::date`;
@@ -101,48 +121,61 @@ function route(r: TripColumns): { origin: ReportLocationDto; destination: Report
 export class TripReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Report 9: trips whose day is in the period. */
+  /**
+   * Report 9: trips whose day is in the period. `trips` is the listed rows, cut at `limit`;
+   * `all` is every matching trip with what the totals and groups need, never cut.
+   */
   async trips(
     user: AuthUser,
     q: TripReportQuery,
     limit: number,
-  ): Promise<{ trips: TripRow[]; truncated: boolean }> {
+  ): Promise<{ trips: TripRow[]; all: TripSummaryRow[]; truncated: boolean }> {
     const branchIds = reportBranchIds(user, q.branchId);
-    if (branchIds.length === 0) return { trips: [], truncated: false };
-    const rows = await this.prisma.$queryRaw<
-      (TripColumns & {
-        branchCode: string;
-        kind: TripKind;
-        tripDate: Date;
-        vehicleId: string | null;
-        driverId: string | null;
-        carrierId: string | null;
-        carrierName: string | null;
-        shipments: number;
-        costEntryIds: string[];
-      })[]
-    >`
-      SELECT ${TRIP_COLUMNS}, b."code" AS "branchCode", t."kind"::text AS "kind",
-             ${TRIP_DAY} AS "tripDate", t."vehicle_id" AS "vehicleId", t."driver_id" AS "driverId",
-             t."carrier_id" AS "carrierId", c."name" AS "carrierName",
-             (SELECT count(*)::int FROM "trip_shipments" ts WHERE ts."trip_id" = t."id") AS "shipments",
-             array_remove(
-               array_append(
-                 coalesce((SELECT array_agg(x."journal_entry_id"::text) FROM "trip_expenses" x
-                           WHERE x."trip_id" = t."id"), ARRAY[]::text[]),
-                 t."accrual_entry_id"::text),
-               NULL) AS "costEntryIds"
-      FROM "trips" t
-      ${TRIP_JOINS}
-      LEFT JOIN "carriers" c ON c."id" = t."carrier_id"
+    if (branchIds.length === 0) return { trips: [], all: [], truncated: false };
+    const where = Prisma.sql`
       WHERE t."branch_id" IN ${uuidList(branchIds)}
         AND ${TRIP_DAY} BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.kind, (kind) => Prisma.sql`t."kind"::text = ${kind}`)}
         ${andIf(q.vehicleId, (id) => Prisma.sql`t."vehicle_id" = ${id}::uuid`)}
         ${andIf(q.driverId, (id) => Prisma.sql`t."driver_id" = ${id}::uuid`)}
-        ${andIf(q.carrierId, (id) => Prisma.sql`t."carrier_id" = ${id}::uuid`)}
-      ORDER BY ${TRIP_DAY}, t."number"
-      LIMIT ${limit + 1}`;
+        ${andIf(q.carrierId, (id) => Prisma.sql`t."carrier_id" = ${id}::uuid`)}`;
+    const [rows, all] = await Promise.all([
+      this.prisma.$queryRaw<
+        (TripColumns & {
+          branchCode: string;
+          kind: TripKind;
+          tripDate: Date;
+          vehicleId: string | null;
+          driverId: string | null;
+          carrierId: string | null;
+          carrierName: string | null;
+          shipments: number;
+          costEntryIds: string[];
+        })[]
+      >`
+        SELECT ${TRIP_COLUMNS}, b."code" AS "branchCode", t."kind"::text AS "kind",
+               ${TRIP_DAY} AS "tripDate", t."vehicle_id" AS "vehicleId", t."driver_id" AS "driverId",
+               t."carrier_id" AS "carrierId", c."name" AS "carrierName",
+               (SELECT count(*)::int FROM "trip_shipments" ts WHERE ts."trip_id" = t."id") AS "shipments",
+               ${COST_ENTRY_IDS} AS "costEntryIds"
+        FROM "trips" t
+        ${TRIP_JOINS}
+        LEFT JOIN "carriers" c ON c."id" = t."carrier_id"
+        ${where}
+        ORDER BY ${TRIP_DAY}, t."number"
+        LIMIT ${limit + 1}`,
+      this.prisma.$queryRaw<TripSummaryRow[]>`
+        SELECT t."vehicle_id" AS "vehicleId", v."plate_number" AS "vehicle",
+               t."driver_id" AS "driverId", dr."name" AS "driver",
+               t."carrier_id" AS "carrierId", c."name" AS "carrierName",
+               ${COST_ENTRY_IDS} AS "costEntryIds"
+        FROM "trips" t
+        JOIN "branches" b ON b."id" = t."branch_id"
+        LEFT JOIN "vehicles" v ON v."id" = t."vehicle_id"
+        LEFT JOIN "drivers" dr ON dr."id" = t."driver_id"
+        LEFT JOIN "carriers" c ON c."id" = t."carrier_id"
+        ${where}`,
+    ]);
     const capped = overLimit(rows, limit);
     return {
       trips: capped.rows.map((r) => ({
@@ -162,6 +195,7 @@ export class TripReportsService {
         shipments: r.shipments,
         costEntryIds: r.costEntryIds,
       })),
+      all,
       truncated: capped.truncated,
     };
   }

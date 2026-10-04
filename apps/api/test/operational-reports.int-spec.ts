@@ -30,6 +30,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { daysBetween, todayIn } from '../src/common/dates.js';
 import type { AuthUser } from '../src/auth/auth-user.js';
 import { Prisma } from '../src/generated/prisma/client.js';
+import { OperationalReportsService } from '../src/reports/operational-reports.service.js';
 import { TripReportsService } from '../src/transport/trip-reports.service.js';
 import {
   APP_ORIGIN,
@@ -863,6 +864,37 @@ describe('operational reports and dashboards', () => {
         `/reports/trips?from=${d('04-01')}&to=${d('04-30')}&carrierId=${carrier.id}`,
       );
       expect(april.trips).toEqual([]);
+    });
+
+    it('totals and groups cover every matching trip when the listed rows are cut', async () => {
+      const full = await report<TripsReportDto>(`/reports/trips?${may()}`);
+      expect(full.trips.length).toBeGreaterThanOrEqual(2);
+      expect(full.truncated).toBe(false);
+      const manager: AuthUser = {
+        id: ids.manager,
+        email: 'manager@example.test',
+        fullName: 'Manager',
+        preferredLocale: 'en',
+        sessionId: randomUUID(),
+        roles: ['BRANCH_MANAGER'],
+        permissions: ROLE_PERMISSIONS.BRANCH_MANAGER,
+        allBranches: false,
+        allowedBranchIds: [pts],
+      };
+      const [from, to] = [d('05-01'), d('05-31')];
+      const cut = await t.app
+        .get(OperationalReportsService)
+        .tripsReport(manager, { from, to, branchId: pts }, 1);
+      const fullPts = await report<TripsReportDto>(
+        `/reports/trips?from=${from}&to=${to}&branchId=${pts}`,
+      );
+      expect(cut.trips).toHaveLength(1);
+      expect(cut.truncated).toBe(true);
+      expect(cut.totals).toEqual(fullPts.totals);
+      expect(cut.byVehicle).toEqual(fullPts.byVehicle);
+      expect(cut.byDriver).toEqual(fullPts.byDriver);
+      expect(cut.byCarrier).toEqual(fullPts.byCarrier);
+      expect(cut.totals.trips).toBe(fullPts.trips.length);
     });
 
     it('another branch is 403 or empty; a driver has no access', async () => {
