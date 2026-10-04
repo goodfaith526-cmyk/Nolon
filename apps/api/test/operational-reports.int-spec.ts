@@ -433,6 +433,7 @@ describe('operational reports and dashboards', () => {
     );
     const expense = (amount: string) =>
       post(`/trips/${ownTrip.id}/expenses`, cookies.opsPts, {
+        requestId: randomUUID(),
         expenseDate: d('05-03'),
         description: `Fuel ${amount}`,
         amount,
