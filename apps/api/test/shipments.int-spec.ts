@@ -283,6 +283,38 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       expect(row.services).toEqual(['MAIN_FREIGHT', 'CUSTOMS']);
     });
 
+    it('a services edit read before a concurrent change is compared with the locked row', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);
+      // Another request changes the services and the shipment moves while this one waits. Its
+      // input equals what it read before the lock, which is no longer the row's value.
+      const { pending } = await t.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${s.id}::uuid FOR UPDATE`;
+        await tx.shipment.update({
+          where: { id: s.id },
+          data: { services: ['MAIN_FREIGHT'], status: 'LOADED' },
+        });
+        await tx.shipmentEvent.create({
+          data: {
+            shipmentId: s.id,
+            kind: 'STATUS',
+            status: 'LOADED',
+            fromStatus: 'CREATED',
+            occurredAt: new Date(),
+            branchId: dxb,
+            source: 'SYSTEM',
+          },
+        });
+        const request = patch(`/shipments/${s.id}`, cookies.opsDxb, {
+          services: ['MAIN_FREIGHT', 'CUSTOMS'],
+        }).then((r) => r.status);
+        await waitForLockWaiter(t.prisma);
+        return { pending: request };
+      });
+      expect(await pending).toBe(409);
+      const row = await t.prisma.shipment.findUniqueOrThrow({ where: { id: s.id } });
+      expect(row.services).toEqual(['MAIN_FREIGHT']);
+    });
+
     it('reverting repeated partial deliveries undoes one at a time', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT', 'LAST_MILE']);
       for (const status of [

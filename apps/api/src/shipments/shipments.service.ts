@@ -224,9 +224,6 @@ export class ShipmentsService {
     ]);
     const services: BookingService[] | undefined = input.services && [...new Set(input.services)];
     if (services?.length === 0) throw new BadRequestException('Choose at least one service');
-    const etd = input.etd === undefined ? fromDbDateOrNull(existing.etd) : input.etd;
-    const eta = input.eta === undefined ? fromDbDateOrNull(existing.eta) : input.eta;
-    if (etd && eta && eta < etd) throw new BadRequestException('ETA cannot be before ETD');
     const data: Prisma.ShipmentUncheckedUpdateInput = {
       cargoDescription: input.cargoDescription,
       services,
@@ -246,12 +243,21 @@ export class ShipmentsService {
       if (!isActive(status)) {
         throw new ConflictException('A closed or cancelled shipment cannot be edited');
       }
+      // Compared with the row as it is under the lock, not as read before it: another edit may
+      // have committed in between.
+      const current = await tx.shipment.findUniqueOrThrow({
+        where: { id },
+        select: { services: true, etd: true, eta: true },
+      });
+      const etd = input.etd === undefined ? fromDbDateOrNull(current.etd) : input.etd;
+      const eta = input.eta === undefined ? fromDbDateOrNull(current.eta) : input.eta;
+      if (etd && eta && eta < etd) throw new BadRequestException('ETA cannot be before ETD');
       // The services decide which stages the shipment must pass. Once it has left CREATED they
       // are fixed, so no booked or in-progress stage can be removed to skip it.
       const changed =
         services !== undefined &&
-        (services.length !== existing.services.length ||
-          services.some((service) => !existing.services.includes(service)));
+        (services.length !== current.services.length ||
+          services.some((service) => !current.services.includes(service)));
       if (changed && status !== 'CREATED') {
         throw new ConflictException('Services can change only before the shipment moves');
       }
