@@ -90,6 +90,13 @@ export const icons = {
       <path d="M12 5v14M5 12h14" />
     </Icon>
   ),
+  warehouse: (
+    <Icon>
+      <path d="M3 9.5 12 4l9 5.5V20H3z" />
+      <path d="M7 20v-7h10v7" />
+      <path d="M7 16.5h10" />
+    </Icon>
+  ),
   ship: (
     <Icon>
       <path d="M3 17c1.5 1.3 3 2 4.5 2S10.5 18.3 12 17c1.5 1.3 3 2 4.5 2s3-.7 4.5-2" />

@@ -19,6 +19,7 @@ interface NavLink {
     | 'quotations'
     | 'bookings'
     | 'shipments'
+    | 'warehouses'
     | 'invoices'
     | 'receipts'
     | 'journals'
@@ -52,7 +53,15 @@ const NAV_SECTIONS: readonly {
   },
   {
     title: 'operations',
-    links: [{ href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' }],
+    links: [
+      { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
+      {
+        href: '/warehouses',
+        label: 'warehouses',
+        icon: 'warehouse',
+        permission: 'warehouse:view',
+      },
+    ],
   },
   {
     title: 'finance',

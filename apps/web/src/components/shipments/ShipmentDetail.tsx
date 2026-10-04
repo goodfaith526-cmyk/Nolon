@@ -14,10 +14,12 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
+import { ShipmentCustoms } from '../customs/ShipmentCustoms';
 import { ShipmentInvoices } from '../finance/ShipmentInvoices';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { ShipmentContainers } from './ShipmentContainers';
+import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
@@ -446,6 +448,8 @@ export function ShipmentDetail({ id }: { id: string }) {
       </div>
 
       <ShipmentContainers shipment={s} onChange={setShipment} />
+      {can(me, 'warehouse:view') && <ShipmentWarehouse shipment={s} onShipmentChanged={load} />}
+      {can(me, 'customs:view') && <ShipmentCustoms shipment={s} onShipmentChange={setShipment} />}
       {can(me, 'documents:view') && <ShipmentDocuments shipmentId={s.id} />}
       {can(me, 'customer_invoices:view') && <ShipmentInvoices shipmentId={s.id} />}
     </section>

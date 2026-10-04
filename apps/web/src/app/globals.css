@@ -675,6 +675,26 @@ tr.inactive td {
   color: var(--warn);
 }
 
+/* Warehouse movements: receipts green, releases blue. Customs files: in progress is blue, held
+   is amber, cleared is green; pending stays neutral. */
+.badge-movement.badge-RECEIPT,
+.badge-customs.badge-CLEARED {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-movement.badge-RELEASE,
+.badge-customs.badge-SUBMITTED,
+.badge-customs.badge-INSPECTION {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.badge-customs.badge-HELD {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 /* ---------------------------------------------------------------------------------------------
    Dashboard.
    --------------------------------------------------------------------------------------------- */
@@ -1050,4 +1070,50 @@ td .actions,
 
 td select {
   max-inline-size: 24rem;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Warehouse and customs sections.
+   --------------------------------------------------------------------------------------------- */
+
+.panel-head p {
+  margin: 0;
+}
+
+.panel.inactive {
+  opacity: 0.7;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.actions > .badge {
+  align-self: center;
+}
+
+.stack.tight {
+  gap: 0.25rem;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.button.small {
+  padding-block: 0.25rem;
+  padding-inline: 0.5rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+/* Hidden but still focusable and read by screen readers (the file input inside a label). */
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

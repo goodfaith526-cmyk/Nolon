@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { MAX_DOCUMENT_BYTES, type ShipmentDocumentDto } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import type { Document } from '../generated/prisma/client.js';
+import type { Document, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -20,6 +20,13 @@ export interface UploadInput {
   note: string | null;
   data: Buffer;
 }
+
+/** An upload whose type, size and content were checked; ready to insert. */
+export interface PreparedUpload extends UploadInput {
+  contentType: string;
+}
+
+type Tx = Prisma.TransactionClient;
 
 export interface DocumentFile {
   fileName: string;
@@ -58,6 +65,21 @@ export class DocumentsService {
     if (shipment.status === 'CANCELLED') {
       throw new ConflictException('A cancelled shipment does not take new documents');
     }
+    const file = await this.prepare(input);
+    return this.prisma.$transaction(async (tx) => {
+      // Re-checked under the shipment lock: a cancel that commits meanwhile is seen here.
+      if ((await this.shipments.lockForChildWrite(tx, shipmentId)) === 'CANCELLED') {
+        throw new ConflictException('A cancelled shipment does not take new documents');
+      }
+      return this.insert(tx, user, shipment.branchId, shipmentId, file);
+    });
+  }
+
+  /**
+   * Checks an upload (type, size, content) before any transaction. For other modules attaching
+   * files under a shipment (warehouse photos), with `insert`.
+   */
+  async prepare(input: UploadInput): Promise<PreparedUpload> {
     await this.masterData.requireDocumentType(input.typeCode);
     if (input.data.length === 0) throw new BadRequestException('The file is empty');
     if (input.data.length > MAX_DOCUMENT_BYTES) {
@@ -66,26 +88,34 @@ export class DocumentsService {
     const contentType = detectContentType(input.data);
     if (!contentType)
       throw new BadRequestException('Only PDF, JPEG, PNG and WebP files are accepted');
-    const document = await this.prisma.$transaction(async (tx) => {
-      // Re-checked under the shipment lock: a cancel that commits meanwhile is seen here.
-      if ((await this.shipments.lockForChildWrite(tx, shipmentId)) === 'CANCELLED') {
-        throw new ConflictException('A cancelled shipment does not take new documents');
-      }
-      return tx.document.create({
-        data: {
-          branchId: shipment.branchId,
-          shipmentId,
-          typeCode: input.typeCode,
-          fileName: cleanFileName(input.fileName),
-          contentType,
-          sizeBytes: input.data.length,
-          sha256: createHash('sha256').update(input.data).digest('hex'),
-          note: input.note,
-          uploadedById: user.id,
-          content: { create: { data: new Uint8Array(input.data) } },
-        },
-        include: { uploadedBy: { select: { fullName: true } } },
-      });
+    return { ...input, contentType };
+  }
+
+  /**
+   * Inserts a prepared file inside the caller's transaction. The caller has checked access to the
+   * shipment and holds its lock (ShipmentsService.lockForChildWrite).
+   */
+  async insert(
+    tx: Tx,
+    user: AuthUser,
+    branchId: string,
+    shipmentId: string,
+    file: PreparedUpload,
+  ): Promise<ShipmentDocumentDto> {
+    const document = await tx.document.create({
+      data: {
+        branchId,
+        shipmentId,
+        typeCode: file.typeCode,
+        fileName: cleanFileName(file.fileName),
+        contentType: file.contentType,
+        sizeBytes: file.data.length,
+        sha256: createHash('sha256').update(file.data).digest('hex'),
+        note: file.note,
+        uploadedById: user.id,
+        content: { create: { data: new Uint8Array(file.data) } },
+      },
+      include: { uploadedBy: { select: { fullName: true } } },
     });
     return toDto(document);
   }
