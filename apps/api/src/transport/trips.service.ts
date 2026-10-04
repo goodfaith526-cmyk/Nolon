@@ -42,10 +42,12 @@ import { forbidDriverOnly, isDriverOnly, lockTrip, tripScope } from './trip-scop
 import {
   OPEN_TRIP_STATUSES,
   SCHEDULED_STATUS,
+  atOrPastOnLeg,
   isPlanned,
   shipmentStatusFor,
   takesExpenses,
   tripMoves,
+  tripTakesPod,
 } from './transport-rules.js';
 
 type Tx = Prisma.TransactionClient;
@@ -103,7 +105,9 @@ export const MAX_TRIP_SHIPMENTS = 100;
  * statuses 9-12) through the shipment state machine, in the same transaction:
  * - putting a shipment on a trip moves it to TRIP_SCHEDULED,
  * - departing moves every shipment to ROAD_DEPARTED, arriving to ROAD_ARRIVED.
- * A shipment already at the target status (moved by hand on the shipment page) is left as it is.
+ * A shipment already at the target status or beyond it on this leg (moved by hand on the shipment
+ * page, or delivered) is left as it is. A trip carries shipments of its own branch only, and a
+ * move is never dated before the trip was planned or before a moved shipment's latest event.
  * When any shipment cannot take the move now (on hold, cancelled, at another stage), the trip
  * change is refused with 409 naming them, and nothing is applied: the trip waits until those
  * shipments are sorted out or taken off the trip (while it is planned). Completing an external
@@ -111,7 +115,9 @@ export const MAX_TRIP_SHIPMENTS = 100;
  *
  * Locks: the trip row first (lockTrip), then each shipment exclusively in id order. Every status
  * change re-reads the trip under its lock, so two concurrent changes run one after the other and
- * the second is refused when the first already made it.
+ * the second is refused when the first already made it. A new trip share-locks its vehicle,
+ * driver, carrier and currency before it reads them. While the trip has posted expenses (split
+ * over its shipments), its shipments are fixed.
  */
 @Injectable()
 export class TripsService {
@@ -183,7 +189,7 @@ export class TripsService {
     if (plannedDeparture && plannedArrival && plannedArrival < plannedDeparture) {
       throw new BadRequestException('The planned arrival cannot be before the departure');
     }
-    const kindFields = await this.kindFields(user, input);
+    checkKindShape(input);
     const shipmentIds = [...new Set(input.shipmentIds)];
     if (shipmentIds.length !== input.shipmentIds.length) {
       throw new BadRequestException('Each shipment appears once');
@@ -194,6 +200,8 @@ export class TripsService {
       select: { timezone: true },
     });
     const id = await this.prisma.$transaction(async (tx) => {
+      // Fleet and currency are checked here, under their row locks (see kindFields).
+      const kindFields = await this.kindFields(tx, user, input);
       const year = todayIn(branch.timezone).slice(0, 4);
       const number = formatDocumentNumber('TRP', await nextSequenceValue(tx, 'TRIP', year), year);
       const trip = await tx.trip.create({
@@ -227,6 +235,7 @@ export class TripsService {
       if (!isPlanned(trip.status)) {
         throw new ConflictException('Shipments are added only while the trip is planned');
       }
+      await requireNoPostedExpenses(tx, id);
       const count = await tx.tripShipment.count({ where: { tripId: id } });
       if (count >= MAX_TRIP_SHIPMENTS) {
         throw new ConflictException(`A trip carries at most ${MAX_TRIP_SHIPMENTS} shipments`);
@@ -252,6 +261,7 @@ export class TripsService {
       if (!isPlanned(trip.status)) {
         throw new ConflictException('Shipments are removed only while the trip is planned');
       }
+      await requireNoPostedExpenses(tx, id);
       const links = await tx.tripShipment.findMany({ where: { tripId: id } });
       if (!links.some((l) => l.shipmentId === shipmentId)) {
         throw new NotFoundException('The shipment is not on this trip');
@@ -278,6 +288,9 @@ export class TripsService {
       const trip = await lockTrip(tx, id);
       if (!tripMoves(trip.status).includes(input.status)) {
         throw new ConflictException(`A ${trip.status} trip cannot be marked ${input.status}`);
+      }
+      if (input.status === 'DEPARTED' && occurredAt < trip.createdAt) {
+        throw new BadRequestException('The departure cannot be before the trip was planned');
       }
       const shipmentIds = (
         await tx.tripShipment.findMany({ where: { tripId: id }, select: { shipmentId: true } })
@@ -349,30 +362,23 @@ export class TripsService {
     return trip;
   }
 
-  /** The own or external fields of a new trip, checked against the fleet master data. */
-  private async kindFields(user: AuthUser, input: TripInput): Promise<KindFields> {
-    if (input.kind === 'OWN') {
-      if (!input.vehicleId || !input.driverId) {
-        throw new BadRequestException('An own trip needs a vehicle and a driver');
-      }
-      if (input.carrierId || input.agreedCost || input.currency) {
-        throw new BadRequestException('An own trip has no carrier or agreed cost');
-      }
-      if (input.externalVehicle || input.externalDriver) {
-        throw new BadRequestException('An own trip takes its vehicle and driver from the fleet');
-      }
-      await this.fleet.requireVehicleForTrip(user, input.vehicleId, input.branchId);
-      await this.fleet.requireDriverForTrip(user, input.driverId, input.branchId);
+  /**
+   * The own or external fields of a new trip, checked against the fleet master data inside the
+   * trip's transaction: each vehicle, driver, carrier and currency row is share-locked, then read
+   * and checked, so a concurrent deactivation either commits first and is refused here (400), or
+   * waits until the trip is saved. The shape was checked before (checkKindShape).
+   */
+  private async kindFields(tx: Tx, user: AuthUser, input: TripInput): Promise<KindFields> {
+    if (input.kind === 'OWN' && input.vehicleId && input.driverId) {
+      await this.fleet.requireVehicleForTrip(tx, user, input.vehicleId, input.branchId);
+      await this.fleet.requireDriverForTrip(tx, user, input.driverId, input.branchId);
       return { vehicleId: input.vehicleId, driverId: input.driverId };
     }
-    if (input.vehicleId || input.driverId) {
-      throw new BadRequestException('An external trip has no fleet vehicle or driver');
-    }
-    if (!input.carrierId || !input.agreedCost || !input.currency) {
+    if (input.kind !== 'EXTERNAL' || !input.carrierId || !input.agreedCost || !input.currency) {
       throw new BadRequestException('An external trip needs a carrier, agreed cost and currency');
     }
-    await this.fleet.requireCarrierForTrip(input.carrierId);
-    const currency = await this.currencies.requireActive(input.currency);
+    await this.fleet.requireCarrierForTrip(tx, input.carrierId);
+    const currency = await this.currencies.requireActiveInTx(tx, input.currency);
     const agreedCost = dec(input.agreedCost);
     if (!agreedCost.gt(0) || !agreedCost.eq(agreedCost.toDecimalPlaces(currency.decimalPlaces))) {
       throw new BadRequestException(
@@ -429,6 +435,11 @@ export class TripsService {
       if (!isActive(status)) {
         throw new ConflictException(`Shipment ${label} is ${status} and cannot go on a trip`);
       }
+      // A trip carries its own branch's shipments only, even for a user of several branches.
+      const { branchId } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
+      if (branchId !== trip.branchId) {
+        throw new BadRequestException(`Shipment ${label} belongs to another branch than the trip`);
+      }
       const other = await tx.tripShipment.findFirst({
         where: {
           shipmentId,
@@ -458,8 +469,10 @@ export class TripsService {
 
   /**
    * Moves every shipment of the trip to `target` through the state machine, in id order under
-   * each shipment's lock. A shipment already at `target` is left alone. 409 naming every shipment
-   * that cannot take the move; the caller's transaction then rolls back the ones already moved.
+   * each shipment's lock. A shipment already at `target` or beyond it on this leg (atOrPastOnLeg)
+   * is left alone. 400 when the move is dated before the latest event of a shipment it moves (the
+   * timeline would go backwards); 409 naming every shipment that cannot take the move. Either way
+   * the caller's transaction rolls back the ones already moved.
    */
   private async moveShipments(
     tx: Tx,
@@ -473,7 +486,14 @@ export class TripsService {
     const blocked: string[] = [];
     for (const shipmentId of [...shipmentIds].sort()) {
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
-      if (status === target) continue;
+      if (atOrPastOnLeg(status, target)) continue;
+      const { lastEventAt } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
+      if (lastEventAt && occurredAt < lastEventAt) {
+        throw new BadRequestException(
+          `Shipment ${numbers.get(shipmentId) ?? shipmentId} has events after that time: ` +
+            `the trip change cannot be dated before ${lastEventAt.toISOString()}`,
+        );
+      }
       const moved = await this.shipments.advanceInTx(tx, user, shipmentId, target, {
         occurredAt,
         note: tripNumber,
@@ -494,13 +514,16 @@ export class TripsService {
     const shipmentIds = t.shipments.map((l) => l.shipmentId);
     const [summaries, shares] = await Promise.all([
       this.shipments.tripSummaries(user, shipmentIds),
-      this.autoJournal.shipmentShares([
-        ...t.expenses.map((e) => e.journalEntryId),
-        ...(t.accrualEntryId ? [t.accrualEntryId] : []),
-      ]),
+      this.autoJournal.shipmentShares(
+        [
+          ...t.expenses.map((e) => e.journalEntryId),
+          ...(t.accrualEntryId ? [t.accrualEntryId] : []),
+        ],
+        t.branchId,
+      ),
     ]);
     const byId = new Map(summaries.map((s) => [s.id, s]));
-    const canPod = has('pod:create') && has('documents:create') && t.status !== 'CANCELLED';
+    const canPod = has('pod:create') && has('documents:create') && tripTakesPod(t.status);
     const shipments: TripShipmentDto[] = [];
     for (const shipmentId of shipmentIds) {
       const s = byId.get(shipmentId);
@@ -598,4 +621,43 @@ function toSummary(t: TripWithSummary): TripSummaryDto {
     carrierName: t.carrier?.name ?? null,
     shipmentCount: t._count.shipments,
   };
+}
+
+/**
+ * The shape of a new trip's own or external fields, before any lookup: an own trip names a fleet
+ * vehicle and driver and nothing of a carrier; an external trip a carrier, cost and currency.
+ */
+function checkKindShape(input: TripInput): void {
+  if (input.kind === 'OWN') {
+    if (!input.vehicleId || !input.driverId) {
+      throw new BadRequestException('An own trip needs a vehicle and a driver');
+    }
+    if (input.carrierId || input.agreedCost || input.currency) {
+      throw new BadRequestException('An own trip has no carrier or agreed cost');
+    }
+    if (input.externalVehicle || input.externalDriver) {
+      throw new BadRequestException('An own trip takes its vehicle and driver from the fleet');
+    }
+    return;
+  }
+  if (input.vehicleId || input.driverId) {
+    throw new BadRequestException('An external trip has no fleet vehicle or driver');
+  }
+  if (!input.carrierId || !input.agreedCost || !input.currency) {
+    throw new BadRequestException('An external trip needs a carrier, agreed cost and currency');
+  }
+}
+
+/**
+ * Posted expenses were split over the trip's shipments when they were posted: while any stands,
+ * the shipments of the trip are fixed (409). Cancel the expense first. The caller holds the trip
+ * lock, which expense posting also takes.
+ */
+async function requireNoPostedExpenses(tx: Tx, tripId: string): Promise<void> {
+  const posted = await tx.tripExpense.count({ where: { tripId, status: 'POSTED' } });
+  if (posted > 0) {
+    throw new ConflictException(
+      'The trip has posted expenses shared by its shipments: cancel them before changing the shipments',
+    );
+  }
 }

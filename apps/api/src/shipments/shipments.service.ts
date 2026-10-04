@@ -732,6 +732,25 @@ export class ShipmentsService {
     return row.status;
   }
 
+  /**
+   * For writes under a shipment that the caller has already locked (lockForChildWrite): its
+   * branch, and when its latest recorded event happened. A change dated before that event would
+   * rewrite the shipment's timeline, so callers refuse it.
+   */
+  async branchAndLastEventInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ branchId: string; lastEventAt: Date | null }> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: {
+        branchId: true,
+        events: { select: { occurredAt: true }, orderBy: { occurredAt: 'desc' }, take: 1 },
+      },
+    });
+    return { branchId: shipment.branchId, lastEventAt: shipment.events[0]?.occurredAt ?? null };
+  }
+
   /** Row lock and current status, inside the caller's transaction. */
   private async lockStatus(tx: Tx, id: string): Promise<ShipmentStatus> {
     const rows = await tx.$queryRaw<{ status: ShipmentStatus }[]>`

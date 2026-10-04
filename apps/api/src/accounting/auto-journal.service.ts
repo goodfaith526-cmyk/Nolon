@@ -76,10 +76,11 @@ export class AutoJournalService {
 
   /**
    * How trip cost entries (rules 10 and 11) were shared between shipments: the debit lines that
-   * carry a shipment, per entry, in the entry's currency.
+   * carry a shipment of `branchId`, per entry, in the entry's currency.
    */
   async shipmentShares(
     entryIds: readonly string[],
+    branchId: string,
   ): Promise<Map<string, { shipmentId: string; shipmentNumber: string; amount: Decimal }[]>> {
     const result = new Map<
       string,
@@ -87,7 +88,13 @@ export class AutoJournalService {
     >();
     if (entryIds.length === 0) return result;
     const lines = await this.prisma.journalLine.findMany({
-      where: { entryId: { in: [...entryIds] }, shipmentId: { not: null }, debit: { gt: 0 } },
+      where: {
+        entryId: { in: [...entryIds] },
+        shipmentId: { not: null },
+        debit: { gt: 0 },
+        // Only the branch's own shipments: a share never shows another branch's shipment number.
+        shipment: { branchId },
+      },
       select: {
         entryId: true,
         shipmentId: true,

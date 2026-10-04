@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { InvalidLineError, splitAmount } from '../accounting/journal-math.js';
 import { dec } from '../common/money.js';
 import {
+  atOrPastOnLeg,
   defaultPodStatus,
   measuresOf,
   podStatusOptions,
@@ -9,6 +10,7 @@ import {
   splitBasis,
   splitTripCost,
   tripMoves,
+  tripTakesPod,
 } from './transport-rules.js';
 
 const m = (shipmentId: string, cbm: string | null, kg: string | null) => ({
@@ -134,5 +136,44 @@ describe('proof of delivery', () => {
     expect(defaultPodStatus(options)).toBe('DELIVERED');
     expect(defaultPodStatus(['PARTIALLY_DELIVERED'])).toBe('PARTIALLY_DELIVERED');
     expect(defaultPodStatus(podStatusOptions(['TRIP_SCHEDULED']))).toBeNull();
+  });
+});
+
+describe('atOrPastOnLeg: a trip move leaves shipments already there or beyond', () => {
+  it('counts the target itself and later road statuses of the leg', () => {
+    expect(atOrPastOnLeg('ROAD_DEPARTED', 'ROAD_DEPARTED')).toBe(true);
+    expect(atOrPastOnLeg('ROAD_IN_TRANSIT', 'ROAD_DEPARTED')).toBe(true);
+    expect(atOrPastOnLeg('ROAD_ARRIVED', 'ROAD_DEPARTED')).toBe(true);
+    expect(atOrPastOnLeg('ROAD_IN_TRANSIT', 'ROAD_ARRIVED')).toBe(false);
+  });
+
+  it('counts the statuses after the leg (customs, warehouse, delivery, closed)', () => {
+    for (const status of [
+      'CUSTOMS_IN_PROGRESS',
+      'OUT_FOR_DELIVERY',
+      'DELIVERED',
+      'CLOSED',
+    ] as const) {
+      expect(atOrPastOnLeg(status, 'ROAD_DEPARTED')).toBe(true);
+      expect(atOrPastOnLeg(status, 'ROAD_ARRIVED')).toBe(true);
+    }
+  });
+
+  it('does not count a shipment behind the target, on hold or cancelled', () => {
+    expect(atOrPastOnLeg('TRIP_SCHEDULED', 'ROAD_DEPARTED')).toBe(false);
+    expect(atOrPastOnLeg('ROAD_DEPARTED', 'ROAD_ARRIVED')).toBe(false);
+    expect(atOrPastOnLeg('ARRIVED_PORT', 'ROAD_DEPARTED')).toBe(false);
+    expect(atOrPastOnLeg('ON_HOLD', 'ROAD_DEPARTED')).toBe(false);
+    expect(atOrPastOnLeg('CANCELLED', 'ROAD_ARRIVED')).toBe(false);
+  });
+});
+
+describe('tripTakesPod', () => {
+  it('only a trip that has left', () => {
+    expect(tripTakesPod('PLANNED')).toBe(false);
+    expect(tripTakesPod('CANCELLED')).toBe(false);
+    expect(tripTakesPod('DEPARTED')).toBe(true);
+    expect(tripTakesPod('ARRIVED')).toBe(true);
+    expect(tripTakesPod('COMPLETED')).toBe(true);
   });
 });

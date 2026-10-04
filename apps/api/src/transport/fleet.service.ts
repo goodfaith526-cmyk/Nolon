@@ -24,6 +24,8 @@ import type { Carrier, Prisma, Vehicle } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersService } from '../users/users.service.js';
 
+type Tx = Prisma.TransactionClient;
+
 const withUser = { user: { select: { fullName: true } } } satisfies Prisma.DriverInclude;
 type DriverWithUser = Prisma.DriverGetPayload<{ include: typeof withUser }>;
 
@@ -87,9 +89,19 @@ export class FleetService {
     );
   }
 
-  /** For a trip of `branchId`: an active vehicle of that branch the user can see; 400 otherwise. */
-  async requireVehicleForTrip(user: AuthUser, id: string, branchId: string): Promise<Vehicle> {
-    const vehicle = await this.prisma.vehicle.findFirst({ where: { id, ...branchScope(user) } });
+  /**
+   * For a trip of `branchId`, inside the trip's transaction: an active vehicle of that branch the
+   * user can see; 400 otherwise. The row is share-locked first, so a concurrent deactivation
+   * either commits before and is seen here, or waits until the trip is saved.
+   */
+  async requireVehicleForTrip(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    branchId: string,
+  ): Promise<Vehicle> {
+    await tx.$queryRaw`SELECT 1 FROM "vehicles" WHERE "id" = ${id}::uuid FOR SHARE`;
+    const vehicle = await tx.vehicle.findFirst({ where: { id, ...branchScope(user) } });
     if (!vehicle?.isActive || vehicle.branchId !== branchId) {
       throw new BadRequestException('Choose an active vehicle of the trip branch');
     }
@@ -131,21 +143,44 @@ export class FleetService {
     }
   }
 
+  /**
+   * Updates a driver. The linked user cannot change once the driver has trips: the user sees the
+   * trips of the driver record, so relinking would hand one driver's history to another (409).
+   * The driver row is locked while its trips are counted, so a trip being planned for it either
+   * commits first and is counted, or waits for the update.
+   */
   async updateDriver(user: AuthUser, id: string, input: DriverUpdateRequest): Promise<DriverDto> {
     const driver = await this.findDriver(user, id);
     if (input.userId) await this.users.requireDriverUser(input.userId, driver.branchId);
     try {
       return toDriverDto(
-        await this.prisma.driver.update({
-          where: { id },
-          data: {
-            name: input.name,
-            phone: input.phone,
-            licenseNumber: input.licenseNumber,
-            userId: input.userId,
-            isActive: input.isActive,
-          },
-          include: withUser,
+        await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "drivers" WHERE "id" = ${id}::uuid FOR UPDATE`;
+          if (input.userId !== undefined) {
+            const current = await tx.driver.findUniqueOrThrow({
+              where: { id },
+              select: { userId: true },
+            });
+            if (
+              input.userId !== current.userId &&
+              (await tx.trip.count({ where: { driverId: id } }))
+            ) {
+              throw new ConflictException(
+                'This driver has trips: its user cannot change. Add a new driver record instead',
+              );
+            }
+          }
+          return tx.driver.update({
+            where: { id },
+            data: {
+              name: input.name,
+              phone: input.phone,
+              licenseNumber: input.licenseNumber,
+              userId: input.userId,
+              isActive: input.isActive,
+            },
+            include: withUser,
+          });
         }),
       );
     } catch (error) {
@@ -161,9 +196,13 @@ export class FleetService {
     return this.users.driverUsers(user.allowedBranchIds);
   }
 
-  /** For a trip of `branchId`: an active driver of that branch the user can see; 400 otherwise. */
-  async requireDriverForTrip(user: AuthUser, id: string, branchId: string): Promise<void> {
-    const driver = await this.prisma.driver.findFirst({ where: { id, ...branchScope(user) } });
+  /**
+   * For a trip of `branchId`, inside the trip's transaction: an active driver of that branch the
+   * user can see; 400 otherwise. Share-locked like requireVehicleForTrip.
+   */
+  async requireDriverForTrip(tx: Tx, user: AuthUser, id: string, branchId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "drivers" WHERE "id" = ${id}::uuid FOR SHARE`;
+    const driver = await tx.driver.findFirst({ where: { id, ...branchScope(user) } });
     if (!driver?.isActive || driver.branchId !== branchId) {
       throw new BadRequestException('Choose an active driver of the trip branch');
     }
@@ -205,9 +244,13 @@ export class FleetService {
     }
   }
 
-  /** For an external trip: an active carrier; 409 otherwise. */
-  async requireCarrierForTrip(id: string): Promise<Carrier> {
-    const carrier = await this.prisma.carrier.findUnique({ where: { id } });
+  /**
+   * For an external trip, inside its transaction: an active carrier; 400 otherwise. Share-locked
+   * like requireVehicleForTrip.
+   */
+  async requireCarrierForTrip(tx: Tx, id: string): Promise<Carrier> {
+    await tx.$queryRaw`SELECT 1 FROM "carriers" WHERE "id" = ${id}::uuid FOR SHARE`;
+    const carrier = await tx.carrier.findUnique({ where: { id } });
     if (!carrier?.isActive) throw new BadRequestException('Choose an active carrier');
     return carrier;
   }

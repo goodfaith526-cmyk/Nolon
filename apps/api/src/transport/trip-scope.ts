@@ -38,3 +38,22 @@ export async function lockTrip(tx: Tx, id: string): Promise<Trip> {
   if (rows.length === 0) throw new NotFoundException('Trip not found');
   return tx.trip.findUniqueOrThrow({ where: { id } });
 }
+
+/**
+ * Share-locks the trip row for a write that depends on the trip without changing it (a POD
+ * naming it) and returns its status and driver's user as they are under the lock. Same order as
+ * lockTrip: the trip first, the shipment after.
+ */
+export async function lockTripShared(
+  tx: Tx,
+  id: string,
+): Promise<{ status: Trip['status']; driverUserId: string | null }> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "trips" WHERE "id" = ${id}::uuid FOR SHARE`;
+  if (rows.length === 0) throw new NotFoundException('Trip not found');
+  const trip = await tx.trip.findUniqueOrThrow({
+    where: { id },
+    select: { status: true, driver: { select: { userId: true } } },
+  });
+  return { status: trip.status, driverUserId: trip.driver?.userId ?? null };
+}

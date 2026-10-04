@@ -46,6 +46,37 @@ export function shipmentStatusFor(move: TripMove): ShipmentStatus | null {
   }
 }
 
+/** The road statuses of one leg, in order (annex B statuses 9-12). */
+const LEG: readonly ShipmentStatus[] = [
+  'TRIP_SCHEDULED',
+  'ROAD_DEPARTED',
+  'ROAD_IN_TRANSIT',
+  'ROAD_ARRIVED',
+];
+
+/** Where a shipment can go after its road leg; it never comes back to this leg from there. */
+const AFTER_LEG: readonly ShipmentStatus[] = [
+  'CUSTOMS_IN_PROGRESS',
+  'CUSTOMS_CLEARED',
+  'RECEIVED_DESTINATION_WAREHOUSE',
+  'OUT_FOR_DELIVERY',
+  'PARTIALLY_DELIVERED',
+  'DELIVERED',
+  'CLOSED',
+];
+
+/**
+ * True when a shipment on a trip already is at `target` or beyond it on this leg (moved by hand
+ * on the shipment page, or delivered): the trip move leaves it as it is instead of waiting for it.
+ * A shipment behind the target (reverted, on hold, cancelled) is not.
+ */
+export function atOrPastOnLeg(status: ShipmentStatus, target: ShipmentStatus): boolean {
+  if (AFTER_LEG.includes(status)) return true;
+  const at = LEG.indexOf(status);
+  const goal = LEG.indexOf(target);
+  return at >= 0 && goal >= 0 && at >= goal;
+}
+
 /** The status a shipment takes when it is put on a trip. */
 export const SCHEDULED_STATUS: ShipmentStatus = 'TRIP_SCHEDULED';
 
@@ -139,6 +170,13 @@ export function splitTripCost(
 // ---------------------------------------------------------------------------------------------
 // Proof of delivery
 // ---------------------------------------------------------------------------------------------
+
+/** A POD names a trip only once the trip has left: the goods are on it or delivered. */
+export const POD_TRIP_STATUSES: readonly TripStatus[] = ['DEPARTED', 'ARRIVED', 'COMPLETED'];
+
+export function tripTakesPod(status: TripStatus): boolean {
+  return POD_TRIP_STATUSES.includes(status);
+}
 
 /** The delivery statuses a POD may move the shipment to, among those allowed now. */
 export function podStatusOptions(transitions: readonly ShipmentStatus[]): PodStatus[] {

@@ -20,8 +20,13 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
-import { isDriverOnly, tripScope } from './trip-scope.js';
-import { defaultPodStatus, podStatusOptions } from './transport-rules.js';
+import { isDriverOnly, lockTripShared, tripScope } from './trip-scope.js';
+import {
+  POD_TRIP_STATUSES,
+  defaultPodStatus,
+  podStatusOptions,
+  tripTakesPod,
+} from './transport-rules.js';
 
 const podDetails = {
   trip: { select: { number: true } },
@@ -52,7 +57,10 @@ export interface PodUpload {
  * move the shipment to PARTIALLY_DELIVERED or DELIVERED through the state machine, in the same
  * transaction, when that move is allowed now; otherwise it only records the delivery. A Driver
  * records PODs only for shipments on their own trips (ShipmentsService scope) and only against
- * their own trips.
+ * their own trips. The trip a POD names is share-locked and checked again inside the transaction,
+ * before the shipment lock (the trip service's order): it must still carry the shipment, have
+ * left and not be cancelled, and for a driver still be theirs. A delivery is never dated before
+ * the shipment's latest event.
  */
 @Injectable()
 export class PodService {
@@ -75,7 +83,9 @@ export class PodService {
     const canRecord =
       user.permissions.has('pod:create') &&
       user.permissions.has('documents:create') &&
-      recordable(shipment.status);
+      recordable(shipment.status) &&
+      // A driver records against one of their trips, so one must have left.
+      (!isDriverOnly(user) || trips.length > 0);
     const statuses = canRecord ? podStatusOptions(shipment.transitions) : [];
     return {
       pods: pods.map(toDto),
@@ -129,10 +139,17 @@ export class PodService {
       select: { timezone: true },
     });
     const id = await this.prisma.$transaction(async (tx) => {
+      if (tripId) await this.requireTripInTx(tx, user, tripId, shipmentId);
       // Exclusive: the status may change in this transaction; a cancel or another POD waits.
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (!recordable(status)) {
         throw new ConflictException(`A ${status} shipment takes no proof of delivery`);
+      }
+      const { lastEventAt } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
+      if (lastEventAt && deliveredAt < lastEventAt) {
+        throw new BadRequestException(
+          `The delivery cannot be dated before the shipment's latest event (${lastEventAt.toISOString()})`,
+        );
       }
       const year = todayIn(branch.timezone).slice(0, 4);
       const number = formatDocumentNumber('POD', await nextSequenceValue(tx, 'POD', year), year);
@@ -181,7 +198,37 @@ export class PodService {
     return toDto(pod);
   }
 
-  /** Trips of this shipment the user may record a POD against (a driver: their own). */
+  /**
+   * Inside the POD's transaction, before the shipment lock: the trip, share-locked, still carries
+   * the shipment, has departed (or arrived, or completed) and is not cancelled (409); a driver's
+   * trip is still assigned to them (404, as for any trip that is not theirs).
+   */
+  private async requireTripInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    tripId: string,
+    shipmentId: string,
+  ): Promise<void> {
+    const trip = await lockTripShared(tx, tripId);
+    if (isDriverOnly(user) && trip.driverUserId !== user.id) {
+      throw new NotFoundException('Trip not found');
+    }
+    const link = await tx.tripShipment.findUnique({
+      where: { tripId_shipmentId: { tripId, shipmentId } },
+      select: { tripId: true },
+    });
+    if (!link || trip.status === 'CANCELLED') {
+      throw new ConflictException('The trip no longer carries this shipment');
+    }
+    if (!tripTakesPod(trip.status)) {
+      throw new ConflictException('A proof of delivery is recorded once the trip has departed');
+    }
+  }
+
+  /**
+   * Trips of this shipment the user may record a POD against (a driver: their own): those that
+   * have left (tripTakesPod), latest first.
+   */
   private async tripsOf(
     user: AuthUser,
     shipmentId: string,
@@ -189,7 +236,7 @@ export class PodService {
     return this.prisma.trip.findMany({
       where: {
         ...tripScope(user),
-        status: { not: 'CANCELLED' },
+        status: { in: [...POD_TRIP_STATUSES] },
         shipments: { some: { shipmentId } },
       },
       select: { id: true, number: true },
@@ -198,8 +245,9 @@ export class PodService {
   }
 
   /**
-   * The trip a POD refers to: the one given, which must carry the shipment and be visible to the
-   * user (400 otherwise); for a driver who gives none, their latest trip carrying it.
+   * The trip a POD refers to: the one given, which must carry the shipment, have left and be
+   * visible to the user (400 otherwise); for a driver who gives none, their latest such trip.
+   * Checked again under the trip lock (requireTripInTx).
    */
   private async resolveTrip(
     user: AuthUser,
@@ -215,7 +263,9 @@ export class PodService {
     }
     if (isDriverOnly(user)) {
       const own = trips[0];
-      if (!own) throw new NotFoundException('Shipment not found');
+      if (!own) {
+        throw new ConflictException('A proof of delivery is recorded once the trip has departed');
+      }
       return own.id;
     }
     return null;

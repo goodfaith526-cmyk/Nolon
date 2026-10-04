@@ -61,7 +61,8 @@ export class TripCostsService {
       select: { timezone: true },
     });
     const date = todayIn(branch.timezone, completedAt);
-    const currency = await this.currencies.requireActive(trip.currency);
+    // Recorded on the trip when it was planned: completion does not depend on it still being active.
+    const currency = await this.currencies.requireRecorded(trip.currency);
     const fxRate = await this.fxRates.resolve(currency.code, date);
     const shares = await this.split(tx, trip.agreedCost, currency.decimalPlaces, shipmentIds);
     return this.autoJournal.tripAccrued(
