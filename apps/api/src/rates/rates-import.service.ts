@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnModuleInit } from '@nestjs/common';
 import {
   CARGO_TYPES,
   LOAD_TYPES,
@@ -22,6 +22,7 @@ import {
   previousImport,
 } from '../imports/import-commit.js';
 import { rowsInvalid } from '../imports/import-http.js';
+import { ImportRecordsRegistry } from '../imports/import-records.registry.js';
 import {
   type CheckedRow,
   type ImportColumn,
@@ -271,13 +272,24 @@ function rateKey(r: {
  * branch. Rows are imported as drafts and approved through the normal workflow.
  */
 @Injectable()
-export class RatesImportService {
+export class RatesImportService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly importRecords: ImportRecordsRegistry,
     private readonly rates: RatesService,
     private readonly masterData: MasterDataService,
     private readonly currencies: CurrenciesService,
   ) {}
+
+  onModuleInit(): void {
+    this.importRecords.register('rates', (client, { from, to }, take) =>
+      client.rateCard.findMany({
+        where: { id: { gte: from, lte: to } },
+        select: { id: true, branchId: true },
+        take,
+      }),
+    );
+  }
 
   async template(user: AuthUser, locale: Locale): Promise<{ fileName: string; data: Buffer }> {
     const [branches, master, currencies] = await Promise.all([
@@ -370,7 +382,7 @@ export class RatesImportService {
     requestId: string,
   ): Promise<ImportResultDto> {
     const request = importRequest('rates', requestId, user.id, file?.buffer ?? Buffer.alloc(0));
-    const done = await previousImport(this.prisma, user, request);
+    const done = await previousImport(this.importRecords.lookups(), this.prisma, user, request);
     if (done) return done;
     const rows = await this.check(user, file);
     const invalid = () => rowsInvalid(buildPreview('rates', RATE_COLUMNS, rows));
@@ -378,7 +390,7 @@ export class RatesImportService {
     const ids = importRecordIds(request, rows.length);
     return this.prisma.$transaction(async (tx) => {
       await lockImportRequest(tx, requestId);
-      const raced = await previousImport(tx, user, request);
+      const raced = await previousImport(this.importRecords.lookups(), tx, user, request);
       if (raced) return raced;
       await lockImportBranches(
         tx,

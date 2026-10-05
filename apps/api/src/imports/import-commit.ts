@@ -13,30 +13,19 @@ import { type ImportRequest, importRecordIds, importRequestRange } from './reque
  * the requestId's id range, and is refused (409).
  */
 
-type RecordsInRange = (
+/**
+ * Lists the ids (and branches) of the records an import of one kind wrote in a primary-key range.
+ * Each module that owns an import provides its own, so this helper never reads another module's
+ * tables: it only reads which ids an import created, never the records' content.
+ */
+export type ImportedRecordsInRange = (
   client: Prisma.TransactionClient,
   range: { from: string; to: string },
   take?: number,
 ) => Promise<{ id: string; branchId: string }[]>;
 
-/**
- * Where each kind of import writes. The lookup is by primary key range only: it reads which ids
- * an import created, never the records' content.
- */
-const IMPORTED_RECORDS: Record<ImportKind, RecordsInRange> = {
-  customers: (client, { from, to }, take) =>
-    client.customer.findMany({
-      where: { id: { gte: from, lte: to } },
-      select: { id: true, branchId: true },
-      take,
-    }),
-  rates: (client, { from, to }, take) =>
-    client.rateCard.findMany({
-      where: { id: { gte: from, lte: to } },
-      select: { id: true, branchId: true },
-      take,
-    }),
-};
+/** The record lookup of every kind of import, keyed by kind. */
+export type ImportedRecordLookups = Record<ImportKind, ImportedRecordsInRange>;
 
 /** Transaction options of a bulk import: thousands of rows take longer than the 5 s default. */
 export const IMPORT_TRANSACTION = { maxWait: 10_000, timeout: 120_000 };
@@ -45,12 +34,13 @@ const reused = () => new ConflictException('This request id was already used for
 
 /** The result of an earlier commit of this request, or null when the requestId is unused. */
 export async function previousImport(
+  lookups: ImportedRecordLookups,
   client: Prisma.TransactionClient,
   user: AuthUser,
   request: ImportRequest,
 ): Promise<ImportResultDto | null> {
   const range = importRequestRange(request.requestId);
-  const found = await IMPORTED_RECORDS[request.kind](client, range);
+  const found = await lookups[request.kind](client, range);
   if (found.length > 0) {
     // Everything under one requestId was written by one commit: rows 0..n-1 of one request.
     const ids = importRecordIds(request, found.length);
@@ -62,7 +52,7 @@ export async function previousImport(
   }
   for (const kind of IMPORT_KINDS) {
     if (kind === request.kind) continue;
-    if ((await IMPORTED_RECORDS[kind](client, range, 1)).length > 0) throw reused();
+    if ((await lookups[kind](client, range, 1)).length > 0) throw reused();
   }
   return null;
 }
