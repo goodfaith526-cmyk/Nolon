@@ -35,8 +35,8 @@ describe('changedFields', () => {
   });
 
   it('records a cleared field with an empty after', () => {
-    expect(changedFields({ notes: 'Peak' }, { notes: null }, ['notes'])).toEqual([
-      { field: 'notes', before: 'Peak', after: null },
-    ]);
+    expect(
+      changedFields<{ notes: string | null }>({ notes: 'Peak' }, { notes: null }, ['notes']),
+    ).toEqual([{ field: 'notes', before: 'Peak', after: null }]);
   });
 });
