@@ -798,6 +798,101 @@ describe('Excel import of customers and rates', () => {
       await edit(other.id, { containerTypeCode: '40HC' }).expect(200);
     });
 
+    describe('a stale edit cannot take back a key another record took meanwhile', () => {
+      type Tx = Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0];
+      const patch = (path: string, change: object) =>
+        t
+          .http()
+          .patch(`/api/v1${path}`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', cookies.salesDxb)
+          .send(change);
+      const newCustomer = async (fields: object = {}) =>
+        (
+          await post('/customers', cookies.salesDxb, {
+            branchId: dxb,
+            kind: 'COMPANY',
+            name: 'Stale edit',
+            phone: phone(),
+            ...fields,
+          }).expect(201)
+        ).body as { id: string; phone: string };
+
+      // whileLocked: the uncommitted transaction moves the record off its key and gives that key
+      // to another record; the stale edit (which read the record before) then waits on the row.
+      it('phone', async () => {
+        const old = phone();
+        const a = await newCustomer({ phone: old });
+        const b = await newCustomer();
+        const [res] = await whileLocked(
+          async (tx: Tx) => {
+            await tx.customer.update({ where: { id: a.id }, data: { phone: phone() } });
+            await tx.customer.update({ where: { id: b.id }, data: { phone: old } });
+          },
+          [() => patch(`/customers/${a.id}`, { name: 'Stale form', phone: old })],
+        );
+        expect(res?.status).toBe(409);
+        expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: old } })).toBe(1);
+      });
+
+      it('tax number', async () => {
+        const old = `TX-${phone()}`;
+        const a = await newCustomer({ taxNumber: old });
+        const b = await newCustomer();
+        const [res] = await whileLocked(
+          async (tx: Tx) => {
+            await tx.customer.update({ where: { id: a.id }, data: { taxNumber: `TX-${phone()}` } });
+            await tx.customer.update({ where: { id: b.id }, data: { taxNumber: old } });
+          },
+          [
+            () =>
+              patch(`/customers/${a.id}`, {
+                name: 'Stale form',
+                phone: a.phone,
+                taxNumber: old.toLowerCase(),
+              }),
+          ],
+        );
+        expect(res?.status).toBe(409);
+        expect(
+          await t.prisma.customer.count({
+            where: { branchId: dxb, taxNumber: { equals: old, mode: 'insensitive' } },
+          }),
+        ).toBe(1);
+      });
+
+      it('rate offer', async () => {
+        const from = day.replace('2031', '2036');
+        const later = day.replace('2031', '2037');
+        const body = await rateBody(from);
+        const a = (await post('/rates', cookies.salesDxb, body).expect(201)).body as { id: string };
+        const b = (
+          await post('/rates', cookies.salesDxb, { ...body, containerTypeCode: '20GP' }).expect(201)
+        ).body as { id: string };
+        const [res] = await whileLocked(
+          async (tx: Tx) => {
+            await tx.rateCard.update({
+              where: { id: a.id },
+              data: { validFrom: new Date(`${later}T00:00:00Z`) },
+            });
+            await tx.rateCard.update({ where: { id: b.id }, data: { containerTypeCode: '40HC' } });
+          },
+          [() => patch(`/rates/${a.id}`, { ...body, branchId: undefined, price: '1100' })],
+        );
+        expect(res?.status).toBe(409);
+        expect(
+          await t.prisma.rateCard.count({
+            where: {
+              branchId: dxb,
+              containerTypeCode: '40HC',
+              validFrom: new Date(`${from}T00:00:00Z`),
+              status: { in: ['DRAFT', 'APPROVED'] },
+            },
+          }),
+        ).toBe(1);
+      });
+    });
+
     for (const order of ['import first', 'create first'] as const) {
       it(`import and a single create race on one phone (${order}): one writes, the other is refused`, async () => {
         const shared = phone();

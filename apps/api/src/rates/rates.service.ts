@@ -228,19 +228,39 @@ export class RatesService {
     );
   }
 
-  /** Drafts only. A change that makes it the same offer as another rate is a 409. */
+  /**
+   * Drafts only. A change that makes it the same offer as another rate is a 409. The status and
+   * the offer are checked against the rate as it is now, not as it was read before the
+   * transaction: the row is locked and read again first, so a stale form cannot put back an offer
+   * the rate gave up and another rate took meanwhile.
+   *
+   * Lock order: the rate row (FOR NO KEY UPDATE), then the branch's rate rule lock. Create and
+   * import take the rule lock and only insert new rows, so no path takes the rule lock and then
+   * this row: the two orders cannot deadlock.
+   */
   async update(user: AuthUser, id: string, input: Partial<RateCardInput>): Promise<RateCardDto> {
-    const existing = await this.findScoped(user, id);
-    if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
-    const before = { ...fromRow(existing), branchId: existing.branchId };
-    const after = { ...before, ...input };
-    await this.validate(after);
+    const read = await this.findScoped(user, id);
+    if (read.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
+    const merge = (r: RateCard) => {
+      const before = { ...fromRow(r), branchId: r.branchId };
+      return { before, after: { ...before, ...input } };
+    };
+    const stale = merge(read);
+    await this.validate(stale.after);
     return this.prisma.$transaction(async (tx) => {
-      if (rateKey(after) !== rateKey(before)) {
-        await lockBranchRule(tx, RATE_UNIQUE_RULE, [existing.branchId]);
-        throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: existing.id }]));
+      await tx.$queryRaw`SELECT 1 FROM "rate_cards" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
+      const current = await tx.rateCard.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      if (!current) throw new NotFoundException('Rate not found');
+      if (current.status !== 'DRAFT') {
+        throw new ConflictException('Only a draft rate can be edited');
       }
-      return this.transition(tx, existing.id, 'DRAFT', toData(input));
+      const { before, after } = merge(current);
+      if (JSON.stringify(after) !== JSON.stringify(stale.after)) await this.validate(after);
+      if (rateKey(after) !== rateKey(before)) {
+        await lockBranchRule(tx, RATE_UNIQUE_RULE, [current.branchId]);
+        throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: current.id }]));
+      }
+      return this.transition(tx, current.id, 'DRAFT', toData(input));
     });
   }
 

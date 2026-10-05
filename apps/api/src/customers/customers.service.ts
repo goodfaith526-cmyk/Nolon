@@ -211,32 +211,51 @@ export class CustomersService {
     });
   }
 
+  /**
+   * The phone and tax number are checked against the customer as it is now, not as it was read
+   * before the transaction: the row is locked and read again first, so a stale form cannot put
+   * back a phone or tax number the customer gave up and another customer took meanwhile.
+   *
+   * Lock order: the customer row (FOR NO KEY UPDATE), then the branch's customer rule lock. Create
+   * and import take the rule lock and only insert new rows, so no path takes the rule lock and
+   * then this row: the two orders cannot deadlock.
+   */
   async update(user: AuthUser, id: string, input: Partial<CustomerInput>): Promise<CustomerDto> {
-    const existing = await this.findScoped(user, id);
-    const merged = {
-      creditLimit: toDecimalStringOrNull(existing.creditLimit),
-      creditLimitCurrency: existing.creditLimitCurrency,
+    const read = await this.findScoped(user, id);
+    const withLimit = (c: Customer) => ({
+      creditLimit: toDecimalStringOrNull(c.creditLimit),
+      creditLimitCurrency: c.creditLimitCurrency,
       ...input,
-    };
-    await this.checkReferences(merged);
+    });
+    await this.checkReferences(withLimit(read));
     const updated = await this.prisma.$transaction(async (tx) => {
-      // A new phone or tax number must be free in the branch (409), checked under the lock.
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
+      const current = await tx.customer.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      if (!current) throw new NotFoundException('Customer not found');
+      if (
+        current.creditLimit?.toString() !== read.creditLimit?.toString() ||
+        current.creditLimitCurrency !== read.creditLimitCurrency
+      ) {
+        await this.checkReferences(withLimit(current));
+      }
+      // A phone or tax number the customer does not hold now must be free in the branch (409),
+      // checked under the lock.
       const keys: CustomerKeys = {
-        branchId: existing.branchId,
-        excludeId: existing.id,
-        ...(input.phone !== undefined && input.phone !== existing.phone
+        branchId: current.branchId,
+        excludeId: current.id,
+        ...(input.phone !== undefined && input.phone !== current.phone
           ? { phone: input.phone }
           : {}),
-        ...(input.taxNumber && !sameTaxNumber(input.taxNumber, existing.taxNumber)
+        ...(input.taxNumber && !sameTaxNumber(input.taxNumber, current.taxNumber)
           ? { taxNumber: input.taxNumber }
           : {}),
       };
       if (keys.phone !== undefined || keys.taxNumber) {
-        await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [existing.branchId]);
+        await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [keys]));
       }
       return tx.customer.update({
-        where: { id: existing.id },
+        where: { id: current.id },
         data: toData(input),
         include: details,
       });
