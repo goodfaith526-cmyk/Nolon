@@ -1,4 +1,5 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { seesTransportCosts } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -64,4 +65,14 @@ export async function lockTripShared(
     driverUserId: trip.driver?.userId ?? null,
     destinationLocationId: trip.destinationLocationId,
   };
+}
+
+/**
+ * Trip costs are Restricted (annex A): a user who may not see them (seesTransportCosts) may not
+ * record or cancel them either, whatever expense permission another of their roles grants.
+ */
+export function forbidHiddenCosts(user: AuthUser): void {
+  if (!seesTransportCosts((p) => user.permissions.has(p))) {
+    throw new ForbiddenException('Trip costs are restricted to those who may see them');
+  }
 }

@@ -602,7 +602,11 @@ export class TripsService {
       });
     }
     const canAddExpense =
-      !driverOnly && has('expenses:create') && t.kind === 'OWN' && takesExpenses(t.status);
+      showsCost &&
+      !driverOnly &&
+      has('expenses:create') &&
+      t.kind === 'OWN' &&
+      takesExpenses(t.status);
     const cashAccounts = canAddExpense ? await this.accounts.cashAccountsFor(t.branchId) : [];
     const shareDtos = (entryId: string | null) =>
       (entryId && showsCost ? (shares.get(entryId) ?? []) : []).map((s) => ({
@@ -624,12 +628,13 @@ export class TripsService {
       cancelReason: t.cancelReason,
       notes: t.notes,
       createdByName: t.createdBy.fullName,
-      accrualJournalEntryId: t.accrualEntryId,
-      accrualJournalNumber: t.accrualEntry?.number ?? null,
+      // Hidden costs hide their entries too: an entry's number leads to its amounts.
+      accrualJournalEntryId: showsCost ? t.accrualEntryId : null,
+      accrualJournalNumber: showsCost ? (t.accrualEntry?.number ?? null) : null,
       accrualShares: shareDtos(t.accrualEntryId),
       showsCost,
       shipments,
-      expenses: t.expenses.map((e) => ({
+      expenses: (showsCost ? t.expenses : []).map((e) => ({
         id: e.id,
         number: e.number,
         expenseDate: fromDbDate(e.expenseDate),
@@ -652,7 +657,7 @@ export class TripsService {
         canCancel: !driverOnly && has('transport_trips:cancel') && isPlanned(t.status),
         canEditShipments: !driverOnly && has('transport_trips:update') && isPlanned(t.status),
         canAddExpense,
-        canCancelExpense: !driverOnly && has('expenses:cancel'),
+        canCancelExpense: showsCost && !driverOnly && has('expenses:cancel'),
       },
     };
   }

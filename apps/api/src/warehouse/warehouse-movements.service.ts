@@ -167,9 +167,16 @@ export class WarehouseMovementsService {
       // Under the exclusive shipment lock: every earlier receipt and release is counted.
       const logged = await tx.warehouseMovement.findMany({
         where: { shipmentId, shipment: shipmentScope(user) },
-        select: { kind: true, warehouseId: true, packages: true, weightKg: true },
+        select: {
+          kind: true,
+          warehouseId: true,
+          packages: true,
+          weightKg: true,
+          occurredAt: true,
+          createdAt: true,
+        },
       });
-      const extra = extraPackagesOnReceipt(shipment.packages, heldPackages(logged), input.packages);
+      const extra = extraPackagesOnReceipt(shipment.packages, logged, occurredAt, input.packages);
       if (extra > 0 && !input.extraPackagesConfirmed) {
         throw new ConflictException(
           `This receipt would hold ${extra} more packages than the ${shipment.packages} on the ` +

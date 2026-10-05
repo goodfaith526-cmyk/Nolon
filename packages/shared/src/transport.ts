@@ -207,17 +207,19 @@ export interface TripDto extends TripSummaryDto {
   cancelReason: string | null;
   notes: string | null;
   createdByName: string;
-  /** Rule 11: the accrual posted when the external trip was completed. */
+  /** Rule 11: the accrual posted when the external trip was completed (null when costs are hidden). */
   accrualJournalEntryId: string | null;
   accrualJournalNumber: string | null;
   /** Empty for users who do not see transport costs. */
   accrualShares: TripCostShareDto[];
   /**
    * Whether the user sees transport costs (seesTransportCosts, annex A "costs (Restricted)"):
-   * otherwise the agreed cost is null and no cost shares are listed.
+   * otherwise the agreed cost and the accrual entry are null, and no cost shares or expenses are
+   * listed.
    */
   showsCost: boolean;
   shipments: TripShipmentDto[];
+  /** Empty for users who do not see transport costs. */
   expenses: TripExpenseDto[];
   /** Filled when actions.canAddExpense: the accounts an expense may be paid from. */
   cashAccounts: TripCashAccountDto[];

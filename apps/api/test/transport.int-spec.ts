@@ -828,7 +828,16 @@ describe('inland transport: trip costs in the books', () => {
   let accounts: Map<string, AccountDto>;
   const year = randomInt(1901, 2000);
   const at = (monthDay: string, time = '08:00:00') => `${year}-${monthDay}T${time}+03:00`;
-  const cookies = { admin: '', opsPts: '', financePts: '', salesPts: '', financeJed: '' };
+  const cookies = {
+    admin: '',
+    opsPts: '',
+    financePts: '',
+    salesPts: '',
+    financeJed: '',
+    warehousePts: '',
+    driverPts: '',
+  };
+  const driverUser = { id: '' };
   const { get, post, put } = helpers(() => t);
 
   async function shipment(volumeCbm: string | null, weightKg: string | null): Promise<string> {
@@ -911,10 +920,13 @@ describe('inland transport: trip costs in the books', () => {
       financePts: await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX),
       salesPts: await createUser(t.prisma, ['SALES'], ['PTS'], LEDGER_PREFIX),
       financeJed: await createUser(t.prisma, ['FINANCE'], ['JED'], LEDGER_PREFIX),
+      warehousePts: await createUser(t.prisma, ['WAREHOUSE'], ['PTS'], LEDGER_PREFIX),
+      driverPts: await createUser(t.prisma, ['DRIVER'], ['PTS'], LEDGER_PREFIX),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
     }
+    driverUser.id = users.driverPts.id;
     customer = (
       await post('/customers', cookies.salesPts, {
         branchId: pts,
@@ -1070,6 +1082,57 @@ describe('inland transport: trip costs in the books', () => {
     }).expect(409);
     const original = await journal(posted.journalEntryId);
     expect(original.reversedById).not.toBeNull();
+  });
+
+  it('an own trip’s expenses stay hidden from Sales, Warehouse and its Driver, who cannot add them', async () => {
+    const one = await shipment('1', '100');
+    const ownDriver = (
+      await post('/transport/drivers', cookies.opsPts, {
+        branchId: pts,
+        name: `LG Own Driver ${randomUUID().slice(0, 6)}`,
+        userId: driverUser.id,
+      }).expect(201)
+    ).body as DriverDto;
+    const trip = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: ownDriver.id }, [
+      one,
+    ]);
+    const expense = {
+      requestId: randomUUID(),
+      expenseDate: `${year}-04-02`,
+      description: 'Fuel',
+      amount: '600',
+      currency: 'SDG',
+      cashAccountId: cashSdg.id,
+    };
+    const paid = (await post(`/trips/${trip.id}/expenses`, cookies.opsPts, expense).expect(201))
+      .body as TripDto;
+    const posted = paid.expenses[0];
+    if (!posted) throw new Error('No expense');
+    expect(paid.showsCost).toBe(true);
+
+    for (const cookie of [cookies.salesPts, cookies.warehousePts, cookies.driverPts]) {
+      const seen = (await get(`/trips/${trip.id}`, cookie).expect(200)).body as TripDto;
+      expect(seen.showsCost).toBe(false);
+      expect(seen.expenses).toEqual([]);
+      expect(seen.accrualJournalEntryId).toBeNull();
+      expect(seen.actions).toMatchObject({ canAddExpense: false, canCancelExpense: false });
+      const body = JSON.stringify(seen);
+      expect(body).not.toContain(posted.number);
+      expect(body).not.toContain(posted.journalNumber);
+      expect(body).not.toContain(cashSdg.id);
+    }
+    // Warehouse holds expenses:create, but trip costs are restricted: neither add nor cancel.
+    await post(`/trips/${trip.id}/expenses`, cookies.warehousePts, {
+      ...expense,
+      requestId: randomUUID(),
+    }).expect(403);
+    await post(`/trips/${trip.id}/expenses/${posted.id}/cancel`, cookies.warehousePts, {
+      reason: 'x',
+    }).expect(403);
+    await post(`/trips/${trip.id}/expenses`, cookies.salesPts, {
+      ...expense,
+      requestId: randomUUID(),
+    }).expect(403);
   });
 
   it('rule 11: completing an external trip accrues the agreed cost, split by weight', async () => {

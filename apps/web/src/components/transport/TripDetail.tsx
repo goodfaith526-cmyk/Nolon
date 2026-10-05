@@ -453,7 +453,7 @@ export function TripDetail({ id }: { id: string }) {
         )}
       </div>
 
-      {trip.kind === 'OWN' ? (
+      {trip.kind === 'OWN' && trip.showsCost ? (
         <div className="panel">
           <div className="panel-head">
             <div>

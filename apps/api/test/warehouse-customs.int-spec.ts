@@ -310,6 +310,27 @@ describe('warehouse and customs', () => {
       }).expect(201);
     });
 
+    it('checks a backdated receipt against what the warehouses held from its date on', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+      await receive(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(3) }).expect(
+        201,
+      );
+      await release(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(1) }).expect(
+        201,
+      );
+      expect(await view(s.id)).toMatchObject({ heldPackages: 0 });
+      // Dated between the receipt and the release, 6 more would have held 12 of 10 meanwhile.
+      await receive(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(2) }).expect(
+        409,
+      );
+      // After the release they fit.
+      await receive(s.id, cookies.warehouseDxb, {
+        packages: 6,
+        occurredAt: hoursAgo(0.5),
+      }).expect(201);
+    });
+
     it('cannot release more than is received and not yet released (409)', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT']);
       await release(s.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
