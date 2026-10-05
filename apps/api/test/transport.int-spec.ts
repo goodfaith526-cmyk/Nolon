@@ -969,6 +969,15 @@ describe('inland transport: trip costs in the books', () => {
       ...expense,
       amount: '0',
     }).expect(400);
+    // 1 SDG is 0.00 USD: refused with a 400 (not the balance trigger's 500), nothing recorded.
+    const tiny = await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+      ...expense,
+      requestId: randomUUID(),
+      amount: '1',
+    }).expect(400);
+    expect(String((tiny.body as { message?: unknown }).message)).toMatch(
+      /too small to post in USD/,
+    );
 
     const withExpense = (
       await post(`/trips/${trip.id}/expenses`, cookies.opsPts, expense).expect(201)

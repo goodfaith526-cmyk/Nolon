@@ -1558,6 +1558,173 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('postings whose USD value rounds to zero', () => {
+    // 1 SDG at 600 is 0.0017 USD: 0.00 once rounded to cents. A document worth nothing in USD is
+    // refused with a 400 and leaves nothing behind; it is never a 500 from the balance trigger.
+    const tooSmall = /too small to post in USD/;
+    const refused = async (res: PromiseLike<Response>) => {
+      const body = (await res).body as { message?: unknown };
+      expect(String(body.message)).toMatch(tooSmall);
+    };
+
+    it('a supplier bill worth 0.00 USD is refused on approval and stays a draft', async () => {
+      const draft = (
+        await post('/supplier-bills', cookies.financePts, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          currency: 'SDG',
+          fxRate: '600',
+          billDate: d('04-10'),
+          dueDate: d('05-10'),
+          lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '1' }],
+        }).expect(201)
+      ).body as SupplierBillDto;
+      await refused(post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).expect(400));
+      const row = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(row).toMatchObject({ status: 'DRAFT', number: null, journalEntryId: null });
+      expect(await t.prisma.journalEntry.count({ where: { sourceId: draft.id } })).toBe(0);
+    });
+
+    it('lines that round to 0.00 USD in a bill worth more post, balanced by the rounding line', async () => {
+      // 3 SDG is 0.005 USD: each line rounds up to 0.01, the 6 SDG payable to 0.01.
+      const bill = await approvedBill({
+        lines: [
+          { kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '3' },
+          { kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '3' },
+          { kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '1' },
+        ],
+      });
+      const entry = await journal(bill.journalEntryId ?? '');
+      balanced(entry);
+      expect(entry.lines.some((l) => l.debit === '1' && l.debitUsd === '0')).toBe(true);
+      expect(lineOf(entry, account('2100').id)).toMatchObject({ credit: '7', creditUsd: '0.01' });
+      expect(sum(entry.lines.map((l) => l.debitUsd))).toBe('0.02');
+    });
+
+    it('a supplier payment worth 0.00 USD is refused and writes nothing', async () => {
+      const target = await approvedBill({
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '60000' }],
+      });
+      const requestId = randomUUID();
+      await refused(
+        post('/supplier-payments', cookies.financePts, {
+          requestId,
+          supplierId: supplier.id,
+          branchId: pts,
+          paymentDate: d('05-05'),
+          currency: 'SDG',
+          fxRate: '600',
+          cashAccountId: cashSdg.id,
+          allocations: [{ billId: target.id, amount: '1' }],
+        }).expect(400),
+      );
+      expect(await t.prisma.supplierPayment.count({ where: { id: requestId } })).toBe(0);
+      expect(await t.prisma.journalEntry.count({ where: { sourceId: requestId } })).toBe(0);
+      const row = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: target.id } });
+      expect(row.paidAmount.toFixed()).toBe('0');
+    });
+
+    it('an expense worth 0.00 USD is refused on approval and stays a draft', async () => {
+      const draft = (
+        await post('/expenses', cookies.opsPts, {
+          requestId: randomUUID(),
+          branchId: pts,
+          expenseDate: d('06-02'),
+          categoryCode: 'RENT',
+          description: 'Stamp',
+          currency: 'SDG',
+          amount: '1',
+          cashAccountId: cashSdg.id,
+        }).expect(201)
+      ).body as ExpenseDto;
+      await refused(post(`/expenses/${draft.id}/approve`, cookies.managerPts).expect(400));
+      const row = await t.prisma.expense.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(row).toMatchObject({ status: 'DRAFT', number: null, journalEntryId: null });
+    });
+
+    it('a credit note worth 0.00 USD is refused on approval and stays a draft', async () => {
+      const invoice = await approvedInvoice();
+      const draft = await creditNoteDraft(invoice.id, '1');
+      await refused(post(`/credit-notes/${draft.id}/approve`, cookies.managerPts).expect(400));
+      const row = await t.prisma.creditNote.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(row).toMatchObject({ status: 'DRAFT', journalEntryId: null });
+      expect((await invoiceRow(invoice.id)).creditedAmount.toFixed()).toBe('0');
+    });
+
+    it('a receipt and a customer invoice worth 0.00 USD are refused', async () => {
+      const invoice = await approvedInvoice();
+      await refused(
+        post('/receipts', cookies.financePts, {
+          customerId: customer.id,
+          receiptDate: d('03-15'),
+          currency: 'SDG',
+          fxRate: '600',
+          amount: '1',
+          cashAccountId: cashSdg.id,
+          allocations: [{ invoiceId: invoice.id, amount: '1' }],
+        }).expect(400),
+      );
+      expect((await invoiceRow(invoice.id)).paidAmount.toFixed()).toBe('0');
+
+      const draft = (
+        await post('/customer-invoices', cookies.financePts, {
+          shipmentId: await shipment(),
+        }).expect(201)
+      ).body as CustomerInvoiceDto;
+      await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
+        currency: 'SDG',
+        fxRate: '600',
+        invoiceDate: d('03-10'),
+        dueDate: d('03-10'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '1' }],
+      }).expect(200);
+      await refused(post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(400));
+      expect((await invoiceRow(draft.id)).status).toBe('DRAFT');
+    });
+
+    it('opening balances and open items worth 0.00 USD are refused', async () => {
+      const ids = [randomUUID(), randomUUID(), randomUUID()];
+      await refused(
+        post('/accounting/opening-balances', cookies.financePts, {
+          requestId: ids[0],
+          branchId: pts,
+          entryDate: d('01-01'),
+          lines: [{ accountId: cashSdg.id, currency: 'SDG', fxRate: '600', debit: '1' }],
+        }).expect(400),
+      );
+      await refused(
+        post('/customer-invoices/opening', cookies.financePts, {
+          requestId: ids[1],
+          customerId: customer.id,
+          entryDate: d('01-01'),
+          reference: 'OLD-TINY',
+          invoiceDate: d('01-01'),
+          dueDate: d('01-31'),
+          currency: 'SDG',
+          amount: '1',
+        }).expect(400),
+      );
+      await refused(
+        post('/supplier-bills/opening', cookies.financePts, {
+          requestId: ids[2],
+          supplierId: supplier.id,
+          branchId: pts,
+          entryDate: d('01-01'),
+          reference: 'OLD-TINY',
+          billDate: d('01-01'),
+          dueDate: d('01-31'),
+          currency: 'SDG',
+          amount: '1',
+        }).expect(400),
+      );
+      expect(await t.prisma.customerInvoice.count({ where: { reference: 'OLD-TINY' } })).toBe(0);
+      expect(await t.prisma.supplierBill.count({ where: { supplierReference: 'OLD-TINY' } })).toBe(
+        0,
+      );
+    });
+  });
+
   describe('audit log of credit notes, supplier bills and payments, and expenses', () => {
     let period: string;
     const numbers = { creditNote: '', bill: '', payment: '', expense: '' };
