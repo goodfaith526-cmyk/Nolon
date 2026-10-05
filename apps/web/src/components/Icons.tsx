@@ -193,4 +193,21 @@ export const icons = {
       <path d="M7 14h10v7H7z" />
     </Icon>
   ),
+  chevron: (
+    <Icon>
+      <path d="m6 9 6 6 6-6" />
+    </Icon>
+  ),
+  close: (
+    <Icon>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </Icon>
+  ),
+  more: (
+    <Icon>
+      <circle cx="5" cy="12" r="1.2" />
+      <circle cx="12" cy="12" r="1.2" />
+      <circle cx="19" cy="12" r="1.2" />
+    </Icon>
+  ),
 } as const;

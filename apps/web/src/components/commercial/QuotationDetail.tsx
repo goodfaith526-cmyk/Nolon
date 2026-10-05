@@ -7,7 +7,9 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { failureStatus, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
+import { MoreMenu } from '../MoreMenu';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
 
@@ -74,55 +76,59 @@ export function QuotationDetail({ id }: { id: string }) {
 
   return (
     <section className="stack">
-      <div className="row">
-        <h1>
-          {t('quotation')} <span dir="ltr">{quotation.number}</span>
-        </h1>
-        <StatusBadge kind="quotation" status={status} />
+      <div className="page-head">
+        <div className="title-row">
+          <h1>
+            {t('quotation')} <span dir="ltr">{quotation.number}</span>
+          </h1>
+          <StatusBadge kind="quotation" status={status} />
+        </div>
+        <div className="actions">
+          {(status === 'DRAFT' || status === 'SENT') && can(me, 'quotations:cancel') && (
+            <MoreMenu>
+              <button type="button" onClick={() => void act('expire', t('expiredNotice'))}>
+                {t('expire')}
+              </button>
+            </MoreMenu>
+          )}
+          <PrintLink href={`/quotations/${id}`} />
+          {quotation.bookingId && (
+            <Link href={`/bookings/${quotation.bookingId}`} className="button">
+              {t('openBooking')}
+            </Link>
+          )}
+          {status === 'DRAFT' && can(me, 'quotations:update') && (
+            <>
+              <Link href={`/quotations/${id}/edit`} className="button">
+                {tc('edit')}
+              </Link>
+              <button type="button" className="primary" onClick={() => void act('send', t('sent'))}>
+                {t('send')}
+              </button>
+            </>
+          )}
+          {status === 'SENT' && can(me, 'quotations:approve') && (
+            <>
+              <button type="button" onClick={() => setRejecting(true)}>
+                {t('reject')}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void act('approve', t('approvedNotice'))}
+              >
+                {t('approve')}
+              </button>
+            </>
+          )}
+          {status === 'APPROVED' && quotation.bookingId === null && can(me, 'bookings:create') && (
+            <button type="button" className="primary" onClick={() => void toBooking()}>
+              {t('toBooking')}
+            </button>
+          )}
+        </div>
       </div>
       <Notice notice={notice} />
-      <div className="actions">
-        <PrintLink href={`/quotations/${id}`} />
-        {status === 'DRAFT' && can(me, 'quotations:update') && (
-          <>
-            <Link href={`/quotations/${id}/edit`} className="button">
-              {tc('edit')}
-            </Link>
-            <button type="button" className="primary" onClick={() => void act('send', t('sent'))}>
-              {t('send')}
-            </button>
-          </>
-        )}
-        {status === 'SENT' && can(me, 'quotations:approve') && (
-          <>
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void act('approve', t('approvedNotice'))}
-            >
-              {t('approve')}
-            </button>
-            <button type="button" onClick={() => setRejecting(true)}>
-              {t('reject')}
-            </button>
-          </>
-        )}
-        {(status === 'DRAFT' || status === 'SENT') && can(me, 'quotations:cancel') && (
-          <button type="button" onClick={() => void act('expire', t('expiredNotice'))}>
-            {t('expire')}
-          </button>
-        )}
-        {status === 'APPROVED' && quotation.bookingId === null && can(me, 'bookings:create') && (
-          <button type="button" className="primary" onClick={() => void toBooking()}>
-            {t('toBooking')}
-          </button>
-        )}
-        {quotation.bookingId && (
-          <Link href={`/bookings/${quotation.bookingId}`} className="button">
-            {t('openBooking')}
-          </Link>
-        )}
-      </div>
       {rejecting && (
         <form
           className="card stack"
@@ -187,9 +193,9 @@ export function QuotationDetail({ id }: { id: string }) {
               <th>#</th>
               <th>{t('chargeType')}</th>
               <th>{t('quantity')}</th>
-              <th>{t('unitPrice')}</th>
-              <th>{t('discount')}</th>
-              <th>{t('lineTotal')}</th>
+              <th className="num">{t('unitPrice')}</th>
+              <th className="num">{t('discount')}</th>
+              <th className="num">{t('lineTotal')}</th>
             </tr>
           </thead>
           <tbody>
@@ -203,32 +209,40 @@ export function QuotationDetail({ id }: { id: string }) {
                 <td dir="ltr">
                   {l.quantity} × {te(`unit_${l.unit}`)}
                 </td>
-                <td dir="ltr">
-                  {l.unitPrice}
+                <td dir="ltr" className="num">
+                  <Money value={l.unitPrice} />
                   {l.minimumCharge !== '0' ? (
                     <div className="muted">
-                      {t('minimum')}: {l.minimumCharge}
+                      {t('minimum')}: <Money value={l.minimumCharge} />
                     </div>
                   ) : null}
                 </td>
-                <td dir="ltr">{l.discount}</td>
-                <td dir="ltr">{l.lineTotal}</td>
+                <td dir="ltr" className="num">
+                  <Money value={l.discount} />
+                </td>
+                <td dir="ltr" className="num">
+                  <Money value={l.lineTotal} />
+                </td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
               <td colSpan={5}>{t('subtotal')}</td>
-              <td dir="ltr">{quotation.subtotal}</td>
+              <td dir="ltr" className="num">
+                <Money value={quotation.subtotal} />
+              </td>
             </tr>
             <tr>
               <td colSpan={5}>{t('discountTotal')}</td>
-              <td dir="ltr">{quotation.discountTotal}</td>
+              <td dir="ltr" className="num">
+                <Money value={quotation.discountTotal} />
+              </td>
             </tr>
             <tr>
               <th colSpan={5}>{t('total')}</th>
-              <th dir="ltr">
-                {quotation.total} {quotation.currency}
+              <th dir="ltr" className="num">
+                <Money value={quotation.total} currency={quotation.currency} />
               </th>
             </tr>
           </tfoot>

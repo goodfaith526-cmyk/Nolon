@@ -8,6 +8,7 @@ import logoAr from '@/assets/brand/logo-ar.webp';
 import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
+import { useFoldedSections } from '@/lib/nav-folds';
 import { icons } from './Icons';
 
 interface NavLink {
@@ -46,26 +47,26 @@ interface NavLink {
   permission?: Permission;
 }
 
+type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
+
+const SECTION_TITLES: readonly SectionTitle[] = [
+  'commercial',
+  'operations',
+  'fleet',
+  'finance',
+  'insights',
+  'settings',
+];
+
+/** Sections that start folded until the user opens them (less used day to day). */
+const FOLDED_BY_DEFAULT: readonly SectionTitle[] = ['fleet', 'settings'];
+
 const NAV_SECTIONS: readonly {
-  title?: 'commercial' | 'operations' | 'finance' | 'admin';
+  title?: SectionTitle;
   links: readonly NavLink[];
 }[] = [
   {
-    links: [
-      { href: '/dashboard', label: 'home', icon: 'home' },
-      {
-        href: '/dashboard/management',
-        label: 'managementDashboard',
-        icon: 'balance',
-        permission: 'dashboards:view',
-      },
-      {
-        href: '/dashboard/branch',
-        label: 'branchDashboard',
-        icon: 'calendar',
-        permission: 'dashboards:view',
-      },
-    ],
+    links: [{ href: '/dashboard', label: 'home', icon: 'home' }],
   },
   {
     title: 'commercial',
@@ -87,6 +88,17 @@ const NAV_SECTIONS: readonly {
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
       { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
       {
+        href: '/warehouses',
+        label: 'warehouses',
+        icon: 'warehouse',
+        permission: 'warehouse:view',
+      },
+    ],
+  },
+  {
+    title: 'fleet',
+    links: [
+      {
         href: '/transport/vehicles',
         label: 'vehicles',
         icon: 'vehicle',
@@ -103,18 +115,6 @@ const NAV_SECTIONS: readonly {
         label: 'carriers',
         icon: 'carrier',
         permission: 'transport_fleet:view',
-      },
-      {
-        href: '/warehouses',
-        label: 'warehouses',
-        icon: 'warehouse',
-        permission: 'warehouse:view',
-      },
-      {
-        href: '/operational-reports',
-        label: 'operationalReports',
-        icon: 'report',
-        permission: 'operational_reports:view',
       },
     ],
   },
@@ -154,11 +154,28 @@ const NAV_SECTIONS: readonly {
         icon: 'journal',
         permission: 'manual_journals:view',
       },
+    ],
+  },
+  {
+    title: 'insights',
+    links: [
       {
-        href: '/accounting/trial-balance',
-        label: 'trialBalance',
+        href: '/dashboard/management',
+        label: 'managementDashboard',
         icon: 'balance',
-        permission: 'financial_reports:view',
+        permission: 'dashboards:view',
+      },
+      {
+        href: '/dashboard/branch',
+        label: 'branchDashboard',
+        icon: 'calendar',
+        permission: 'dashboards:view',
+      },
+      {
+        href: '/operational-reports',
+        label: 'operationalReports',
+        icon: 'report',
+        permission: 'operational_reports:view',
       },
       {
         href: '/reports',
@@ -166,6 +183,17 @@ const NAV_SECTIONS: readonly {
         icon: 'report',
         permission: 'financial_reports:view',
       },
+      {
+        href: '/accounting/trial-balance',
+        label: 'trialBalance',
+        icon: 'balance',
+        permission: 'financial_reports:view',
+      },
+    ],
+  },
+  {
+    title: 'settings',
+    links: [
       {
         href: '/accounting/accounts',
         label: 'chartOfAccounts',
@@ -190,11 +218,8 @@ const NAV_SECTIONS: readonly {
         icon: 'balance',
         permission: 'manual_journals:approve',
       },
+      { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
     ],
-  },
-  {
-    title: 'admin',
-    links: [{ href: '/users', label: 'users', icon: 'users', permission: 'users:view' }],
   },
 ];
 
@@ -220,6 +245,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const locale = useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [folded, toggleSection] = useFoldedSections(SECTION_TITLES, FOLDED_BY_DEFAULT);
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -271,21 +297,35 @@ export function StaffShell({ children }: { children: ReactNode }) {
             {NAV_SECTIONS.map((section, index) => {
               const links = section.links.filter((l) => !l.permission || can(me, l.permission));
               if (links.length === 0) return null;
+              const { title } = section;
+              // A section holding the current page never folds.
+              const open = !title || !folded.has(title) || links.some((l) => isActive(l.href));
               return (
-                <div key={section.title ?? index} className="nav-section">
-                  {section.title && <p className="nav-title">{t(section.title)}</p>}
-                  {links.map((l) => (
-                    <Link
-                      key={l.href}
-                      href={l.href}
-                      className={isActive(l.href) ? 'nav-link active' : 'nav-link'}
-                      aria-current={isActive(l.href) ? 'page' : undefined}
-                      onClick={() => setMenuOpen(false)}
+                <div key={title ?? index} className="nav-section">
+                  {title && (
+                    <button
+                      type="button"
+                      className="nav-title"
+                      aria-expanded={open}
+                      onClick={() => toggleSection(title)}
                     >
-                      {icons[l.icon]}
-                      <span>{t(l.label)}</span>
-                    </Link>
-                  ))}
+                      <span>{t(title)}</span>
+                      {icons.chevron}
+                    </button>
+                  )}
+                  {open &&
+                    links.map((l) => (
+                      <Link
+                        key={l.href}
+                        href={l.href}
+                        className={isActive(l.href) ? 'nav-link active' : 'nav-link'}
+                        aria-current={isActive(l.href) ? 'page' : undefined}
+                        onClick={() => setMenuOpen(false)}
+                      >
+                        {icons[l.icon]}
+                        <span>{t(l.label)}</span>
+                      </Link>
+                    ))}
                 </div>
               );
             })}
@@ -317,6 +357,17 @@ export function StaffShell({ children }: { children: ReactNode }) {
             >
               {icons.menu}
             </button>
+            <div className="topbar-spacer" />
+            <div className="topbar-actions">
+              <Link href={pathname} locale={otherLocale} className="button ghost">
+                {icons.globe}
+                <span>{t('switchLocale')}</span>
+              </Link>
+              <button type="button" className="ghost" onClick={() => void signOut()}>
+                {icons.signOut}
+                <span>{t('signOut')}</span>
+              </button>
+            </div>
             <div className="topbar-user">
               <span className="avatar" aria-hidden="true">
                 {me.fullName.trim().charAt(0).toUpperCase()}
@@ -327,16 +378,6 @@ export function StaffShell({ children }: { children: ReactNode }) {
                   {me.allBranches ? t('allBranches') : me.branches.map((b) => b.code).join(' · ')}
                 </span>
               </span>
-            </div>
-            <div className="topbar-actions">
-              <Link href={pathname} locale={otherLocale} className="button ghost">
-                {icons.globe}
-                <span>{t('switchLocale')}</span>
-              </Link>
-              <button type="button" className="ghost" onClick={() => void signOut()}>
-                {icons.signOut}
-                <span>{t('signOut')}</span>
-              </button>
             </div>
           </header>
           <main className="page">{children}</main>

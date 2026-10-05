@@ -7,6 +7,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { MoreMenu } from '../MoreMenu';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
@@ -62,45 +63,47 @@ export function BookingDetail({ id }: { id: string }) {
 
   return (
     <section className="stack">
-      <div className="row">
-        <h1>
-          {t('booking')} <span dir="ltr">{booking.number}</span>
-        </h1>
-        <StatusBadge kind="booking" status={status} />
+      <div className="page-head">
+        <div className="title-row">
+          <h1>
+            {t('booking')} <span dir="ltr">{booking.number}</span>
+          </h1>
+          <StatusBadge kind="booking" status={status} />
+        </div>
+        <div className="actions">
+          <MoreMenu>
+            {booking.quotationId && (
+              <Link href={`/quotations/${booking.quotationId}`}>{t('openQuotation')}</Link>
+            )}
+            {(status === 'DRAFT' || status === 'CONFIRMED') && can(me, 'bookings:cancel') && (
+              <button type="button" className="danger" onClick={() => setCancelling(true)}>
+                {t('cancel')}
+              </button>
+            )}
+          </MoreMenu>
+          <PrintLink href={`/bookings/${id}`} />
+          {booking.shipmentId && can(me, 'shipments:view') && (
+            <Link href={`/shipments/${booking.shipmentId}`} className="button">
+              {t('openShipment')} <span dir="ltr">{booking.shipmentNumber}</span>
+            </Link>
+          )}
+          {status === 'DRAFT' && can(me, 'bookings:update') && (
+            <Link href={`/bookings/${id}/edit`} className="button">
+              {tc('edit')}
+            </Link>
+          )}
+          {status === 'DRAFT' && can(me, 'bookings:approve') && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void act('confirm', t('confirmedNotice'))}
+            >
+              {t('confirm')}
+            </button>
+          )}
+        </div>
       </div>
       <Notice notice={notice} />
-      <div className="actions">
-        <PrintLink href={`/bookings/${id}`} />
-        {status === 'DRAFT' && can(me, 'bookings:update') && (
-          <Link href={`/bookings/${id}/edit`} className="button">
-            {tc('edit')}
-          </Link>
-        )}
-        {status === 'DRAFT' && can(me, 'bookings:approve') && (
-          <button
-            type="button"
-            className="primary"
-            onClick={() => void act('confirm', t('confirmedNotice'))}
-          >
-            {t('confirm')}
-          </button>
-        )}
-        {(status === 'DRAFT' || status === 'CONFIRMED') && can(me, 'bookings:cancel') && (
-          <button type="button" onClick={() => setCancelling(true)}>
-            {t('cancel')}
-          </button>
-        )}
-        {booking.quotationId && (
-          <Link href={`/quotations/${booking.quotationId}`} className="button">
-            {t('openQuotation')}
-          </Link>
-        )}
-        {booking.shipmentId && can(me, 'shipments:view') && (
-          <Link href={`/shipments/${booking.shipmentId}`} className="button">
-            {t('openShipment')} <span dir="ltr">{booking.shipmentNumber}</span>
-          </Link>
-        )}
-      </div>
       {cancelling && (
         <form
           className="card stack"
