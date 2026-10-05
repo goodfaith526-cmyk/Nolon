@@ -18,7 +18,7 @@ import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { ZERO, dec, roundMoney } from '../common/money.js';
+import { ZERO, dec, requestedRate, roundMoney, sameRequestedRate } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
@@ -200,7 +200,7 @@ export class SupplierPaymentsService {
             paymentDate: toDbDate(input.paymentDate),
             currency: currency.code,
             fxRate,
-            requestedFxRate: input.fxRate ? dec(input.fxRate) : null,
+            requestedFxRate: requestedRate(input.fxRate),
             amount,
             cashAccountId: input.cashAccountId,
             reference: input.reference ?? null,
@@ -315,19 +315,6 @@ export class SupplierPaymentsService {
     if (!payment) throw new NotFoundException('Supplier payment not found');
     return payment;
   }
-}
-
-/**
- * Whether the retry sent the rate the first request sent, at Decimal precision: both omitted, or
- * both the same number. The rate the first request resolved from the table is not consulted, so
- * editing the table afterwards does not turn an exact retry into a conflict.
- */
-function sameRequestedRate(
-  stored: Prisma.Decimal | null,
-  sent: string | null | undefined,
-): boolean {
-  if (!sent) return stored === null;
-  return stored !== null && stored.eq(dec(sent));
 }
 
 /** Raised inside the transaction when the payment id is already recorded. */

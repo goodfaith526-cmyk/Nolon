@@ -1628,6 +1628,113 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('retries of open items, bills and expenses compare the rate the client sent', () => {
+    type Body = Record<string, unknown> & { requestId: string };
+    /**
+     * For one create path: a request without a rate replays without one and is refused with one
+     * (even the table's); a request with a rate replays with the same number and is refused
+     * without it or with another. Nothing more is recorded.
+     */
+    const check = async (
+      path: string,
+      cookie: string,
+      body: () => Body,
+      count: (ids: string[]) => Promise<number>,
+    ) => {
+      const omitted = body();
+      const first = (await post(path, cookie, omitted).expect(201)).body as { id: string };
+      const replay = (await post(path, cookie, { ...omitted, fxRate: null }).expect(201)).body as {
+        id: string;
+      };
+      expect(replay.id).toBe(first.id);
+      await post(path, cookie, { ...omitted, fxRate: '600' }).expect(409);
+
+      const entered = { ...body(), fxRate: '600' };
+      const second = (await post(path, cookie, entered).expect(201)).body as { id: string };
+      const again = (await post(path, cookie, { ...entered, fxRate: '600.00000000' }).expect(201))
+        .body as { id: string };
+      expect(again.id).toBe(second.id);
+      const dropped: Partial<Body> = { ...entered };
+      delete dropped.fxRate;
+      await post(path, cookie, dropped).expect(409);
+      await post(path, cookie, { ...entered, fxRate: null }).expect(409);
+      await post(path, cookie, { ...entered, fxRate: '601' }).expect(409);
+      expect(await count([first.id, second.id])).toBe(2);
+    };
+
+    it('opening customer items', async () => {
+      await check(
+        '/customer-invoices/opening',
+        cookies.financePts,
+        () => ({
+          requestId: randomUUID(),
+          customerId: customer.id,
+          entryDate: d('01-02'),
+          reference: `RATE-${randomInt(1e6)}`,
+          invoiceDate: d('01-02'),
+          dueDate: d('01-31'),
+          currency: 'SDG',
+          amount: '6000',
+        }),
+        (ids) => t.prisma.customerInvoice.count({ where: { id: { in: ids } } }),
+      );
+    });
+
+    it('opening supplier items', async () => {
+      await check(
+        '/supplier-bills/opening',
+        cookies.financePts,
+        () => ({
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          entryDate: d('01-02'),
+          reference: `RATE-${randomInt(1e6)}`,
+          billDate: d('01-02'),
+          dueDate: d('01-31'),
+          currency: 'SDG',
+          amount: '6000',
+        }),
+        (ids) => t.prisma.supplierBill.count({ where: { id: { in: ids } } }),
+      );
+    });
+
+    it('supplier bills', async () => {
+      await check(
+        '/supplier-bills',
+        cookies.opsPts,
+        () => ({
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          currency: 'SDG',
+          billDate: d('04-12'),
+          dueDate: d('05-12'),
+          lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '600' }],
+        }),
+        (ids) => t.prisma.supplierBill.count({ where: { id: { in: ids } } }),
+      );
+    });
+
+    it('general expenses', async () => {
+      await check(
+        '/expenses',
+        cookies.opsPts,
+        () => ({
+          requestId: randomUUID(),
+          branchId: pts,
+          expenseDate: d('06-02'),
+          categoryCode: 'RENT',
+          description: 'Rate retry',
+          currency: 'SDG',
+          amount: '600',
+          cashAccountId: cashSdg.id,
+        }),
+        (ids) => t.prisma.expense.count({ where: { id: { in: ids } } }),
+      );
+    });
+  });
+
   describe('postings whose USD value rounds to zero', () => {
     // 1 SDG at 600 is 0.0017 USD: 0.00 once rounded to cents. A document worth nothing in USD is
     // refused with a 400 and leaves nothing behind; it is never a 500 from the balance trigger.

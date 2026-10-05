@@ -38,6 +38,7 @@ ALTER TABLE "customer_invoices" ADD COLUMN     "credited_amount" DECIMAL(18,4) N
 ADD COLUMN     "credited_usd" DECIMAL(18,4) NOT NULL DEFAULT 0,
 ADD COLUMN     "is_opening" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "reference" VARCHAR(50),
+ADD COLUMN     "requested_fx_rate" DECIMAL(18,8),
 ALTER COLUMN "shipment_id" DROP NOT NULL;
 
 -- AlterTable
@@ -100,6 +101,7 @@ CREATE TABLE "supplier_bills" (
     "is_opening" BOOLEAN NOT NULL DEFAULT false,
     "currency" CHAR(3) NOT NULL,
     "fx_rate" DECIMAL(18,8) NOT NULL,
+    "requested_fx_rate" DECIMAL(18,8),
     "bill_date" DATE NOT NULL,
     "due_date" DATE NOT NULL,
     "status" "supplier_bill_status" NOT NULL DEFAULT 'DRAFT',
@@ -200,6 +202,7 @@ CREATE TABLE "expenses" (
     "amount" DECIMAL(18,4) NOT NULL,
     "currency" CHAR(3) NOT NULL,
     "fx_rate" DECIMAL(18,8) NOT NULL,
+    "requested_fx_rate" DECIMAL(18,8),
     "cash_account_id" UUID NOT NULL,
     "reference" VARCHAR(100),
     "status" "expense_status" NOT NULL DEFAULT 'DRAFT',

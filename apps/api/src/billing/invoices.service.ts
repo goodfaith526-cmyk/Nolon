@@ -13,14 +13,19 @@ import type {
   Page,
   PaymentStatus,
 } from '@nolon/shared';
-import { BASE_CURRENCY } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { type Decimal, dec, roundMoney } from '../common/money.js';
+import {
+  type Decimal,
+  dec,
+  requestedRate,
+  roundMoney,
+  sameRequestedRate,
+} from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
@@ -192,6 +197,7 @@ export class InvoicesService {
             reference: input.reference,
             currency: currency.code,
             fxRate,
+            requestedFxRate: requestedRate(input.fxRate),
             invoiceDate: toDbDate(input.invoiceDate),
             dueDate: toDbDate(input.dueDate),
             status: 'APPROVED',
@@ -234,9 +240,7 @@ export class InvoicesService {
       existing.customerId === input.customerId &&
       existing.createdById === user.id &&
       existing.currency === input.currency &&
-      (input.currency === BASE_CURRENCY ||
-        !input.fxRate ||
-        existing.fxRate.eq(dec(input.fxRate))) &&
+      sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(entry.entryDate) === input.entryDate &&
       fromDbDate(existing.invoiceDate) === input.invoiceDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&

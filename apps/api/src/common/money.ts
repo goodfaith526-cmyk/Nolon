@@ -25,3 +25,21 @@ export function toDecimalString(value: Decimal): string {
 export function toDecimalStringOrNull(value: Decimal | null): string | null {
   return value === null ? null : value.toFixed();
 }
+
+/** The exchange rate a request sent, as stored for idempotent retries: null when it sent none. */
+export function requestedRate(sent: string | null | undefined): Decimal | null {
+  return sent ? dec(sent) : null;
+}
+
+/**
+ * Whether a retry sent the rate the first request sent, at Decimal precision: both omitted, or
+ * both the same number. The rate the first request resolved from the FX table is not consulted,
+ * so editing the table afterwards does not turn an exact retry into a conflict.
+ */
+export function sameRequestedRate(
+  stored: Decimal | null,
+  sent: string | null | undefined,
+): boolean {
+  if (!sent) return stored === null;
+  return stored !== null && stored.eq(dec(sent));
+}

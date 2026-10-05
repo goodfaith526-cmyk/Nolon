@@ -13,7 +13,6 @@ import type {
   ExpenseSummaryDto,
   Page,
 } from '@nolon/shared';
-import { BASE_CURRENCY } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { ExpenseCategoriesService } from '../accounting/expense-categories.service.js';
@@ -22,7 +21,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { dec, roundMoney } from '../common/money.js';
+import { dec, requestedRate, roundMoney, sameRequestedRate } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
@@ -131,9 +130,7 @@ export class ExpensesService {
       existing.categoryCode === input.categoryCode &&
       existing.description === input.description &&
       existing.currency === input.currency &&
-      (input.currency === BASE_CURRENCY ||
-        !input.fxRate ||
-        existing.fxRate.eq(dec(input.fxRate))) &&
+      sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       existing.amount.eq(dec(input.amount)) &&
       existing.cashAccountId === input.cashAccountId &&
       existing.reference === (input.reference ?? null);
@@ -269,6 +266,7 @@ export class ExpensesService {
       description: input.description,
       currency: currency.code,
       fxRate,
+      requestedFxRate: requestedRate(input.fxRate),
       amount,
       cashAccountId: input.cashAccountId,
       reference: input.reference ?? null,

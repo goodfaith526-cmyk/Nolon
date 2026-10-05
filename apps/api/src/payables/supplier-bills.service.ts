@@ -15,7 +15,6 @@ import type {
   SupplierBillStatus,
   SupplierBillSummaryDto,
 } from '@nolon/shared';
-import { BASE_CURRENCY } from '@nolon/shared';
 import { AutoJournalService, type BillLineForPosting } from '../accounting/auto-journal.service.js';
 import { ExpenseCategoriesService } from '../accounting/expense-categories.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -23,7 +22,14 @@ import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { type Decimal, ZERO, dec, roundMoney } from '../common/money.js';
+import {
+  type Decimal,
+  ZERO,
+  dec,
+  requestedRate,
+  roundMoney,
+  sameRequestedRate,
+} from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
@@ -185,7 +191,7 @@ export class SupplierBillsService {
       existing.createdById === user.id &&
       existing.branchId === input.branchId &&
       existing.currency === input.currency &&
-      sameRate(existing.fxRate, input.currency, input.fxRate) &&
+      sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(existing.billDate) === input.billDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&
       existing.supplierReference === (input.supplierReference ?? null) &&
@@ -403,6 +409,7 @@ export class SupplierBillsService {
             isOpening: true,
             currency: currency.code,
             fxRate,
+            requestedFxRate: requestedRate(input.fxRate),
             billDate: toDbDate(input.billDate),
             dueDate: toDbDate(input.dueDate),
             status: 'APPROVED',
@@ -444,7 +451,7 @@ export class SupplierBillsService {
       existing.createdById === user.id &&
       existing.branchId === input.branchId &&
       existing.currency === input.currency &&
-      sameRate(existing.fxRate, input.currency, input.fxRate) &&
+      sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(entry.entryDate) === input.entryDate &&
       fromDbDate(existing.billDate) === input.billDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&
@@ -570,6 +577,7 @@ export class SupplierBillsService {
         supplierReference: input.supplierReference ?? null,
         currency: currency.code,
         fxRate,
+        requestedFxRate: requestedRate(input.fxRate),
         billDate: toDbDate(input.billDate),
         dueDate: toDbDate(input.dueDate),
         notes: input.notes ?? null,
@@ -587,11 +595,6 @@ export class SupplierBillsService {
     if (!bill) throw new NotFoundException('Supplier bill not found');
     return bill;
   }
-}
-
-/** A rate the request named is the rate the document has (USD is always 1). */
-function sameRate(stored: Decimal, currency: string, sent: string | null | undefined): boolean {
-  return currency === BASE_CURRENCY || !sent || stored.eq(dec(sent));
 }
 
 function checkAmount(amount: Decimal, decimals: number, label = 'Amount'): void {

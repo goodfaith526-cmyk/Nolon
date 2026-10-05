@@ -1236,6 +1236,8 @@ model CustomerInvoice {
   currency            String        @db.Char(3)
   /// Units of `currency` per 1 USD on the invoice date.
   fxRate              Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  /// The rate the client sent, null when it left the rate to the table (idempotent retries).
+  requestedFxRate     Decimal?      @map("requested_fx_rate") @db.Decimal(18, 8)
   invoiceDate         DateTime      @map("invoice_date") @db.Date
   dueDate             DateTime      @map("due_date") @db.Date
   status              InvoiceStatus @default(DRAFT)
@@ -1895,6 +1897,8 @@ model SupplierBill {
   isOpening            Boolean            @default(false) @map("is_opening")
   currency             String             @db.Char(3)
   fxRate               Decimal            @map("fx_rate") @db.Decimal(18, 8)
+  /// The rate the client sent, null when it left the rate to the table (idempotent retries).
+  requestedFxRate      Decimal?           @map("requested_fx_rate") @db.Decimal(18, 8)
   billDate             DateTime           @map("bill_date") @db.Date
   dueDate              DateTime           @map("due_date") @db.Date
   status               SupplierBillStatus @default(DRAFT)
@@ -2077,6 +2081,8 @@ model Expense {
   amount               Decimal       @db.Decimal(18, 4)
   currency             String        @db.Char(3)
   fxRate               Decimal       @map("fx_rate") @db.Decimal(18, 8)
+  /// The rate the client sent, null when it left the rate to the table (idempotent retries).
+  requestedFxRate      Decimal?      @map("requested_fx_rate") @db.Decimal(18, 8)
   cashAccountId        String        @map("cash_account_id") @db.Uuid
   reference            String?       @db.VarChar(100)
   status               ExpenseStatus @default(DRAFT)
