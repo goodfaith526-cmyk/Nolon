@@ -281,15 +281,18 @@ export interface TripReportRowDto {
   carrierId: string | null;
   carrierName: string | null;
   shipments: number;
-  /** Posted trip expenses (less cancellations) and the posted accrual (less its reversal). */
-  costUsd: DecimalString;
+  /**
+   * Posted trip expenses (less cancellations) and the posted accrual (less its reversal). Null
+   * unless the user sees transport costs (TripsReportDto.showsCost).
+   */
+  costUsd: DecimalString | null;
 }
 
 export interface TripGroupDto {
   id: string;
   name: string;
   trips: number;
-  costUsd: DecimalString;
+  costUsd: DecimalString | null;
 }
 
 export interface TripsReportDto {
@@ -304,7 +307,9 @@ export interface TripsReportDto {
   byVehicle: TripGroupDto[];
   byDriver: TripGroupDto[];
   byCarrier: TripGroupDto[];
-  totals: { trips: number; costUsd: DecimalString };
+  totals: { trips: number; costUsd: DecimalString | null };
+  /** False for users who do not see transport costs (seesTransportCosts): every cost is null. */
+  showsCost: boolean;
   truncated: boolean;
 }
 

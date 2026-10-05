@@ -156,6 +156,16 @@ function buildRolePermissions(): Record<Role, ReadonlySet<Permission>> {
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> =
   buildRolePermissions();
 
+/**
+ * Annex A, "shipment profitability and costs (Restricted)": who sees what transport cost (a hired
+ * trip's agreed cost, how a trip's cost was shared between shipments, the cost column of the trips
+ * report). Holders of shipment_profitability:view, and those who plan trips and agree the cost
+ * with a carrier (transport_fleet:create); not Sales, Warehouse, Customs or Drivers.
+ */
+export function seesTransportCosts(has: (permission: Permission) => boolean): boolean {
+  return has('shipment_profitability:view') || has('transport_fleet:create');
+}
+
 /** Permissions of a user holding several roles: the union (annex A). Sorted for stable output. */
 export function permissionsForRoles(roles: readonly Role[]): Permission[] {
   const all = new Set<Permission>();

@@ -16,6 +16,7 @@ import type {
   TripStatus,
   TripSummaryDto,
 } from '@nolon/shared';
+import { seesTransportCosts } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -559,6 +560,7 @@ export class TripsService {
   private async toDto(user: AuthUser, t: TripWithDetails): Promise<TripDto> {
     const has = (permission: Permission) => user.permissions.has(permission);
     const driverOnly = isDriverOnly(user);
+    const showsCost = seesTransportCosts(has);
     const shipmentIds = t.shipments.map((l) => l.shipmentId);
     const [summaries, shares] = await Promise.all([
       this.shipments.tripSummaries(user, shipmentIds),
@@ -599,7 +601,7 @@ export class TripsService {
       !driverOnly && has('expenses:create') && t.kind === 'OWN' && takesExpenses(t.status);
     const cashAccounts = canAddExpense ? await this.accounts.cashAccountsFor(t.branchId) : [];
     const shareDtos = (entryId: string | null) =>
-      (entryId ? (shares.get(entryId) ?? []) : []).map((s) => ({
+      (entryId && showsCost ? (shares.get(entryId) ?? []) : []).map((s) => ({
         shipmentId: s.shipmentId,
         shipmentNumber: s.shipmentNumber,
         amount: toDecimalString(s.amount),
@@ -609,7 +611,7 @@ export class TripsService {
       vehicleId: t.vehicleId,
       driverId: t.driverId,
       carrierId: t.carrierId,
-      agreedCost: toDecimalStringOrNull(t.agreedCost),
+      agreedCost: showsCost ? toDecimalStringOrNull(t.agreedCost) : null,
       currency: t.currency,
       externalVehicle: t.externalVehicle,
       externalDriver: t.externalDriver,
@@ -621,6 +623,7 @@ export class TripsService {
       accrualJournalEntryId: t.accrualEntryId,
       accrualJournalNumber: t.accrualEntry?.number ?? null,
       accrualShares: shareDtos(t.accrualEntryId),
+      showsCost,
       shipments,
       expenses: t.expenses.map((e) => ({
         id: e.id,

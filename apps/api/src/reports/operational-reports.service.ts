@@ -27,6 +27,7 @@ import {
   type WarehouseMovementKind,
   type WarehouseMovementsDto,
   type WarehouseOnHandDto,
+  seesTransportCosts,
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
 import { sum } from '../accounting/report-math.js';
@@ -439,12 +440,17 @@ export class OperationalReportsService {
    */
   async tripsReport(user: AuthUser, q: TripsQuery, limit = LIMIT): Promise<TripsReportDto> {
     const r = await this.trips.trips(user, q, limit);
+    // Costs are restricted (annex A): users who do not see them get the trips without any cost.
+    const showsCost = seesTransportCosts((p) => user.permissions.has(p));
     // Totals and groups cover every matching trip; only the listed rows are cut at the limit.
-    const costs = await this.ledger.entryCostsUsd(
-      user,
-      r.all.flatMap((t) => t.costEntryIds),
-      q.branchId,
-    );
+    const costs = showsCost
+      ? await this.ledger.entryCostsUsd(
+          user,
+          r.all.flatMap((t) => t.costEntryIds),
+          q.branchId,
+        )
+      : new Map<string, Decimal>();
+    const shown = (amount: Decimal) => (showsCost ? amount.toFixed() : null);
     const costOf = (entryIds: readonly string[]) =>
       sum(entryIds.map((id) => costs.get(id) ?? ZERO));
     const all = r.all.map((t) => ({ ...t, cost: costOf(t.costEntryIds) }));
@@ -464,7 +470,7 @@ export class OperationalReportsService {
           id: g.id,
           name: g.name,
           trips: g.trips,
-          costUsd: g.cost.toFixed(),
+          costUsd: shown(g.cost),
         }));
     };
     return {
@@ -477,7 +483,7 @@ export class OperationalReportsService {
       carrierId: q.carrierId ?? null,
       trips: r.trips.map(({ costEntryIds, ...t }) => ({
         ...t,
-        costUsd: costOf(costEntryIds).toFixed(),
+        costUsd: shown(costOf(costEntryIds)),
       })),
       byVehicle: group((t) =>
         t.vehicleId && t.vehicle ? { id: t.vehicleId, name: t.vehicle } : null,
@@ -486,7 +492,8 @@ export class OperationalReportsService {
       byCarrier: group((t) =>
         t.carrierId && t.carrierName ? { id: t.carrierId, name: t.carrierName } : null,
       ),
-      totals: { trips: all.length, costUsd: sum(all.map((t) => t.cost)).toFixed() },
+      totals: { trips: all.length, costUsd: shown(sum(all.map((t) => t.cost))) },
+      showsCost,
       truncated: r.truncated,
     };
   }

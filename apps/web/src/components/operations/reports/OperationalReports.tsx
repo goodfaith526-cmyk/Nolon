@@ -697,7 +697,15 @@ export function CustomsFilesReport() {
   );
 }
 
-function GroupTable({ title, groups }: { title: string; groups: TripGroupDto[] }) {
+function GroupTable({
+  title,
+  groups,
+  showsCost,
+}: {
+  title: string;
+  groups: TripGroupDto[];
+  showsCost: boolean;
+}) {
   const t = useTranslations('OpsReports');
   const tr = useTranslations('Reports');
   return (
@@ -706,16 +714,16 @@ function GroupTable({ title, groups }: { title: string; groups: TripGroupDto[] }
         <tr>
           <th>{t('name')}</th>
           <th>{tr('trips')}</th>
-          <th>{tr('costUsd')}</th>
+          {showsCost && <th>{tr('costUsd')}</th>}
         </tr>
       </thead>
       <tbody>
-        {groups.length === 0 && <EmptyRow columns={3} text={t('none')} />}
+        {groups.length === 0 && <EmptyRow columns={showsCost ? 3 : 2} text={t('none')} />}
         {groups.map((g) => (
           <tr key={g.id}>
             <td>{g.name}</td>
             <td dir="ltr">{g.trips}</td>
-            <AmountCell value={g.costUsd} />
+            {showsCost && <AmountCell value={g.costUsd} />}
           </tr>
         ))}
       </tbody>
@@ -766,7 +774,9 @@ export function TripsReport() {
           <Figures
             items={[
               { label: tr('trips'), value: r.totals.trips },
-              { label: tr('costUsd'), value: r.totals.costUsd },
+              ...(r.showsCost && r.totals.costUsd !== null
+                ? [{ label: tr('costUsd'), value: r.totals.costUsd }]
+                : []),
             ]}
           />
           <Truncated shown={r.truncated} />
@@ -782,11 +792,11 @@ export function TripsReport() {
                 <th>{t('driver')}</th>
                 <th>{tr('carrier')}</th>
                 <th>{tr('shipmentCount')}</th>
-                <th>{tr('costUsd')}</th>
+                {r.showsCost && <th>{tr('costUsd')}</th>}
               </tr>
             </thead>
             <tbody>
-              {r.trips.length === 0 && <EmptyRow columns={10} text={t('none')} />}
+              {r.trips.length === 0 && <EmptyRow columns={r.showsCost ? 10 : 9} text={t('none')} />}
               {r.trips.map((x) => (
                 <tr key={x.tripId}>
                   <td dir="ltr">
@@ -804,20 +814,22 @@ export function TripsReport() {
                   <td>{dash(x.driver)}</td>
                   <td>{dash(x.carrierName)}</td>
                   <td dir="ltr">{x.shipments}</td>
-                  <AmountCell value={x.costUsd} />
+                  {r.showsCost && <AmountCell value={x.costUsd} />}
                 </tr>
               ))}
-              <tr className="subtotal">
-                <td>{tr('total')}</td>
-                <td colSpan={8} />
-                <AmountCell value={r.totals.costUsd} strong />
-              </tr>
+              {r.showsCost && (
+                <tr className="subtotal">
+                  <td>{tr('total')}</td>
+                  <td colSpan={8} />
+                  <AmountCell value={r.totals.costUsd} strong />
+                </tr>
+              )}
             </tbody>
           </ReportTable>
           <div className="panels">
-            <GroupTable title={t('byVehicle')} groups={r.byVehicle} />
-            <GroupTable title={t('byDriver')} groups={r.byDriver} />
-            <GroupTable title={t('byCarrier')} groups={r.byCarrier} />
+            <GroupTable title={t('byVehicle')} groups={r.byVehicle} showsCost={r.showsCost} />
+            <GroupTable title={t('byDriver')} groups={r.byDriver} showsCost={r.showsCost} />
+            <GroupTable title={t('byCarrier')} groups={r.byCarrier} showsCost={r.showsCost} />
           </div>
           <p className="muted">{t('tripCostNote')}</p>
         </div>

@@ -444,6 +444,8 @@ export function customsFilesSheets(ctx: ExportContext, r: CustomsFilesDto): Work
 
 export function tripsSheets(ctx: ExportContext, r: TripsReportDto): WorkbookSpec {
   const t = opsTranslator(ctx.locale);
+  // Without access to costs (annex A) the cost column and note are left out, not shown empty.
+  const cost = <T>(items: T[]): T[] => (r.showsCost ? items : []);
   const trips: RowSpec[] = r.trips.map((x) => ({
     cells: [
       x.number,
@@ -457,7 +459,7 @@ export function tripsSheets(ctx: ExportContext, r: TripsReportDto): WorkbookSpec
       x.driver,
       x.carrierName,
       x.shipments,
-      x.costUsd,
+      ...cost([x.costUsd]),
     ],
   }));
   trips.push({
@@ -473,7 +475,7 @@ export function tripsSheets(ctx: ExportContext, r: TripsReportDto): WorkbookSpec
       null,
       null,
       null,
-      r.totals.costUsd,
+      ...cost([r.totals.costUsd]),
     ],
     bold: true,
   });
@@ -482,14 +484,14 @@ export function tripsSheets(ctx: ExportContext, r: TripsReportDto): WorkbookSpec
     columns: [
       col(t('name'), 'text', 30),
       col(t('tripCount'), 'integer', 12),
-      col(t('costUsd'), 'amount'),
+      ...cost([col(t('costUsd'), 'amount')]),
     ],
-    rows: groups.map((g) => ({ cells: [g.name, g.trips, g.costUsd] })),
+    rows: groups.map((g) => ({ cells: [g.name, g.trips, ...cost([g.costUsd])] })),
   });
   return book(
     ctx,
     'tripsReport',
-    [period(t, r.from, r.to), t('costNote')],
+    [period(t, r.from, r.to), ...cost([t('costNote')])],
     [
       {
         name: t('trips'),
@@ -505,7 +507,7 @@ export function tripsSheets(ctx: ExportContext, r: TripsReportDto): WorkbookSpec
           col(t('driver'), 'text', 22),
           col(t('carrier'), 'text', 22),
           col(t('shipmentCount'), 'integer', 12),
-          col(t('costUsd'), 'amount'),
+          ...cost([col(t('costUsd'), 'amount')]),
         ],
         rows: trips,
       },
