@@ -119,6 +119,9 @@ describe('inland transport: fleet, trips, POD', () => {
 
   const status = async (id: string) =>
     (await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status;
+  /** Where the shipment is now, as the public tracking page shows it. */
+  const location = async (id: string) =>
+    (await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).currentLocationId;
 
   const recordPod = (shipmentId: string, cookie: string, fields: Record<string, string>) => {
     let req = t
@@ -428,8 +431,11 @@ describe('inland transport: fleet, trips, POD', () => {
         canAddExpense: false,
       });
       await post(`/trips/${own.id}/status`, cookies.driver, { status: 'DEPARTED' }).expect(200);
+      expect(await location(mine.id)).toBe(portSudan);
       await post(`/trips/${own.id}/status`, cookies.driver, { status: 'ARRIVED' }).expect(200);
       expect(await status(mine.id)).toBe('ROAD_ARRIVED');
+      // The tracking page follows the trip: the shipment is now at its destination.
+      expect(await location(mine.id)).toBe(khartoum);
 
       const pods = (await get(`/shipments/${mine.id}/pods`, cookies.driver).expect(200))
         .body as ShipmentPodsDto;
@@ -749,6 +755,27 @@ describe('inland transport: fleet, trips, POD', () => {
         .body as TripDto;
       await post(`/shipments/${d.id}/hold`, cookies.opsDxb, { reason: 'Papers' }).expect(200);
       await post(`/trips/${second.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(409);
+    });
+
+    it('a POD recorded without a trip puts the shipment at its own destination', async () => {
+      const a = await roadShipment();
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))
+        .body as TripDto;
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+      // Marked arrived by hand, with no location given: the tracking page still says Port Sudan.
+      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
+        200,
+      );
+      expect(await location(a.id)).toBe(portSudan);
+      await recordPod(a.id, cookies.opsDxb, {
+        recipientName: 'Ahmed Ali',
+        recipientCapacity: 'Consignee',
+        shipmentStatus: 'DELIVERED',
+      })
+        .attach('signature', PNG, 'signature.png')
+        .expect(201);
+      expect(await status(a.id)).toBe('DELIVERED');
+      expect(await location(a.id)).toBe(khartoum);
     });
 
     it('a driver record with trips keeps its user: relinking would expose the trips (409)', async () => {

@@ -139,12 +139,14 @@ export class PodService {
       select: { timezone: true },
     });
     const id = await this.prisma.$transaction(async (tx) => {
-      if (tripId) await this.requireTripInTx(tx, user, tripId, shipmentId);
+      const tripTo = tripId ? await this.requireTripInTx(tx, user, tripId, shipmentId) : null;
       // Exclusive: the status may change in this transaction; a cancel or another POD waits.
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (!recordable(status)) {
         throw new ConflictException(`A ${status} shipment takes no proof of delivery`);
       }
+      // Delivered at the trip's destination, or without a trip at the shipment's.
+      const deliveredTo = tripTo ?? (await this.shipments.destinationInTx(tx, shipmentId));
       const { lastEventAt } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
       if (lastEventAt && deliveredAt < lastEventAt) {
         throw new BadRequestException(
@@ -161,6 +163,7 @@ export class PodService {
         ? await this.shipments.advanceInTx(tx, user, shipmentId, fields.shipmentStatus, {
             occurredAt: deliveredAt,
             note: number,
+            locationId: deliveredTo,
           })
         : false;
       const pod = await tx.proofOfDelivery.create({
@@ -201,14 +204,15 @@ export class PodService {
   /**
    * Inside the POD's transaction, before the shipment lock: the trip, share-locked, still carries
    * the shipment, has departed (or arrived, or completed) and is not cancelled (409); a driver's
-   * trip is still assigned to them (404, as for any trip that is not theirs).
+   * trip is still assigned to them (404, as for any trip that is not theirs). Returns the trip's
+   * destination, where the shipment is delivered.
    */
   private async requireTripInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
     tripId: string,
     shipmentId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const trip = await lockTripShared(tx, tripId);
     if (isDriverOnly(user) && trip.driverUserId !== user.id) {
       throw new NotFoundException('Trip not found');
@@ -223,6 +227,7 @@ export class PodService {
     if (!tripTakesPod(trip.status)) {
       throw new ConflictException('A proof of delivery is recorded once the trip has departed');
     }
+    return trip.destinationLocationId;
   }
 
   /**

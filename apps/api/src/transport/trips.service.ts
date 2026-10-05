@@ -345,7 +345,9 @@ export class TripsService {
       ).map((l) => l.shipmentId);
       const target = shipmentStatusFor(input.status);
       if (target) {
-        await this.moveShipments(tx, user, trip.number, shipmentIds, target, occurredAt, numbers);
+        // Departing, the shipments are at the trip's origin; arriving, at its destination.
+        const at = input.status === 'DEPARTED' ? trip.originLocationId : trip.destinationLocationId;
+        await this.moveShipments(tx, user, trip, shipmentIds, target, occurredAt, at, numbers);
       }
       const data: Prisma.TripUncheckedUpdateManyInput = { status: input.status };
       switch (input.status) {
@@ -526,10 +528,11 @@ export class TripsService {
   private async moveShipments(
     tx: Tx,
     user: AuthUser,
-    tripNumber: string,
+    trip: { number: string },
     shipmentIds: readonly string[],
     target: ShipmentStatus,
     occurredAt: Date,
+    locationId: string,
     numbers: ReadonlyMap<string, string>,
   ): Promise<void> {
     const blocked: string[] = [];
@@ -545,7 +548,8 @@ export class TripsService {
       }
       const moved = await this.shipments.advanceInTx(tx, user, shipmentId, target, {
         occurredAt,
-        note: tripNumber,
+        note: trip.number,
+        locationId,
       });
       if (!moved) blocked.push(`${numbers.get(shipmentId) ?? shipmentId} (${status})`);
     }

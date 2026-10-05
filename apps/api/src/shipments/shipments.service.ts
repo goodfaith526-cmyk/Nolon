@@ -509,14 +509,16 @@ export class ShipmentsService {
    * For other modules (a warehouse receipt), inside their transaction: moves the shipment to
    * `status` through the state machine when that move is allowed now, and records the event like
    * any status change. Returns false, changing nothing, when the state machine does not allow it.
-   * 403 when it is allowed but the user lacks the permission for it.
+   * 403 when it is allowed but the user lacks the permission for it. `locationId`, when given, is
+   * where the shipment now is (a trip's destination on arrival): it becomes the current location
+   * the tracking page shows.
    */
   async advanceInTx(
     tx: Tx,
     user: AuthUser,
     id: string,
     status: ShipmentStatus,
-    options: { occurredAt: Date; note: string | null },
+    options: { occurredAt: Date; note: string | null; locationId?: string | null },
   ): Promise<boolean> {
     return this.applyEventInTx(tx, user, id, (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
@@ -528,9 +530,19 @@ export class ShipmentsService {
         status,
         occurredAt: options.occurredAt,
         note: options.note,
+        locationId: options.locationId ?? null,
         update: { status },
       };
     });
+  }
+
+  /** For a proof of delivery without a trip, inside its transaction: the shipment's destination. */
+  async destinationInTx(tx: Tx, id: string): Promise<string> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: { destinationLocationId: true },
+    });
+    return shipment.destinationLocationId;
   }
 
   /**
