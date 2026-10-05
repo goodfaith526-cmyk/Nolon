@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AuditChangeDto,
   ContactInput,
   CreateCustomerRequest,
   CustomerContactDto,
@@ -15,6 +16,12 @@ import type {
   PartyDto,
   PartyInput,
 } from '@nolon/shared';
+import {
+  type AuditRecord,
+  AuditService,
+  type AuditValue,
+  changedFields,
+} from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
@@ -64,6 +71,7 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currencies: CurrenciesService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(user: AuthUser, query: PageQuery): Promise<Page<CustomerSummaryDto>> {
@@ -109,10 +117,16 @@ export class CustomersService {
       await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
       throwFirstConflict(await this.duplicateIssues(tx, [input]));
       const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
-      return tx.customer.create({
+      const customer = await tx.customer.create({
         data: { ...toData(fields), number, branchId, createdById: user.id },
         include: details,
       });
+      await this.audit.record(
+        tx,
+        user,
+        auditRecord(customer, 'CREATED', changedFields(null, auditFields(customer), AUDIT_FIELDS)),
+      );
+      return customer;
     });
     return toDto(created);
   }
@@ -159,6 +173,22 @@ export class CustomersService {
     for (let i = 0; i < data.length; i += WRITE_CHUNK) {
       await tx.customer.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
     }
+    // Every field as written (defaults included), like a customer created on screen, and where it
+    // came from.
+    const created = await tx.customer.findMany({
+      where: { id: { in: data.map((c) => c.id) } },
+      orderBy: { number: 'asc' },
+    });
+    await this.audit.recordMany(
+      tx,
+      user,
+      created.map((c) =>
+        auditRecord(c, 'CREATED', [
+          ...changedFields(null, auditFields(c), AUDIT_FIELDS),
+          { field: 'source', before: null, after: 'Excel import' },
+        ]),
+      ),
+    );
     return issues;
   }
 
@@ -254,11 +284,21 @@ export class CustomersService {
         await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [keys]));
       }
-      return tx.customer.update({
+      const changed = await tx.customer.update({
         where: { id: current.id },
         data: toData(input),
         include: details,
       });
+      await this.audit.record(
+        tx,
+        user,
+        auditRecord(
+          changed,
+          'UPDATED',
+          changedFields(auditFields(current), auditFields(changed), AUDIT_FIELDS),
+        ),
+      );
+      return changed;
     });
     return toDto(updated);
   }
@@ -266,17 +306,33 @@ export class CustomersService {
   async setActive(user: AuthUser, id: string, isActive: boolean): Promise<CustomerDto> {
     const existing = await this.findScoped(user, id);
     return toDto(
-      await this.prisma.customer.update({
-        where: { id: existing.id },
-        data: { isActive },
-        include: details,
+      await this.prisma.$transaction(async (tx) => {
+        // Locked before `before` is read: two concurrent changes queue, and each logs what it
+        // actually changed.
+        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${existing.id}::uuid FOR NO KEY UPDATE`;
+        const before = await tx.customer.findUniqueOrThrow({ where: { id: existing.id } });
+        const changed = await tx.customer.update({
+          where: { id: existing.id },
+          data: { isActive },
+          include: details,
+        });
+        await this.audit.record(
+          tx,
+          user,
+          auditRecord(
+            changed,
+            'UPDATED',
+            changedFields({ isActive: before.isActive }, { isActive }, ['isActive']),
+          ),
+        );
+        return changed;
       }),
     );
   }
 
   async addContact(user: AuthUser, customerId: string, input: ContactInput): Promise<CustomerDto> {
     const customer = await this.findScoped(user, customerId);
-    await this.writeContacts(customer.id, async (tx) => {
+    await this.writeContacts(user, customer, async (tx) => {
       if (input.isPrimary) {
         await tx.customerContact.updateMany({
           where: { customerId: customer.id },
@@ -298,7 +354,7 @@ export class CustomersService {
     if (!customer.contacts.some((c) => c.id === contactId)) {
       throw new NotFoundException('Contact not found');
     }
-    await this.writeContacts(customer.id, async (tx) => {
+    await this.writeContacts(user, customer, async (tx) => {
       if (input.isPrimary) {
         await tx.customerContact.updateMany({
           where: { customerId: customer.id, id: { not: contactId } },
@@ -313,15 +369,23 @@ export class CustomersService {
   /**
    * Contact changes of one customer run one at a time (customer row lock), so moving the primary
    * flag is never interleaved. A unique partial index backs the one-primary rule in the database.
+   * The audit log gets every contact the write changed (the primary flag moved off another one
+   * included), read before and after under the lock.
    */
   private async writeContacts(
-    customerId: string,
+    user: AuthUser,
+    customer: Customer,
     write: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<void> {
+    const read = (tx: Prisma.TransactionClient) =>
+      tx.customerContact.findMany({ where: { customerId: customer.id } });
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customerId}::uuid FOR UPDATE`;
+        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customer.id}::uuid FOR UPDATE`;
+        const before = await read(tx);
         await write(tx);
+        const changes = childChanges('contact', before, await read(tx), CONTACT_AUDIT_FIELDS);
+        await this.audit.record(tx, user, auditRecord(customer, 'UPDATED', changes));
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -333,7 +397,9 @@ export class CustomersService {
 
   async addParty(user: AuthUser, customerId: string, input: PartyInput): Promise<CustomerDto> {
     const customer = await this.findScoped(user, customerId);
-    await this.prisma.party.create({ data: { ...input, customerId: customer.id } });
+    await this.writeParties(user, customer, async (tx) => {
+      await tx.party.create({ data: { ...input, customerId: customer.id } });
+    });
     return this.get(user, customer.id);
   }
 
@@ -347,8 +413,27 @@ export class CustomersService {
     if (!customer.parties.some((p) => p.id === partyId)) {
       throw new NotFoundException('Party not found');
     }
-    await this.prisma.party.update({ where: { id: partyId }, data: input });
+    await this.writeParties(user, customer, async (tx) => {
+      await tx.party.update({ where: { id: partyId }, data: input });
+    });
     return this.get(user, customer.id);
+  }
+
+  /** Party changes, under the customer row lock, with their audit log row (as writeContacts). */
+  private async writeParties(
+    user: AuthUser,
+    customer: Customer,
+    write: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    const read = (tx: Prisma.TransactionClient) =>
+      tx.party.findMany({ where: { customerId: customer.id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customer.id}::uuid FOR UPDATE`;
+      const before = await read(tx);
+      await write(tx);
+      const changes = childChanges('party', before, await read(tx), PARTY_AUDIT_FIELDS);
+      await this.audit.record(tx, user, auditRecord(customer, 'UPDATED', changes));
+    });
   }
 
   /**
@@ -487,6 +572,103 @@ function toPartyDto(p: Party): PartyDto {
     countryCode: p.countryCode,
     city: p.city,
     address: p.address,
+  };
+}
+
+/** The fields of a customer the audit log compares. */
+const AUDIT_FIELDS = [
+  'kind',
+  'name',
+  'companyName',
+  'phone',
+  'whatsapp',
+  'email',
+  'countryCode',
+  'city',
+  'address',
+  'taxNumber',
+  'preferredCurrency',
+  'preferredLocale',
+  'paymentTermsDays',
+  'creditLimit',
+  'creditLimitCurrency',
+  'notes',
+  'isActive',
+] as const;
+
+const CONTACT_AUDIT_FIELDS = [
+  'name',
+  'position',
+  'phone',
+  'email',
+  'idNumber',
+  'canInquire',
+  'canReceiveCargo',
+  'canReceiveDocuments',
+  'isPrimary',
+  'isActive',
+] as const;
+
+const PARTY_AUDIT_FIELDS = [
+  'name',
+  'companyName',
+  'phone',
+  'email',
+  'countryCode',
+  'city',
+  'address',
+] as const;
+
+/**
+ * The audit changes of a customer's contacts or parties: for each one added or changed, a
+ * `kind` change naming it (its name before and after; null before when added), then its fields
+ * that changed as `kind.field`.
+ */
+function childChanges<
+  T extends { id: string; name: string } & Record<F, AuditValue>,
+  F extends string,
+>(
+  kind: 'contact' | 'party',
+  before: readonly T[],
+  after: readonly T[],
+  fields: readonly F[],
+): AuditChangeDto[] {
+  const was = new Map(before.map((row) => [row.id, row]));
+  return after.flatMap((row) => {
+    const old = was.get(row.id) ?? null;
+    const pick = (r: T): Record<F, AuditValue> => {
+      const out = {} as Record<F, AuditValue>;
+      for (const f of fields) out[f] = r[f];
+      return out;
+    };
+    const fieldChanges = changedFields(old && pick(old), pick(row), fields);
+    if (fieldChanges.length === 0) return [];
+    return [
+      { field: kind, before: old?.name ?? null, after: row.name },
+      ...fieldChanges.map((c) => ({ ...c, field: `${kind}.${c.field}` })),
+    ];
+  });
+}
+
+function auditFields(c: Customer): Pick<Customer, (typeof AUDIT_FIELDS)[number]> {
+  const fields = {} as Record<(typeof AUDIT_FIELDS)[number], unknown>;
+  for (const f of AUDIT_FIELDS) fields[f] = c[f];
+  return fields as Pick<Customer, (typeof AUDIT_FIELDS)[number]>;
+}
+
+/** A customer change for the audit log, named by number and name. */
+function auditRecord(
+  c: { id: string; branchId: string; number: string; name: string },
+  action: 'CREATED' | 'UPDATED',
+  changes: AuditChangeDto[],
+): AuditRecord {
+  return {
+    branchId: c.branchId,
+    entity: 'CUSTOMER',
+    entityId: c.id,
+    reference: `${c.number} ${c.name}`,
+    action,
+    changes,
   };
 }
 

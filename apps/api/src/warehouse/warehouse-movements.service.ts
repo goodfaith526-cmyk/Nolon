@@ -14,7 +14,7 @@ import type {
   WarehouseMovementKind,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { shipmentScope } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
@@ -26,6 +26,8 @@ import { isActive } from '../shipments/state-machine.js';
 import {
   canRelease,
   defaultReceiptStatus,
+  extraPackagesOnReceipt,
+  heldPackages,
   receiptStatusOptions,
   releasableAt,
   totalsByWarehouse,
@@ -83,7 +85,7 @@ export class WarehouseMovementsService {
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentWarehouseDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const movements = await this.prisma.warehouseMovement.findMany({
-      where: { shipmentId, ...branchScope(user) },
+      where: { shipmentId, shipment: shipmentScope(user) },
       include: movementDetails,
       orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }],
     });
@@ -109,8 +111,11 @@ export class WarehouseMovementsService {
     const receiptStatuses = has('warehouse:create')
       ? receiptStatusOptions(shipment.transitions)
       : [];
+    const held = heldPackages(movements);
     return {
       expectedPackages: shipment.packages,
+      heldPackages: held,
+      remainingPackages: Math.max(0, shipment.packages - held),
       balances,
       movements: movements.map(toDto),
       actions: {
@@ -131,16 +136,20 @@ export class WarehouseMovementsService {
    * Goods receipt (full or partial): issues a GRN. When `shipmentStatus` is given and the state
    * machine allows that move now, the shipment moves to it in the same transaction; otherwise the
    * receipt only records the goods (statusApplied stays null). 409 on a closed or cancelled
-   * shipment.
+   * shipment, and when the warehouses would hold more packages than the cargo lines have, unless
+   * the user confirms the extra packages and says why in the note.
    */
   async receive(
     user: AuthUser,
     shipmentId: string,
     input: GoodsReceiptRequest,
   ): Promise<WarehouseMovementDto> {
-    const shipment = await this.shipments.requireAccessible(user, shipmentId);
+    const shipment = await this.shipments.childContext(user, shipmentId);
     if (!isActive(shipment.status)) {
       throw new ConflictException('A closed or cancelled shipment cannot receive goods');
+    }
+    if (input.extraPackagesConfirmed && !input.note) {
+      throw new BadRequestException('Say in the note why there are extra packages');
     }
     const occurredAt = occurredAtOf(input.occurredAt);
     const id = await this.prisma.$transaction(async (tx) => {
@@ -155,6 +164,25 @@ export class WarehouseMovementsService {
         input.storageLocationId ?? null,
         'receipt',
       );
+      // Under the exclusive shipment lock: every earlier receipt and release is counted.
+      const logged = await tx.warehouseMovement.findMany({
+        where: { shipmentId, shipment: shipmentScope(user) },
+        select: {
+          kind: true,
+          warehouseId: true,
+          packages: true,
+          weightKg: true,
+          occurredAt: true,
+          createdAt: true,
+        },
+      });
+      const extra = extraPackagesOnReceipt(shipment.packages, logged, occurredAt, input.packages);
+      if (extra > 0 && !input.extraPackagesConfirmed) {
+        throw new ConflictException(
+          `This receipt would hold ${extra} more packages than the ${shipment.packages} on the ` +
+            'cargo lines: confirm the extra packages and say why in the note',
+        );
+      }
       const number = await this.nextNumber(tx, 'RECEIPT', warehouse);
       const applied = input.shipmentStatus
         ? await this.shipments.advanceInTx(tx, user, shipmentId, input.shipmentStatus, {
@@ -214,7 +242,7 @@ export class WarehouseMovementsService {
         'release',
       );
       const held = await tx.warehouseMovement.findMany({
-        where: { shipmentId, warehouseId: warehouse.id, ...branchScope(user) },
+        where: { shipmentId, warehouseId: warehouse.id, shipment: shipmentScope(user) },
         select: {
           kind: true,
           warehouseId: true,
@@ -294,7 +322,7 @@ export class WarehouseMovementsService {
     id: string,
   ): Promise<MovementWithDetails> {
     const movement = await this.prisma.warehouseMovement.findFirst({
-      where: { id, shipmentId, ...branchScope(user) },
+      where: { id, shipmentId, shipment: shipmentScope(user) },
       include: movementDetails,
     });
     if (!movement) throw new NotFoundException('Movement not found');

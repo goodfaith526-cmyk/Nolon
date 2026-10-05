@@ -291,10 +291,16 @@ export function TripDetail({ id }: { id: string }) {
           <>
             <dt>{t('carrier')}</dt>
             <dd>{trip.carrierName}</dd>
-            <dt>{t('agreedCost')}</dt>
-            <dd>
-              {trip.agreedCost && <Money value={trip.agreedCost} currency={trip.currency ?? ''} />}
-            </dd>
+            {trip.showsCost && (
+              <>
+                <dt>{t('agreedCost')}</dt>
+                <dd>
+                  {trip.agreedCost && (
+                    <Money value={trip.agreedCost} currency={trip.currency ?? ''} />
+                  )}
+                </dd>
+              </>
+            )}
           </>
         )}
         <dt>{t('plannedDeparture')}</dt>
@@ -447,7 +453,7 @@ export function TripDetail({ id }: { id: string }) {
         )}
       </div>
 
-      {trip.kind === 'OWN' ? (
+      {trip.kind === 'OWN' && trip.showsCost ? (
         <div className="panel">
           <div className="panel-head">
             <div>
@@ -601,27 +607,29 @@ export function TripDetail({ id }: { id: string }) {
           )}
         </div>
       ) : (
-        <div className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>{t('accrualSection')}</h2>
-              <p className="muted">{t('accrualHint')}</p>
+        trip.showsCost && (
+          <div className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>{t('accrualSection')}</h2>
+                <p className="muted">{t('accrualHint')}</p>
+              </div>
+            </div>
+            <div className="panel-body stack">
+              {trip.accrualJournalEntryId && trip.accrualJournalNumber ? (
+                <>
+                  <p>
+                    {t('accrualPosted')}{' '}
+                    {journalLink(trip.accrualJournalEntryId, trip.accrualJournalNumber)}
+                  </p>
+                  {shares(trip.accrualShares, trip.currency ?? '')}
+                </>
+              ) : (
+                <p className="muted">{t('accrualPending')}</p>
+              )}
             </div>
           </div>
-          <div className="panel-body stack">
-            {trip.accrualJournalEntryId && trip.accrualJournalNumber ? (
-              <>
-                <p>
-                  {t('accrualPosted')}{' '}
-                  {journalLink(trip.accrualJournalEntryId, trip.accrualJournalNumber)}
-                </p>
-                {shares(trip.accrualShares, trip.currency ?? '')}
-              </>
-            ) : (
-              <p className="muted">{t('accrualPending')}</p>
-            )}
-          </div>
-        </div>
+        )
       )}
     </section>
   );

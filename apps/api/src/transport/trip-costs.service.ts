@@ -18,7 +18,7 @@ import type { JournalEntry, Prisma, Trip } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { FleetService } from './fleet.service.js';
-import { forbidDriverOnly, lockTrip, tripScope } from './trip-scope.js';
+import { forbidDriverOnly, forbidHiddenCosts, lockTrip, tripScope } from './trip-scope.js';
 import {
   type CostShare,
   measuresOf,
@@ -99,6 +99,7 @@ export class TripCostsService {
    */
   async addExpense(user: AuthUser, tripId: string, input: TripExpenseRequest): Promise<void> {
     forbidDriverOnly(user, 'pay trip expenses');
+    forbidHiddenCosts(user);
     const existing = await this.findScoped(user, tripId);
     if (existing.kind !== 'OWN') {
       throw new ConflictException(
@@ -198,6 +199,7 @@ export class TripCostsService {
     reason: string,
   ): Promise<void> {
     forbidDriverOnly(user, 'cancel trip expenses');
+    forbidHiddenCosts(user);
     const trip = await this.findScoped(user, tripId);
     const expense = await this.prisma.tripExpense.findFirst({
       where: { id: expenseId, tripId: trip.id },

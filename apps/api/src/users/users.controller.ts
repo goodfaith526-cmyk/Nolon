@@ -66,14 +66,18 @@ export class UsersController {
 
   @Post()
   @RequirePermission('users:create')
-  create(@Body() body: unknown): Promise<UserSummary> {
-    return this.users.create(parse(createBody, body));
+  create(@CurrentUser() actor: AuthUser, @Body() body: unknown): Promise<UserSummary> {
+    return this.users.create(actor.id, parse(createBody, body));
   }
 
   @Patch(':id')
   @RequirePermission('users:update')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<UserSummary> {
-    return this.users.update(id, parse(updateBody, body));
+  update(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<UserSummary> {
+    return this.users.update(actor.id, id, parse(updateBody, body));
   }
 
   @Post(':id/deactivate')
@@ -99,7 +103,11 @@ export class UsersController {
   @Post(':id/password')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermission('users:update')
-  resetPassword(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<void> {
-    return this.users.resetPassword(id, parse(resetBody, body).password);
+  resetPassword(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<void> {
+    return this.users.resetPassword(actor.id, id, parse(resetBody, body).password);
   }
 }

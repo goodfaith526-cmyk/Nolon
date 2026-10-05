@@ -287,6 +287,22 @@ export function schemaIssues<K extends string>(
   });
 }
 
+/**
+ * For a row that failed its schema: the fields that passed it, parsed, so the rule checks can
+ * still report on them and the user sees every problem of the row at once. Null when even those
+ * do not parse.
+ */
+export function passingFields<S extends z.ZodObject>(
+  schema: S,
+  input: Record<string, unknown>,
+  error: z.ZodError,
+): Partial<z.infer<S>> | null {
+  const failed = new Set(error.issues.map((i) => String(i.path[0] ?? '')));
+  const rest = Object.fromEntries(Object.entries(input).filter(([field]) => !failed.has(field)));
+  const parsed = schema.partial().safeParse(rest);
+  return parsed.success ? (parsed.data as Partial<z.infer<S>>) : null;
+}
+
 /** A row after every check: the parsed input when it passed the schema, and all its issues. */
 export interface CheckedRow<K extends string, T> {
   row: number;

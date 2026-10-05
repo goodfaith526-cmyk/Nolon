@@ -697,7 +697,15 @@ export function CustomsFilesReport() {
   );
 }
 
-function GroupTable({ title, groups }: { title: string; groups: TripGroupDto[] }) {
+function GroupTable({
+  title,
+  groups,
+  showsCost,
+}: {
+  title: string;
+  groups: TripGroupDto[];
+  showsCost: boolean;
+}) {
   const t = useTranslations('OpsReports');
   const tr = useTranslations('Reports');
   return (
@@ -706,16 +714,16 @@ function GroupTable({ title, groups }: { title: string; groups: TripGroupDto[] }
         <tr>
           <th>{t('name')}</th>
           <th>{tr('trips')}</th>
-          <th>{tr('costUsd')}</th>
+          {showsCost && <th>{tr('costUsd')}</th>}
         </tr>
       </thead>
       <tbody>
-        {groups.length === 0 && <EmptyRow columns={3} text={t('none')} />}
+        {groups.length === 0 && <EmptyRow columns={showsCost ? 3 : 2} text={t('none')} />}
         {groups.map((g) => (
           <tr key={g.id}>
             <td>{g.name}</td>
             <td dir="ltr">{g.trips}</td>
-            <AmountCell value={g.costUsd} />
+            {showsCost && <AmountCell value={g.costUsd} />}
           </tr>
         ))}
       </tbody>
@@ -766,7 +774,9 @@ export function TripsReport() {
           <Figures
             items={[
               { label: tr('trips'), value: r.totals.trips },
-              { label: tr('costUsd'), value: r.totals.costUsd },
+              ...(r.showsCost && r.totals.costUsd !== null
+                ? [{ label: tr('costUsd'), value: r.totals.costUsd }]
+                : []),
             ]}
           />
           <Truncated shown={r.truncated} />
@@ -782,11 +792,11 @@ export function TripsReport() {
                 <th>{t('driver')}</th>
                 <th>{tr('carrier')}</th>
                 <th>{tr('shipmentCount')}</th>
-                <th>{tr('costUsd')}</th>
+                {r.showsCost && <th>{tr('costUsd')}</th>}
               </tr>
             </thead>
             <tbody>
-              {r.trips.length === 0 && <EmptyRow columns={10} text={t('none')} />}
+              {r.trips.length === 0 && <EmptyRow columns={r.showsCost ? 10 : 9} text={t('none')} />}
               {r.trips.map((x) => (
                 <tr key={x.tripId}>
                   <td dir="ltr">
@@ -804,20 +814,22 @@ export function TripsReport() {
                   <td>{dash(x.driver)}</td>
                   <td>{dash(x.carrierName)}</td>
                   <td dir="ltr">{x.shipments}</td>
-                  <AmountCell value={x.costUsd} />
+                  {r.showsCost && <AmountCell value={x.costUsd} />}
                 </tr>
               ))}
-              <tr className="subtotal">
-                <td>{tr('total')}</td>
-                <td colSpan={8} />
-                <AmountCell value={r.totals.costUsd} strong />
-              </tr>
+              {r.showsCost && (
+                <tr className="subtotal">
+                  <td>{tr('total')}</td>
+                  <td colSpan={8} />
+                  <AmountCell value={r.totals.costUsd} strong />
+                </tr>
+              )}
             </tbody>
           </ReportTable>
           <div className="panels">
-            <GroupTable title={t('byVehicle')} groups={r.byVehicle} />
-            <GroupTable title={t('byDriver')} groups={r.byDriver} />
-            <GroupTable title={t('byCarrier')} groups={r.byCarrier} />
+            <GroupTable title={t('byVehicle')} groups={r.byVehicle} showsCost={r.showsCost} />
+            <GroupTable title={t('byDriver')} groups={r.byDriver} showsCost={r.showsCost} />
+            <GroupTable title={t('byCarrier')} groups={r.byCarrier} showsCost={r.showsCost} />
           </div>
           <p className="muted">{t('tripCostNote')}</p>
         </div>
@@ -841,6 +853,24 @@ function AuditStatus({ entry }: { entry: AuditLogEntryDto }) {
   const kind = STATUS_KINDS[entry.entity as keyof typeof STATUS_KINDS] as
     (typeof STATUS_KINDS)[keyof typeof STATUS_KINDS] | undefined;
   return kind ? <StatusBadge kind={kind} status={entry.status} /> : null;
+}
+
+/** What an audit entry changed, field by field (a field without a label shows its code). */
+function AuditChanges({ entry }: { entry: AuditLogEntryDto }) {
+  const t = useTranslations('OpsReports');
+  if (!entry.changes?.length) return null;
+  const name = (field: string) => (t.has(`field_${field}`) ? t(`field_${field}`) : field);
+  // A contact's or party's field comes as `contact.phone`: shown as "Contact · Phone".
+  const label = (field: string) => field.split('.').map(name).join(' · ');
+  return (
+    <ul className="audit-changes">
+      {entry.changes.map((c) => (
+        <li key={c.field}>
+          {label(c.field)}: <bdi>{c.before ?? '—'}</bdi> → <bdi>{c.after ?? '—'}</bdi>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** Report 10. */
@@ -875,11 +905,13 @@ export function AuditLogReport() {
                 <th>{t('action')}</th>
                 <th>{t('reference')}</th>
                 <th>{tr('status')}</th>
+                <th>{t('changes')}</th>
                 <th>{t('detail')}</th>
+                <th>{t('source')}</th>
               </tr>
             </thead>
             <tbody>
-              {r.entries.length === 0 && <EmptyRow columns={8} text={t('none')} />}
+              {r.entries.length === 0 && <EmptyRow columns={10} text={t('none')} />}
               {r.entries.map((e, i) => (
                 <tr key={`${e.at}-${e.entity}-${e.reference}-${i}`}>
                   <td>{time.format(new Date(e.at))}</td>
@@ -891,7 +923,11 @@ export function AuditLogReport() {
                   <td>
                     <AuditStatus entry={e} />
                   </td>
+                  <td className="wrap">
+                    <AuditChanges entry={e} />
+                  </td>
                   <td className="wrap">{e.detail ?? ''}</td>
+                  <td>{e.source ? t(`source_${e.source}`) : ''}</td>
                 </tr>
               ))}
             </tbody>

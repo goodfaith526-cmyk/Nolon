@@ -16,6 +16,7 @@ import {
 import {
   BOOKING_SERVICES,
   CONTAINER_NUMBER_PATTERN,
+  MAX_SHARED_BRANCHES,
   SHIPMENT_STATUSES,
   type Page,
   type ShipmentDto,
@@ -42,6 +43,7 @@ const updateBody = z
     blNumber: shortText(50).optional(),
     etd: dateString.nullish(),
     eta: dateString.nullish(),
+    sharedBranchIds: z.array(z.uuid()).max(MAX_SHARED_BRANCHES).optional(),
   })
   .strict();
 

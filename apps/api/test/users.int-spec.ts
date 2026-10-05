@@ -1,4 +1,4 @@
-import type { UserSummary } from '@nolon/shared';
+import type { AuditLogDto, UserSummary } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   APP_ORIGIN,
@@ -184,6 +184,53 @@ describe('users administration', () => {
     }).expect(204);
     await t.http().get('/api/v1/auth/me').set('Cookie', cookie).expect(401);
     await signIn(t, user.email, NEW_PASSWORD);
+  });
+
+  it('logs account changes, never the password, for those who manage users only', async () => {
+    const created = (await post('/api/v1/users', adminCookie, newUserBody()).expect(201))
+      .body as UserSummary;
+    await patch(`/api/v1/users/${created.id}`, adminCookie, {
+      fullName: 'Renamed Staff',
+      roles: ['SALES', 'OPERATIONS'],
+    }).expect(200);
+    await post(`/api/v1/users/${created.id}/password`, adminCookie, {
+      password: NEW_PASSWORD,
+    }).expect(204);
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const query = `from=${day(-1)}&to=${day(1)}&userId=${admin.id}&entity=USER`;
+    const log = async (cookie: string, extra = '') =>
+      (
+        (
+          await t
+            .http()
+            .get(`/api/v1/reports/audit-log?${query}${extra}`)
+            .set('Cookie', cookie)
+            .expect(200)
+        ).body as AuditLogDto
+      ).entries.filter((e) => e.reference.includes(created.email));
+
+    const entries = await log(adminCookie);
+    expect(entries.map((e) => e.action)).toEqual(['UPDATED', 'UPDATED', 'CREATED']);
+    const [reset, edit, creation] = entries;
+    expect(reset?.changes).toEqual([{ field: 'password', before: null, after: 'reset' }]);
+    expect(edit?.changes).toEqual([
+      { field: 'fullName', before: 'New Staff', after: 'Renamed Staff' },
+      { field: 'roles', before: 'SALES', after: 'OPERATIONS, SALES' },
+    ]);
+    expect(creation?.changes).toEqual(
+      expect.arrayContaining([
+        { field: 'roles', before: null, after: 'SALES' },
+        { field: 'branches', before: null, after: 'DXB' },
+      ]),
+    );
+    expect(JSON.stringify(entries)).not.toContain(PASSWORD);
+    expect(entries.every((e) => e.branchCode === '—' && e.source === 'USER')).toBe(true);
+
+    // Not for a branch's view, nor for a role that reads the log but does not manage users.
+    expect(await log(adminCookie, `&branchId=${dxb}`)).toEqual([]);
+    const management = await createUser(t.prisma, ['MANAGEMENT']);
+    expect(await log(await signIn(t, management.email))).toEqual([]);
   });
 
   it('returns 404 for an unknown user and 400 for a bad id', async () => {

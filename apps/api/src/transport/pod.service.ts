@@ -12,7 +12,7 @@ import {
   type ShipmentStatus,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { shipmentScope } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService, type PreparedUpload } from '../documents/documents.service.js';
@@ -74,7 +74,7 @@ export class PodService {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const [pods, trips] = await Promise.all([
       this.prisma.proofOfDelivery.findMany({
-        where: { shipmentId, ...branchScope(user) },
+        where: { shipmentId, shipment: shipmentScope(user) },
         include: podDetails,
         orderBy: { deliveredAt: 'asc' },
       }),
@@ -139,12 +139,14 @@ export class PodService {
       select: { timezone: true },
     });
     const id = await this.prisma.$transaction(async (tx) => {
-      if (tripId) await this.requireTripInTx(tx, user, tripId, shipmentId);
+      const tripTo = tripId ? await this.requireTripInTx(tx, user, tripId, shipmentId) : null;
       // Exclusive: the status may change in this transaction; a cancel or another POD waits.
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (!recordable(status)) {
         throw new ConflictException(`A ${status} shipment takes no proof of delivery`);
       }
+      // Delivered at the trip's destination, or without a trip at the shipment's.
+      const deliveredTo = tripTo ?? (await this.shipments.destinationInTx(tx, shipmentId));
       const { lastEventAt } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
       if (lastEventAt && deliveredAt < lastEventAt) {
         throw new BadRequestException(
@@ -161,8 +163,12 @@ export class PodService {
         ? await this.shipments.advanceInTx(tx, user, shipmentId, fields.shipmentStatus, {
             occurredAt: deliveredAt,
             note: number,
+            locationId: deliveredTo,
           })
         : false;
+      // Delivered there whether or not the status changed ("keep the status"): the tracking
+      // page follows the goods.
+      if (!applied) await this.shipments.relocateInTx(tx, shipmentId, deliveredTo);
       const pod = await tx.proofOfDelivery.create({
         data: {
           number,
@@ -192,7 +198,7 @@ export class PodService {
       return pod.id;
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({
-      where: { id, ...branchScope(user) },
+      where: { id, shipment: shipmentScope(user) },
       include: podDetails,
     });
     return toDto(pod);
@@ -201,14 +207,15 @@ export class PodService {
   /**
    * Inside the POD's transaction, before the shipment lock: the trip, share-locked, still carries
    * the shipment, has departed (or arrived, or completed) and is not cancelled (409); a driver's
-   * trip is still assigned to them (404, as for any trip that is not theirs).
+   * trip is still assigned to them (404, as for any trip that is not theirs). Returns the trip's
+   * destination, where the shipment is delivered.
    */
   private async requireTripInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
     tripId: string,
     shipmentId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const trip = await lockTripShared(tx, tripId);
     if (isDriverOnly(user) && trip.driverUserId !== user.id) {
       throw new NotFoundException('Trip not found');
@@ -223,6 +230,7 @@ export class PodService {
     if (!tripTakesPod(trip.status)) {
       throw new ConflictException('A proof of delivery is recorded once the trip has departed');
     }
+    return trip.destinationLocationId;
   }
 
   /**

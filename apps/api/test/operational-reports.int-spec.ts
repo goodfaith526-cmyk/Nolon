@@ -131,7 +131,7 @@ describe('operational reports and dashboards', () => {
         mode: 'ROAD',
         cargoType: 'GENERAL',
         services: ['MAIN_FREIGHT', 'WAREHOUSE', 'CUSTOMS'],
-        items: [{ cargoType: 'GENERAL', quantity: 1, volumeCbm, weightKg }],
+        items: [{ cargoType: 'GENERAL', quantity: 10, volumeCbm, weightKg }],
       }).expect(201)
     ).body as BookingDto;
     const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.opsPts).expect(200))
@@ -906,6 +906,37 @@ describe('operational reports and dashboards', () => {
       );
       expect(jedView.trips).toEqual([]);
       await get(`/reports/trips?${may()}`, cookies.driver).expect(403);
+    });
+
+    it('hides transport costs from Sales and Warehouse (annex A, restricted)', async () => {
+      for (const cookie of [cookies.salesPts, cookies.warehousePts]) {
+        const r = await report<TripsReportDto>(`/reports/trips?${may()}`, cookie);
+        expect(r.showsCost).toBe(false);
+        expect(r.trips.map((x) => x.tripId)).toContain(externalTrip.id);
+        expect(r.trips.every((x) => x.costUsd === null)).toBe(true);
+        expect(
+          [...r.byVehicle, ...r.byDriver, ...r.byCarrier].every((g) => g.costUsd === null),
+        ).toBe(true);
+        expect(r.totals.costUsd).toBeNull();
+        const trip = (await get(`/trips/${externalTrip.id}`, cookie).expect(200)).body as TripDto;
+        expect(trip).toMatchObject({ showsCost: false, agreedCost: null, accrualShares: [] });
+        const sheet = await get(
+          `/reports/trips/export?${may()}&carrierId=${carrier.id}&locale=en`,
+          cookie,
+        )
+          .buffer(true)
+          .parse(binary)
+          .expect(200);
+        const values = await workbookValues(sheet);
+        expect(values).toContain(externalTrip.number);
+        expect(values).not.toContain(400);
+        expect(values).not.toContain('Cost (USD)');
+      }
+      const ops = (await get(`/trips/${externalTrip.id}`, cookies.opsPts).expect(200))
+        .body as TripDto;
+      expect(ops).toMatchObject({ showsCost: true, agreedCost: '400' });
+      const finance = await report<TripsReportDto>(`/reports/trips?${may()}`, cookies.financePts);
+      expect(finance.showsCost).toBe(true);
     });
 
     it('exports the trips with their cost', async () => {

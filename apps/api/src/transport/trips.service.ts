@@ -16,10 +16,11 @@ import type {
   TripStatus,
   TripSummaryDto,
 } from '@nolon/shared';
+import { seesTransportCosts } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess } from '../auth/branch-scope.js';
+import { assertBranchAccess, canAccessBranch } from '../auth/branch-scope.js';
 import { fromDbDate, todayIn } from '../common/dates.js';
 import {
   type Decimal,
@@ -39,6 +40,7 @@ import { isActive } from '../shipments/state-machine.js';
 import { FleetService } from './fleet.service.js';
 import { TripCostsService } from './trip-costs.service.js';
 import { forbidDriverOnly, isDriverOnly, lockTrip, tripScope } from './trip-scope.js';
+import { shipmentBranches } from '../shipments/shipment-scope.js';
 import {
   OPEN_TRIP_STATUSES,
   SCHEDULED_STATUS,
@@ -106,8 +108,8 @@ export const MAX_TRIP_SHIPMENTS = 100;
  * - putting a shipment on a trip moves it to TRIP_SCHEDULED,
  * - departing moves every shipment to ROAD_DEPARTED, arriving to ROAD_ARRIVED.
  * A shipment already at the target status or beyond it on this leg (moved by hand on the shipment
- * page, or delivered) is left as it is. A trip carries shipments of its own branch only, and a
- * move is never dated before the trip was planned or before a moved shipment's latest event.
+ * page, or delivered) is left as it is. A trip carries shipments its branch owns or shares, and
+ * a move is never dated before the trip was planned or before a moved shipment's latest event.
  * When any shipment cannot take the move now (on hold, cancelled, at another stage), the trip
  * change is refused with 409 naming them, and nothing is applied: the trip waits until those
  * shipments are sorted out or taken off the trip (while it is planned). Completing an external
@@ -155,11 +157,19 @@ export class TripsService {
     return this.toDto(user, await this.findScoped(user, id));
   }
 
-  /** The trips (road legs) of a shipment the user can see. 404 unless they can see the shipment. */
+  /**
+   * The trips (road legs) of a shipment the user can see. 404 unless they can see the shipment.
+   * Every leg is part of the shipment's record, so the owning branch also sees a trip of a branch
+   * sharing the shipment (and the other way round); a trip outside the user's branches is listed
+   * without its costs and cannot be opened. A Driver sees only their own trips.
+   */
   async forShipment(user: AuthUser, shipmentId: string): Promise<ShipmentTripDto[]> {
     await this.shipments.requireAccessible(user, shipmentId);
     const trips = await this.prisma.trip.findMany({
-      where: { ...tripScope(user), shipments: { some: { shipmentId } } },
+      where: {
+        ...(isDriverOnly(user) ? tripScope(user) : {}),
+        shipments: { some: { shipmentId } },
+      },
       include: summaryInclude,
       orderBy: { createdAt: 'asc' },
     });
@@ -176,6 +186,7 @@ export class TripsService {
         actualArrival: s.actualArrival,
         vehicleLabel: s.vehicleLabel,
         driverLabel: s.driverLabel,
+        canOpen: canAccessBranch(user, trip.branchId),
       };
     });
   }
@@ -334,7 +345,9 @@ export class TripsService {
       ).map((l) => l.shipmentId);
       const target = shipmentStatusFor(input.status);
       if (target) {
-        await this.moveShipments(tx, user, trip.number, shipmentIds, target, occurredAt, numbers);
+        // Departing, the shipments are at the trip's origin; arriving, at its destination.
+        const at = input.status === 'DEPARTED' ? trip.originLocationId : trip.destinationLocationId;
+        await this.moveShipments(tx, user, trip, shipmentIds, target, occurredAt, at, numbers);
       }
       const data: Prisma.TripUncheckedUpdateManyInput = { status: input.status };
       switch (input.status) {
@@ -472,9 +485,10 @@ export class TripsService {
       if (!isActive(status)) {
         throw new ConflictException(`Shipment ${label} is ${status} and cannot go on a trip`);
       }
-      // A trip carries its own branch's shipments only, even for a user of several branches.
-      const { branchId } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
-      if (branchId !== trip.branchId) {
+      // A trip carries the shipments of its branch only, even for a user of several branches:
+      // those it owns and those shared with it (a PTS → KRT leg of a DXB shipment).
+      const shipment = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
+      if (!shipmentBranches(shipment).includes(trip.branchId)) {
         throw new BadRequestException(`Shipment ${label} belongs to another branch than the trip`);
       }
       const other = await tx.tripShipment.findFirst({
@@ -514,10 +528,11 @@ export class TripsService {
   private async moveShipments(
     tx: Tx,
     user: AuthUser,
-    tripNumber: string,
+    trip: { number: string },
     shipmentIds: readonly string[],
     target: ShipmentStatus,
     occurredAt: Date,
+    locationId: string,
     numbers: ReadonlyMap<string, string>,
   ): Promise<void> {
     const blocked: string[] = [];
@@ -533,7 +548,8 @@ export class TripsService {
       }
       const moved = await this.shipments.advanceInTx(tx, user, shipmentId, target, {
         occurredAt,
-        note: tripNumber,
+        note: trip.number,
+        locationId,
       });
       if (!moved) blocked.push(`${numbers.get(shipmentId) ?? shipmentId} (${status})`);
     }
@@ -548,6 +564,7 @@ export class TripsService {
   private async toDto(user: AuthUser, t: TripWithDetails): Promise<TripDto> {
     const has = (permission: Permission) => user.permissions.has(permission);
     const driverOnly = isDriverOnly(user);
+    const showsCost = seesTransportCosts(has);
     const shipmentIds = t.shipments.map((l) => l.shipmentId);
     const [summaries, shares] = await Promise.all([
       this.shipments.tripSummaries(user, shipmentIds),
@@ -585,10 +602,14 @@ export class TripsService {
       });
     }
     const canAddExpense =
-      !driverOnly && has('expenses:create') && t.kind === 'OWN' && takesExpenses(t.status);
+      showsCost &&
+      !driverOnly &&
+      has('expenses:create') &&
+      t.kind === 'OWN' &&
+      takesExpenses(t.status);
     const cashAccounts = canAddExpense ? await this.accounts.cashAccountsFor(t.branchId) : [];
     const shareDtos = (entryId: string | null) =>
-      (entryId ? (shares.get(entryId) ?? []) : []).map((s) => ({
+      (entryId && showsCost ? (shares.get(entryId) ?? []) : []).map((s) => ({
         shipmentId: s.shipmentId,
         shipmentNumber: s.shipmentNumber,
         amount: toDecimalString(s.amount),
@@ -598,7 +619,7 @@ export class TripsService {
       vehicleId: t.vehicleId,
       driverId: t.driverId,
       carrierId: t.carrierId,
-      agreedCost: toDecimalStringOrNull(t.agreedCost),
+      agreedCost: showsCost ? toDecimalStringOrNull(t.agreedCost) : null,
       currency: t.currency,
       externalVehicle: t.externalVehicle,
       externalDriver: t.externalDriver,
@@ -607,11 +628,13 @@ export class TripsService {
       cancelReason: t.cancelReason,
       notes: t.notes,
       createdByName: t.createdBy.fullName,
-      accrualJournalEntryId: t.accrualEntryId,
-      accrualJournalNumber: t.accrualEntry?.number ?? null,
+      // Hidden costs hide their entries too: an entry's number leads to its amounts.
+      accrualJournalEntryId: showsCost ? t.accrualEntryId : null,
+      accrualJournalNumber: showsCost ? (t.accrualEntry?.number ?? null) : null,
       accrualShares: shareDtos(t.accrualEntryId),
+      showsCost,
       shipments,
-      expenses: t.expenses.map((e) => ({
+      expenses: (showsCost ? t.expenses : []).map((e) => ({
         id: e.id,
         number: e.number,
         expenseDate: fromDbDate(e.expenseDate),
@@ -634,7 +657,7 @@ export class TripsService {
         canCancel: !driverOnly && has('transport_trips:cancel') && isPlanned(t.status),
         canEditShipments: !driverOnly && has('transport_trips:update') && isPlanned(t.status),
         canAddExpense,
-        canCancelExpense: !driverOnly && has('expenses:cancel'),
+        canCancelExpense: showsCost && !driverOnly && has('expenses:cancel'),
       },
     };
   }

@@ -37,6 +37,7 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import { Prisma, type SupplierBill } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { shipmentBranches } from '../shipments/shipment-scope.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripCostsService } from '../transport/trip-costs.service.js';
 import { SuppliersService } from './suppliers.service.js';
@@ -476,9 +477,10 @@ export class SupplierBillsService {
     branchId: string,
   ): Promise<BillLineForPosting> {
     if (line.kind === 'SHIPMENT_COST' && line.chargeTypeCode && line.shipmentId) {
-      // Under a share lock: the shipment stays in the bill's branch and is not cancelled meanwhile.
+      // Under a share lock: the shipment stays visible in the bill's branch (its own or a branch
+      // sharing it) and is not cancelled meanwhile.
       const shipment = await this.shipments.lockForCostInTx(tx, line.shipmentId);
-      if (shipment.branchId !== branchId) {
+      if (!shipmentBranches(shipment).includes(branchId)) {
         throw new BadRequestException('A shipment on the bill is of another branch');
       }
       if (shipment.status === 'CANCELLED') {
@@ -546,7 +548,7 @@ export class SupplierBillsService {
           throw new BadRequestException(`${label}: a shipment cost needs a shipment and a charge`);
         }
         const shipment = await this.shipments.requireAccessible(user, line.shipmentId);
-        if (shipment.branchId !== input.branchId) {
+        if (!shipmentBranches(shipment).includes(input.branchId)) {
           throw new BadRequestException(`${label}: the shipment is of another branch`);
         }
         if (shipment.status === 'CANCELLED') {

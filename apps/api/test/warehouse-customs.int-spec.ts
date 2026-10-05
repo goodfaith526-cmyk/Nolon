@@ -278,6 +278,59 @@ describe('warehouse and customs', () => {
       expect(after.actions.canRelease).toBe(true);
     });
 
+    it('refuses holding more packages than the cargo lines unless confirmed with a reason', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      await receive(s.id, cookies.warehouseDxb, { packages: 6 }).expect(201);
+      let v = await view(s.id);
+      expect(v).toMatchObject({ expectedPackages: 10, heldPackages: 6, remainingPackages: 4 });
+      await receive(s.id, cookies.warehouseDxb, { packages: 5 }).expect(409);
+      await receive(s.id, cookies.warehouseDxb, { packages: 4 }).expect(201);
+      await receive(s.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
+      await receive(s.id, cookies.warehouseDxb, {
+        packages: 1,
+        extraPackagesConfirmed: true,
+      }).expect(400);
+      const extra = (
+        await receive(s.id, cookies.warehouseDxb, {
+          packages: 1,
+          extraPackagesConfirmed: true,
+          note: 'Booked 10, the truck brought 11',
+        }).expect(201)
+      ).body as WarehouseMovementDto;
+      expect(extra.note).toBe('Booked 10, the truck brought 11');
+      v = await view(s.id);
+      expect(v).toMatchObject({ heldPackages: 11, remainingPackages: 0 });
+      // Released goods are no longer held: the next warehouse may receive them again.
+      await release(s.id, cookies.warehouseDxb, { packages: 11 }).expect(201);
+      v = await view(s.id);
+      expect(v).toMatchObject({ heldPackages: 0, remainingPackages: 10 });
+      await receive(s.id, cookies.warehouseDxbPts, {
+        warehouseId: ptsWarehouse.id,
+        packages: 10,
+      }).expect(201);
+    });
+
+    it('checks a backdated receipt against what the warehouses held from its date on', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+      await receive(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(3) }).expect(
+        201,
+      );
+      await release(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(1) }).expect(
+        201,
+      );
+      expect(await view(s.id)).toMatchObject({ heldPackages: 0 });
+      // Dated between the receipt and the release, 6 more would have held 12 of 10 meanwhile.
+      await receive(s.id, cookies.warehouseDxb, { packages: 6, occurredAt: hoursAgo(2) }).expect(
+        409,
+      );
+      // After the release they fit.
+      await receive(s.id, cookies.warehouseDxb, {
+        packages: 6,
+        occurredAt: hoursAgo(0.5),
+      }).expect(201);
+    });
+
     it('cannot release more than is received and not yet released (409)', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT']);
       await release(s.id, cookies.warehouseDxb, { packages: 1 }).expect(409);

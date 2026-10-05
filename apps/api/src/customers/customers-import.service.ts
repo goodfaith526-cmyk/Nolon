@@ -19,6 +19,7 @@ import {
   type UploadedWorkbook,
   addIssues,
   buildPreview,
+  passingFields,
   flagDuplicatesInFile,
   issue,
   readImportSheet,
@@ -355,6 +356,15 @@ export class CustomersImportService implements OnModuleInit {
         );
       } else {
         addIssues(issues, schemaIssues(row, input, parsed.error, columnOf, kindOf));
+        const rest = passingFields(createCustomerBody, input, parsed.error);
+        if (rest) {
+          addIssues(
+            issues,
+            (await checkReferences(rest)).map((r) =>
+              issue(row, columnOf(r.field), r.code, r.message),
+            ),
+          );
+        }
       }
       rows.push(checked);
     }

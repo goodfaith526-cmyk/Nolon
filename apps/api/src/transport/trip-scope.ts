@@ -1,4 +1,5 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { seesTransportCosts } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -47,13 +48,31 @@ export async function lockTrip(tx: Tx, id: string): Promise<Trip> {
 export async function lockTripShared(
   tx: Tx,
   id: string,
-): Promise<{ status: Trip['status']; driverUserId: string | null }> {
+): Promise<{
+  status: Trip['status'];
+  driverUserId: string | null;
+  destinationLocationId: string;
+}> {
   const rows = await tx.$queryRaw<{ id: string }[]>`
     SELECT "id" FROM "trips" WHERE "id" = ${id}::uuid FOR SHARE`;
   if (rows.length === 0) throw new NotFoundException('Trip not found');
   const trip = await tx.trip.findUniqueOrThrow({
     where: { id },
-    select: { status: true, driver: { select: { userId: true } } },
+    select: { status: true, destinationLocationId: true, driver: { select: { userId: true } } },
   });
-  return { status: trip.status, driverUserId: trip.driver?.userId ?? null };
+  return {
+    status: trip.status,
+    driverUserId: trip.driver?.userId ?? null,
+    destinationLocationId: trip.destinationLocationId,
+  };
+}
+
+/**
+ * Trip costs are Restricted (annex A): a user who may not see them (seesTransportCosts) may not
+ * record or cancel them either, whatever expense permission another of their roles grants.
+ */
+export function forbidHiddenCosts(user: AuthUser): void {
+  if (!seesTransportCosts((p) => user.permissions.has(p))) {
+    throw new ForbiddenException('Trip costs are restricted to those who may see them');
+  }
 }

@@ -5,6 +5,8 @@ import {
   type MovementAmounts,
   canRelease,
   defaultReceiptStatus,
+  extraPackagesOnReceipt,
+  heldPackages,
   onHandPackages,
   type TimedMovement,
   receiptStatusOptions,
@@ -146,5 +148,58 @@ describe('daysHeld', () => {
 
   it('never goes below zero (a receipt dated ahead in another time zone)', () => {
     expect(daysHeld('2026-05-03', '2026-05-02')).toBe(0);
+  });
+});
+
+describe('heldPackages and extraPackagesOnReceipt', () => {
+  const m = (kind: 'RECEIPT' | 'RELEASE', warehouseId: string, packages: number) => ({
+    kind,
+    warehouseId,
+    packages,
+    weightKg: null,
+  });
+
+  it('adds up what every warehouse holds now', () => {
+    expect(heldPackages([])).toBe(0);
+    // Received at PTS, sent on to KRT and received there: only KRT holds the goods now.
+    expect(
+      heldPackages([m('RECEIPT', 'pts', 10), m('RELEASE', 'pts', 10), m('RECEIPT', 'krt', 6)]),
+    ).toBe(6);
+    expect(heldPackages([m('RECEIPT', 'pts', 4), m('RECEIPT', 'krt', 3)])).toBe(7);
+  });
+
+  const day = (d: number) => new Date(Date.UTC(2026, 9, d));
+  const timed = (
+    kind: 'RECEIPT' | 'RELEASE',
+    warehouseId: string,
+    packages: number,
+    on: number,
+  ): TimedMovement => ({
+    ...m(kind, warehouseId, packages),
+    occurredAt: day(on),
+    createdAt: day(20),
+  });
+
+  it('counts the packages a receipt would hold beyond the cargo lines', () => {
+    expect(extraPackagesOnReceipt(10, [], day(5), 10)).toBe(0);
+    expect(extraPackagesOnReceipt(10, [timed('RECEIPT', 'pts', 6, 1)], day(5), 4)).toBe(0);
+    expect(extraPackagesOnReceipt(10, [timed('RECEIPT', 'pts', 10, 1)], day(5), 1)).toBe(1);
+    expect(extraPackagesOnReceipt(10, [timed('RECEIPT', 'pts', 6, 1)], day(5), 7)).toBe(3);
+    // A shipment with no cargo lines counted: every package is extra.
+    expect(extraPackagesOnReceipt(0, [], day(5), 2)).toBe(2);
+  });
+
+  it('checks a backdated receipt against the highest balance from its date on', () => {
+    // 4 received on day 1, released on day 10: nothing held today.
+    const log = [timed('RECEIPT', 'pts', 4, 1), timed('RELEASE', 'pts', 4, 10)];
+    // Another 4 dated day 5 would have held 8 of 4 between day 5 and day 10.
+    expect(extraPackagesOnReceipt(4, log, day(5), 4)).toBe(4);
+    // Dated after the release, the same 4 fit.
+    expect(extraPackagesOnReceipt(4, log, day(11), 4)).toBe(0);
+    // Dated before the first receipt, it overlaps it from day 1 to day 10.
+    expect(extraPackagesOnReceipt(4, log, day(0), 4)).toBe(4);
+    // Goods sent on to KRT after the release: a backdated PTS receipt still counts them.
+    const onward = [...log, timed('RECEIPT', 'krt', 4, 12)];
+    expect(extraPackagesOnReceipt(4, onward, day(11), 1)).toBe(1);
   });
 });

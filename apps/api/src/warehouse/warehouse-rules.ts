@@ -53,6 +53,13 @@ export function totalsByWarehouse(
   return totals;
 }
 
+/** Packages held now in all warehouses: what each holds, added up. */
+export function heldPackages(movements: readonly MovementAmounts[]): number {
+  let held = 0;
+  for (const t of totalsByWarehouse(movements).values()) held += t.onHandPackages;
+  return held;
+}
+
 /** Packages a warehouse holds for the shipment: received there minus released from there. */
 export function onHandPackages(movements: readonly MovementAmounts[], warehouseId: string): number {
   return totalsByWarehouse(movements).get(warehouseId)?.onHandPackages ?? 0;
@@ -89,6 +96,34 @@ export function releasableAt(
     if (releasable !== null) releasable = Math.min(releasable, balance);
   }
   return Math.max(releasable ?? balance, 0);
+}
+
+/**
+ * Packages a receipt dated `at` would put in the warehouses beyond the shipment's cargo lines:
+ * goods are in one place at a time, so together the warehouses hold at most `expected` at any
+ * moment. The receipt counts from its date on, in log order (occurredAt, then createdAt; it goes
+ * after the movements with the same time), so a backdated receipt is checked against the highest
+ * balance from its date to now, not only today's. Zero when it fits.
+ */
+export function extraPackagesOnReceipt(
+  expected: number,
+  movements: readonly TimedMovement[],
+  at: Date,
+  packages: number,
+): number {
+  const ordered = [...movements].sort(
+    (a, b) =>
+      a.occurredAt.getTime() - b.occurredAt.getTime() ||
+      a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+  let balance = 0;
+  let peak: number | null = null;
+  for (const m of ordered) {
+    if (peak === null && m.occurredAt.getTime() > at.getTime()) peak = balance;
+    balance += m.kind === 'RECEIPT' ? m.packages : -m.packages;
+    if (peak !== null) peak = Math.max(peak, balance);
+  }
+  return Math.max(0, (peak ?? balance) + packages - expected);
 }
 
 /** A release is allowed only for at least one package and no more than is on hand. */

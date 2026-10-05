@@ -359,11 +359,13 @@ describe('Excel import of customers and rates', () => {
         customerRow({ tax: `tx-${existing}` }),
         customerRow({ name: null, phone: '0912345678' }),
         customerRow({ kind: 'PARTNER', terms: 400 }),
+        // A schema error does not hide the rule errors of the same row: both show at once.
+        customerRow({ kind: 'PARTNER', currency: 'XYZ' }),
       ]);
       const preview = (
         await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
       ).body as ImportPreviewDto;
-      expect(preview.totalRows).toBe(11);
+      expect(preview.totalRows).toBe(12);
       expect(preview.validRows).toBe(1);
       expect(codesOf(preview)).toEqual([
         [2, 'branchCode', 'BRANCH_NOT_ALLOWED'],
@@ -378,6 +380,8 @@ describe('Excel import of customers and rates', () => {
         [11, 'phone', 'INVALID_FORMAT'],
         [12, 'kind', 'INVALID_VALUE'],
         [12, 'paymentTermsDays', 'INVALID_VALUE'],
+        [13, 'kind', 'INVALID_VALUE'],
+        [13, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
       ]);
       expect(preview.issues.find((i) => i.row === 8)?.otherRow).toBe(7);
     });
@@ -425,6 +429,23 @@ describe('Excel import of customers and rates', () => {
       expect(saved[0]?.creditLimit?.toFixed()).toBe('5000.25');
       expect(saved[1]?.creditLimit?.toFixed()).toBe('99999999999999.5');
       expect(saved[2]).toMatchObject({ creditLimit: null, paymentTermsDays: 0 });
+      // The audit log keeps every imported field, as for a customer created on screen.
+      const logged = await t.prisma.auditEvent.findMany({
+        where: { entity: 'CUSTOMER', entityId: { in: first.ids } },
+      });
+      expect(logged).toHaveLength(3);
+      const third = logged.find((e) => e.entityId === saved[2]?.id);
+      expect(third).toMatchObject({ action: 'CREATED', source: 'USER' });
+      expect(third?.changes).toEqual(
+        expect.arrayContaining([
+          { field: 'kind', before: null, after: 'COMPANY' },
+          { field: 'name', before: null, after: 'Imported Trading' },
+          { field: 'phone', before: null, after: phones[2] },
+          { field: 'paymentTermsDays', before: null, after: '0' },
+          { field: 'isActive', before: null, after: 'true' },
+          { field: 'source', before: null, after: 'Excel import' },
+        ]),
+      );
 
       const again = (
         await commit('/customers/import', cookies.salesDxb, file, requestId).expect(201)
@@ -644,6 +665,8 @@ describe('Excel import of customers and rates', () => {
           price: '2',
         }),
         rateRow({ from: '31/12/2031' }),
+        // A schema error does not hide the rule errors of the same row: all show at once.
+        rateRow({ mode: 'AIR', price: 'ten', currency: 'XYZ', to: '2020-01-01' }),
       ]);
       const preview = (await upload('/rates/import/preview', cookies.salesDxb, file).expect(200))
         .body as ImportPreviewDto;
@@ -663,6 +686,10 @@ describe('Excel import of customers and rates', () => {
         [13, 'validFrom', 'DUPLICATE_IN_FILE'],
         [14, 'validFrom', 'DUPLICATE_IN_DB'],
         [15, 'validFrom', 'INVALID_DATE'],
+        [16, 'price', 'INVALID_AMOUNT'],
+        [16, 'mode', 'INVALID_VALUE'],
+        [16, 'currency', 'UNKNOWN_CURRENCY'],
+        [16, 'validTo', 'VALID_TO_BEFORE_FROM'],
       ]);
       expect(preview.validRows).toBe(1);
     });
@@ -695,6 +722,18 @@ describe('Excel import of customers and rates', () => {
         ['DRAFT', '40GP', '99.95', dxb],
       ]);
       expect(saved[1]?.validTo?.toISOString().slice(0, 10)).toBe('2032-12-31');
+      const logged = await t.prisma.auditEvent.findFirstOrThrow({
+        where: { entity: 'RATE', entityId: saved[1]?.id },
+      });
+      expect(logged.changes).toEqual(
+        expect.arrayContaining([
+          { field: 'status', before: null, after: 'DRAFT' },
+          { field: 'originLocationId', before: null, after: 'AEJEA' },
+          { field: 'price', before: null, after: '99.95' },
+          { field: 'validTo', before: null, after: '2032-12-31' },
+          { field: 'source', before: null, after: 'Excel import' },
+        ]),
+      );
       const again = (await commit('/rates/import', cookies.salesDxb, file, requestId).expect(201))
         .body as ImportResultDto;
       expect(again).toMatchObject({ replayed: true, ids: first.ids });

@@ -197,6 +197,7 @@ export interface TripDto extends TripSummaryDto {
   vehicleId: string | null;
   driverId: string | null;
   carrierId: string | null;
+  /** Null for users who do not see transport costs (showsCost false). */
   agreedCost: DecimalString | null;
   currency: CurrencyCode | null;
   externalVehicle: string | null;
@@ -206,11 +207,19 @@ export interface TripDto extends TripSummaryDto {
   cancelReason: string | null;
   notes: string | null;
   createdByName: string;
-  /** Rule 11: the accrual posted when the external trip was completed. */
+  /** Rule 11: the accrual posted when the external trip was completed (null when costs are hidden). */
   accrualJournalEntryId: string | null;
   accrualJournalNumber: string | null;
+  /** Empty for users who do not see transport costs. */
   accrualShares: TripCostShareDto[];
+  /**
+   * Whether the user sees transport costs (seesTransportCosts, annex A "costs (Restricted)"):
+   * otherwise the agreed cost and the accrual entry are null, and no cost shares or expenses are
+   * listed.
+   */
+  showsCost: boolean;
   shipments: TripShipmentDto[];
+  /** Empty for users who do not see transport costs. */
   expenses: TripExpenseDto[];
   /** Filled when actions.canAddExpense: the accounts an expense may be paid from. */
   cashAccounts: TripCashAccountDto[];
@@ -268,6 +277,8 @@ export interface ShipmentTripDto {
   actualArrival: string | null;
   vehicleLabel: string | null;
   driverLabel: string | null;
+  /** False for a trip of another branch (the other end of the shipment): listed, not opened. */
+  canOpen: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------

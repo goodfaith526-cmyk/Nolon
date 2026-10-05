@@ -42,19 +42,21 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users          UserBranch[]
-  customers      Customer[]
-  rateCards      RateCard[]
-  quotations     Quotation[]
-  bookings       Booking[]
-  shipments      Shipment[]
-  shipmentEvents ShipmentEvent[]
-  documents      Document[]
-  accounts       Account[]
-  journalEntries JournalEntry[]
-  journalLines   JournalLine[]
-  invoices       CustomerInvoice[]
-  receipts       Receipt[]
+  users           UserBranch[]
+  customers       Customer[]
+  rateCards       RateCard[]
+  quotations      Quotation[]
+  bookings        Booking[]
+  shipments       Shipment[]
+  sharedShipments ShipmentBranch[]
+  auditEvents     AuditEvent[]
+  shipmentEvents  ShipmentEvent[]
+  documents       Document[]
+  accounts        Account[]
+  journalEntries  JournalEntry[]
+  journalLines    JournalLine[]
+  invoices        CustomerInvoice[]
+  receipts        Receipt[]
 
   warehouses         Warehouse[]
   storageLocations   StorageLocation[]
@@ -810,10 +812,30 @@ model Shipment {
   tripLinks       TripShipment[]
   pods            ProofOfDelivery[]
   billLines       SupplierBillLine[]
+  sharedBranches  ShipmentBranch[]
 
   @@index([branchId, status])
   @@index([customerId])
   @@map("shipments")
+}
+
+/**
+ * Other branches that work on a shipment besides the one that owns it (annex A: a DXB → KRT
+ * shipment is visible to both branches; a transit branch such as PTS may join too). Their users
+ * see the shipment and record its operations (goods receipt, customs, trips, POD); billing stays
+ * with the owning branch. Chosen by the owning branch on the shipment page.
+ */
+model ShipmentBranch {
+  shipmentId String   @map("shipment_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([shipmentId, branchId])
+  @@index([branchId])
+  @@map("shipment_branches")
 }
 
 /**
@@ -1015,6 +1037,8 @@ enum PostingRole {
   CUSTOMER_ADVANCES
   DEFAULT_REVENUE
   DEFAULT_COST
+  /// Trip costs (annex C rules 10, 11 and the difference of 11a).
+  TRANSPORT_COST
   REIMBURSABLE
   CONSOLIDATION_CLEARING
   ACCRUED_TRANSPORT
@@ -2109,4 +2133,33 @@ model Expense {
 
   @@index([branchId, expenseDate])
   @@map("expenses")
+}
+
+/**
+ * Who changed what, when and through which channel, for records that keep no history of their
+ * own (annex E scenario 21): rates, customers and user accounts. One row per change, with the
+ * changed fields before and after. Append-only: a trigger refuses UPDATE and DELETE. No foreign
+ * key to the user or the record, so a row outlives both; the branch is null for user accounts.
+ */
+model AuditEvent {
+  id         BigInt      @id @default(autoincrement())
+  occurredAt DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  branchId   String?     @map("branch_id") @db.Uuid
+  userId     String?     @map("user_id") @db.Uuid
+  source     EventSource
+  /// RATE, CUSTOMER or USER (AuditEntity).
+  entity     String      @db.VarChar(30)
+  entityId   String      @map("entity_id") @db.Uuid
+  /// What the record is called in the log (a customer's name, a rate's route and charge).
+  reference  String      @db.VarChar(300)
+  /// CREATED, UPDATED, APPROVED, CANCELLED (AuditAction).
+  action     String      @db.VarChar(20)
+  /// [{ field, before, after }], values as text.
+  changes    Json
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@index([occurredAt])
+  @@index([entity, entityId])
+  @@map("audit_events")
 }

@@ -25,6 +25,7 @@ import { type Decimal, ZERO, dec } from '../common/money.js';
 import type { AuditQuery } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { shipmentIdOwnedBy } from '../shipments/shipment-scope.js';
 import { FX_DIFFERENCE_LINE } from './auto-journal.service.js';
 import { naturalBalance, sum } from './report-math.js';
 
@@ -529,8 +530,9 @@ export class LedgerReportsService {
 
   /**
    * Revenue (credit - debit on revenue accounts) and cost (debit - credit on expense accounts) per
-   * shipment, from posted lines of the period that carry the shipment, in the report's branches.
-   * The caller keeps only the shipments the user may see.
+   * shipment owned by the report's branches, from posted lines of the period that carry it, in
+   * whichever branch they were posted: a sharing branch's delivery trip or supplier bill is a
+   * cost of the shipment too. The caller keeps only the shipments the user may see.
    */
   async shipmentResults(
     user: AuthUser,
@@ -551,8 +553,7 @@ export class LedgerReportsService {
       WHERE e."status" = 'POSTED'
         AND e."entry_date" BETWEEN ${toDbDate(period.from)} AND ${toDbDate(period.to)}
         AND a."type" IN ('REVENUE', 'EXPENSE')
-        AND l."shipment_id" IS NOT NULL
-        AND ${lineBranchIn(branchIds)}
+        AND ${shipmentIdOwnedBy(Prisma.sql`l."shipment_id"`, branchIds)}
       GROUP BY l."shipment_id"`;
     return rows.map((r) => ({
       shipmentId: r.shipmentId,

@@ -23,6 +23,7 @@ import {
   type UploadedWorkbook,
   addIssues,
   buildPreview,
+  passingFields,
   flagDuplicatesInFile,
   issue,
   readImportSheet,
@@ -426,6 +427,13 @@ export class RatesImportService implements OnModuleInit {
         );
       } else {
         addIssues(issues, schemaIssues(row, input, parsed.error, columnOf, kindOf));
+        const rest = passingFields(createRateBody, input, parsed.error);
+        if (rest) {
+          addIssues(
+            issues,
+            (await checkRules(rest)).map((r) => issue(row, columnOf(r.field), r.code, r.message)),
+          );
+        }
       }
       rows.push(checked);
     }

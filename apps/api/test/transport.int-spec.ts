@@ -119,6 +119,9 @@ describe('inland transport: fleet, trips, POD', () => {
 
   const status = async (id: string) =>
     (await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status;
+  /** Where the shipment is now, as the public tracking page shows it. */
+  const location = async (id: string) =>
+    (await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).currentLocationId;
 
   const recordPod = (shipmentId: string, cookie: string, fields: Record<string, string>) => {
     let req = t
@@ -428,8 +431,11 @@ describe('inland transport: fleet, trips, POD', () => {
         canAddExpense: false,
       });
       await post(`/trips/${own.id}/status`, cookies.driver, { status: 'DEPARTED' }).expect(200);
+      expect(await location(mine.id)).toBe(portSudan);
       await post(`/trips/${own.id}/status`, cookies.driver, { status: 'ARRIVED' }).expect(200);
       expect(await status(mine.id)).toBe('ROAD_ARRIVED');
+      // The tracking page follows the trip: the shipment is now at its destination.
+      expect(await location(mine.id)).toBe(khartoum);
 
       const pods = (await get(`/shipments/${mine.id}/pods`, cookies.driver).expect(200))
         .body as ShipmentPodsDto;
@@ -751,6 +757,54 @@ describe('inland transport: fleet, trips, POD', () => {
       await post(`/trips/${second.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(409);
     });
 
+    it('a POD recorded without a trip puts the shipment at its own destination', async () => {
+      const a = await roadShipment();
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))
+        .body as TripDto;
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+      // Marked arrived by hand, with no location given: the tracking page still says Port Sudan.
+      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
+        200,
+      );
+      expect(await location(a.id)).toBe(portSudan);
+      await recordPod(a.id, cookies.opsDxb, {
+        recipientName: 'Ahmed Ali',
+        recipientCapacity: 'Consignee',
+        shipmentStatus: 'DELIVERED',
+      })
+        .attach('signature', PNG, 'signature.png')
+        .expect(201);
+      expect(await status(a.id)).toBe('DELIVERED');
+      expect(await location(a.id)).toBe(khartoum);
+    });
+
+    it('a POD that keeps the status still moves the tracking location, with or without a trip', async () => {
+      const [a, b] = [await roadShipment(), await roadShipment()];
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id, b.id])).expect(201))
+        .body as TripDto;
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+      expect([await location(a.id), await location(b.id)]).toEqual([portSudan, portSudan]);
+      const keep = { recipientName: 'Ahmed Ali', recipientCapacity: 'Consignee' };
+      // Named trip, no status change: at the trip's destination.
+      const withTrip = (
+        await recordPod(a.id, cookies.opsDxb, { ...keep, tripId: trip.id })
+          .attach('signature', PNG, 'signature.png')
+          .expect(201)
+      ).body as PodDto;
+      expect(withTrip.statusApplied).toBeNull();
+      expect(await status(a.id)).toBe('ROAD_DEPARTED');
+      expect(await location(a.id)).toBe(khartoum);
+      // No trip named, no status change: at the shipment's destination.
+      const withoutTrip = (
+        await recordPod(b.id, cookies.opsDxb, keep)
+          .attach('signature', PNG, 'signature.png')
+          .expect(201)
+      ).body as PodDto;
+      expect(withoutTrip).toMatchObject({ tripId: null, statusApplied: null });
+      expect(await status(b.id)).toBe('ROAD_DEPARTED');
+      expect(await location(b.id)).toBe(khartoum);
+    });
+
     it('a driver record with trips keeps its user: relinking would expose the trips (409)', async () => {
       const driver3 = users.driver3?.id;
       if (!driver3) throw new Error('No user');
@@ -801,7 +855,16 @@ describe('inland transport: trip costs in the books', () => {
   let accounts: Map<string, AccountDto>;
   const year = randomInt(1901, 2000);
   const at = (monthDay: string, time = '08:00:00') => `${year}-${monthDay}T${time}+03:00`;
-  const cookies = { admin: '', opsPts: '', financePts: '', salesPts: '', financeJed: '' };
+  const cookies = {
+    admin: '',
+    opsPts: '',
+    financePts: '',
+    salesPts: '',
+    financeJed: '',
+    warehousePts: '',
+    driverPts: '',
+  };
+  const driverUser = { id: '' };
   const { get, post, put } = helpers(() => t);
 
   async function shipment(volumeCbm: string | null, weightKg: string | null): Promise<string> {
@@ -884,10 +947,13 @@ describe('inland transport: trip costs in the books', () => {
       financePts: await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX),
       salesPts: await createUser(t.prisma, ['SALES'], ['PTS'], LEDGER_PREFIX),
       financeJed: await createUser(t.prisma, ['FINANCE'], ['JED'], LEDGER_PREFIX),
+      warehousePts: await createUser(t.prisma, ['WAREHOUSE'], ['PTS'], LEDGER_PREFIX),
+      driverPts: await createUser(t.prisma, ['DRIVER'], ['PTS'], LEDGER_PREFIX),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
     }
+    driverUser.id = users.driverPts.id;
     customer = (
       await post('/customers', cookies.salesPts, {
         branchId: pts,
@@ -1012,7 +1078,7 @@ describe('inland transport: trip costs in the books', () => {
     });
     expect(entry.sourceNumber).toBe(posted.number);
     expect(sum(entry.lines.map((l) => l.debitUsd))).toBe(sum(entry.lines.map((l) => l.creditUsd)));
-    const cost = accounts.get('5100');
+    const cost = accounts.get('5300');
     const debits = entry.lines.filter((l) => l.accountId === cost?.id);
     expect(debits.map((l) => [l.shipmentId, l.debit])).toEqual(
       expect.arrayContaining([
@@ -1043,6 +1109,57 @@ describe('inland transport: trip costs in the books', () => {
     }).expect(409);
     const original = await journal(posted.journalEntryId);
     expect(original.reversedById).not.toBeNull();
+  });
+
+  it('an own trip’s expenses stay hidden from Sales, Warehouse and its Driver, who cannot add them', async () => {
+    const one = await shipment('1', '100');
+    const ownDriver = (
+      await post('/transport/drivers', cookies.opsPts, {
+        branchId: pts,
+        name: `LG Own Driver ${randomUUID().slice(0, 6)}`,
+        userId: driverUser.id,
+      }).expect(201)
+    ).body as DriverDto;
+    const trip = await arrivedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: ownDriver.id }, [
+      one,
+    ]);
+    const expense = {
+      requestId: randomUUID(),
+      expenseDate: `${year}-04-02`,
+      description: 'Fuel',
+      amount: '600',
+      currency: 'SDG',
+      cashAccountId: cashSdg.id,
+    };
+    const paid = (await post(`/trips/${trip.id}/expenses`, cookies.opsPts, expense).expect(201))
+      .body as TripDto;
+    const posted = paid.expenses[0];
+    if (!posted) throw new Error('No expense');
+    expect(paid.showsCost).toBe(true);
+
+    for (const cookie of [cookies.salesPts, cookies.warehousePts, cookies.driverPts]) {
+      const seen = (await get(`/trips/${trip.id}`, cookie).expect(200)).body as TripDto;
+      expect(seen.showsCost).toBe(false);
+      expect(seen.expenses).toEqual([]);
+      expect(seen.accrualJournalEntryId).toBeNull();
+      expect(seen.actions).toMatchObject({ canAddExpense: false, canCancelExpense: false });
+      const body = JSON.stringify(seen);
+      expect(body).not.toContain(posted.number);
+      expect(body).not.toContain(posted.journalNumber);
+      expect(body).not.toContain(cashSdg.id);
+    }
+    // Warehouse holds expenses:create, but trip costs are restricted: neither add nor cancel.
+    await post(`/trips/${trip.id}/expenses`, cookies.warehousePts, {
+      ...expense,
+      requestId: randomUUID(),
+    }).expect(403);
+    await post(`/trips/${trip.id}/expenses/${posted.id}/cancel`, cookies.warehousePts, {
+      reason: 'x',
+    }).expect(403);
+    await post(`/trips/${trip.id}/expenses`, cookies.salesPts, {
+      ...expense,
+      requestId: randomUUID(),
+    }).expect(403);
   });
 
   it('rule 11: completing an external trip accrues the agreed cost, split by weight', async () => {

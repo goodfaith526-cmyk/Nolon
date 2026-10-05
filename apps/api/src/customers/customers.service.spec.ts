@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import type { AuditService } from '../audit/audit.service.js';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -14,6 +15,7 @@ function service() {
   const customers = new CustomersService(
     {} as PrismaService,
     { requireActive } as unknown as CurrenciesService,
+    {} as AuditService,
   );
   return { customers, requireActive };
 }
