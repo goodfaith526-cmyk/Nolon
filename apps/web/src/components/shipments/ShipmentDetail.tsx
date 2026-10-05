@@ -19,6 +19,7 @@ import { ShipmentInvoices } from '../finance/ShipmentInvoices';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Tabs } from '../Tabs';
+import { MoreMenu } from '../MoreMenu';
 import { ShipmentContainers } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
@@ -177,51 +178,51 @@ export function ShipmentDetail({ id }: { id: string }) {
             })}
           </p>
         </div>
+        <div className="actions">
+          <MoreMenu>
+            <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>
+            <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
+            {(actions.canHold || actions.revertTo || actions.canCancel) && <hr />}
+            {actions.canHold && (
+              <button type="button" onClick={() => setPanel('hold')}>
+                {t('hold')}
+              </button>
+            )}
+            {actions.revertTo && (
+              <button type="button" onClick={() => setPanel('revert')}>
+                {t('revert')}
+              </button>
+            )}
+            {actions.canCancel && (
+              <button type="button" className="danger" onClick={() => setPanel('cancel')}>
+                {t('cancel')}
+              </button>
+            )}
+          </MoreMenu>
+          {actions.canEdit && (
+            <button type="button" onClick={() => setPanel('edit')}>
+              {t('editDetails')}
+            </button>
+          )}
+          <PrintLink href={`/shipments/${s.id}`} label={tp('printShipmentSheet')} />
+          {actions.transitions.length > 0 && (
+            <button type="button" className="primary" onClick={() => setPanel('status')}>
+              {t('changeStatus')}
+            </button>
+          )}
+          {actions.canResume && (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy}
+              onClick={() => void send('/resume', {}, t('resumedNotice'))}
+            >
+              {t('resume')}
+            </button>
+          )}
+        </div>
       </div>
       <Notice notice={notice} />
-
-      <div className="actions">
-        {actions.transitions.length > 0 && (
-          <button type="button" className="primary" onClick={() => setPanel('status')}>
-            {t('changeStatus')}
-          </button>
-        )}
-        {actions.canResume && (
-          <button
-            type="button"
-            className="primary"
-            disabled={busy}
-            onClick={() => void send('/resume', {}, t('resumedNotice'))}
-          >
-            {t('resume')}
-          </button>
-        )}
-        {actions.canHold && (
-          <button type="button" onClick={() => setPanel('hold')}>
-            {t('hold')}
-          </button>
-        )}
-        {actions.revertTo && (
-          <button type="button" onClick={() => setPanel('revert')}>
-            {t('revert')}
-          </button>
-        )}
-        {actions.canEdit && (
-          <button type="button" onClick={() => setPanel('edit')}>
-            {t('editDetails')}
-          </button>
-        )}
-        {actions.canCancel && (
-          <button type="button" onClick={() => setPanel('cancel')}>
-            {t('cancel')}
-          </button>
-        )}
-        <Link href={`/bookings/${s.bookingId}`} className="button">
-          {t('openBooking')}
-        </Link>
-        <PrintLink href={`/shipments/${s.id}`} label={tp('printShipmentSheet')} />
-        <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
-      </div>
 
       {panel === 'status' && (
         <form className="card stack" onSubmit={onStatus}>

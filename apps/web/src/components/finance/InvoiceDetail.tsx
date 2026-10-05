@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { MoreMenu } from '../MoreMenu';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useRecord } from './common';
 import { InvoiceNumber } from './Invoices';
@@ -63,44 +64,46 @@ export function InvoiceDetail({ id }: { id: string }) {
 
   return (
     <section className="stack">
-      <div className="row">
-        <h1>
-          {t('invoice')} <InvoiceNumber number={inv.number} />
-        </h1>
-        <div className="actions">
+      <div className="page-head">
+        <div className="title-row">
+          <h1>
+            {t('invoice')} <InvoiceNumber number={inv.number} />
+          </h1>
           <StatusBadge kind="invoice" status={inv.status} />
           {inv.status === 'APPROVED' && <StatusBadge kind="payment" status={inv.paymentStatus} />}
         </div>
+        <div className="actions">
+          <MoreMenu>
+            {inv.journalEntryId && can(me, 'manual_journals:view') && (
+              <Link href={`/accounting/journals/${inv.journalEntryId}`}>
+                {t('openJournal')} <span dir="ltr">{inv.journalEntryNumber}</span>
+              </Link>
+            )}
+            {inv.actions.canCancel && (
+              <button type="button" className="danger" onClick={() => setPanel('cancel')}>
+                {t('cancel')}
+              </button>
+            )}
+          </MoreMenu>
+          <PrintLink href={`/invoices/${inv.id}`} />
+          {can(me, 'shipments:view') && (
+            <Link href={`/shipments/${inv.shipmentId}`} className="button">
+              {t('openShipment')} <span dir="ltr">{inv.shipmentNumber}</span>
+            </Link>
+          )}
+          {inv.actions.canEdit && (
+            <Link href={`/invoices/${id}/edit`} className="button">
+              {tc('edit')}
+            </Link>
+          )}
+          {inv.actions.canApprove && (
+            <button type="button" className="primary" onClick={() => setPanel('approve')}>
+              {t('approve')}
+            </button>
+          )}
+        </div>
       </div>
       <Notice notice={notice} />
-      <div className="actions">
-        <PrintLink href={`/invoices/${inv.id}`} />
-        {inv.actions.canEdit && (
-          <Link href={`/invoices/${id}/edit`} className="button">
-            {tc('edit')}
-          </Link>
-        )}
-        {inv.actions.canApprove && (
-          <button type="button" className="primary" onClick={() => setPanel('approve')}>
-            {t('approve')}
-          </button>
-        )}
-        {inv.actions.canCancel && (
-          <button type="button" onClick={() => setPanel('cancel')}>
-            {t('cancel')}
-          </button>
-        )}
-        {can(me, 'shipments:view') && (
-          <Link href={`/shipments/${inv.shipmentId}`} className="button">
-            {t('openShipment')} <span dir="ltr">{inv.shipmentNumber}</span>
-          </Link>
-        )}
-        {inv.journalEntryId && can(me, 'manual_journals:view') && (
-          <Link href={`/accounting/journals/${inv.journalEntryId}`} className="button">
-            {t('openJournal')} <span dir="ltr">{inv.journalEntryNumber}</span>
-          </Link>
-        )}
-      </div>
 
       {panel === 'approve' && (
         <div className="card stack">

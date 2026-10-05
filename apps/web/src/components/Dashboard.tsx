@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { formatAmount } from '@/lib/money';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { icons } from './Icons';
+import { MoreMenu } from './MoreMenu';
 import { can, useMe } from './StaffShell';
 import { StatusBadge } from './StatusBadge';
 
@@ -82,12 +83,14 @@ export function Dashboard() {
         </div>
         {quick.length > 0 && (
           <div className="actions">
-            {quick.map((q) => (
-              <Link key={q.href} href={q.href} className="button primary">
-                {icons.plus}
-                <span>{q.label}</span>
-              </Link>
-            ))}
+            <MoreMenu primary label={tc('new')}>
+              {quick.map((q) => (
+                <Link key={q.href} href={q.href}>
+                  {icons.plus}
+                  <span>{q.label}</span>
+                </Link>
+              ))}
+            </MoreMenu>
           </div>
         )}
       </div>

@@ -40,26 +40,17 @@ interface NavLink {
   permission?: Permission;
 }
 
+type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
+
+/** Sections that start folded until the user opens them (less used day to day). */
+const FOLDED_BY_DEFAULT: readonly SectionTitle[] = ['fleet', 'settings'];
+
 const NAV_SECTIONS: readonly {
-  title?: 'commercial' | 'operations' | 'finance' | 'admin';
+  title?: SectionTitle;
   links: readonly NavLink[];
 }[] = [
   {
-    links: [
-      { href: '/dashboard', label: 'home', icon: 'home' },
-      {
-        href: '/dashboard/management',
-        label: 'managementDashboard',
-        icon: 'balance',
-        permission: 'dashboards:view',
-      },
-      {
-        href: '/dashboard/branch',
-        label: 'branchDashboard',
-        icon: 'calendar',
-        permission: 'dashboards:view',
-      },
-    ],
+    links: [{ href: '/dashboard', label: 'home', icon: 'home' }],
   },
   {
     title: 'commercial',
@@ -81,6 +72,17 @@ const NAV_SECTIONS: readonly {
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
       { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
       {
+        href: '/warehouses',
+        label: 'warehouses',
+        icon: 'warehouse',
+        permission: 'warehouse:view',
+      },
+    ],
+  },
+  {
+    title: 'fleet',
+    links: [
+      {
         href: '/transport/vehicles',
         label: 'vehicles',
         icon: 'vehicle',
@@ -97,18 +99,6 @@ const NAV_SECTIONS: readonly {
         label: 'carriers',
         icon: 'carrier',
         permission: 'transport_fleet:view',
-      },
-      {
-        href: '/warehouses',
-        label: 'warehouses',
-        icon: 'warehouse',
-        permission: 'warehouse:view',
-      },
-      {
-        href: '/operational-reports',
-        label: 'operationalReports',
-        icon: 'report',
-        permission: 'operational_reports:view',
       },
     ],
   },
@@ -128,11 +118,28 @@ const NAV_SECTIONS: readonly {
         icon: 'journal',
         permission: 'manual_journals:view',
       },
+    ],
+  },
+  {
+    title: 'insights',
+    links: [
       {
-        href: '/accounting/trial-balance',
-        label: 'trialBalance',
+        href: '/dashboard/management',
+        label: 'managementDashboard',
         icon: 'balance',
-        permission: 'financial_reports:view',
+        permission: 'dashboards:view',
+      },
+      {
+        href: '/dashboard/branch',
+        label: 'branchDashboard',
+        icon: 'calendar',
+        permission: 'dashboards:view',
+      },
+      {
+        href: '/operational-reports',
+        label: 'operationalReports',
+        icon: 'report',
+        permission: 'operational_reports:view',
       },
       {
         href: '/reports',
@@ -140,6 +147,17 @@ const NAV_SECTIONS: readonly {
         icon: 'report',
         permission: 'financial_reports:view',
       },
+      {
+        href: '/accounting/trial-balance',
+        label: 'trialBalance',
+        icon: 'balance',
+        permission: 'financial_reports:view',
+      },
+    ],
+  },
+  {
+    title: 'settings',
+    links: [
       {
         href: '/accounting/accounts',
         label: 'chartOfAccounts',
@@ -158,13 +176,39 @@ const NAV_SECTIONS: readonly {
         icon: 'calendar',
         permission: 'chart_of_accounts:view',
       },
+      { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
     ],
   },
-  {
-    title: 'admin',
-    links: [{ href: '/users', label: 'users', icon: 'users', permission: 'users:view' }],
-  },
 ];
+
+const FOLD_STORAGE_KEY = 'nolon.nav.folded';
+
+/** Which sidebar sections the user folded, remembered in this browser only. */
+function useFoldedSections(): [Set<SectionTitle>, (title: SectionTitle) => void] {
+  const [folded, setFolded] = useState<Set<SectionTitle>>(() => {
+    try {
+      const saved = window.localStorage.getItem(FOLD_STORAGE_KEY);
+      if (saved) return new Set(JSON.parse(saved) as SectionTitle[]);
+    } catch {
+      // Storage unavailable (private mode): fall back to the defaults.
+    }
+    return new Set(FOLDED_BY_DEFAULT);
+  });
+  function toggle(title: SectionTitle) {
+    setFolded((current) => {
+      const next = new Set(current);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      try {
+        window.localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify([...next]));
+      } catch {
+        // Not remembered; the toggle still works for this page.
+      }
+      return next;
+    });
+  }
+  return [folded, toggle];
+}
 
 /** The signed-in user; provided by StaffShell and by the printouts' PrintShell. */
 export const MeContext = createContext<AuthMeResponse | null>(null);
@@ -188,6 +232,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const locale = useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [folded, toggleSection] = useFoldedSections();
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -239,21 +284,35 @@ export function StaffShell({ children }: { children: ReactNode }) {
             {NAV_SECTIONS.map((section, index) => {
               const links = section.links.filter((l) => !l.permission || can(me, l.permission));
               if (links.length === 0) return null;
+              const { title } = section;
+              // A section holding the current page never folds.
+              const open = !title || !folded.has(title) || links.some((l) => isActive(l.href));
               return (
-                <div key={section.title ?? index} className="nav-section">
-                  {section.title && <p className="nav-title">{t(section.title)}</p>}
-                  {links.map((l) => (
-                    <Link
-                      key={l.href}
-                      href={l.href}
-                      className={isActive(l.href) ? 'nav-link active' : 'nav-link'}
-                      aria-current={isActive(l.href) ? 'page' : undefined}
-                      onClick={() => setMenuOpen(false)}
+                <div key={title ?? index} className="nav-section">
+                  {title && (
+                    <button
+                      type="button"
+                      className="nav-title"
+                      aria-expanded={open}
+                      onClick={() => toggleSection(title)}
                     >
-                      {icons[l.icon]}
-                      <span>{t(l.label)}</span>
-                    </Link>
-                  ))}
+                      <span>{t(title)}</span>
+                      {icons.chevron}
+                    </button>
+                  )}
+                  {open &&
+                    links.map((l) => (
+                      <Link
+                        key={l.href}
+                        href={l.href}
+                        className={isActive(l.href) ? 'nav-link active' : 'nav-link'}
+                        aria-current={isActive(l.href) ? 'page' : undefined}
+                        onClick={() => setMenuOpen(false)}
+                      >
+                        {icons[l.icon]}
+                        <span>{t(l.label)}</span>
+                      </Link>
+                    ))}
                 </div>
               );
             })}
