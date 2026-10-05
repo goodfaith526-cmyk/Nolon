@@ -116,6 +116,10 @@ export interface ShipmentWarehouseActionsDto {
 export interface ShipmentWarehouseDto {
   /** Packages on the shipment's cargo lines (what a full receipt expects). */
   expectedPackages: number;
+  /** Packages held now in all warehouses (received minus released, per warehouse, added up). */
+  heldPackages: number;
+  /** Packages still to receive: the expected ones not held anywhere now (never below zero). */
+  remainingPackages: number;
   balances: WarehouseBalanceDto[];
   /** Movement log, oldest first. */
   movements: WarehouseMovementDto[];
@@ -134,6 +138,11 @@ export interface GoodsReceiptRequest {
   occurredAt?: string;
   /** Move the shipment to this status too, when the state machine allows it now. */
   shipmentStatus?: WarehouseReceiptStatus | null;
+  /**
+   * Confirms a receipt that makes the warehouses hold more packages than the cargo lines have
+   * (a miscounted booking). Without it such a receipt is refused; with it a note is required.
+   */
+  extraPackagesConfirmed?: boolean;
 }
 
 export interface GoodsReleaseRequest {

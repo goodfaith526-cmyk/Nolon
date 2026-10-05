@@ -78,6 +78,7 @@ const receiptBody = z
     note: optionalText(1000),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     shipmentStatus: z.enum(WAREHOUSE_RECEIPT_STATUSES).nullish(),
+    extraPackagesConfirmed: z.boolean().optional(),
   })
   .strict();
 

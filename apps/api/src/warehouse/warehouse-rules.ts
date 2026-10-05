@@ -53,6 +53,21 @@ export function totalsByWarehouse(
   return totals;
 }
 
+/** Packages held now in all warehouses: what each holds, added up. */
+export function heldPackages(movements: readonly MovementAmounts[]): number {
+  let held = 0;
+  for (const t of totalsByWarehouse(movements).values()) held += t.onHandPackages;
+  return held;
+}
+
+/**
+ * Packages a receipt would put in the warehouses beyond the shipment's cargo lines: goods are in
+ * one place at a time, so together the warehouses hold at most `expected`. Zero when it fits.
+ */
+export function extraPackagesOnReceipt(expected: number, held: number, packages: number): number {
+  return Math.max(0, held + packages - expected);
+}
+
 /** Packages a warehouse holds for the shipment: received there minus released from there. */
 export function onHandPackages(movements: readonly MovementAmounts[], warehouseId: string): number {
   return totalsByWarehouse(movements).get(warehouseId)?.onHandPackages ?? 0;

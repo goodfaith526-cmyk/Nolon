@@ -131,7 +131,7 @@ describe('operational reports and dashboards', () => {
         mode: 'ROAD',
         cargoType: 'GENERAL',
         services: ['MAIN_FREIGHT', 'WAREHOUSE', 'CUSTOMS'],
-        items: [{ cargoType: 'GENERAL', quantity: 1, volumeCbm, weightKg }],
+        items: [{ cargoType: 'GENERAL', quantity: 10, volumeCbm, weightKg }],
       }).expect(201)
     ).body as BookingDto;
     const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.opsPts).expect(200))

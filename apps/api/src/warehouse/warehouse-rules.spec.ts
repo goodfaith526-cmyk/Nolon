@@ -5,6 +5,8 @@ import {
   type MovementAmounts,
   canRelease,
   defaultReceiptStatus,
+  extraPackagesOnReceipt,
+  heldPackages,
   onHandPackages,
   type TimedMovement,
   receiptStatusOptions,
@@ -146,5 +148,32 @@ describe('daysHeld', () => {
 
   it('never goes below zero (a receipt dated ahead in another time zone)', () => {
     expect(daysHeld('2026-05-03', '2026-05-02')).toBe(0);
+  });
+});
+
+describe('heldPackages and extraPackagesOnReceipt', () => {
+  const m = (kind: 'RECEIPT' | 'RELEASE', warehouseId: string, packages: number) => ({
+    kind,
+    warehouseId,
+    packages,
+    weightKg: null,
+  });
+
+  it('adds up what every warehouse holds now', () => {
+    expect(heldPackages([])).toBe(0);
+    // Received at PTS, sent on to KRT and received there: only KRT holds the goods now.
+    expect(
+      heldPackages([m('RECEIPT', 'pts', 10), m('RELEASE', 'pts', 10), m('RECEIPT', 'krt', 6)]),
+    ).toBe(6);
+    expect(heldPackages([m('RECEIPT', 'pts', 4), m('RECEIPT', 'krt', 3)])).toBe(7);
+  });
+
+  it('counts the packages a receipt would hold beyond the cargo lines', () => {
+    expect(extraPackagesOnReceipt(10, 0, 10)).toBe(0);
+    expect(extraPackagesOnReceipt(10, 6, 4)).toBe(0);
+    expect(extraPackagesOnReceipt(10, 10, 1)).toBe(1);
+    expect(extraPackagesOnReceipt(10, 6, 7)).toBe(3);
+    // A shipment with no cargo lines counted: every package is extra.
+    expect(extraPackagesOnReceipt(0, 0, 2)).toBe(2);
   });
 });

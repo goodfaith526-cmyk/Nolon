@@ -158,6 +158,7 @@ export function ShipmentWarehouse({
       note: field(f, 'note').trim() || null,
       occurredAt: toIso(field(f, 'occurredAt')),
       shipmentStatus: (field(f, 'shipmentStatus') || null) as WarehouseReceiptStatus | null,
+      extraPackagesConfirmed: f.get('extraPackagesConfirmed') === 'on',
     };
     void submit('receipts', body, (m) =>
       m.statusApplied
@@ -243,7 +244,13 @@ export function ShipmentWarehouse({
         {actions.canReceive && activeWarehouses.length === 0 && (
           <p className="muted">{t('noWarehouses')}</p>
         )}
-        <p className="muted">{t('expected', { packages: data.expectedPackages })}</p>
+        <p className="muted">
+          {t('expectedHeld', {
+            packages: data.expectedPackages,
+            held: data.heldPackages,
+            remaining: data.remainingPackages,
+          })}
+        </p>
 
         {form === 'receipt' && selectedWarehouse && (
           <form className="card stack" onSubmit={onReceive}>
@@ -322,6 +329,12 @@ export function ShipmentWarehouse({
               <span>{t('note')}</span>
               <textarea name="note" maxLength={1000} />
             </label>
+            <div className="checks">
+              <label>
+                <input type="checkbox" name="extraPackagesConfirmed" />
+                {t('extraPackagesConfirmed', { remaining: data.remainingPackages })}
+              </label>
+            </div>
             <p className="muted">{t('photosHint')}</p>
             <div className="actions">
               <button type="submit" className="primary" disabled={busy}>
