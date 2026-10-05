@@ -247,14 +247,15 @@ describe('shipments shared with other branches', () => {
       200,
     );
     expect(JSON.stringify(onHand.body)).toContain(shipment.number);
-    const today = new Date().toISOString().slice(0, 10);
+    // Up to tomorrow (UTC): the shipment's day in its branch's time zone may already be tomorrow.
+    const upTo = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const report = await get(
-      `/reports/shipments?from=2020-01-01&to=${today}&branchId=${krt}&customerId=${customer.id}`,
+      `/reports/shipments?from=2020-01-01&to=${upTo}&branchId=${krt}&customerId=${customer.id}`,
       cookies.admin,
     ).expect(200);
     expect(JSON.stringify(report.body)).toContain(shipment.number);
     const jedReport = await get(
-      `/reports/shipments?from=2020-01-01&to=${today}&branchId=${await branchId(t.prisma, 'JED')}&customerId=${customer.id}`,
+      `/reports/shipments?from=2020-01-01&to=${upTo}&branchId=${await branchId(t.prisma, 'JED')}&customerId=${customer.id}`,
       cookies.admin,
     ).expect(200);
     expect(JSON.stringify(jedReport.body)).not.toContain(shipment.number);
