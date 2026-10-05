@@ -166,6 +166,9 @@ export class PodService {
             locationId: deliveredTo,
           })
         : false;
+      // Delivered there whether or not the status changed ("keep the status"): the tracking
+      // page follows the goods.
+      if (!applied) await this.shipments.relocateInTx(tx, shipmentId, deliveredTo);
       const pod = await tx.proofOfDelivery.create({
         data: {
           number,

@@ -536,6 +536,14 @@ export class ShipmentsService {
     });
   }
 
+  /**
+   * For a proof of delivery that keeps the shipment's status, inside its transaction (the caller
+   * holds the shipment lock): where the shipment now is, for the tracking page. No status event.
+   */
+  async relocateInTx(tx: Tx, id: string, locationId: string): Promise<void> {
+    await tx.shipment.update({ where: { id }, data: { currentLocationId: locationId } });
+  }
+
   /** For a proof of delivery without a trip, inside its transaction: the shipment's destination. */
   async destinationInTx(tx: Tx, id: string): Promise<string> {
     const shipment = await tx.shipment.findUniqueOrThrow({

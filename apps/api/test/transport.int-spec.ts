@@ -778,6 +778,33 @@ describe('inland transport: fleet, trips, POD', () => {
       expect(await location(a.id)).toBe(khartoum);
     });
 
+    it('a POD that keeps the status still moves the tracking location, with or without a trip', async () => {
+      const [a, b] = [await roadShipment(), await roadShipment()];
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id, b.id])).expect(201))
+        .body as TripDto;
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+      expect([await location(a.id), await location(b.id)]).toEqual([portSudan, portSudan]);
+      const keep = { recipientName: 'Ahmed Ali', recipientCapacity: 'Consignee' };
+      // Named trip, no status change: at the trip's destination.
+      const withTrip = (
+        await recordPod(a.id, cookies.opsDxb, { ...keep, tripId: trip.id })
+          .attach('signature', PNG, 'signature.png')
+          .expect(201)
+      ).body as PodDto;
+      expect(withTrip.statusApplied).toBeNull();
+      expect(await status(a.id)).toBe('ROAD_DEPARTED');
+      expect(await location(a.id)).toBe(khartoum);
+      // No trip named, no status change: at the shipment's destination.
+      const withoutTrip = (
+        await recordPod(b.id, cookies.opsDxb, keep)
+          .attach('signature', PNG, 'signature.png')
+          .expect(201)
+      ).body as PodDto;
+      expect(withoutTrip).toMatchObject({ tripId: null, statusApplied: null });
+      expect(await status(b.id)).toBe('ROAD_DEPARTED');
+      expect(await location(b.id)).toBe(khartoum);
+    });
+
     it('a driver record with trips keeps its user: relinking would expose the trips (409)', async () => {
       const driver3 = users.driver3?.id;
       if (!driver3) throw new Error('No user');
