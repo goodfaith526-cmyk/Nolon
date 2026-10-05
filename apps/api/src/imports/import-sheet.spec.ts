@@ -13,7 +13,7 @@ import {
   readImportSheet,
   schemaIssues,
 } from './import-sheet.js';
-import { zipWithinLimits } from './zip-guard.js';
+import { lyingZipBomb } from '../../test/zip-bomb.js';
 
 type Key = 'code' | 'name' | 'price' | 'from';
 
@@ -171,26 +171,16 @@ describe('readImportSheet', () => {
     ).toMatchObject({
       code: 'UNREADABLE',
     });
+    // Declares 100 bytes, inflates to 1 GiB: refused at the cap, before exceljs sees it.
+    expect(await fileErrorOf(readImportSheet(file(lyingZipBomb(1024)), COLUMNS))).toMatchObject({
+      status: 400,
+      code: 'UNREADABLE',
+    });
     const big = Buffer.concat([good, Buffer.alloc(IMPORT_MAX_BYTES)]);
     expect(await fileErrorOf(readImportSheet(file(big), COLUMNS))).toMatchObject({
       status: 413,
       code: 'FILE_TOO_LARGE',
     });
-  });
-});
-
-describe('zipWithinLimits', () => {
-  it('accepts a workbook and refuses one that would expand too far', async () => {
-    const data = await workbook([['Code'], ['a']]);
-    expect(zipWithinLimits(data, { maxEntries: 100, maxUncompressedBytes: 10_000_000 })).toBe(true);
-    expect(zipWithinLimits(data, { maxEntries: 100, maxUncompressedBytes: 100 })).toBe(false);
-    expect(zipWithinLimits(data, { maxEntries: 1, maxUncompressedBytes: 10_000_000 })).toBe(false);
-    expect(
-      zipWithinLimits(Buffer.from('PK\u0003\u0004 not really a zip'), {
-        maxEntries: 9,
-        maxUncompressedBytes: 9,
-      }),
-    ).toBe(false);
   });
 });
 

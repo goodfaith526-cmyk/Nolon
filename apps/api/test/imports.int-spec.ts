@@ -18,7 +18,9 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { deleteCommercialTestData } from './test-data.js';
+import { lockImportBranches, lockImportRequest } from '../src/imports/import-commit.js';
+import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
+import { lyingZipBomb } from './zip-bomb.js';
 
 const CUSTOMER_HEADER = [
   'Branch code',
@@ -142,6 +144,23 @@ describe('Excel import of customers and rates', () => {
       row.from,
       row.to,
     ].map((v) => v ?? null);
+  }
+
+  /** Responses of `requests`, sent while `hold` keeps a lock they all wait for. */
+  async function whileLocked(
+    hold: (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) => Promise<void>,
+    requests: (() => ReturnType<typeof upload>)[],
+  ) {
+    const { pending } = await t.prisma.$transaction(
+      async (tx) => {
+        await hold(tx);
+        const sent = requests.map((request) => request().then((res) => res));
+        await waitForLockWaiter(t.prisma, requests.length);
+        return { pending: Promise.all(sent) };
+      },
+      { timeout: 20_000 },
+    );
+    return pending;
   }
 
   function codesOf(preview: ImportPreviewDto): [number, string | null, string][] {
@@ -350,6 +369,81 @@ describe('Excel import of customers and rates', () => {
       ]);
     });
 
+    it('commits nothing when a row names a branch the user does not hold', async () => {
+      const before = await myCustomers();
+      const file = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ branch: 'JED' })]);
+      const body = (
+        await commit('/customers/import', cookies.salesDxb, file, randomUUID()).expect(422)
+      ).body as ImportRowsInvalidBody;
+      expect(codesOf(body.preview)).toEqual([[3, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
+      expect(await myCustomers()).toBe(before);
+    });
+
+    it('replays only an exact retry: another file, user or kind under the request id is a 409', async () => {
+      const requestId = randomUUID();
+      const file = await xlsx([CUSTOMER_HEADER, customerRow()]);
+      const first = (
+        await commit('/customers/import', cookies.salesDxb, file, requestId).expect(201)
+      ).body as ImportResultDto;
+      const [customers, rates] = [await myCustomers(), await myRates()];
+
+      const again = (
+        await commit('/customers/import', cookies.salesDxb, file, requestId).expect(201)
+      ).body as ImportResultDto;
+      expect(again).toMatchObject({ replayed: true, created: 1, ids: first.ids });
+      // Another file from the same user.
+      const otherFile = await xlsx([CUSTOMER_HEADER, customerRow()]);
+      await commit('/customers/import', cookies.salesDxb, otherFile, requestId).expect(409);
+      // The same file from another user who may write to the branch.
+      await commit('/customers/import', cookies.admin, file, requestId).expect(409);
+      // Another kind of import.
+      const rateFile = await xlsx([
+        RATE_HEADER,
+        rateRow({ container: 'OTHER', unit: 'PER_PIECE' }),
+      ]);
+      await commit('/rates/import', cookies.salesDxb, rateFile, requestId).expect(409);
+      expect([await myCustomers(), await myRates()]).toEqual([customers, rates]);
+
+      // And the other way round: a rates request id is not a customers one.
+      const ratesRequest = randomUUID();
+      await commit('/rates/import', cookies.salesDxb, rateFile, ratesRequest).expect(201);
+      await commit('/customers/import', cookies.salesDxb, otherFile, ratesRequest).expect(409);
+      expect(await myCustomers()).toBe(customers);
+    });
+
+    it('two concurrent commits of one request write once; the other replays', async () => {
+      const before = await myCustomers();
+      const requestId = randomUUID();
+      const file = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow()]);
+      const send = () => commit('/customers/import', cookies.salesDxb, file, requestId);
+      const responses = await whileLocked((tx) => lockImportRequest(tx, requestId), [send, send]);
+      expect(responses.map((r) => r.status)).toEqual([201, 201]);
+      const results = responses.map((r) => r.body as ImportResultDto);
+      expect(results.map((r) => r.replayed).sort()).toEqual([false, true]);
+      expect(results[0]?.ids).toEqual(results[1]?.ids);
+      expect(await myCustomers()).toBe(before + 2);
+    });
+
+    it('two concurrent imports with the same phone in one branch: one succeeds, one is a 422', async () => {
+      const shared = phone();
+      const one = await xlsx([CUSTOMER_HEADER, customerRow({ phone: shared })]);
+      const two = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ phone: shared })]);
+      const responses = await whileLocked(
+        (tx) => lockImportBranches(tx, 'customers', [dxb]),
+        [
+          () => commit('/customers/import', cookies.salesDxb, one, randomUUID()),
+          () => commit('/customers/import', cookies.salesDxb, two, randomUUID()),
+        ],
+      );
+      expect(responses.map((r) => r.status).sort()).toEqual([201, 422]);
+      const refused = responses.find((r) => r.status === 422)?.body as ImportRowsInvalidBody;
+      expect(refused.code).toBe('ROWS_INVALID');
+      expect(refused.preview.issues.map((i) => [i.column, i.code])).toEqual([
+        ['phone', 'DUPLICATE_IN_DB'],
+      ]);
+      expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: shared } })).toBe(1);
+    });
+
     it('takes a full file of IMPORT_MAX_ROWS rows in one transaction, and refuses one more', async () => {
       const before = await myCustomers();
       const rows = Array.from({ length: IMPORT_MAX_ROWS }, (_, i) =>
@@ -417,6 +511,13 @@ describe('Excel import of customers and rates', () => {
       ).toBe('NO_ROWS');
       expect(
         await codeOf(upload('/customers/import/preview', cookies.salesDxb, Buffer.alloc(0)), 400),
+      ).toBe('UNREADABLE');
+      // A zip whose entry declares 100 bytes and inflates to 1 GiB.
+      expect(
+        await codeOf(
+          upload('/customers/import/preview', cookies.salesDxb, lyingZipBomb(1024)),
+          400,
+        ),
       ).toBe('UNREADABLE');
     });
   });
@@ -522,6 +623,15 @@ describe('Excel import of customers and rates', () => {
         .body as ImportResultDto;
       expect(again).toMatchObject({ replayed: true, ids: first.ids });
       expect(await myRates()).toBe(before + 2);
+    });
+
+    it('commits nothing when a row names a branch the user does not hold', async () => {
+      const before = await myRates();
+      const file = await xlsx([RATE_HEADER, rateRow(), rateRow({ branch: 'JED' })]);
+      const body = (await commit('/rates/import', cookies.salesDxb, file, randomUUID()).expect(422))
+        .body as ImportRowsInvalidBody;
+      expect(codesOf(body.preview)).toEqual([[3, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
+      expect(await myRates()).toBe(before);
     });
 
     it('writes nothing when one row of many fails', async () => {

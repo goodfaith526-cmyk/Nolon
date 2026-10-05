@@ -23,7 +23,7 @@ import {
   cellText,
   rawCell,
 } from './cells.js';
-import { zipWithinLimits } from './zip-guard.js';
+import { repackZip } from './zip-guard.js';
 
 /**
  * The developer-defined import templates (scope 18): column definitions, reading an uploaded
@@ -64,8 +64,12 @@ export interface UploadedWorkbook {
   buffer: Buffer;
 }
 
-/** Bounds on what an upload may expand to once unzipped. */
-const ZIP_LIMITS = { maxEntries: 200, maxUncompressedBytes: 60 * 1024 * 1024 };
+/**
+ * Bounds on what an upload may expand to once unzipped, counted on the bytes actually inflated.
+ * A full template of IMPORT_MAX_ROWS rows is a few megabytes of XML; 16 MiB leaves room for long
+ * texts while keeping the parsed workbook (and so a file with far too many rows) small.
+ */
+export const ZIP_LIMITS = { maxEntries: 200, maxUncompressedBytes: 16 * 1024 * 1024 };
 
 /** Parts of a worksheet the import never needs; skipping them keeps parsing lean. */
 const IGNORED_NODES = ['dataValidations', 'conditionalFormatting', 'hyperlinks', 'drawing'];
@@ -128,14 +132,16 @@ async function openWorkbook(file: UploadedWorkbook | undefined): Promise<ExcelJS
   if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
     throw fileError('NOT_XLSX', 'Only .xlsx workbooks are accepted');
   }
-  if (!zipWithinLimits(file.buffer, ZIP_LIMITS)) {
+  // exceljs only ever sees the archive rebuilt from entries inflated under the cap (zip-guard.ts).
+  const verified = repackZip(file.buffer, ZIP_LIMITS);
+  if (!verified) {
     throw fileError('UNREADABLE', 'The file is not a readable .xlsx workbook');
   }
   const workbook = new ExcelJS.Workbook();
   try {
     // exceljs's typings redeclare Buffer as an ArrayBuffer, which no Node Buffer satisfies; at
     // runtime it hands the Node Buffer to JSZip, which is what it expects.
-    const data = file.buffer as unknown as Parameters<ExcelJS.Xlsx['load']>[0];
+    const data = verified as unknown as Parameters<ExcelJS.Xlsx['load']>[0];
     await workbook.xlsx.load(data, { ignoreNodes: IGNORED_NODES });
   } catch {
     throw fileError('UNREADABLE', 'The file is not a readable .xlsx workbook');

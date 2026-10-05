@@ -121,6 +121,18 @@ describe('cellInteger, cellText, cellCode, cellPhone', () => {
     expect(cellText({ kind: 'error' })).toMatchObject({ ok: false, code: 'INVALID_FORMAT' });
   });
 
+  it('refuses numbers with more than 15 significant digits instead of rounding them', () => {
+    expect(cellText(num(123456789012345))).toEqual({ ok: true, value: '123456789012345' });
+    expect(cellText(num(0.12345678901234))).toEqual({ ok: true, value: '0.12345678901234' });
+    // A 16-digit tax number typed as a number: Excel itself keeps only 15 of its digits.
+    expect(cellText(num(3001234567890123))).toMatchObject({ ok: false, code: 'INVALID_FORMAT' });
+    expect(cellText(num(1.2345678901234567e19))).toMatchObject({
+      ok: false,
+      code: 'INVALID_FORMAT',
+    });
+    expect(cellPhone(num(2499123456789012))).toMatchObject({ ok: false, code: 'INVALID_FORMAT' });
+  });
+
   it('upper-cases codes and compacts phones', () => {
     expect(cellCode(text(' dxb '))).toEqual({ ok: true, value: 'DXB' });
     expect(cellPhone(text('+249 91-234 5678'))).toEqual({ ok: true, value: '+249912345678' });

@@ -10,9 +10,10 @@ import {
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import {
   IMPORT_TRANSACTION,
-  type ExistingRecords,
+  lockImportBranches,
   lockImportRequest,
   previousImport,
 } from '../imports/import-commit.js';
@@ -28,7 +29,7 @@ import {
   readImportSheet,
   schemaIssues,
 } from '../imports/import-sheet.js';
-import { importRecordIds } from '../imports/request-ids.js';
+import { importRecordIds, importRequest } from '../imports/request-ids.js';
 import { buildTemplate } from '../imports/template.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { createCustomerBody } from './customer-schemas.js';
@@ -77,8 +78,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: true,
     label: { en: 'Phone', ar: 'الهاتف' },
     hint: {
-      en: 'International form, e.g. +249912345678. Unique per branch.',
-      ar: 'بالصيغة الدولية مثل ‎+249912345678. لا يتكرر في الفرع نفسه.',
+      en: 'International form, e.g. +249912345678. Checked on import: not already used in the branch.',
+      ar: 'بالصيغة الدولية مثل ‎+249912345678. يُتحقَّق عند الاستيراد من أنه غير مستخدم في الفرع.',
     },
   },
   {
@@ -127,8 +128,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: false,
     label: { en: 'Tax number', ar: 'الرقم الضريبي' },
     hint: {
-      en: 'Up to 50 characters. Unique per branch.',
-      ar: 'حتى 50 حرفاً. لا يتكرر في الفرع نفسه.',
+      en: 'Up to 50 characters. Checked on import: not already used in the branch.',
+      ar: 'حتى 50 حرفاً. يُتحقَّق عند الاستيراد من أنه غير مستخدم في الفرع.',
     },
   },
   {
@@ -205,9 +206,9 @@ const normalizeTax = (value: string) => value.trim().toUpperCase();
 
 /**
  * Excel import of customers (scope 6 and 18). Each row is checked with the same request schema
- * and reference rules as POST /customers, plus duplicates: one phone and one tax number per
- * branch, within the file and against the branch's customers. Commit writes every row in one
- * transaction, or nothing when any row fails.
+ * and reference rules as POST /customers, plus an import-only duplicate check: a phone or tax
+ * number repeated within the file, or already held by a customer of the same branch. Commit
+ * writes every row in one transaction, or nothing when any row fails.
  */
 @Injectable()
 export class CustomersImportService {
@@ -268,25 +269,36 @@ export class CustomersImportService {
 
   /**
    * Imports every row in one transaction. Any invalid row refuses the whole file (422, with the
-   * preview); the user fixes the file and uploads it again. A retry with the same requestId
-   * answers with the first attempt's result and writes nothing.
+   * preview); the user fixes the file and uploads it again. A retry of the same file by the same
+   * user with the same requestId answers with the first attempt's result and writes nothing; the
+   * requestId reused for anything else is refused (409).
+   *
+   * The duplicate check runs again inside the transaction, under a lock per branch of the file,
+   * so two imports into one branch cannot both pass it with the same phone or tax number.
    */
   async commit(
     user: AuthUser,
     file: UploadedWorkbook | undefined,
     requestId: string,
   ): Promise<ImportResultDto> {
-    const done = await previousImport(this.prisma, user, 'customers', requestId, existingCustomers);
+    const request = importRequest('customers', requestId, user.id, file?.buffer ?? Buffer.alloc(0));
+    const done = await previousImport(this.prisma, user, request);
     if (done) return done;
     const rows = await this.check(user, file);
-    if (rows.some((r) => r.issues.length > 0 || !r.input)) {
-      throw rowsInvalid(buildPreview('customers', CUSTOMER_COLUMNS, rows));
-    }
-    const ids = importRecordIds(requestId, rows.length);
+    const invalid = () => rowsInvalid(buildPreview('customers', CUSTOMER_COLUMNS, rows));
+    if (rows.some((r) => r.issues.length > 0 || !r.input)) throw invalid();
+    const ids = importRecordIds(request, rows.length);
     return this.prisma.$transaction(async (tx) => {
       await lockImportRequest(tx, requestId);
-      const raced = await previousImport(tx, user, 'customers', requestId, existingCustomers);
+      const raced = await previousImport(tx, user, request);
       if (raced) return raced;
+      await lockImportBranches(
+        tx,
+        'customers',
+        rows.flatMap((r) => (r.input ? [r.input.branchId] : [])),
+      );
+      await this.flagExisting(tx, user, rows);
+      if (rows.some((r) => r.issues.length > 0)) throw invalid();
       await this.customers.createImported(
         tx,
         user,
@@ -355,17 +367,21 @@ export class CustomersImportService {
           ]
         : []),
     ]);
-    await this.flagExisting(user, rows);
+    await this.flagExisting(this.prisma, user, rows);
     return rows;
   }
 
   /** Rows whose phone or tax number a customer of the same branch already has. */
-  private async flagExisting(user: AuthUser, rows: Row[]): Promise<void> {
+  private async flagExisting(
+    client: Prisma.TransactionClient,
+    user: AuthUser,
+    rows: Row[],
+  ): Promise<void> {
     const inputs = rows.flatMap((r) => (r.input ? [r.input] : []));
     if (inputs.length === 0) return;
     const phones = [...new Set(inputs.map((i) => i.phone))];
     const taxes = [...new Set(inputs.flatMap((i) => (i.taxNumber ? [i.taxNumber] : [])))];
-    const existing = await this.prisma.customer.findMany({
+    const existing = await client.customer.findMany({
       where: {
         ...branchScope(user),
         OR: [
@@ -399,6 +415,3 @@ export class CustomersImportService {
     }
   }
 }
-
-const existingCustomers: ExistingRecords = (client, ids) =>
-  client.customer.findMany({ where: { id: { in: ids } }, select: { id: true, branchId: true } });

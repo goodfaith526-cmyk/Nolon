@@ -73,12 +73,19 @@ function formulaOrError<T>(raw: RawCell): CellResult<T> | null {
   return null;
 }
 
+/** Significant digits a double reproduces exactly when written back as decimal text. */
+const DOUBLE_SAFE_DIGITS = 15;
+
 /** The shortest decimal text of a double (what Excel shows for up to 15 digits). */
 function numberText(value: number): string {
   return dec(String(value)).toFixed();
 }
 
-/** Text: trimmed; blank is null. Numbers become their plain decimal text, dates YYYY-MM-DD. */
+/**
+ * Text: trimmed; blank is null. Numbers become their plain decimal text, dates YYYY-MM-DD. A
+ * number with more than 15 significant digits (a long tax or phone number typed as a number) has
+ * already lost digits in Excel, so it is refused rather than stored rounded.
+ */
 export function cellText(raw: RawCell): CellResult<string | null> {
   const refused = formulaOrError<string | null>(raw);
   if (refused) return refused;
@@ -89,6 +96,12 @@ export function cellText(raw: RawCell): CellResult<string | null> {
     }
     case 'number':
       if (!Number.isFinite(raw.value)) return fail('INVALID_FORMAT', 'Not a finite number');
+      if (dec(String(raw.value)).sd(true) > DOUBLE_SAFE_DIGITS) {
+        return fail(
+          'INVALID_FORMAT',
+          'The number has too many digits to be read exactly; enter it as text',
+        );
+      }
       return { ok: true, value: numberText(raw.value) };
     case 'boolean':
       return { ok: true, value: raw.value ? 'TRUE' : 'FALSE' };
@@ -105,9 +118,6 @@ export function cellCode(raw: RawCell): CellResult<string | null> {
   if (!text.ok || text.value === null) return text;
   return { ok: true, value: normalizeDigits(text.value).toUpperCase() };
 }
-
-/** Significant digits a double reproduces exactly when written back as decimal text. */
-const DOUBLE_SAFE_DIGITS = 15;
 
 /**
  * A non-negative amount as a decimal string with at most `scale` decimal places and
