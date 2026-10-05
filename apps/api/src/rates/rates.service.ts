@@ -18,11 +18,15 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
+import { type RuleIssue, memoAsync, refusal, throwFirstIssue } from '../common/rule-issues.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+/** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
+const WRITE_CHUNK = 1000;
 
 /** What a quotation line's rate must match. */
 export interface RatePricingContext {
@@ -90,6 +94,26 @@ export class RatesService {
       data: { ...toData(fields), branchId, createdById: user.id },
     });
     return toDto(rate);
+  }
+
+  /**
+   * Writes the rates of an Excel import, as drafts, inside the caller's transaction, each with its
+   * given id. The import has already checked every input (schema, rules, duplicates); branch
+   * access is asserted again here. Imported rates go through the normal approval.
+   */
+  async createImported(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    rows: readonly { id: string; input: CreateRateCardRequest }[],
+  ): Promise<void> {
+    for (const { input } of rows) assertBranchAccess(user, input.branchId);
+    const data = rows.map(({ id, input }) => {
+      const { branchId, ...fields } = input;
+      return { ...toData(fields), id, branchId, createdById: user.id };
+    });
+    for (let i = 0; i < data.length; i += WRITE_CHUNK) {
+      await tx.rateCard.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
+    }
   }
 
   /** Drafts only. */
@@ -165,23 +189,74 @@ export class RatesService {
   }
 
   private async validate(input: RateCardInput): Promise<void> {
-    await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
-    if (input.mode !== 'SEA' && input.loadType) {
-      throw new BadRequestException('FCL/LCL applies to sea rates only');
-    }
-    if (input.cargoType === 'CONTAINER') {
-      if (!input.containerTypeCode) {
-        throw new BadRequestException('A container rate needs a container type');
+    throwFirstIssue(await this.ruleChecker()(input));
+  }
+
+  /**
+   * The rules a rate must meet (scope 7), as issues by field: create and update throw the first,
+   * the Excel import reports them all. Master data is checked through its services; lookups are
+   * cached per checker, so a file of thousands of rows asks for each code once.
+   */
+  ruleChecker(): (input: RateCardInput) => Promise<RuleIssue[]> {
+    const routeRefusal = memoAsync((key: string) => {
+      const [origin = '', destination = ''] = key.split('|');
+      return refusal(() => this.masterData.requireRoute(origin, destination));
+    });
+    const locationRefusal = memoAsync((id: string) =>
+      refusal(() => this.masterData.requireLocation(id)),
+    );
+    const containerRefusal = memoAsync((code: string) =>
+      refusal(() => this.masterData.requireContainerType(code)),
+    );
+    const chargeRefusal = memoAsync((code: string) =>
+      refusal(() => this.masterData.requireChargeType(code)),
+    );
+    const currencyRefusal = memoAsync((code: string) =>
+      refusal(() => this.currencies.requireActive(code)),
+    );
+    return async (input) => {
+      const issues: RuleIssue[] = [];
+      const add = (field: string, code: RuleIssue['code'], message: string) =>
+        issues.push({ field, code, message });
+
+      const route = await routeRefusal(`${input.originLocationId}|${input.destinationLocationId}`);
+      if (route) {
+        const origin = await locationRefusal(input.originLocationId);
+        const destination = await locationRefusal(input.destinationLocationId);
+        if (origin) add('originLocationId', 'UNKNOWN_LOCATION', origin);
+        if (destination) add('destinationLocationId', 'UNKNOWN_LOCATION', destination);
+        if (!origin && !destination) add('destinationLocationId', 'SAME_ROUTE', route);
       }
-      await this.masterData.requireContainerType(input.containerTypeCode);
-    } else if (input.containerTypeCode) {
-      throw new BadRequestException('Container type applies to container rates only');
-    }
-    await this.masterData.requireChargeType(input.chargeTypeCode ?? 'FREIGHT');
-    await this.currencies.requireActive(input.currency);
-    if (input.validTo && input.validTo < input.validFrom) {
-      throw new BadRequestException('Valid-to is before valid-from');
-    }
+      if (input.mode !== 'SEA' && input.loadType) {
+        add('loadType', 'LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea rates only');
+      }
+      if (input.cargoType === 'CONTAINER') {
+        if (!input.containerTypeCode) {
+          add(
+            'containerTypeCode',
+            'CONTAINER_TYPE_REQUIRED',
+            'A container rate needs a container type',
+          );
+        } else {
+          const refused = await containerRefusal(input.containerTypeCode);
+          if (refused) add('containerTypeCode', 'UNKNOWN_CONTAINER_TYPE', refused);
+        }
+      } else if (input.containerTypeCode) {
+        add(
+          'containerTypeCode',
+          'CONTAINER_TYPE_NOT_APPLICABLE',
+          'Container type applies to container rates only',
+        );
+      }
+      const charge = await chargeRefusal(input.chargeTypeCode ?? 'FREIGHT');
+      if (charge) add('chargeTypeCode', 'UNKNOWN_CHARGE_TYPE', charge);
+      const currency = await currencyRefusal(input.currency);
+      if (currency) add('currency', 'UNKNOWN_CURRENCY', currency);
+      if (input.validTo && input.validTo < input.validFrom) {
+        add('validTo', 'VALID_TO_BEFORE_FROM', 'Valid-to is before valid-from');
+      }
+      return issues;
+    };
   }
 }
 

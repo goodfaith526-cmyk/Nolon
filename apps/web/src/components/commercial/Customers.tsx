@@ -50,9 +50,14 @@ export function Customers() {
       <div className="row">
         <h1>{t('title')}</h1>
         {!creating && can(me, 'customers:create') && (
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
-            {t('add')}
-          </button>
+          <div className="actions">
+            <Link className="button" href="/customers/import">
+              {t('import')}
+            </Link>
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              {t('add')}
+            </button>
+          </div>
         )}
       </div>
       <Notice notice={notice} />

@@ -18,12 +18,16 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { formatDocumentNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
+import { type RuleIssue, memoAsync, refusal, throwFirstIssue } from '../common/rule-issues.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Customer, CustomerContact, Party, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+/** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
+const WRITE_CHUNK = 1000;
 
 type CustomerWithDetails = Customer & { contacts: CustomerContact[]; parties: Party[] };
 
@@ -79,6 +83,34 @@ export class CustomersService {
       });
     });
     return toDto(created);
+  }
+
+  /**
+   * Writes the customers of an Excel import inside the caller's transaction, each with its given
+   * id and the next consecutive customer numbers. The import has already checked every input
+   * (schema, references, duplicates); branch access is asserted again here.
+   */
+  async createImported(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    rows: readonly { id: string; input: CreateCustomerRequest }[],
+  ): Promise<void> {
+    for (const { input } of rows) assertBranchAccess(user, input.branchId);
+    if (rows.length === 0) return;
+    const first = await nextSequenceRange(tx, 'CUSTOMER', rows.length);
+    const data = rows.map(({ id, input }, i) => {
+      const { branchId, ...fields } = input;
+      return {
+        ...toData(fields),
+        id,
+        number: formatDocumentNumber('CUS', first + BigInt(i)),
+        branchId,
+        createdById: user.id,
+      };
+    });
+    for (let i = 0; i < data.length; i += WRITE_CHUNK) {
+      await tx.customer.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
+    }
   }
 
   async update(user: AuthUser, id: string, input: Partial<CustomerInput>): Promise<CustomerDto> {
@@ -223,13 +255,43 @@ export class CustomersService {
   }
 
   private async checkReferences(input: Partial<CustomerInput>): Promise<void> {
-    if (input.preferredCurrency) await this.currencies.requireActive(input.preferredCurrency);
-    const hasLimit = input.creditLimit !== undefined && input.creditLimit !== null;
-    const hasLimitCurrency = Boolean(input.creditLimitCurrency);
-    if (hasLimit !== hasLimitCurrency) {
-      throw new BadRequestException('Credit limit and its currency go together');
-    }
-    if (input.creditLimitCurrency) await this.currencies.requireActive(input.creditLimitCurrency);
+    throwFirstIssue(await this.referenceChecker()(input));
+  }
+
+  /**
+   * The rules a customer's references must meet (scope 6), as issues by field: create and update
+   * throw the first, the Excel import reports them all. Lookups are cached per checker, so a file
+   * of thousands of rows asks for each currency once.
+   */
+  referenceChecker(): (input: Partial<CustomerInput>) => Promise<RuleIssue[]> {
+    const currencyRefusal = memoAsync((code: string) =>
+      refusal(() => this.currencies.requireActive(code)),
+    );
+    return async (input) => {
+      const issues: RuleIssue[] = [];
+      if (input.preferredCurrency) {
+        const refused = await currencyRefusal(input.preferredCurrency);
+        if (refused) {
+          issues.push({ field: 'preferredCurrency', code: 'UNKNOWN_CURRENCY', message: refused });
+        }
+      }
+      const hasLimit = input.creditLimit !== undefined && input.creditLimit !== null;
+      const hasLimitCurrency = Boolean(input.creditLimitCurrency);
+      if (hasLimit !== hasLimitCurrency) {
+        issues.push({
+          field: hasLimit ? 'creditLimitCurrency' : 'creditLimit',
+          code: 'CREDIT_LIMIT_PAIR',
+          message: 'Credit limit and its currency go together',
+        });
+      }
+      if (input.creditLimitCurrency) {
+        const refused = await currencyRefusal(input.creditLimitCurrency);
+        if (refused) {
+          issues.push({ field: 'creditLimitCurrency', code: 'UNKNOWN_CURRENCY', message: refused });
+        }
+      }
+      return issues;
+    };
   }
 }
 

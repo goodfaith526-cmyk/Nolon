@@ -12,6 +12,7 @@ import {
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
@@ -60,9 +61,14 @@ export function Rates() {
       <div className="row">
         <h1>{t('title')}</h1>
         {!creating && can(me, 'rates:create') && (
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
-            {t('add')}
-          </button>
+          <div className="actions">
+            <Link className="button" href="/rates/import">
+              {t('import')}
+            </Link>
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              {t('add')}
+            </button>
+          </div>
         )}
       </div>
       <p className="muted">{t('workflow')}</p>

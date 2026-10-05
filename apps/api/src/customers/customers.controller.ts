@@ -10,58 +10,20 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  CUSTOMER_KINDS,
-  LOCALES,
-  type CustomerDto,
-  type CustomerSummaryDto,
-  type Page,
-} from '@nolon/shared';
+import type { CustomerDto, CustomerSummaryDto, Page } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
 import {
-  amount,
   countryCode,
-  currencyCode,
   optionalText,
   pageQuery,
   parse,
   phone,
   requiredText,
 } from '../common/validation.js';
+import { createCustomerBody, email, updateCustomerBody } from './customer-schemas.js';
 import { CustomersService } from './customers.service.js';
-
-const email = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .email()
-  .max(254)
-  .nullish()
-  .or(z.literal('').transform(() => null));
-
-const customerFields = {
-  kind: z.enum(CUSTOMER_KINDS),
-  name: requiredText(200),
-  companyName: optionalText(200),
-  phone,
-  whatsapp: phone.nullish(),
-  email,
-  countryCode: countryCode.nullish(),
-  city: optionalText(100),
-  address: optionalText(500),
-  taxNumber: optionalText(50),
-  preferredCurrency: currencyCode.nullish(),
-  preferredLocale: z.enum(LOCALES).optional(),
-  paymentTermsDays: z.number().int().min(0).max(365).optional(),
-  creditLimit: amount.nullish(),
-  creditLimitCurrency: currencyCode.nullish(),
-  notes: optionalText(2000),
-};
-
-const createBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
-const updateBody = z.object(customerFields).partial().strict();
 
 const contactBody = z
   .object({
@@ -109,7 +71,7 @@ export class CustomersController {
   @Post()
   @RequirePermission('customers:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerDto> {
-    return this.customers.create(user, parse(createBody, body));
+    return this.customers.create(user, parse(createCustomerBody, body));
   }
 
   @Patch(':id')
@@ -119,7 +81,7 @@ export class CustomersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<CustomerDto> {
-    return this.customers.update(user, id, parse(updateBody, body));
+    return this.customers.update(user, id, parse(updateCustomerBody, body));
   }
 
   @Post(':id/deactivate')
