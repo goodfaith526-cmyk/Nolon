@@ -12,6 +12,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
@@ -109,7 +110,7 @@ export function Quotations() {
                     })}
                   </td>
                   <td dir="ltr">
-                    {x.total} {x.currency}
+                    <Money value={x.total} currency={x.currency} />
                   </td>
                   <td dir="ltr">{x.validUntil}</td>
                   <td>

@@ -162,9 +162,12 @@ export function ShipmentDetail({ id }: { id: string }) {
     <section className="stack">
       <div className="page-head">
         <div>
-          <h1>
-            {t('shipment')} <span dir="ltr">{s.number}</span>
-          </h1>
+          <div className="title-row">
+            <h1>
+              {t('shipment')} <span dir="ltr">{s.number}</span>
+            </h1>
+            <StatusBadge kind="shipment" status={s.status} />
+          </div>
           <p className="muted">
             {s.customerName} ·{' '}
             {tc('route', {
@@ -173,7 +176,6 @@ export function ShipmentDetail({ id }: { id: string }) {
             })}
           </p>
         </div>
-        <StatusBadge kind="shipment" status={s.status} />
       </div>
       <Notice notice={notice} />
 

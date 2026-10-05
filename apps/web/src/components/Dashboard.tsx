@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { formatAmount } from '@/lib/money';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { icons } from './Icons';
 import { can, useMe } from './StaffShell';
@@ -144,24 +145,26 @@ export function Dashboard() {
                 {data.quotations.recent.length === 0 ? (
                   <p className="empty">{t('noQuotations')}</p>
                 ) : (
-                  <table>
-                    <tbody>
-                      {data.quotations.recent.map((x) => (
-                        <tr key={x.id}>
-                          <td dir="ltr">
-                            <Link href={`/quotations/${x.id}`}>{x.number}</Link>
-                          </td>
-                          <td>{x.customerName}</td>
-                          <td dir="ltr" className="hide-narrow">
-                            {x.total} {x.currency}
-                          </td>
-                          <td>
+                  <ul className="recent">
+                    {data.quotations.recent.map((x) => (
+                      <li key={x.id}>
+                        <Link href={`/quotations/${x.id}`} className="recent-item">
+                          <span className="recent-main">
+                            <span className="recent-number" dir="ltr">
+                              {x.number}
+                            </span>
+                            <span className="recent-sub">{x.customerName}</span>
+                          </span>
+                          <span className="recent-side">
+                            <span className="money" dir="ltr">
+                              {formatAmount(x.total)} {x.currency}
+                            </span>
                             <StatusBadge kind="quotation" status={x.status} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             )}
@@ -174,27 +177,29 @@ export function Dashboard() {
                 {data.bookings.recent.length === 0 ? (
                   <p className="empty">{t('noBookings')}</p>
                 ) : (
-                  <table>
-                    <tbody>
-                      {data.bookings.recent.map((b) => (
-                        <tr key={b.id}>
-                          <td dir="ltr">
-                            <Link href={`/bookings/${b.id}`}>{b.number}</Link>
-                          </td>
-                          <td>{b.customerName}</td>
-                          <td className="hide-narrow">
-                            {tc('route', {
-                              from: locationName(b.originLocationId),
-                              to: locationName(b.destinationLocationId),
-                            })}
-                          </td>
-                          <td>
+                  <ul className="recent">
+                    {data.bookings.recent.map((b) => (
+                      <li key={b.id}>
+                        <Link href={`/bookings/${b.id}`} className="recent-item">
+                          <span className="recent-main">
+                            <span className="recent-number" dir="ltr">
+                              {b.number}
+                            </span>
+                            <span className="recent-sub">
+                              {b.customerName} ·{' '}
+                              {tc('route', {
+                                from: locationName(b.originLocationId),
+                                to: locationName(b.destinationLocationId),
+                              })}
+                            </span>
+                          </span>
+                          <span className="recent-side">
                             <StatusBadge kind="booking" status={b.status} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             )}

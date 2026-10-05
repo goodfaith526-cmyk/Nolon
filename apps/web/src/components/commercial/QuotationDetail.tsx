@@ -7,6 +7,7 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { failureStatus, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
@@ -187,9 +188,9 @@ export function QuotationDetail({ id }: { id: string }) {
               <th>#</th>
               <th>{t('chargeType')}</th>
               <th>{t('quantity')}</th>
-              <th>{t('unitPrice')}</th>
-              <th>{t('discount')}</th>
-              <th>{t('lineTotal')}</th>
+              <th className="num">{t('unitPrice')}</th>
+              <th className="num">{t('discount')}</th>
+              <th className="num">{t('lineTotal')}</th>
             </tr>
           </thead>
           <tbody>
@@ -203,32 +204,40 @@ export function QuotationDetail({ id }: { id: string }) {
                 <td dir="ltr">
                   {l.quantity} × {te(`unit_${l.unit}`)}
                 </td>
-                <td dir="ltr">
-                  {l.unitPrice}
+                <td dir="ltr" className="num">
+                  <Money value={l.unitPrice} />
                   {l.minimumCharge !== '0' ? (
                     <div className="muted">
-                      {t('minimum')}: {l.minimumCharge}
+                      {t('minimum')}: <Money value={l.minimumCharge} />
                     </div>
                   ) : null}
                 </td>
-                <td dir="ltr">{l.discount}</td>
-                <td dir="ltr">{l.lineTotal}</td>
+                <td dir="ltr" className="num">
+                  <Money value={l.discount} />
+                </td>
+                <td dir="ltr" className="num">
+                  <Money value={l.lineTotal} />
+                </td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
               <td colSpan={5}>{t('subtotal')}</td>
-              <td dir="ltr">{quotation.subtotal}</td>
+              <td dir="ltr" className="num">
+                <Money value={quotation.subtotal} />
+              </td>
             </tr>
             <tr>
               <td colSpan={5}>{t('discountTotal')}</td>
-              <td dir="ltr">{quotation.discountTotal}</td>
+              <td dir="ltr" className="num">
+                <Money value={quotation.discountTotal} />
+              </td>
             </tr>
             <tr>
               <th colSpan={5}>{t('total')}</th>
-              <th dir="ltr">
-                {quotation.total} {quotation.currency}
+              <th dir="ltr" className="num">
+                <Money value={quotation.total} currency={quotation.currency} />
               </th>
             </tr>
           </tfoot>

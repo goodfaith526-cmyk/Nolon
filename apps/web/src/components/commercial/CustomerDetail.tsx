@@ -6,6 +6,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
+import { Money } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
@@ -161,9 +162,14 @@ export function CustomerDetail({ id }: { id: string }) {
           <dd>{customer.paymentTermsDays}</dd>
           <dt>{t('creditLimit')}</dt>
           <dd dir="ltr">
-            {customer.creditLimit
-              ? `${customer.creditLimit} ${customer.creditLimitCurrency ?? ''}`
-              : '—'}
+            {customer.creditLimit ? (
+              <Money
+                value={customer.creditLimit}
+                currency={customer.creditLimitCurrency ?? undefined}
+              />
+            ) : (
+              '—'
+            )}
           </dd>
           <dt>{tc('status')}</dt>
           <dd>{customer.isActive ? tc('active') : tc('inactive')}</dd>

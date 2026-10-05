@@ -18,7 +18,13 @@
     "signingIn": "Signing in...",
     "invalid": "Wrong email or password.",
     "tooManyAttempts": "Too many attempts. Try again in 15 minutes.",
-    "failed": "Sign-in failed. Try again."
+    "failed": "Sign-in failed. Try again.",
+    "subtitle": "Use your work email and password.",
+    "brandTitle": "Every shipment, invoice and entry in one place.",
+    "brandLead": "Sea and road freight, warehousing, customs, inland transport and accounting for all NOLON branches.",
+    "pointShipments": "Shipments",
+    "pointBilling": "Billing",
+    "pointAccounting": "Accounting"
   },
   "Shell": {
     "home": "Home",

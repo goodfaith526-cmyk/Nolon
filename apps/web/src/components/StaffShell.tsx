@@ -285,6 +285,17 @@ export function StaffShell({ children }: { children: ReactNode }) {
             >
               {icons.menu}
             </button>
+            <div className="topbar-spacer" />
+            <div className="topbar-actions">
+              <Link href={pathname} locale={otherLocale} className="button ghost">
+                {icons.globe}
+                <span>{t('switchLocale')}</span>
+              </Link>
+              <button type="button" className="ghost" onClick={() => void signOut()}>
+                {icons.signOut}
+                <span>{t('signOut')}</span>
+              </button>
+            </div>
             <div className="topbar-user">
               <span className="avatar" aria-hidden="true">
                 {me.fullName.trim().charAt(0).toUpperCase()}
@@ -295,16 +306,6 @@ export function StaffShell({ children }: { children: ReactNode }) {
                   {me.allBranches ? t('allBranches') : me.branches.map((b) => b.code).join(' · ')}
                 </span>
               </span>
-            </div>
-            <div className="topbar-actions">
-              <Link href={pathname} locale={otherLocale} className="button ghost">
-                {icons.globe}
-                <span>{t('switchLocale')}</span>
-              </Link>
-              <button type="button" className="ghost" onClick={() => void signOut()}>
-                {icons.signOut}
-                <span>{t('signOut')}</span>
-              </button>
             </div>
           </header>
           <main className="page">{children}</main>
