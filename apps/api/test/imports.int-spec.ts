@@ -359,11 +359,13 @@ describe('Excel import of customers and rates', () => {
         customerRow({ tax: `tx-${existing}` }),
         customerRow({ name: null, phone: '0912345678' }),
         customerRow({ kind: 'PARTNER', terms: 400 }),
+        // A schema error does not hide the rule errors of the same row: both show at once.
+        customerRow({ kind: 'PARTNER', currency: 'XYZ' }),
       ]);
       const preview = (
         await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
       ).body as ImportPreviewDto;
-      expect(preview.totalRows).toBe(11);
+      expect(preview.totalRows).toBe(12);
       expect(preview.validRows).toBe(1);
       expect(codesOf(preview)).toEqual([
         [2, 'branchCode', 'BRANCH_NOT_ALLOWED'],
@@ -378,6 +380,8 @@ describe('Excel import of customers and rates', () => {
         [11, 'phone', 'INVALID_FORMAT'],
         [12, 'kind', 'INVALID_VALUE'],
         [12, 'paymentTermsDays', 'INVALID_VALUE'],
+        [13, 'kind', 'INVALID_VALUE'],
+        [13, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
       ]);
       expect(preview.issues.find((i) => i.row === 8)?.otherRow).toBe(7);
     });
@@ -644,6 +648,8 @@ describe('Excel import of customers and rates', () => {
           price: '2',
         }),
         rateRow({ from: '31/12/2031' }),
+        // A schema error does not hide the rule errors of the same row: all show at once.
+        rateRow({ mode: 'AIR', price: 'ten', currency: 'XYZ', to: '2020-01-01' }),
       ]);
       const preview = (await upload('/rates/import/preview', cookies.salesDxb, file).expect(200))
         .body as ImportPreviewDto;
@@ -663,6 +669,10 @@ describe('Excel import of customers and rates', () => {
         [13, 'validFrom', 'DUPLICATE_IN_FILE'],
         [14, 'validFrom', 'DUPLICATE_IN_DB'],
         [15, 'validFrom', 'INVALID_DATE'],
+        [16, 'price', 'INVALID_AMOUNT'],
+        [16, 'mode', 'INVALID_VALUE'],
+        [16, 'currency', 'UNKNOWN_CURRENCY'],
+        [16, 'validTo', 'VALID_TO_BEFORE_FROM'],
       ]);
       expect(preview.validRows).toBe(1);
     });

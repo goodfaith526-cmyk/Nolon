@@ -431,9 +431,11 @@ export class RatesService {
   /**
    * The rules a rate must meet (scope 7), as issues by field: create and update throw the first,
    * the Excel import reports them all. Master data is checked through its services; lookups are
-   * cached per checker, so a file of thousands of rows asks for each code once.
+   * cached per checker, so a file of thousands of rows asks for each code once. A rule whose
+   * fields are missing is skipped: the import checks what is left of a row that failed its schema,
+   * so every problem of the row shows at once.
    */
-  ruleChecker(): (input: RateCardInput) => Promise<RuleIssue[]> {
+  ruleChecker(): (input: Partial<RateCardInput>) => Promise<RuleIssue[]> {
     const routeRefusal = memoAsync((key: string) => {
       const [origin = '', destination = ''] = key.split('|');
       return refusal(() => this.masterData.requireRoute(origin, destination));
@@ -455,15 +457,16 @@ export class RatesService {
       const add = (field: string, code: RuleIssue['code'], message: string) =>
         issues.push({ field, code, message });
 
-      const route = await routeRefusal(`${input.originLocationId}|${input.destinationLocationId}`);
-      if (route) {
-        const origin = await locationRefusal(input.originLocationId);
-        const destination = await locationRefusal(input.destinationLocationId);
+      const { originLocationId: from, destinationLocationId: to } = input;
+      const route = from && to ? await routeRefusal(`${from}|${to}`) : null;
+      if (from && to && route) {
+        const origin = await locationRefusal(from);
+        const destination = await locationRefusal(to);
         if (origin) add('originLocationId', 'UNKNOWN_LOCATION', origin);
         if (destination) add('destinationLocationId', 'UNKNOWN_LOCATION', destination);
         if (!origin && !destination) add('destinationLocationId', 'SAME_ROUTE', route);
       }
-      if (input.mode !== 'SEA' && input.loadType) {
+      if (input.mode && input.mode !== 'SEA' && input.loadType) {
         add('loadType', 'LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea rates only');
       }
       if (input.cargoType === 'CONTAINER') {
@@ -477,7 +480,7 @@ export class RatesService {
           const refused = await containerRefusal(input.containerTypeCode);
           if (refused) add('containerTypeCode', 'UNKNOWN_CONTAINER_TYPE', refused);
         }
-      } else if (input.containerTypeCode) {
+      } else if (input.cargoType && input.containerTypeCode) {
         add(
           'containerTypeCode',
           'CONTAINER_TYPE_NOT_APPLICABLE',
@@ -486,9 +489,9 @@ export class RatesService {
       }
       const charge = await chargeRefusal(input.chargeTypeCode ?? 'FREIGHT');
       if (charge) add('chargeTypeCode', 'UNKNOWN_CHARGE_TYPE', charge);
-      const currency = await currencyRefusal(input.currency);
+      const currency = input.currency ? await currencyRefusal(input.currency) : null;
       if (currency) add('currency', 'UNKNOWN_CURRENCY', currency);
-      if (input.validTo && input.validTo < input.validFrom) {
+      if (input.validFrom && input.validTo && input.validTo < input.validFrom) {
         add('validTo', 'VALID_TO_BEFORE_FROM', 'Valid-to is before valid-from');
       }
       return issues;
