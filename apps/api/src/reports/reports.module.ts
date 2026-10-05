@@ -5,6 +5,8 @@ import { BookingsModule } from '../bookings/bookings.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { CustomsModule } from '../customs/customs.module.js';
 import { DocumentsModule } from '../documents/documents.module.js';
+import { ExpensesModule } from '../expenses/expenses.module.js';
+import { PayablesModule } from '../payables/payables.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { TransportModule } from '../transport/transport.module.js';
@@ -26,6 +28,8 @@ import { ReportsService } from './reports.service.js';
     CustomersModule,
     CustomsModule,
     DocumentsModule,
+    ExpensesModule,
+    PayablesModule,
     QuotationsModule,
     ShipmentsModule,
     TransportModule,

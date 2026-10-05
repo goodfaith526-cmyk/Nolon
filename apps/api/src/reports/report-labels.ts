@@ -12,12 +12,14 @@ const LABELS = {
   invoicesReceipts: { en: 'Invoices and receipts', ar: 'الفواتير والمقبوضات' },
   cashMovement: { en: 'Cash and bank movement', ar: 'حركة النقدية والبنوك' },
   openAccruals: { en: 'Open accruals', ar: 'الاستحقاقات المفتوحة' },
+  apAging: { en: 'Supplier payables aging', ar: 'أعمار ديون الموردين' },
   // Filters
   period: { en: 'Period', ar: 'الفترة' },
   asOf: { en: 'As of', ar: 'حتى تاريخ' },
   branch: { en: 'Branch', ar: 'الفرع' },
   allBranches: { en: 'All my branches', ar: 'كل فروعي' },
   customerFilter: { en: 'Customer', ar: 'العميل' },
+  supplierFilter: { en: 'Supplier', ar: 'المورد' },
   amountsInUsd: {
     en: 'Amounts in USD unless a column names another currency. Posted entries only.',
     ar: 'المبالغ بالدولار الأمريكي ما لم يذكر العمود عملة أخرى. القيود المرحّلة فقط.',
@@ -25,6 +27,8 @@ const LABELS = {
   // Sheets
   byCustomer: { en: 'By customer', ar: 'حسب العميل' },
   invoices: { en: 'Invoices', ar: 'الفواتير' },
+  bySupplier: { en: 'By supplier', ar: 'حسب المورد' },
+  bills: { en: 'Bills', ar: 'فواتير الموردين' },
   receipts: { en: 'Receipts', ar: 'المقبوضات' },
   shipments: { en: 'Shipments', ar: 'الشحنات' },
   customers: { en: 'Customers', ar: 'العملاء' },
@@ -67,6 +71,9 @@ const LABELS = {
   closingBalance: { en: 'Closing balance', ar: 'الرصيد الختامي' },
   number: { en: 'Number', ar: 'الرقم' },
   customer: { en: 'Customer', ar: 'العميل' },
+  supplier: { en: 'Supplier', ar: 'المورد' },
+  supplierReference: { en: 'Supplier reference', ar: 'مرجع المورد' },
+  billDate: { en: 'Bill date', ar: 'تاريخ فاتورة المورد' },
   invoiceDate: { en: 'Invoice date', ar: 'تاريخ الفاتورة' },
   dueDate: { en: 'Due date', ar: 'تاريخ الاستحقاق' },
   amount: { en: 'Amount', ar: 'المبلغ' },

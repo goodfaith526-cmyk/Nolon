@@ -65,6 +65,11 @@ export const JOURNAL_SOURCES = [
   'REVERSAL',
   'TRIP_EXPENSE',
   'TRIP_ACCRUAL',
+  'CREDIT_NOTE',
+  'SUPPLIER_BILL',
+  'SUPPLIER_PAYMENT',
+  'EXPENSE',
+  'OPENING_BALANCE',
 ] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
@@ -118,6 +123,8 @@ export interface ChargeTypePostingDto {
   chargeTypeCode: string;
   /** null: the DEFAULT_REVENUE account (or REIMBURSABLE when isReimbursable). */
   revenueAccountId: string | null;
+  /** Cost account on supplier bills (rule 7). null: DEFAULT_COST (or REIMBURSABLE). */
+  costAccountId?: string | null;
   isReimbursable: boolean;
 }
 
@@ -167,6 +174,8 @@ export interface JournalLineDto {
   shipmentNumber: string | null;
   customerId: string | null;
   customerName: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
   description: string | null;
   currency: CurrencyCode;
   fxRate: FxRateString;
@@ -250,15 +259,24 @@ export interface CustomerInvoiceSummaryDto {
   branchId: string;
   customerId: string;
   customerName: string;
-  shipmentId: string;
-  shipmentNumber: string;
+  /** Null only for an opening item (isOpening). */
+  shipmentId: string | null;
+  shipmentNumber: string | null;
+  /** An open invoice brought in at go-live (annex C rule 15). */
+  isOpening: boolean;
+  /** Opening items: the invoice's number in the previous system. */
+  reference: string | null;
   currency: CurrencyCode;
   invoiceDate: string;
   dueDate: string;
   status: InvoiceStatus;
   total: DecimalString;
   paidAmount: DecimalString;
+  /** Approved credit notes. */
+  creditedAmount: DecimalString;
+  /** Total less payments and credit notes. */
   balance: DecimalString;
+  /** PAID once payments and credit notes cover the total. */
   paymentStatus: PaymentStatus;
 }
 
@@ -276,11 +294,26 @@ export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   notes: string | null;
   lines: CustomerInvoiceLineDto[];
   payments: InvoicePaymentDto[];
+  creditNotes: InvoiceCreditNoteDto[];
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   approvedAt: string | null;
   cancelReason: string | null;
-  actions: { canEdit: boolean; canApprove: boolean; canCancel: boolean };
+  actions: {
+    canEdit: boolean;
+    canApprove: boolean;
+    canCancel: boolean;
+    /** Approved with a balance left, and the user may create credit notes. */
+    canCreditNote: boolean;
+  };
+}
+
+export interface InvoiceCreditNoteDto {
+  creditNoteId: string;
+  number: string | null;
+  creditDate: string;
+  amount: DecimalString;
+  status: CreditNoteStatus;
 }
 
 export interface CustomerInvoiceInput {
@@ -377,12 +410,15 @@ export interface TrialBalanceDto {
 
 /**
  * What a statement line is: an approved invoice, a receipt, a receipt's cancellation (its
- * reversing entry), another reversal, or any other posted entry on the customer's accounts.
+ * reversing entry), a credit note, an open invoice brought in at go-live, another reversal, or any
+ * other posted entry on the customer's accounts.
  */
 export const STATEMENT_LINE_KINDS = [
   'INVOICE',
   'RECEIPT',
   'RECEIPT_CANCELLATION',
+  'CREDIT_NOTE',
+  'OPENING_BALANCE',
   'REVERSAL',
   'OTHER',
 ] as const;
@@ -398,7 +434,10 @@ export interface CustomerStatementLineDto {
   entryNumber: string | null;
   date: DateString;
   kind: StatementLineKind;
-  /** The invoice or receipt the entry came from (or that it reversed), when there is one. */
+  /**
+   * The invoice, receipt, credit note or opening item the entry came from (or that it reversed),
+   * when there is one.
+   */
   documentId: string | null;
   documentNumber: string | null;
   /** The entry's description, or a fixed generic one when `detailsHidden`. */
@@ -435,4 +474,84 @@ export interface CustomerStatementDto {
   to: DateString;
   /** One per currency the customer dealt in, by currency code. */
   sections: CustomerStatementSectionDto[];
+}
+
+// ---- Credit notes (annex C rule 6) -------------------------------------------------------------
+
+export const CREDIT_NOTE_STATUSES = ['DRAFT', 'APPROVED', 'CANCELLED'] as const;
+export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUSES)[number];
+
+export interface CreditNoteSummaryDto {
+  id: string;
+  number: string | null;
+  branchId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  customerName: string;
+  creditDate: string;
+  /** The invoice's currency. */
+  currency: CurrencyCode;
+  amount: DecimalString;
+  status: CreditNoteStatus;
+}
+
+export interface CreditNoteDto extends CreditNoteSummaryDto {
+  /** The invoice's rate, which the credit note posts at. */
+  fxRate: FxRateString;
+  /** USD carrying value of the invoice it cleared; set on approval. */
+  amountUsd: DecimalString | null;
+  reason: string;
+  /** What the invoice still has open (total less payments and approved credit notes). */
+  invoiceBalance: DecimalString;
+  journalEntryId: string | null;
+  journalEntryNumber: string | null;
+  approvedAt: string | null;
+  cancelReason: string | null;
+  actions: { canEdit: boolean; canApprove: boolean; canCancel: boolean };
+}
+
+export interface CreditNoteInput {
+  creditDate: string;
+  /** In the invoice currency, at most its open amount. */
+  amount: DecimalString;
+  reason: string;
+}
+
+export interface CreateCreditNoteRequest extends CreditNoteInput {
+  /** Client-generated UUID: a retry of the same request returns the first draft. */
+  requestId: string;
+  invoiceId: string;
+}
+
+// ---- Opening balances (annex C rule 15) --------------------------------------------------------
+
+/**
+ * Opening balances of general ledger accounts at go-live, in one entry: each line a debit or a
+ * credit; the difference goes to the OPENING_EQUITY account. Receivable, payable and advances
+ * accounts are not entered here: their balances come from the customers' and suppliers' open
+ * items, which also post against opening equity.
+ */
+export interface OpeningAccountsRequest {
+  requestId: string;
+  branchId: string;
+  entryDate: string;
+  description?: string | null;
+  lines: ManualJournalLineInput[];
+}
+
+/** A customer's open invoice at go-live. It is approved and posted when recorded. */
+export interface OpeningCustomerItemRequest {
+  requestId: string;
+  customerId: string;
+  /** The day the opening balances are entered (the journal date). */
+  entryDate: string;
+  /** The invoice's own number and dates in the previous system. */
+  reference: string;
+  invoiceDate: string;
+  dueDate: string;
+  currency: CurrencyCode;
+  fxRate?: FxRateString | null;
+  /** Still open, in `currency`. */
+  amount: DecimalString;
 }

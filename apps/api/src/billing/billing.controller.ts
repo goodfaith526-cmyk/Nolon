@@ -11,8 +11,11 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  CREDIT_NOTE_STATUSES,
   INVOICE_STATUSES,
   RECEIPT_STATUSES,
+  type CreditNoteDto,
+  type CreditNoteSummaryDto,
   type CustomerInvoiceDto,
   type CustomerInvoiceSummaryDto,
   type CustomerStatementDto,
@@ -35,6 +38,7 @@ import {
   requiredText,
 } from '../common/validation.js';
 import { CustomerStatementService } from './customer-statement.service.js';
+import { CreditNotesService } from './credit-notes.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
@@ -84,6 +88,34 @@ const createReceiptBody = z
 const statementQuery = z
   .object({ from: dateString, to: dateString, branchId: z.uuid().optional() })
   .strict();
+const creditNoteFields = {
+  creditDate: dateString,
+  amount,
+  reason: requiredText(1000),
+};
+const createCreditNoteBody = z
+  .object({ requestId: z.uuid(), invoiceId: z.uuid(), ...creditNoteFields })
+  .strict();
+const updateCreditNoteBody = z.object(creditNoteFields).strict();
+const creditNoteListQuery = pageQuery.extend({
+  status: z.enum(CREDIT_NOTE_STATUSES).optional(),
+  invoiceId: z.uuid().optional(),
+  customerId: z.uuid().optional(),
+});
+const openingItemBody = z
+  .object({
+    requestId: z.uuid(),
+    customerId: z.uuid(),
+    entryDate: dateString,
+    reference: requiredText(50),
+    invoiceDate: dateString,
+    dueDate: dateString,
+    currency: currencyCode,
+    fxRate: fxRate.nullish(),
+    amount,
+  })
+  .strict();
+
 const receiptListQuery = pageQuery.extend({
   status: z.enum(RECEIPT_STATUSES).optional(),
   customerId: z.uuid().optional(),
@@ -115,6 +147,16 @@ export class InvoicesController {
   @RequirePermission('customer_invoices:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerInvoiceDto> {
     return this.invoices.createForShipment(user, parse(createInvoiceBody, body).shipmentId);
+  }
+
+  /** A customer's open invoice at go-live (annex C rule 15), approved and posted at once. */
+  @Post('opening')
+  @RequirePermission('customer_invoices:view', 'manual_journals:create', 'manual_journals:approve')
+  createOpeningItem(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<CustomerInvoiceDto> {
+    return this.invoices.createOpeningItem(user, parse(openingItemBody, body));
   }
 
   @Patch(':id')
@@ -196,5 +238,65 @@ export class CustomerStatementsController {
     @Query() query: unknown,
   ): Promise<CustomerStatementDto> {
     return this.statements.statement(user, { customerId, ...parse(statementQuery, query) });
+  }
+}
+
+@Controller('credit-notes')
+export class CreditNotesController {
+  constructor(private readonly creditNotes: CreditNotesService) {}
+
+  @Get()
+  @RequirePermission('credit_notes:view')
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<Page<CreditNoteSummaryDto>> {
+    return this.creditNotes.list(user, parse(creditNoteListQuery, query));
+  }
+
+  @Get(':id')
+  @RequirePermission('credit_notes:view')
+  get(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CreditNoteDto> {
+    return this.creditNotes.get(user, id);
+  }
+
+  @Post()
+  @RequirePermission('credit_notes:create')
+  create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CreditNoteDto> {
+    return this.creditNotes.create(user, parse(createCreditNoteBody, body));
+  }
+
+  @Patch(':id')
+  @RequirePermission('credit_notes:update')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CreditNoteDto> {
+    return this.creditNotes.update(user, id, parse(updateCreditNoteBody, body));
+  }
+
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('credit_notes:approve')
+  approve(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CreditNoteDto> {
+    return this.creditNotes.approve(user, id);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('credit_notes:cancel')
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CreditNoteDto> {
+    return this.creditNotes.cancel(user, id, parse(reasonBody, body).reason);
   }
 }

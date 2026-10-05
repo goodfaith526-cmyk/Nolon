@@ -9,6 +9,7 @@ import type {
   CustomerInvoiceInput,
   CustomerInvoiceSummaryDto,
   InvoiceStatus,
+  OpeningCustomerItemRequest,
   Page,
   PaymentStatus,
 } from '@nolon/shared';
@@ -18,12 +19,19 @@ import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { type Decimal, dec, roundMoney } from '../common/money.js';
+import {
+  type Decimal,
+  dec,
+  requestedRate,
+  roundMoney,
+  sameRequestedRate,
+} from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { CustomerInvoice, Prisma } from '../generated/prisma/client.js';
+import { isUniqueViolation } from '../common/prisma-errors.js';
+import { type CustomerInvoice, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
@@ -50,6 +58,10 @@ const details = {
       receipt: { select: { id: true, number: true, receiptDate: true, status: true } },
     },
     orderBy: { receipt: { receiptDate: 'asc' } },
+  },
+  creditNotes: {
+    select: { id: true, number: true, creditDate: true, amount: true, status: true },
+    orderBy: { createdAt: 'asc' },
   },
 } satisfies Prisma.CustomerInvoiceInclude;
 
@@ -80,10 +92,7 @@ export class InvoicesService {
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.shipmentId ? { shipmentId: filters.shipmentId } : {}),
       ...(filters.openOnly
-        ? {
-            status: 'APPROVED',
-            paidAmount: { lt: this.prisma.customerInvoice.fields.total },
-          }
+        ? { status: 'APPROVED', id: { in: await this.openInvoiceIds(user, filters.customerId) } }
         : {}),
       ...(filters.q
         ? {
@@ -110,6 +119,137 @@ export class InvoicesService {
 
   async get(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
     return toDto(await this.findScoped(user, id), user);
+  }
+
+  /** Approved invoices of the user's branches with a balance left (payments and credit notes). */
+  private async openInvoiceIds(user: AuthUser, customerId?: string): Promise<string[]> {
+    if (user.allowedBranchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "customer_invoices"
+      WHERE "status" = 'APPROVED'
+        AND "paid_amount" + "credited_amount" < "total"
+        AND "branch_id" IN (${Prisma.join(user.allowedBranchIds.map((b) => Prisma.sql`${b}::uuid`))})
+        ${customerId ? Prisma.sql`AND "customer_id" = ${customerId}::uuid` : Prisma.empty}`;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Annex C rule 15: a customer's invoice still open at go-live, recorded as an approved opening
+   * item (no shipment, no lines) and posted at once against opening equity. Receipts and credit
+   * notes then settle it like any invoice. The client's `requestId` becomes its id, so a retry
+   * returns the first item.
+   */
+  async createOpeningItem(
+    user: AuthUser,
+    input: OpeningCustomerItemRequest,
+  ): Promise<CustomerInvoiceDto> {
+    const customer = await this.customers.requireCustomer(user, input.customerId);
+    if (input.dueDate < input.invoiceDate) {
+      throw new BadRequestException('The due date is before the invoice date');
+    }
+    if (input.entryDate < input.invoiceDate) {
+      throw new BadRequestException('The opening entry is dated before the invoice');
+    }
+    const existing = await this.prisma.customerInvoice.findUnique({
+      where: { id: input.requestId },
+    });
+    if (existing) return this.sameOpeningRequest(user, existing, input);
+    const amount = dec(input.amount);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const currency = await this.currencies.requireActiveInTx(tx, input.currency);
+        if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
+          throw new BadRequestException(
+            `Amount must be positive with ${currency.decimalPlaces} decimal places`,
+          );
+        }
+        const fxRate = await this.fxRates.resolve(currency.code, input.entryDate, input.fxRate);
+        const totalUsd = toUsd(amount, fxRate, currency.code);
+        const year = input.entryDate.slice(0, 4);
+        const number = formatDocumentNumber(
+          'OBI',
+          await nextSequenceValue(tx, 'OPENING_INVOICE', year),
+          year,
+        );
+        const { entry, receivableAccountId } = await this.autoJournal.openingCustomerItem(
+          tx,
+          {
+            sourceId: input.requestId,
+            number,
+            reference: input.reference,
+            branchId: customer.branchId,
+            customerId: customer.id,
+            entryDate: input.entryDate,
+            currency: currency.code,
+            fxRate,
+            amount,
+            amountUsd: totalUsd,
+          },
+          user.id,
+        );
+        await tx.customerInvoice.create({
+          data: {
+            id: input.requestId,
+            number,
+            branchId: customer.branchId,
+            customerId: customer.id,
+            isOpening: true,
+            reference: input.reference,
+            currency: currency.code,
+            fxRate,
+            requestedFxRate: requestedRate(input.fxRate),
+            invoiceDate: toDbDate(input.invoiceDate),
+            dueDate: toDbDate(input.dueDate),
+            status: 'APPROVED',
+            total: amount,
+            totalUsd,
+            journalEntryId: entry.id,
+            receivableAccountId,
+            createdById: user.id,
+            approvedById: user.id,
+            approvedAt: new Date(),
+          },
+        });
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // The same request id, posted meanwhile by a concurrent retry.
+      const raced = await this.prisma.customerInvoice.findUnique({
+        where: { id: input.requestId },
+      });
+      if (!raced) throw error;
+      return this.sameOpeningRequest(user, raced, input);
+    }
+    return this.get(user, input.requestId);
+  }
+
+  private async sameOpeningRequest(
+    user: AuthUser,
+    existing: CustomerInvoice,
+    input: OpeningCustomerItemRequest,
+  ): Promise<CustomerInvoiceDto> {
+    const entry = existing.journalEntryId
+      ? await this.prisma.journalEntry.findUnique({
+          where: { id: existing.journalEntryId },
+          select: { entryDate: true },
+        })
+      : null;
+    const same =
+      existing.isOpening &&
+      entry !== null &&
+      existing.customerId === input.customerId &&
+      existing.createdById === user.id &&
+      existing.currency === input.currency &&
+      sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
+      fromDbDate(entry.entryDate) === input.entryDate &&
+      fromDbDate(existing.invoiceDate) === input.invoiceDate &&
+      fromDbDate(existing.dueDate) === input.dueDate &&
+      existing.reference === input.reference &&
+      existing.total.eq(dec(input.amount));
+    if (!same) {
+      throw new ConflictException('This request id was already used: send a new id');
+    }
+    return this.get(user, existing.id);
   }
 
   /**
@@ -242,6 +382,7 @@ export class InvoicesService {
       if (invoice.lines.length === 0 || !invoice.total.gt(0)) {
         throw new BadRequestException('An invoice needs at least one line with an amount');
       }
+      if (!invoice.shipment || !invoice.shipmentId) throw new Error('A draft bills a shipment');
       if (invoice.shipment.status === 'CANCELLED') {
         throw new ConflictException('The shipment was cancelled');
       }
@@ -255,7 +396,7 @@ export class InvoicesService {
       const totalUsd = toUsd(invoice.total, invoice.fxRate, invoice.currency);
       const { entry, receivableAccountId } = await this.autoJournal.customerInvoiceApproved(
         tx,
-        { ...invoice, number, totalUsd },
+        { ...invoice, shipmentId: invoice.shipmentId, number, totalUsd },
         user.id,
       );
       await tx.customerInvoice.update({
@@ -315,15 +456,21 @@ function addDays(date: string, days: number): string {
   return fromDbDate(d);
 }
 
+/** UNPAID, PARTIAL or PAID by what payments and credit notes settled together. */
 export function paymentStatus(
-  invoice: Pick<CustomerInvoice, 'total' | 'paidAmount'>,
+  invoice: Pick<CustomerInvoice, 'total' | 'paidAmount' | 'creditedAmount'>,
 ): PaymentStatus {
-  if (invoice.paidAmount.isZero()) return 'UNPAID';
-  return invoice.paidAmount.gte(invoice.total) ? 'PAID' : 'PARTIAL';
+  const settled = invoice.paidAmount.plus(invoice.creditedAmount);
+  if (settled.isZero()) return 'UNPAID';
+  return settled.gte(invoice.total) ? 'PAID' : 'PARTIAL';
 }
 
-function balance(invoice: { total: Decimal; paidAmount: Decimal }): Decimal {
-  return invoice.total.minus(invoice.paidAmount);
+function balance(invoice: {
+  total: Decimal;
+  paidAmount: Decimal;
+  creditedAmount: Decimal;
+}): Decimal {
+  return invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
 }
 
 function toSummary(i: InvoiceWithDetails): CustomerInvoiceSummaryDto {
@@ -334,13 +481,16 @@ function toSummary(i: InvoiceWithDetails): CustomerInvoiceSummaryDto {
     customerId: i.customerId,
     customerName: i.customer.name,
     shipmentId: i.shipmentId,
-    shipmentNumber: i.shipment.number,
+    shipmentNumber: i.shipment?.number ?? null,
+    isOpening: i.isOpening,
+    reference: i.reference,
     currency: i.currency,
     invoiceDate: fromDbDate(i.invoiceDate),
     dueDate: fromDbDate(i.dueDate),
     status: i.status,
     total: i.total.toFixed(),
     paidAmount: i.paidAmount.toFixed(),
+    creditedAmount: i.creditedAmount.toFixed(),
     balance: balance(i).toFixed(),
     paymentStatus: paymentStatus(i),
   };
@@ -368,6 +518,13 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
       amount: a.amount.toFixed(),
       cancelled: a.receipt.status === 'CANCELLED',
     })),
+    creditNotes: i.creditNotes.map((c) => ({
+      creditNoteId: c.id,
+      number: c.number,
+      creditDate: fromDbDate(c.creditDate),
+      amount: c.amount.toFixed(),
+      status: c.status,
+    })),
     journalEntryId: i.journalEntryId,
     journalEntryNumber: i.journalEntry?.number ?? null,
     approvedAt: i.approvedAt?.toISOString() ?? null,
@@ -376,6 +533,8 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
       canEdit: isDraft && user.permissions.has('customer_invoices:update'),
       canApprove: isDraft && user.permissions.has('customer_invoices:approve'),
       canCancel: isDraft && user.permissions.has('customer_invoices:cancel'),
+      canCreditNote:
+        i.status === 'APPROVED' && balance(i).gt(0) && user.permissions.has('credit_notes:create'),
     },
   };
 }

@@ -49,8 +49,8 @@ const LABELS = {
     ar: 'الإيراد بالدولار: الفواتير المعتمدة المؤرخة في الفترة.',
   },
   auditNote: {
-    en: 'From the records that keep who did what: shipment events, warehouse, customs, journal entries, invoices, receipts, trips, PODs and documents. Times in UTC.',
-    ar: 'من السجلات التي تحفظ من فعل ماذا: أحداث الشحنات والمستودع والجمارك والقيود والفواتير والمقبوضات والرحلات وإثباتات التسليم والمستندات. الأوقات بالتوقيت العالمي.',
+    en: 'From the records that keep who did what: shipment events, warehouse, customs, journal entries, invoices, receipts, credit notes, supplier bills and payments, expenses, trips, PODs and documents. Times in UTC.',
+    ar: 'من السجلات التي تحفظ من فعل ماذا: أحداث الشحنات والمستودع والجمارك والقيود والفواتير والمقبوضات والإشعارات الدائنة وفواتير الموردين ومدفوعاتهم والمصروفات والرحلات وإثباتات التسليم والمستندات. الأوقات بالتوقيت العالمي.',
   },
   // Sheets and sections
   summary: { en: 'Summary', ar: 'الملخص' },
@@ -202,6 +202,14 @@ const CONDITION = {
   GOOD: { en: 'Good', ar: 'سليمة' },
   DAMAGED: { en: 'Damaged', ar: 'متضررة' },
 } as const;
+/** The status of a credit note, supplier bill or payment, or general expense. */
+const DOCUMENT_STATUS = {
+  DRAFT: { en: 'Draft', ar: 'مسودة' },
+  APPROVED: { en: 'Approved', ar: 'معتمد' },
+  POSTED: { en: 'Posted', ar: 'مُرحَّل' },
+  CANCELLED: { en: 'Cancelled', ar: 'ملغى' },
+} as const;
+
 const AUDIT_ENTITY = {
   SHIPMENT: { en: 'Shipment', ar: 'شحنة' },
   WAREHOUSE_MOVEMENT: { en: 'Warehouse movement', ar: 'حركة مستودع' },
@@ -209,6 +217,10 @@ const AUDIT_ENTITY = {
   JOURNAL_ENTRY: { en: 'Journal entry', ar: 'قيد يومية' },
   INVOICE: { en: 'Invoice', ar: 'فاتورة' },
   RECEIPT: { en: 'Receipt', ar: 'سند قبض' },
+  CREDIT_NOTE: { en: 'Credit note', ar: 'إشعار دائن' },
+  SUPPLIER_BILL: { en: 'Supplier bill', ar: 'فاتورة مورد' },
+  SUPPLIER_PAYMENT: { en: 'Supplier payment', ar: 'دفعة لمورد' },
+  EXPENSE: { en: 'Expense', ar: 'مصروف' },
   TRIP: { en: 'Trip', ar: 'رحلة' },
   TRIP_EXPENSE: { en: 'Trip expense', ar: 'مصروف رحلة' },
   POD: { en: 'Proof of delivery', ar: 'إثبات تسليم' },
@@ -237,6 +249,7 @@ const ENUMS = {
   mode: MODE,
   customsStatus: CUSTOMS_STATUS,
   tripStatus: TRIP_STATUS,
+  documentStatus: DOCUMENT_STATUS,
   tripKind: TRIP_KIND,
   movementKind: MOVEMENT_KIND,
   condition: CONDITION,

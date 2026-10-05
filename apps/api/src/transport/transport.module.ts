@@ -28,6 +28,6 @@ import { TripReportsService } from './trip-reports.service.js';
   ],
   controllers: [FleetController, TripsController, ShipmentTransportController],
   providers: [TripReportsService, FleetService, TripsService, TripCostsService, PodService],
-  exports: [TripReportsService, TripsService],
+  exports: [TripReportsService, TripsService, TripCostsService, FleetService],
 })
 export class TransportModule {}

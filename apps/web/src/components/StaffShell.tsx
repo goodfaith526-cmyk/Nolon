@@ -27,6 +27,12 @@ interface NavLink {
     | 'carriers'
     | 'invoices'
     | 'receipts'
+    | 'creditNotes'
+    | 'suppliers'
+    | 'supplierBills'
+    | 'supplierPayments'
+    | 'expenses'
+    | 'openingBalances'
     | 'journals'
     | 'trialBalance'
     | 'reports'
@@ -123,6 +129,26 @@ const NAV_SECTIONS: readonly {
       },
       { href: '/receipts', label: 'receipts', icon: 'receipt', permission: 'receipts:view' },
       {
+        href: '/credit-notes',
+        label: 'creditNotes',
+        icon: 'invoice',
+        permission: 'credit_notes:view',
+      },
+      { href: '/suppliers', label: 'suppliers', icon: 'carrier', permission: 'suppliers:view' },
+      {
+        href: '/supplier-bills',
+        label: 'supplierBills',
+        icon: 'invoice',
+        permission: 'suppliers:view',
+      },
+      {
+        href: '/supplier-payments',
+        label: 'supplierPayments',
+        icon: 'receipt',
+        permission: 'supplier_payments:view',
+      },
+      { href: '/expenses', label: 'expenses', icon: 'receipt', permission: 'expenses:view' },
+      {
         href: '/accounting/journals',
         label: 'journals',
         icon: 'journal',
@@ -185,6 +211,12 @@ const NAV_SECTIONS: readonly {
         label: 'periods',
         icon: 'calendar',
         permission: 'chart_of_accounts:view',
+      },
+      {
+        href: '/accounting/opening-balances',
+        label: 'openingBalances',
+        icon: 'balance',
+        permission: 'manual_journals:approve',
       },
       { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
     ],

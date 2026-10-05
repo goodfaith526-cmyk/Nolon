@@ -5,7 +5,7 @@ import { type Decimal, ZERO, dec } from '../common/money.js';
 import type { JournalEntry, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccountsService } from './accounts.service.js';
-import { type LineSpec, toUsd } from './journal-math.js';
+import { type LineSpec, USD_DECIMALS, splitAmount, toUsd } from './journal-math.js';
 import { JournalService } from './journal.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -66,6 +66,104 @@ export interface TripCostForPosting {
   description: string;
   /** In `currency`, adding up to `amount` (transport-rules splitTripCost). */
   shares: readonly { shipmentId: string; amount: Decimal }[];
+}
+
+/** Rule 6: an approved credit note against an approved invoice. */
+export interface CreditNoteForPosting {
+  id: string;
+  number: string;
+  branchId: string;
+  customerId: string;
+  shipmentId: string | null;
+  invoiceNumber: string;
+  /** The invoice's entry: its revenue lines are the accounts the credit note debits. */
+  invoiceEntryId: string;
+  /**
+   * An opening item (rule 15): its entry credited opening equity, so the credit note debits
+   * OPENING_EQUITY back rather than any revenue account.
+   */
+  isOpening: boolean;
+  receivableAccountId: string;
+  currency: string;
+  /** The invoice's rate. */
+  fxRate: Decimal;
+  currencyDecimals: number;
+  creditDate: string;
+  amount: Decimal;
+  /** The receivable's USD carrying value the credit note clears. */
+  relievedUsd: Decimal;
+}
+
+/** A supplier bill line, resolved to what it posts (rules 7, 8, 11a and 12). */
+export type BillLineForPosting =
+  | { kind: 'SHIPMENT_COST'; chargeTypeCode: string; shipmentId: string; amount: Decimal }
+  | { kind: 'EXPENSE'; accountId: string; amount: Decimal }
+  | {
+      kind: 'TRIP';
+      tripId: string;
+      tripNumber: string;
+      /** The trip's rule 11 entry, which the line clears. */
+      accrualEntryId: string;
+      amount: Decimal;
+    };
+
+export interface SupplierBillForPosting {
+  id: string;
+  number: string;
+  branchId: string;
+  supplierId: string;
+  currency: string;
+  fxRate: Decimal;
+  billDate: string;
+  total: Decimal;
+  totalUsd: Decimal;
+  lines: readonly (BillLineForPosting & { description: string | null })[];
+}
+
+export interface SupplierPaymentForPosting {
+  id: string;
+  number: string;
+  branchId: string;
+  supplierId: string;
+  paymentDate: string;
+  currency: string;
+  fxRate: Decimal;
+  amount: Decimal;
+  cashAccountId: string;
+  /** Each in the payment currency, at the bill's own rate, against its own payable. */
+  allocations: readonly {
+    billNumber: string;
+    payableAccountId: string;
+    billFxRate: Decimal;
+    amount: Decimal;
+    relievedUsd: Decimal;
+  }[];
+}
+
+export interface ExpenseForPosting {
+  id: string;
+  number: string;
+  branchId: string;
+  expenseDate: string;
+  description: string;
+  currency: string;
+  fxRate: Decimal;
+  amount: Decimal;
+  expenseAccountId: string;
+  cashAccountId: string;
+}
+
+/** A customer's or supplier's open item at go-live (rule 15). */
+export interface OpeningItemForPosting {
+  sourceId: string;
+  number: string;
+  reference: string;
+  branchId: string;
+  entryDate: string;
+  currency: string;
+  fxRate: Decimal;
+  amount: Decimal;
+  amountUsd: Decimal;
 }
 
 /**
@@ -353,6 +451,464 @@ export class AutoJournalService {
         userId,
       },
       lines,
+    );
+  }
+
+  /**
+   * Rule 6, credit note approved: debit the revenue (or reimbursable) accounts the invoice
+   * credited, sharing the amount in proportion to what each received, at the invoice's rate;
+   * credit the invoice's own receivable with the USD carrying value cleared. A credit note on an
+   * opening item debits OPENING_EQUITY instead, the account the opening item credited: reducing a
+   * balance brought forward is not revenue of the current period. The carrying value cleared can differ
+   * from the debits at the invoice rate by the cents earlier partial settlements rounded; that
+   * difference is booked to the rounding account explicitly, as a receipt does.
+   */
+  async creditNoteApproved(
+    tx: Tx,
+    note: CreditNoteForPosting,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const common = {
+      branchId: note.branchId,
+      currency: note.currency,
+      fxRate: note.fxRate,
+      customerId: note.customerId,
+      shipmentId: note.shipmentId,
+    };
+    const lines: LineSpec[] = [];
+    if (note.isOpening) {
+      lines.push({
+        ...common,
+        accountId: await this.accounts.roleAccount(tx, 'OPENING_EQUITY'),
+        side: 'DEBIT',
+        amount: note.amount,
+      });
+    } else {
+      const invoiceLines = await tx.journalLine.findMany({
+        where: {
+          entryId: note.invoiceEntryId,
+          credit: { gt: 0 },
+          currency: note.currency,
+          NOT: { accountId: note.receivableAccountId },
+        },
+        orderBy: { lineNo: 'asc' },
+      });
+      // The rounding line of an invoice entry is in USD at rate 1; only charge lines remain.
+      const revenue = invoiceLines.filter(
+        (l) => l.fxRate.eq(note.fxRate) && l.description !== 'Rounding',
+      );
+      if (revenue.length === 0) {
+        throw new Error(`Invoice ${note.invoiceNumber} has no revenue lines`);
+      }
+      const shares = splitAmount(
+        note.amount,
+        revenue.map((l) => l.credit),
+        note.currencyDecimals,
+      );
+      revenue.forEach((line, index) => {
+        const amount = shares[index] ?? ZERO;
+        if (amount.isZero()) return;
+        lines.push({ ...common, accountId: line.accountId, side: 'DEBIT', amount });
+      });
+    }
+    let debitUsd = ZERO;
+    for (const line of lines)
+      debitUsd = debitUsd.plus(toUsd(line.amount, line.fxRate, line.currency));
+    lines.push({
+      ...common,
+      accountId: note.receivableAccountId,
+      side: 'CREDIT',
+      amount: note.amount,
+      amountUsd: note.relievedUsd,
+      description: note.invoiceNumber,
+    });
+    const difference = debitUsd.minus(note.relievedUsd);
+    if (!difference.isZero()) {
+      lines.push({
+        branchId: note.branchId,
+        customerId: note.customerId,
+        accountId: await this.accounts.roleAccount(tx, 'ROUNDING'),
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
+        amount: difference.abs(),
+        amountUsd: difference.abs(),
+        description: 'Rounding',
+      });
+    }
+    return this.journal.post(
+      tx,
+      {
+        branchId: note.branchId,
+        entryDate: note.creditDate,
+        description: `Credit note ${note.number} on invoice ${note.invoiceNumber}`,
+        source: 'CREDIT_NOTE',
+        sourceId: note.id,
+        userId,
+      },
+      lines,
+    );
+  }
+
+  /**
+   * Rules 7, 8, 11a and 12, supplier bill approved: credit the payable with the total (supplier
+   * dimension) and debit, per line,
+   * - a shipment cost: the charge type's cost account (the reimbursable clearing account for a
+   *   reimbursable charge), with the shipment;
+   * - a general expense: the category's expense account;
+   * - a carrier's trip: the accrued transport account, with exactly what the trip's rule 11
+   *   entry accrued there (amount, rate and USD value), so the accrual is cleared. Any USD
+   *   difference between the billed and the accrued cost goes to the transport cost account the
+   *   accrual debited, shared by the trip's shipments as the accrual was.
+   * Returns the payable account used, which the bill keeps: its payments clear it there.
+   */
+  async supplierBillApproved(
+    tx: Tx,
+    bill: SupplierBillForPosting,
+    userId: string,
+  ): Promise<{ entry: JournalEntry; payableAccountId: string }> {
+    const payableAccountId = await this.accounts.roleAccount(tx, 'PAYABLE');
+    const costAccounts = await this.accounts.costAccounts(
+      tx,
+      bill.lines.flatMap((l) => (l.kind === 'SHIPMENT_COST' ? [l.chargeTypeCode] : [])),
+    );
+    const common = { branchId: bill.branchId, currency: bill.currency, fxRate: bill.fxRate };
+    const lines: LineSpec[] = [];
+    for (const line of bill.lines) {
+      if (line.kind === 'SHIPMENT_COST') {
+        const accountId = costAccounts.get(line.chargeTypeCode);
+        if (!accountId) throw new Error(`No cost account for ${line.chargeTypeCode}`);
+        lines.push({
+          ...common,
+          accountId,
+          side: 'DEBIT',
+          amount: line.amount,
+          shipmentId: line.shipmentId,
+          supplierId: bill.supplierId,
+          description: line.description,
+        });
+      } else if (line.kind === 'EXPENSE') {
+        lines.push({
+          ...common,
+          accountId: line.accountId,
+          side: 'DEBIT',
+          amount: line.amount,
+          supplierId: bill.supplierId,
+          description: line.description,
+        });
+      } else {
+        lines.push(...(await this.accrualClearingLines(tx, bill, line)));
+      }
+    }
+    lines.push({
+      ...common,
+      accountId: payableAccountId,
+      side: 'CREDIT',
+      amount: bill.total,
+      amountUsd: bill.totalUsd,
+      supplierId: bill.supplierId,
+      description: bill.number,
+    });
+    const entry = await this.journal.post(
+      tx,
+      {
+        branchId: bill.branchId,
+        entryDate: bill.billDate,
+        description: `Supplier bill ${bill.number}`,
+        source: 'SUPPLIER_BILL',
+        sourceId: bill.id,
+        userId,
+      },
+      lines,
+    );
+    return { entry, payableAccountId };
+  }
+
+  /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */
+  private async accrualClearingLines(
+    tx: Tx,
+    bill: SupplierBillForPosting,
+    line: Extract<BillLineForPosting, { kind: 'TRIP' }>,
+  ): Promise<LineSpec[]> {
+    const accrual = await tx.journalLine.findMany({
+      where: { entryId: line.accrualEntryId },
+      orderBy: { lineNo: 'asc' },
+    });
+    const accrued = accrual.find(
+      (l) => l.shipmentId === null && l.credit.gt(0) && l.description !== 'Rounding',
+    );
+    const costs = accrual.filter((l) => l.shipmentId !== null && l.debit.gt(0));
+    if (!accrued || costs.length === 0) {
+      throw new Error(`Trip ${line.tripNumber} has no accrual to clear`);
+    }
+    if (accrued.currency !== bill.currency) {
+      throw new Error(`Trip ${line.tripNumber} was accrued in ${accrued.currency}`);
+    }
+    const lines: LineSpec[] = [
+      {
+        accountId: accrued.accountId,
+        branchId: accrued.branchId,
+        currency: accrued.currency,
+        fxRate: accrued.fxRate,
+        side: 'DEBIT',
+        amount: accrued.credit,
+        amountUsd: accrued.creditUsd,
+        tripId: line.tripId,
+        supplierId: bill.supplierId,
+        description: line.tripNumber,
+      },
+    ];
+    const difference = toUsd(line.amount, bill.fxRate, bill.currency).minus(accrued.creditUsd);
+    if (difference.isZero()) return lines;
+    const shares = splitAmount(
+      difference.abs(),
+      costs.map((c) => c.debitUsd),
+      USD_DECIMALS,
+    );
+    costs.forEach((cost, index) => {
+      const amount = shares[index] ?? ZERO;
+      if (amount.isZero()) return;
+      lines.push({
+        accountId: cost.accountId,
+        branchId: bill.branchId,
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'DEBIT' : 'CREDIT',
+        amount,
+        amountUsd: amount,
+        shipmentId: cost.shipmentId,
+        supplierId: bill.supplierId,
+        description: `${line.tripNumber}: billed cost difference`,
+      });
+    });
+    return lines;
+  }
+
+  /**
+   * Rule 9, supplier payment recorded: debit the payable each bill was posted to at the bill's
+   * own USD value, credit the cash account. The USD difference is the realized exchange gain or
+   * loss (annex C section 3, the reverse of a receipt): paying more USD than the bill carried is
+   * a loss. When every rate is the same, it is only rounding.
+   */
+  async supplierPaymentRecorded(
+    tx: Tx,
+    payment: SupplierPaymentForPosting,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const common = {
+      branchId: payment.branchId,
+      currency: payment.currency,
+      supplierId: payment.supplierId,
+    };
+    const cashUsd = toUsd(payment.amount, payment.fxRate, payment.currency);
+    let allocated = ZERO;
+    let relievedUsd = ZERO;
+    const lines: LineSpec[] = payment.allocations.map((a) => {
+      allocated = allocated.plus(a.amount);
+      relievedUsd = relievedUsd.plus(a.relievedUsd);
+      return {
+        ...common,
+        accountId: a.payableAccountId,
+        fxRate: a.billFxRate,
+        side: 'DEBIT',
+        amount: a.amount,
+        amountUsd: a.relievedUsd,
+        description: a.billNumber,
+      };
+    });
+    if (!allocated.eq(payment.amount)) throw new Error('A payment is allocated in full');
+    lines.push({
+      ...common,
+      accountId: payment.cashAccountId,
+      fxRate: payment.fxRate,
+      side: 'CREDIT',
+      amount: payment.amount,
+      amountUsd: cashUsd,
+      description: payment.number,
+    });
+    const difference = relievedUsd.minus(cashUsd);
+    if (!difference.isZero()) {
+      const sameRate = payment.allocations.every((a) => a.billFxRate.eq(payment.fxRate));
+      const role = sameRate ? 'ROUNDING' : difference.gt(0) ? 'FX_GAIN' : 'FX_LOSS';
+      lines.push({
+        branchId: payment.branchId,
+        supplierId: payment.supplierId,
+        accountId: await this.accounts.roleAccount(tx, role),
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
+        amount: difference.abs(),
+        amountUsd: difference.abs(),
+        description: sameRate ? 'Rounding' : FX_DIFFERENCE_LINE,
+      });
+    }
+    return this.journal.post(
+      tx,
+      {
+        branchId: payment.branchId,
+        entryDate: payment.paymentDate,
+        description: `Supplier payment ${payment.number}`,
+        source: 'SUPPLIER_PAYMENT',
+        sourceId: payment.id,
+        userId,
+      },
+      lines,
+    );
+  }
+
+  /** Rule 12, general expense approved: debit the category's account, credit the cash account. */
+  expenseApproved(tx: Tx, expense: ExpenseForPosting, userId: string): Promise<JournalEntry> {
+    const common = {
+      branchId: expense.branchId,
+      currency: expense.currency,
+      fxRate: expense.fxRate,
+      amount: expense.amount,
+    };
+    return this.journal.post(
+      tx,
+      {
+        branchId: expense.branchId,
+        entryDate: expense.expenseDate,
+        description: `Expense ${expense.number}: ${expense.description}`,
+        source: 'EXPENSE',
+        sourceId: expense.id,
+        userId,
+      },
+      [
+        {
+          ...common,
+          accountId: expense.expenseAccountId,
+          side: 'DEBIT',
+          description: expense.description,
+        },
+        {
+          ...common,
+          accountId: expense.cashAccountId,
+          side: 'CREDIT',
+          description: expense.number,
+        },
+      ],
+    );
+  }
+
+  /**
+   * Rule 15, opening balances of ledger accounts: the lines as entered, and the difference
+   * between their USD debits and credits on the OPENING_EQUITY account.
+   */
+  async openingAccounts(
+    tx: Tx,
+    opening: { id: string; branchId: string; entryDate: string; description: string },
+    specs: readonly LineSpec[],
+    userId: string,
+  ): Promise<JournalEntry> {
+    const equity = await this.accounts.roleAccount(tx, 'OPENING_EQUITY');
+    let net = ZERO;
+    for (const line of specs) {
+      const usd = line.amountUsd ?? toUsd(line.amount, line.fxRate, line.currency);
+      net = line.side === 'DEBIT' ? net.plus(usd) : net.minus(usd);
+    }
+    const lines: LineSpec[] = [...specs];
+    if (!net.isZero()) {
+      lines.push({
+        accountId: equity,
+        branchId: opening.branchId,
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: net.gt(0) ? 'CREDIT' : 'DEBIT',
+        amount: net.abs(),
+        description: 'Opening balance equity',
+      });
+    }
+    return this.journal.post(
+      tx,
+      {
+        branchId: opening.branchId,
+        entryDate: opening.entryDate,
+        description: opening.description,
+        source: 'OPENING_BALANCE',
+        sourceId: opening.id,
+        userId,
+      },
+      lines,
+    );
+  }
+
+  /**
+   * Rule 15, a customer's open invoice at go-live: debit the receivable (customer dimension),
+   * credit opening equity. Returns the receivable account, which the item keeps.
+   */
+  async openingCustomerItem(
+    tx: Tx,
+    item: OpeningItemForPosting & { customerId: string },
+    userId: string,
+  ): Promise<{ entry: JournalEntry; receivableAccountId: string }> {
+    const receivableAccountId = await this.accounts.roleAccount(tx, 'RECEIVABLE');
+    const entry = await this.openingItem(
+      tx,
+      item,
+      { accountId: receivableAccountId, side: 'DEBIT', customerId: item.customerId },
+      `Opening balance: customer invoice ${item.reference} (${item.number})`,
+      userId,
+    );
+    return { entry, receivableAccountId };
+  }
+
+  /**
+   * Rule 15, a supplier's open bill at go-live: credit the payable (supplier dimension), debit
+   * opening equity. Returns the payable account, which the item keeps.
+   */
+  async openingSupplierItem(
+    tx: Tx,
+    item: OpeningItemForPosting & { supplierId: string },
+    userId: string,
+  ): Promise<{ entry: JournalEntry; payableAccountId: string }> {
+    const payableAccountId = await this.accounts.roleAccount(tx, 'PAYABLE');
+    const entry = await this.openingItem(
+      tx,
+      item,
+      { accountId: payableAccountId, side: 'CREDIT', supplierId: item.supplierId },
+      `Opening balance: supplier bill ${item.reference} (${item.number})`,
+      userId,
+    );
+    return { entry, payableAccountId };
+  }
+
+  private async openingItem(
+    tx: Tx,
+    item: OpeningItemForPosting,
+    party: Pick<LineSpec, 'accountId' | 'side' | 'customerId' | 'supplierId'>,
+    description: string,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const equity = await this.accounts.roleAccount(tx, 'OPENING_EQUITY');
+    const common = {
+      branchId: item.branchId,
+      currency: item.currency,
+      fxRate: item.fxRate,
+      amount: item.amount,
+      amountUsd: item.amountUsd,
+      customerId: party.customerId ?? null,
+      supplierId: party.supplierId ?? null,
+    };
+    return this.journal.post(
+      tx,
+      {
+        branchId: item.branchId,
+        entryDate: item.entryDate,
+        description,
+        source: 'OPENING_BALANCE',
+        sourceId: item.sourceId,
+        userId,
+      },
+      [
+        { ...common, accountId: party.accountId, side: party.side, description: item.reference },
+        {
+          ...common,
+          accountId: equity,
+          side: party.side === 'DEBIT' ? 'CREDIT' : 'DEBIT',
+          description: item.number,
+        },
+      ],
     );
   }
 

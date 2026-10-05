@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import {
+  AMOUNT_TOO_SMALL,
   type LineSpec,
   InvalidLineError,
   UnbalancedEntryError,
@@ -75,6 +76,36 @@ describe('prepareLines', () => {
     expect(() =>
       prepareLines([line('DEBIT', '1', 'USD', '2'), line('CREDIT', '1')], rounding),
     ).toThrow(InvalidLineError);
+  });
+
+  it('refuses an entry worth 0.00 USD in total', () => {
+    // 1 SDG at 600 is 0.0017 USD: both sides round to 0.00.
+    expect(() =>
+      prepareLines([line('DEBIT', '1', 'SDG', '600'), line('CREDIT', '1', 'SDG', '600')], rounding),
+    ).toThrow(AMOUNT_TOO_SMALL);
+    // Also when it has a single line (an opening balance with no equity difference to book).
+    expect(() => prepareLines([line('DEBIT', '1', 'SDG', '600')], rounding)).toThrow(
+      AMOUNT_TOO_SMALL,
+    );
+    expect(() => prepareLines([], rounding)).toThrow('at least two lines');
+  });
+
+  it('keeps lines worth 0.00 USD when the entry is worth more, balanced by rounding', () => {
+    // 3 SDG at 600 is 0.005 USD, half up to 0.01; 1 SDG is 0.00; the 7 SDG credit is 0.01.
+    const lines = prepareLines(
+      [
+        line('DEBIT', '3', 'SDG', '600'),
+        line('DEBIT', '3', 'SDG', '600'),
+        line('DEBIT', '1', 'SDG', '600'),
+        line('CREDIT', '7', 'SDG', '600'),
+      ],
+      rounding,
+    );
+    expect(lines.map((l) => l.amountUsd.toFixed())).toEqual(['0.01', '0.01', '0', '0.01', '0.01']);
+    expect(lines[4]).toMatchObject({ accountId: 'rounding', side: 'CREDIT' });
+    const { debitUsd, creditUsd } = totals(lines);
+    expect(debitUsd.toFixed()).toBe('0.02');
+    expect(debitUsd.eq(creditUsd)).toBe(true);
   });
 
   it('keeps a USD value set by the caller', () => {

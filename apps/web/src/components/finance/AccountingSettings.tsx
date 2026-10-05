@@ -15,6 +15,7 @@ import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { useRecord } from './common';
+import { ExpenseCategories } from './ExpenseCategories';
 
 /** Which account each automatic posting uses: posting roles, then revenue per charge type. */
 export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
@@ -57,6 +58,7 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
     const form = new FormData(e.currentTarget);
     void put(`/accounting/settings/charge-types/${encodeURIComponent(code)}`, {
       revenueAccountId: field(form, 'revenueAccountId') || null,
+      costAccountId: field(form, 'costAccountId') || null,
       isReimbursable: form.get('isReimbursable') === 'on',
     });
   }
@@ -137,6 +139,7 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
             <tr>
               <th>{t('chargeType')}</th>
               <th>{t('revenueAccount')}</th>
+              <th>{t('costAccount')}</th>
               <th>{t('reimbursable')}</th>
               {canUpdate && <th />}
             </tr>
@@ -146,9 +149,10 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
               const posting = settings.chargeTypes.find((p) => p.chargeTypeCode === c.code);
               const formId = `charge-${c.code}`;
               const revenueId = posting?.revenueAccountId ?? '';
+              const costId = posting?.costAccountId ?? '';
               const reimbursable = posting?.isReimbursable ?? false;
               return (
-                <tr key={`${c.code}-${revenueId}-${String(reimbursable)}`}>
+                <tr key={`${c.code}-${revenueId}-${costId}-${String(reimbursable)}`}>
                   <td>
                     {name(c)}{' '}
                     <span className="muted" dir="ltr">
@@ -170,6 +174,24 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
                           {label(a)}
                         </option>
                       ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      form={formId}
+                      name="costAccountId"
+                      disabled={!canUpdate}
+                      defaultValue={costId}
+                      aria-label={t('costAccount')}
+                    >
+                      <option value="">{t('defaultAccount')}</option>
+                      {postable
+                        .filter((a) => a.type === 'EXPENSE' && !a.isCash)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {label(a)}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td>
@@ -195,6 +217,8 @@ export function AccountingSettings({ accounts }: { accounts: AccountDto[] }) {
           </tbody>
         </table>
       </div>
+
+      <ExpenseCategories accounts={accounts} />
     </div>
   );
 }

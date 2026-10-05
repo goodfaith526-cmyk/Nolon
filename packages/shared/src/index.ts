@@ -13,3 +13,5 @@ export * from './customs.js';
 export * from './transport.js';
 export * from './reports.js';
 export * from './operational-reports.js';
+export * from './payables.js';
+export * from './expenses.js';

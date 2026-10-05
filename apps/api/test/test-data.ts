@@ -34,14 +34,17 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.warehouse.deleteMany({ where: { code: { startsWith: 'ZZ' } } });
 }
 
-/** Waits until some session is blocked on a row lock (the request under test reached the lock). */
-export async function waitForLockWaiter(prisma: PrismaService): Promise<void> {
+/**
+ * Waits until `count` sessions (default one) are blocked on a row lock: the requests under test
+ * reached the lock.
+ */
+export async function waitForLockWaiter(prisma: PrismaService, count = 1): Promise<void> {
   for (let i = 0; i < 200; i++) {
     const rows = await prisma.$queryRaw<{ n: bigint }[]>`
       SELECT count(*) AS "n" FROM pg_stat_activity
       WHERE "datname" = current_database() AND "wait_event_type" = 'Lock'`;
-    if ((rows[0]?.n ?? 0n) > 0n) return;
+    if ((rows[0]?.n ?? 0n) >= BigInt(count)) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error('No request waited on the lock');
+  throw new Error(`Fewer than ${count} requests waited on the lock`);
 }

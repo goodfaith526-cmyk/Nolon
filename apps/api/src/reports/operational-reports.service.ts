@@ -39,7 +39,9 @@ import { type Decimal, ZERO } from '../common/money.js';
 import type { AuditQuery, ShipmentAuditEntry } from '../common/report-sql.js';
 import { CustomsReportsService } from '../customs/customs-reports.service.js';
 import { DocumentReportsService } from '../documents/document-reports.service.js';
+import { ExpenseReportsService } from '../expenses/expense-reports.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { PayablesReportsService } from '../payables/payables-reports.service.js';
 import { QuotationReportsService } from '../quotations/quotation-reports.service.js';
 import { ShipmentReportsService } from '../shipments/shipment-reports.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -131,6 +133,8 @@ export class OperationalReportsService {
     private readonly trips: TripReportsService,
     private readonly ledger: LedgerReportsService,
     private readonly documents: DocumentReportsService,
+    private readonly payables: PayablesReportsService,
+    private readonly expenses: ExpenseReportsService,
   ) {}
 
   /** Report 1. */
@@ -504,26 +508,20 @@ export class OperationalReportsService {
     };
     const wants = (...entities: AuditEntity[]) => !q.entity || entities.includes(q.entity);
     const none = Promise.resolve([]);
-    const [shipments, warehouse, customs, journals, billing, transport, documents] =
-      await Promise.all([
-        wants('SHIPMENT') ? this.shipmentReports.auditEntries(user, aq) : none,
-        wants('WAREHOUSE_MOVEMENT') ? this.warehouse.auditEntries(user, aq) : none,
-        wants('CUSTOMS') ? this.customs.auditEntries(user, aq) : none,
-        wants('JOURNAL_ENTRY') ? this.ledger.auditEntries(user, aq) : none,
-        wants('INVOICE', 'RECEIPT') ? this.billing.auditEntries(user, aq) : none,
-        wants('TRIP', 'TRIP_EXPENSE', 'POD') ? this.trips.auditEntries(user, aq) : none,
-        wants('DOCUMENT') ? this.documents.auditEntries(user, aq) : none,
-      ]);
-    const customsEntries = await this.withShipmentNumbers(user, customs);
-    const merged = [
-      ...shipments,
-      ...warehouse,
-      ...customsEntries,
-      ...journals,
-      ...billing,
-      ...transport,
-      ...documents,
-    ].sort((a, b) => b.at.localeCompare(a.at));
+    const sources = await Promise.all([
+      wants('SHIPMENT') ? this.shipmentReports.auditEntries(user, aq) : none,
+      wants('WAREHOUSE_MOVEMENT') ? this.warehouse.auditEntries(user, aq) : none,
+      wants('CUSTOMS')
+        ? this.customs.auditEntries(user, aq).then((rows) => this.withShipmentNumbers(user, rows))
+        : none,
+      wants('JOURNAL_ENTRY') ? this.ledger.auditEntries(user, aq) : none,
+      wants('INVOICE', 'RECEIPT', 'CREDIT_NOTE') ? this.billing.auditEntries(user, aq) : none,
+      wants('SUPPLIER_BILL', 'SUPPLIER_PAYMENT') ? this.payables.auditEntries(user, aq) : none,
+      wants('EXPENSE') ? this.expenses.auditEntries(user, aq) : none,
+      wants('TRIP', 'TRIP_EXPENSE', 'POD') ? this.trips.auditEntries(user, aq) : none,
+      wants('DOCUMENT') ? this.documents.auditEntries(user, aq) : none,
+    ]);
+    const merged = sources.flat().sort((a, b) => b.at.localeCompare(a.at));
     const users = new Map<string, string>();
     const entries = merged.slice(0, LIMIT);
     for (const e of entries) if (e.userId && e.userName) users.set(e.userId, e.userName);

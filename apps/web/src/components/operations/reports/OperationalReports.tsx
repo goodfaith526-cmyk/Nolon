@@ -826,7 +826,15 @@ export function TripsReport() {
   );
 }
 
-const STATUS_KINDS = { SHIPMENT: 'shipment', CUSTOMS: 'customs', TRIP: 'trip' } as const;
+const STATUS_KINDS = {
+  SHIPMENT: 'shipment',
+  CUSTOMS: 'customs',
+  TRIP: 'trip',
+  CREDIT_NOTE: 'creditNote',
+  SUPPLIER_BILL: 'supplierBill',
+  SUPPLIER_PAYMENT: 'supplierPayment',
+  EXPENSE: 'expense',
+} as const;
 
 function AuditStatus({ entry }: { entry: AuditLogEntryDto }) {
   if (!entry.status) return null;

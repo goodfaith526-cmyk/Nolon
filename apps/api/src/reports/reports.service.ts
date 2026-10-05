@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   DEFAULT_LOCALE,
   isLocale,
+  type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
   type CashMovementDto,
@@ -21,6 +22,8 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import { PayablesReportsService } from '../payables/payables-reports.service.js';
+import { SuppliersService } from '../payables/suppliers.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripsService } from '../transport/trips.service.js';
@@ -29,6 +32,7 @@ import { buildWorkbook } from './excel.js';
 import { addAmounts, byCustomer, byRoute, NO_AMOUNTS, profitFigures } from './profitability.js';
 import {
   type ExportContext,
+  apAgingSheets,
   arAgingSheets,
   balanceSheetSheets,
   cashMovementSheets,
@@ -60,7 +64,8 @@ export type ReportRequest =
   | { report: 'shipment-profitability'; query: PeriodQuery & { customerId?: string } }
   | { report: 'invoices-receipts'; query: PeriodQuery & { customerId?: string } }
   | { report: 'cash-movement'; query: PeriodQuery & { accountId?: string } }
-  | { report: 'open-accruals'; query: AsOfQuery };
+  | { report: 'open-accruals'; query: AsOfQuery }
+  | { report: 'ap-aging'; query: AsOfQuery & { supplierId?: string } };
 
 export interface ReportFile {
   fileName: string;
@@ -83,6 +88,8 @@ export class ReportsService {
     private readonly customers: CustomersService,
     private readonly shipments: ShipmentsService,
     private readonly trips: TripsService,
+    private readonly payables: PayablesReportsService,
+    private readonly suppliers: SuppliersService,
   ) {}
 
   accountOptions(user: AuthUser): Promise<ReportAccountOptionDto[]> {
@@ -115,6 +122,11 @@ export class ReportsService {
       this.ledger.customerAdvances(user, q.asOf, q.branchId, q.customerId),
     ]);
     return withAdvances(aging, advances);
+  }
+
+  /** Open approved supplier bills by age (payables). */
+  apAging(user: AuthUser, q: AsOfQuery & { supplierId?: string }): Promise<ApAgingDto> {
+    return this.payables.apAging(user, q.asOf, q.branchId, q.supplierId);
   }
 
   invoicesReceipts(
@@ -266,6 +278,12 @@ export class ReportsService {
         return cashMovementSheets(ctx, await this.cashMovement(user, request.query));
       case 'open-accruals':
         return openAccrualsSheets(ctx, await this.openAccruals(user, request.query));
+      case 'ap-aging':
+        return apAgingSheets(
+          ctx,
+          await this.apAging(user, request.query),
+          await this.supplierName(request.query.supplierId),
+        );
     }
   }
 
@@ -279,6 +297,17 @@ export class ReportsService {
       select: { code: true },
     });
     return branch?.code ?? null;
+  }
+
+  /** The filtered supplier's name (suppliers are shared by every branch), or null. */
+  private async supplierName(supplierId?: string): Promise<string | null> {
+    if (!supplierId) return null;
+    try {
+      return (await this.suppliers.requireSupplier(supplierId)).name;
+    } catch (error) {
+      if (error instanceof NotFoundException) return null;
+      throw error;
+    }
   }
 
   /** The filtered customer's name, through the customers module (404 outside the user's branches). */

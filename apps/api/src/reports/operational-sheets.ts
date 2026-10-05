@@ -523,6 +523,10 @@ export function auditLogSheets(ctx: ExportContext, r: AuditLogDto): WorkbookSpec
     SHIPMENT: 'shipmentStatus',
     CUSTOMS: 'customsStatus',
     TRIP: 'tripStatus',
+    CREDIT_NOTE: 'documentStatus',
+    SUPPLIER_BILL: 'documentStatus',
+    SUPPLIER_PAYMENT: 'documentStatus',
+    EXPENSE: 'documentStatus',
   } as const;
   const rows: RowSpec[] = r.entries.map((e) => {
     const kind = e.entity in statusKind ? statusKind[e.entity as keyof typeof statusKind] : null;

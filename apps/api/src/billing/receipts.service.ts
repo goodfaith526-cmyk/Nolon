@@ -135,7 +135,7 @@ export class ReceiptsService {
           );
         }
         const share = dec(a.amount);
-        const outstanding = invoice.total.minus(invoice.paidAmount);
+        const outstanding = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
         if (!share.gt(0) || !roundMoney(share, decimals).eq(share)) {
           throw new BadRequestException('Allocated amounts must be positive');
         }
@@ -147,7 +147,13 @@ export class ReceiptsService {
         return {
           invoice,
           amount: share,
-          relievedUsd: relievedUsd(invoice, share, invoice.fxRate, invoice.currency, USD_DECIMALS),
+          relievedUsd: relievedUsd(
+            settledSoFar(invoice),
+            share,
+            invoice.fxRate,
+            invoice.currency,
+            USD_DECIMALS,
+          ),
         };
       });
 
@@ -281,6 +287,18 @@ interface LockedInvoice {
   totalUsd: Prisma.Decimal;
   paidAmount: Prisma.Decimal;
   paidUsd: Prisma.Decimal;
+  creditedAmount: Prisma.Decimal;
+  creditedUsd: Prisma.Decimal;
+}
+
+/** Payments and credit notes both settle an invoice: what is left is cleared by either. */
+function settledSoFar(invoice: LockedInvoice) {
+  return {
+    total: invoice.total,
+    totalUsd: invoice.totalUsd,
+    paidAmount: invoice.paidAmount.plus(invoice.creditedAmount),
+    paidUsd: invoice.paidUsd.plus(invoice.creditedUsd),
+  };
 }
 
 async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string, LockedInvoice>> {
@@ -289,7 +307,8 @@ async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string,
     SELECT "id", "number", "customer_id" AS "customerId", "shipment_id" AS "shipmentId",
            "status"::text AS "status", "currency", "fx_rate" AS "fxRate", "total",
            "receivable_account_id" AS "receivableAccountId",
-           "total_usd" AS "totalUsd", "paid_amount" AS "paidAmount", "paid_usd" AS "paidUsd"
+           "total_usd" AS "totalUsd", "paid_amount" AS "paidAmount", "paid_usd" AS "paidUsd",
+           "credited_amount" AS "creditedAmount", "credited_usd" AS "creditedUsd"
     FROM "customer_invoices"
     WHERE "id" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
     ORDER BY "id"
@@ -304,6 +323,8 @@ async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string,
         totalUsd: new Prisma.Decimal(r.totalUsd),
         paidAmount: new Prisma.Decimal(r.paidAmount),
         paidUsd: new Prisma.Decimal(r.paidUsd),
+        creditedAmount: new Prisma.Decimal(r.creditedAmount),
+        creditedUsd: new Prisma.Decimal(r.creditedUsd),
       },
     ]),
   );

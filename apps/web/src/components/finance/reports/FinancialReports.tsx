@@ -2,6 +2,7 @@
 
 import {
   AGING_BUCKETS,
+  type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
   type BalanceSheetRowDto,
@@ -15,10 +16,15 @@ import {
   type ProfitFiguresDto,
   type ReportLocationDto,
   type ShipmentProfitabilityDto,
+  type SupplierSummaryDto,
+  type Page,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
+import { useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
+import { api } from '@/lib/api';
 import { useLocalName } from '@/lib/master-data';
+import { can, useMe } from '../../StaffShell';
 import { Money } from '../common';
 import { AmountCell, BranchHeads, EmptyRow, ReportTable, ReportView } from './ReportKit';
 
@@ -309,6 +315,119 @@ export function ArAging() {
                   </td>
                   <AmountCell value={i.outstandingUsd} />
                   <td>{t(`bucket_${i.bucket}`)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </ReportTable>
+        </div>
+      )}
+    </ReportView>
+  );
+}
+
+/** Active and inactive suppliers for the AP aging filter; empty without suppliers:view. */
+function useSupplierOptions(enabled: boolean): SupplierSummaryDto[] {
+  const [suppliers, setSuppliers] = useState<SupplierSummaryDto[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    api<Page<SupplierSummaryDto>>('/suppliers?pageSize=100')
+      .then((page) => {
+        if (!cancelled) setSuppliers(page.items);
+      })
+      .catch(() => {
+        // Without the list the report still runs for every supplier.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+  return suppliers;
+}
+
+export function ApAging() {
+  const t = useTranslations('Reports');
+  const me = useMe();
+  const suppliers = useSupplierOptions(can(me, 'suppliers:view'));
+  return (
+    <ReportView<ApAgingDto>
+      id="ap-aging"
+      permission="financial_reports:view"
+      title={t('apAging')}
+      hint={t('apAgingHint')}
+      filters={{
+        dates: 'asOf',
+        extras: [
+          {
+            name: 'supplierId',
+            label: t('supplier'),
+            all: t('allSuppliers'),
+            options: suppliers.map((s) => ({ value: s.id, label: s.name })),
+          },
+        ],
+      }}
+    >
+      {(r) => (
+        <div className="stack">
+          <ReportTable title={t('bySupplier')}>
+            <thead>
+              <tr>
+                <th>{t('supplier')}</th>
+                {AGING_BUCKETS.map((b) => (
+                  <th key={b}>{t(`bucket_${b}`)}</th>
+                ))}
+                <th>{t('totalUsd')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.suppliers.length === 0 && <EmptyRow columns={7} text={t('nothingOpen')} />}
+              {r.suppliers.map((s) => (
+                <tr key={s.supplierId}>
+                  <td>{s.supplierName}</td>
+                  {AGING_BUCKETS.map((b) => (
+                    <AmountCell key={b} value={s.amounts[b]} />
+                  ))}
+                  <AmountCell value={s.amounts.total} strong />
+                </tr>
+              ))}
+              <tr className="subtotal">
+                <td>{t('total')}</td>
+                {AGING_BUCKETS.map((b) => (
+                  <AmountCell key={b} value={r.totals[b]} />
+                ))}
+                <AmountCell value={r.totals.total} strong />
+              </tr>
+            </tbody>
+          </ReportTable>
+          <ReportTable title={t('bills')}>
+            <thead>
+              <tr>
+                <th>{t('number')}</th>
+                <th>{t('supplier')}</th>
+                <th>{t('supplierReference')}</th>
+                <th>{t('dueDate')}</th>
+                <th>{t('daysPastDue')}</th>
+                <th>{t('outstanding')}</th>
+                <th>{t('outstandingUsd')}</th>
+                <th>{t('bucket')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.bills.length === 0 && <EmptyRow columns={8} text={t('nothingOpen')} />}
+              {r.bills.map((b) => (
+                <tr key={b.billId}>
+                  <td dir="ltr">
+                    <Link href={`/supplier-bills/${b.billId}`}>{b.number}</Link>
+                  </td>
+                  <td>{b.supplierName}</td>
+                  <td dir="ltr">{b.supplierReference ?? '—'}</td>
+                  <td dir="ltr">{b.dueDate}</td>
+                  <td dir="ltr">{b.daysPastDue}</td>
+                  <td dir="ltr">
+                    <Money value={b.outstanding} currency={b.currency} />
+                  </td>
+                  <AmountCell value={b.outstandingUsd} />
+                  <td>{t(`bucket_${b.bucket}`)}</td>
                 </tr>
               ))}
             </tbody>

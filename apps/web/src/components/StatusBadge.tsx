@@ -19,7 +19,11 @@ export function StatusBadge({
     | 'period'
     | 'customs'
     | 'trip'
-    | 'tripExpense';
+    | 'tripExpense'
+    | 'creditNote'
+    | 'supplierBill'
+    | 'supplierPayment'
+    | 'expense';
   status: string;
 }) {
   const te = useTranslations('Enums');

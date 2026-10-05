@@ -199,7 +199,12 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         }).expect(201)
       ).body as CustomerInvoiceDto;
       expect(draft).toMatchObject({ status: 'DRAFT', number: null, currency: 'SDG', total: '0' });
-      expect(draft.actions).toEqual({ canEdit: true, canApprove: true, canCancel: true });
+      expect(draft.actions).toEqual({
+        canEdit: true,
+        canApprove: true,
+        canCancel: true,
+        canCreditNote: false,
+      });
       // An empty invoice is not approved.
       await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(400);
     });
@@ -214,7 +219,12 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         balance: '1000000.5',
       });
       expect(invoice.paymentStatus).toBe('UNPAID');
-      expect(invoice.actions).toEqual({ canEdit: false, canApprove: false, canCancel: false });
+      expect(invoice.actions).toEqual({
+        canEdit: false,
+        canApprove: false,
+        canCancel: false,
+        canCreditNote: true,
+      });
 
       const entry = await journal(invoice.journalEntryId ?? '');
       expect(entry).toMatchObject({

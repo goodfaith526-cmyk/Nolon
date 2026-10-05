@@ -30,6 +30,9 @@ export interface LineSpec {
   amountUsd?: Decimal;
   shipmentId?: string | null;
   customerId?: string | null;
+  supplierId?: string | null;
+  /** Accrued transport lines (rules 11 and 11a): the trip the accrual belongs to. */
+  tripId?: string | null;
   description?: string | null;
 }
 
@@ -50,6 +53,9 @@ export class UnbalancedEntryError extends Error {
 
 export class InvalidLineError extends Error {}
 
+export const AMOUNT_TOO_SMALL =
+  'The amount is too small to post in USD: it rounds to 0.00 USD at this exchange rate';
+
 export function toUsd(amount: Decimal, fxRate: Decimal, currency: string): Decimal {
   if (currency === BASE_CURRENCY) return amount;
   return roundMoney(amount.div(fxRate), USD_DECIMALS);
@@ -68,13 +74,14 @@ export function totals(lines: readonly PreparedLine[]): { debitUsd: Decimal; cre
 /**
  * Converts each line to USD and balances the entry. When USD debits and credits differ by no more
  * than one cent per line, a line on the rounding account (in the entry's branch) takes up the
- * difference; a larger difference throws UnbalancedEntryError.
+ * difference; a larger difference throws UnbalancedEntryError. An entry worth 0.00 USD in total
+ * throws InvalidLineError: lines whose own USD value rounds to zero are kept (with their amount in
+ * their currency), as long as the entry as a whole is worth at least a cent.
  */
 export function prepareLines(
   lines: readonly LineSpec[],
   rounding: { accountId: string; branchId: string },
 ): PreparedLine[] {
-  if (lines.length < 2) throw new InvalidLineError('An entry needs at least two lines');
   const prepared = lines.map((line): PreparedLine => {
     if (!line.amount.gt(0)) throw new InvalidLineError('Line amounts must be positive');
     if (!line.fxRate.gt(0)) throw new InvalidLineError('Exchange rates must be positive');
@@ -89,6 +96,13 @@ export function prepareLines(
     return { ...line, amountUsd };
   });
   const { debitUsd, creditUsd } = totals(prepared);
+  // Every line rounds to 0.00 USD (e.g. 1 SDG at 600): there is nothing to post in the reporting
+  // currency, and the database refuses an entry of zero. Checked before the line count, as an
+  // opening entry worth nothing has no equity line to balance it.
+  if (prepared.length > 0 && debitUsd.isZero() && creditUsd.isZero()) {
+    throw new InvalidLineError(AMOUNT_TOO_SMALL);
+  }
+  if (lines.length < 2) throw new InvalidLineError('An entry needs at least two lines');
   const difference = debitUsd.minus(creditUsd);
   if (difference.isZero()) return prepared;
   if (difference.abs().gt(ROUNDING_PER_LINE.times(prepared.length))) {

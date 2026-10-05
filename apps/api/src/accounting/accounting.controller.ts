@@ -20,6 +20,7 @@ import {
   POSTING_ROLES,
   type AccountDto,
   type AccountingSettingsDto,
+  type ExpenseCategoryDto,
   type FiscalPeriodDto,
   type FxRateDto,
   type FxRateLookupDto,
@@ -42,6 +43,8 @@ import {
   requiredText,
 } from '../common/validation.js';
 import { AccountsService } from './accounts.service.js';
+import { ExpenseCategoriesService } from './expense-categories.service.js';
+import { OpeningBalancesService } from './opening-balances.service.js';
 import { FxRatesService } from './fx-rates.service.js';
 import { JournalService } from './journal.service.js';
 import { ManualJournalsService } from './manual-journals.service.js';
@@ -68,7 +71,11 @@ const accountBody = z
   .strict();
 const mappingBody = z.object({ accountId: z.uuid() }).strict();
 const chargeTypePostingBody = z
-  .object({ revenueAccountId: z.uuid().nullable(), isReimbursable: z.boolean() })
+  .object({
+    revenueAccountId: z.uuid().nullable(),
+    costAccountId: z.uuid().nullish(),
+    isReimbursable: z.boolean(),
+  })
   .strict();
 const fxRateBody = z
   .object({ currency: currencyCode, rateDate: dateString, rate: fxRate })
@@ -107,6 +114,28 @@ const journalListQuery = pageQuery.extend({
   to: dateString.optional(),
 });
 const trialBalanceQuery = z.object({ asOf: dateString, branchId: z.uuid().optional() });
+const expenseCategoryBody = z
+  .object({
+    nameEn: requiredText(200),
+    nameAr: requiredText(200),
+    accountId: z.uuid(),
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+const categoryCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9_]{1,20}$/);
+const openingAccountsBody = z
+  .object({
+    requestId: z.uuid(),
+    branchId: z.uuid(),
+    entryDate: dateString,
+    description: optionalText(1000),
+    lines: z.array(journalLine).min(1).max(500),
+  })
+  .strict();
 
 @Controller('accounting')
 export class AccountingController {
@@ -117,7 +146,38 @@ export class AccountingController {
     private readonly journal: JournalService,
     private readonly manual: ManualJournalsService,
     private readonly trialBalance: TrialBalanceService,
+    private readonly expenseCategories: ExpenseCategoriesService,
+    private readonly openingBalances: OpeningBalancesService,
   ) {}
+
+  /** Expense categories: everyone reads them for dropdowns; the chart's owners change them. */
+  @Get('expense-categories')
+  @RequirePermission('master_data:view')
+  listExpenseCategories(): Promise<ExpenseCategoryDto[]> {
+    return this.expenseCategories.list();
+  }
+
+  @Put('expense-categories/:code')
+  @RequirePermission('chart_of_accounts:update')
+  upsertExpenseCategory(
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<ExpenseCategoryDto> {
+    return this.expenseCategories.upsert({
+      code: parse(categoryCode, code),
+      ...parse(expenseCategoryBody, body),
+    });
+  }
+
+  /** Opening balances of ledger accounts at go-live (annex C rule 15), posted at once. */
+  @Post('opening-balances')
+  @RequirePermission('manual_journals:create', 'manual_journals:approve')
+  postOpeningBalances(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<JournalEntryDto> {
+    return this.openingBalances.postAccounts(user, parse(openingAccountsBody, body));
+  }
 
   @Get('accounts')
   @RequirePermission('chart_of_accounts:view')

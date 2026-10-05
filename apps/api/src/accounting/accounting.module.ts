@@ -4,6 +4,8 @@ import { MasterDataModule } from '../master-data/master-data.module.js';
 import { AccountingController } from './accounting.controller.js';
 import { AccountsService } from './accounts.service.js';
 import { AutoJournalService } from './auto-journal.service.js';
+import { ExpenseCategoriesService } from './expense-categories.service.js';
+import { OpeningBalancesService } from './opening-balances.service.js';
 import { FxRatesService } from './fx-rates.service.js';
 import { JournalService } from './journal.service.js';
 import { LedgerReportsService } from './ledger-reports.service.js';
@@ -23,8 +25,11 @@ import { TrialBalanceService } from './trial-balance.service.js';
     AutoJournalService,
     TrialBalanceService,
     LedgerReportsService,
+    ExpenseCategoriesService,
+    OpeningBalancesService,
   ],
   exports: [
+    ExpenseCategoriesService,
     AccountsService,
     FxRatesService,
     PeriodsService,

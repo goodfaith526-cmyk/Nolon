@@ -393,9 +393,9 @@ export class LedgerReportsService {
     const from = toDbDate(period.from);
     const to = toDbDate(period.to);
     const onlyAccount = accountId ? Prisma.sql`AND a."id" = ${accountId}::uuid` : Prisma.empty;
-    // Realized FX: the exchange-difference lines of receipt entries and of their reversals, on
-    // whatever revenue (gain) or expense (loss) account they were posted to at the time. With an
-    // account chosen, only the receipts into that account.
+    // Realized FX: the exchange-difference lines of receipt and supplier payment entries and of
+    // their reversals, on whatever revenue (gain) or expense (loss) account they were posted to at
+    // the time. With an account chosen, only the receipts into (payments from) that account.
     const onlyReceiptsInto = accountId
       ? Prisma.sql`AND EXISTS (
           SELECT 1 FROM "journal_lines" c
@@ -455,7 +455,8 @@ export class LedgerReportsService {
               JOIN "branches" b ON b."id" = l."branch_id"
               WHERE e."status" = 'POSTED'
                 AND e."entry_date" BETWEEN ${from} AND ${to}
-                AND (e."source" = 'RECEIPT' OR o."source" = 'RECEIPT')
+                AND (e."source" IN ('RECEIPT', 'SUPPLIER_PAYMENT')
+                     OR o."source" IN ('RECEIPT', 'SUPPLIER_PAYMENT'))
                 AND l."description" = ${FX_DIFFERENCE_LINE}
                 AND a."type" IN ('REVENUE', 'EXPENSE')
                 AND ${lineBranchIn(branchIds)}
@@ -562,9 +563,11 @@ export class LedgerReportsService {
 
   /**
    * Accrued transport costs as of a date. Per trip: the accrued line of each rule 11 entry (source
-   * TRIP_ACCRUAL, its liability line without a shipment) and of its reversal, credit - debit, on
-   * whatever account it was posted to, so a remap of ACCRUED_TRANSPORT hides nothing. `otherUsd`
-   * is what else sits on the account mapped today (manual entries). Zero balances are left out.
+   * TRIP_ACCRUAL, its liability line without a shipment) and of its reversal, and the lines that
+   * carry the trip (a carrier bill clearing it, rule 11a, and that bill's reversal), credit -
+   * debit, on whatever account they were posted to, so a remap of ACCRUED_TRANSPORT hides nothing.
+   * `otherUsd` is what else sits on the account mapped today (manual entries). Zero balances are
+   * left out.
    */
   async openTripAccruals(
     user: AuthUser,
@@ -579,7 +582,8 @@ export class LedgerReportsService {
       this.prisma.$queryRaw<
         { tripId: string; currency: string; balance: Decimal; balanceUsd: Decimal }[]
       >`
-        SELECT CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE o."source_id" END AS "tripId",
+        SELECT coalesce(l."trip_id",
+                        CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE o."source_id" END) AS "tripId",
                l."currency",
                sum(l."credit" - l."debit") AS "balance",
                sum(l."credit_usd" - l."debit_usd") AS "balanceUsd"
@@ -589,7 +593,7 @@ export class LedgerReportsService {
         JOIN "accounts" a ON a."id" = l."account_id"
         WHERE e."status" = 'POSTED'
           AND e."entry_date" <= ${at}
-          AND (e."source" = 'TRIP_ACCRUAL' OR o."source" = 'TRIP_ACCRUAL')
+          AND (e."source" = 'TRIP_ACCRUAL' OR o."source" = 'TRIP_ACCRUAL' OR l."trip_id" IS NOT NULL)
           AND l."shipment_id" IS NULL
           AND a."type" = 'LIABILITY'
           AND ${lineBranchIn(branchIds)}
@@ -606,6 +610,7 @@ export class LedgerReportsService {
               AND l."account_id" = ${accrued.accountId}::uuid
               AND e."source" <> 'TRIP_ACCRUAL'
               AND o."source" IS DISTINCT FROM 'TRIP_ACCRUAL'
+              AND l."trip_id" IS NULL
               AND ${lineBranchIn(branchIds)}`
         : Promise.resolve([]),
     ]);

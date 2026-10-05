@@ -50,3 +50,45 @@ export type ShipmentAuditEntry = Omit<AuditLogEntryDto, 'reference'> & { shipmen
 export function auditEntityFilter(q: AuditQuery): Prisma.Sql {
   return andIf(q.entity, (e) => Prisma.sql`x."entity" = ${e}`);
 }
+
+/** A row of a document's audit events, as `documentAuditRows` returns it. */
+export interface DocumentAuditRow {
+  at: Date;
+  branchCode: string;
+  userId: string | null;
+  userName: string | null;
+  entity: AuditEntity;
+  action: AuditLogEntryDto['action'];
+  reference: string;
+  status: string | null;
+  detail: string | null;
+}
+
+/**
+ * The audit query over `events`, a UNION of rows with the columns "branch_id", "at", "user_id",
+ * "entity", "action", "reference", "status" and "detail": in the branches given, recorded in the
+ * period (days in the branch's time zone), of the user and kind asked for, newest first.
+ */
+export function documentAuditSql(
+  events: Prisma.Sql,
+  branchIds: readonly string[],
+  q: AuditQuery,
+): Prisma.Sql {
+  return Prisma.sql`
+    WITH events AS (${events})
+    SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
+           x."entity", x."action", x."reference", x."status", x."detail"
+    FROM events x
+    JOIN "branches" b ON b."id" = x."branch_id"
+    LEFT JOIN "users" u ON u."id" = x."user_id"
+    WHERE x."branch_id" IN ${uuidList(branchIds)}
+      AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+      ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
+      ${auditEntityFilter(q)}
+    ORDER BY x."at" DESC
+    LIMIT ${q.limit + 1}`;
+}
+
+export function toAuditEntry(row: DocumentAuditRow): AuditLogEntryDto {
+  return { ...row, at: row.at.toISOString() };
+}

@@ -313,7 +313,8 @@ export interface TripsReportDto {
 /**
  * There is no general audit table: the log is read from the records that already say who did
  * what and when (shipment events, warehouse movements, customs fees and files, journal entries,
- * invoices, receipts, trips, trip expenses, proofs of delivery and documents). Edits that leave no
+ * invoices, receipts, credit notes, supplier bills and payments, general expenses, trips, trip
+ * expenses, proofs of delivery and documents). Edits that leave no
  * such record (a customer's address, a draft's lines, a user's roles) are not in it.
  */
 export const AUDIT_ENTITIES = [
@@ -323,6 +324,10 @@ export const AUDIT_ENTITIES = [
   'JOURNAL_ENTRY',
   'INVOICE',
   'RECEIPT',
+  'CREDIT_NOTE',
+  'SUPPLIER_BILL',
+  'SUPPLIER_PAYMENT',
+  'EXPENSE',
   'TRIP',
   'TRIP_EXPENSE',
   'POD',
@@ -359,8 +364,9 @@ export interface AuditLogEntryDto {
   /** The record's number (or file name). */
   reference: string;
   /**
-   * The status reached, as its code: a shipment status (SHIPMENT), customs status (CUSTOMS) or
-   * trip status (TRIP); null otherwise.
+   * The status reached, as its code: a shipment status (SHIPMENT), customs status (CUSTOMS), trip
+   * status (TRIP), or the document's status (CREDIT_NOTE, SUPPLIER_BILL, SUPPLIER_PAYMENT,
+   * EXPENSE); null otherwise.
    */
   status: string | null;
   /** The reason or note, as recorded. */

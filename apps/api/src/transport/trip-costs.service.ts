@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { TripExpenseRequest } from '@nolon/shared';
+import type { BillableTripDto, TripExpenseRequest } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -17,6 +17,7 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { JournalEntry, Prisma, Trip } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { FleetService } from './fleet.service.js';
 import { forbidDriverOnly, lockTrip, tripScope } from './trip-scope.js';
 import {
   type CostShare,
@@ -36,7 +37,8 @@ type Tx = Prisma.TransactionClient;
  *   cost per shipment, credit accrued transport costs.
  * The cost is shared by the trip's shipments (transport-rules splitTripCost) and each share is a
  * journal line with the shipment as its dimension, so it reaches the shipment's profitability.
- * Rule 11a (the carrier's bill clearing the accrual) comes with supplier bills.
+ * Rule 11a: an approved carrier bill clears the accrual; the trip keeps the bill that did
+ * (carrierBillId), so it is cleared once. The payables module calls the helpers below.
  */
 @Injectable()
 export class TripCostsService {
@@ -47,6 +49,7 @@ export class TripCostsService {
     private readonly accounts: AccountsService,
     private readonly fxRates: FxRatesService,
     private readonly currencies: CurrenciesService,
+    private readonly fleet: FleetService,
   ) {}
 
   /**
@@ -230,6 +233,126 @@ export class TripCostsService {
         },
       });
     });
+  }
+
+  /**
+   * Completed external trips of carriers linked to `supplierId` whose accrual no bill has cleared
+   * yet, in the user's branches (or `branchId`): what a carrier bill can settle.
+   */
+  async billableTrips(
+    user: AuthUser,
+    supplierId: string,
+    branchId?: string,
+  ): Promise<BillableTripDto[]> {
+    const trips = await this.prisma.trip.findMany({
+      where: {
+        ...tripScope(user),
+        ...(branchId ? { branchId } : {}),
+        kind: 'EXTERNAL',
+        status: 'COMPLETED',
+        accrualEntryId: { not: null },
+        carrierBillId: null,
+        carrier: { supplierId },
+      },
+      include: { carrier: { select: { name: true } }, branch: { select: { timezone: true } } },
+      orderBy: { number: 'asc' },
+      take: 200,
+    });
+    return trips.flatMap((t) =>
+      t.agreedCost && t.currency
+        ? [
+            {
+              tripId: t.id,
+              tripNumber: t.number,
+              branchId: t.branchId,
+              carrierName: t.carrier?.name ?? '',
+              completedOn: t.completedAt ? todayIn(t.branch.timezone, t.completedAt) : null,
+              currency: t.currency,
+              agreedCost: t.agreedCost.toFixed(),
+            },
+          ]
+        : [],
+    );
+  }
+
+  /** For a draft bill line: 404 unless the user may see the trip; its number and branch. */
+  async requireBillableTrip(
+    user: AuthUser,
+    tripId: string,
+  ): Promise<{ id: string; number: string; branchId: string }> {
+    forbidDriverOnly(user, 'bill trips');
+    const trip = await this.prisma.trip.findFirst({
+      where: { id: tripId, ...tripScope(user) },
+      select: { id: true, number: true, branchId: true, kind: true },
+    });
+    if (!trip) throw new NotFoundException('Trip not found');
+    if (trip.kind !== 'EXTERNAL') {
+      throw new BadRequestException(`Trip ${trip.number} is not an external carrier's trip`);
+    }
+    return trip;
+  }
+
+  /**
+   * Rule 11a, inside the approving transaction of carrier bill `bill`: locks each trip (in id
+   * order, after the bill), then share-locks their carriers (in id order), checks each trip can be
+   * cleared by this bill and marks it billed. A trip is cleared once: it must be a completed external trip of the bill's branch with its accrual
+   * posted, its carrier linked to the bill's supplier, accrued in the bill's currency, and not
+   * cleared by another bill yet.
+   */
+  async markCarrierBilled(
+    tx: Tx,
+    tripIds: readonly string[],
+    bill: { id: string; supplierId: string; branchId: string; currency: string },
+  ): Promise<Map<string, { number: string; accrualEntryId: string }>> {
+    const result = new Map<string, { number: string; accrualEntryId: string }>();
+    // Every trip first, then their carriers, each in id order: the same order everywhere, so two
+    // bills cannot deadlock, and a carrier's link to a supplier is read under a lock that a
+    // concurrent link change (FleetService.setCarrierSupplier, FOR UPDATE) must wait for.
+    const trips: Trip[] = [];
+    for (const id of [...new Set(tripIds)].sort()) trips.push(await lockTrip(tx, id));
+    const links = await this.fleet.lockCarrierSuppliers(
+      tx,
+      trips.flatMap((trip) => (trip.carrierId ? [trip.carrierId] : [])),
+    );
+    for (const trip of trips) {
+      const id = trip.id;
+      const supplierId = trip.carrierId ? (links.get(trip.carrierId) ?? null) : null;
+      if (trip.kind !== 'EXTERNAL' || trip.status !== 'COMPLETED' || !trip.accrualEntryId) {
+        throw new ConflictException(`Trip ${trip.number} is not a completed external trip`);
+      }
+      if (trip.branchId !== bill.branchId) {
+        throw new BadRequestException(`Trip ${trip.number} belongs to another branch`);
+      }
+      if (supplierId !== bill.supplierId) {
+        throw new BadRequestException(
+          `Trip ${trip.number}'s carrier is not linked to this supplier`,
+        );
+      }
+      if (trip.currency !== bill.currency) {
+        throw new BadRequestException(
+          `Trip ${trip.number} was agreed in ${trip.currency ?? '—'}; bill it in that currency`,
+        );
+      }
+      if (trip.carrierBillId !== null) {
+        throw new ConflictException(`Trip ${trip.number} is already settled by another bill`);
+      }
+      await tx.trip.update({ where: { id }, data: { carrierBillId: bill.id } });
+      result.set(id, { number: trip.number, accrualEntryId: trip.accrualEntryId });
+    }
+    return result;
+  }
+
+  /** A cancelled carrier bill gives its trips' accruals back: they can be billed again. */
+  async releaseCarrierBill(tx: Tx, billId: string): Promise<void> {
+    const trips = await tx.trip.findMany({
+      where: { carrierBillId: billId },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    for (const { id } of trips) {
+      await lockTrip(tx, id);
+      await tx.trip.update({ where: { id }, data: { carrierBillId: null } });
+    }
   }
 
   /** The trip's cost shares, from its shipments' cargo lines (CBM, else weight, else equal). */
