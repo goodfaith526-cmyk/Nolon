@@ -859,7 +859,9 @@ function AuditStatus({ entry }: { entry: AuditLogEntryDto }) {
 function AuditChanges({ entry }: { entry: AuditLogEntryDto }) {
   const t = useTranslations('OpsReports');
   if (!entry.changes?.length) return null;
-  const label = (field: string) => (t.has(`field_${field}`) ? t(`field_${field}`) : field);
+  const name = (field: string) => (t.has(`field_${field}`) ? t(`field_${field}`) : field);
+  // A contact's or party's field comes as `contact.phone`: shown as "Contact · Phone".
+  const label = (field: string) => field.split('.').map(name).join(' · ');
   return (
     <ul className="audit-changes">
       {entry.changes.map((c) => (

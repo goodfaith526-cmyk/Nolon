@@ -289,7 +289,16 @@ const AUDIT_FIELD = {
   branches: { en: 'Branches', ar: 'الفروع' },
   password: { en: 'Password', ar: 'كلمة المرور' },
   source: { en: 'Source', ar: 'المصدر' },
+  contact: { en: 'Contact', ar: 'جهة الاتصال' },
+  party: { en: 'Party', ar: 'طرف' },
+  position: { en: 'Position', ar: 'المنصب' },
+  idNumber: { en: 'ID number', ar: 'رقم الهوية' },
+  canInquire: { en: 'May inquire', ar: 'يحق له الاستفسار' },
+  canReceiveCargo: { en: 'May receive cargo', ar: 'يحق له استلام البضاعة' },
+  canReceiveDocuments: { en: 'May receive documents', ar: 'يحق له استلام المستندات' },
+  isPrimary: { en: 'Primary', ar: 'أساسي' },
 } as const;
+
 const EVENT_SOURCE = {
   USER: { en: 'Staff', ar: 'موظف' },
   API: { en: 'API', ar: 'واجهة API' },

@@ -1372,7 +1372,15 @@
     "field_roles": "Roles",
     "field_branches": "Branches",
     "field_password": "Password",
-    "field_source": "Source"
+    "field_source": "Source",
+    "field_contact": "Contact",
+    "field_party": "Party",
+    "field_position": "Position",
+    "field_idNumber": "ID number",
+    "field_canInquire": "May inquire",
+    "field_canReceiveCargo": "May receive cargo",
+    "field_canReceiveDocuments": "May receive documents",
+    "field_isPrimary": "Primary"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",

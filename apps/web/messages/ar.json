@@ -1372,7 +1372,15 @@
     "field_roles": "الأدوار",
     "field_branches": "الفروع",
     "field_password": "كلمة المرور",
-    "field_source": "المصدر"
+    "field_source": "المصدر",
+    "field_contact": "جهة الاتصال",
+    "field_party": "طرف",
+    "field_position": "المنصب",
+    "field_idNumber": "رقم الهوية",
+    "field_canInquire": "يحق له الاستفسار",
+    "field_canReceiveCargo": "يحق له استلام البضاعة",
+    "field_canReceiveDocuments": "يحق له استلام المستندات",
+    "field_isPrimary": "أساسي"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",

@@ -375,6 +375,109 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await get(`/reports/audit-log?${around()}`, cookie).expect(403);
     });
 
+    it('records contact and party changes, before and after, under the customer', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      const withContact = (
+        await post(`/customers/${c.id}/contacts`, cookies.salesDxb, {
+          name: 'Omar',
+          phone: '+971501234111',
+          isPrimary: true,
+        }).expect(201)
+      ).body as CustomerDto;
+      const omar = withContact.contacts[0];
+      if (!omar) throw new Error('No contact');
+      // A second primary contact moves the flag off Omar: both changes are logged.
+      await post(`/customers/${c.id}/contacts`, cookies.salesDxb, {
+        name: 'Huda',
+        phone: '+971501234222',
+        isPrimary: true,
+      }).expect(201);
+      await patch(`/customers/${c.id}/contacts/${omar.id}`, cookies.salesDxb, {
+        phone: '+971501234333',
+      }).expect(200);
+      const withParty = (
+        await post(`/customers/${c.id}/parties`, cookies.salesDxb, {
+          name: 'Nile Consignee',
+        }).expect(201)
+      ).body as CustomerDto;
+      const party = withParty.parties[0];
+      if (!party) throw new Error('No party');
+      await patch(`/customers/${c.id}/parties/${party.id}`, cookies.salesDxb, {
+        city: 'Khartoum',
+      }).expect(200);
+
+      const log = (await entries(cookies.managerDxb, `userId=${ids.salesDxb}&entity=CUSTOMER`))
+        .filter((e) => e.reference.startsWith(c.number))
+        .map((e) => [e.action, e.changes]);
+      expect(log).toEqual([
+        [
+          'UPDATED',
+          [
+            { field: 'party', before: 'Nile Consignee', after: 'Nile Consignee' },
+            { field: 'party.city', before: null, after: 'Khartoum' },
+          ],
+        ],
+        [
+          'UPDATED',
+          expect.arrayContaining([
+            { field: 'party', before: null, after: 'Nile Consignee' },
+            { field: 'party.name', before: null, after: 'Nile Consignee' },
+          ]),
+        ],
+        [
+          'UPDATED',
+          [
+            { field: 'contact', before: 'Omar', after: 'Omar' },
+            { field: 'contact.phone', before: '+971501234111', after: '+971501234333' },
+          ],
+        ],
+        [
+          'UPDATED',
+          expect.arrayContaining([
+            { field: 'contact', before: 'Omar', after: 'Omar' },
+            { field: 'contact.isPrimary', before: 'true', after: 'false' },
+            { field: 'contact', before: null, after: 'Huda' },
+            { field: 'contact.isPrimary', before: null, after: 'true' },
+          ]),
+        ],
+        [
+          'UPDATED',
+          expect.arrayContaining([
+            { field: 'contact', before: null, after: 'Omar' },
+            { field: 'contact.phone', before: null, after: '+971501234111' },
+          ]),
+        ],
+        ['CREATED', expect.any(Array)],
+      ]);
+    });
+
+    it('concurrent deactivations and reactivations log each change as it happened', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      const flip = (active: boolean) =>
+        post(`/customers/${c.id}/${active ? 'activate' : 'deactivate'}`, cookies.admin);
+      await Promise.all([
+        flip(false),
+        flip(true),
+        flip(false),
+        flip(true),
+        flip(false),
+        flip(true),
+      ]);
+      const log = (await entries(cookies.managerDxb, `userId=${ids.admin}&entity=CUSTOMER`))
+        .filter((e) => e.reference.startsWith(c.number))
+        .reverse()
+        .map((e) => e.changes?.[0]);
+      // Each logged change starts where the one before ended, and the last ends where the
+      // customer is now: no change is hidden or invented by a stale read.
+      let state = 'true';
+      for (const change of log) {
+        expect(change).toMatchObject({ field: 'isActive', before: state });
+        state = change?.after ?? '';
+      }
+      const now = await t.prisma.customer.findUniqueOrThrow({ where: { id: c.id } });
+      expect(state).toBe(String(now.isActive));
+    });
+
     it('the audit table refuses any change or removal, even from the application', async () => {
       const row = await t.prisma.auditEvent.findFirstOrThrow({ where: { entity: 'RATE' } });
       await expect(

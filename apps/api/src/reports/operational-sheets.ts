@@ -542,7 +542,13 @@ export function auditLogSheets(ctx: ExportContext, r: AuditLogDto): WorkbookSpec
         e.reference,
         kind ? t.value(kind, e.status) : null,
         (e.changes ?? [])
-          .map((c) => `${t.value('auditField', c.field)}: ${c.before ?? '—'} → ${c.after ?? '—'}`)
+          .map((c) => {
+            const field = c.field
+              .split('.')
+              .map((part) => t.value('auditField', part))
+              .join(' · ');
+            return `${field}: ${c.before ?? '—'} → ${c.after ?? '—'}`;
+          })
           .join('\n') || null,
         e.detail,
         e.source ? t.value('eventSource', e.source) : null,

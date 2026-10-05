@@ -205,8 +205,13 @@ export class RatesService {
     for (let i = 0; i < data.length; i += WRITE_CHUNK) {
       await tx.rateCard.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
     }
-    const created = await tx.rateCard.findMany({ where: { id: { in: rows.map((r) => r.id) } } });
-    await this.log(tx, user, 'CREATED', created, () => [
+    const created = await tx.rateCard.findMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      orderBy: { id: 'asc' },
+    });
+    // Every field as written, like a rate created on screen, and where it came from.
+    await this.log(tx, user, 'CREATED', created, (r) => [
+      ...changedFields(null, auditFields(r), RATE_AUDIT_FIELDS),
       { field: 'source', before: null, after: 'Excel import' },
     ]);
     return issues;
