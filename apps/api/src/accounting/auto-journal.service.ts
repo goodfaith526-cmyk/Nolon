@@ -405,8 +405,9 @@ export class AutoJournalService {
   }
 
   /**
-   * Transport cost goes to the DEFAULT_COST role: the accountant maps it in the settings (annex
-   * C: account names are generic and remapped without code). Shares of zero (an amount with fewer
+   * Transport cost goes to the TRANSPORT_COST role (annex C rules 10 and 11, "transport cost"):
+   * the accountant maps it in the settings (account names are generic and remapped without code).
+   * The difference of a carrier bill (rule 11a) follows the accrual's cost lines. Shares of zero (an amount with fewer
    * minor units than shipments) get no line. Per-line USD rounding goes to the rounding account.
    */
   private async postTripCost(
@@ -417,7 +418,7 @@ export class AutoJournalService {
     description: string,
     userId: string,
   ): Promise<JournalEntry> {
-    const costAccount = await this.accounts.roleAccount(tx, 'DEFAULT_COST');
+    const costAccount = await this.accounts.roleAccount(tx, 'TRANSPORT_COST');
     const common = { branchId: cost.branchId, currency: cost.currency, fxRate: cost.fxRate };
     let shared = ZERO;
     const lines: LineSpec[] = [];

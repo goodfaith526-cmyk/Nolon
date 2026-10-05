@@ -375,8 +375,8 @@ describe('financial reports', () => {
       const byCode = (rows: IncomeStatementDto['revenue']) =>
         Object.fromEntries(rows.map((row) => [row.code, row.total]));
       expect(byCode(r.revenue)).toEqual({ '4100': '2000', '4200': '300', '4900': '100' });
-      // 5100: the accrued trip cost; 6100: the posted manual entry (not the draft, not JED's).
-      expect(byCode(r.expenses)).toEqual({ '5100': '400', '6100': '50' });
+      // 5300 (transport cost): the accrued trip; 6100: the posted manual entry (not the draft, not JED's).
+      expect(byCode(r.expenses)).toEqual({ '5300': '400', '6100': '50' });
       expect(r.totalRevenue).toEqual({ byBranch: ['2400'], total: '2400' });
       expect(r.totalExpenses).toEqual({ byBranch: ['450'], total: '450' });
       expect(r.netIncome).toEqual({ byBranch: ['1950'], total: '1950' });

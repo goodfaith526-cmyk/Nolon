@@ -342,6 +342,7 @@
     "postingRole_CUSTOMER_ADVANCES": "Customer advances",
     "postingRole_DEFAULT_REVENUE": "Default revenue",
     "postingRole_DEFAULT_COST": "Default cost",
+    "postingRole_TRANSPORT_COST": "Transport cost",
     "postingRole_REIMBURSABLE": "Reimbursable charges",
     "postingRole_CONSOLIDATION_CLEARING": "Consolidation clearing",
     "postingRole_ACCRUED_TRANSPORT": "Accrued transport costs",

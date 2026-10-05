@@ -342,6 +342,7 @@
     "postingRole_CUSTOMER_ADVANCES": "دفعات العملاء المقدمة",
     "postingRole_DEFAULT_REVENUE": "الإيراد الافتراضي",
     "postingRole_DEFAULT_COST": "التكلفة الافتراضية",
+    "postingRole_TRANSPORT_COST": "تكلفة النقل",
     "postingRole_REIMBURSABLE": "مصاريف مستردة",
     "postingRole_CONSOLIDATION_CLEARING": "حساب تسوية التجميع",
     "postingRole_ACCRUED_TRANSPORT": "تكاليف نقل مستحقة",

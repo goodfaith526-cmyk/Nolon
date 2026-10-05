@@ -1012,7 +1012,7 @@ describe('inland transport: trip costs in the books', () => {
     });
     expect(entry.sourceNumber).toBe(posted.number);
     expect(sum(entry.lines.map((l) => l.debitUsd))).toBe(sum(entry.lines.map((l) => l.creditUsd)));
-    const cost = accounts.get('5100');
+    const cost = accounts.get('5300');
     const debits = entry.lines.filter((l) => l.accountId === cost?.id);
     expect(debits.map((l) => [l.shipmentId, l.debit])).toEqual(
       expect.arrayContaining([

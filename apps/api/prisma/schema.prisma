@@ -1036,6 +1036,8 @@ enum PostingRole {
   CUSTOMER_ADVANCES
   DEFAULT_REVENUE
   DEFAULT_COST
+  /// Trip costs (annex C rules 10, 11 and the difference of 11a).
+  TRANSPORT_COST
   REIMBURSABLE
   CONSOLIDATION_CLEARING
   ACCRUED_TRANSPORT
