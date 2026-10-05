@@ -1,6 +1,6 @@
 'use client';
 
-import { type KeyboardEvent, type ReactNode, useId, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useId, useSyncExternalStore } from 'react';
 
 export interface Tab {
   key: string;
@@ -13,17 +13,30 @@ export interface Tab {
  * section keeps its own state and loads once, as it did on the single long page. The selected
  * tab is kept in the URL hash, so a link or a reload opens the same section.
  */
+function subscribeToHash(listener: () => void): () => void {
+  window.addEventListener('hashchange', listener);
+  return () => window.removeEventListener('hashchange', listener);
+}
+
+function readHash(): string {
+  try {
+    return decodeURIComponent(window.location.hash.slice(1));
+  } catch {
+    return ''; // A malformed hash (a stray %) opens the first tab.
+  }
+}
+
 export function Tabs({ tabs, label }: { tabs: Tab[]; label: string }) {
   const id = useId();
-  // Staff pages render in the browser only (after the session loads), so the hash is readable.
-  const [selected, setSelected] = useState(() => {
-    const fromHash = typeof window === 'undefined' ? '' : window.location.hash.slice(1);
-    return tabs.some((t) => t.key === fromHash) ? fromHash : (tabs[0]?.key ?? '');
-  });
+  // The server render and hydration see no hash (first tab); the real hash is read right after,
+  // so they never disagree. An unknown or hidden tab in the hash falls back to the first tab.
+  const hash = useSyncExternalStore(subscribeToHash, readHash, () => '');
+  const selected = tabs.some((t) => t.key === hash) ? hash : (tabs[0]?.key ?? '');
 
   function select(key: string) {
-    setSelected(key);
-    window.history.replaceState(null, '', `#${key}`);
+    // replaceState keeps Back for leaving the page and does not scroll; it fires no event itself.
+    window.history.replaceState(null, '', `#${encodeURIComponent(key)}`);
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {

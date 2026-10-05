@@ -8,6 +8,7 @@ import logoAr from '@/assets/brand/logo-ar.webp';
 import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
+import { useFoldedSections } from '@/lib/nav-folds';
 import { icons } from './Icons';
 
 interface NavLink {
@@ -41,6 +42,15 @@ interface NavLink {
 }
 
 type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
+
+const SECTION_TITLES: readonly SectionTitle[] = [
+  'commercial',
+  'operations',
+  'fleet',
+  'finance',
+  'insights',
+  'settings',
+];
 
 /** Sections that start folded until the user opens them (less used day to day). */
 const FOLDED_BY_DEFAULT: readonly SectionTitle[] = ['fleet', 'settings'];
@@ -181,35 +191,6 @@ const NAV_SECTIONS: readonly {
   },
 ];
 
-const FOLD_STORAGE_KEY = 'nolon.nav.folded';
-
-/** Which sidebar sections the user folded, remembered in this browser only. */
-function useFoldedSections(): [Set<SectionTitle>, (title: SectionTitle) => void] {
-  const [folded, setFolded] = useState<Set<SectionTitle>>(() => {
-    try {
-      const saved = window.localStorage.getItem(FOLD_STORAGE_KEY);
-      if (saved) return new Set(JSON.parse(saved) as SectionTitle[]);
-    } catch {
-      // Storage unavailable (private mode): fall back to the defaults.
-    }
-    return new Set(FOLDED_BY_DEFAULT);
-  });
-  function toggle(title: SectionTitle) {
-    setFolded((current) => {
-      const next = new Set(current);
-      if (next.has(title)) next.delete(title);
-      else next.add(title);
-      try {
-        window.localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify([...next]));
-      } catch {
-        // Not remembered; the toggle still works for this page.
-      }
-      return next;
-    });
-  }
-  return [folded, toggle];
-}
-
 /** The signed-in user; provided by StaffShell and by the printouts' PrintShell. */
 export const MeContext = createContext<AuthMeResponse | null>(null);
 
@@ -232,7 +213,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const locale = useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [folded, toggleSection] = useFoldedSections();
+  const [folded, toggleSection] = useFoldedSections(SECTION_TITLES, FOLDED_BY_DEFAULT);
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
