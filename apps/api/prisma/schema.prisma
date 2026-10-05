@@ -42,19 +42,20 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users          UserBranch[]
-  customers      Customer[]
-  rateCards      RateCard[]
-  quotations     Quotation[]
-  bookings       Booking[]
-  shipments      Shipment[]
-  shipmentEvents ShipmentEvent[]
-  documents      Document[]
-  accounts       Account[]
-  journalEntries JournalEntry[]
-  journalLines   JournalLine[]
-  invoices       CustomerInvoice[]
-  receipts       Receipt[]
+  users           UserBranch[]
+  customers       Customer[]
+  rateCards       RateCard[]
+  quotations      Quotation[]
+  bookings        Booking[]
+  shipments       Shipment[]
+  sharedShipments ShipmentBranch[]
+  shipmentEvents  ShipmentEvent[]
+  documents       Document[]
+  accounts        Account[]
+  journalEntries  JournalEntry[]
+  journalLines    JournalLine[]
+  invoices        CustomerInvoice[]
+  receipts        Receipt[]
 
   warehouses         Warehouse[]
   storageLocations   StorageLocation[]
@@ -810,10 +811,30 @@ model Shipment {
   tripLinks       TripShipment[]
   pods            ProofOfDelivery[]
   billLines       SupplierBillLine[]
+  sharedBranches  ShipmentBranch[]
 
   @@index([branchId, status])
   @@index([customerId])
   @@map("shipments")
+}
+
+/**
+ * Other branches that work on a shipment besides the one that owns it (annex A: a DXB → KRT
+ * shipment is visible to both branches; a transit branch such as PTS may join too). Their users
+ * see the shipment and record its operations (goods receipt, customs, trips, POD); billing stays
+ * with the owning branch. Chosen by the owning branch on the shipment page.
+ */
+model ShipmentBranch {
+  shipmentId String   @map("shipment_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([shipmentId, branchId])
+  @@index([branchId])
+  @@map("shipment_branches")
 }
 
 /**

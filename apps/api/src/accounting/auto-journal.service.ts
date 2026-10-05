@@ -181,7 +181,7 @@ export class AutoJournalService {
 
   /**
    * How trip cost entries (rules 10 and 11) were shared between shipments: the debit lines that
-   * carry a shipment of `branchId`, per entry, in the entry's currency.
+   * carry a shipment visible in `branchId`, per entry, in the entry's currency.
    */
   async shipmentShares(
     entryIds: readonly string[],
@@ -197,8 +197,9 @@ export class AutoJournalService {
         entryId: { in: [...entryIds] },
         shipmentId: { not: null },
         debit: { gt: 0 },
-        // Only the branch's own shipments: a share never shows another branch's shipment number.
-        shipment: { branchId },
+        // Only shipments visible in the branch (owned or received): a share never shows the
+        // number of a shipment the branch cannot see.
+        shipment: { OR: [{ branchId }, { sharedBranches: { some: { branchId } } }] },
       },
       select: {
         entryId: true,

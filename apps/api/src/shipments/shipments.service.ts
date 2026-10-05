@@ -22,7 +22,9 @@ import type {
 } from '@nolon/shared';
 import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, canAccessBranch } from '../auth/branch-scope.js';
+import { lockActiveBranches } from '../common/branch-locks.js';
+import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
@@ -55,9 +57,17 @@ export interface ShipmentFilters extends PageQuery {
 
 type Tx = Prisma.TransactionClient;
 
+const sharedBranchesSelect = {
+  select: { branchId: true },
+  orderBy: { branchId: 'asc' },
+} satisfies Prisma.Shipment$sharedBranchesArgs;
+
+const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
+
 const details = {
   customer: { select: { name: true } },
   booking: { select: { number: true } },
+  sharedBranches: { ...sharedBranchesSelect, select: { branchId: true, branch: branchRef } },
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
@@ -68,6 +78,7 @@ type ShipmentWithDetails = Prisma.ShipmentGetPayload<{ include: typeof details }
 const summary = {
   customer: { select: { name: true } },
   booking: { select: { number: true } },
+  sharedBranches: sharedBranchesSelect,
 } satisfies Prisma.ShipmentInclude;
 
 type ShipmentWithSummary = Prisma.ShipmentGetPayload<{ include: typeof summary }>;
@@ -124,7 +135,16 @@ export class ShipmentsService {
   }
 
   async get(user: AuthUser, id: string): Promise<ShipmentDto> {
-    return this.toDto(user, await this.findScoped(user, id));
+    const shipment = await this.findScoped(user, id);
+    const dto = this.toDto(user, shipment);
+    if (dto.actions.canShareBranches) {
+      dto.shareableBranches = await this.prisma.branch.findMany({
+        where: { isActive: true, id: { not: shipment.branchId } },
+        ...branchRef,
+        orderBy: { code: 'asc' },
+      });
+    }
+    return dto;
   }
 
   /** The shipment a tracking link points to, if the signed-in user may open it. */
@@ -139,7 +159,7 @@ export class ShipmentsService {
 
   /**
    * For billing: what an invoice for this shipment starts from. 404 unless the user may see the
-   * shipment.
+   * shipment in its own branch (not only as a branch sharing it).
    */
   async billingSource(
     user: AuthUser,
@@ -152,8 +172,9 @@ export class ShipmentsService {
     status: ShipmentStatus;
     quotationId: string | null;
   }> {
+    // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
-      where: { id, ...this.scope(user) },
+      where: { AND: [{ id }, this.scope(user), branchScope(user)] },
       select: {
         id: true,
         number: true,
@@ -172,27 +193,38 @@ export class ShipmentsService {
   async requireAccessible(
     user: AuthUser,
     id: string,
-  ): Promise<{ id: string; branchId: string; status: ShipmentStatus }> {
+  ): Promise<{
+    id: string;
+    branchId: string;
+    sharedBranchIds: string[];
+    status: ShipmentStatus;
+  }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id, ...this.scope(user) },
-      select: { id: true, branchId: true, status: true },
+      select: { id: true, branchId: true, status: true, sharedBranches: sharedBranchesSelect },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
-    return shipment;
+    const { sharedBranches, ...rest } = shipment;
+    return { ...rest, sharedBranchIds: sharedBranches.map((b) => b.branchId) };
   }
 
   /**
    * For a cost booked on the shipment inside another module's transaction (a supplier bill's
-   * approval): the shipment's branch and status under a share lock, so it cannot be cancelled or
-   * moved until that transaction ends. The caller has checked access to the shipment.
+   * approval): the shipment's branches and status under a share lock, so it cannot be cancelled or
+   * change branches until that transaction ends. The caller has checked access to the shipment.
    */
-  async lockForCostInTx(tx: Tx, id: string): Promise<{ branchId: string; status: ShipmentStatus }> {
+  async lockForCostInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ branchId: string; sharedBranchIds: string[]; status: ShipmentStatus }> {
     const rows = await tx.$queryRaw<{ branchId: string; status: ShipmentStatus }[]>`
       SELECT "branch_id"::text AS "branchId", "status"::text AS "status"
       FROM "shipments" WHERE "id" = ${id}::uuid FOR SHARE`;
     const row = rows[0];
     if (!row) throw new NotFoundException('Shipment not found');
-    return row;
+    // The shared branches change only under the shipment's row lock (update), so this share lock
+    // holds them too.
+    return { ...row, sharedBranchIds: await this.sharedBranchIdsInTx(tx, id) };
   }
 
   /**
@@ -306,6 +338,18 @@ export class ShipmentsService {
     ]);
     const services: BookingService[] | undefined = input.services && [...new Set(input.services)];
     if (services?.length === 0) throw new BadRequestException('Choose at least one service');
+    const sharedBranchIds = input.sharedBranchIds && [...new Set(input.sharedBranchIds)].sort();
+    if (sharedBranchIds) {
+      // Only the owning branch decides which other branches work on its shipment.
+      if (!canAccessBranch(user, existing.branchId)) {
+        throw new ForbiddenException(
+          "Only the shipment's own branch can choose the branches sharing it",
+        );
+      }
+      if (sharedBranchIds.includes(existing.branchId)) {
+        throw new BadRequestException("The shipment's own branch is not a shared branch");
+      }
+    }
     const data: Prisma.ShipmentUncheckedUpdateInput = {
       cargoDescription: input.cargoDescription,
       services,
@@ -344,6 +388,7 @@ export class ShipmentsService {
         throw new ConflictException('Services can change only before the shipment moves');
       }
       await tx.shipment.update({ where: { id }, data });
+      if (sharedBranchIds) await this.replaceSharedBranchesInTx(tx, id, sharedBranchIds);
     });
     return this.get(user, id);
   }
@@ -789,21 +834,61 @@ export class ShipmentsService {
 
   /**
    * For writes under a shipment that the caller has already locked (lockForChildWrite): its
-   * branch, and when its latest recorded event happened. A change dated before that event would
-   * rewrite the shipment's timeline, so callers refuse it.
+   * branch, the branches sharing it, and when its latest recorded event happened. A change dated
+   * before that event would rewrite the shipment's timeline, so callers refuse it.
    */
   async branchAndLastEventInTx(
     tx: Tx,
     id: string,
-  ): Promise<{ branchId: string; lastEventAt: Date | null }> {
+  ): Promise<{ branchId: string; sharedBranchIds: string[]; lastEventAt: Date | null }> {
     const shipment = await tx.shipment.findUniqueOrThrow({
       where: { id },
       select: {
         branchId: true,
+        sharedBranches: sharedBranchesSelect,
         events: { select: { occurredAt: true }, orderBy: { occurredAt: 'desc' }, take: 1 },
       },
     });
-    return { branchId: shipment.branchId, lastEventAt: shipment.events[0]?.occurredAt ?? null };
+    return {
+      branchId: shipment.branchId,
+      sharedBranchIds: shipment.sharedBranches.map((b) => b.branchId),
+      lastEventAt: shipment.events[0]?.occurredAt ?? null,
+    };
+  }
+
+  private async sharedBranchIdsInTx(tx: Tx, id: string): Promise<string[]> {
+    const rows = await tx.shipmentBranch.findMany({
+      where: { shipmentId: id },
+      select: { branchId: true },
+      orderBy: { branchId: 'asc' },
+    });
+    return rows.map((r) => r.branchId);
+  }
+
+  /**
+   * Replaces the branches sharing the shipment, under its row lock (held by the caller). A branch
+   * added must be active, and stays so until the caller commits. A branch removed loses access;
+   * what its users recorded (receipts, trips, PODs) stays on the shipment.
+   */
+  private async replaceSharedBranchesInTx(
+    tx: Tx,
+    id: string,
+    branchIds: readonly string[],
+  ): Promise<void> {
+    const current = await this.sharedBranchIdsInTx(tx, id);
+    const added = branchIds.filter((b) => !current.includes(b));
+    const active = await lockActiveBranches(tx, added);
+    if (added.some((b) => !active.has(b))) {
+      throw new BadRequestException('Unknown or inactive branch');
+    }
+    await tx.shipmentBranch.deleteMany({
+      where: { shipmentId: id, branchId: { notIn: [...branchIds] } },
+    });
+    if (added.length > 0) {
+      await tx.shipmentBranch.createMany({
+        data: added.map((branchId) => ({ shipmentId: id, branchId })),
+      });
+    }
   }
 
   /** Row lock and current status, inside the caller's transaction. */
@@ -825,12 +910,12 @@ export class ShipmentsService {
   /**
    * Branch scope (AGENTS.md rule 2). A Driver (annex A, own trips) sees only the shipments carried
    * on trips assigned to them (their driver record is linked to their user), cancelled trips
-   * excepted; trip and shipment both in one of their branches.
+   * excepted; the trip in one of their branches, the shipment visible in one of them.
    */
   private scope(user: AuthUser): Prisma.ShipmentWhereInput {
     if (limitedToOwnTrips(user, 'shipments')) {
       return {
-        ...branchScope(user),
+        ...shipmentScope(user),
         tripLinks: {
           some: {
             trip: {
@@ -842,7 +927,7 @@ export class ShipmentsService {
         },
       };
     }
-    return branchScope(user);
+    return shipmentScope(user);
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<ShipmentWithDetails> {
@@ -915,6 +1000,8 @@ export class ShipmentsService {
         note: e.note,
         reason: e.reason,
       })),
+      sharedBranches: s.sharedBranches.map((b) => b.branch),
+      shareableBranches: [],
       actions: actionsFor(user, s, path),
     };
   }
@@ -968,6 +1055,7 @@ function actionsFor(
       canCancelStatus(s.status) &&
       (!hasPassedLoading(path) || isLateCanceller(user)),
     canEdit: canUpdate && isActive(s.status),
+    canShareBranches: canUpdate && isActive(s.status) && canAccessBranch(user, s.branchId),
   };
 }
 
@@ -981,6 +1069,7 @@ function toSummary(s: ShipmentWithSummary): ShipmentSummaryDto {
     id: s.id,
     number: s.number,
     branchId: s.branchId,
+    sharedBranchIds: s.sharedBranches.map((b) => b.branchId),
     customerId: s.customerId,
     customerName: s.customer.name,
     bookingId: s.bookingId,

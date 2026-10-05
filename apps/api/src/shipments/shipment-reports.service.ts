@@ -15,8 +15,9 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, fromDbDateOrNull } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
-import { type AuditQuery, andIf, overLimit, sqlDate, uuidList } from '../common/report-sql.js';
+import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { shipmentVisibleIn } from './shipment-scope.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { daysLate } from './lateness.js';
 
@@ -108,8 +109,10 @@ const AUDIT_ACTION: Record<ShipmentEventKind, AuditLogEntryDto['action']> = {
 
 /**
  * The shipment figures of the operational reports and dashboards (annex D sections 2 and 3),
- * added up in SQL over the shipments of the report's branches: the requested branch, checked
- * against the user's, or all of the user's. Periods are days in each shipment's branch.
+ * added up in SQL over the shipments visible in the report's branches (the requested branch,
+ * checked against the user's, or all of the user's): those they own and those shared with them
+ * (ShipmentBranch). Rows are labelled with the owning branch. Periods are days in each
+ * shipment's branch.
  */
 @Injectable()
 export class ShipmentReportsService {
@@ -135,7 +138,7 @@ export class ShipmentReportsService {
     const branchIds = reportBranchIds(user, q.branchId);
     if (branchIds.length === 0) return { groups: [], shipments: [], truncated: false };
     const where = Prisma.sql`
-      WHERE s."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentVisibleIn('s', branchIds)}
         AND ${localDay(Prisma.sql`s."created_at"`)} BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.customerId, (id) => Prisma.sql`s."customer_id" = ${id}::uuid`)}
         ${andIf(q.mode, (mode) => Prisma.sql`s."mode"::text = ${mode}`)}
@@ -237,7 +240,7 @@ export class ShipmentReportsService {
         JOIN "branches" b ON b."id" = s."branch_id"
         JOIN "customers" c ON c."id" = s."customer_id"
         ${ROUTE_JOINS}
-        WHERE s."branch_id" IN ${uuidList(branchIds)}
+        WHERE ${shipmentVisibleIn('s', branchIds)}
           AND s."status" <> 'CANCELLED'
           AND s."eta" BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
           ${andIf(q.customerId, (id) => Prisma.sql`s."customer_id" = ${id}::uuid`)}
@@ -322,7 +325,7 @@ export class ShipmentReportsService {
         SELECT "shipment_id", sum("volume_cbm") AS "volume", sum("weight_kg") AS "weight"
         FROM "shipment_items" GROUP BY "shipment_id"
       ) i ON i."shipment_id" = s."id"
-      WHERE s."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentVisibleIn('s', branchIds)}
         AND s."status" <> 'CANCELLED'
         AND ${localDay(Prisma.sql`s."created_at"`)} BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.customerId, (id) => Prisma.sql`s."customer_id" = ${id}::uuid`)}
@@ -348,7 +351,7 @@ export class ShipmentReportsService {
     const scope = Prisma.sql`
       FROM "shipments" s
       JOIN "branches" b ON b."id" = s."branch_id"
-      WHERE s."branch_id" IN ${uuidList(branchIds)}`;
+      WHERE ${shipmentVisibleIn('s', branchIds)}`;
     const [byStatus, totals] = await Promise.all([
       this.prisma.$queryRaw<{ status: ShipmentStatus; count: number }[]>`
         SELECT s."status"::text AS "status", count(*)::int AS "count"
@@ -389,7 +392,7 @@ export class ShipmentReportsService {
       JOIN "branches" b ON b."id" = s."branch_id"
       JOIN "customers" c ON c."id" = s."customer_id"
       ${ROUTE_JOINS}
-      WHERE s."branch_id" = ${only}::uuid
+      WHERE ${shipmentVisibleIn('s', [only])}
         AND s."status" <> 'CANCELLED'
         AND ${column} = ${sqlDate(day)}
       ORDER BY s."number"
@@ -432,7 +435,7 @@ export class ShipmentReportsService {
       JOIN "shipments" s ON s."id" = e."shipment_id"
       JOIN "branches" b ON b."id" = s."branch_id"
       LEFT JOIN "users" u ON u."id" = e."user_id"
-      WHERE s."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentVisibleIn('s', branchIds)}
         AND ${localDay(Prisma.sql`e."created_at"`)} BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.userId, (id) => Prisma.sql`e."user_id" = ${id}::uuid`)}
       ORDER BY e."created_at" DESC, e."id" DESC

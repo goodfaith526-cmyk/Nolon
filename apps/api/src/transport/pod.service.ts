@@ -12,7 +12,7 @@ import {
   type ShipmentStatus,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { shipmentScope } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService, type PreparedUpload } from '../documents/documents.service.js';
@@ -74,7 +74,7 @@ export class PodService {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const [pods, trips] = await Promise.all([
       this.prisma.proofOfDelivery.findMany({
-        where: { shipmentId, ...branchScope(user) },
+        where: { shipmentId, shipment: shipmentScope(user) },
         include: podDetails,
         orderBy: { deliveredAt: 'asc' },
       }),
@@ -192,7 +192,7 @@ export class PodService {
       return pod.id;
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({
-      where: { id, ...branchScope(user) },
+      where: { id, shipment: shipmentScope(user) },
       include: podDetails,
     });
     return toDto(pod);

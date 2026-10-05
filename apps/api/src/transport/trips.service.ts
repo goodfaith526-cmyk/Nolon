@@ -19,7 +19,7 @@ import type {
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess } from '../auth/branch-scope.js';
+import { assertBranchAccess, canAccessBranch } from '../auth/branch-scope.js';
 import { fromDbDate, todayIn } from '../common/dates.js';
 import {
   type Decimal,
@@ -39,6 +39,7 @@ import { isActive } from '../shipments/state-machine.js';
 import { FleetService } from './fleet.service.js';
 import { TripCostsService } from './trip-costs.service.js';
 import { forbidDriverOnly, isDriverOnly, lockTrip, tripScope } from './trip-scope.js';
+import { shipmentBranches } from '../shipments/shipment-scope.js';
 import {
   OPEN_TRIP_STATUSES,
   SCHEDULED_STATUS,
@@ -106,8 +107,8 @@ export const MAX_TRIP_SHIPMENTS = 100;
  * - putting a shipment on a trip moves it to TRIP_SCHEDULED,
  * - departing moves every shipment to ROAD_DEPARTED, arriving to ROAD_ARRIVED.
  * A shipment already at the target status or beyond it on this leg (moved by hand on the shipment
- * page, or delivered) is left as it is. A trip carries shipments of its own branch only, and a
- * move is never dated before the trip was planned or before a moved shipment's latest event.
+ * page, or delivered) is left as it is. A trip carries shipments its branch owns or shares, and
+ * a move is never dated before the trip was planned or before a moved shipment's latest event.
  * When any shipment cannot take the move now (on hold, cancelled, at another stage), the trip
  * change is refused with 409 naming them, and nothing is applied: the trip waits until those
  * shipments are sorted out or taken off the trip (while it is planned). Completing an external
@@ -155,11 +156,19 @@ export class TripsService {
     return this.toDto(user, await this.findScoped(user, id));
   }
 
-  /** The trips (road legs) of a shipment the user can see. 404 unless they can see the shipment. */
+  /**
+   * The trips (road legs) of a shipment the user can see. 404 unless they can see the shipment.
+   * Every leg is part of the shipment's record, so the owning branch also sees a trip of a branch
+   * sharing the shipment (and the other way round); a trip outside the user's branches is listed
+   * without its costs and cannot be opened. A Driver sees only their own trips.
+   */
   async forShipment(user: AuthUser, shipmentId: string): Promise<ShipmentTripDto[]> {
     await this.shipments.requireAccessible(user, shipmentId);
     const trips = await this.prisma.trip.findMany({
-      where: { ...tripScope(user), shipments: { some: { shipmentId } } },
+      where: {
+        ...(isDriverOnly(user) ? tripScope(user) : {}),
+        shipments: { some: { shipmentId } },
+      },
       include: summaryInclude,
       orderBy: { createdAt: 'asc' },
     });
@@ -176,6 +185,7 @@ export class TripsService {
         actualArrival: s.actualArrival,
         vehicleLabel: s.vehicleLabel,
         driverLabel: s.driverLabel,
+        canOpen: canAccessBranch(user, trip.branchId),
       };
     });
   }
@@ -472,9 +482,10 @@ export class TripsService {
       if (!isActive(status)) {
         throw new ConflictException(`Shipment ${label} is ${status} and cannot go on a trip`);
       }
-      // A trip carries its own branch's shipments only, even for a user of several branches.
-      const { branchId } = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
-      if (branchId !== trip.branchId) {
+      // A trip carries the shipments of its branch only, even for a user of several branches:
+      // those it owns and those shared with it (a PTS → KRT leg of a DXB shipment).
+      const shipment = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
+      if (!shipmentBranches(shipment).includes(trip.branchId)) {
         throw new BadRequestException(`Shipment ${label} belongs to another branch than the trip`);
       }
       const other = await tx.tripShipment.findFirst({

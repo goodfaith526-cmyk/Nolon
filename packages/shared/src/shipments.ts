@@ -85,6 +85,11 @@ export interface ShipmentSummaryDto {
   id: string;
   number: string;
   branchId: string;
+  /**
+   * Other branches that see and work on the shipment besides its own (annex A: origin and
+   * destination; a transit branch may join). Billing stays with `branchId`.
+   */
+  sharedBranchIds: string[];
   customerId: string;
   customerName: string;
   bookingId: string;
@@ -144,6 +149,16 @@ export interface ShipmentActionsDto {
   revertTo: ShipmentStatus | null;
   canCancel: boolean;
   canEdit: boolean;
+  /** Only users of the shipment's own branch choose the branches sharing it. */
+  canShareBranches: boolean;
+}
+
+/** A branch named on a shipment (one sharing it, or one it may be shared with). */
+export interface ShipmentBranchDto {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
 }
 
 export interface ShipmentDto extends ShipmentSummaryDto {
@@ -169,6 +184,10 @@ export interface ShipmentDto extends ShipmentSummaryDto {
   items: ShipmentItemDto[];
   containers: ShipmentContainerDto[];
   events: ShipmentEventDto[];
+  /** The branches in sharedBranchIds, by code. */
+  sharedBranches: ShipmentBranchDto[];
+  /** When actions.canShareBranches: the active branches the shipment may be shared with. */
+  shareableBranches: ShipmentBranchDto[];
   actions: ShipmentActionsDto;
 }
 
@@ -185,7 +204,12 @@ export interface ShipmentUpdateRequest {
   blNumber?: string | null;
   etd?: DateString | null;
   eta?: DateString | null;
+  /** Replaces the other branches working on the shipment ([] removes them all). */
+  sharedBranchIds?: string[];
 }
+
+/** At most this many other branches share one shipment. */
+export const MAX_SHARED_BRANCHES = 5;
 
 export interface ShipmentStatusRequest {
   status: ShipmentStatus;

@@ -571,7 +571,9 @@
     "noDocuments": "لا توجد مستندات بعد.",
     "uploadedBy": "رفعه",
     "fileTooLarge": "الملف أكبر من 10 ميجابايت.",
-    "fileRejected": "يُقبل PDF أو صور JPEG وPNG وWebP فقط."
+    "fileRejected": "يُقبل PDF أو صور JPEG وPNG وWebP فقط.",
+    "sharedBranches": "فروع مشاركة",
+    "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",

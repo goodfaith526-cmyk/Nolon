@@ -125,6 +125,13 @@ export function ShipmentDetail({ id }: { id: string }) {
         etd: text('etd'),
         eta: text('eta'),
         services: form.getAll('services').filter((v): v is BookingService => typeof v === 'string'),
+        ...(shipment?.actions.canShareBranches
+          ? {
+              sharedBranchIds: form
+                .getAll('sharedBranchIds')
+                .filter((v): v is string => typeof v === 'string'),
+            }
+          : {}),
       },
       t('savedNotice'),
       'PATCH',
@@ -305,6 +312,25 @@ export function ShipmentDetail({ id }: { id: string }) {
               ))}
             </div>
           </fieldset>
+          {actions.canShareBranches && (
+            <fieldset>
+              <legend>{t('sharedBranches')}</legend>
+              <p className="muted">{t('sharedBranchesHint')}</p>
+              <div className="checks">
+                {s.shareableBranches.map((b) => (
+                  <label key={b.id}>
+                    <input
+                      type="checkbox"
+                      name="sharedBranchIds"
+                      value={b.id}
+                      defaultChecked={s.sharedBranchIds.includes(b.id)}
+                    />
+                    {localName(b)} ({b.code})
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {tc('save')}
@@ -341,6 +367,12 @@ export function ShipmentDetail({ id }: { id: string }) {
                       <dd>{party(s.consigneeId)}</dd>
                       <dt>{t('shipper')}</dt>
                       <dd>{party(s.shipperId)}</dd>
+                      <dt>{t('sharedBranches')}</dt>
+                      <dd>
+                        {s.sharedBranches.length > 0
+                          ? list.format(s.sharedBranches.map((b) => `${localName(b)} (${b.code})`))
+                          : '—'}
+                      </dd>
                       <dt>{t('currentLocation')}</dt>
                       <dd>{s.currentLocationId ? locationName(s.currentLocationId) : '—'}</dd>
                       <dt>{t('carrierName')}</dt>

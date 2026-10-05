@@ -65,7 +65,11 @@ export function ShipmentTrips({ shipmentId }: { shipmentId: string }) {
               {trips.map((trip) => (
                 <tr key={trip.id} className={trip.status === 'CANCELLED' ? 'inactive' : ''}>
                   <td dir="ltr">
-                    <Link href={`/trips/${trip.id}`}>{trip.number}</Link>
+                    {trip.canOpen ? (
+                      <Link href={`/trips/${trip.id}`}>{trip.number}</Link>
+                    ) : (
+                      trip.number
+                    )}
                   </td>
                   <td>
                     {tc('route', {

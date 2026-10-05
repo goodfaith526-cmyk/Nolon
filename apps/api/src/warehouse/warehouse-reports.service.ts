@@ -9,9 +9,10 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
-import { type AuditQuery, andIf, overLimit, sqlDate, uuidList } from '../common/report-sql.js';
+import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { shipmentIdVisibleIn } from '../shipments/shipment-scope.js';
 import { daysHeld } from './warehouse-rules.js';
 
 /** Goods a warehouse holds for a shipment now (the shipment's number comes from its module). */
@@ -48,9 +49,11 @@ const SIGNED_WEIGHT = Prisma.sql`CASE WHEN m."kind" = 'RECEIPT' THEN m."weight_k
 /**
  * Warehouse figures of the operational reports and the branch dashboard (annex D sections 2 and
  * 3). A movement belongs to its shipment's branch (warehouse_movements.branch_id), so the report's
- * branches (the requested one, checked, or all of the user's) filter on it. What is held is
- * receipts minus releases in log order (occurred_at, then created_at), as the warehouse rules
- * keep it; the holding started with the first receipt after the last time nothing was held.
+ * branches (the requested one, checked, or all of the user's) filter on the shipment: those they
+ * own and those shared with them (ShipmentBranch). Rows are labelled with the owning
+ * branch. What is held is receipts minus releases in log order (occurred_at, then created_at), as
+ * the warehouse rules keep it; the holding started with the first receipt after the last time
+ * nothing was held.
  */
 @Injectable()
 export class WarehouseReportsService {
@@ -66,8 +69,8 @@ export class WarehouseReportsService {
                row_number() OVER w AS "rn",
                sum(${SIGNED_PACKAGES}) OVER w AS "running"
         FROM "warehouse_movements" m
-        -- Scoped by the shipment's branch (rule 2), not the warehouse's: these are your branches' shipments.
-        WHERE m."branch_id" IN ${uuidList(branchIds)}
+        -- Scoped by the shipment (rule 2), not the warehouse: your branches' shipments, owned or shared.
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
           ${andIf(warehouseId, (id) => Prisma.sql`m."warehouse_id" = ${id}::uuid`)}
         WINDOW w AS (PARTITION BY m."shipment_id", m."warehouse_id"
                      ORDER BY m."occurred_at", m."created_at", m."id" ROWS UNBOUNDED PRECEDING)
@@ -184,7 +187,7 @@ export class WarehouseReportsService {
       JOIN "branches" b ON b."id" = m."branch_id"
       JOIN "warehouses" w ON w."id" = m."warehouse_id"
       JOIN "users" u ON u."id" = m."created_by_id"
-      WHERE m."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
         AND (m."occurred_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.warehouseId, (id) => Prisma.sql`m."warehouse_id" = ${id}::uuid`)}
         ${andIf(q.kind, (kind) => Prisma.sql`m."kind"::text = ${kind}`)}`;
@@ -273,7 +276,7 @@ export class WarehouseReportsService {
                count(*) FILTER (WHERE m."kind" = 'RELEASE')::int AS "released"
         FROM "warehouse_movements" m
         JOIN "branches" b ON b."id" = m."branch_id"
-        WHERE m."branch_id" IN ${uuidList(branchIds)}
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
           AND (m."occurred_at" AT TIME ZONE b."timezone")::date = ${sqlDate(today)}`,
     ]);
     const h = held[0];
@@ -307,7 +310,7 @@ export class WarehouseReportsService {
       FROM "warehouse_movements" m
       JOIN "branches" b ON b."id" = m."branch_id"
       JOIN "users" u ON u."id" = m."created_by_id"
-      WHERE m."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
         AND (m."created_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.userId, (id) => Prisma.sql`m."created_by_id" = ${id}::uuid`)}
       ORDER BY m."created_at" DESC

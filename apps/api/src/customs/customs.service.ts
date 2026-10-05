@@ -11,7 +11,7 @@ import type {
   ShipmentCustomsDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { shipmentScope } from '../shipments/shipment-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
@@ -41,11 +41,11 @@ export class CustomsService {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     const [clearance, fees] = await Promise.all([
       this.prisma.customsClearance.findFirst({
-        where: { shipmentId, ...branchScope(user) },
+        where: { shipmentId, shipment: shipmentScope(user) },
         include: { updatedBy: { select: { fullName: true } } },
       }),
       this.prisma.customsFee.findMany({
-        where: { shipmentId, ...branchScope(user) },
+        where: { shipmentId, shipment: shipmentScope(user) },
         include: { createdBy: { select: { fullName: true } } },
         orderBy: { createdAt: 'asc' },
       }),
@@ -149,7 +149,7 @@ export class CustomsService {
     await this.prisma.$transaction(async (tx) => {
       await this.lockActive(tx, shipmentId);
       const { count } = await tx.customsFee.deleteMany({
-        where: { id: feeId, shipmentId, ...branchScope(user) },
+        where: { id: feeId, shipmentId, shipment: shipmentScope(user) },
       });
       if (count === 0) throw new NotFoundException('Fee not found');
     });

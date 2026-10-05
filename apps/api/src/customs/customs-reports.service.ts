@@ -9,10 +9,10 @@ import {
   andIf,
   overLimit,
   sqlDate,
-  uuidList,
 } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { shipmentIdVisibleIn } from '../shipments/shipment-scope.js';
 import { clearanceDays, daysOpen } from './customs-rules.js';
 
 /** A customs file of the report (its shipment's number comes from the shipments module). */
@@ -31,9 +31,9 @@ export interface CustomsFileRow {
 }
 
 /**
- * Customs figures of the operational reports (annex D section 3, report 8), in the report's
- * branches. A file is in a period by its submission day, or by the day it was opened while it has
- * not been submitted.
+ * Customs figures of the operational reports (annex D section 3, report 8), for the shipments
+ * visible in the report's branches (owned or shared). A file is in a period by its submission
+ * day, or by the day it was opened while it has not been submitted.
  */
 @Injectable()
 export class CustomsReportsService {
@@ -60,7 +60,7 @@ export class CustomsReportsService {
                (now() AT TIME ZONE b."timezone")::date AS "today"
         FROM "customs_clearances" x
         JOIN "branches" b ON b."id" = x."branch_id"
-        WHERE x."branch_id" IN ${uuidList(branchIds)}
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`x."shipment_id"`, branchIds)}
       ),
       p AS (
         SELECT * FROM f
@@ -158,7 +158,7 @@ export class CustomsReportsService {
       FROM events x
       JOIN "branches" b ON b."id" = x."branch_id"
       JOIN "users" u ON u."id" = x."user_id"
-      WHERE x."branch_id" IN ${uuidList(branchIds)}
+      WHERE ${shipmentIdVisibleIn(Prisma.sql`x."shipment_id"`, branchIds)}
         AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
       ORDER BY x."at" DESC

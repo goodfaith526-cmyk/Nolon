@@ -14,7 +14,7 @@ import type {
   WarehouseMovementKind,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { shipmentScope } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
@@ -83,7 +83,7 @@ export class WarehouseMovementsService {
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentWarehouseDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const movements = await this.prisma.warehouseMovement.findMany({
-      where: { shipmentId, ...branchScope(user) },
+      where: { shipmentId, shipment: shipmentScope(user) },
       include: movementDetails,
       orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }],
     });
@@ -214,7 +214,7 @@ export class WarehouseMovementsService {
         'release',
       );
       const held = await tx.warehouseMovement.findMany({
-        where: { shipmentId, warehouseId: warehouse.id, ...branchScope(user) },
+        where: { shipmentId, warehouseId: warehouse.id, shipment: shipmentScope(user) },
         select: {
           kind: true,
           warehouseId: true,
@@ -294,7 +294,7 @@ export class WarehouseMovementsService {
     id: string,
   ): Promise<MovementWithDetails> {
     const movement = await this.prisma.warehouseMovement.findFirst({
-      where: { id, shipmentId, ...branchScope(user) },
+      where: { id, shipmentId, shipment: shipmentScope(user) },
       include: movementDetails,
     });
     if (!movement) throw new NotFoundException('Movement not found');

@@ -268,6 +268,8 @@ export interface ShipmentTripDto {
   actualArrival: string | null;
   vehicleLabel: string | null;
   driverLabel: string | null;
+  /** False for a trip of another branch (the other end of the shipment): listed, not opened. */
+  canOpen: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------

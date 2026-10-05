@@ -571,7 +571,9 @@
     "noDocuments": "No documents yet.",
     "uploadedBy": "Uploaded by",
     "fileTooLarge": "The file is larger than 10 MB.",
-    "fileRejected": "Only PDF, JPEG, PNG and WebP files are accepted."
+    "fileRejected": "Only PDF, JPEG, PNG and WebP files are accepted.",
+    "sharedBranches": "Shared with branches",
+    "sharedBranchesHint": "Users of these branches see the shipment and record its receipt, customs, trips and delivery. Invoicing stays with this branch."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
