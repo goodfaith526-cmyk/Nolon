@@ -18,7 +18,10 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { lockImportBranches, lockImportRequest } from '../src/imports/import-commit.js';
+import { lockBranchRule } from '../src/common/branch-locks.js';
+import { CUSTOMER_UNIQUE_RULE } from '../src/customers/customers.service.js';
+import { lockImportRequest } from '../src/imports/import-commit.js';
+import { RATE_UNIQUE_RULE } from '../src/rates/rates.service.js';
 import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
 import { lyingZipBomb } from './zip-bomb.js';
 
@@ -64,7 +67,16 @@ function phone(): string {
 describe('Excel import of customers and rates', () => {
   let t: TestApp;
   let dxb: string;
-  const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '', managerDxb: '' };
+  /** A branch of its own, deactivated and reactivated by the branch-state tests. */
+  let zzi: string;
+  const cookies = {
+    admin: '',
+    salesDxb: '',
+    salesJed: '',
+    opsDxb: '',
+    managerDxb: '',
+    salesZzi: '',
+  };
   // A start date of its own, so the rate duplicates checked here are only this run's.
   const day = `2031-${String(randomInt(1, 13)).padStart(2, '0')}-${String(randomInt(1, 29)).padStart(2, '0')}`;
 
@@ -163,6 +175,52 @@ describe('Excel import of customers and rates', () => {
     return pending;
   }
 
+  /**
+   * Responses of `first` and `second`, queued in that order on the lock `hold` keeps: once it is
+   * released, PostgreSQL grants it to them in the order they asked, so `first` writes first.
+   */
+  async function oneAfterTheOther(
+    hold: (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) => Promise<void>,
+    first: () => ReturnType<typeof upload>,
+    second: () => ReturnType<typeof upload>,
+  ) {
+    const { pending } = await t.prisma.$transaction(
+      async (tx) => {
+        await hold(tx);
+        const one = first().then((res) => res);
+        await waitForLockWaiter(t.prisma, 1);
+        const two = second().then((res) => res);
+        await waitForLockWaiter(t.prisma, 2);
+        return { pending: Promise.all([one, two]) };
+      },
+      { timeout: 20_000 },
+    );
+    return pending;
+  }
+
+  const post = (path: string, cookie: string, body: object) =>
+    t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+
+  const locationId = async (code: string) =>
+    (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
+
+  /** The body of POST /rates for the offer rateRow() writes with the same overrides. */
+  async function rateBody(from: string) {
+    return {
+      branchId: dxb,
+      originLocationId: await locationId('AEJEA'),
+      destinationLocationId: await locationId('SDPZU'),
+      mode: 'SEA',
+      loadType: 'FCL',
+      cargoType: 'CONTAINER',
+      containerTypeCode: '40HC',
+      unit: 'PER_CONTAINER',
+      price: '999',
+      currency: 'USD',
+      validFrom: from,
+    };
+  }
+
   function codesOf(preview: ImportPreviewDto): [number, string | null, string][] {
     return preview.issues.map((i) => [i.row, i.column, i.code]);
   }
@@ -170,12 +228,29 @@ describe('Excel import of customers and rates', () => {
   beforeAll(async () => {
     t = await createTestApp();
     dxb = await branchId(t.prisma, 'DXB');
+    const zziFields = {
+      nameEn: 'Import test',
+      nameAr: 'اختبار الاستيراد',
+      countryCode: 'AE',
+      city: 'Test',
+      defaultCurrency: 'USD',
+      timezone: 'Asia/Dubai',
+      isActive: true,
+    };
+    zzi = (
+      await t.prisma.branch.upsert({
+        where: { code: 'ZZI' },
+        create: { code: 'ZZI', ...zziFields },
+        update: zziFields,
+      })
+    ).id;
     const users = {
       admin: await createUser(t.prisma, ['ADMINISTRATOR']),
       salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
       salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
       opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
       managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
+      salesZzi: await createUser(t.prisma, ['SALES'], ['ZZI']),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
@@ -183,6 +258,7 @@ describe('Excel import of customers and rates', () => {
   });
 
   afterAll(async () => {
+    await t.prisma.branch.update({ where: { id: zzi }, data: { isActive: true } });
     await deleteCommercialTestData(t.prisma);
     await deleteTestUsers(t.prisma);
     await t.close();
@@ -429,7 +505,7 @@ describe('Excel import of customers and rates', () => {
       const one = await xlsx([CUSTOMER_HEADER, customerRow({ phone: shared })]);
       const two = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ phone: shared })]);
       const responses = await whileLocked(
-        (tx) => lockImportBranches(tx, 'customers', [dxb]),
+        (tx) => lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]),
         [
           () => commit('/customers/import', cookies.salesDxb, one, randomUUID()),
           () => commit('/customers/import', cookies.salesDxb, two, randomUUID()),
@@ -643,6 +719,264 @@ describe('Excel import of customers and rates', () => {
       ]);
       await commit('/rates/import', cookies.salesDxb, file, randomUUID()).expect(422);
       expect(await myRates()).toBe(before);
+    });
+  });
+
+  describe('one duplicate rule for every write path', () => {
+    const refusedCodes = (res: { body: unknown }) =>
+      (res.body as ImportRowsInvalidBody).preview.issues.map((i) => [i.column, i.code]);
+
+    it('refuses a single create or edit that repeats a phone or tax number of the branch (409)', async () => {
+      const taken = phone();
+      const first = (
+        await post('/customers', cookies.salesDxb, {
+          branchId: dxb,
+          kind: 'COMPANY',
+          name: 'Unique keys',
+          phone: taken,
+          taxNumber: `TX-${taken}`,
+        }).expect(201)
+      ).body as { id: string };
+      const body = { branchId: dxb, kind: 'COMPANY', name: 'Second' };
+      await post('/customers', cookies.salesDxb, { ...body, phone: taken }).expect(409);
+      await post('/customers', cookies.salesDxb, {
+        ...body,
+        phone: phone(),
+        taxNumber: ` tx-${taken.toLowerCase()} `,
+      }).expect(409);
+      // Another branch may hold the same phone and tax number.
+      await post('/customers', cookies.admin, {
+        ...body,
+        branchId: await branchId(t.prisma, 'JED'),
+        phone: taken,
+        taxNumber: `TX-${taken}`,
+      }).expect(201);
+      const other = (
+        await post('/customers', cookies.salesDxb, { ...body, phone: phone() }).expect(201)
+      ).body as { id: string };
+      const edit = (id: string, change: object) =>
+        t
+          .http()
+          .patch(`/api/v1/customers/${id}`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', cookies.salesDxb)
+          .send(change);
+      await edit(other.id, { phone: taken }).expect(409);
+      await edit(other.id, { taxNumber: `tx-${taken}` }).expect(409);
+      // Saving a customer's own phone and tax number again is no duplicate.
+      await edit(first.id, { phone: taken, taxNumber: `tx-${taken}`, name: 'Renamed' }).expect(200);
+      expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: taken } })).toBe(1);
+    });
+
+    it('refuses a single create or edit that repeats a draft or approved rate (409)', async () => {
+      const from = day.replace('2031', '2035');
+      const draft = (await post('/rates', cookies.salesDxb, await rateBody(from)).expect(201))
+        .body as { id: string };
+      await post('/rates', cookies.salesDxb, await rateBody(from)).expect(409);
+      const other = (
+        await post('/rates', cookies.salesDxb, {
+          ...(await rateBody(from)),
+          containerTypeCode: '20GP',
+        }).expect(201)
+      ).body as { id: string };
+      const edit = (id: string, change: object) =>
+        t
+          .http()
+          .patch(`/api/v1/rates/${id}`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', cookies.salesDxb)
+          .send(change);
+      await edit(other.id, { containerTypeCode: '40HC' }).expect(409);
+      await edit(draft.id, { price: '1000' }).expect(200);
+      // A cancelled rate no longer holds the offer.
+      await t
+        .http()
+        .post(`/api/v1/rates/${draft.id}/cancel`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.admin)
+        .expect(200);
+      await edit(other.id, { containerTypeCode: '40HC' }).expect(200);
+    });
+
+    for (const order of ['import first', 'create first'] as const) {
+      it(`import and a single create race on one phone (${order}): one writes, the other is refused`, async () => {
+        const shared = phone();
+        const file = await xlsx([CUSTOMER_HEADER, customerRow({ phone: shared })]);
+        const importing = () => commit('/customers/import', cookies.salesDxb, file, randomUUID());
+        const creating = () =>
+          post('/customers', cookies.salesDxb, {
+            branchId: dxb,
+            kind: 'COMPANY',
+            name: 'Raced',
+            phone: shared,
+          });
+        const hold = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
+          lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]);
+        if (order === 'import first') {
+          const [imported, created] = await oneAfterTheOther(hold, importing, creating);
+          expect([imported.status, created.status]).toEqual([201, 409]);
+        } else {
+          const [created, imported] = await oneAfterTheOther(hold, creating, importing);
+          expect([created.status, imported.status]).toEqual([201, 422]);
+          expect(refusedCodes(imported)).toEqual([['phone', 'DUPLICATE_IN_DB']]);
+        }
+        expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: shared } })).toBe(1);
+      });
+
+      it(`import and a single create race on one tax number (${order}): one writes, the other is refused`, async () => {
+        const tax = `TX-${phone()}`;
+        const file = await xlsx([CUSTOMER_HEADER, customerRow({ tax })]);
+        const importing = () => commit('/customers/import', cookies.salesDxb, file, randomUUID());
+        const creating = () =>
+          post('/customers', cookies.salesDxb, {
+            branchId: dxb,
+            kind: 'COMPANY',
+            name: 'Raced',
+            phone: phone(),
+            taxNumber: tax.toLowerCase(),
+          });
+        const hold = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
+          lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]);
+        if (order === 'import first') {
+          const [imported, created] = await oneAfterTheOther(hold, importing, creating);
+          expect([imported.status, created.status]).toEqual([201, 409]);
+        } else {
+          const [created, imported] = await oneAfterTheOther(hold, creating, importing);
+          expect([created.status, imported.status]).toEqual([201, 422]);
+          expect(refusedCodes(imported)).toEqual([['taxNumber', 'DUPLICATE_IN_DB']]);
+        }
+        expect(
+          await t.prisma.customer.count({
+            where: { branchId: dxb, taxNumber: { equals: tax, mode: 'insensitive' } },
+          }),
+        ).toBe(1);
+      });
+
+      it(`import and a single create race on one rate (${order}): one writes, the other is refused`, async () => {
+        const from = day.replace('2031', order === 'import first' ? '2033' : '2034');
+        const file = await xlsx([RATE_HEADER, rateRow({ from })]);
+        const body = await rateBody(from);
+        const importing = () => commit('/rates/import', cookies.salesDxb, file, randomUUID());
+        const creating = () => post('/rates', cookies.salesDxb, body);
+        const hold = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
+          lockBranchRule(tx, RATE_UNIQUE_RULE, [dxb]);
+        if (order === 'import first') {
+          const [imported, created] = await oneAfterTheOther(hold, importing, creating);
+          expect([imported.status, created.status]).toEqual([201, 409]);
+        } else {
+          const [created, imported] = await oneAfterTheOther(hold, creating, importing);
+          expect([created.status, imported.status]).toEqual([201, 422]);
+          expect(refusedCodes(imported)).toEqual([['validFrom', 'DUPLICATE_IN_DB']]);
+        }
+        expect(
+          await t.prisma.rateCard.count({
+            where: {
+              branchId: dxb,
+              containerTypeCode: '40HC',
+              validFrom: new Date(`${from}T00:00:00Z`),
+              status: { in: ['DRAFT', 'APPROVED'] },
+            },
+          }),
+        ).toBe(1);
+      });
+    }
+  });
+
+  describe('branch deactivated during a commit', () => {
+    const deactivate = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
+      tx.branch.update({ where: { id: zzi }, data: { isActive: false } });
+    const reactivate = () =>
+      t.prisma.branch.update({ where: { id: zzi }, data: { isActive: true } });
+    const zziCustomers = () => t.prisma.customer.count({ where: { branchId: zzi } });
+
+    it('a deactivation committed first refuses the import waiting on the branch (422)', async () => {
+      const before = await zziCustomers();
+      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: 'ZZI' })]);
+      try {
+        const { pending } = await t.prisma.$transaction(
+          async (tx) => {
+            await deactivate(tx);
+            // The import passed its first checks (the deactivation is not committed yet) and
+            // waits on the branch row inside its transaction.
+            const sent = commit('/customers/import', cookies.salesZzi, file, randomUUID()).then(
+              (res) => res,
+            );
+            await waitForLockWaiter(t.prisma, 1);
+            return { pending: sent };
+          },
+          { timeout: 20_000 },
+        );
+        const res = await pending;
+        expect(res.status).toBe(422);
+        expect(
+          (res.body as ImportRowsInvalidBody).preview.issues.map((i) => [i.column, i.code]),
+        ).toEqual([['branchCode', 'BRANCH_NOT_ALLOWED']]);
+        expect(await zziCustomers()).toBe(before);
+      } finally {
+        await reactivate();
+      }
+    });
+
+    it('the same holds for rates', async () => {
+      const before = await t.prisma.rateCard.count({ where: { branchId: zzi } });
+      const file = await xlsx([RATE_HEADER, rateRow({ branch: 'ZZI' })]);
+      try {
+        const { pending } = await t.prisma.$transaction(
+          async (tx) => {
+            await deactivate(tx);
+            const sent = commit('/rates/import', cookies.salesZzi, file, randomUUID()).then(
+              (res) => res,
+            );
+            await waitForLockWaiter(t.prisma, 1);
+            return { pending: sent };
+          },
+          { timeout: 20_000 },
+        );
+        const res = await pending;
+        expect(res.status).toBe(422);
+        expect(
+          (res.body as ImportRowsInvalidBody).preview.issues.map((i) => [i.column, i.code]),
+        ).toEqual([['branchCode', 'BRANCH_NOT_ALLOWED']]);
+        expect(await t.prisma.rateCard.count({ where: { branchId: zzi } })).toBe(before);
+      } finally {
+        await reactivate();
+      }
+    });
+
+    it('an import that holds the branch first commits, and the deactivation waits for it', async () => {
+      const before = await zziCustomers();
+      const file = await xlsx([
+        CUSTOMER_HEADER,
+        customerRow({ branch: 'ZZI' }),
+        customerRow({ branch: 'ZZI' }),
+      ]);
+      try {
+        let deactivated: Promise<unknown> = Promise.resolve();
+        const { pending } = await t.prisma.$transaction(
+          async (tx) => {
+            // Barrier: the import locks the branch row, then waits on the customer rule lock.
+            await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [zzi]);
+            const sent = commit('/customers/import', cookies.salesZzi, file, randomUUID()).then(
+              (res) => res,
+            );
+            await waitForLockWaiter(t.prisma, 1);
+            deactivated = t.prisma.$transaction((other) => deactivate(other)).then((b) => b);
+            // The deactivation waits on the branch row the import holds.
+            await waitForLockWaiter(t.prisma, 2);
+            return { pending: sent };
+          },
+          { timeout: 20_000 },
+        );
+        const res = await pending;
+        expect(res.status).toBe(201);
+        await deactivated;
+        expect(await zziCustomers()).toBe(before + 2);
+        expect((await t.prisma.branch.findUniqueOrThrow({ where: { id: zzi } })).isActive).toBe(
+          false,
+        );
+      } finally {
+        await reactivate();
+      }
     });
   });
 });

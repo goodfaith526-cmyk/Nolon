@@ -16,9 +16,16 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
-import { type RuleIssue, memoAsync, refusal, throwFirstIssue } from '../common/rule-issues.js';
+import {
+  type RuleIssue,
+  memoAsync,
+  refusal,
+  throwFirstConflict,
+  throwFirstIssue,
+} from '../common/rule-issues.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
@@ -27,6 +34,57 @@ import { PrismaService } from '../prisma/prisma.service.js';
 
 /** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
 const WRITE_CHUNK = 1000;
+
+/** The per-branch lock every write that can add a draft or approved rate takes. */
+export const RATE_UNIQUE_RULE = 'rate-offer';
+
+/** The fields that make two rates the same offer. */
+export interface RateKeyFields {
+  branchId: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: string;
+  loadType?: string | null;
+  cargoType: string;
+  containerTypeCode?: string | null;
+  chargeTypeCode?: string | null;
+  unit: string;
+  currency: string;
+  validFrom: string;
+}
+
+/**
+ * What makes two rates the same offer: branch, route, mode, load, cargo, container, charge,
+ * unit, currency and start date. Two such rates in DRAFT or APPROVED would make quotation pricing
+ * ambiguous, so a branch holds at most one.
+ */
+export function rateKey(r: RateKeyFields): string {
+  return [
+    r.branchId,
+    r.originLocationId,
+    r.destinationLocationId,
+    r.mode,
+    r.loadType ?? '',
+    r.cargoType,
+    r.containerTypeCode ?? '',
+    r.chargeTypeCode ?? 'FREIGHT',
+    r.unit,
+    r.currency,
+    r.validFrom,
+  ].join('|');
+}
+
+const duplicateRate: RuleIssue = {
+  field: 'validFrom',
+  code: 'DUPLICATE_IN_DB',
+  message: 'The same rate already exists in this branch',
+};
+
+const inactiveBranch: RuleIssue = {
+  field: 'branchId',
+  code: 'BRANCH_NOT_ALLOWED',
+  message: 'Not one of your active branches',
+};
 
 /** What a quotation line's rate must match. */
 export interface RatePricingContext {
@@ -86,27 +144,51 @@ export class RatesService {
     return toDto(await this.findScoped(user, id));
   }
 
+  /**
+   * A draft or approved rate is unique per branch by its rateKey(): the check runs under the
+   * branch's rate lock (shared with update and the Excel import), so two writers cannot both pass
+   * it. A duplicate is a 409.
+   */
   async create(user: AuthUser, input: CreateRateCardRequest): Promise<RateCardDto> {
     assertBranchAccess(user, input.branchId);
     await this.validate(input);
     const { branchId, ...fields } = input;
-    const rate = await this.prisma.rateCard.create({
-      data: { ...toData(fields), branchId, createdById: user.id },
+    const rate = await this.prisma.$transaction(async (tx) => {
+      await lockBranchRule(tx, RATE_UNIQUE_RULE, [branchId]);
+      throwFirstConflict(await this.duplicateIssues(tx, [input]));
+      return tx.rateCard.create({ data: { ...toData(fields), branchId, createdById: user.id } });
     });
     return toDto(rate);
   }
 
   /**
    * Writes the rates of an Excel import, as drafts, inside the caller's transaction, each with its
-   * given id. The import has already checked every input (schema, rules, duplicates); branch
-   * access is asserted again here. Imported rates go through the normal approval.
+   * given id. The import has already checked each input's schema and rules; here, under the same
+   * locks as create, branch access is asserted again, each branch must still be active (its row
+   * is locked, so it stays active until the import commits) and no rate may repeat a draft or
+   * approved one of its branch. Imported rates go through the normal approval.
+   *
+   * Returns the issues of each row, in order. When any row has one, nothing is written.
    */
   async createImported(
     tx: Prisma.TransactionClient,
     user: AuthUser,
     rows: readonly { id: string; input: CreateRateCardRequest }[],
-  ): Promise<void> {
+  ): Promise<RuleIssue[][]> {
     for (const { input } of rows) assertBranchAccess(user, input.branchId);
+    if (rows.length === 0) return [];
+    const branchIds = rows.map((r) => r.input.branchId);
+    const active = await lockActiveBranches(tx, branchIds);
+    await lockBranchRule(tx, RATE_UNIQUE_RULE, branchIds);
+    const duplicates = await this.duplicateIssues(
+      tx,
+      rows.map((r) => r.input),
+    );
+    const issues = rows.map(({ input }, i): RuleIssue[] => [
+      ...(active.has(input.branchId) ? [] : [inactiveBranch]),
+      ...(duplicates[i] ?? []),
+    ]);
+    if (issues.some((list) => list.length > 0)) return issues;
     const data = rows.map(({ id, input }) => {
       const { branchId, ...fields } = input;
       return { ...toData(fields), id, branchId, createdById: user.id };
@@ -114,21 +196,60 @@ export class RatesService {
     for (let i = 0; i < data.length; i += WRITE_CHUNK) {
       await tx.rateCard.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
     }
+    return issues;
   }
 
-  /** Drafts only. */
+  /**
+   * For each candidate, a DUPLICATE_IN_DB issue when a draft or approved rate of its branch
+   * (other than the rate `excludeId`) is the same offer. Binding only while the caller holds the
+   * branch's rate lock (create, update, import); without it (the import preview) it is advice.
+   */
+  async duplicateIssues(
+    client: Prisma.TransactionClient,
+    candidates: readonly (RateKeyFields & { excludeId?: string })[],
+  ): Promise<RuleIssue[][]> {
+    if (candidates.length === 0) return [];
+    const unique = (values: string[]) => [...new Set(values)];
+    const existing = await client.rateCard.findMany({
+      where: {
+        branchId: { in: unique(candidates.map((c) => c.branchId)) },
+        status: { in: ['DRAFT', 'APPROVED'] },
+        originLocationId: { in: unique(candidates.map((c) => c.originLocationId)) },
+        destinationLocationId: { in: unique(candidates.map((c) => c.destinationLocationId)) },
+      },
+    });
+    const holders = new Map<string, string[]>();
+    for (const r of existing) {
+      const key = rateKey({ ...r, validFrom: fromDbDate(r.validFrom) });
+      holders.set(key, [...(holders.get(key) ?? []), r.id]);
+    }
+    return candidates.map((c) =>
+      (holders.get(rateKey(c)) ?? []).some((id) => id !== c.excludeId) ? [duplicateRate] : [],
+    );
+  }
+
+  /** Drafts only. A change that makes it the same offer as another rate is a 409. */
   async update(user: AuthUser, id: string, input: Partial<RateCardInput>): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
-    await this.validate({ ...fromRow(existing), ...input });
-    return this.transition(existing.id, 'DRAFT', toData(input));
+    const before = { ...fromRow(existing), branchId: existing.branchId };
+    const after = { ...before, ...input };
+    await this.validate(after);
+    return this.prisma.$transaction(async (tx) => {
+      if (rateKey(after) !== rateKey(before)) {
+        await lockBranchRule(tx, RATE_UNIQUE_RULE, [existing.branchId]);
+        throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: existing.id }]));
+      }
+      return this.transition(tx, existing.id, 'DRAFT', toData(input));
+    });
   }
 
   async approve(user: AuthUser, id: string): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft rate can be approved');
-    return this.transition(existing.id, 'DRAFT', {
+    // Approving keeps the rate among the drafts and approved ones: it cannot add a duplicate.
+    return this.transition(this.prisma, existing.id, 'DRAFT', {
       status: 'APPROVED',
       approvedById: user.id,
       approvedAt: new Date(),
@@ -138,7 +259,7 @@ export class RatesService {
   async cancel(user: AuthUser, id: string): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status === 'CANCELLED') throw new ConflictException('Rate is already cancelled');
-    return this.transition(existing.id, existing.status, { status: 'CANCELLED' });
+    return this.transition(this.prisma, existing.id, existing.status, { status: 'CANCELLED' });
   }
 
   /**
@@ -173,13 +294,14 @@ export class RatesService {
 
   /** Compare-and-set on the status, so two concurrent transitions cannot both win. */
   private async transition(
+    client: Prisma.TransactionClient,
     id: string,
     from: RateStatus,
     data: Prisma.RateCardUncheckedUpdateManyInput,
   ): Promise<RateCardDto> {
-    const { count } = await this.prisma.rateCard.updateMany({ where: { id, status: from }, data });
+    const { count } = await client.rateCard.updateMany({ where: { id, status: from }, data });
     if (count === 0) throw new ConflictException('Rate changed meanwhile; reload and retry');
-    return toDto(await this.prisma.rateCard.findUniqueOrThrow({ where: { id } }));
+    return toDto(await client.rateCard.findUniqueOrThrow({ where: { id } }));
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<RateCard> {

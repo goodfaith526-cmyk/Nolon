@@ -66,18 +66,3 @@ export async function lockImportRequest(
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey(requestId)}, 0))`;
 }
-
-/**
- * Serializes imports of one kind into the same branches until the transaction ends, so the
- * duplicate check re-run under these locks sees every earlier import. Branches are locked in a
- * fixed order: two files naming the same branches cannot deadlock.
- */
-export async function lockImportBranches(
-  tx: Prisma.TransactionClient,
-  kind: ImportKind,
-  branchIds: Iterable<string>,
-): Promise<void> {
-  for (const branchId of [...new Set(branchIds)].sort()) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey(`${kind}:${branchId}`)}, 0))`;
-  }
-}

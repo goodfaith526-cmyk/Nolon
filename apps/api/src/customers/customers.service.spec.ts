@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from './customers.service.js';
 
 function service() {
@@ -45,5 +46,36 @@ describe('CustomersService.referenceChecker', () => {
     const check = customers.referenceChecker();
     for (let i = 0; i < 20; i++) await check({ preferredCurrency: 'USD' });
     expect(requireActive).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CustomersService.duplicateIssues', () => {
+  const held = [
+    {
+      id: 'c1',
+      branchId: 'b1',
+      number: 'NOL-CUS-000001',
+      phone: '+249900000001',
+      taxNumber: 'TX-1',
+    },
+  ];
+  const client = {
+    customer: { findMany: vi.fn(() => Promise.resolve(held)) },
+  } as unknown as Prisma.TransactionClient;
+
+  it('reports a phone or tax number (any case and spacing) another customer of the branch holds', async () => {
+    const issues = await service().customers.duplicateIssues(client, [
+      { branchId: 'b1', phone: '+249900000001' },
+      { branchId: 'b1', phone: '+249900000002', taxNumber: ' tx-1 ' },
+      { branchId: 'b2', phone: '+249900000001', taxNumber: 'TX-1' },
+      { branchId: 'b1', phone: '+249900000001', taxNumber: 'TX-1', excludeId: 'c1' },
+    ]);
+    expect(issues.map((list) => list.map((i) => [i.field, i.code]))).toEqual([
+      [['phone', 'DUPLICATE_IN_DB']],
+      [['taxNumber', 'DUPLICATE_IN_DB']],
+      [],
+      [],
+    ]);
+    expect(issues[0]?.[0]?.message).toContain('NOL-CUS-000001');
   });
 });

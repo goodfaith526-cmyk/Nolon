@@ -9,6 +9,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { uniquePhone } from './test-data.js';
 
 describe('dashboard', () => {
   let t: TestApp;
@@ -34,7 +35,7 @@ describe('dashboard', () => {
       .post('/api/v1/customers')
       .set('Origin', APP_ORIGIN)
       .set('Cookie', salesKrt)
-      .send({ branchId: krt, kind: 'INDIVIDUAL', name: 'Dashboard Test', phone: '+249912000111' })
+      .send({ branchId: krt, kind: 'INDIVIDUAL', name: 'Dashboard Test', phone: uniquePhone() })
       .expect(201);
   });
 

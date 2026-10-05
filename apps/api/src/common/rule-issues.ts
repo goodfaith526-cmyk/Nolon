@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { ImportRowError } from '@nolon/shared';
 
 /**
@@ -15,6 +15,12 @@ export interface RuleIssue {
 export function throwFirstIssue(issues: readonly RuleIssue[]): void {
   const [first] = issues;
   if (first) throw new BadRequestException(first.message);
+}
+
+/** 409 with the first issue's message, when there is one: the record would duplicate another. */
+export function throwFirstConflict(issues: readonly (readonly RuleIssue[])[]): void {
+  const first = issues.flat()[0];
+  if (first) throw new ConflictException(first.message);
 }
 
 /**

@@ -11,16 +11,9 @@ import {
   type RateImportColumn,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
-import { fromDbDate } from '../common/dates.js';
+import type { RuleIssue } from '../common/rule-issues.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
-import {
-  IMPORT_TRANSACTION,
-  lockImportBranches,
-  lockImportRequest,
-  previousImport,
-} from '../imports/import-commit.js';
+import { IMPORT_TRANSACTION, lockImportRequest, previousImport } from '../imports/import-commit.js';
 import { rowsInvalid } from '../imports/import-http.js';
 import { ImportRecordsRegistry } from '../imports/import-records.registry.js';
 import {
@@ -40,7 +33,7 @@ import { buildTemplate } from '../imports/template.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { createRateBody } from './rate-schemas.js';
-import { RatesService } from './rates.service.js';
+import { RatesService, rateKey } from './rates.service.js';
 
 type Column = RateImportColumn;
 type Row = CheckedRow<Column, CreateRateCardRequest>;
@@ -235,41 +228,12 @@ function kindOf(column: Column) {
   return RATE_COLUMNS.find((c) => c.key === column)?.kind;
 }
 
-/** What makes two rates the same offer: a second one would make quotation pricing ambiguous. */
-function rateKey(r: {
-  branchId: string;
-  originLocationId: string;
-  destinationLocationId: string;
-  mode: string;
-  loadType?: string | null;
-  cargoType: string;
-  containerTypeCode?: string | null;
-  chargeTypeCode?: string | null;
-  unit: string;
-  currency: string;
-  validFrom: string;
-}): string {
-  return [
-    r.branchId,
-    r.originLocationId,
-    r.destinationLocationId,
-    r.mode,
-    r.loadType ?? '',
-    r.cargoType,
-    r.containerTypeCode ?? '',
-    r.chargeTypeCode ?? 'FREIGHT',
-    r.unit,
-    r.currency,
-    r.validFrom,
-  ].join('|');
-}
-
 /**
  * Excel import of selling rates (scope 7 and 18). Each row is checked with the same request
  * schema and rules as POST /rates (route, load and container type, charge type, currency,
  * validity), plus duplicates: the same offer (branch, route, mode, load, cargo, container,
  * charge, unit, currency and start date) twice in the file, or as a draft or approved rate of the
- * branch. Rows are imported as drafts and approved through the normal workflow.
+ * branch (the rule RatesService enforces on every write). Rows are imported as drafts and approved through the normal workflow.
  */
 @Injectable()
 export class RatesImportService implements OnModuleInit {
@@ -373,8 +337,9 @@ export class RatesImportService implements OnModuleInit {
    * user with the same requestId answers with the first attempt's result and writes nothing; the
    * requestId reused for anything else is refused (409).
    *
-   * The duplicate check runs again inside the transaction, under a lock per branch of the file,
-   * so two imports into one branch cannot both pass it with the same rate.
+   * Inside the transaction, RatesService checks again, under the locks every rate write takes,
+   * that each branch is still active and that no row repeats a rate written meanwhile (by another
+   * import or a single create or update); any such row refuses the file.
    */
   async commit(
     user: AuthUser,
@@ -386,24 +351,22 @@ export class RatesImportService implements OnModuleInit {
     if (done) return done;
     const rows = await this.check(user, file);
     const invalid = () => rowsInvalid(buildPreview('rates', RATE_COLUMNS, rows));
-    if (rows.some((r) => r.issues.length > 0 || !r.input)) throw invalid();
+    const ready = rows.flatMap((r) =>
+      r.input && r.issues.length === 0 ? [{ row: r, input: r.input }] : [],
+    );
+    if (ready.length < rows.length) throw invalid();
     const ids = importRecordIds(request, rows.length);
     return this.prisma.$transaction(async (tx) => {
       await lockImportRequest(tx, requestId);
       const raced = await previousImport(this.importRecords.lookups(), tx, user, request);
       if (raced) return raced;
-      await lockImportBranches(
-        tx,
-        'rates',
-        rows.flatMap((r) => (r.input ? [r.input.branchId] : [])),
-      );
-      await this.flagExisting(tx, user, rows);
-      if (rows.some((r) => r.issues.length > 0)) throw invalid();
-      await this.rates.createImported(
+      const issues = await this.rates.createImported(
         tx,
         user,
-        rows.flatMap((r, i) => (r.input ? [{ id: ids[i] ?? '', input: r.input }] : [])),
+        ready.map((r, i) => ({ id: ids[i] ?? '', input: r.input })),
       );
+      ready.forEach((r, i) => addRuleIssues(r.row, issues[i] ?? []));
+      if (rows.some((r) => r.issues.length > 0)) throw invalid();
       return { kind: 'rates', requestId, created: rows.length, replayed: false, ids };
     }, IMPORT_TRANSACTION);
   }
@@ -473,40 +436,19 @@ export class RatesImportService implements OnModuleInit {
         what: 'rate (route, cargo, unit, currency, start)',
       },
     ]);
-    await this.flagExisting(this.prisma, user, rows);
+    const parsed = rows.flatMap((r) => (r.input ? [{ row: r, input: r.input }] : []));
+    const duplicates = await this.rates.duplicateIssues(
+      this.prisma,
+      parsed.map((p) => p.input),
+    );
+    parsed.forEach((p, i) => addRuleIssues(p.row, duplicates[i] ?? []));
     return rows;
   }
+}
 
-  /** Rows that repeat a draft or approved rate of the same branch. */
-  private async flagExisting(
-    client: Prisma.TransactionClient,
-    user: AuthUser,
-    rows: Row[],
-  ): Promise<void> {
-    const inputs = rows.flatMap((r) => (r.input ? [r.input] : []));
-    if (inputs.length === 0) return;
-    const existing = await client.rateCard.findMany({
-      where: {
-        ...branchScope(user),
-        status: { in: ['DRAFT', 'APPROVED'] },
-        originLocationId: { in: [...new Set(inputs.map((i) => i.originLocationId))] },
-        destinationLocationId: { in: [...new Set(inputs.map((i) => i.destinationLocationId))] },
-      },
-    });
-    const keys = new Set(
-      existing.map((r) => rateKey({ ...r, validFrom: fromDbDate(r.validFrom) })),
-    );
-    for (const row of rows) {
-      if (row.input && keys.has(rateKey(row.input))) {
-        addIssues(row.issues, [
-          issue(
-            row.row,
-            'validFrom',
-            'DUPLICATE_IN_DB',
-            'The same rate already exists in this branch',
-          ),
-        ]);
-      }
-    }
-  }
+function addRuleIssues(row: Row, issues: readonly RuleIssue[]): void {
+  addIssues(
+    row.issues,
+    issues.map((r) => issue(row.row, columnOf(r.field), r.code, r.message)),
+  );
 }

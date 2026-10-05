@@ -22,7 +22,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
-import { waitForLockWaiter } from './test-data.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /**
  * Accounting: invoices, receipts, manual journals, periods and the database guards on posted
@@ -147,7 +147,7 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `Ledger Test ${year}`,
-        phone: '+249912000222',
+        phone: uniquePhone(),
         preferredCurrency: 'SDG',
       }).expect(201)
     ).body as CustomerDto;

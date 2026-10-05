@@ -8,15 +8,9 @@ import {
   type Locale,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import type { RuleIssue } from '../common/rule-issues.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
-import {
-  IMPORT_TRANSACTION,
-  lockImportBranches,
-  lockImportRequest,
-  previousImport,
-} from '../imports/import-commit.js';
+import { IMPORT_TRANSACTION, lockImportRequest, previousImport } from '../imports/import-commit.js';
 import { rowsInvalid } from '../imports/import-http.js';
 import { ImportRecordsRegistry } from '../imports/import-records.registry.js';
 import {
@@ -34,7 +28,7 @@ import { importRecordIds, importRequest } from '../imports/request-ids.js';
 import { buildTemplate } from '../imports/template.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { createCustomerBody } from './customer-schemas.js';
-import { CustomersService } from './customers.service.js';
+import { CustomersService, normalizeTaxNumber } from './customers.service.js';
 
 type Column = CustomerImportColumn;
 type Row = CheckedRow<Column, CreateCustomerRequest>;
@@ -79,8 +73,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: true,
     label: { en: 'Phone', ar: 'الهاتف' },
     hint: {
-      en: 'International form, e.g. +249912345678. Checked on import: not already used in the branch.',
-      ar: 'بالصيغة الدولية مثل ‎+249912345678. يُتحقَّق عند الاستيراد من أنه غير مستخدم في الفرع.',
+      en: 'International form, e.g. +249912345678. Unique per branch.',
+      ar: 'بالصيغة الدولية مثل ‎+249912345678. لا يتكرر داخل الفرع.',
     },
   },
   {
@@ -129,8 +123,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: false,
     label: { en: 'Tax number', ar: 'الرقم الضريبي' },
     hint: {
-      en: 'Up to 50 characters. Checked on import: not already used in the branch.',
-      ar: 'حتى 50 حرفاً. يُتحقَّق عند الاستيراد من أنه غير مستخدم في الفرع.',
+      en: 'Up to 50 characters. Unique per branch (case does not matter).',
+      ar: 'حتى 50 حرفاً. لا يتكرر داخل الفرع (دون اعتبار لحالة الأحرف).',
     },
   },
   {
@@ -203,13 +197,11 @@ function kindOf(column: Column) {
   return CUSTOMER_COLUMNS.find((c) => c.key === column)?.kind;
 }
 
-const normalizeTax = (value: string) => value.trim().toUpperCase();
-
 /**
  * Excel import of customers (scope 6 and 18). Each row is checked with the same request schema
- * and reference rules as POST /customers, plus an import-only duplicate check: a phone or tax
- * number repeated within the file, or already held by a customer of the same branch. Commit
- * writes every row in one transaction, or nothing when any row fails.
+ * and reference rules as POST /customers, plus duplicates: a phone or tax number repeated within
+ * the file, or already held by a customer of the same branch (the rule CustomersService enforces
+ * on every write). Commit writes every row in one transaction, or nothing when any row fails.
  */
 @Injectable()
 export class CustomersImportService implements OnModuleInit {
@@ -285,8 +277,9 @@ export class CustomersImportService implements OnModuleInit {
    * user with the same requestId answers with the first attempt's result and writes nothing; the
    * requestId reused for anything else is refused (409).
    *
-   * The duplicate check runs again inside the transaction, under a lock per branch of the file,
-   * so two imports into one branch cannot both pass it with the same phone or tax number.
+   * Inside the transaction, CustomersService checks again, under the locks every customer write
+   * takes, that each branch is still active and that no phone or tax number has been taken
+   * meanwhile (by another import or a single create or update); any such row refuses the file.
    */
   async commit(
     user: AuthUser,
@@ -298,24 +291,22 @@ export class CustomersImportService implements OnModuleInit {
     if (done) return done;
     const rows = await this.check(user, file);
     const invalid = () => rowsInvalid(buildPreview('customers', CUSTOMER_COLUMNS, rows));
-    if (rows.some((r) => r.issues.length > 0 || !r.input)) throw invalid();
+    const ready = rows.flatMap((r) =>
+      r.input && r.issues.length === 0 ? [{ row: r, input: r.input }] : [],
+    );
+    if (ready.length < rows.length) throw invalid();
     const ids = importRecordIds(request, rows.length);
     return this.prisma.$transaction(async (tx) => {
       await lockImportRequest(tx, requestId);
       const raced = await previousImport(this.importRecords.lookups(), tx, user, request);
       if (raced) return raced;
-      await lockImportBranches(
-        tx,
-        'customers',
-        rows.flatMap((r) => (r.input ? [r.input.branchId] : [])),
-      );
-      await this.flagExisting(tx, user, rows);
-      if (rows.some((r) => r.issues.length > 0)) throw invalid();
-      await this.customers.createImported(
+      const issues = await this.customers.createImported(
         tx,
         user,
-        rows.flatMap((r, i) => (r.input ? [{ id: ids[i] ?? '', input: r.input }] : [])),
+        ready.map((r, i) => ({ id: ids[i] ?? '', input: r.input })),
       );
+      ready.forEach((r, i) => addRuleIssues(r.row, issues[i] ?? []));
+      if (rows.some((r) => r.issues.length > 0)) throw invalid();
       return { kind: 'customers', requestId, created: rows.length, replayed: false, ids };
     }, IMPORT_TRANSACTION);
   }
@@ -372,58 +363,26 @@ export class CustomersImportService implements OnModuleInit {
       ...(input.taxNumber
         ? [
             {
-              key: `tax|${input.branchId}|${normalizeTax(input.taxNumber)}`,
+              key: `tax|${input.branchId}|${normalizeTaxNumber(input.taxNumber)}`,
               column: 'taxNumber' as const,
               what: 'tax number',
             },
           ]
         : []),
     ]);
-    await this.flagExisting(this.prisma, user, rows);
+    const parsed = rows.flatMap((r) => (r.input ? [{ row: r, input: r.input }] : []));
+    const duplicates = await this.customers.duplicateIssues(
+      this.prisma,
+      parsed.map((p) => p.input),
+    );
+    parsed.forEach((p, i) => addRuleIssues(p.row, duplicates[i] ?? []));
     return rows;
   }
+}
 
-  /** Rows whose phone or tax number a customer of the same branch already has. */
-  private async flagExisting(
-    client: Prisma.TransactionClient,
-    user: AuthUser,
-    rows: Row[],
-  ): Promise<void> {
-    const inputs = rows.flatMap((r) => (r.input ? [r.input] : []));
-    if (inputs.length === 0) return;
-    const phones = [...new Set(inputs.map((i) => i.phone))];
-    const taxes = [...new Set(inputs.flatMap((i) => (i.taxNumber ? [i.taxNumber] : [])))];
-    const existing = await client.customer.findMany({
-      where: {
-        ...branchScope(user),
-        OR: [
-          { phone: { in: phones } },
-          ...(taxes.length > 0 ? [{ taxNumber: { in: taxes, mode: 'insensitive' as const } }] : []),
-        ],
-      },
-      select: { branchId: true, number: true, phone: true, taxNumber: true },
-    });
-    const byPhone = new Map(existing.map((c) => [`${c.branchId}|${c.phone}`, c.number]));
-    const byTax = new Map(
-      existing.flatMap((c) =>
-        c.taxNumber ? [[`${c.branchId}|${normalizeTax(c.taxNumber)}`, c.number] as const] : [],
-      ),
-    );
-    for (const row of rows) {
-      if (!row.input) continue;
-      const { branchId, phone, taxNumber } = row.input;
-      const samePhone = byPhone.get(`${branchId}|${phone}`);
-      if (samePhone) {
-        addIssues(row.issues, [
-          issue(row.row, 'phone', 'DUPLICATE_IN_DB', `Customer ${samePhone} has this phone`),
-        ]);
-      }
-      const sameTax = taxNumber ? byTax.get(`${branchId}|${normalizeTax(taxNumber)}`) : undefined;
-      if (sameTax) {
-        addIssues(row.issues, [
-          issue(row.row, 'taxNumber', 'DUPLICATE_IN_DB', `Customer ${sameTax} has this tax number`),
-        ]);
-      }
-    }
-  }
+function addRuleIssues(row: Row, issues: readonly RuleIssue[]): void {
+  addIssues(
+    row.issues,
+    issues.map((r) => issue(row.row, columnOf(r.field), r.code, r.message)),
+  );
 }

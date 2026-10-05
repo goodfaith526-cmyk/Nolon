@@ -19,6 +19,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { uniquePhone } from './test-data.js';
 
 /**
  * Customer statement of account (annex D printout 12) against PostgreSQL. Posted entries are never
@@ -120,7 +121,7 @@ describe('customer statement', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `${name} ${year} ${randomUUID().slice(0, 6)}`,
-        phone: '+249912000777',
+        phone: uniquePhone(),
         preferredCurrency: 'USD',
       }).expect(201)
     ).body as CustomerDto;

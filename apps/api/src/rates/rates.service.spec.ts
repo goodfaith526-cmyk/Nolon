@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
 import type { MasterDataService } from '../master-data/master-data.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
-import { RatesService } from './rates.service.js';
+import type { Prisma } from '../generated/prisma/client.js';
+import { RatesService, rateKey } from './rates.service.js';
 
 const JEA = '00000000-0000-4000-8000-000000000001';
 const PZU = '00000000-0000-4000-8000-000000000002';
@@ -104,5 +105,55 @@ describe('RatesService.ruleChecker', () => {
     expect(masterData.requireRoute).toHaveBeenCalledTimes(1);
     expect(masterData.requireContainerType).toHaveBeenCalledTimes(1);
     expect(currencies.requireActive).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('rate duplicates', () => {
+  const offer = {
+    branchId: 'b1',
+    originLocationId: JEA,
+    destinationLocationId: PZU,
+    mode: 'SEA',
+    loadType: 'FCL',
+    cargoType: 'CONTAINER',
+    containerTypeCode: '40HC',
+    unit: 'PER_CONTAINER',
+    currency: 'USD',
+    validFrom: '2031-01-01',
+  };
+
+  it('keys an offer by every field but the price; the charge type defaults to FREIGHT', () => {
+    expect(rateKey(offer)).toBe(rateKey({ ...offer, chargeTypeCode: 'FREIGHT' }));
+    expect(rateKey(offer)).not.toBe(rateKey({ ...offer, chargeTypeCode: 'THC' }));
+    expect(rateKey(offer)).not.toBe(rateKey({ ...offer, branchId: 'b2' }));
+    expect(rateKey(offer)).not.toBe(rateKey({ ...offer, validFrom: '2031-01-02' }));
+    expect(rateKey({ ...offer, loadType: null })).toBe(rateKey({ ...offer, loadType: undefined }));
+  });
+
+  it('finds draft and approved rates of the offer, except the rate being edited', async () => {
+    const findMany = vi.fn(() =>
+      Promise.resolve([
+        {
+          ...offer,
+          id: 'r1',
+          chargeTypeCode: 'FREIGHT',
+          validFrom: new Date('2031-01-01T00:00:00Z'),
+        },
+      ]),
+    );
+    const client = { rateCard: { findMany } } as unknown as Prisma.TransactionClient;
+    const issues = await service().rates.duplicateIssues(client, [
+      offer,
+      { ...offer, excludeId: 'r1' },
+      { ...offer, unit: 'PER_CBM' },
+    ]);
+    expect(issues.map((list) => list.map((i) => [i.field, i.code]))).toEqual([
+      [['validFrom', 'DUPLICATE_IN_DB']],
+      [],
+      [],
+    ]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ status: { in: ['DRAFT', 'APPROVED'] } }) as unknown,
+    });
   });
 });

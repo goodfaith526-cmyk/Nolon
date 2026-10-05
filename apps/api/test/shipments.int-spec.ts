@@ -17,7 +17,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
+import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 const PDF = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
 
@@ -120,7 +120,8 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         branchId: dxb,
         kind: 'COMPANY',
         name: 'Shipment Test Trading',
-        phone: '+971501110001',
+        // Unique in the branch, and ending in 0001 (public tracking below).
+        phone: `${uniquePhone().slice(0, -4)}0001`,
       }).expect(201)
     ).body as CustomerDto;
     await post(`/customers/${created.id}/parties`, cookies.salesDxb, {
