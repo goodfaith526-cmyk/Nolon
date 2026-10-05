@@ -16,13 +16,75 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
+import {
+  type RuleIssue,
+  memoAsync,
+  refusal,
+  throwFirstConflict,
+  throwFirstIssue,
+} from '../common/rule-issues.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+/** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
+const WRITE_CHUNK = 1000;
+
+/** The per-branch lock every write that can add a draft or approved rate takes. */
+export const RATE_UNIQUE_RULE = 'rate-offer';
+
+/** The fields that make two rates the same offer. */
+export interface RateKeyFields {
+  branchId: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: string;
+  loadType?: string | null;
+  cargoType: string;
+  containerTypeCode?: string | null;
+  chargeTypeCode?: string | null;
+  unit: string;
+  currency: string;
+  validFrom: string;
+}
+
+/**
+ * What makes two rates the same offer: branch, route, mode, load, cargo, container, charge,
+ * unit, currency and start date. Two such rates in DRAFT or APPROVED would make quotation pricing
+ * ambiguous, so a branch holds at most one.
+ */
+export function rateKey(r: RateKeyFields): string {
+  return [
+    r.branchId,
+    r.originLocationId,
+    r.destinationLocationId,
+    r.mode,
+    r.loadType ?? '',
+    r.cargoType,
+    r.containerTypeCode ?? '',
+    r.chargeTypeCode ?? 'FREIGHT',
+    r.unit,
+    r.currency,
+    r.validFrom,
+  ].join('|');
+}
+
+const duplicateRate: RuleIssue = {
+  field: 'validFrom',
+  code: 'DUPLICATE_IN_DB',
+  message: 'The same rate already exists in this branch',
+};
+
+const inactiveBranch: RuleIssue = {
+  field: 'branchId',
+  code: 'BRANCH_NOT_ALLOWED',
+  message: 'Not one of your active branches',
+};
 
 /** What a quotation line's rate must match. */
 export interface RatePricingContext {
@@ -82,29 +144,132 @@ export class RatesService {
     return toDto(await this.findScoped(user, id));
   }
 
+  /**
+   * A draft or approved rate is unique per branch by its rateKey(): the check runs under the
+   * branch's rate lock (shared with update and the Excel import), so two writers cannot both pass
+   * it. A duplicate is a 409.
+   */
   async create(user: AuthUser, input: CreateRateCardRequest): Promise<RateCardDto> {
     assertBranchAccess(user, input.branchId);
     await this.validate(input);
     const { branchId, ...fields } = input;
-    const rate = await this.prisma.rateCard.create({
-      data: { ...toData(fields), branchId, createdById: user.id },
+    const rate = await this.prisma.$transaction(async (tx) => {
+      await lockBranchRule(tx, RATE_UNIQUE_RULE, [branchId]);
+      throwFirstConflict(await this.duplicateIssues(tx, [input]));
+      return tx.rateCard.create({ data: { ...toData(fields), branchId, createdById: user.id } });
     });
     return toDto(rate);
   }
 
-  /** Drafts only. */
+  /**
+   * Writes the rates of an Excel import, as drafts, inside the caller's transaction, each with its
+   * given id. The import has already checked each input's schema and rules; here, under the same
+   * locks as create, branch access is asserted again, each branch must still be active (its row
+   * is locked, so it stays active until the import commits) and no rate may repeat a draft or
+   * approved one of its branch. Imported rates go through the normal approval.
+   *
+   * Returns the issues of each row, in order. When any row has one, nothing is written.
+   */
+  async createImported(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    rows: readonly { id: string; input: CreateRateCardRequest }[],
+  ): Promise<RuleIssue[][]> {
+    for (const { input } of rows) assertBranchAccess(user, input.branchId);
+    if (rows.length === 0) return [];
+    const branchIds = rows.map((r) => r.input.branchId);
+    const active = await lockActiveBranches(tx, branchIds);
+    await lockBranchRule(tx, RATE_UNIQUE_RULE, branchIds);
+    const duplicates = await this.duplicateIssues(
+      tx,
+      rows.map((r) => r.input),
+    );
+    const issues = rows.map(({ input }, i): RuleIssue[] => [
+      ...(active.has(input.branchId) ? [] : [inactiveBranch]),
+      ...(duplicates[i] ?? []),
+    ]);
+    if (issues.some((list) => list.length > 0)) return issues;
+    const data = rows.map(({ id, input }) => {
+      const { branchId, ...fields } = input;
+      return { ...toData(fields), id, branchId, createdById: user.id };
+    });
+    for (let i = 0; i < data.length; i += WRITE_CHUNK) {
+      await tx.rateCard.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
+    }
+    return issues;
+  }
+
+  /**
+   * For each candidate, a DUPLICATE_IN_DB issue when a draft or approved rate of its branch
+   * (other than the rate `excludeId`) is the same offer. Binding only while the caller holds the
+   * branch's rate lock (create, update, import); without it (the import preview) it is advice.
+   */
+  async duplicateIssues(
+    client: Prisma.TransactionClient,
+    candidates: readonly (RateKeyFields & { excludeId?: string })[],
+  ): Promise<RuleIssue[][]> {
+    if (candidates.length === 0) return [];
+    const unique = (values: string[]) => [...new Set(values)];
+    const existing = await client.rateCard.findMany({
+      where: {
+        branchId: { in: unique(candidates.map((c) => c.branchId)) },
+        status: { in: ['DRAFT', 'APPROVED'] },
+        originLocationId: { in: unique(candidates.map((c) => c.originLocationId)) },
+        destinationLocationId: { in: unique(candidates.map((c) => c.destinationLocationId)) },
+      },
+    });
+    const holders = new Map<string, string[]>();
+    for (const r of existing) {
+      const key = rateKey({ ...r, validFrom: fromDbDate(r.validFrom) });
+      holders.set(key, [...(holders.get(key) ?? []), r.id]);
+    }
+    return candidates.map((c) =>
+      (holders.get(rateKey(c)) ?? []).some((id) => id !== c.excludeId) ? [duplicateRate] : [],
+    );
+  }
+
+  /**
+   * Drafts only. A change that makes it the same offer as another rate is a 409. The status and
+   * the offer are checked against the rate as it is now, not as it was read before the
+   * transaction: the row is locked and read again first, so a stale form cannot put back an offer
+   * the rate gave up and another rate took meanwhile.
+   *
+   * Lock order: the rate row (FOR NO KEY UPDATE), then the branch's rate rule lock. Create and
+   * import take the rule lock and only insert new rows, so no path takes the rule lock and then
+   * this row: the two orders cannot deadlock.
+   */
   async update(user: AuthUser, id: string, input: Partial<RateCardInput>): Promise<RateCardDto> {
-    const existing = await this.findScoped(user, id);
-    if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
-    await this.validate({ ...fromRow(existing), ...input });
-    return this.transition(existing.id, 'DRAFT', toData(input));
+    const read = await this.findScoped(user, id);
+    if (read.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
+    const merge = (r: RateCard) => {
+      const before = { ...fromRow(r), branchId: r.branchId };
+      return { before, after: { ...before, ...input } };
+    };
+    const stale = merge(read);
+    await this.validate(stale.after);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "rate_cards" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
+      const current = await tx.rateCard.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      if (!current) throw new NotFoundException('Rate not found');
+      if (current.status !== 'DRAFT') {
+        throw new ConflictException('Only a draft rate can be edited');
+      }
+      const { before, after } = merge(current);
+      if (JSON.stringify(after) !== JSON.stringify(stale.after)) await this.validate(after);
+      if (rateKey(after) !== rateKey(before)) {
+        await lockBranchRule(tx, RATE_UNIQUE_RULE, [current.branchId]);
+        throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: current.id }]));
+      }
+      return this.transition(tx, current.id, 'DRAFT', toData(input));
+    });
   }
 
   async approve(user: AuthUser, id: string): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft rate can be approved');
-    return this.transition(existing.id, 'DRAFT', {
+    // Approving keeps the rate among the drafts and approved ones: it cannot add a duplicate.
+    return this.transition(this.prisma, existing.id, 'DRAFT', {
       status: 'APPROVED',
       approvedById: user.id,
       approvedAt: new Date(),
@@ -114,7 +279,7 @@ export class RatesService {
   async cancel(user: AuthUser, id: string): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status === 'CANCELLED') throw new ConflictException('Rate is already cancelled');
-    return this.transition(existing.id, existing.status, { status: 'CANCELLED' });
+    return this.transition(this.prisma, existing.id, existing.status, { status: 'CANCELLED' });
   }
 
   /**
@@ -149,13 +314,14 @@ export class RatesService {
 
   /** Compare-and-set on the status, so two concurrent transitions cannot both win. */
   private async transition(
+    client: Prisma.TransactionClient,
     id: string,
     from: RateStatus,
     data: Prisma.RateCardUncheckedUpdateManyInput,
   ): Promise<RateCardDto> {
-    const { count } = await this.prisma.rateCard.updateMany({ where: { id, status: from }, data });
+    const { count } = await client.rateCard.updateMany({ where: { id, status: from }, data });
     if (count === 0) throw new ConflictException('Rate changed meanwhile; reload and retry');
-    return toDto(await this.prisma.rateCard.findUniqueOrThrow({ where: { id } }));
+    return toDto(await client.rateCard.findUniqueOrThrow({ where: { id } }));
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<RateCard> {
@@ -165,23 +331,74 @@ export class RatesService {
   }
 
   private async validate(input: RateCardInput): Promise<void> {
-    await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
-    if (input.mode !== 'SEA' && input.loadType) {
-      throw new BadRequestException('FCL/LCL applies to sea rates only');
-    }
-    if (input.cargoType === 'CONTAINER') {
-      if (!input.containerTypeCode) {
-        throw new BadRequestException('A container rate needs a container type');
+    throwFirstIssue(await this.ruleChecker()(input));
+  }
+
+  /**
+   * The rules a rate must meet (scope 7), as issues by field: create and update throw the first,
+   * the Excel import reports them all. Master data is checked through its services; lookups are
+   * cached per checker, so a file of thousands of rows asks for each code once.
+   */
+  ruleChecker(): (input: RateCardInput) => Promise<RuleIssue[]> {
+    const routeRefusal = memoAsync((key: string) => {
+      const [origin = '', destination = ''] = key.split('|');
+      return refusal(() => this.masterData.requireRoute(origin, destination));
+    });
+    const locationRefusal = memoAsync((id: string) =>
+      refusal(() => this.masterData.requireLocation(id)),
+    );
+    const containerRefusal = memoAsync((code: string) =>
+      refusal(() => this.masterData.requireContainerType(code)),
+    );
+    const chargeRefusal = memoAsync((code: string) =>
+      refusal(() => this.masterData.requireChargeType(code)),
+    );
+    const currencyRefusal = memoAsync((code: string) =>
+      refusal(() => this.currencies.requireActive(code)),
+    );
+    return async (input) => {
+      const issues: RuleIssue[] = [];
+      const add = (field: string, code: RuleIssue['code'], message: string) =>
+        issues.push({ field, code, message });
+
+      const route = await routeRefusal(`${input.originLocationId}|${input.destinationLocationId}`);
+      if (route) {
+        const origin = await locationRefusal(input.originLocationId);
+        const destination = await locationRefusal(input.destinationLocationId);
+        if (origin) add('originLocationId', 'UNKNOWN_LOCATION', origin);
+        if (destination) add('destinationLocationId', 'UNKNOWN_LOCATION', destination);
+        if (!origin && !destination) add('destinationLocationId', 'SAME_ROUTE', route);
       }
-      await this.masterData.requireContainerType(input.containerTypeCode);
-    } else if (input.containerTypeCode) {
-      throw new BadRequestException('Container type applies to container rates only');
-    }
-    await this.masterData.requireChargeType(input.chargeTypeCode ?? 'FREIGHT');
-    await this.currencies.requireActive(input.currency);
-    if (input.validTo && input.validTo < input.validFrom) {
-      throw new BadRequestException('Valid-to is before valid-from');
-    }
+      if (input.mode !== 'SEA' && input.loadType) {
+        add('loadType', 'LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea rates only');
+      }
+      if (input.cargoType === 'CONTAINER') {
+        if (!input.containerTypeCode) {
+          add(
+            'containerTypeCode',
+            'CONTAINER_TYPE_REQUIRED',
+            'A container rate needs a container type',
+          );
+        } else {
+          const refused = await containerRefusal(input.containerTypeCode);
+          if (refused) add('containerTypeCode', 'UNKNOWN_CONTAINER_TYPE', refused);
+        }
+      } else if (input.containerTypeCode) {
+        add(
+          'containerTypeCode',
+          'CONTAINER_TYPE_NOT_APPLICABLE',
+          'Container type applies to container rates only',
+        );
+      }
+      const charge = await chargeRefusal(input.chargeTypeCode ?? 'FREIGHT');
+      if (charge) add('chargeTypeCode', 'UNKNOWN_CHARGE_TYPE', charge);
+      const currency = await currencyRefusal(input.currency);
+      if (currency) add('currency', 'UNKNOWN_CURRENCY', currency);
+      if (input.validTo && input.validTo < input.validFrom) {
+        add('validTo', 'VALID_TO_BEFORE_FROM', 'Valid-to is before valid-from');
+      }
+      return issues;
+    };
   }
 }
 

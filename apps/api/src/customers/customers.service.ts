@@ -17,13 +17,41 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { formatDocumentNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
+import {
+  type RuleIssue,
+  memoAsync,
+  refusal,
+  throwFirstConflict,
+  throwFirstIssue,
+} from '../common/rule-issues.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Customer, CustomerContact, Party, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+/** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
+const WRITE_CHUNK = 1000;
+
+/** The per-branch lock every write that can change a customer's phone or tax number takes. */
+export const CUSTOMER_UNIQUE_RULE = 'customer-phone-tax';
+
+/** How tax numbers compare: case and surrounding spaces do not matter. */
+export const normalizeTaxNumber = (value: string) => value.trim().toUpperCase();
+
+/** What a customer write would claim in its branch; `excludeId` is the customer being edited. */
+export interface CustomerKeys {
+  branchId: string;
+  phone?: string;
+  taxNumber?: string | null;
+  excludeId?: string;
+}
+
+const sameTaxNumber = (a: string, b: string | null) =>
+  b !== null && normalizeTaxNumber(a) === normalizeTaxNumber(b);
 
 type CustomerWithDetails = Customer & { contacts: CustomerContact[]; parties: Party[] };
 
@@ -65,13 +93,21 @@ export class CustomersService {
     return toDto(await this.findScoped(user, id));
   }
 
+  /**
+   * A phone, and a tax number when given, is unique per branch: the check runs under the branch's
+   * customer lock (shared with update and the Excel import), so two writers cannot both pass it.
+   * A duplicate is a 409.
+   */
   async create(user: AuthUser, input: CreateCustomerRequest): Promise<CustomerDto> {
     assertBranchAccess(user, input.branchId);
-    const branch = await this.prisma.branch.findUnique({ where: { id: input.branchId } });
-    if (!branch?.isActive) throw new BadRequestException('Unknown or inactive branch');
     await this.checkReferences(input);
     const { branchId, ...fields } = input;
     const created = await this.prisma.$transaction(async (tx) => {
+      if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
+        throw new BadRequestException('Unknown or inactive branch');
+      }
+      await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
+      throwFirstConflict(await this.duplicateIssues(tx, [input]));
       const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
       return tx.customer.create({
         data: { ...toData(fields), number, branchId, createdById: user.id },
@@ -81,18 +117,148 @@ export class CustomersService {
     return toDto(created);
   }
 
+  /**
+   * Writes the customers of an Excel import inside the caller's transaction, each with its given
+   * id and the next consecutive customer numbers. The import has already checked each input's
+   * schema and references; here, under the same locks as create, branch access is asserted again,
+   * each branch must still be active (its row is locked, so it stays active until the import
+   * commits) and no phone or tax number may already be taken in the branch.
+   *
+   * Returns the issues of each row, in order. When any row has one, nothing is written.
+   */
+  async createImported(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    rows: readonly { id: string; input: CreateCustomerRequest }[],
+  ): Promise<RuleIssue[][]> {
+    for (const { input } of rows) assertBranchAccess(user, input.branchId);
+    if (rows.length === 0) return [];
+    const branchIds = rows.map((r) => r.input.branchId);
+    const active = await lockActiveBranches(tx, branchIds);
+    await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, branchIds);
+    const duplicates = await this.duplicateIssues(
+      tx,
+      rows.map((r) => r.input),
+    );
+    const issues = rows.map(({ input }, i): RuleIssue[] => [
+      ...(active.has(input.branchId) ? [] : [inactiveBranch]),
+      ...(duplicates[i] ?? []),
+    ]);
+    if (issues.some((list) => list.length > 0)) return issues;
+    const first = await nextSequenceRange(tx, 'CUSTOMER', rows.length);
+    const data = rows.map(({ id, input }, i) => {
+      const { branchId, ...fields } = input;
+      return {
+        ...toData(fields),
+        id,
+        number: formatDocumentNumber('CUS', first + BigInt(i)),
+        branchId,
+        createdById: user.id,
+      };
+    });
+    for (let i = 0; i < data.length; i += WRITE_CHUNK) {
+      await tx.customer.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
+    }
+    return issues;
+  }
+
+  /**
+   * For each candidate, the phone or tax number another customer of its branch already holds
+   * (inactive customers included). Binding only while the caller holds the branch's customer lock
+   * (create, update, import); without it (the import preview) it is advice.
+   */
+  async duplicateIssues(
+    client: Prisma.TransactionClient,
+    candidates: readonly CustomerKeys[],
+  ): Promise<RuleIssue[][]> {
+    const phones = [...new Set(candidates.flatMap((c) => (c.phone ? [c.phone] : [])))];
+    const taxes = [...new Set(candidates.flatMap((c) => (c.taxNumber ? [c.taxNumber] : [])))];
+    if (phones.length === 0 && taxes.length === 0) return candidates.map(() => []);
+    const existing = await client.customer.findMany({
+      where: {
+        branchId: { in: [...new Set(candidates.map((c) => c.branchId))] },
+        OR: [
+          ...(phones.length > 0 ? [{ phone: { in: phones } }] : []),
+          ...(taxes.length > 0 ? [{ taxNumber: { in: taxes, mode: 'insensitive' as const } }] : []),
+        ],
+      },
+      select: { id: true, branchId: true, number: true, phone: true, taxNumber: true },
+    });
+    const holder = (excludeId: string | undefined, matches: (c: (typeof existing)[0]) => boolean) =>
+      existing.find((c) => c.id !== excludeId && matches(c))?.number;
+    return candidates.map(({ branchId, phone, taxNumber, excludeId }) => {
+      const issues: RuleIssue[] = [];
+      const samePhone =
+        phone && holder(excludeId, (c) => c.branchId === branchId && c.phone === phone);
+      if (samePhone) {
+        issues.push({
+          field: 'phone',
+          code: 'DUPLICATE_IN_DB',
+          message: `Customer ${samePhone} of this branch has this phone`,
+        });
+      }
+      const sameTax =
+        taxNumber &&
+        holder(excludeId, (c) => c.branchId === branchId && sameTaxNumber(taxNumber, c.taxNumber));
+      if (sameTax) {
+        issues.push({
+          field: 'taxNumber',
+          code: 'DUPLICATE_IN_DB',
+          message: `Customer ${sameTax} of this branch has this tax number`,
+        });
+      }
+      return issues;
+    });
+  }
+
+  /**
+   * The phone and tax number are checked against the customer as it is now, not as it was read
+   * before the transaction: the row is locked and read again first, so a stale form cannot put
+   * back a phone or tax number the customer gave up and another customer took meanwhile.
+   *
+   * Lock order: the customer row (FOR NO KEY UPDATE), then the branch's customer rule lock. Create
+   * and import take the rule lock and only insert new rows, so no path takes the rule lock and
+   * then this row: the two orders cannot deadlock.
+   */
   async update(user: AuthUser, id: string, input: Partial<CustomerInput>): Promise<CustomerDto> {
-    const existing = await this.findScoped(user, id);
-    const merged = {
-      creditLimit: toDecimalStringOrNull(existing.creditLimit),
-      creditLimitCurrency: existing.creditLimitCurrency,
+    const read = await this.findScoped(user, id);
+    const withLimit = (c: Customer) => ({
+      creditLimit: toDecimalStringOrNull(c.creditLimit),
+      creditLimitCurrency: c.creditLimitCurrency,
       ...input,
-    };
-    await this.checkReferences(merged);
-    const updated = await this.prisma.customer.update({
-      where: { id: existing.id },
-      data: toData(input),
-      include: details,
+    });
+    await this.checkReferences(withLimit(read));
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
+      const current = await tx.customer.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      if (!current) throw new NotFoundException('Customer not found');
+      if (
+        current.creditLimit?.toString() !== read.creditLimit?.toString() ||
+        current.creditLimitCurrency !== read.creditLimitCurrency
+      ) {
+        await this.checkReferences(withLimit(current));
+      }
+      // A phone or tax number the customer does not hold now must be free in the branch (409),
+      // checked under the lock.
+      const keys: CustomerKeys = {
+        branchId: current.branchId,
+        excludeId: current.id,
+        ...(input.phone !== undefined && input.phone !== current.phone
+          ? { phone: input.phone }
+          : {}),
+        ...(input.taxNumber && !sameTaxNumber(input.taxNumber, current.taxNumber)
+          ? { taxNumber: input.taxNumber }
+          : {}),
+      };
+      if (keys.phone !== undefined || keys.taxNumber) {
+        await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
+        throwFirstConflict(await this.duplicateIssues(tx, [keys]));
+      }
+      return tx.customer.update({
+        where: { id: current.id },
+        data: toData(input),
+        include: details,
+      });
     });
     return toDto(updated);
   }
@@ -223,15 +389,51 @@ export class CustomersService {
   }
 
   private async checkReferences(input: Partial<CustomerInput>): Promise<void> {
-    if (input.preferredCurrency) await this.currencies.requireActive(input.preferredCurrency);
-    const hasLimit = input.creditLimit !== undefined && input.creditLimit !== null;
-    const hasLimitCurrency = Boolean(input.creditLimitCurrency);
-    if (hasLimit !== hasLimitCurrency) {
-      throw new BadRequestException('Credit limit and its currency go together');
-    }
-    if (input.creditLimitCurrency) await this.currencies.requireActive(input.creditLimitCurrency);
+    throwFirstIssue(await this.referenceChecker()(input));
+  }
+
+  /**
+   * The rules a customer's references must meet (scope 6), as issues by field: create and update
+   * throw the first, the Excel import reports them all. Lookups are cached per checker, so a file
+   * of thousands of rows asks for each currency once.
+   */
+  referenceChecker(): (input: Partial<CustomerInput>) => Promise<RuleIssue[]> {
+    const currencyRefusal = memoAsync((code: string) =>
+      refusal(() => this.currencies.requireActive(code)),
+    );
+    return async (input) => {
+      const issues: RuleIssue[] = [];
+      if (input.preferredCurrency) {
+        const refused = await currencyRefusal(input.preferredCurrency);
+        if (refused) {
+          issues.push({ field: 'preferredCurrency', code: 'UNKNOWN_CURRENCY', message: refused });
+        }
+      }
+      const hasLimit = input.creditLimit !== undefined && input.creditLimit !== null;
+      const hasLimitCurrency = Boolean(input.creditLimitCurrency);
+      if (hasLimit !== hasLimitCurrency) {
+        issues.push({
+          field: hasLimit ? 'creditLimitCurrency' : 'creditLimit',
+          code: 'CREDIT_LIMIT_PAIR',
+          message: 'Credit limit and its currency go together',
+        });
+      }
+      if (input.creditLimitCurrency) {
+        const refused = await currencyRefusal(input.creditLimitCurrency);
+        if (refused) {
+          issues.push({ field: 'creditLimitCurrency', code: 'UNKNOWN_CURRENCY', message: refused });
+        }
+      }
+      return issues;
+    };
   }
 }
+
+const inactiveBranch: RuleIssue = {
+  field: 'branchId',
+  code: 'BRANCH_NOT_ALLOWED',
+  message: 'Not one of your active branches',
+};
 
 const details = {
   contacts: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },

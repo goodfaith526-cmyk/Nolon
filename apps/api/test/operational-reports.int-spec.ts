@@ -41,6 +41,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { uniquePhone } from './test-data.js';
 
 /**
  * Operational reports and dashboards (annex D sections 2 and 3) against PostgreSQL. Invoices and
@@ -313,7 +314,7 @@ describe('operational reports and dashboards', () => {
           branchId: pts,
           kind: 'COMPANY',
           name: `Ops ${name} ${year} ${suffix}`,
-          phone: '+249912000555',
+          phone: uniquePhone(),
           preferredCurrency: 'USD',
         }).expect(201)
       ).body as CustomerDto;

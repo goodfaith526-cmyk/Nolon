@@ -31,6 +31,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { uniquePhone } from './test-data.js';
 
 /**
  * Financial reports (annex D section 4) against PostgreSQL. Posted entries are never deleted, so
@@ -193,7 +194,7 @@ describe('financial reports', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `Ledger Reports ${year} ${randomUUID().slice(0, 4)}`,
-        phone: '+249912000444',
+        phone: uniquePhone(),
         preferredCurrency: 'USD',
       }).expect(201)
     ).body as CustomerDto;
@@ -291,7 +292,7 @@ describe('financial reports', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `Ledger Advance ${year} ${randomUUID().slice(0, 4)}`,
-        phone: '+249912000445',
+        phone: uniquePhone(),
         preferredCurrency: 'USD',
       }).expect(201)
     ).body as CustomerDto;

@@ -1,4 +1,13 @@
+import { randomInt } from 'node:crypto';
 import type { PrismaService } from '../src/prisma/prisma.service.js';
+
+/**
+ * A customer phone no other test, nor an earlier run, holds: a phone is unique per branch, and
+ * customers with posted entries outlive their run.
+ */
+export function uniquePhone(): string {
+  return `+2496${String(randomInt(10_000_000, 99_999_999))}`;
+}
 
 /** Removes everything the test users created, so the users themselves can be deleted. */
 export async function deleteCommercialTestData(prisma: PrismaService): Promise<void> {

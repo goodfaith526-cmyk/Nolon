@@ -37,7 +37,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
-import { waitForLockWaiter } from './test-data.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /**
  * Group 4b: credit notes, suppliers and their bills (rule 11a clearing of trip accruals),
@@ -285,7 +285,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `Ledger 4B ${year}`,
-        phone: '+249912000444',
+        phone: uniquePhone(),
         preferredCurrency: 'SDG',
       }).expect(201)
     ).body as CustomerDto;

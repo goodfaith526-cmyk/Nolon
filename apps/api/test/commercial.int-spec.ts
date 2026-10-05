@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type {
   BookingDto,
   CustomerDto,
@@ -16,10 +17,16 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
+import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 const PAST = '2020-01-01';
 const FAR_FUTURE = '2099-12-31';
+
+// Each rate starts on a day of its own before PAST: a branch holds one draft or approved rate
+// per offer, start date included.
+let rateDay = randomInt(0, 6000);
+const nextRateDay = () =>
+  new Date(Date.UTC(2000, 0, 1) + rateDay++ * 86_400_000).toISOString().slice(0, 10);
 
 describe('commercial cycle: customers, rates, quotations, bookings', () => {
   let t: TestApp;
@@ -54,7 +61,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       kind: 'COMPANY',
       name: 'Al Noor Trading',
       companyName: 'Al Noor Trading LLC',
-      phone: '+971501234567',
+      phone: uniquePhone(),
       preferredCurrency: 'USD',
       ...overrides,
     };
@@ -73,7 +80,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       price: '1250.50',
       minimumCharge: '0',
       currency: 'USD',
-      validFrom: PAST,
+      validFrom: nextRateDay(),
       validTo: FAR_FUTURE,
       ...overrides,
     };

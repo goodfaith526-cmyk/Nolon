@@ -30,7 +30,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
+import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /** A PNG signature header is enough for the content check (magic bytes). */
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
@@ -160,7 +160,7 @@ describe('inland transport: fleet, trips, POD', () => {
         branchId: dxb,
         kind: 'COMPANY',
         name: 'Transport Test Trading',
-        phone: '+971501110003',
+        phone: uniquePhone(),
       }).expect(201)
     ).body as CustomerDto;
   });
@@ -659,7 +659,7 @@ describe('inland transport: fleet, trips, POD', () => {
           branchId: pts,
           kind: 'COMPANY',
           name: 'Transport Test PTS Trading',
-          phone: '+249912000444',
+          phone: uniquePhone(),
         }).expect(201)
       ).body as CustomerDto;
       const booking = (
@@ -893,7 +893,7 @@ describe('inland transport: trip costs in the books', () => {
         branchId: pts,
         kind: 'COMPANY',
         name: `Ledger Transport ${year}`,
-        phone: '+249912000333',
+        phone: uniquePhone(),
       }).expect(201)
     ).body as CustomerDto;
     const suffix = randomUUID().slice(0, 6).toUpperCase();

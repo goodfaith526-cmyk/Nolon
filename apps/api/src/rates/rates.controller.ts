@@ -10,48 +10,14 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  CARGO_TYPES,
-  LOAD_TYPES,
-  RATE_STATUSES,
-  RATE_UNITS,
-  SHIPPING_MODES,
-  type Page,
-  type RateCardDto,
-} from '@nolon/shared';
+import { RATE_STATUSES, SHIPPING_MODES, type Page, type RateCardDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
-import {
-  amount,
-  currencyCode,
-  dateString,
-  optionalText,
-  pageQuery,
-  parse,
-} from '../common/validation.js';
+import { pageQuery, parse } from '../common/validation.js';
+import { createRateBody, updateRateBody } from './rate-schemas.js';
 import { RatesService } from './rates.service.js';
 
-const rateFields = {
-  originLocationId: z.uuid(),
-  destinationLocationId: z.uuid(),
-  mode: z.enum(SHIPPING_MODES),
-  loadType: z.enum(LOAD_TYPES).nullish(),
-  cargoType: z.enum(CARGO_TYPES),
-  containerTypeCode: z.string().trim().toUpperCase().max(10).nullish(),
-  chargeTypeCode: z.string().trim().toUpperCase().max(20).optional(),
-  unit: z.enum(RATE_UNITS),
-  price: amount,
-  minimumCharge: amount.optional(),
-  currency: currencyCode,
-  validFrom: dateString,
-  validTo: dateString.nullish(),
-  transitDays: z.number().int().min(0).max(365).nullish(),
-  notes: optionalText(2000),
-};
-
-const createBody = z.object({ branchId: z.uuid(), ...rateFields }).strict();
-const updateBody = z.object(rateFields).partial().strict();
 const listQuery = pageQuery.extend({
   status: z.enum(RATE_STATUSES).optional(),
   originLocationId: z.uuid().optional(),
@@ -78,7 +44,7 @@ export class RatesController {
   @Post()
   @RequirePermission('rates:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<RateCardDto> {
-    return this.rates.create(user, parse(createBody, body));
+    return this.rates.create(user, parse(createRateBody, body));
   }
 
   @Patch(':id')
@@ -88,7 +54,7 @@ export class RatesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<RateCardDto> {
-    return this.rates.update(user, id, parse(updateBody, body));
+    return this.rates.update(user, id, parse(updateRateBody, body));
   }
 
   @Post(':id/approve')
