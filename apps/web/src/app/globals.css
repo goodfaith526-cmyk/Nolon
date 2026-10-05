@@ -2894,3 +2894,62 @@ section.stack > form.row input:not([type]) {
     font-size: var(--text-xl);
   }
 }
+
+/* Public tracking: the lookup form is centred under the header; the logo is a small plate. */
+.track-page > form.narrow {
+  align-self: center;
+}
+
+.track-page:has(> form.narrow) {
+  max-inline-size: 30rem;
+  padding-block-start: 3rem;
+}
+
+.track-logo {
+  border-radius: var(--radius);
+}
+
+/* Row actions in a table are compact. */
+td .actions button,
+td .actions .button,
+td > button,
+td > .button {
+  min-block-size: var(--control-h-sm);
+  padding-block: 0.25rem;
+  padding-inline: 0.625rem;
+  font-size: var(--text-sm);
+}
+
+/* Report and section cards: a quiet arrow shows they open. */
+.report-card {
+  position: relative;
+  padding-inline-end: 2.5rem;
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.report-card:hover {
+  box-shadow: var(--shadow-md);
+  color: inherit;
+}
+
+.report-card::after {
+  content: '';
+  position: absolute;
+  inset-block-start: 1.125rem;
+  inset-inline-end: 1rem;
+  inline-size: 1rem;
+  block-size: 1rem;
+  background: var(--faint);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 6 6 6-6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+html[dir='rtl'] .report-card::after {
+  transform: scaleX(-1);
+}
+
+.report-card:hover::after {
+  background: var(--brand-blue);
+}
