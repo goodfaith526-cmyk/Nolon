@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type {
+  AuditLogDto,
   BookingDto,
   CustomerDto,
   MasterDataDto,
@@ -47,6 +48,8 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     financeDxb: '',
     driver: '',
   };
+
+  const ids = {} as Record<keyof typeof cookies, string>;
 
   const get = (path: string, cookie: string) =>
     t.http().get(`/api/v1${path}`).set('Cookie', cookie);
@@ -147,6 +150,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
+      ids[key] = users[key].id;
     }
   });
 
@@ -286,6 +290,102 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       const data = { customerId: c.id, name: 'X', phone: '+249912345678', isPrimary: true };
       await t.prisma.customerContact.create({ data });
       await expect(t.prisma.customerContact.create({ data })).rejects.toThrow();
+    });
+  });
+
+  describe('audit log', () => {
+    /** Yesterday to tomorrow (UTC): today in any branch's time zone. */
+    const around = () => {
+      const day = (offset: number) =>
+        new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+      return `from=${day(-1)}&to=${day(1)}`;
+    };
+    const entries = async (cookie: string, query: string) =>
+      (
+        (await get(`/reports/audit-log?${around()}&${query}`, cookie).expect(200))
+          .body as AuditLogDto
+      ).entries;
+
+    it('records a rate’s edits and approval field by field, before and after', async () => {
+      const sales = await createUser(t.prisma, ['SALES'], ['DXB']);
+      const cookie = await signIn(t, sales.email);
+      const draft = (await post('/rates', cookie, rateBody(dxb, { price: '2300' })).expect(201))
+        .body as RateCardDto;
+      await patch(`/rates/${draft.id}`, cookie, { price: '2350', notes: 'Peak season' }).expect(
+        200,
+      );
+      await patch(`/rates/${draft.id}`, cookie, { price: '2350' }).expect(200); // no change: no row
+      await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200);
+
+      const own = await entries(cookies.managerDxb, `userId=${sales.id}&entity=RATE`);
+      expect(own.map((e) => e.action)).toEqual(['UPDATED', 'CREATED']);
+      const [updated, created] = own;
+      expect(updated?.changes).toEqual([
+        { field: 'price', before: '2300', after: '2350' },
+        { field: 'notes', before: null, after: 'Peak season' },
+      ]);
+      expect(updated).toMatchObject({
+        source: 'USER',
+        branchCode: 'DXB',
+        userName: 'Integration Test',
+      });
+      expect(updated?.reference).toContain('AEJEA→SDPZU');
+      expect(created?.changes).toEqual(
+        expect.arrayContaining([
+          { field: 'status', before: null, after: 'DRAFT' },
+          { field: 'originLocationId', before: null, after: 'AEJEA' },
+          { field: 'price', before: null, after: '2300' },
+        ]),
+      );
+      const [approval] = await entries(cookies.managerDxb, `userId=${ids.managerDxb}&entity=RATE`);
+      expect(approval).toMatchObject({
+        action: 'APPROVED',
+        changes: [{ field: 'status', before: 'DRAFT', after: 'APPROVED' }],
+      });
+    });
+
+    it('records a customer’s edits and deactivation, in the customer’s branch only', async () => {
+      const sales = await createUser(t.prisma, ['SALES'], ['DXB']);
+      const cookie = await signIn(t, sales.email);
+      const c = await createCustomer(cookie, dxb);
+      await patch(`/customers/${c.id}`, cookie, { city: 'Dubai', paymentTermsDays: 30 }).expect(
+        200,
+      );
+      await post(`/customers/${c.id}/deactivate`, cookies.admin).expect(200);
+
+      const own = await entries(cookies.managerDxb, `userId=${sales.id}&entity=CUSTOMER`);
+      expect(own.map((e) => [e.action, e.reference])).toEqual([
+        ['UPDATED', expect.stringContaining(c.number)],
+        ['CREATED', expect.stringContaining(c.number)],
+      ]);
+      expect(own[0]?.changes).toEqual([
+        { field: 'city', before: null, after: 'Dubai' },
+        { field: 'paymentTermsDays', before: '0', after: '30' },
+      ]);
+      const [deactivated] = await entries(
+        cookies.managerDxb,
+        `userId=${ids.admin}&entity=CUSTOMER`,
+      );
+      expect(deactivated?.changes).toEqual([{ field: 'isActive', before: 'true', after: 'false' }]);
+
+      // Another branch's manager and a role without audit_log:view see nothing of it.
+      const managerJed = await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED']);
+      const jedCookie = await signIn(t, managerJed.email);
+      expect(await entries(jedCookie, `userId=${sales.id}`)).toEqual([]);
+      await get(`/reports/audit-log?${around()}`, cookie).expect(403);
+    });
+
+    it('the audit table refuses any change or removal, even from the application', async () => {
+      const row = await t.prisma.auditEvent.findFirstOrThrow({ where: { entity: 'RATE' } });
+      await expect(
+        t.prisma.auditEvent.update({ where: { id: row.id }, data: { reference: 'x' } }),
+      ).rejects.toThrow(/cannot be changed or deleted/);
+      await expect(t.prisma.auditEvent.delete({ where: { id: row.id } })).rejects.toThrow(
+        /cannot be changed or deleted/,
+      );
+      await expect(t.prisma.$executeRawUnsafe('TRUNCATE "audit_events"')).rejects.toThrow(
+        /cannot be changed or deleted/,
+      );
     });
   });
 

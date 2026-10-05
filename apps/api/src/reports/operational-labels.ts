@@ -48,9 +48,11 @@ const LABELS = {
     en: 'Revenue in USD: approved invoices dated in the period.',
     ar: 'الإيراد بالدولار: الفواتير المعتمدة المؤرخة في الفترة.',
   },
+  changes: { en: 'Changes', ar: 'التغييرات' },
+  source: { en: 'Source', ar: 'المصدر' },
   auditNote: {
-    en: 'From the records that keep who did what: shipment events, warehouse, customs, journal entries, invoices, receipts, credit notes, supplier bills and payments, expenses, trips, PODs and documents. Times in UTC.',
-    ar: 'من السجلات التي تحفظ من فعل ماذا: أحداث الشحنات والمستودع والجمارك والقيود والفواتير والمقبوضات والإشعارات الدائنة وفواتير الموردين ومدفوعاتهم والمصروفات والرحلات وإثباتات التسليم والمستندات. الأوقات بالتوقيت العالمي.',
+    en: 'Rates, customers and user accounts: field by field from the append-only audit table. The rest from the records that keep who did what: shipment events, warehouse, customs, journal entries, invoices, receipts, credit notes, supplier bills and payments, expenses, trips, PODs and documents. Times in UTC.',
+    ar: 'الأسعار والعملاء وحسابات المستخدمين: حقلاً بحقل من جدول التدقيق الذي لا يُعدَّل. والباقي من السجلات التي تحفظ من فعل ماذا: أحداث الشحنات والمستودع والجمارك والقيود والفواتير والمقبوضات والإشعارات الدائنة وفواتير الموردين ومدفوعاتهم والمصروفات والرحلات وإثباتات التسليم والمستندات. الأوقات بالتوقيت العالمي.',
   },
   // Sheets and sections
   summary: { en: 'Summary', ar: 'الملخص' },
@@ -225,6 +227,10 @@ const AUDIT_ENTITY = {
   TRIP_EXPENSE: { en: 'Trip expense', ar: 'مصروف رحلة' },
   POD: { en: 'Proof of delivery', ar: 'إثبات تسليم' },
   DOCUMENT: { en: 'Document', ar: 'مستند' },
+
+  RATE: { en: 'Rate', ar: 'سعر' },
+  CUSTOMER: { en: 'Customer', ar: 'عميل' },
+  USER: { en: 'User account', ar: 'حساب مستخدم' },
 } as const;
 
 const AUDIT_ACTION = {
@@ -244,6 +250,52 @@ const AUDIT_ACTION = {
   DELETED: { en: 'Deleted', ar: 'حذف' },
 } as const;
 
+/** The fields the audit table records, as AuditChangeDto.field. */
+const AUDIT_FIELD = {
+  status: { en: 'Status', ar: 'الحالة' },
+  originLocationId: { en: 'Origin', ar: 'المنشأ' },
+  destinationLocationId: { en: 'Destination', ar: 'الوجهة' },
+  mode: { en: 'Mode', ar: 'نوع النقل' },
+  loadType: { en: 'Load type', ar: 'نوع الحمولة' },
+  cargoType: { en: 'Cargo type', ar: 'نوع البضاعة' },
+  containerTypeCode: { en: 'Container', ar: 'الحاوية' },
+  chargeTypeCode: { en: 'Charge', ar: 'البند' },
+  unit: { en: 'Unit', ar: 'الوحدة' },
+  price: { en: 'Price', ar: 'السعر' },
+  minimumCharge: { en: 'Minimum charge', ar: 'الحد الأدنى' },
+  currency: { en: 'Currency', ar: 'العملة' },
+  validFrom: { en: 'Valid from', ar: 'ساري من' },
+  validTo: { en: 'Valid to', ar: 'ساري حتى' },
+  transitDays: { en: 'Transit days', ar: 'أيام العبور' },
+  notes: { en: 'Notes', ar: 'ملاحظات' },
+  kind: { en: 'Type', ar: 'النوع' },
+  name: { en: 'Name', ar: 'الاسم' },
+  companyName: { en: 'Company', ar: 'الشركة' },
+  phone: { en: 'Phone', ar: 'الهاتف' },
+  whatsapp: { en: 'WhatsApp', ar: 'واتساب' },
+  email: { en: 'Email', ar: 'البريد الإلكتروني' },
+  countryCode: { en: 'Country', ar: 'الدولة' },
+  city: { en: 'City', ar: 'المدينة' },
+  address: { en: 'Address', ar: 'العنوان' },
+  taxNumber: { en: 'Tax number', ar: 'الرقم الضريبي' },
+  preferredCurrency: { en: 'Preferred currency', ar: 'العملة المفضلة' },
+  preferredLocale: { en: 'Language', ar: 'اللغة' },
+  paymentTermsDays: { en: 'Payment terms (days)', ar: 'مدة السداد (أيام)' },
+  creditLimit: { en: 'Credit limit', ar: 'حد الائتمان' },
+  creditLimitCurrency: { en: 'Credit limit currency', ar: 'عملة حد الائتمان' },
+  isActive: { en: 'Active', ar: 'نشط' },
+  fullName: { en: 'Full name', ar: 'الاسم الكامل' },
+  roles: { en: 'Roles', ar: 'الأدوار' },
+  branches: { en: 'Branches', ar: 'الفروع' },
+  password: { en: 'Password', ar: 'كلمة المرور' },
+  source: { en: 'Source', ar: 'المصدر' },
+} as const;
+const EVENT_SOURCE = {
+  USER: { en: 'Staff', ar: 'موظف' },
+  API: { en: 'API', ar: 'واجهة API' },
+  SYSTEM: { en: 'System', ar: 'النظام' },
+} as const;
+
 const ENUMS = {
   shipmentStatus: SHIPMENT_STATUS,
   mode: MODE,
@@ -255,6 +307,8 @@ const ENUMS = {
   condition: CONDITION,
   auditEntity: AUDIT_ENTITY,
   auditAction: AUDIT_ACTION,
+  auditField: AUDIT_FIELD,
+  eventSource: EVENT_SOURCE,
 } as const;
 
 export type OpsLabelKey = keyof typeof LABELS;

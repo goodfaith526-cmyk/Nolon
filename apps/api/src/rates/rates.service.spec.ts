@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { RateCardInput } from '@nolon/shared';
 import { describe, expect, it, vi } from 'vitest';
+import type { AuditService } from '../audit/audit.service.js';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
 import type { MasterDataService } from '../master-data/master-data.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
@@ -43,6 +44,7 @@ function service() {
     {} as PrismaService,
     masterData as unknown as MasterDataService,
     currencies as unknown as CurrenciesService,
+    {} as AuditService,
   );
   return { rates, masterData, currencies };
 }

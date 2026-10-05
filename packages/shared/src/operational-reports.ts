@@ -2,7 +2,7 @@ import type { BookingStatus, QuotationStatus, ShippingMode } from './commercial.
 import type { DecimalString } from './currencies.js';
 import type { CustomsStatus } from './customs.js';
 import type { ReportBranchDto, ReportLocationDto } from './reports.js';
-import type { ShipmentStatus } from './shipments.js';
+import type { EventSource, ShipmentStatus } from './shipments.js';
 import type { TripKind, TripStatus } from './transport.js';
 import type { GoodsCondition, WarehouseMovementKind } from './warehouse.js';
 
@@ -337,6 +337,9 @@ export const AUDIT_ENTITIES = [
   'TRIP_EXPENSE',
   'POD',
   'DOCUMENT',
+  'RATE',
+  'CUSTOMER',
+  'USER',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -376,6 +379,19 @@ export interface AuditLogEntryDto {
   status: string | null;
   /** The reason or note, as recorded. */
   detail: string | null;
+  /**
+   * What changed, field by field, as text (codes, decimal strings, YYYY-MM-DD), when the record
+   * keeps it: a shipment's status, or the fields of a rate, customer or user. Absent otherwise.
+   */
+  changes?: AuditChangeDto[];
+  /** Through which channel the change came, when the record keeps it. */
+  source?: EventSource;
+}
+
+export interface AuditChangeDto {
+  field: string;
+  before: string | null;
+  after: string | null;
 }
 
 export interface AuditLogDto {

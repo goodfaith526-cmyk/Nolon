@@ -41,7 +41,7 @@ describe('credential changes racing with sign-in and password change', () => {
   it('a sign-in verified before an admin reset does not get a session after it', async () => {
     const user = await createUser(t.prisma, ['SALES'], ['DXB']);
     const verified = await storedHash(user.id); // the login checked PASSWORD against this
-    await users.resetPassword(user.id, 'admin-chosen-password');
+    await users.resetPassword(user.id, user.id, 'admin-chosen-password');
     await expect(auth.issueSession(user.id, verified, CTX)).resolves.toBeNull();
     expect(await t.prisma.session.count({ where: { userId: user.id } })).toBe(0);
   });
@@ -62,7 +62,7 @@ describe('credential changes racing with sign-in and password change', () => {
     const verified = await storedHash(user.id);
     await Promise.all([
       auth.issueSession(user.id, verified, CTX),
-      users.resetPassword(user.id, 'admin-chosen-password'),
+      users.resetPassword(user.id, user.id, 'admin-chosen-password'),
     ]);
     const open = await t.prisma.session.count({ where: { userId: user.id, revokedAt: null } });
     expect(open).toBe(0);
@@ -74,7 +74,7 @@ describe('credential changes racing with sign-in and password change', () => {
     const me = await auth.resolveSession(cookie.split('=')[1] ?? '');
     expect(me).not.toBeNull();
     const verified = await storedHash(user.id); // currentPassword was checked against this
-    await users.resetPassword(user.id, 'admin-chosen-password');
+    await users.resetPassword(user.id, user.id, 'admin-chosen-password');
     const changed = await auth.applyPasswordChange(
       me as AuthUser,
       verified,
@@ -147,8 +147,8 @@ describe('at least one active Administrator, under concurrency', () => {
   it('two concurrent demotions: one succeeds, one is rejected', async () => {
     const [a, b] = await twoAdminsOnly();
     const results = await Promise.allSettled([
-      users.update(a, { roles: ['MANAGEMENT'] }),
-      users.update(b, { roles: ['MANAGEMENT'] }),
+      users.update(b, a, { roles: ['MANAGEMENT'] }),
+      users.update(a, b, { roles: ['MANAGEMENT'] }),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);

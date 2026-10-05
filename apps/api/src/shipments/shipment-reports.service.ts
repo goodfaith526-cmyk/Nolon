@@ -3,6 +3,7 @@ import type {
   AuditLogEntryDto,
   DashboardShipmentRefDto,
   DashboardShipmentsDto,
+  EventSource,
   LateShipmentRowDto,
   ReportBranchDto,
   ReportLocationDto,
@@ -423,6 +424,8 @@ export class ShipmentReportsService {
         userName: string | null;
         kind: ShipmentEventKind;
         status: ShipmentStatus;
+        fromStatus: ShipmentStatus | null;
+        source: EventSource;
         reference: string;
         reason: string | null;
         note: string | null;
@@ -430,6 +433,7 @@ export class ShipmentReportsService {
     >`
       SELECT e."created_at" AS "at", b."code" AS "branchCode", e."user_id" AS "userId",
              u."full_name" AS "userName", e."kind"::text AS "kind", e."status"::text AS "status",
+             e."from_status"::text AS "fromStatus", e."source"::text AS "source",
              s."number" AS "reference", e."reason", e."note"
       FROM "shipment_events" e
       JOIN "shipments" s ON s."id" = e."shipment_id"
@@ -450,6 +454,8 @@ export class ShipmentReportsService {
       reference: r.reference,
       status: r.status,
       detail: r.reason ?? r.note,
+      changes: [{ field: 'status', before: r.fromStatus, after: r.status }],
+      source: r.source,
     }));
   }
 }

@@ -855,6 +855,22 @@ function AuditStatus({ entry }: { entry: AuditLogEntryDto }) {
   return kind ? <StatusBadge kind={kind} status={entry.status} /> : null;
 }
 
+/** What an audit entry changed, field by field (a field without a label shows its code). */
+function AuditChanges({ entry }: { entry: AuditLogEntryDto }) {
+  const t = useTranslations('OpsReports');
+  if (!entry.changes?.length) return null;
+  const label = (field: string) => (t.has(`field_${field}`) ? t(`field_${field}`) : field);
+  return (
+    <ul className="audit-changes">
+      {entry.changes.map((c) => (
+        <li key={c.field}>
+          {label(c.field)}: <bdi>{c.before ?? '—'}</bdi> → <bdi>{c.after ?? '—'}</bdi>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Report 10. */
 export function AuditLogReport() {
   const t = useTranslations('OpsReports');
@@ -887,11 +903,13 @@ export function AuditLogReport() {
                 <th>{t('action')}</th>
                 <th>{t('reference')}</th>
                 <th>{tr('status')}</th>
+                <th>{t('changes')}</th>
                 <th>{t('detail')}</th>
+                <th>{t('source')}</th>
               </tr>
             </thead>
             <tbody>
-              {r.entries.length === 0 && <EmptyRow columns={8} text={t('none')} />}
+              {r.entries.length === 0 && <EmptyRow columns={10} text={t('none')} />}
               {r.entries.map((e, i) => (
                 <tr key={`${e.at}-${e.entity}-${e.reference}-${i}`}>
                   <td>{time.format(new Date(e.at))}</td>
@@ -903,7 +921,11 @@ export function AuditLogReport() {
                   <td>
                     <AuditStatus entry={e} />
                   </td>
+                  <td className="wrap">
+                    <AuditChanges entry={e} />
+                  </td>
                   <td className="wrap">{e.detail ?? ''}</td>
+                  <td>{e.source ? t(`source_${e.source}`) : ''}</td>
                 </tr>
               ))}
             </tbody>

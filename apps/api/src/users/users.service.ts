@@ -6,11 +6,13 @@ import {
 } from '@nestjs/common';
 import {
   hasAllBranchAccess,
+  type AuditChangeDto,
   type CreateUserRequest,
   type Role,
   type UpdateUserRequest,
   type UserSummary,
 } from '@nolon/shared';
+import { AuditService, changedFields } from '../audit/audit.service.js';
 import { normalizeEmail } from '../auth/email.js';
 import { lockCredentials } from '../auth/credential-lock.js';
 import { hashPassword } from '../auth/password.js';
@@ -49,7 +51,10 @@ function toSummary(user: UserRow): UserSummary {
  */
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * For fleet master data: active users with the DRIVER role who work in one of `branchIds`, to
@@ -97,7 +102,7 @@ export class UsersService {
     return users.map(toSummary);
   }
 
-  async create(input: CreateUserRequest): Promise<UserSummary> {
+  async create(actorId: string, input: CreateUserRequest): Promise<UserSummary> {
     const email = normalizeEmail(input.email);
     const passwordHash = await hashPassword(input.password);
     return this.prisma.$transaction(async (tx) => {
@@ -117,14 +122,17 @@ export class UsersService {
         },
         include: USER_INCLUDE,
       });
-      return toSummary(user);
+      const created = toSummary(user);
+      await this.log(tx, actorId, 'CREATED', null, created);
+      return created;
     });
   }
 
-  async update(id: string, input: UpdateUserRequest): Promise<UserSummary> {
+  async update(actorId: string, id: string, input: UpdateUserRequest): Promise<UserSummary> {
     return this.prisma.$transaction(async (tx) => {
       await lockAdministratorSet(tx);
       const current = await findOrThrow(tx, id);
+      const before = toSummary(current);
       const roles = input.roles ?? current.roles.map((r) => r.role);
       const branchIds = input.branchIds ?? current.branches.map((b) => b.branchId);
       assertBranchesForRoles(roles, branchIds);
@@ -150,7 +158,9 @@ export class UsersService {
         },
       });
       await assertActiveAdministratorRemains(tx);
-      return toSummary(await findOrThrow(tx, id));
+      const after = toSummary(await findOrThrow(tx, id));
+      await this.log(tx, actorId, 'UPDATED', before, after);
+      return after;
     });
   }
 
@@ -161,23 +171,77 @@ export class UsersService {
     return this.prisma.$transaction(async (tx) => {
       await lockAdministratorSet(tx);
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
+      const before = toSummary(await findOrThrow(tx, id));
       await tx.user.update({ where: { id }, data: { isActive } });
       if (!isActive) {
         await revokeSessions(tx, id);
         await assertActiveAdministratorRemains(tx);
       }
-      return toSummary(await findOrThrow(tx, id));
+      const after = toSummary(await findOrThrow(tx, id));
+      await this.log(tx, actorId, 'UPDATED', before, after);
+      return after;
     });
   }
 
   /** Admin reset: sets a new password and ends every open session of that user. */
-  async resetPassword(id: string, password: string): Promise<void> {
+  async resetPassword(actorId: string, id: string, password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
     await this.prisma.$transaction(async (tx) => {
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       await tx.user.update({ where: { id }, data: { passwordHash } });
       await revokeSessions(tx, id);
+      const user = toSummary(await findOrThrow(tx, id));
+      // The log says a reset happened, never anything about the password itself.
+      await this.log(tx, actorId, 'UPDATED', user, user, [
+        { field: 'password', before: null, after: 'reset' },
+      ]);
     });
+  }
+
+  /**
+   * Audit log (AuditService): who changed a user account and what, branches by code. User
+   * accounts belong to no branch.
+   */
+  private async log(
+    tx: Prisma.TransactionClient,
+    actorId: string,
+    action: 'CREATED' | 'UPDATED',
+    before: UserSummary | null,
+    after: UserSummary,
+    extra: AuditChangeDto[] = [],
+  ): Promise<void> {
+    const branches = await tx.branch.findMany({ select: { id: true, code: true } });
+    const codes = new Map(branches.map((b) => [b.id, b.code]));
+    const fields = (u: UserSummary) => ({
+      email: u.email,
+      fullName: u.fullName,
+      preferredLocale: u.preferredLocale,
+      isActive: u.isActive,
+      roles: u.roles,
+      branches: u.branchIds.map((id) => codes.get(id) ?? id),
+    });
+    await this.audit.record(
+      tx,
+      { id: actorId },
+      {
+        branchId: null,
+        entity: 'USER',
+        entityId: after.id,
+        reference: `${after.fullName} <${after.email}>`,
+        action,
+        changes: [
+          ...changedFields(before && fields(before), fields(after), [
+            'email',
+            'fullName',
+            'preferredLocale',
+            'isActive',
+            'roles',
+            'branches',
+          ]),
+          ...extra,
+        ],
+      },
+    );
   }
 }
 

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AuditChangeDto,
   CargoType,
   CreateRateCardRequest,
   LoadType,
@@ -14,6 +15,7 @@ import type {
   RateStatus,
   ShippingMode,
 } from '@nolon/shared';
+import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
@@ -116,6 +118,7 @@ export class RatesService {
     private readonly prisma: PrismaService,
     private readonly masterData: MasterDataService,
     private readonly currencies: CurrenciesService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(user: AuthUser, filters: RateFilters): Promise<Page<RateCardDto>> {
@@ -156,7 +159,13 @@ export class RatesService {
     const rate = await this.prisma.$transaction(async (tx) => {
       await lockBranchRule(tx, RATE_UNIQUE_RULE, [branchId]);
       throwFirstConflict(await this.duplicateIssues(tx, [input]));
-      return tx.rateCard.create({ data: { ...toData(fields), branchId, createdById: user.id } });
+      const created = await tx.rateCard.create({
+        data: { ...toData(fields), branchId, createdById: user.id },
+      });
+      await this.log(tx, user, 'CREATED', [created], (r) =>
+        changedFields(null, auditFields(r), RATE_AUDIT_FIELDS),
+      );
+      return created;
     });
     return toDto(rate);
   }
@@ -196,6 +205,10 @@ export class RatesService {
     for (let i = 0; i < data.length; i += WRITE_CHUNK) {
       await tx.rateCard.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
     }
+    const created = await tx.rateCard.findMany({ where: { id: { in: rows.map((r) => r.id) } } });
+    await this.log(tx, user, 'CREATED', created, () => [
+      { field: 'source', before: null, after: 'Excel import' },
+    ]);
     return issues;
   }
 
@@ -260,7 +273,12 @@ export class RatesService {
         await lockBranchRule(tx, RATE_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: current.id }]));
       }
-      return this.transition(tx, current.id, 'DRAFT', toData(input));
+      const dto = await this.transition(tx, current.id, 'DRAFT', toData(input));
+      const updated = await tx.rateCard.findUniqueOrThrow({ where: { id: current.id } });
+      await this.log(tx, user, 'UPDATED', [updated], (r) =>
+        changedFields(auditFields(current), auditFields(r), RATE_AUDIT_FIELDS),
+      );
+      return dto;
     });
   }
 
@@ -269,17 +287,93 @@ export class RatesService {
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft rate can be approved');
     // Approving keeps the rate among the drafts and approved ones: it cannot add a duplicate.
-    return this.transition(this.prisma, existing.id, 'DRAFT', {
-      status: 'APPROVED',
-      approvedById: user.id,
-      approvedAt: new Date(),
+    return this.prisma.$transaction(async (tx) => {
+      const dto = await this.transition(tx, existing.id, 'DRAFT', {
+        status: 'APPROVED',
+        approvedById: user.id,
+        approvedAt: new Date(),
+      });
+      await this.logStatus(tx, user, 'APPROVED', existing.id, 'DRAFT', 'APPROVED');
+      return dto;
     });
   }
 
   async cancel(user: AuthUser, id: string): Promise<RateCardDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status === 'CANCELLED') throw new ConflictException('Rate is already cancelled');
-    return this.transition(this.prisma, existing.id, existing.status, { status: 'CANCELLED' });
+    return this.prisma.$transaction(async (tx) => {
+      const dto = await this.transition(tx, existing.id, existing.status, { status: 'CANCELLED' });
+      await this.logStatus(tx, user, 'CANCELLED', existing.id, existing.status, 'CANCELLED');
+      return dto;
+    });
+  }
+
+  /**
+   * Audit log (AuditService): one row per rate, with the changes `changes` finds; locations by
+   * code.
+   */
+  private async log(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    action: 'CREATED' | 'UPDATED',
+    rates: readonly RateCard[],
+    changes: (r: RateCard) => AuditChangeDto[],
+  ): Promise<void> {
+    const found = rates.map((r) => ({ rate: r, changes: changes(r) }));
+    const ids = found.flatMap(({ rate, changes: c }) => [
+      rate.originLocationId,
+      rate.destinationLocationId,
+      ...c.filter((x) => LOCATION_FIELDS.has(x.field)).flatMap((x) => [x.before, x.after]),
+    ]);
+    const codes = await this.locationCodes(tx, ids);
+    const code = (id: string | null) => (id === null ? null : (codes.get(id) ?? id));
+    await this.audit.recordMany(
+      tx,
+      user,
+      found.map(({ rate, changes: c }) => ({
+        branchId: rate.branchId,
+        entity: 'RATE',
+        entityId: rate.id,
+        reference: rateReference(rate, codes),
+        action,
+        changes: c.map((x) =>
+          LOCATION_FIELDS.has(x.field) ? { ...x, before: code(x.before), after: code(x.after) } : x,
+        ),
+      })),
+    );
+  }
+
+  private async logStatus(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    action: 'APPROVED' | 'CANCELLED',
+    id: string,
+    from: RateStatus,
+    to: RateStatus,
+  ): Promise<void> {
+    const rate = await tx.rateCard.findUniqueOrThrow({ where: { id } });
+    await this.audit.record(tx, user, {
+      branchId: rate.branchId,
+      entity: 'RATE',
+      entityId: rate.id,
+      reference: rateReference(
+        rate,
+        await this.locationCodes(tx, [rate.originLocationId, rate.destinationLocationId]),
+      ),
+      action,
+      changes: [{ field: 'status', before: from, after: to }],
+    });
+  }
+
+  private async locationCodes(
+    tx: Prisma.TransactionClient,
+    ids: readonly (string | null)[],
+  ): Promise<Map<string, string>> {
+    const locations = await tx.location.findMany({
+      where: { id: { in: [...new Set(ids.filter((id) => id !== null))] } },
+      select: { id: true, code: true },
+    });
+    return new Map(locations.map((l) => [l.id, l.code]));
   }
 
   /**
@@ -423,6 +517,39 @@ function toData<T extends Partial<RateCardInput>>(input: T): RateData<T> {
 }
 
 type RateFields = Omit<RateCardDto, 'id' | 'branchId' | 'status' | 'approvedAt' | 'createdAt'>;
+
+/** The fields of a rate the audit log compares, as the API shows them. */
+function auditFields(r: RateCard): RateFields & { status: RateStatus } {
+  return { ...fromRow(r), status: r.status };
+}
+
+/** Rate fields that hold a location id: the log shows the location's code. */
+const LOCATION_FIELDS: ReadonlySet<string> = new Set(['originLocationId', 'destinationLocationId']);
+
+const RATE_AUDIT_FIELDS = [
+  'status',
+  'originLocationId',
+  'destinationLocationId',
+  'mode',
+  'loadType',
+  'cargoType',
+  'containerTypeCode',
+  'chargeTypeCode',
+  'unit',
+  'price',
+  'minimumCharge',
+  'currency',
+  'validFrom',
+  'validTo',
+  'transitDays',
+  'notes',
+] as const;
+
+/** How a rate is named in the audit log: route, charge, container, currency. */
+function rateReference(r: RateCard, codes: ReadonlyMap<string, string>): string {
+  const route = `${codes.get(r.originLocationId) ?? '?'}→${codes.get(r.destinationLocationId) ?? '?'}`;
+  return [route, r.chargeTypeCode, r.containerTypeCode, r.currency].filter(Boolean).join(' ');
+}
 
 function fromRow(r: RateCard): RateFields {
   return {

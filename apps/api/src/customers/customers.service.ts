@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AuditChangeDto,
   ContactInput,
   CreateCustomerRequest,
   CustomerContactDto,
@@ -15,6 +16,7 @@ import type {
   PartyDto,
   PartyInput,
 } from '@nolon/shared';
+import { type AuditRecord, AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
@@ -64,6 +66,7 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currencies: CurrenciesService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(user: AuthUser, query: PageQuery): Promise<Page<CustomerSummaryDto>> {
@@ -109,10 +112,16 @@ export class CustomersService {
       await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
       throwFirstConflict(await this.duplicateIssues(tx, [input]));
       const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
-      return tx.customer.create({
+      const customer = await tx.customer.create({
         data: { ...toData(fields), number, branchId, createdById: user.id },
         include: details,
       });
+      await this.audit.record(
+        tx,
+        user,
+        auditRecord(customer, 'CREATED', changedFields(null, auditFields(customer), AUDIT_FIELDS)),
+      );
+      return customer;
     });
     return toDto(created);
   }
@@ -159,6 +168,15 @@ export class CustomersService {
     for (let i = 0; i < data.length; i += WRITE_CHUNK) {
       await tx.customer.createMany({ data: data.slice(i, i + WRITE_CHUNK) });
     }
+    await this.audit.recordMany(
+      tx,
+      user,
+      data.map((c) =>
+        auditRecord({ id: c.id, branchId: c.branchId, number: c.number, name: c.name }, 'CREATED', [
+          { field: 'source', before: null, after: 'Excel import' },
+        ]),
+      ),
+    );
     return issues;
   }
 
@@ -254,11 +272,21 @@ export class CustomersService {
         await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [keys]));
       }
-      return tx.customer.update({
+      const changed = await tx.customer.update({
         where: { id: current.id },
         data: toData(input),
         include: details,
       });
+      await this.audit.record(
+        tx,
+        user,
+        auditRecord(
+          changed,
+          'UPDATED',
+          changedFields(auditFields(current), auditFields(changed), AUDIT_FIELDS),
+        ),
+      );
+      return changed;
     });
     return toDto(updated);
   }
@@ -266,10 +294,23 @@ export class CustomersService {
   async setActive(user: AuthUser, id: string, isActive: boolean): Promise<CustomerDto> {
     const existing = await this.findScoped(user, id);
     return toDto(
-      await this.prisma.customer.update({
-        where: { id: existing.id },
-        data: { isActive },
-        include: details,
+      await this.prisma.$transaction(async (tx) => {
+        const before = await tx.customer.findUniqueOrThrow({ where: { id: existing.id } });
+        const changed = await tx.customer.update({
+          where: { id: existing.id },
+          data: { isActive },
+          include: details,
+        });
+        await this.audit.record(
+          tx,
+          user,
+          auditRecord(
+            changed,
+            'UPDATED',
+            changedFields({ isActive: before.isActive }, { isActive }, ['isActive']),
+          ),
+        );
+        return changed;
       }),
     );
   }
@@ -487,6 +528,49 @@ function toPartyDto(p: Party): PartyDto {
     countryCode: p.countryCode,
     city: p.city,
     address: p.address,
+  };
+}
+
+/** The fields of a customer the audit log compares. */
+const AUDIT_FIELDS = [
+  'kind',
+  'name',
+  'companyName',
+  'phone',
+  'whatsapp',
+  'email',
+  'countryCode',
+  'city',
+  'address',
+  'taxNumber',
+  'preferredCurrency',
+  'preferredLocale',
+  'paymentTermsDays',
+  'creditLimit',
+  'creditLimitCurrency',
+  'notes',
+  'isActive',
+] as const;
+
+function auditFields(c: Customer): Pick<Customer, (typeof AUDIT_FIELDS)[number]> {
+  const fields = {} as Record<(typeof AUDIT_FIELDS)[number], unknown>;
+  for (const f of AUDIT_FIELDS) fields[f] = c[f];
+  return fields as Pick<Customer, (typeof AUDIT_FIELDS)[number]>;
+}
+
+/** A customer change for the audit log, named by number and name. */
+function auditRecord(
+  c: { id: string; branchId: string; number: string; name: string },
+  action: 'CREATED' | 'UPDATED',
+  changes: AuditChangeDto[],
+): AuditRecord {
+  return {
+    branchId: c.branchId,
+    entity: 'CUSTOMER',
+    entityId: c.id,
+    reference: `${c.number} ${c.name}`,
+    action,
+    changes,
   };
 }
 

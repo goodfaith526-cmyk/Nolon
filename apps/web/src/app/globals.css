@@ -2157,6 +2157,13 @@ tr.subtotal td {
   min-inline-size: 16rem;
 }
 
+/* Audit log: one changed field per line. */
+.audit-changes {
+  margin: 0;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Operational reports and dashboards: a row of headline figures above the tables.
    --------------------------------------------------------------------------------------------- */
