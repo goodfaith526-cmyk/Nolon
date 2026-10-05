@@ -3274,3 +3274,28 @@ textarea[rows] {
 .more-menu-list .icon {
   color: var(--muted);
 }
+
+/* A fieldset used only to group lines inside a form section: no frame of its own. */
+fieldset.bare {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.page form.stack fieldset.bare {
+  background: transparent;
+}
+
+.form-section-body.checks {
+  align-content: start;
+  gap: 0.75rem 1.5rem;
+}
+
+fieldset > .line > .line-remove-button {
+  align-self: end;
+  color: var(--muted);
+}
+
+fieldset > .line > .line-remove-button:hover {
+  color: var(--bad);
+}
