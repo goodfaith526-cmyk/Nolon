@@ -18,6 +18,7 @@ import { ShipmentCustoms } from '../customs/ShipmentCustoms';
 import { ShipmentInvoices } from '../finance/ShipmentInvoices';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
+import { Tabs } from '../Tabs';
 import { ShipmentContainers } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
@@ -314,153 +315,222 @@ export function ShipmentDetail({ id }: { id: string }) {
         </form>
       )}
 
-      <div className="panels">
-        <div className="panel">
-          <div className="panel-head">
-            <h2>{t('overview')}</h2>
-          </div>
-          <dl className="details flat">
-            <dt>{t('mode')}</dt>
-            <dd>
-              {te(`mode_${s.mode}`)}
-              {s.loadType ? ` · ${s.loadType}` : ''} · {te(`cargo_${s.cargoType}`)}
-            </dd>
-            <dt>{t('services')}</dt>
-            <dd>{list.format(s.services.map((x) => te(`service_${x}`)))}</dd>
-            <dt>{t('consignee')}</dt>
-            <dd>{party(s.consigneeId)}</dd>
-            <dt>{t('shipper')}</dt>
-            <dd>{party(s.shipperId)}</dd>
-            <dt>{t('currentLocation')}</dt>
-            <dd>{s.currentLocationId ? locationName(s.currentLocationId) : '—'}</dd>
-            <dt>{t('carrierName')}</dt>
-            <dd>
-              {[s.carrierName, s.vesselName, s.voyageNumber].filter(Boolean).join(' · ') || '—'}
-            </dd>
-            <dt>{t('blNumber')}</dt>
-            <dd dir="ltr">{s.blNumber ?? '—'}</dd>
-            <dt>{t('etd')}</dt>
-            <dd dir="ltr">{s.etd ?? '—'}</dd>
-            <dt>{t('eta')}</dt>
-            <dd dir="ltr">{s.eta ?? '—'}</dd>
-            {s.holdReason && (
+      <Tabs
+        label={t('sections')}
+        tabs={[
+          {
+            key: 'overview',
+            label: t('tabOverview'),
+            content: (
               <>
-                <dt>{t('holdReason')}</dt>
-                <dd>{s.holdReason}</dd>
-              </>
-            )}
-            {s.cancelReason && (
-              <>
-                <dt>{t('cancelReason')}</dt>
-                <dd>{s.cancelReason}</dd>
-              </>
-            )}
-          </dl>
-        </div>
-        <div className="panel">
-          <div className="panel-head">
-            <h2>{t('publicTracking')}</h2>
-          </div>
-          <div className="tracking-share">
-            {/* The API draws the QR code of the public tracking link. */}
-            {/* eslint-disable-next-line @next/next/no-img-element -- an API-served SVG, not a static asset */}
-            <img
-              src={`/api/v1/shipments/${s.id}/qr.svg`}
-              alt={t('qrAlt')}
-              width={160}
-              height={160}
-            />
-            <div className="stack">
-              <p className="muted">{t('trackingHint')}</p>
-              <input readOnly dir="ltr" value={trackingUrl} onFocus={(e) => e.target.select()} />
-              <div className="actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard
-                      .writeText(trackingUrl)
-                      .then(() => setNotice({ ok: true, text: t('linkCopied') }));
-                  }}
-                >
-                  {t('copyLink')}
-                </button>
-                <a href={trackingUrl} target="_blank" rel="noreferrer" className="button">
-                  {t('openPublicPage')}
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          <h2>{t('timeline')}</h2>
-        </div>
-        <ol className="timeline">
-          {[...s.events].reverse().map((e) => (
-            <li key={e.id} className={`timeline-item kind-${e.kind}`}>
-              <div className="timeline-head">
-                <StatusBadge kind="shipment" status={e.status} />
-                <span className="muted">{te(`eventKind_${e.kind}`)}</span>
-              </div>
-              <div className="muted">
-                {dateTime.format(new Date(e.occurredAt))}
-                {e.locationId ? ` · ${locationName(e.locationId)}` : ''}
-                {' · '}
-                {e.userName ?? te(`source_${e.source}`)}
-              </div>
-              {e.reason && (
-                <div>
-                  <strong>{t('reason')}: </strong>
-                  {e.reason}
+                <div className="panels">
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h2>{t('overview')}</h2>
+                    </div>
+                    <dl className="details flat">
+                      <dt>{t('mode')}</dt>
+                      <dd>
+                        {te(`mode_${s.mode}`)}
+                        {s.loadType ? ` · ${s.loadType}` : ''} · {te(`cargo_${s.cargoType}`)}
+                      </dd>
+                      <dt>{t('services')}</dt>
+                      <dd>{list.format(s.services.map((x) => te(`service_${x}`)))}</dd>
+                      <dt>{t('consignee')}</dt>
+                      <dd>{party(s.consigneeId)}</dd>
+                      <dt>{t('shipper')}</dt>
+                      <dd>{party(s.shipperId)}</dd>
+                      <dt>{t('currentLocation')}</dt>
+                      <dd>{s.currentLocationId ? locationName(s.currentLocationId) : '—'}</dd>
+                      <dt>{t('carrierName')}</dt>
+                      <dd>
+                        {[s.carrierName, s.vesselName, s.voyageNumber]
+                          .filter(Boolean)
+                          .join(' · ') || '—'}
+                      </dd>
+                      <dt>{t('blNumber')}</dt>
+                      <dd dir="ltr">{s.blNumber ?? '—'}</dd>
+                      <dt>{t('etd')}</dt>
+                      <dd dir="ltr">{s.etd ?? '—'}</dd>
+                      <dt>{t('eta')}</dt>
+                      <dd dir="ltr">{s.eta ?? '—'}</dd>
+                      {s.holdReason && (
+                        <>
+                          <dt>{t('holdReason')}</dt>
+                          <dd>{s.holdReason}</dd>
+                        </>
+                      )}
+                      {s.cancelReason && (
+                        <>
+                          <dt>{t('cancelReason')}</dt>
+                          <dd>{s.cancelReason}</dd>
+                        </>
+                      )}
+                    </dl>
+                  </div>
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h2>{t('publicTracking')}</h2>
+                    </div>
+                    <div className="tracking-share">
+                      {/* The API draws the QR code of the public tracking link. */}
+                      {/* eslint-disable-next-line @next/next/no-img-element -- an API-served SVG, not a static asset */}
+                      <img
+                        src={`/api/v1/shipments/${s.id}/qr.svg`}
+                        alt={t('qrAlt')}
+                        width={160}
+                        height={160}
+                      />
+                      <div className="stack">
+                        <p className="muted">{t('trackingHint')}</p>
+                        <input
+                          readOnly
+                          dir="ltr"
+                          value={trackingUrl}
+                          onFocus={(e) => e.target.select()}
+                        />
+                        <div className="actions">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void navigator.clipboard
+                                .writeText(trackingUrl)
+                                .then(() => setNotice({ ok: true, text: t('linkCopied') }));
+                            }}
+                          >
+                            {t('copyLink')}
+                          </button>
+                          <a href={trackingUrl} target="_blank" rel="noreferrer" className="button">
+                            {t('openPublicPage')}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-              {e.note && <div className="pre">{e.note}</div>}
-            </li>
-          ))}
-        </ol>
-      </div>
 
-      <div className="panel">
-        <div className="panel-head">
-          <h2>{t('items')}</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>{t('cargo')}</th>
-              <th>{t('quantity')}</th>
-              <th>{t('weightKg')}</th>
-              <th>{t('volumeCbm')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {s.items.map((i) => (
-              <tr key={i.lineNo}>
-                <td>{i.lineNo}</td>
-                <td>
-                  {te(`cargo_${i.cargoType}`)}
-                  {i.containerTypeCode ? ` · ${i.containerTypeCode}` : ''}
-                  {i.description ? <div className="muted">{i.description}</div> : null}
-                </td>
-                <td>{i.quantity}</td>
-                <td dir="ltr">{i.weightKg ?? '—'}</td>
-                <td dir="ltr">{i.volumeCbm ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                <div className="panel">
+                  <div className="panel-head">
+                    <h2>{t('timeline')}</h2>
+                  </div>
+                  <ol className="timeline">
+                    {[...s.events].reverse().map((e) => (
+                      <li key={e.id} className={`timeline-item kind-${e.kind}`}>
+                        <div className="timeline-head">
+                          <StatusBadge kind="shipment" status={e.status} />
+                          <span className="muted">{te(`eventKind_${e.kind}`)}</span>
+                        </div>
+                        <div className="muted">
+                          {dateTime.format(new Date(e.occurredAt))}
+                          {e.locationId ? ` · ${locationName(e.locationId)}` : ''}
+                          {' · '}
+                          {e.userName ?? te(`source_${e.source}`)}
+                        </div>
+                        {e.reason && (
+                          <div>
+                            <strong>{t('reason')}: </strong>
+                            {e.reason}
+                          </div>
+                        )}
+                        {e.note && <div className="pre">{e.note}</div>}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
 
-      <ShipmentContainers shipment={s} onChange={setShipment} />
-      {can(me, 'transport_trips:view') && <ShipmentTrips shipmentId={s.id} />}
-      {can(me, 'pod:view') && <ShipmentPods shipment={s} onShipmentChanged={load} />}
-      {can(me, 'warehouse:view') && <ShipmentWarehouse shipment={s} onShipmentChanged={load} />}
-      {can(me, 'customs:view') && <ShipmentCustoms shipment={s} onShipmentChange={setShipment} />}
-      {can(me, 'documents:view') && <ShipmentDocuments shipmentId={s.id} />}
-      {can(me, 'customer_invoices:view') && <ShipmentInvoices shipmentId={s.id} />}
+                <div className="panel">
+                  <div className="panel-head">
+                    <h2>{t('items')}</h2>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>{t('cargo')}</th>
+                        <th>{t('quantity')}</th>
+                        <th>{t('weightKg')}</th>
+                        <th>{t('volumeCbm')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.items.map((i) => (
+                        <tr key={i.lineNo}>
+                          <td>{i.lineNo}</td>
+                          <td>
+                            {te(`cargo_${i.cargoType}`)}
+                            {i.containerTypeCode ? ` · ${i.containerTypeCode}` : ''}
+                            {i.description ? <div className="muted">{i.description}</div> : null}
+                          </td>
+                          <td>{i.quantity}</td>
+                          <td dir="ltr">{i.weightKg ?? '—'}</td>
+                          <td dir="ltr">{i.volumeCbm ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ),
+          },
+          {
+            key: 'containers',
+            label: t('tabContainers'),
+            content: <ShipmentContainers shipment={s} onChange={setShipment} />,
+          },
+          ...(can(me, 'transport_trips:view') || can(me, 'pod:view')
+            ? [
+                {
+                  key: 'transport',
+                  label: t('tabTransport'),
+                  content: (
+                    <>
+                      {can(me, 'transport_trips:view') && <ShipmentTrips shipmentId={s.id} />}
+                      {can(me, 'pod:view') && (
+                        <ShipmentPods shipment={s} onShipmentChanged={load} />
+                      )}
+                    </>
+                  ),
+                },
+              ]
+            : []),
+          ...(can(me, 'warehouse:view')
+            ? [
+                {
+                  key: 'warehouse',
+                  label: t('tabWarehouse'),
+                  content: <ShipmentWarehouse shipment={s} onShipmentChanged={load} />,
+                },
+              ]
+            : []),
+          ...(can(me, 'customs:view')
+            ? [
+                {
+                  key: 'customs',
+                  label: t('tabCustoms'),
+                  content: <ShipmentCustoms shipment={s} onShipmentChange={setShipment} />,
+                },
+              ]
+            : []),
+          ...(can(me, 'documents:view')
+            ? [
+                {
+                  key: 'documents',
+                  label: t('tabDocuments'),
+                  content: <ShipmentDocuments shipmentId={s.id} />,
+                },
+              ]
+            : []),
+          ...(can(me, 'customer_invoices:view')
+            ? [
+                {
+                  key: 'invoices',
+                  label: t('tabInvoices'),
+                  content: <ShipmentInvoices shipmentId={s.id} />,
+                },
+              ]
+            : []),
+        ]}
+      />
     </section>
   );
 }
