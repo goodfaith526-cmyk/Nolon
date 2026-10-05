@@ -20,7 +20,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { Carrier, Prisma, Vehicle } from '../generated/prisma/client.js';
+import { Prisma, type Carrier, type Vehicle } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersService } from '../users/users.service.js';
 
@@ -258,6 +258,26 @@ export class FleetService {
     const carrier = await tx.carrier.findUnique({ where: { id } });
     if (!carrier?.isActive) throw new BadRequestException('Choose an active carrier');
     return carrier;
+  }
+
+  /**
+   * For rule 11a, inside a carrier bill's approving transaction (after its trips are locked):
+   * share-locks the carriers in id order and returns the supplier each is linked to, as it is
+   * under the lock. The share lock conflicts with setCarrierSupplier's FOR UPDATE: a link change
+   * that committed first is seen here, and one that comes later waits until the bill commits.
+   */
+  async lockCarrierSuppliers(
+    tx: Tx,
+    carrierIds: readonly string[],
+  ): Promise<Map<string, string | null>> {
+    const ids = [...new Set(carrierIds)].sort();
+    if (ids.length === 0) return new Map();
+    const rows = await tx.$queryRaw<{ id: string; supplierId: string | null }[]>`
+      SELECT "id", "supplier_id" AS "supplierId" FROM "carriers"
+      WHERE "id" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
+      ORDER BY "id"
+      FOR SHARE`;
+    return new Map(rows.map((r) => [r.id, r.supplierId]));
   }
 
   /**

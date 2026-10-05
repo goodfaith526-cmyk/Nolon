@@ -1,15 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import type { ApAgingBillDto, ApAgingDto } from '@nolon/shared';
+import type { ApAgingBillDto, ApAgingDto, AuditLogEntryDto } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { AgingTotals, agingBucket, daysPastDue } from '../billing/aging.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec } from '../common/money.js';
+import {
+  type AuditQuery,
+  type DocumentAuditRow,
+  documentAuditSql,
+  toAuditEntry,
+} from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
- * Payables reports (annex D section 4, report 6): AP aging. Only bills whose approval entry is
+ * Payables reports (annex D section 4, report 6): AP aging, and the payables' audit log entries. Only bills whose approval entry is
  * POSTED count, in the report's branches (the requested one, checked against the user's, or all of
  * the user's).
  */
@@ -128,5 +134,43 @@ export class PayablesReportsService {
       bills,
       totals: totals.toDto(),
     };
+  }
+
+  /**
+   * Audit log: supplier bills created, approved and cancelled, and supplier payments posted and
+   * cancelled, recorded in the period (days in the document's branch), newest first, with the
+   * status each step reached. A draft bill has no number yet ("—"); an opening bill is created
+   * approved.
+   */
+  async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return [];
+    const events = Prisma.sql`
+      SELECT b."branch_id", b."created_at" AS "at", b."created_by_id" AS "user_id",
+             'SUPPLIER_BILL' AS "entity", 'CREATED' AS "action",
+             coalesce(b."number", '—') AS "reference",
+             CASE WHEN b."is_opening" THEN 'APPROVED' ELSE 'DRAFT' END AS "status",
+             b."supplier_reference" AS "detail"
+      FROM "supplier_bills" b
+      UNION ALL
+      SELECT b."branch_id", b."approved_at", b."approved_by_id", 'SUPPLIER_BILL', 'APPROVED',
+             b."number", 'APPROVED', NULL
+      FROM "supplier_bills" b WHERE b."approved_at" IS NOT NULL AND NOT b."is_opening"
+      UNION ALL
+      SELECT b."branch_id", b."cancelled_at", b."cancelled_by_id", 'SUPPLIER_BILL', 'CANCELLED',
+             coalesce(b."number", '—'), 'CANCELLED', b."cancel_reason"
+      FROM "supplier_bills" b WHERE b."cancelled_at" IS NOT NULL
+      UNION ALL
+      SELECT p."branch_id", p."created_at", p."created_by_id", 'SUPPLIER_PAYMENT', 'POSTED',
+             p."number", 'POSTED', p."reference"
+      FROM "supplier_payments" p
+      UNION ALL
+      SELECT p."branch_id", p."cancelled_at", p."cancelled_by_id", 'SUPPLIER_PAYMENT',
+             'CANCELLED', p."number", 'CANCELLED', p."cancel_reason"
+      FROM "supplier_payments" p WHERE p."cancelled_at" IS NOT NULL`;
+    const rows = await this.prisma.$queryRaw<DocumentAuditRow[]>(
+      documentAuditSql(events, branchIds, q),
+    );
+    return rows.map(toAuditEntry);
   }
 }

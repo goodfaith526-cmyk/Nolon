@@ -14,9 +14,11 @@ import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec } from '../common/money.js';
 import {
   type AuditQuery,
+  type DocumentAuditRow,
   andIf,
-  auditEntityFilter,
+  documentAuditSql,
   sqlDate,
+  toAuditEntry,
   uuidList,
 } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -280,59 +282,51 @@ export class BillingReportsService {
   }
 
   /**
-   * Audit log: invoices created, approved and cancelled, receipts created and cancelled, recorded
-   * in the period (days in the document's branch), newest first. A draft invoice has no number
-   * yet ("—"). An invoice cancellation does not record who did it.
+   * Audit log: invoices created, approved and cancelled, receipts created and cancelled, and
+   * credit notes created, approved and cancelled, recorded in the period (days in the document's
+   * branch), newest first. A draft has no number yet ("—"). An invoice cancellation does not
+   * record who did it. Credit notes carry the status each step reached and their reason.
    */
   async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
     const branchIds = reportBranchIds(user, q.branchId);
     if (branchIds.length === 0) return [];
-    const rows = await this.prisma.$queryRaw<
-      {
-        at: Date;
-        branchCode: string;
-        userId: string | null;
-        userName: string | null;
-        entity: 'INVOICE' | 'RECEIPT';
-        action: 'CREATED' | 'APPROVED' | 'CANCELLED';
-        reference: string;
-        detail: string | null;
-      }[]
-    >`
-      WITH events AS (
-        SELECT i."branch_id", i."created_at" AS "at", i."created_by_id" AS "user_id",
-               'INVOICE' AS "entity", 'CREATED' AS "action",
-               coalesce(i."number", '—') AS "reference", NULL AS "detail"
-        FROM "customer_invoices" i
-        UNION ALL
-        SELECT i."branch_id", i."approved_at", i."approved_by_id", 'INVOICE', 'APPROVED',
-               i."number", NULL
-        FROM "customer_invoices" i WHERE i."approved_at" IS NOT NULL
-        UNION ALL
-        SELECT i."branch_id", i."cancelled_at", NULL, 'INVOICE', 'CANCELLED',
-               coalesce(i."number", '—'), i."cancel_reason"
-        FROM "customer_invoices" i
-        WHERE i."cancelled_at" IS NOT NULL
-        UNION ALL
-        SELECT r."branch_id", r."created_at", r."created_by_id", 'RECEIPT', 'CREATED',
-               r."number", NULL
-        FROM "receipts" r
-        UNION ALL
-        SELECT r."branch_id", r."cancelled_at", r."cancelled_by_id", 'RECEIPT', 'CANCELLED',
-               r."number", r."cancel_reason"
-        FROM "receipts" r WHERE r."cancelled_at" IS NOT NULL
-      )
-      SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
-             x."entity", x."action", x."reference", x."detail"
-      FROM events x
-      JOIN "branches" b ON b."id" = x."branch_id"
-      LEFT JOIN "users" u ON u."id" = x."user_id"
-      WHERE x."branch_id" IN ${uuidList(branchIds)}
-        AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
-        ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
-        ${auditEntityFilter(q)}
-      ORDER BY x."at" DESC
-      LIMIT ${q.limit + 1}`;
-    return rows.map((r) => ({ ...r, at: r.at.toISOString(), status: null }));
+    const events = Prisma.sql`
+      SELECT i."branch_id", i."created_at" AS "at", i."created_by_id" AS "user_id",
+             'INVOICE' AS "entity", 'CREATED' AS "action",
+             coalesce(i."number", '—') AS "reference", NULL AS "status", NULL AS "detail"
+      FROM "customer_invoices" i
+      UNION ALL
+      SELECT i."branch_id", i."approved_at", i."approved_by_id", 'INVOICE', 'APPROVED',
+             i."number", NULL, NULL
+      FROM "customer_invoices" i WHERE i."approved_at" IS NOT NULL
+      UNION ALL
+      SELECT i."branch_id", i."cancelled_at", NULL, 'INVOICE', 'CANCELLED',
+             coalesce(i."number", '—'), NULL, i."cancel_reason"
+      FROM "customer_invoices" i
+      WHERE i."cancelled_at" IS NOT NULL
+      UNION ALL
+      SELECT r."branch_id", r."created_at", r."created_by_id", 'RECEIPT', 'CREATED',
+             r."number", NULL, NULL
+      FROM "receipts" r
+      UNION ALL
+      SELECT r."branch_id", r."cancelled_at", r."cancelled_by_id", 'RECEIPT', 'CANCELLED',
+             r."number", NULL, r."cancel_reason"
+      FROM "receipts" r WHERE r."cancelled_at" IS NOT NULL
+      UNION ALL
+      SELECT n."branch_id", n."created_at", n."created_by_id", 'CREDIT_NOTE', 'CREATED',
+             coalesce(n."number", '—'), 'DRAFT', n."reason"
+      FROM "credit_notes" n
+      UNION ALL
+      SELECT n."branch_id", n."approved_at", n."approved_by_id", 'CREDIT_NOTE', 'APPROVED',
+             n."number", 'APPROVED', NULL
+      FROM "credit_notes" n WHERE n."approved_at" IS NOT NULL
+      UNION ALL
+      SELECT n."branch_id", n."cancelled_at", n."cancelled_by_id", 'CREDIT_NOTE', 'CANCELLED',
+             coalesce(n."number", '—'), 'CANCELLED', n."cancel_reason"
+      FROM "credit_notes" n WHERE n."cancelled_at" IS NOT NULL`;
+    const rows = await this.prisma.$queryRaw<DocumentAuditRow[]>(
+      documentAuditSql(events, branchIds, q),
+    );
+    return rows.map(toAuditEntry);
   }
 }

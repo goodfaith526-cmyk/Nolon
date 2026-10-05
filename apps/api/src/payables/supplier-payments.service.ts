@@ -288,6 +288,9 @@ export class SupplierPaymentsService {
     const asked = new Map(input.allocations.map((a) => [a.billId, dec(a.amount)]));
     const same =
       done.createdById === user.id &&
+      (await this.sameFxRate(done, input)) &&
+      done.reference === (input.reference ?? null) &&
+      done.notes === (input.notes ?? null) &&
       done.supplierId === input.supplierId &&
       done.branchId === input.branchId &&
       done.currency === input.currency &&
@@ -301,6 +304,26 @@ export class SupplierPaymentsService {
       );
     }
     return this.get(user, done.id);
+  }
+
+  /**
+   * The rate is compared the way create resolved it: an entered rate must equal the stored one at
+   * Decimal precision; an omitted rate means "the table's rate for the date", so it matches when
+   * resolving it again gives the stored rate. (If the table was edited for that date in between,
+   * the retry is refused, which is safe: nothing is posted twice.)
+   */
+  private async sameFxRate(
+    done: SupplierPayment,
+    input: CreateSupplierPaymentRequest,
+  ): Promise<boolean> {
+    if (input.fxRate) return dec(input.fxRate).eq(done.fxRate);
+    try {
+      const resolved = await this.fxRates.resolve(done.currency, input.paymentDate);
+      return resolved.eq(done.fxRate);
+    } catch (error) {
+      if (error instanceof BadRequestException) return false;
+      throw error;
+    }
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<PaymentWithDetails> {

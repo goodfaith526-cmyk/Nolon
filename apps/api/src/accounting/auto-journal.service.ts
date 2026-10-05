@@ -79,8 +79,8 @@ export interface CreditNoteForPosting {
   /** The invoice's entry: its revenue lines are the accounts the credit note debits. */
   invoiceEntryId: string;
   /**
-   * An opening item (rule 15): its entry credited opening equity, but an allowance granted after
-   * go-live is a current-period P&L item, so the credit note debits the DEFAULT_REVENUE account.
+   * An opening item (rule 15): its entry credited opening equity, so the credit note debits
+   * OPENING_EQUITY back rather than any revenue account.
    */
   isOpening: boolean;
   receivableAccountId: string;
@@ -458,7 +458,8 @@ export class AutoJournalService {
    * Rule 6, credit note approved: debit the revenue (or reimbursable) accounts the invoice
    * credited, sharing the amount in proportion to what each received, at the invoice's rate;
    * credit the invoice's own receivable with the USD carrying value cleared. A credit note on an
-   * opening item debits the DEFAULT_REVENUE account instead. The carrying value cleared can differ
+   * opening item debits OPENING_EQUITY instead, the account the opening item credited: reducing a
+   * balance brought forward is not revenue of the current period. The carrying value cleared can differ
    * from the debits at the invoice rate by the cents earlier partial settlements rounded; that
    * difference is booked to the rounding account explicitly, as a receipt does.
    */
@@ -478,7 +479,7 @@ export class AutoJournalService {
     if (note.isOpening) {
       lines.push({
         ...common,
-        accountId: await this.accounts.roleAccount(tx, 'DEFAULT_REVENUE'),
+        accountId: await this.accounts.roleAccount(tx, 'OPENING_EQUITY'),
         side: 'DEBIT',
         amount: note.amount,
       });

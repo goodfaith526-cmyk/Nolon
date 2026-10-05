@@ -17,6 +17,7 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { JournalEntry, Prisma, Trip } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { FleetService } from './fleet.service.js';
 import { forbidDriverOnly, lockTrip, tripScope } from './trip-scope.js';
 import {
   type CostShare,
@@ -48,6 +49,7 @@ export class TripCostsService {
     private readonly accounts: AccountsService,
     private readonly fxRates: FxRatesService,
     private readonly currencies: CurrenciesService,
+    private readonly fleet: FleetService,
   ) {}
 
   /**
@@ -292,8 +294,8 @@ export class TripCostsService {
 
   /**
    * Rule 11a, inside the approving transaction of carrier bill `bill`: locks each trip (in id
-   * order, after the bill), checks it can be cleared by this bill and marks it billed. A trip is
-   * cleared once: it must be a completed external trip of the bill's branch with its accrual
+   * order, after the bill), then share-locks their carriers (in id order), checks each trip can be
+   * cleared by this bill and marks it billed. A trip is cleared once: it must be a completed external trip of the bill's branch with its accrual
    * posted, its carrier linked to the bill's supplier, accrued in the bill's currency, and not
    * cleared by another bill yet.
    */
@@ -303,18 +305,25 @@ export class TripCostsService {
     bill: { id: string; supplierId: string; branchId: string; currency: string },
   ): Promise<Map<string, { number: string; accrualEntryId: string }>> {
     const result = new Map<string, { number: string; accrualEntryId: string }>();
-    for (const id of [...new Set(tripIds)].sort()) {
-      const trip = await lockTrip(tx, id);
-      const carrier = trip.carrierId
-        ? await tx.carrier.findUnique({ where: { id: trip.carrierId } })
-        : null;
+    // Every trip first, then their carriers, each in id order: the same order everywhere, so two
+    // bills cannot deadlock, and a carrier's link to a supplier is read under a lock that a
+    // concurrent link change (FleetService.setCarrierSupplier, FOR UPDATE) must wait for.
+    const trips: Trip[] = [];
+    for (const id of [...new Set(tripIds)].sort()) trips.push(await lockTrip(tx, id));
+    const links = await this.fleet.lockCarrierSuppliers(
+      tx,
+      trips.flatMap((trip) => (trip.carrierId ? [trip.carrierId] : [])),
+    );
+    for (const trip of trips) {
+      const id = trip.id;
+      const supplierId = trip.carrierId ? (links.get(trip.carrierId) ?? null) : null;
       if (trip.kind !== 'EXTERNAL' || trip.status !== 'COMPLETED' || !trip.accrualEntryId) {
         throw new ConflictException(`Trip ${trip.number} is not a completed external trip`);
       }
       if (trip.branchId !== bill.branchId) {
         throw new BadRequestException(`Trip ${trip.number} belongs to another branch`);
       }
-      if (carrier?.supplierId !== bill.supplierId) {
+      if (supplierId !== bill.supplierId) {
         throw new BadRequestException(
           `Trip ${trip.number}'s carrier is not linked to this supplier`,
         );

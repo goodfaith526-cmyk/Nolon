@@ -12,6 +12,8 @@ import type {
   ExpenseCategoryDto,
   ExpenseDto,
   AccountingSettingsDto,
+  AuditLogDto,
+  AuditLogEntryDto,
   JournalEntryDto,
   OpenAccrualsDto,
   ReceiptDto,
@@ -24,6 +26,7 @@ import ExcelJS from 'exceljs';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { todayIn } from '../src/common/dates.js';
 import { Prisma } from '../src/generated/prisma/client.js';
 import {
   APP_ORIGIN,
@@ -55,6 +58,9 @@ describe('credit notes, payables, expenses and opening balances', () => {
   /** An SDG cash account of Jeddah: another branch's. */
   let cashJed: AccountDto;
   let accounts: Map<string, AccountDto>;
+  let auditorId: string;
+  let adminId: string;
+  let financePtsId: string;
   const year = randomInt(1901, 2000);
   const d = (monthDay: string) => `${year}-${monthDay}`;
   const at = (monthDay: string) => `${year}-${monthDay}T08:00:00+03:00`;
@@ -66,6 +72,9 @@ describe('credit notes, payables, expenses and opening balances', () => {
     managerPts: '',
     opsPts: '',
     driverPts: '',
+    managerJed: '',
+    /** Finance and branch manager of Port Sudan: enters, approves and cancels, and reads the log. */
+    auditor: '',
   };
 
   const get = (path: string, cookie: string) =>
@@ -76,6 +85,8 @@ describe('credit notes, payables, expenses and opening balances', () => {
     t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
   const put = (path: string, cookie: string, body: object) =>
     t.http().put(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+  const del = (path: string, cookie: string) =>
+    t.http().delete(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie);
 
   const account = (code: string): AccountDto => {
     const found = accounts.get(code);
@@ -138,7 +149,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
   }
 
   /** A completed external trip of `carrier` (600,000 SDG at 600), split 750/250 by weight. */
-  async function completedExternalTrip(): Promise<TripDto> {
+  async function completedExternalTrip(carrierId = carrier.id): Promise<TripDto> {
     const shipments = [await shipment('750'), await shipment('250')];
     const trip = (
       await post('/trips', cookies.opsPts, {
@@ -147,7 +158,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
         destinationLocationId: khartoum,
         shipmentIds: shipments,
         kind: 'EXTERNAL',
-        carrierId: carrier.id,
+        carrierId,
         agreedCost: '600000',
         currency: 'SDG',
       }).expect(201)
@@ -260,7 +271,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
       managerPts: await createUser(t.prisma, ['BRANCH_MANAGER'], ['PTS'], LEDGER_PREFIX),
       opsPts: await createUser(t.prisma, ['OPERATIONS'], ['PTS'], LEDGER_PREFIX),
       driverPts: await createUser(t.prisma, ['DRIVER'], ['PTS'], LEDGER_PREFIX),
+      managerJed: await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED'], LEDGER_PREFIX),
+      auditor: await createUser(t.prisma, ['FINANCE', 'BRANCH_MANAGER'], ['PTS'], LEDGER_PREFIX),
     };
+    auditorId = users.auditor.id;
+    adminId = users.admin.id;
+    financePtsId = users.financePts.id;
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
     }
@@ -1007,6 +1023,233 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('carrier links racing a carrier bill', () => {
+    /** A new carrier linked to `supplier`, a completed trip of it, and a draft bill for it. */
+    async function draftCarrierBill() {
+      const own = (
+        await post('/transport/carriers', cookies.opsPts, {
+          name: `LG4B Carrier ${randomUUID().slice(0, 6)}`,
+        }).expect(201)
+      ).body as CarrierDto;
+      await put(`/suppliers/${supplier.id}/carriers/${own.id}`, cookies.financePts, {}).expect(200);
+      const trip = await completedExternalTrip(own.id);
+      const draft = (
+        await post('/supplier-bills', cookies.financePts, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          currency: 'SDG',
+          fxRate: '600',
+          billDate: d('04-12'),
+          dueDate: d('05-12'),
+          lines: [{ kind: 'TRIP', tripId: trip.id, amount: '600000' }],
+        }).expect(201)
+      ).body as SupplierBillDto;
+      return { carrierId: own.id, trip, draft };
+    }
+
+    it('a link change that commits first makes the approval refuse the trip', async () => {
+      const { carrierId, trip, draft } = await draftCarrierBill();
+      const other = (
+        await post('/suppliers', cookies.financePts, {
+          name: `LG4B Other ${randomUUID().slice(0, 6)}`,
+        }).expect(201)
+      ).body as SupplierDto;
+      // The approval waits on the trip row while the carrier is moved to another supplier.
+      const approval = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "trips" WHERE "id" = ${trip.id}::uuid FOR UPDATE`;
+          const started = post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).then(
+            (r) => r,
+          );
+          await waitForLockWaiter(t.prisma);
+          await put(`/suppliers/${other.id}/carriers/${carrierId}`, cookies.financePts, {}).expect(
+            200,
+          );
+          return { started };
+        },
+        { timeout: 15_000 },
+      );
+      const res = await approval.started;
+      expect(res.status).toBe(400);
+      const bill = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(bill).toMatchObject({ status: 'DRAFT', journalEntryId: null });
+      const row = await t.prisma.trip.findUniqueOrThrow({ where: { id: trip.id } });
+      expect(row.carrierBillId).toBeNull();
+      const linked = await t.prisma.carrier.findUniqueOrThrow({ where: { id: carrierId } });
+      expect(linked.supplierId).toBe(other.id);
+    });
+
+    it('an approval that read the link first makes the link change wait for it', async () => {
+      const { carrierId, trip, draft } = await draftCarrierBill();
+      // A bill of this year is numbered first, so the sequence row exists to be held.
+      await approvedBill({
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '600' }],
+      });
+      let unlinked = false;
+      // The approval passes the carrier (share lock held) and waits on the bill number while the
+      // unlink is sent: the unlink must wait on the carrier row until the approval commits.
+      const { approval, unlink } = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT 1 FROM "number_sequences"
+            WHERE "doc_type" = 'SUPPLIER_BILL' AND "period_key" = ${String(year)} FOR UPDATE`;
+          const approval = post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).then(
+            (r) => r,
+          );
+          await waitForLockWaiter(t.prisma);
+          const unlink = del(
+            `/suppliers/${supplier.id}/carriers/${carrierId}`,
+            cookies.financePts,
+          ).then((r) => {
+            unlinked = true;
+            return r;
+          });
+          await waitForLockWaiter(t.prisma, 2);
+          expect(unlinked).toBe(false);
+          return { approval, unlink };
+        },
+        { timeout: 15_000 },
+      );
+      expect((await approval).status).toBe(200);
+      expect((await unlink).status).toBe(200);
+      const bill = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(bill.status).toBe('APPROVED');
+      const row = await t.prisma.trip.findUniqueOrThrow({ where: { id: trip.id } });
+      expect(row.carrierBillId).toBe(draft.id);
+      const after = await t.prisma.carrier.findUniqueOrThrow({ where: { id: carrierId } });
+      expect(after.supplierId).toBeNull();
+    });
+  });
+
+  describe('supplier payment retries and races', () => {
+    const rentBill = () =>
+      approvedBill({ lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '60000' }] });
+
+    it('an exact retry replays; changing the rate, reference or notes is refused', async () => {
+      const target = await rentBill();
+      const body = {
+        requestId: randomUUID(),
+        supplierId: supplier.id,
+        branchId: pts,
+        paymentDate: d('05-02'),
+        currency: 'SDG',
+        fxRate: '600',
+        cashAccountId: cashSdg.id,
+        reference: 'TRF-1',
+        notes: 'First half',
+        allocations: [{ billId: target.id, amount: '30000' }],
+      };
+      const first = (await post('/supplier-payments', cookies.financePts, body).expect(201))
+        .body as SupplierPaymentDto;
+      // The same rate written another way is the same request.
+      const replay = (
+        await post('/supplier-payments', cookies.financePts, {
+          ...body,
+          fxRate: '600.00000000',
+        }).expect(201)
+      ).body as SupplierPaymentDto;
+      expect(replay).toMatchObject({ id: first.id, number: first.number });
+      for (const change of [
+        { fxRate: '600.00000001' },
+        { fxRate: '601' },
+        { reference: 'TRF-2' },
+        { reference: null },
+        { notes: 'Second half' },
+        { notes: null },
+      ]) {
+        await post('/supplier-payments', cookies.financePts, { ...body, ...change }).expect(409);
+      }
+      // Dropping a field the first request sent is a change too.
+      for (const dropped of ['reference', 'notes'] as const) {
+        const partial: Partial<typeof body> = { ...body };
+        delete partial[dropped];
+        await post('/supplier-payments', cookies.financePts, partial).expect(409);
+      }
+
+      // A request that left the rate to the table replays when it again omits it, and is refused
+      // when it names another rate; a request without reference or notes replays without them.
+      const tableRate = {
+        requestId: randomUUID(),
+        supplierId: supplier.id,
+        branchId: pts,
+        paymentDate: d('05-03'),
+        currency: 'SDG',
+        cashAccountId: cashSdg.id,
+        allocations: [{ billId: target.id, amount: '10000' }],
+      };
+      const second = (await post('/supplier-payments', cookies.financePts, tableRate).expect(201))
+        .body as SupplierPaymentDto;
+      expect(second).toMatchObject({ fxRate: '600', reference: null, notes: null });
+      const again = (
+        await post('/supplier-payments', cookies.financePts, {
+          ...tableRate,
+          fxRate: null,
+          reference: null,
+          notes: null,
+        }).expect(201)
+      ).body as SupplierPaymentDto;
+      expect(again.id).toBe(second.id);
+      await post('/supplier-payments', cookies.financePts, { ...tableRate, fxRate: '650' }).expect(
+        409,
+      );
+      await post('/supplier-payments', cookies.financePts, {
+        ...tableRate,
+        reference: 'TRF-3',
+      }).expect(409);
+
+      // Nothing more was posted or paid by the replays and refusals.
+      const ids = [first.id, second.id];
+      expect(await t.prisma.supplierPayment.count({ where: { id: { in: ids } } })).toBe(2);
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'SUPPLIER_PAYMENT', sourceId: { in: ids } },
+        }),
+      ).toBe(2);
+      const row = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: target.id } });
+      expect(row.paidAmount.toFixed()).toBe('40000');
+    });
+
+    it('two payments of the whole balance at once: one is recorded, the other refused', async () => {
+      const target = await rentBill();
+      const pay = (requestId: string) => () =>
+        post('/supplier-payments', cookies.financePts, {
+          requestId,
+          supplierId: supplier.id,
+          branchId: pts,
+          paymentDate: d('05-04'),
+          currency: 'SDG',
+          fxRate: '600',
+          cashAccountId: cashSdg.id,
+          allocations: [{ billId: target.id, amount: '60000' }],
+        });
+      const ids = [randomUUID(), randomUUID()];
+      const statuses = await whileLocked('supplier_bills', target.id, ids.map(pay));
+      expect(statuses).toEqual([201, 400]);
+
+      const row = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: target.id } });
+      expect(row.paidAmount.toFixed()).toBe('60000');
+      expect(row.paidAmount.lte(row.total)).toBe(true);
+      expect(row.paidUsd.toFixed()).toBe('100');
+      const payments = await t.prisma.supplierPayment.findMany({ where: { id: { in: ids } } });
+      expect(payments).toHaveLength(1);
+      expect(await t.prisma.supplierPaymentAllocation.count({ where: { billId: target.id } })).toBe(
+        1,
+      );
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'SUPPLIER_PAYMENT', sourceId: { in: ids } },
+        }),
+      ).toBe(1);
+      // The refused request left nothing behind.
+      const refused = ids.find((id) => id !== payments[0]?.id) ?? '';
+      expect(
+        await t.prisma.supplierPaymentAllocation.count({ where: { paymentId: refused } }),
+      ).toBe(0);
+      expect(await t.prisma.journalEntry.count({ where: { sourceId: refused } })).toBe(0);
+    });
+  });
+
   describe('general expenses', () => {
     const body = () => ({
       requestId: randomUUID(),
@@ -1232,7 +1475,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
       expect(apAging.bills.map((b) => b.billId)).toEqual([openingBill.id]);
     });
 
-    it('a credit note on an opening item debits revenue; both show on the statement', async () => {
+    it('a credit note on an opening item debits opening equity; both show on the statement', async () => {
       const item = (
         await post('/customer-invoices/opening', cookies.financePts, {
           requestId: randomUUID(),
@@ -1249,19 +1492,34 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const note = (await post(`/credit-notes/${draft.id}/approve`, cookies.managerPts).expect(200))
         .body as CreditNoteDto;
       expect(note).toMatchObject({ amountUsd: '166.67', invoiceBalance: '200000' });
+      const invoiceAfter = (
+        await get(`/customer-invoices/${item.id}`, cookies.financePts).expect(200)
+      ).body as CustomerInvoiceDto;
+      expect(invoiceAfter).toMatchObject({ creditedAmount: '100000', balance: '200000' });
 
+      // The opening item credited OPENING_EQUITY; the credit note reverses that side, not revenue.
       const settings = (await get('/accounting/settings', cookies.admin).expect(200))
         .body as AccountingSettingsDto;
-      const revenue = settings.mappings.find((m) => m.role === 'DEFAULT_REVENUE')?.accountId;
-      if (!revenue) throw new Error('No DEFAULT_REVENUE account');
+      const role = (name: string) => {
+        const found = settings.mappings.find((m) => m.role === name)?.accountId;
+        if (!found) throw new Error(`No ${name} account`);
+        return found;
+      };
+      const equity = role('OPENING_EQUITY');
       const entry = await journal(note.journalEntryId ?? '');
       balanced(entry);
-      expect(lineOf(entry, revenue)).toMatchObject({ debit: '100000', debitUsd: '166.67' });
+      expect(lineOf(entry, equity)).toMatchObject({
+        debit: '100000',
+        debitUsd: '166.67',
+        customerId: customer.id,
+      });
       expect(lineOf(entry, account('1200').id)).toMatchObject({
         credit: '100000',
         creditUsd: '166.67',
+        customerId: customer.id,
       });
-      expect(entry.lines.filter((l) => l.accountId === account('3100').id)).toHaveLength(0);
+      expect(entry.lines.filter((l) => l.accountId === role('DEFAULT_REVENUE'))).toHaveLength(0);
+      expect(entry.lines).toHaveLength(2);
 
       // Sales may not view journal entries, yet both lines show with their kind and number.
       const statement = (
@@ -1283,6 +1541,245 @@ describe('credit notes, payables, expenses and opening balances', () => {
         detailsHidden: false,
         credit: '100000',
       });
+      // The running balance drops by the credit note, and the totals still close.
+      const sdg = statement.sections.find((section) => section.currency === 'SDG');
+      if (!sdg) throw new Error('No SDG section');
+      const index = sdg.lines.findIndex((l) => l.documentId === draft.id);
+      const before = index === 0 ? sdg.openingBalance : (sdg.lines[index - 1]?.balance ?? '');
+      expect(new Prisma.Decimal(before).minus(sdg.lines[index]?.balance ?? '').toFixed()).toBe(
+        '100000',
+      );
+      expect(
+        new Prisma.Decimal(sdg.openingBalance)
+          .plus(sdg.totalDebit)
+          .minus(sdg.totalCredit)
+          .toFixed(),
+      ).toBe(sdg.closingBalance);
+    });
+  });
+
+  describe('audit log of credit notes, supplier bills and payments, and expenses', () => {
+    let period: string;
+    const numbers = { creditNote: '', bill: '', payment: '', expense: '' };
+    const drafts = { creditNote: '' };
+
+    const auditLog = async (query: string, cookie = cookies.auditor) =>
+      (await get(`/reports/audit-log?${period}${query}`, cookie).expect(200)).body as AuditLogDto;
+    const steps = (entries: AuditLogEntryDto[], reference: string) =>
+      entries
+        .filter((e) => e.reference === reference)
+        .map((e) => [e.entity, e.action, e.status])
+        .sort();
+
+    beforeAll(async () => {
+      const { timezone } = await t.prisma.branch.findUniqueOrThrow({ where: { id: pts } });
+      const day = 86_400_000;
+      // Recorded now: the period around today in the branch, whatever the time of day.
+      period = `from=${todayIn(timezone, new Date(Date.now() - day))}&to=${todayIn(
+        timezone,
+        new Date(Date.now() + day),
+      )}`;
+      const by = cookies.auditor;
+
+      // A credit note created, approved; another created and cancelled (a draft keeps no number).
+      const invoice = await approvedInvoice();
+      const note = (
+        await post('/credit-notes', by, {
+          requestId: randomUUID(),
+          invoiceId: invoice.id,
+          creditDate: d('03-20'),
+          amount: '1000',
+          reason: 'Audit allowance',
+        }).expect(201)
+      ).body as CreditNoteDto;
+      numbers.creditNote =
+        ((await post(`/credit-notes/${note.id}/approve`, by).expect(200)).body as CreditNoteDto)
+          .number ?? '';
+      const noteDraft = (
+        await post('/credit-notes', by, {
+          requestId: randomUUID(),
+          invoiceId: invoice.id,
+          creditDate: d('03-21'),
+          amount: '1',
+          reason: 'Audit draft',
+        }).expect(201)
+      ).body as CreditNoteDto;
+      drafts.creditNote = noteDraft.id;
+      // Only the Administrator cancels a credit note.
+      await post(`/credit-notes/${noteDraft.id}/cancel`, cookies.admin, {
+        reason: 'Audit: not needed',
+      }).expect(200);
+
+      // A supplier bill created, approved, paid; the payment and then the bill cancelled.
+      const billDraft = (
+        await post('/supplier-bills', by, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          currency: 'SDG',
+          fxRate: '600',
+          billDate: d('04-10'),
+          dueDate: d('05-10'),
+          supplierReference: 'AUD-1',
+          lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '6000' }],
+        }).expect(201)
+      ).body as SupplierBillDto;
+      numbers.bill =
+        (
+          (await post(`/supplier-bills/${billDraft.id}/approve`, by).expect(200))
+            .body as SupplierBillDto
+        ).number ?? '';
+      const payment = (
+        await post('/supplier-payments', by, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          paymentDate: d('05-01'),
+          currency: 'SDG',
+          fxRate: '600',
+          cashAccountId: cashSdg.id,
+          reference: 'AUD-TRF',
+          allocations: [{ billId: billDraft.id, amount: '6000' }],
+        }).expect(201)
+      ).body as SupplierPaymentDto;
+      numbers.payment = payment.number;
+      await post(`/supplier-payments/${payment.id}/cancel`, by, { reason: 'Wrong bank' }).expect(
+        200,
+      );
+      await post(`/supplier-bills/${billDraft.id}/cancel`, by, { reason: 'Billed twice' }).expect(
+        200,
+      );
+
+      // An expense created, approved and cancelled.
+      const expense = (
+        await post('/expenses', by, {
+          requestId: randomUUID(),
+          branchId: pts,
+          expenseDate: d('06-02'),
+          categoryCode: 'RENT',
+          description: 'Audit rent',
+          currency: 'SDG',
+          amount: '600',
+          cashAccountId: cashSdg.id,
+        }).expect(201)
+      ).body as ExpenseDto;
+      numbers.expense =
+        ((await post(`/expenses/${expense.id}/approve`, by).expect(200)).body as ExpenseDto)
+          .number ?? '';
+      await post(`/expenses/${expense.id}/cancel`, by, { reason: 'Paid twice' }).expect(200);
+    });
+
+    it('records each step with its number, status, user, time and branch', async () => {
+      const r = await auditLog(`&userId=${auditorId}`);
+      expect(r.users.map((u) => u.id)).toEqual([auditorId]);
+      expect(r.entries.every((e) => e.userId === auditorId && e.branchCode === 'PTS')).toBe(true);
+      expect(r.entries.every((e) => !Number.isNaN(Date.parse(e.at)))).toBe(true);
+      expect(steps(r.entries, numbers.creditNote)).toEqual(
+        [
+          ['CREDIT_NOTE', 'CREATED', 'DRAFT'],
+          ['CREDIT_NOTE', 'APPROVED', 'APPROVED'],
+        ].sort(),
+      );
+      expect(steps(r.entries, numbers.bill)).toEqual(
+        [
+          ['SUPPLIER_BILL', 'CREATED', 'DRAFT'],
+          ['SUPPLIER_BILL', 'APPROVED', 'APPROVED'],
+          ['SUPPLIER_BILL', 'CANCELLED', 'CANCELLED'],
+        ].sort(),
+      );
+      expect(steps(r.entries, numbers.payment)).toEqual(
+        [
+          ['SUPPLIER_PAYMENT', 'POSTED', 'POSTED'],
+          ['SUPPLIER_PAYMENT', 'CANCELLED', 'CANCELLED'],
+        ].sort(),
+      );
+      expect(steps(r.entries, numbers.expense)).toEqual(
+        [
+          ['EXPENSE', 'CREATED', 'DRAFT'],
+          ['EXPENSE', 'APPROVED', 'APPROVED'],
+          ['EXPENSE', 'CANCELLED', 'CANCELLED'],
+        ].sort(),
+      );
+      // Cancellations carry the reason and who cancelled, a cancelled draft included.
+      const cancelled = r.entries.filter((e) => e.action === 'CANCELLED');
+      expect(cancelled.map((e) => [e.entity, e.detail]).sort()).toEqual(
+        [
+          ['EXPENSE', 'Paid twice'],
+          ['SUPPLIER_BILL', 'Billed twice'],
+          ['SUPPLIER_PAYMENT', 'Wrong bank'],
+        ].sort(),
+      );
+      const byAdmin = await auditLog(`&userId=${adminId}&entity=CREDIT_NOTE`);
+      expect(byAdmin.entries.filter((e) => e.detail === 'Audit: not needed')).toEqual([
+        expect.objectContaining({
+          entity: 'CREDIT_NOTE',
+          action: 'CANCELLED',
+          reference: '—',
+          status: 'CANCELLED',
+          userId: adminId,
+          branchCode: 'PTS',
+        }),
+      ]);
+      const row = await t.prisma.creditNote.findUniqueOrThrow({ where: { id: drafts.creditNote } });
+      expect(row.cancelledById).toBe(adminId);
+    });
+
+    it('filters on each kind of record, the user and the branch', async () => {
+      for (const entity of ['CREDIT_NOTE', 'SUPPLIER_BILL', 'SUPPLIER_PAYMENT', 'EXPENSE']) {
+        const r = await auditLog(`&userId=${auditorId}&entity=${entity}`);
+        expect(r.entity).toBe(entity);
+        expect(r.entries.length).toBeGreaterThan(0);
+        expect(r.entries.every((e) => e.entity === entity)).toBe(true);
+      }
+      const bills = await auditLog(`&userId=${auditorId}&entity=SUPPLIER_BILL&branchId=${pts}`);
+      expect(bills.entries).toHaveLength(3);
+      // Another user's records are not the auditor's; another branch's user sees none of them.
+      const others = await auditLog(`&userId=${financePtsId}&entity=SUPPLIER_PAYMENT`);
+      expect(others.entries.some((e) => e.reference === numbers.payment)).toBe(false);
+      await get(`/reports/audit-log?${period}&branchId=${pts}`, cookies.managerJed).expect(403);
+      const jedView = await auditLog(`&userId=${auditorId}`, cookies.managerJed);
+      expect(jedView.entries).toEqual([]);
+      const jedBranch = await auditLog(`&branchId=${jed}&entity=EXPENSE`, cookies.managerJed);
+      expect(jedBranch.entries.some((e) => e.reference === numbers.expense)).toBe(false);
+      // Sales, operations and finance users do not read the audit log.
+      await get(`/reports/audit-log?${period}`, cookies.financePts).expect(403);
+    });
+
+    it('the records are in the Excel export too', async () => {
+      const res = await get(
+        `/reports/audit-log/export?${period}&userId=${auditorId}&locale=en`,
+        cookies.auditor,
+      )
+        .buffer(true)
+        .parse(binary)
+        .expect(200);
+      const values = await workbookValues(res);
+      for (const value of [
+        numbers.creditNote,
+        numbers.bill,
+        numbers.payment,
+        numbers.expense,
+        'Credit note',
+        'Supplier bill',
+        'Supplier payment',
+        'Expense',
+        'Billed twice',
+        'Cancelled',
+        'Posted',
+      ]) {
+        expect(values).toContain(value);
+      }
+      const ar = await get(
+        `/reports/audit-log/export?${period}&userId=${auditorId}&entity=CREDIT_NOTE&locale=ar`,
+        cookies.auditor,
+      )
+        .buffer(true)
+        .parse(binary)
+        .expect(200);
+      const arValues = await workbookValues(ar);
+      expect(arValues).toContain('إشعار دائن');
+      expect(arValues).toContain(numbers.creditNote);
+      expect(arValues).not.toContain(numbers.bill);
     });
   });
 });

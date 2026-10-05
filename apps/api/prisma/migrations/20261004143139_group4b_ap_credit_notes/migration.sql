@@ -65,6 +65,7 @@ CREATE TABLE "credit_notes" (
     "approved_at" TIMESTAMPTZ(3),
     "cancel_reason" TEXT,
     "cancelled_at" TIMESTAMPTZ(3),
+    "cancelled_by_id" UUID,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL,
 
@@ -325,6 +326,9 @@ ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_created_by_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_approved_by_id_fkey" FOREIGN KEY ("approved_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_cancelled_by_id_fkey" FOREIGN KEY ("cancelled_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "suppliers" ADD CONSTRAINT "suppliers_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

@@ -274,7 +274,12 @@ export class CreditNotesService {
       await lockStatus(tx, id, 'DRAFT');
       await tx.creditNote.update({
         where: { id },
-        data: { status: 'CANCELLED', cancelReason: reason, cancelledAt: new Date() },
+        data: {
+          status: 'CANCELLED',
+          cancelReason: reason,
+          cancelledAt: new Date(),
+          cancelledById: user.id,
+        },
       });
     });
     return this.get(user, id);

@@ -181,6 +181,7 @@ model User {
 
   creditNotesCreated       CreditNote[]      @relation("CreditNoteCreatedBy")
   creditNotesApproved      CreditNote[]      @relation("CreditNoteApprovedBy")
+  creditNotesCancelled     CreditNote[]      @relation("CreditNoteCancelledBy")
   suppliersCreated         Supplier[]        @relation("SupplierCreatedBy")
   supplierBillsCreated     SupplierBill[]    @relation("SupplierBillCreatedBy")
   supplierBillsApproved    SupplierBill[]    @relation("SupplierBillApprovedBy")
@@ -1826,6 +1827,7 @@ model CreditNote {
   approvedAt     DateTime?        @map("approved_at") @db.Timestamptz(3)
   cancelReason   String?          @map("cancel_reason")
   cancelledAt    DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById  String?          @map("cancelled_by_id") @db.Uuid
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1835,6 +1837,7 @@ model CreditNote {
   journalEntry JournalEntry?   @relation("CreditNoteJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
   createdBy    User            @relation("CreditNoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   approvedBy   User?           @relation("CreditNoteApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  cancelledBy  User?           @relation("CreditNoteCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
 
   @@index([branchId, status])
   @@index([invoiceId])
