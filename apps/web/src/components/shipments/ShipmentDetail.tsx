@@ -21,6 +21,7 @@ import { StatusBadge } from '../StatusBadge';
 import { Tabs } from '../Tabs';
 import { MoreMenu } from '../MoreMenu';
 import { ShipmentContainers } from './ShipmentContainers';
+import { ShipmentConsolidations } from '../consolidations/ShipmentConsolidations';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
@@ -508,7 +509,12 @@ export function ShipmentDetail({ id }: { id: string }) {
           {
             key: 'containers',
             label: t('tabContainers'),
-            content: <ShipmentContainers shipment={s} onChange={setShipment} />,
+            content: (
+              <>
+                {s.loadType === 'LCL' && <ShipmentConsolidations shipmentId={s.id} />}
+                <ShipmentContainers shipment={s} onChange={setShipment} />
+              </>
+            ),
           },
           ...(can(me, 'transport_trips:view') || can(me, 'pod:view')
             ? [

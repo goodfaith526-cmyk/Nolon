@@ -22,6 +22,7 @@ interface NavLink {
     | 'shipments'
     | 'warehouses'
     | 'trips'
+    | 'consolidations'
     | 'vehicles'
     | 'drivers'
     | 'carriers'
@@ -86,6 +87,12 @@ const NAV_SECTIONS: readonly {
     title: 'operations',
     links: [
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
+      {
+        href: '/consolidations',
+        label: 'consolidations',
+        icon: 'ship',
+        permission: 'consolidation:view',
+      },
       { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
       {
         href: '/warehouses',

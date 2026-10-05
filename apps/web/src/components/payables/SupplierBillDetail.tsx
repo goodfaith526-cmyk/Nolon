@@ -203,6 +203,18 @@ export function SupplierBillDetail({ id }: { id: string }) {
                           <span dir="ltr">{l.tripNumber}</span>
                         ))}
                       {l.kind === 'EXPENSE' && <span dir="ltr">{l.expenseCategoryCode}</span>}
+                      {l.kind === 'CONSOLIDATION' && (
+                        <>
+                          {can(me, 'consolidation:view') && l.consolidationId ? (
+                            <Link href={`/consolidations/${l.consolidationId}`} dir="ltr">
+                              {l.consolidationNumber}
+                            </Link>
+                          ) : (
+                            <span dir="ltr">{l.consolidationNumber}</span>
+                          )}{' '}
+                          · {chargeName(l.chargeTypeCode)}
+                        </>
+                      )}
                     </td>
                     <td>{l.description ?? ''}</td>
                     <td dir="ltr">

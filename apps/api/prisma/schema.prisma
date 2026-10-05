@@ -65,13 +65,15 @@ model Branch {
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
 
-  vehicles     Vehicle[]
-  drivers      Driver[]
-  trips        Trip[]
-  tripLinks    TripShipment[]
-  tripExpenses TripExpense[]
-  pods         ProofOfDelivery[]
-  podPhotos    PodPhoto[]
+  vehicles           Vehicle[]
+  drivers            Driver[]
+  trips              Trip[]
+  tripLinks          TripShipment[]
+  consolidations     Consolidation[]
+  consolidationLinks ConsolidationShipment[]
+  tripExpenses       TripExpense[]
+  pods               ProofOfDelivery[]
+  podPhotos          PodPhoto[]
 
   creditNotes      CreditNote[]
   supplierBills    SupplierBill[]
@@ -177,6 +179,7 @@ model User {
 
   driverProfile         Driver?
   tripsCreated          Trip[]            @relation("TripCreatedBy")
+  consolidationsCreated Consolidation[]   @relation("ConsolidationCreatedBy")
   tripExpensesCreated   TripExpense[]     @relation("TripExpenseCreatedBy")
   tripExpensesCancelled TripExpense[]     @relation("TripExpenseCancelledBy")
   podsCreated           ProofOfDelivery[] @relation("PodCreatedBy")
@@ -285,18 +288,20 @@ model Location {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  ratesFrom      RateCard[]      @relation("RateOrigin")
-  ratesTo        RateCard[]      @relation("RateDestination")
-  quotationsFrom Quotation[]     @relation("QuotationOrigin")
-  quotationsTo   Quotation[]     @relation("QuotationDestination")
-  bookingsFrom   Booking[]       @relation("BookingOrigin")
-  bookingsTo     Booking[]       @relation("BookingDestination")
-  shipmentsFrom  Shipment[]      @relation("ShipmentOrigin")
-  shipmentsTo    Shipment[]      @relation("ShipmentDestination")
-  shipmentsAt    Shipment[]      @relation("ShipmentCurrentLocation")
-  events         ShipmentEvent[]
-  tripsFrom      Trip[]          @relation("TripOrigin")
-  tripsTo        Trip[]          @relation("TripDestination")
+  ratesFrom          RateCard[]      @relation("RateOrigin")
+  ratesTo            RateCard[]      @relation("RateDestination")
+  quotationsFrom     Quotation[]     @relation("QuotationOrigin")
+  quotationsTo       Quotation[]     @relation("QuotationDestination")
+  bookingsFrom       Booking[]       @relation("BookingOrigin")
+  bookingsTo         Booking[]       @relation("BookingDestination")
+  shipmentsFrom      Shipment[]      @relation("ShipmentOrigin")
+  shipmentsTo        Shipment[]      @relation("ShipmentDestination")
+  shipmentsAt        Shipment[]      @relation("ShipmentCurrentLocation")
+  events             ShipmentEvent[]
+  tripsFrom          Trip[]          @relation("TripOrigin")
+  tripsTo            Trip[]          @relation("TripDestination")
+  consolidationsFrom Consolidation[] @relation("ConsolidationOrigin")
+  consolidationsTo   Consolidation[] @relation("ConsolidationDestination")
 
   @@map("locations")
 }
@@ -313,6 +318,7 @@ model ContainerType {
   bookingItems       BookingItem[]
   shipmentItems      ShipmentItem[]
   shipmentContainers ShipmentContainer[]
+  consolidations     Consolidation[]
 
   @@map("container_types")
 }
@@ -790,29 +796,30 @@ model Shipment {
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch          Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer        Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  booking         Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  origin          Location            @relation("ShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination     Location            @relation("ShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  currentLocation Location?           @relation("ShipmentCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
-  shipper         Party?              @relation("ShipmentShipper", fields: [shipperId], references: [id], onDelete: Restrict)
-  consignee       Party?              @relation("ShipmentConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
-  notifyParty     Party?              @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
-  createdBy       User                @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  items           ShipmentItem[]
-  containers      ShipmentContainer[]
-  events          ShipmentEvent[]
-  documents       Document[]
-  journalLines    JournalLine[]
-  invoices        CustomerInvoice[]
-  movements       WarehouseMovement[]
-  customs         CustomsClearance?
-  customsFees     CustomsFee[]
-  tripLinks       TripShipment[]
-  pods            ProofOfDelivery[]
-  billLines       SupplierBillLine[]
-  sharedBranches  ShipmentBranch[]
+  branch             Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer           Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  booking            Booking                 @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  origin             Location                @relation("ShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination        Location                @relation("ShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currentLocation    Location?               @relation("ShipmentCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
+  shipper            Party?                  @relation("ShipmentShipper", fields: [shipperId], references: [id], onDelete: Restrict)
+  consignee          Party?                  @relation("ShipmentConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
+  notifyParty        Party?                  @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
+  createdBy          User                    @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items              ShipmentItem[]
+  containers         ShipmentContainer[]
+  events             ShipmentEvent[]
+  documents          Document[]
+  journalLines       JournalLine[]
+  invoices           CustomerInvoice[]
+  movements          WarehouseMovement[]
+  customs            CustomsClearance?
+  customsFees        CustomsFee[]
+  tripLinks          TripShipment[]
+  pods               ProofOfDelivery[]
+  billLines          SupplierBillLine[]
+  sharedBranches     ShipmentBranch[]
+  consolidationLinks ConsolidationShipment[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -1139,6 +1146,7 @@ enum JournalSource {
   SUPPLIER_PAYMENT
   EXPENSE
   OPENING_BALANCE
+  CONSOLIDATION_ALLOCATION
 
   @@map("journal_source")
 }
@@ -1165,26 +1173,27 @@ model JournalEntry {
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch                Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  period                FiscalPeriod     @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  reversalOf            JournalEntry?    @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy            JournalEntry?    @relation("JournalReversal")
-  createdBy             User             @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  postedBy              User?            @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
-  lines                 JournalLine[]
-  invoice               CustomerInvoice? @relation("InvoiceJournal")
-  receipt               Receipt?         @relation("ReceiptJournal")
-  receiptCancel         Receipt?         @relation("ReceiptCancelJournal")
-  tripExpense           TripExpense?     @relation("TripExpenseJournal")
-  tripExpenseCancel     TripExpense?     @relation("TripExpenseCancelJournal")
-  tripAccrual           Trip?            @relation("TripAccrualJournal")
-  creditNote            CreditNote?      @relation("CreditNoteJournal")
-  supplierBill          SupplierBill?    @relation("SupplierBillJournal")
-  supplierBillCancel    SupplierBill?    @relation("SupplierBillCancelJournal")
-  supplierPayment       SupplierPayment? @relation("SupplierPaymentJournal")
-  supplierPaymentCancel SupplierPayment? @relation("SupplierPaymentCancelJournal")
-  expense               Expense?         @relation("ExpenseJournal")
-  expenseCancel         Expense?         @relation("ExpenseCancelJournal")
+  branch                  Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  period                  FiscalPeriod      @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  reversalOf              JournalEntry?     @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy              JournalEntry?     @relation("JournalReversal")
+  createdBy               User              @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedBy                User?             @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  lines                   JournalLine[]
+  invoice                 CustomerInvoice?  @relation("InvoiceJournal")
+  receipt                 Receipt?          @relation("ReceiptJournal")
+  receiptCancel           Receipt?          @relation("ReceiptCancelJournal")
+  tripExpense             TripExpense?      @relation("TripExpenseJournal")
+  tripExpenseCancel       TripExpense?      @relation("TripExpenseCancelJournal")
+  tripAccrual             Trip?             @relation("TripAccrualJournal")
+  creditNote              CreditNote?       @relation("CreditNoteJournal")
+  supplierBill            SupplierBill?     @relation("SupplierBillJournal")
+  supplierBillCancel      SupplierBill?     @relation("SupplierBillCancelJournal")
+  supplierPayment         SupplierPayment?  @relation("SupplierPaymentJournal")
+  supplierPaymentCancel   SupplierPayment?  @relation("SupplierPaymentCancelJournal")
+  expense                 Expense?          @relation("ExpenseJournal")
+  expenseCancel           Expense?          @relation("ExpenseCancelJournal")
+  consolidationAllocation SupplierBillLine? @relation("BillLineAllocationJournal")
 
   @@index([branchId, entryDate])
   @@index([source, sourceId])
@@ -1195,34 +1204,37 @@ model JournalEntry {
 /// own rate, with the USD amount the entry balances on. Branch, shipment, customer, supplier and
 /// trip are the analysis dimensions.
 model JournalLine {
-  id          String  @id @default(uuid()) @db.Uuid
-  entryId     String  @map("entry_id") @db.Uuid
-  lineNo      Int     @map("line_no") @db.SmallInt
-  accountId   String  @map("account_id") @db.Uuid
-  branchId    String  @map("branch_id") @db.Uuid
-  shipmentId  String? @map("shipment_id") @db.Uuid
-  customerId  String? @map("customer_id") @db.Uuid
+  id              String  @id @default(uuid()) @db.Uuid
+  entryId         String  @map("entry_id") @db.Uuid
+  lineNo          Int     @map("line_no") @db.SmallInt
+  accountId       String  @map("account_id") @db.Uuid
+  branchId        String  @map("branch_id") @db.Uuid
+  shipmentId      String? @map("shipment_id") @db.Uuid
+  customerId      String? @map("customer_id") @db.Uuid
   /// Payables lines: the supplier owed or paid.
-  supplierId  String? @map("supplier_id") @db.Uuid
+  supplierId      String? @map("supplier_id") @db.Uuid
   /// Accrued transport lines a carrier bill clears (rule 11a): the trip they belong to.
-  tripId      String? @map("trip_id") @db.Uuid
-  description String?
-  currency    String  @db.Char(3)
+  tripId          String? @map("trip_id") @db.Uuid
+  /// Consolidated container clearing lines (rules 7a and 13): the container they belong to.
+  consolidationId String? @map("consolidation_id") @db.Uuid
+  description     String?
+  currency        String  @db.Char(3)
   /// Units of `currency` per 1 USD.
-  fxRate      Decimal @map("fx_rate") @db.Decimal(18, 8)
-  debit       Decimal @default(0) @db.Decimal(18, 4)
-  credit      Decimal @default(0) @db.Decimal(18, 4)
-  debitUsd    Decimal @default(0) @map("debit_usd") @db.Decimal(18, 4)
-  creditUsd   Decimal @default(0) @map("credit_usd") @db.Decimal(18, 4)
+  fxRate          Decimal @map("fx_rate") @db.Decimal(18, 8)
+  debit           Decimal @default(0) @db.Decimal(18, 4)
+  credit          Decimal @default(0) @db.Decimal(18, 4)
+  debitUsd        Decimal @default(0) @map("debit_usd") @db.Decimal(18, 4)
+  creditUsd       Decimal @default(0) @map("credit_usd") @db.Decimal(18, 4)
 
-  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
-  account     Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment    Shipment?    @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  supplier    Supplier?    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  trip        Trip?        @relation(fields: [tripId], references: [id], onDelete: Restrict)
-  currencyRef Currency     @relation(fields: [currency], references: [code], onDelete: Restrict)
+  entry         JournalEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  branch        Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment      Shipment?      @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  trip          Trip?          @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  consolidation Consolidation? @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  currencyRef   Currency       @relation(fields: [currency], references: [code], onDelete: Restrict)
 
   @@unique([entryId, lineNo])
   @@index([accountId])
@@ -1230,6 +1242,7 @@ model JournalLine {
   @@index([shipmentId])
   @@index([supplierId])
   @@index([tripId])
+  @@index([consolidationId])
   @@map("journal_lines")
 }
 
@@ -1726,6 +1739,104 @@ model TripShipment {
   @@map("trip_shipments")
 }
 
+enum ConsolidationStatus {
+  /// Shipments are added and removed.
+  OPEN
+  /// Stuffed and sealed: the shipments are fixed and consolidated, and the container's costs are
+  /// shared between them (rule 13).
+  CLOSED
+  LOADED
+  DEPARTED
+  ARRIVED
+  /// Unpacked at the destination: each shipment goes on by itself.
+  DECONSOLIDATED
+  CANCELLED
+
+  @@map("consolidation_status")
+}
+
+/// How a consolidated container's cost is shared between its shipments (annex B: CBM by default).
+enum ConsolidationBasis {
+  CBM
+  WEIGHT
+
+  @@map("consolidation_basis")
+}
+
+/**
+ * A consolidated (LCL) container: shipments of different customers in one container (annex B,
+ * consolidation). Its status moves its shipments (consolidated, loaded, departed, arrived at the
+ * port) through the shipment state machine. Its supplier bills post to the consolidation clearing
+ * account (rule 7a); closing it shares them between the shipments by CBM or weight (rule 13).
+ */
+model Consolidation {
+  id                    String              @id @default(uuid()) @db.Uuid
+  /// NOL-CON-2026-000001
+  number                String              @unique @db.VarChar(30)
+  branchId              String              @map("branch_id") @db.Uuid
+  /// Port of loading and port of discharge.
+  originLocationId      String              @map("origin_location_id") @db.Uuid
+  destinationLocationId String              @map("destination_location_id") @db.Uuid
+  containerTypeCode     String              @map("container_type_code") @db.VarChar(10)
+  /// ISO 6346; required to close the container.
+  containerNumber       String?             @map("container_number") @db.VarChar(11)
+  sealNumber            String?             @map("seal_number") @db.VarChar(30)
+  carrierName           String?             @map("carrier_name") @db.VarChar(200)
+  vesselName            String?             @map("vessel_name") @db.VarChar(200)
+  voyageNumber          String?             @map("voyage_number") @db.VarChar(50)
+  /// The shipping line's bill of lading for the whole container.
+  masterBlNumber        String?             @map("master_bl_number") @db.VarChar(50)
+  etd                   DateTime?           @db.Date
+  eta                   DateTime?           @db.Date
+  basis                 ConsolidationBasis  @default(CBM)
+  status                ConsolidationStatus @default(OPEN)
+  closedAt              DateTime?           @map("closed_at") @db.Timestamptz(3)
+  loadedAt              DateTime?           @map("loaded_at") @db.Timestamptz(3)
+  departedAt            DateTime?           @map("departed_at") @db.Timestamptz(3)
+  arrivedAt             DateTime?           @map("arrived_at") @db.Timestamptz(3)
+  deconsolidatedAt      DateTime?           @map("deconsolidated_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  cancelReason          String?             @map("cancel_reason")
+  notes                 String?
+  createdById           String              @map("created_by_id") @db.Uuid
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch        Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin        Location                @relation("ConsolidationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination   Location                @relation("ConsolidationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  containerType ContainerType           @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  createdBy     User                    @relation("ConsolidationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  shipments     ConsolidationShipment[]
+  billLines     SupplierBillLine[]
+  journalLines  JournalLine[]
+
+  @@index([branchId, status])
+  @@map("consolidations")
+}
+
+/// A shipment in a consolidated container. A shipment is in one container at a time (cancelled
+/// containers aside); the service checks it under the shipment's lock.
+model ConsolidationShipment {
+  consolidationId String   @map("consolidation_id") @db.Uuid
+  shipmentId      String   @map("shipment_id") @db.Uuid
+  /// The container's branch.
+  branchId        String   @map("branch_id") @db.Uuid
+  /// The shipment's CBM or weight (the container's basis) when the container was closed: its
+  /// share of every container cost, then and later.
+  basisValue      Decimal? @map("basis_value") @db.Decimal(18, 4)
+  addedAt         DateTime @default(now()) @map("added_at") @db.Timestamptz(3)
+
+  consolidation Consolidation @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  shipment      Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([consolidationId, shipmentId])
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("consolidation_shipments")
+}
+
 enum TripExpenseStatus {
   POSTED
   CANCELLED
@@ -1969,6 +2080,9 @@ enum SupplierBillLineKind {
   TRIP
   /// A general expense by category (rule 12).
   EXPENSE
+  /// A cost of a consolidated (LCL) container by charge type, to its clearing account (rule 7a),
+  /// shared by the container's shipments (rule 13).
+  CONSOLIDATION
 
   @@map("supplier_bill_line_kind")
 }
@@ -1982,6 +2096,10 @@ model SupplierBillLine {
   shipmentId          String?              @map("shipment_id") @db.Uuid
   tripId              String?              @map("trip_id") @db.Uuid
   expenseCategoryCode String?              @map("expense_category_code") @db.VarChar(20)
+  consolidationId     String?              @map("consolidation_id") @db.Uuid
+  /// Rule 13: the entry that shared this container cost between the container's shipments, once
+  /// the container is closed (at the close, or on approval for a bill approved after it).
+  allocationEntryId   String?              @unique @map("allocation_entry_id") @db.Uuid
   description         String?
   /// In the bill currency, rounded to its minor units.
   amount              Decimal              @db.Decimal(18, 4)
@@ -1991,10 +2109,13 @@ model SupplierBillLine {
   shipment        Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   trip            Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
   expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryCode], references: [code], onDelete: Restrict)
+  consolidation   Consolidation?   @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  allocationEntry JournalEntry?    @relation("BillLineAllocationJournal", fields: [allocationEntryId], references: [id], onDelete: Restrict)
 
   @@unique([billId, lineNo])
   @@index([shipmentId])
   @@index([tripId])
+  @@index([consolidationId])
   @@map("supplier_bill_lines")
 }
 

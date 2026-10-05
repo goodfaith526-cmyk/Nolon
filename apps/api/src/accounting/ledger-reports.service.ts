@@ -775,8 +775,8 @@ export class LedgerReportsService {
 
   /**
    * Debit - credit of the account mapped to `role`, as of a date, in the report's branches. Used
-   * for CONSOLIDATION_CLEARING: nothing posts to it yet (consolidation is not built) and the
-   * mapping keeps no history, so the account mapped today is the only one known.
+   * for CONSOLIDATION_CLEARING: container costs wait there until their container is closed (rules
+   * 7a and 13). The mapping keeps no history, so the account mapped today is the only one known.
    */
   async roleBalance(
     user: AuthUser,

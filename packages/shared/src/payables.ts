@@ -46,7 +46,12 @@ export type SupplierBillStatus = (typeof SUPPLIER_BILL_STATUSES)[number];
  * TRIP: a carrier's charge for a completed external trip; it clears the trip's accrual (rule 11a).
  * EXPENSE: a general expense by category (rule 12).
  */
-export const SUPPLIER_BILL_LINE_KINDS = ['SHIPMENT_COST', 'TRIP', 'EXPENSE'] as const;
+export const SUPPLIER_BILL_LINE_KINDS = [
+  'SHIPMENT_COST',
+  'TRIP',
+  'EXPENSE',
+  'CONSOLIDATION',
+] as const;
 export type SupplierBillLineKind = (typeof SUPPLIER_BILL_LINE_KINDS)[number];
 
 export interface SupplierBillLineInput {
@@ -55,6 +60,8 @@ export interface SupplierBillLineInput {
   shipmentId?: string | null;
   tripId?: string | null;
   expenseCategoryCode?: string | null;
+  /** A container cost (CONSOLIDATION): the container; with chargeTypeCode. */
+  consolidationId?: string | null;
   description?: string | null;
   /** In the bill currency. */
   amount: DecimalString;
@@ -69,6 +76,8 @@ export interface SupplierBillLineDto {
   tripId: string | null;
   tripNumber: string | null;
   expenseCategoryCode: string | null;
+  consolidationId: string | null;
+  consolidationNumber: string | null;
   description: string | null;
   amount: DecimalString;
 }

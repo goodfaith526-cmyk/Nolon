@@ -203,6 +203,7 @@ export class JournalService {
         customerId: line.customerId ?? null,
         supplierId: line.supplierId ?? null,
         tripId: line.tripId ?? null,
+        consolidationId: line.consolidationId ?? null,
         description: line.description ?? null,
         currency: line.currency,
         fxRate: line.fxRate,
@@ -293,6 +294,7 @@ export function toPrepared(line: JournalLine): PreparedLine {
     customerId: line.customerId,
     supplierId: line.supplierId,
     tripId: line.tripId,
+    consolidationId: line.consolidationId,
     description: line.description,
   };
 }

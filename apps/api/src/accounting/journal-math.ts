@@ -33,6 +33,8 @@ export interface LineSpec {
   supplierId?: string | null;
   /** Accrued transport lines (rules 11 and 11a): the trip the accrual belongs to. */
   tripId?: string | null;
+  /** Consolidation clearing lines (rules 7a and 13): the container the cost belongs to. */
+  consolidationId?: string | null;
   description?: string | null;
 }
 

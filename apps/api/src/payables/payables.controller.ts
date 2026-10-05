@@ -71,6 +71,7 @@ const billLine = z
     shipmentId: z.uuid().nullish(),
     tripId: z.uuid().nullish(),
     expenseCategoryCode: z.string().trim().toUpperCase().min(1).max(20).nullish(),
+    consolidationId: z.uuid().nullish(),
     description: optionalText(500),
     amount,
   })

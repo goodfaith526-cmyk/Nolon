@@ -4,6 +4,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { BookingsModule } from './bookings/bookings.module.js';
 import { ConfigModule } from './config/config.module.js';
+import { ConsolidationsModule } from './consolidations/consolidations.module.js';
 import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { CustomsModule } from './customs/customs.module.js';
@@ -38,6 +39,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     BookingsModule,
     DashboardModule,
     ShipmentsModule,
+    ConsolidationsModule,
     DocumentsModule,
     AccountingModule,
     BillingModule,

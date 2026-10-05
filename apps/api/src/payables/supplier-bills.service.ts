@@ -33,6 +33,7 @@ import {
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
+import { ConsolidationsService } from '../consolidations/consolidations.service.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { Prisma, type SupplierBill } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -40,6 +41,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentBranches } from '../shipments/shipment-scope.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripCostsService } from '../transport/trip-costs.service.js';
+import { ContainerCostsService } from './container-costs.service.js';
 import { SuppliersService } from './suppliers.service.js';
 
 export interface SupplierBillFilters extends PageQuery {
@@ -55,7 +57,11 @@ const details = {
   supplier: { select: { name: true } },
   lines: {
     orderBy: { lineNo: 'asc' },
-    include: { shipment: { select: { number: true } }, trip: { select: { number: true } } },
+    include: {
+      shipment: { select: { number: true } },
+      trip: { select: { number: true } },
+      consolidation: { select: { number: true } },
+    },
   },
   journalEntry: { select: { number: true } },
   cancelJournal: { select: { number: true } },
@@ -75,6 +81,7 @@ interface CheckedLine {
   shipmentId: string | null;
   tripId: string | null;
   expenseCategoryCode: string | null;
+  consolidationId: string | null;
   description: string | null;
   amount: Decimal;
 }
@@ -82,9 +89,15 @@ interface CheckedLine {
 /**
  * Supplier bills (scope 13; annex C rules 7, 8, 11a and 12). A bill belongs to one branch and
  * currency and is edited as a DRAFT; approving it numbers it and posts its entry together. Lines
- * are shipment costs by charge type, a carrier's completed trips (clearing their accruals) or
- * general expenses by category. An approved bill with no payment is cancelled by its reversing
- * entry, which gives its trips' accruals back.
+ * are shipment costs by charge type, a carrier's completed trips (clearing their accruals),
+ * general expenses by category, or a consolidated container's costs by charge type (rule 7a; shared
+ * between the container's shipments once it is closed, rule 13). An approved bill with no payment
+ * is cancelled by its reversing entry, and the reversal of its containers' sharing-out entries,
+ * which gives its trips' accruals back.
+ *
+ * Locks: approving takes the bill, then its containers (shared, id order), then any shipment;
+ * cancelling takes the containers before the bill, as a container's close takes the container
+ * before the approved bills.
  */
 @Injectable()
 export class SupplierBillsService {
@@ -98,6 +111,8 @@ export class SupplierBillsService {
     private readonly shipments: ShipmentsService,
     private readonly tripCosts: TripCostsService,
     private readonly suppliers: SuppliersService,
+    private readonly consolidations: ConsolidationsService,
+    private readonly containerCosts: ContainerCostsService,
   ) {}
 
   async list(user: AuthUser, filters: SupplierBillFilters): Promise<Page<SupplierBillSummaryDto>> {
@@ -210,7 +225,10 @@ export class SupplierBillsService {
               line.chargeTypeCode === (sent.chargeTypeCode ?? null))) &&
           (sent.kind !== 'TRIP' || line.tripId === (sent.tripId ?? null)) &&
           (sent.kind !== 'EXPENSE' ||
-            line.expenseCategoryCode === (sent.expenseCategoryCode ?? null))
+            line.expenseCategoryCode === (sent.expenseCategoryCode ?? null)) &&
+          (sent.kind !== 'CONSOLIDATION' ||
+            (line.consolidationId === (sent.consolidationId ?? null) &&
+              line.chargeTypeCode === (sent.chargeTypeCode ?? null)))
         );
       });
     if (!same) throw new ConflictException('This request id was already used: send a new id');
@@ -254,6 +272,18 @@ export class SupplierBillsService {
       }
       await this.suppliers.requireActiveInTx(tx, bill.supplierId);
       await this.currencies.requireActiveInTx(tx, bill.currency);
+      // The containers before any shipment lock (see the class comment).
+      const containers = await this.consolidations.lockForCostsInTx(
+        tx,
+        bill.lines.flatMap((l) => (l.consolidationId ? [l.consolidationId] : [])),
+        { forApproval: true },
+      );
+      for (const line of bill.lines) {
+        const container = line.consolidationId ? containers.get(line.consolidationId) : undefined;
+        if (container && container.branchId !== bill.branchId) {
+          throw new BadRequestException(`Container ${container.number} is of another branch`);
+        }
+      }
       const trips = await this.tripCosts.markCarrierBilled(
         tx,
         bill.lines.flatMap((l) => (l.tripId ? [l.tripId] : [])),
@@ -302,6 +332,31 @@ export class SupplierBillsService {
           approvedById: user.id,
         },
       });
+      // Rule 13 at once for a container already closed; the others are shared at their close.
+      for (const line of bill.lines) {
+        const container = line.consolidationId ? containers.get(line.consolidationId) : undefined;
+        if (!container?.closed || !line.chargeTypeCode) continue;
+        await this.containerCosts.allocateInTx(
+          tx,
+          user,
+          {
+            lineId: line.id,
+            consolidationId: container.id,
+            chargeTypeCode: line.chargeTypeCode,
+            amount: line.amount,
+            bill: {
+              number,
+              branchId: bill.branchId,
+              supplierId: bill.supplierId,
+              currency: bill.currency,
+              fxRate: bill.fxRate,
+              billDate: bill.billDate,
+              journalEntryId: entry.id,
+            },
+          },
+          container.closed,
+        );
+      }
     });
     return this.get(user, id);
   }
@@ -317,8 +372,17 @@ export class SupplierBillsService {
       select: { timezone: true },
     });
     await this.prisma.$transaction(async (tx) => {
+      // The containers first, as a container's close does (see the class comment).
+      await this.consolidations.lockForCostsInTx(
+        tx,
+        existing.lines.flatMap((l) => (l.consolidationId ? [l.consolidationId] : [])),
+        { forApproval: false },
+      );
       const status = await lockStatus(tx, id, ['DRAFT', 'APPROVED']);
-      const bill = await tx.supplierBill.findUniqueOrThrow({ where: { id } });
+      const bill = await tx.supplierBill.findUniqueOrThrow({
+        where: { id },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
       let cancelJournalEntryId: string | null = null;
       if (status === 'APPROVED') {
         if (bill.isOpening) {
@@ -328,6 +392,16 @@ export class SupplierBillsService {
           throw new ConflictException('Cancel the payments of this bill first');
         }
         if (!bill.journalEntryId) throw new Error('An approved bill has an entry');
+        for (const line of bill.lines) {
+          if (!line.allocationEntryId) continue;
+          await this.autoJournal.reverseDocumentEntry(
+            tx,
+            line.allocationEntryId,
+            todayIn(branch.timezone),
+            user.id,
+            `Cancellation of supplier bill ${bill.number ?? ''}: container cost shared back`,
+          );
+        }
         const reversal = await this.autoJournal.reverseDocumentEntry(
           tx,
           bill.journalEntryId,
@@ -471,6 +545,7 @@ export class SupplierBillsService {
       shipmentId: string | null;
       tripId: string | null;
       expenseCategoryCode: string | null;
+      consolidationId: string | null;
       amount: Decimal;
     },
     trips: Map<string, { number: string; accrualEntryId: string }>,
@@ -492,6 +567,10 @@ export class SupplierBillsService {
         shipmentId: line.shipmentId,
         amount: line.amount,
       };
+    }
+    if (line.kind === 'CONSOLIDATION' && line.consolidationId && line.chargeTypeCode) {
+      // The container was locked and checked by the approval before the lines.
+      return { kind: 'CONSOLIDATION', consolidationId: line.consolidationId, amount: line.amount };
     }
     if (line.kind === 'EXPENSE' && line.expenseCategoryCode) {
       const category = await this.expenseCategories.requireActiveInTx(tx, line.expenseCategoryCode);
@@ -540,6 +619,7 @@ export class SupplierBillsService {
         shipmentId: null,
         tripId: null,
         expenseCategoryCode: null,
+        consolidationId: null,
         description: line.description ?? null,
         amount,
       };
@@ -556,6 +636,24 @@ export class SupplierBillsService {
         }
         await this.masterData.requireChargeType(line.chargeTypeCode);
         lines.push({ ...base, shipmentId: line.shipmentId, chargeTypeCode: line.chargeTypeCode });
+      } else if (line.kind === 'CONSOLIDATION') {
+        if (!line.consolidationId || !line.chargeTypeCode) {
+          throw new BadRequestException(
+            `${label}: a container cost needs a container and a charge`,
+          );
+        }
+        const container = await this.consolidations.requireBillable(user, line.consolidationId);
+        if (container.branchId !== input.branchId) {
+          throw new BadRequestException(
+            `${label}: container ${container.number} is of another branch`,
+          );
+        }
+        await this.masterData.requireChargeType(line.chargeTypeCode);
+        lines.push({
+          ...base,
+          consolidationId: container.id,
+          chargeTypeCode: line.chargeTypeCode,
+        });
       } else if (line.kind === 'TRIP') {
         if (!line.tripId) throw new BadRequestException(`${label}: choose the trip`);
         const trip = await this.tripCosts.requireBillableTrip(user, line.tripId);
@@ -661,6 +759,8 @@ function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
       tripId: l.tripId,
       tripNumber: l.trip?.number ?? null,
       expenseCategoryCode: l.expenseCategoryCode,
+      consolidationId: l.consolidationId,
+      consolidationNumber: l.consolidation?.number ?? null,
       description: l.description,
       amount: l.amount.toFixed(),
     })),
