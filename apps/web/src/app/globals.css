@@ -14,6 +14,8 @@
   --brand-blue-dark: #083f78;
   --brand-blue-soft: #eaf1fb;
   --brand-blue-ring: rgb(10 85 161 / 0.22);
+  /* Link text: the brand blue, lighter on dark surfaces. */
+  --link: var(--brand-blue);
   --brand-orange: #f39531;
   --brand-orange-soft: #fef1e2;
   --brand-navy: #0b2f57;
@@ -90,6 +92,7 @@
     --fg-soft: #c8d2df;
     --muted: #94a3b8;
     --faint: #64748b;
+    --link: #7cb3f5;
     --brand-blue-soft: #10294a;
     --brand-blue-ring: rgb(96 165 250 / 0.35);
     --brand-orange-soft: #3a2611;
@@ -108,11 +111,6 @@
     --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.25);
     --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.45);
-  }
-
-  /* Links and primary buttons keep enough contrast on the dark surface. */
-  :root a {
-    color: var(--info);
   }
 }
 
@@ -166,12 +164,18 @@ html[dir='rtl'] :is(h1, h2, h3) {
 }
 
 a {
-  color: var(--brand-blue);
+  color: var(--link);
   text-underline-offset: 0.2em;
 }
 
 a:hover {
   color: var(--brand-blue-dark);
+}
+
+@media (prefers-color-scheme: dark) {
+  a:hover {
+    color: #a9cdf8;
+  }
 }
 
 strong,
@@ -1350,7 +1354,7 @@ a.stat:hover {
   block-size: 2.5rem;
   border-radius: var(--radius);
   background: var(--brand-blue-soft);
-  color: var(--brand-blue);
+  color: var(--link);
 }
 
 .stat-body {
@@ -2739,7 +2743,7 @@ tr.subtotal td {
 
 .recent-number {
   align-self: flex-start;
-  color: var(--brand-blue);
+  color: var(--link);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: start;
@@ -2815,7 +2819,7 @@ button.tab:active:not(:disabled) {
 }
 
 button.tab[aria-selected='true'] {
-  color: var(--brand-blue);
+  color: var(--link);
   font-weight: 600;
 }
 
