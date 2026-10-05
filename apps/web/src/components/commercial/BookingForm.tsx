@@ -18,6 +18,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
+import { icons } from '../Icons';
 import { CustomerPicker } from './CustomerPicker';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
@@ -181,83 +182,105 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
   );
 
   return (
-    <form className="stack" onSubmit={(e) => void submit(e)}>
+    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>{booking ? t('editTitle', { number: booking.number }) : t('add')}</h1>
       <Notice notice={notice} />
       {!booking && (
-        <fieldset>
-          <legend>{t('customer')}</legend>
-          <CustomerPicker value={customer} onChange={setCustomer} />
-        </fieldset>
+        <section className="form-section">
+          <header>
+            <h2>{t('customer')}</h2>
+            <p>{t('sectionCustomerHint')}</p>
+          </header>
+          <div className="form-section-body">
+            <CustomerPicker value={customer} onChange={setCustomer} />
+          </div>
+        </section>
       )}
-      <div className="grid">
-        <label className="field">
-          {t('origin')}
-          <select value={origin} onChange={(e) => setOrigin(e.target.value)}>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('destination')}
-          <select value={destination} onChange={(e) => setDestination(e.target.value)}>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('mode')}
-          <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
-            {SHIPPING_MODES.map((m) => (
-              <option key={m} value={m}>
-                {te(`mode_${m}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'SEA' && (
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionRoute')}</h2>
+          <p>{t('sectionRouteHint')}</p>
+        </header>
+        <div className="form-section-body form-grid">
           <label className="field">
-            {t('loadType')}
-            <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
-              {LOAD_TYPES.map((l) => (
-                <option key={l} value={l}>
-                  {l}
+            {t('origin')}
+            <select value={origin} onChange={(e) => setOrigin(e.target.value)}>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {name(l)} ({l.code})
                 </option>
               ))}
             </select>
           </label>
-        )}
-        <label className="field">
-          {t('cargoType')}
-          <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
-            {CARGO_TYPES.map((c) => (
-              <option key={c} value={c}>
-                {te(`cargo_${c}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('requestedDeparture')}
-          <input
-            name="requestedDeparture"
-            type="date"
-            defaultValue={booking?.requestedDeparture ?? ''}
-          />
-        </label>
-        {partySelect('shipperId')}
-        {partySelect('consigneeId')}
-        {partySelect('notifyPartyId')}
-      </div>
-      <fieldset>
-        <legend>{t('services')}</legend>
-        <div className="checks">
+          <label className="field">
+            {t('destination')}
+            <select value={destination} onChange={(e) => setDestination(e.target.value)}>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {name(l)} ({l.code})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            {t('mode')}
+            <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
+              {SHIPPING_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {te(`mode_${m}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {mode === 'SEA' && (
+            <label className="field">
+              {t('loadType')}
+              <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
+                {LOAD_TYPES.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="field">
+            {t('cargoType')}
+            <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
+              {CARGO_TYPES.map((c) => (
+                <option key={c} value={c}>
+                  {te(`cargo_${c}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            {t('requestedDeparture')}
+            <input
+              name="requestedDeparture"
+              type="date"
+              defaultValue={booking?.requestedDeparture ?? ''}
+            />
+          </label>
+        </div>
+      </section>
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionParties')}</h2>
+          <p>{t('sectionPartiesHint')}</p>
+        </header>
+        <div className="form-section-body form-grid">
+          {partySelect('shipperId')}
+          {partySelect('consigneeId')}
+          {partySelect('notifyPartyId')}
+        </div>
+      </section>
+      <section className="form-section">
+        <header>
+          <h2>{t('services')}</h2>
+          <p>{t('servicesHint')}</p>
+        </header>
+        <div className="form-section-body checks">
           {BOOKING_SERVICES.map((s) => (
             <label key={s}>
               <input
@@ -269,111 +292,142 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             </label>
           ))}
         </div>
-      </fieldset>
-      <label className="field">
-        {t('cargoDescription')}
-        <textarea name="cargoDescription" defaultValue={booking?.cargoDescription ?? ''} />
-      </label>
+      </section>
 
-      <fieldset className="stack">
-        <legend>{t('items')}</legend>
-        <p className="muted">{t('cbmHint')}</p>
-        {items.map((i, index) => (
-          <div key={i.key} className="line">
-            <span className="muted">{index + 1}</span>
-            <label className="field">
-              {t('cargoType')}
-              <select
-                value={i.cargoType}
-                onChange={(e) => {
-                  const next = e.target.value as CargoType;
-                  updateItem(i.key, {
-                    cargoType: next,
-                    containerTypeCode: next === 'CONTAINER' ? '20GP' : '',
-                  });
-                }}
-              >
-                {CARGO_TYPES.map((c) => (
-                  <option key={c} value={c}>
-                    {te(`cargo_${c}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {i.cargoType === 'CONTAINER' && (
+      <section className="form-section wide">
+        <header>
+          <h2>{t('items')}</h2>
+          <p>{t('cbmHint')}</p>
+        </header>
+        <fieldset className="form-section-body stack bare">
+          <legend className="visually-hidden">{t('items')}</legend>
+          {items.map((i, index) => (
+            <div key={i.key} className="line">
+              <span className="muted">{index + 1}</span>
               <label className="field">
-                {t('containerType')}
+                {t('cargoType')}
                 <select
-                  value={i.containerTypeCode}
-                  onChange={(e) => updateItem(i.key, { containerTypeCode: e.target.value })}
+                  value={i.cargoType}
+                  onChange={(e) => {
+                    const next = e.target.value as CargoType;
+                    updateItem(i.key, {
+                      cargoType: next,
+                      containerTypeCode: next === 'CONTAINER' ? '20GP' : '',
+                    });
+                  }}
                 >
-                  {master.containerTypes
-                    .filter((c) => c.isActive)
-                    .map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {name(c)}
-                      </option>
-                    ))}
+                  {CARGO_TYPES.map((c) => (
+                    <option key={c} value={c}>
+                      {te(`cargo_${c}`)}
+                    </option>
+                  ))}
                 </select>
               </label>
-            )}
-            <label className="field">
-              {t('quantity')}
-              <input
-                type="number"
-                min={1}
-                required
-                value={i.quantity}
-                onChange={(e) => updateItem(i.key, { quantity: e.target.value })}
-              />
-            </label>
-            {(['lengthCm', 'widthCm', 'heightCm', 'weightKg', 'volumeCbm'] as const).map((k) => (
-              <label key={k} className="field">
-                {t(k)}
+              {i.cargoType === 'CONTAINER' && (
+                <label className="field">
+                  {t('containerType')}
+                  <select
+                    value={i.containerTypeCode}
+                    onChange={(e) => updateItem(i.key, { containerTypeCode: e.target.value })}
+                  >
+                    {master.containerTypes
+                      .filter((c) => c.isActive)
+                      .map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {name(c)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+              <label className="field">
+                {t('quantity')}
                 <input
-                  inputMode="decimal"
-                  dir="ltr"
-                  value={i[k]}
-                  disabled={k === 'volumeCbm' && i.lengthCm !== ''}
-                  onChange={(e) => updateItem(i.key, { [k]: e.target.value })}
+                  type="number"
+                  min={1}
+                  required
+                  value={i.quantity}
+                  onChange={(e) => updateItem(i.key, { quantity: e.target.value })}
                 />
               </label>
-            ))}
-            <label className="field">
-              {t('itemDescription')}
-              <input
-                value={i.description}
-                onChange={(e) => updateItem(i.key, { description: e.target.value })}
-              />
-            </label>
+              {(['lengthCm', 'widthCm', 'heightCm', 'weightKg', 'volumeCbm'] as const).map((k) => (
+                <label key={k} className="field">
+                  {t(k)}
+                  <input
+                    inputMode="decimal"
+                    dir="ltr"
+                    value={i[k]}
+                    disabled={k === 'volumeCbm' && i.lengthCm !== ''}
+                    onChange={(e) => updateItem(i.key, { [k]: e.target.value })}
+                  />
+                </label>
+              ))}
+              <label className="field">
+                {t('itemDescription')}
+                <input
+                  value={i.description}
+                  onChange={(e) => updateItem(i.key, { description: e.target.value })}
+                />
+              </label>
+              <button
+                type="button"
+                className="ghost icon-button line-remove-button"
+                aria-label={tc('remove')}
+                title={tc('remove')}
+                onClick={() => setItems((all) => all.filter((x) => x.key !== i.key))}
+              >
+                {icons.close}
+              </button>
+            </div>
+          ))}
+          <div>
             <button
               type="button"
-              onClick={() => setItems((all) => all.filter((x) => x.key !== i.key))}
+              className="ghost add-line"
+              onClick={() => setItems((all) => [...all, emptyItem(cargoType)])}
             >
-              {tc('remove')}
+              {icons.plus}
+              <span>{t('addItem')}</span>
             </button>
           </div>
-        ))}
-        <div>
-          <button type="button" onClick={() => setItems((all) => [...all, emptyItem(cargoType)])}>
-            {t('addItem')}
-          </button>
+        </fieldset>
+      </section>
+
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionNotes')}</h2>
+          <p>{t('sectionNotesHint')}</p>
+        </header>
+        <div className="form-section-body stack">
+          <label className="field">
+            {t('cargoDescription')}
+            <textarea
+              name="cargoDescription"
+              rows={2}
+              defaultValue={booking?.cargoDescription ?? ''}
+            />
+          </label>
+          <label className="field">
+            {t('specialInstructions')}
+            <textarea
+              name="specialInstructions"
+              rows={2}
+              defaultValue={booking?.specialInstructions ?? ''}
+            />
+          </label>
         </div>
-      </fieldset>
-      <label className="field">
-        {t('specialInstructions')}
-        <textarea name="specialInstructions" defaultValue={booking?.specialInstructions ?? ''} />
-      </label>
-      <div className="actions">
+      </section>
+
+      <div className="actions form-footer">
+        <button type="button" onClick={() => router.back()}>
+          {tc('cancel')}
+        </button>
         <button
           type="submit"
           className="primary"
           disabled={busy || (!booking && customer === null)}
         >
           {tc('save')}
-        </button>
-        <button type="button" onClick={() => router.back()}>
-          {tc('cancel')}
         </button>
       </div>
     </form>

@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
+import { icons } from '../Icons';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useRecord } from './common';
 
@@ -113,7 +114,7 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
   if (!master) return <p className="muted">{tc('loading')}</p>;
 
   return (
-    <form className="stack" onSubmit={(e) => void submit(e)}>
+    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>
         {invoice.number ? (
           <>
@@ -127,120 +128,144 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
         {invoice.customerName} · <span dir="ltr">{invoice.shipmentNumber}</span>
       </p>
       <Notice notice={notice} />
-      <div className="grid">
-        <label className="field">
-          {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            {master.currencies
-              .filter((c) => c.isActive || c.code === invoice.currency)
-              .map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.code} · {name(c)}
-                </option>
-              ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('fxRateOptional')}
-          <input
-            name="fxRate"
-            inputMode="decimal"
-            dir="ltr"
-            pattern={FX_RATE_PATTERN}
-            disabled={currency === 'USD'}
-            defaultValue={invoice.currency === 'USD' ? '' : invoice.fxRate}
-          />
-        </label>
-        <label className="field">
-          {t('invoiceDate')}
-          <input name="invoiceDate" type="date" required defaultValue={invoice.invoiceDate} />
-        </label>
-        <label className="field">
-          {t('dueDate')}
-          <input name="dueDate" type="date" required defaultValue={invoice.dueDate} />
-        </label>
-      </div>
-      <p className="muted">{t('fxRateHint', { currency })}</p>
-
-      <fieldset className="stack">
-        <legend>{t('lines')}</legend>
-        {lines.map((l, index) => (
-          <div key={l.key} className="line">
-            <span className="muted">{index + 1}</span>
-            <label className="field">
-              {t('chargeType')}
-              <select
-                value={l.chargeTypeCode || defaultCharge}
-                onChange={(e) => updateLine(l.key, { chargeTypeCode: e.target.value })}
-              >
-                {chargeTypes.map((c) => (
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionDetails')}</h2>
+          <p>{t('fxRateHint', { currency })}</p>
+        </header>
+        <div className="form-section-body form-grid">
+          <label className="field">
+            {t('currency')}
+            <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {master.currencies
+                .filter((c) => c.isActive || c.code === invoice.currency)
+                .map((c) => (
                   <option key={c.code} value={c.code}>
-                    {name(c)}
+                    {c.code} · {name(c)}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field grow">
-              {t('description')}
-              <input
-                value={l.description}
-                maxLength={500}
-                onChange={(e) => updateLine(l.key, { description: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              {t('quantity')}
-              <input
-                required
-                inputMode="decimal"
-                dir="ltr"
-                pattern={AMOUNT_PATTERN}
-                value={l.quantity}
-                onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              {t('unitPrice')}
-              <input
-                required
-                inputMode="decimal"
-                dir="ltr"
-                pattern={AMOUNT_PATTERN}
-                value={l.unitPrice}
-                onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
-              />
-            </label>
-            {lines.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setLines((all) => all.filter((x) => x.key !== l.key))}
-              >
-                {tc('remove')}
-              </button>
-            )}
-          </div>
-        ))}
-        <div>
-          <button
-            type="button"
-            onClick={() => setLines((all) => [...all, emptyLine(defaultCharge)])}
-          >
-            {t('addLine')}
-          </button>
+            </select>
+          </label>
+          <label className="field">
+            {t('fxRateOptional')}
+            <input
+              name="fxRate"
+              inputMode="decimal"
+              dir="ltr"
+              pattern={FX_RATE_PATTERN}
+              disabled={currency === 'USD'}
+              defaultValue={invoice.currency === 'USD' ? '' : invoice.fxRate}
+            />
+          </label>
+          <label className="field">
+            {t('invoiceDate')}
+            <input name="invoiceDate" type="date" required defaultValue={invoice.invoiceDate} />
+          </label>
+          <label className="field">
+            {t('dueDate')}
+            <input name="dueDate" type="date" required defaultValue={invoice.dueDate} />
+          </label>
         </div>
-        <p className="muted">{t('totalsHint')}</p>
-      </fieldset>
+      </section>
 
-      <label className="field">
-        {tc('notes')}
-        <textarea name="notes" maxLength={2000} defaultValue={invoice.notes ?? ''} />
-      </label>
-      <div className="actions">
-        <button type="submit" className="primary" disabled={busy}>
-          {tc('save')}
-        </button>
+      <section className="form-section wide">
+        <header>
+          <h2>{t('lines')}</h2>
+          <p>{t('totalsHint')}</p>
+        </header>
+        <fieldset className="form-section-body stack bare">
+          <legend className="visually-hidden">{t('lines')}</legend>
+          {lines.map((l, index) => (
+            <div key={l.key} className="line">
+              <span className="muted">{index + 1}</span>
+              <label className="field">
+                {t('chargeType')}
+                <select
+                  value={l.chargeTypeCode || defaultCharge}
+                  onChange={(e) => updateLine(l.key, { chargeTypeCode: e.target.value })}
+                >
+                  {chargeTypes.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {name(c)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field grow">
+                {t('description')}
+                <input
+                  value={l.description}
+                  maxLength={500}
+                  onChange={(e) => updateLine(l.key, { description: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                {t('quantity')}
+                <input
+                  required
+                  inputMode="decimal"
+                  dir="ltr"
+                  pattern={AMOUNT_PATTERN}
+                  value={l.quantity}
+                  onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                {t('unitPrice')}
+                <input
+                  required
+                  inputMode="decimal"
+                  dir="ltr"
+                  pattern={AMOUNT_PATTERN}
+                  value={l.unitPrice}
+                  onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
+                />
+              </label>
+              {lines.length > 1 && (
+                <button
+                  type="button"
+                  className="ghost icon-button line-remove-button"
+                  aria-label={tc('remove')}
+                  title={tc('remove')}
+                  onClick={() => setLines((all) => all.filter((x) => x.key !== l.key))}
+                >
+                  {icons.close}
+                </button>
+              )}
+            </div>
+          ))}
+          <div>
+            <button
+              type="button"
+              className="ghost add-line"
+              onClick={() => setLines((all) => [...all, emptyLine(defaultCharge)])}
+            >
+              {icons.plus}
+              <span>{t('addLine')}</span>
+            </button>
+          </div>
+        </fieldset>
+      </section>
+
+      <section className="form-section">
+        <header>
+          <h2>{tc('notes')}</h2>
+          <p>{t('notesHint')}</p>
+        </header>
+        <div className="form-section-body">
+          <label className="field">
+            <span className="visually-hidden">{tc('notes')}</span>
+            <textarea name="notes" rows={3} maxLength={2000} defaultValue={invoice.notes ?? ''} />
+          </label>
+        </div>
+      </section>
+
+      <div className="actions form-footer">
         <button type="button" onClick={() => router.back()}>
           {tc('cancel')}
+        </button>
+        <button type="submit" className="primary" disabled={busy}>
+          {tc('save')}
         </button>
       </div>
     </form>

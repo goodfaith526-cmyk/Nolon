@@ -9,6 +9,7 @@ import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { MoreMenu } from '../MoreMenu';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useBranchCode, useRecord } from './common';
 import { PrintLink } from '../print/PrintLink';
@@ -87,54 +88,56 @@ export function JournalDetail({ id }: { id: string }) {
 
   return (
     <section className="stack">
-      <div className="row">
-        <h1>
-          {t('entry')} <span dir="ltr">{j.number}</span>
-        </h1>
-        <div className="actions">
+      <div className="page-head">
+        <div className="title-row">
+          <h1>
+            {t('entry')} <span dir="ltr">{j.number}</span>
+          </h1>
           <StatusBadge kind="journal" status={j.status} />
           {j.reversedById && <span className="badge">{t('reversed')}</span>}
         </div>
+        <div className="actions">
+          <MoreMenu>
+            {sourceLink && (
+              <Link href={sourceLink}>
+                {te(`journalSource_${j.source}`)} <span dir="ltr">{j.sourceNumber}</span>
+              </Link>
+            )}
+            {j.reversalOfId && (
+              <Link href={`/accounting/journals/${j.reversalOfId}`}>
+                {t('reversalOf')} <span dir="ltr">{j.reversalOfNumber}</span>
+              </Link>
+            )}
+            {j.reversedById && (
+              <Link href={`/accounting/journals/${j.reversedById}`}>
+                {t('reversedBy')} <span dir="ltr">{j.reversedByNumber}</span>
+              </Link>
+            )}
+            {j.actions.canReverse && (
+              <button type="button" onClick={() => setPanel('reverse')}>
+                {t('reverse')}
+              </button>
+            )}
+            {j.actions.canDelete && (
+              <button type="button" className="danger" onClick={() => setPanel('delete')}>
+                {t('delete')}
+              </button>
+            )}
+          </MoreMenu>
+          <PrintLink href={`/journals/${j.id}`} />
+          {j.actions.canEdit && (
+            <Link href={`/accounting/journals/${id}/edit`} className="button">
+              {tc('edit')}
+            </Link>
+          )}
+          {j.actions.canPost && (
+            <button type="button" className="primary" onClick={() => setPanel('post')}>
+              {t('post')}
+            </button>
+          )}
+        </div>
       </div>
       <Notice notice={notice} />
-      <div className="actions">
-        <PrintLink href={`/journals/${j.id}`} />
-        {j.actions.canEdit && (
-          <Link href={`/accounting/journals/${id}/edit`} className="button">
-            {tc('edit')}
-          </Link>
-        )}
-        {j.actions.canPost && (
-          <button type="button" className="primary" onClick={() => setPanel('post')}>
-            {t('post')}
-          </button>
-        )}
-        {j.actions.canReverse && (
-          <button type="button" onClick={() => setPanel('reverse')}>
-            {t('reverse')}
-          </button>
-        )}
-        {j.actions.canDelete && (
-          <button type="button" onClick={() => setPanel('delete')}>
-            {t('delete')}
-          </button>
-        )}
-        {sourceLink && (
-          <Link href={sourceLink} className="button">
-            {te(`journalSource_${j.source}`)} <span dir="ltr">{j.sourceNumber}</span>
-          </Link>
-        )}
-        {j.reversalOfId && (
-          <Link href={`/accounting/journals/${j.reversalOfId}`} className="button">
-            {t('reversalOf')} <span dir="ltr">{j.reversalOfNumber}</span>
-          </Link>
-        )}
-        {j.reversedById && (
-          <Link href={`/accounting/journals/${j.reversedById}`} className="button">
-            {t('reversedBy')} <span dir="ltr">{j.reversedByNumber}</span>
-          </Link>
-        )}
-      </div>
 
       {panel === 'post' && (
         <div className="card stack">

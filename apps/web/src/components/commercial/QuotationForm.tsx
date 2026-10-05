@@ -19,6 +19,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
+import { icons } from '../Icons';
 import { CustomerPicker } from './CustomerPicker';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
@@ -163,207 +164,273 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const rateLabel = (r: RateCardDto) =>
     `${r.chargeTypeCode} · ${te(`cargo_${r.cargoType}`)}${r.containerTypeCode ? ` ${r.containerTypeCode}` : ''}${r.loadType ? ` ${r.loadType}` : ''} · ${r.price} ${r.currency} / ${te(`unit_${r.unit}`)}`;
 
+  const locationOptions = locations.map((l) => (
+    <option key={l.id} value={l.id}>
+      {name(l)} ({l.code})
+    </option>
+  ));
+
   return (
-    <form className="stack" onSubmit={(e) => void submit(e)}>
+    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>{quotation ? t('editTitle', { number: quotation.number }) : t('add')}</h1>
       <Notice notice={notice} />
+
       {!quotation && (
-        <fieldset>
-          <legend>{t('customer')}</legend>
-          <CustomerPicker value={customer} onChange={setCustomer} />
-        </fieldset>
+        <section className="form-section">
+          <header>
+            <h2>{t('customer')}</h2>
+            <p>{t('sectionCustomerHint')}</p>
+          </header>
+          <div className="form-section-body">
+            <CustomerPicker value={customer} onChange={setCustomer} />
+          </div>
+        </section>
       )}
-      <div className="grid">
-        <label className="field">
-          {t('origin')}
-          <select value={origin} onChange={(e) => setOrigin(e.target.value)} required>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('destination')}
-          <select value={destination} onChange={(e) => setDestination(e.target.value)} required>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('mode')}
-          <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
-            {SHIPPING_MODES.map((m) => (
-              <option key={m} value={m}>
-                {te(`mode_${m}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'SEA' && (
+
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionShipment')}</h2>
+          <p>{t('sectionShipmentHint')}</p>
+        </header>
+        <div className="form-section-body form-grid">
           <label className="field">
-            {t('loadType')}
-            <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
-              {LOAD_TYPES.map((l) => (
-                <option key={l} value={l}>
-                  {l}
+            {t('origin')}
+            <select value={origin} onChange={(e) => setOrigin(e.target.value)} required>
+              {locationOptions}
+            </select>
+          </label>
+          <label className="field">
+            {t('destination')}
+            <select value={destination} onChange={(e) => setDestination(e.target.value)} required>
+              {locationOptions}
+            </select>
+          </label>
+          <label className="field">
+            {t('mode')}
+            <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
+              {SHIPPING_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {te(`mode_${m}`)}
                 </option>
               ))}
             </select>
           </label>
-        )}
-        <label className="field">
-          {t('cargoType')}
-          <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
-            {CARGO_TYPES.map((c) => (
-              <option key={c} value={c}>
-                {te(`cargo_${c}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            {master.currencies
-              .filter((c) => c.isActive)
-              .map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.code}
-                </option>
-              ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('validUntil')}
-          <input name="validUntil" type="date" required defaultValue={quotation?.validUntil} />
-        </label>
-      </div>
-      <label className="field">
-        {t('cargoDescription')}
-        <textarea name="cargoDescription" defaultValue={quotation?.cargoDescription ?? ''} />
-      </label>
-
-      <fieldset className="stack">
-        <legend>{t('lines')}</legend>
-        {branchId && rates.length === 0 && <p className="muted">{t('noRates')}</p>}
-        {lines.map((l, index) => (
-          <div key={l.key} className="line">
-            <span className="muted">{index + 1}</span>
+          {mode === 'SEA' && (
             <label className="field">
-              {t('rate')}
-              <select
-                value={l.rateCardId}
-                onChange={(e) => updateLine(l.key, { rateCardId: e.target.value })}
-              >
-                <option value="">{t('manualLine')}</option>
-                {rates.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {rateLabel(r)}
+              {t('loadType')}
+              <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
+                {LOAD_TYPES.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
                   </option>
                 ))}
               </select>
             </label>
-            {!l.rateCardId && (
-              <>
-                <label className="field">
-                  {t('chargeType')}
+          )}
+          <label className="field">
+            {t('cargoType')}
+            <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
+              {CARGO_TYPES.map((c) => (
+                <option key={c} value={c}>
+                  {te(`cargo_${c}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field span-all">
+            {t('cargoDescription')}
+            <textarea
+              name="cargoDescription"
+              rows={2}
+              defaultValue={quotation?.cargoDescription ?? ''}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionPricing')}</h2>
+          <p>{t('sectionPricingHint')}</p>
+        </header>
+        <div className="form-section-body form-grid">
+          <label className="field">
+            {t('currency')}
+            <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {master.currencies
+                .filter((c) => c.isActive)
+                .map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="field">
+            {t('validUntil')}
+            <input name="validUntil" type="date" required defaultValue={quotation?.validUntil} />
+          </label>
+        </div>
+      </section>
+
+      <section className="form-section wide">
+        <header>
+          <h2>{t('lines')}</h2>
+          <p>{t('totalsHint')}</p>
+        </header>
+        <div className="form-section-body stack">
+          {branchId && rates.length === 0 && <p className="muted">{t('noRates')}</p>}
+          <div className="line-items" role="table" aria-label={t('lines')}>
+            <div className="line-items-head" role="row">
+              <span role="columnheader">#</span>
+              <span role="columnheader">{t('rate')}</span>
+              <span role="columnheader">{t('chargeType')}</span>
+              <span role="columnheader">{t('unit')}</span>
+              <span role="columnheader">{t('unitPrice')}</span>
+              <span role="columnheader">{t('quantity')}</span>
+              <span role="columnheader">{t('discount')}</span>
+              <span role="columnheader" />
+            </div>
+            {lines.map((l, index) => (
+              <div key={l.key} className="line-item" role="row">
+                <span className="line-no" role="cell">
+                  {index + 1}
+                </span>
+                <label className="cell" role="cell" data-label={t('rate')}>
                   <select
-                    value={l.chargeTypeCode}
-                    onChange={(e) => updateLine(l.key, { chargeTypeCode: e.target.value })}
+                    aria-label={t('rate')}
+                    value={l.rateCardId}
+                    onChange={(e) => updateLine(l.key, { rateCardId: e.target.value })}
                   >
-                    {master.chargeTypes
-                      .filter((c) => c.isActive)
-                      .map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {name(c)}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className="field">
-                  {t('unit')}
-                  <select
-                    value={l.unit}
-                    onChange={(e) => updateLine(l.key, { unit: e.target.value as RateUnit })}
-                  >
-                    {RATE_UNITS.map((u) => (
-                      <option key={u} value={u}>
-                        {te(`unit_${u}`)}
+                    <option value="">{t('manualLine')}</option>
+                    {rates.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {rateLabel(r)}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label className="field">
-                  {t('unitPrice')}
+                {l.rateCardId ? (
+                  <span className="cell from-rate" role="cell">
+                    {t('fromRate')}
+                  </span>
+                ) : (
+                  <>
+                    <label className="cell" role="cell" data-label={t('chargeType')}>
+                      <select
+                        aria-label={t('chargeType')}
+                        value={l.chargeTypeCode}
+                        onChange={(e) => updateLine(l.key, { chargeTypeCode: e.target.value })}
+                      >
+                        {master.chargeTypes
+                          .filter((c) => c.isActive)
+                          .map((c) => (
+                            <option key={c.code} value={c.code}>
+                              {name(c)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="cell" role="cell" data-label={t('unit')}>
+                      <select
+                        aria-label={t('unit')}
+                        value={l.unit}
+                        onChange={(e) => updateLine(l.key, { unit: e.target.value as RateUnit })}
+                      >
+                        {RATE_UNITS.map((u) => (
+                          <option key={u} value={u}>
+                            {te(`unit_${u}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="cell" role="cell" data-label={t('unitPrice')}>
+                      <input
+                        aria-label={t('unitPrice')}
+                        required
+                        inputMode="decimal"
+                        dir="ltr"
+                        pattern="\d{1,14}(\.\d{1,4})?"
+                        value={l.unitPrice}
+                        onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
+                      />
+                    </label>
+                  </>
+                )}
+                <label className="cell" role="cell" data-label={t('quantity')}>
                   <input
+                    aria-label={t('quantity')}
                     required
                     inputMode="decimal"
                     dir="ltr"
                     pattern="\d{1,14}(\.\d{1,4})?"
-                    value={l.unitPrice}
-                    onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
+                    value={l.quantity}
+                    onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
                   />
                 </label>
-              </>
-            )}
-            <label className="field">
-              {t('quantity')}
-              <input
-                required
-                inputMode="decimal"
-                dir="ltr"
-                pattern="\d{1,14}(\.\d{1,4})?"
-                value={l.quantity}
-                onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              {t('discount')}
-              <input
-                inputMode="decimal"
-                dir="ltr"
-                pattern="\d{1,14}(\.\d{1,4})?"
-                value={l.discount}
-                onChange={(e) => updateLine(l.key, { discount: e.target.value })}
-              />
-            </label>
-            {lines.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setLines((all) => all.filter((x) => x.key !== l.key))}
-              >
-                {tc('remove')}
-              </button>
-            )}
+                <label className="cell" role="cell" data-label={t('discount')}>
+                  <input
+                    aria-label={t('discount')}
+                    inputMode="decimal"
+                    dir="ltr"
+                    pattern="\d{1,14}(\.\d{1,4})?"
+                    placeholder="0"
+                    value={l.discount}
+                    onChange={(e) => updateLine(l.key, { discount: e.target.value })}
+                  />
+                </label>
+                <span className="cell line-remove" role="cell">
+                  {lines.length > 1 && (
+                    <button
+                      type="button"
+                      className="ghost icon-button"
+                      aria-label={tc('remove')}
+                      title={tc('remove')}
+                      onClick={() => setLines((all) => all.filter((x) => x.key !== l.key))}
+                    >
+                      {icons.close}
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
-        <div>
-          <button type="button" onClick={() => setLines((all) => [...all, emptyLine()])}>
-            {t('addLine')}
-          </button>
+          <div>
+            <button
+              type="button"
+              className="ghost add-line"
+              onClick={() => setLines((all) => [...all, emptyLine()])}
+            >
+              {icons.plus}
+              <span>{t('addLine')}</span>
+            </button>
+          </div>
         </div>
-        <p className="muted">{t('totalsHint')}</p>
-      </fieldset>
+      </section>
 
-      <label className="field">
-        {t('terms')}
-        <textarea name="terms" defaultValue={quotation?.terms ?? ''} />
-      </label>
-      <div className="actions">
+      <section className="form-section">
+        <header>
+          <h2>{t('terms')}</h2>
+          <p>{t('termsHint')}</p>
+        </header>
+        <div className="form-section-body">
+          <label className="field">
+            <span className="visually-hidden">{t('terms')}</span>
+            <textarea name="terms" rows={3} defaultValue={quotation?.terms ?? ''} />
+          </label>
+        </div>
+      </section>
+
+      <div className="actions form-footer">
+        <button type="button" onClick={() => router.back()}>
+          {tc('cancel')}
+        </button>
         <button
           type="submit"
           className="primary"
           disabled={busy || (!quotation && customer === null)}
         >
           {tc('save')}
-        </button>
-        <button type="button" onClick={() => router.back()}>
-          {tc('cancel')}
         </button>
       </div>
     </form>

@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { MoreMenu } from '../MoreMenu';
 import { StatusBadge } from '../StatusBadge';
 import { Money, useRecord } from './common';
 import { PrintLink } from '../print/PrintLink';
@@ -53,31 +54,35 @@ export function ReceiptDetail({ id }: { id: string }) {
 
   return (
     <section className="stack">
-      <div className="row">
-        <h1>
-          {t('receipt')} <span dir="ltr">{r.number}</span>
-        </h1>
-        <StatusBadge kind="receipt" status={r.status} />
+      <div className="page-head">
+        <div className="title-row">
+          <h1>
+            {t('receipt')} <span dir="ltr">{r.number}</span>
+          </h1>
+          <StatusBadge kind="receipt" status={r.status} />
+        </div>
+        <div className="actions">
+          <MoreMenu>
+            {journals && (
+              <Link href={`/accounting/journals/${r.journalEntryId}`}>
+                {t('openJournal')} <span dir="ltr">{r.journalEntryNumber}</span>
+              </Link>
+            )}
+            {journals && r.cancelJournalEntryId && (
+              <Link href={`/accounting/journals/${r.cancelJournalEntryId}`}>
+                {t('openCancelJournal')} <span dir="ltr">{r.cancelJournalEntryNumber}</span>
+              </Link>
+            )}
+            {r.actions.canCancel && (
+              <button type="button" className="danger" onClick={() => setCancelling(true)}>
+                {t('cancel')}
+              </button>
+            )}
+          </MoreMenu>
+          <PrintLink href={`/receipts/${r.id}`} />
+        </div>
       </div>
       <Notice notice={notice} />
-      <div className="actions">
-        <PrintLink href={`/receipts/${r.id}`} />
-        {r.actions.canCancel && (
-          <button type="button" onClick={() => setCancelling(true)}>
-            {t('cancel')}
-          </button>
-        )}
-        {journals && (
-          <Link href={`/accounting/journals/${r.journalEntryId}`} className="button">
-            {t('openJournal')} <span dir="ltr">{r.journalEntryNumber}</span>
-          </Link>
-        )}
-        {journals && r.cancelJournalEntryId && (
-          <Link href={`/accounting/journals/${r.cancelJournalEntryId}`} className="button">
-            {t('openCancelJournal')} <span dir="ltr">{r.cancelJournalEntryNumber}</span>
-          </Link>
-        )}
-      </div>
       {cancelling && (
         <form
           className="card stack"

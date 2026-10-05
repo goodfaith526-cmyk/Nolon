@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
@@ -124,10 +125,10 @@ export function Rates() {
                     <div className="muted">{r.chargeTypeCode}</div>
                   </td>
                   <td dir="ltr">
-                    {r.price} {r.currency} / {te(`unit_${r.unit}`)}
+                    <Money value={r.price} currency={r.currency} /> / {te(`unit_${r.unit}`)}
                     {r.minimumCharge !== '0' ? (
                       <div className="muted">
-                        {t('minimum')}: {r.minimumCharge}
+                        {t('minimum')}: <Money value={r.minimumCharge} />
                       </div>
                     ) : null}
                   </td>

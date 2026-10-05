@@ -34,35 +34,54 @@ export function LoginForm() {
     }
   }
 
+  const logo = locale === 'ar' ? logoAr : logoEn;
   return (
     <main className="auth-page">
-      <form className="card stack" onSubmit={(e) => void onSubmit(e)}>
-        <Image
-          src={locale === 'ar' ? logoAr : logoEn}
-          alt="NOLON"
-          className="auth-logo"
-          width={176}
-          priority
-          unoptimized
-        />
-        <h1>{t('title')}</h1>
-        <label className="field">
-          <span>{t('email')}</span>
-          <input name="email" type="email" autoComplete="username" required dir="ltr" />
-        </label>
-        <label className="field">
-          <span>{t('password')}</span>
-          <input name="password" type="password" autoComplete="current-password" required />
-        </label>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="primary" disabled={busy}>
-          {busy ? t('signingIn') : t('submit')}
-        </button>
-      </form>
+      <aside className="auth-brand">
+        <span className="auth-brand-logo">
+          <Image src={logo} alt="NOLON" width={150} priority unoptimized />
+        </span>
+        <div>
+          <h2>{t('brandTitle')}</h2>
+          <p>{t('brandLead')}</p>
+        </div>
+        <ul className="auth-branches">
+          <li>{t('pointShipments')}</li>
+          <li>{t('pointBilling')}</li>
+          <li>{t('pointAccounting')}</li>
+        </ul>
+      </aside>
+      <div className="auth-main">
+        <form className="card stack" onSubmit={(e) => void onSubmit(e)}>
+          <Image src={logo} alt="NOLON" className="auth-logo" width={176} unoptimized />
+          <div>
+            <h1>{t('title')}</h1>
+            <p className="muted auth-subtitle">{t('subtitle')}</p>
+          </div>
+          <label className="field">
+            <span>{t('email')}</span>
+            <input name="email" type="email" autoComplete="username" required dir="ltr" />
+          </label>
+          <label className="field">
+            <span>{t('password')}</span>
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              dir="ltr"
+            />
+          </label>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <button type="submit" className="primary" disabled={busy}>
+            {busy ? t('signingIn') : t('submit')}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

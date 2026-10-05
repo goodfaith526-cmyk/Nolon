@@ -107,160 +107,193 @@ export function ReceiptForm() {
   if (!master) return <p className="muted">{tc('loading')}</p>;
 
   return (
-    <form className="stack" onSubmit={(e) => void submit(e)}>
+    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>{t('add')}</h1>
       <Notice notice={notice} />
-      <fieldset>
-        <legend>{t('customer')}</legend>
-        <CustomerPicker value={customer} onChange={pickCustomer} />
-      </fieldset>
-      <div className="grid">
-        <label className="field">
-          {t('receiptDate')}
-          <input name="receiptDate" type="date" required defaultValue={todayString()} />
-        </label>
-        <label className="field">
-          {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            {master.currencies
-              .filter((c) => c.isActive)
-              .map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.code} · {name(c)}
-                </option>
-              ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('fxRateOptional')}
-          <input
-            name="fxRate"
-            inputMode="decimal"
-            dir="ltr"
-            pattern={FX_RATE_PATTERN}
-            disabled={currency === 'USD'}
-          />
-        </label>
-        <label className="field">
-          {t('amount')}
-          <input name="amount" required inputMode="decimal" dir="ltr" pattern={AMOUNT_PATTERN} />
-        </label>
-        <label className="field">
-          {t('cashAccount')}
-          <select
-            value={selectedCash}
-            required
-            disabled={accounts === null}
-            onChange={(e) => setCashAccountId(e.target.value)}
-          >
-            <option value="">{t('chooseCashAccount')}</option>
-            {cashAccounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} · {name(a)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('reference')}
-          <input name="reference" maxLength={100} dir="ltr" />
-        </label>
-      </div>
-      <p className="muted">{t('fxRateHint', { currency })}</p>
-      {accountsStatus === 403 ? (
-        <p className="error">{t('cashAccountsNoAccess')}</p>
-      ) : accountsStatus !== null ? (
-        <p className="error">{tc('failed')}</p>
-      ) : (
-        accounts !== null &&
-        cashAccounts.length === 0 && <p className="muted">{t('noCashAccounts', { currency })}</p>
-      )}
-
-      <fieldset className="stack">
-        <legend>{t('allocations')}</legend>
-        <p className="muted">{t('allocationsHint')}</p>
-        {!customer ? (
-          <p className="muted">{t('pickCustomerFirst')}</p>
-        ) : openInvoices === null ? (
-          <p className="muted">{tc('loading')}</p>
-        ) : openInvoices.length === 0 ? (
-          <p className="muted">{t('noOpenInvoices')}</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t('invoice')}</th>
-                  <th>{t('invoiceDate')}</th>
-                  <th>{t('dueDate')}</th>
-                  <th>{t('invoiceTotal')}</th>
-                  <th>{t('invoiceBalance')}</th>
-                  <th>{t('allocate', { currency })}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {openInvoices.map((i) => {
-                  const sameCurrency = i.currency === currency;
-                  return (
-                    <tr key={i.id} className={sameCurrency ? '' : 'inactive'}>
-                      <td className="nowrap">
-                        <Link href={`/invoices/${i.id}`}>
-                          <InvoiceNumber number={i.number} />
-                        </Link>
-                        <div className="muted" dir="ltr">
-                          {i.shipmentNumber}
-                        </div>
-                      </td>
-                      <td dir="ltr">{i.invoiceDate}</td>
-                      <td dir="ltr">{i.dueDate}</td>
-                      <td dir="ltr">
-                        <Money value={i.total} currency={i.currency} />
-                      </td>
-                      <td dir="ltr">
-                        <Money value={i.balance} currency={i.currency} />
-                      </td>
-                      <td>
-                        {sameCurrency ? (
-                          <input
-                            className="amount-input"
-                            inputMode="decimal"
-                            dir="ltr"
-                            pattern={AMOUNT_PATTERN}
-                            aria-label={t('allocate', { currency })}
-                            value={allocations[i.id] ?? ''}
-                            onChange={(e) =>
-                              setAllocations((all) => ({ ...all, [i.id]: e.target.value }))
-                            }
-                          />
-                        ) : (
-                          <span className="muted">
-                            {t('otherCurrency', { currency: i.currency })}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      <section className="form-section">
+        <header>
+          <h2>{t('customer')}</h2>
+          <p>{t('sectionCustomerHint')}</p>
+        </header>
+        <div className="form-section-body">
+          <CustomerPicker value={customer} onChange={pickCustomer} />
+        </div>
+      </section>
+      <section className="form-section">
+        <header>
+          <h2>{t('sectionPayment')}</h2>
+          <p>{t('fxRateHint', { currency })}</p>
+        </header>
+        <div className="form-section-body stack">
+          <div className="form-grid">
+            <label className="field">
+              {t('receiptDate')}
+              <input name="receiptDate" type="date" required defaultValue={todayString()} />
+            </label>
+            <label className="field">
+              {t('currency')}
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                {master.currencies
+                  .filter((c) => c.isActive)
+                  .map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code} · {name(c)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="field">
+              {t('fxRateOptional')}
+              <input
+                name="fxRate"
+                inputMode="decimal"
+                dir="ltr"
+                pattern={FX_RATE_PATTERN}
+                disabled={currency === 'USD'}
+              />
+            </label>
+            <label className="field">
+              {t('amount')}
+              <input
+                name="amount"
+                required
+                inputMode="decimal"
+                dir="ltr"
+                pattern={AMOUNT_PATTERN}
+              />
+            </label>
+            <label className="field">
+              {t('cashAccount')}
+              <select
+                value={selectedCash}
+                required
+                disabled={accounts === null}
+                onChange={(e) => setCashAccountId(e.target.value)}
+              >
+                <option value="">{t('chooseCashAccount')}</option>
+                {cashAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} · {name(a)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              {t('reference')}
+              <input name="reference" maxLength={100} dir="ltr" />
+            </label>
           </div>
-        )}
-      </fieldset>
+          {accountsStatus === 403 ? (
+            <p className="error">{t('cashAccountsNoAccess')}</p>
+          ) : accountsStatus !== null ? (
+            <p className="error">{tc('failed')}</p>
+          ) : (
+            accounts !== null &&
+            cashAccounts.length === 0 && (
+              <p className="muted">{t('noCashAccounts', { currency })}</p>
+            )
+          )}
+        </div>
+      </section>
 
-      <label className="field">
-        {tc('notes')}
-        <textarea name="notes" maxLength={2000} />
-      </label>
-      <div className="actions">
+      <section className="form-section wide">
+        <header>
+          <h2>{t('allocations')}</h2>
+          <p>{t('allocationsHint')}</p>
+        </header>
+        <fieldset className="form-section-body stack bare">
+          <legend className="visually-hidden">{t('allocations')}</legend>
+          {!customer ? (
+            <p className="muted">{t('pickCustomerFirst')}</p>
+          ) : openInvoices === null ? (
+            <p className="muted">{tc('loading')}</p>
+          ) : openInvoices.length === 0 ? (
+            <p className="muted">{t('noOpenInvoices')}</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('invoice')}</th>
+                    <th>{t('invoiceDate')}</th>
+                    <th>{t('dueDate')}</th>
+                    <th>{t('invoiceTotal')}</th>
+                    <th>{t('invoiceBalance')}</th>
+                    <th>{t('allocate', { currency })}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openInvoices.map((i) => {
+                    const sameCurrency = i.currency === currency;
+                    return (
+                      <tr key={i.id} className={sameCurrency ? '' : 'inactive'}>
+                        <td className="nowrap">
+                          <Link href={`/invoices/${i.id}`}>
+                            <InvoiceNumber number={i.number} />
+                          </Link>
+                          <div className="muted" dir="ltr">
+                            {i.shipmentNumber}
+                          </div>
+                        </td>
+                        <td dir="ltr">{i.invoiceDate}</td>
+                        <td dir="ltr">{i.dueDate}</td>
+                        <td dir="ltr">
+                          <Money value={i.total} currency={i.currency} />
+                        </td>
+                        <td dir="ltr">
+                          <Money value={i.balance} currency={i.currency} />
+                        </td>
+                        <td>
+                          {sameCurrency ? (
+                            <input
+                              className="amount-input"
+                              inputMode="decimal"
+                              dir="ltr"
+                              pattern={AMOUNT_PATTERN}
+                              aria-label={t('allocate', { currency })}
+                              value={allocations[i.id] ?? ''}
+                              onChange={(e) =>
+                                setAllocations((all) => ({ ...all, [i.id]: e.target.value }))
+                              }
+                            />
+                          ) : (
+                            <span className="muted">
+                              {t('otherCurrency', { currency: i.currency })}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </fieldset>
+      </section>
+
+      <section className="form-section">
+        <header>
+          <h2>{tc('notes')}</h2>
+        </header>
+        <div className="form-section-body">
+          <label className="field">
+            <span className="visually-hidden">{tc('notes')}</span>
+            <textarea name="notes" rows={3} maxLength={2000} />
+          </label>
+        </div>
+      </section>
+
+      <div className="actions form-footer">
+        <button type="button" onClick={() => router.back()}>
+          {tc('cancel')}
+        </button>
         <button
           type="submit"
           className="primary"
           disabled={busy || customer === null || selectedCash === ''}
         >
           {t('save')}
-        </button>
-        <button type="button" onClick={() => router.back()}>
-          {tc('cancel')}
         </button>
       </div>
     </form>
