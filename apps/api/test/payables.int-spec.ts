@@ -1210,6 +1210,76 @@ describe('credit notes, payables, expenses and opening balances', () => {
       expect(row.paidAmount.toFixed()).toBe('40000');
     });
 
+    it('a retry is compared with the rate the client sent, not with the rate table today', async () => {
+      const target = await rentBill();
+      const setRate = (rate: string) =>
+        put('/accounting/fx-rates', cookies.financePts, {
+          currency: 'SDG',
+          rateDate: d('05-06'),
+          rate,
+        }).expect(200);
+      await setRate('610');
+      try {
+        const tableRate = {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          paymentDate: d('05-06'),
+          currency: 'SDG',
+          cashAccountId: cashSdg.id,
+          allocations: [{ billId: target.id, amount: '12000' }],
+        };
+        const first = (await post('/supplier-payments', cookies.financePts, tableRate).expect(201))
+          .body as SupplierPaymentDto;
+        expect(first.fxRate).toBe('610');
+        // The table's rate for the date is corrected after the payment.
+        await setRate('620');
+        const replay = (await post('/supplier-payments', cookies.financePts, tableRate).expect(201))
+          .body as SupplierPaymentDto;
+        expect(replay).toMatchObject({ id: first.id, number: first.number, fxRate: '610' });
+        // Naming a rate the first request left to the table is another request, even the same one.
+        for (const fxRate of ['610', '620']) {
+          await post('/supplier-payments', cookies.financePts, { ...tableRate, fxRate }).expect(
+            409,
+          );
+        }
+
+        // A request that named its rate replays with that rate whatever the table says.
+        const entered = {
+          ...tableRate,
+          requestId: randomUUID(),
+          fxRate: '615',
+          allocations: [{ billId: target.id, amount: '6000' }],
+        };
+        const second = (await post('/supplier-payments', cookies.financePts, entered).expect(201))
+          .body as SupplierPaymentDto;
+        await setRate('630');
+        const again = (await post('/supplier-payments', cookies.financePts, entered).expect(201))
+          .body as SupplierPaymentDto;
+        expect(again).toMatchObject({ id: second.id, fxRate: '615' });
+        await post('/supplier-payments', cookies.financePts, { ...entered, fxRate: '616' }).expect(
+          409,
+        );
+        const omitted: Partial<typeof entered> = { ...entered };
+        delete omitted.fxRate;
+        await post('/supplier-payments', cookies.financePts, omitted).expect(409);
+
+        // The replays and refusals posted and paid nothing more.
+        const ids = [first.id, second.id];
+        expect(await t.prisma.supplierPayment.count({ where: { id: { in: ids } } })).toBe(2);
+        expect(
+          await t.prisma.journalEntry.count({
+            where: { source: 'SUPPLIER_PAYMENT', sourceId: { in: ids } },
+          }),
+        ).toBe(2);
+        const row = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: target.id } });
+        expect(row.paidAmount.toFixed()).toBe('18000');
+      } finally {
+        // Later dates resolve the suite's rate again.
+        await setRate('600');
+      }
+    });
+
     it('two payments of the whole balance at once: one is recorded, the other refused', async () => {
       const target = await rentBill();
       const pay = (requestId: string) => () =>

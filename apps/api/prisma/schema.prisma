@@ -1989,6 +1989,9 @@ model SupplierPayment {
   paymentDate          DateTime              @map("payment_date") @db.Date
   currency             String                @db.Char(3)
   fxRate               Decimal               @map("fx_rate") @db.Decimal(18, 8)
+  /// The rate the client sent, null when it left the rate to the table: an idempotent retry is
+  /// compared with this, never with the (editable) rate table.
+  requestedFxRate      Decimal?              @map("requested_fx_rate") @db.Decimal(18, 8)
   amount               Decimal               @db.Decimal(18, 4)
   cashAccountId        String                @map("cash_account_id") @db.Uuid
   reference            String?               @db.VarChar(100)

@@ -200,6 +200,7 @@ export class SupplierPaymentsService {
             paymentDate: toDbDate(input.paymentDate),
             currency: currency.code,
             fxRate,
+            requestedFxRate: input.fxRate ? dec(input.fxRate) : null,
             amount,
             cashAccountId: input.cashAccountId,
             reference: input.reference ?? null,
@@ -288,7 +289,7 @@ export class SupplierPaymentsService {
     const asked = new Map(input.allocations.map((a) => [a.billId, dec(a.amount)]));
     const same =
       done.createdById === user.id &&
-      (await this.sameFxRate(done, input)) &&
+      sameRequestedRate(done.requestedFxRate, input.fxRate) &&
       done.reference === (input.reference ?? null) &&
       done.notes === (input.notes ?? null) &&
       done.supplierId === input.supplierId &&
@@ -306,26 +307,6 @@ export class SupplierPaymentsService {
     return this.get(user, done.id);
   }
 
-  /**
-   * The rate is compared the way create resolved it: an entered rate must equal the stored one at
-   * Decimal precision; an omitted rate means "the table's rate for the date", so it matches when
-   * resolving it again gives the stored rate. (If the table was edited for that date in between,
-   * the retry is refused, which is safe: nothing is posted twice.)
-   */
-  private async sameFxRate(
-    done: SupplierPayment,
-    input: CreateSupplierPaymentRequest,
-  ): Promise<boolean> {
-    if (input.fxRate) return dec(input.fxRate).eq(done.fxRate);
-    try {
-      const resolved = await this.fxRates.resolve(done.currency, input.paymentDate);
-      return resolved.eq(done.fxRate);
-    } catch (error) {
-      if (error instanceof BadRequestException) return false;
-      throw error;
-    }
-  }
-
   private async findScoped(user: AuthUser, id: string): Promise<PaymentWithDetails> {
     const payment = await this.prisma.supplierPayment.findFirst({
       where: { id, ...branchScope(user) },
@@ -334,6 +315,19 @@ export class SupplierPaymentsService {
     if (!payment) throw new NotFoundException('Supplier payment not found');
     return payment;
   }
+}
+
+/**
+ * Whether the retry sent the rate the first request sent, at Decimal precision: both omitted, or
+ * both the same number. The rate the first request resolved from the table is not consulted, so
+ * editing the table afterwards does not turn an exact retry into a conflict.
+ */
+function sameRequestedRate(
+  stored: Prisma.Decimal | null,
+  sent: string | null | undefined,
+): boolean {
+  if (!sent) return stored === null;
+  return stored !== null && stored.eq(dec(sent));
 }
 
 /** Raised inside the transaction when the payment id is already recorded. */

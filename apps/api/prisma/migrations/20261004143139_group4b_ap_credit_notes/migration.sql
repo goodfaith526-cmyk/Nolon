@@ -148,6 +148,7 @@ CREATE TABLE "supplier_payments" (
     "payment_date" DATE NOT NULL,
     "currency" CHAR(3) NOT NULL,
     "fx_rate" DECIMAL(18,8) NOT NULL,
+    "requested_fx_rate" DECIMAL(18,8),
     "amount" DECIMAL(18,4) NOT NULL,
     "cash_account_id" UUID NOT NULL,
     "reference" VARCHAR(100),
