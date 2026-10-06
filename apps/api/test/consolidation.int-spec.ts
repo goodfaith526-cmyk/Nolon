@@ -324,6 +324,62 @@ describe('consolidated LCL containers', () => {
     expect(finance.clearingBalanceUsd).toBe('100');
   });
 
+  it('clears the voyage on its shipments when the container clears it', async () => {
+    const ids = [
+      await lclShipment(customers[0], '1'),
+      await lclShipment(customers[1], '1'),
+    ] as const;
+    const created = (await newContainer(ids).expect(201)).body as ConsolidationDto;
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      carrierName: 'MSC',
+      vesselName: 'MSC Borealis',
+      voyageNumber: 'BR456',
+      etd: d('05-01'),
+      eta: d('05-09'),
+    }).expect(200);
+    for (const id of ids) {
+      const s = await shipmentOf(id);
+      expect([s.carrierName, s.vesselName, s.voyageNumber, s.etd, s.eta]).toEqual([
+        'MSC',
+        'MSC Borealis',
+        'BR456',
+        d('05-01'),
+        d('05-09'),
+      ]);
+    }
+    // An edit that does not send the voyage leaves the shipments' voyage alone.
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, { notes: 'Seal checked' }).expect(
+      200,
+    );
+    expect((await shipmentOf(ids[0])).vesselName).toBe('MSC Borealis');
+
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      carrierName: null,
+      vesselName: null,
+      voyageNumber: null,
+      etd: null,
+      eta: null,
+    }).expect(200);
+    const view = await container(created.id);
+    expect([view.carrierName, view.vesselName, view.voyageNumber, view.etd, view.eta]).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    for (const id of ids) {
+      const s = await shipmentOf(id);
+      expect([s.carrierName, s.vesselName, s.voyageNumber, s.etd, s.eta]).toEqual([
+        null,
+        null,
+        null,
+        null,
+        null,
+      ]);
+    }
+  });
+
   it('refuses what a container cannot take, other branches and missing permissions', async () => {
     const lcl = await lclShipment(customers[1], '4');
     const fcl = await lclShipment(customers[1], '4', { loadType: 'FCL' });

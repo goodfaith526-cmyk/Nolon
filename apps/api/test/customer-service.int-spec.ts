@@ -327,6 +327,24 @@ describe('Customer Service API', () => {
     await cs(`${path}/shipments?limit=500`, ptsKey.key).expect(400);
   });
 
+  it('does not open a shipment to the key of a branch it is only shared with', async () => {
+    const shared = (
+      await patch(`/shipments/${shipment.id}`, cookies.opsPts, { sharedBranchIds: [jed] }).expect(
+        200,
+      )
+    ).body as ShipmentDto;
+    expect(shared.sharedBranchIds).toEqual([jed]);
+    try {
+      // Owned by PTS, shared with JED: the JED key still does not find it.
+      await cs(`/shipments/${shipment.number}`, jedKey.key).expect(404);
+      await cs(`/customers/${customer.number}/shipments?state=all`, jedKey.key).expect(404);
+      // The owner's key is unchanged.
+      await cs(`/shipments/${shipment.number}`, ptsKey.key).expect(200);
+    } finally {
+      await patch(`/shipments/${shipment.id}`, cookies.opsPts, { sharedBranchIds: [] }).expect(200);
+    }
+  });
+
   it('lets only the Administrator make and revoke keys, shown once', async () => {
     await post('/api-clients', cookies.management, { name: 'x', branchIds: [pts] }).expect(403);
     await post('/api-clients', cookies.financePts, { name: 'x', branchIds: [pts] }).expect(403);

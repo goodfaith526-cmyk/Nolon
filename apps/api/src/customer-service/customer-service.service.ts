@@ -20,7 +20,6 @@ import { type Decimal, toDecimalString, toDecimalStringOrNull } from '../common/
 import { uuidList } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { shipmentVisibleIn } from '../shipments/shipment-scope.js';
 import { publicStatus, publicTimeline, replayHistory } from '../shipments/state-machine.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 
@@ -91,7 +90,8 @@ const DONE: readonly ShipmentStatus[] = ['DELIVERED', 'CLOSED'];
  * (cs_customers, cs_customer_contacts, cs_shipments, cs_shipment_events, cs_invoices; migration
  * customer_service_api) and the public location names, never the tables, and is limited to the
  * key's branches (AGENTS.md rule 2). A record outside them is "not found", as one that does not
- * exist.
+ * exist. A shipment counts only in the branch that owns it: sharing it with another branch
+ * (shipment_branches) is for staff work and does not open it to that branch's key.
  */
 @Injectable()
 export class CustomerServiceService {
@@ -136,7 +136,7 @@ export class CustomerServiceService {
       SELECT s.*, ${customer.number} AS "customerNumber"
       FROM "cs_shipments" s
       WHERE s."customer_id" = ${customer.id}::uuid
-        AND ${shipmentVisibleIn('s', client.allowedBranchIds)}
+        AND s."branch_id" IN ${uuidList(client.allowedBranchIds)}
         ${filter}
       ORDER BY s."created_at" DESC, s."number" DESC
       LIMIT ${limit}`;
@@ -150,7 +150,8 @@ export class CustomerServiceService {
       SELECT s.*, c."number" AS "customerNumber"
       FROM "cs_shipments" s
       JOIN "cs_customers" c ON c."id" = s."customer_id"
-      WHERE s."number" = ${number} AND ${shipmentVisibleIn('s', client.allowedBranchIds)}`;
+      WHERE s."number" = ${number}
+        AND s."branch_id" IN ${uuidList(client.allowedBranchIds)}`;
     if (!row) throw new NotFoundException('Shipment not found');
     const events = await this.prisma.$queryRaw<
       {

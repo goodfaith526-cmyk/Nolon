@@ -563,20 +563,20 @@ export class ShipmentsService {
   /**
    * For consolidation, inside its transaction (the caller holds the shipment locks): the voyage of
    * the container the shipments are in (annex B: the container's updates apply to its shipments).
-   * Only the fields given (not null) are written.
+   * A field left out (undefined) is not touched; null clears it.
    */
   async setVoyageInTx(
     tx: Tx,
     ids: readonly string[],
     voyage: {
-      carrierName: string | null;
-      vesselName: string | null;
-      voyageNumber: string | null;
-      etd: Date | null;
-      eta: Date | null;
+      carrierName?: string | null;
+      vesselName?: string | null;
+      voyageNumber?: string | null;
+      etd?: Date | null;
+      eta?: Date | null;
     },
   ): Promise<void> {
-    const data = Object.fromEntries(Object.entries(voyage).filter(([, v]) => v !== null));
+    const data = Object.fromEntries(Object.entries(voyage).filter(([, v]) => v !== undefined));
     if (ids.length === 0 || Object.keys(data).length === 0) return;
     await tx.shipment.updateMany({ where: { id: { in: [...ids] } }, data });
   }

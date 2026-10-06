@@ -281,7 +281,9 @@ export class ConsolidationsService {
         },
       });
       const ids = await this.lockShipments(tx, id);
-      await this.shipments.setVoyageInTx(tx, ids, voyageOf(updated));
+      // Only the voyage fields sent are copied, a clear (null) included: an edit of the notes
+      // leaves the shipments' own voyage alone.
+      await this.shipments.setVoyageInTx(tx, ids, sentVoyage(input, updated));
     });
     return this.get(user, id);
   }
@@ -570,7 +572,7 @@ export class ConsolidationsService {
         data: { consolidationId: container.id, shipmentId, branchId: container.branchId },
       });
     }
-    await this.shipments.setVoyageInTx(tx, shipmentIds, voyageOf(container));
+    await this.shipments.setVoyageInTx(tx, shipmentIds, knownVoyage(container));
   }
 
   /**
@@ -740,14 +742,25 @@ function lastChange(c: Consolidation): Date | null {
   return c.arrivedAt ?? c.departedAt ?? c.loadedAt ?? c.closedAt ?? null;
 }
 
-function voyageOf(c: Consolidation) {
-  return {
-    carrierName: c.carrierName,
-    vesselName: c.vesselName,
-    voyageNumber: c.voyageNumber,
-    etd: c.etd,
-    eta: c.eta,
-  };
+const VOYAGE_FIELDS = ['carrierName', 'vesselName', 'voyageNumber', 'etd', 'eta'] as const;
+type Voyage = Partial<Pick<Consolidation, (typeof VOYAGE_FIELDS)[number]>>;
+
+/** The container's voyage fields the edit sent, with their new values (null when cleared). */
+function sentVoyage(input: ConsolidationUpdateRequest, c: Consolidation): Voyage {
+  const voyage: Voyage = {};
+  for (const field of VOYAGE_FIELDS) {
+    if (input[field] !== undefined) Object.assign(voyage, { [field]: c[field] });
+  }
+  return voyage;
+}
+
+/** The container's voyage fields that are known: a shipment joining keeps its own for the rest. */
+function knownVoyage(c: Consolidation): Voyage {
+  const voyage: Voyage = {};
+  for (const field of VOYAGE_FIELDS) {
+    if (c[field] !== null) Object.assign(voyage, { [field]: c[field] });
+  }
+  return voyage;
 }
 
 function checkDates(etd: string | null, eta: string | null): void {
