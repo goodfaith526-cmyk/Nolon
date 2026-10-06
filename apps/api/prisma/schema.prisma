@@ -70,6 +70,7 @@ model Branch {
   trips              Trip[]
   tripLinks          TripShipment[]
   consolidations     Consolidation[]
+  apiClients         ApiClientBranch[]
   consolidationLinks ConsolidationShipment[]
   tripExpenses       TripExpense[]
   pods               ProofOfDelivery[]
@@ -181,6 +182,8 @@ model User {
   tripsCreated          Trip[]            @relation("TripCreatedBy")
   consolidationsCreated Consolidation[]   @relation("ConsolidationCreatedBy")
   alertSettingsUpdated  AlertSetting[]    @relation("AlertSettingUpdatedBy")
+  apiClientsCreated     ApiClient[]       @relation("ApiClientCreatedBy")
+  apiClientsRevoked     ApiClient[]       @relation("ApiClientRevokedBy")
   tripExpensesCreated   TripExpense[]     @relation("TripExpenseCreatedBy")
   tripExpensesCancelled TripExpense[]     @relation("TripExpenseCancelledBy")
   podsCreated           ProofOfDelivery[] @relation("PodCreatedBy")
@@ -2307,4 +2310,39 @@ model AlertSetting {
   updatedBy User? @relation("AlertSettingUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@map("alert_settings")
+}
+
+/// A key of the Customer Service API (scope section 17): a client such as the AI agent reads
+/// customer-safe data of its branches with it. Only the key's SHA-256 is kept; its prefix tells
+/// keys apart and finds the row. A revoked key stays, inactive, for the record.
+model ApiClient {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(100)
+  keyPrefix   String    @unique @map("key_prefix") @db.VarChar(16)
+  keyHash     String    @map("key_hash") @db.Char(64)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById String?   @map("revoked_by_id") @db.Uuid
+
+  createdBy User              @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy User?             @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  branches  ApiClientBranch[]
+
+  @@map("api_clients")
+}
+
+/// The branches whose customers an API key may read (AGENTS.md rule 2).
+model ApiClientBranch {
+  apiClientId String @map("api_client_id") @db.Uuid
+  branchId    String @map("branch_id") @db.Uuid
+
+  apiClient ApiClient @relation(fields: [apiClientId], references: [id], onDelete: Cascade)
+  branch    Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([apiClientId, branchId])
+  @@index([branchId])
+  @@map("api_client_branches")
 }

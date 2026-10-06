@@ -71,7 +71,8 @@
     "expenses": "Expenses",
     "openingBalances": "Opening balances",
     "consolidations": "Containers (LCL)",
-    "alertSettings": "Alert days"
+    "alertSettings": "Alert days",
+    "apiKeys": "API keys"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -1198,6 +1199,26 @@
     "since_CUSTOMS_STALLED": "Last update",
     "since_STORAGE_EXCEEDED": "In since",
     "since_TRIP_LATE": "Planned arrival"
+  },
+  "ApiKeys": {
+    "title": "Customer Service API keys",
+    "hint": "A key lets a customer-service client (the WhatsApp agent later) read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
+    "name": "Name",
+    "namePlaceholder": "e.g. WhatsApp agent",
+    "branches": "Branches",
+    "create": "Make key",
+    "none": "No keys yet.",
+    "key": "Key",
+    "lastUsed": "Last used",
+    "active": "Active",
+    "revokedAt": "Revoked {at}",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this key? Clients using it stop working at once.",
+    "revoked": "The key was revoked.",
+    "createdTitle": "Copy the key now",
+    "createdHint": "This is the only time it is shown. Keep it in the client's secret settings, never in code or chat.",
+    "copy": "Copy",
+    "done": "Done"
   },
   "Reports": {
     "title": "Financial reports",

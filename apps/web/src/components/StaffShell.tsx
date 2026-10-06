@@ -45,7 +45,8 @@ interface NavLink {
     | 'fxRates'
     | 'periods'
     | 'users'
-    | 'alertSettings';
+    | 'alertSettings'
+    | 'apiKeys';
   icon: keyof typeof icons;
   permission?: Permission;
 }
@@ -234,6 +235,7 @@ const NAV_SECTIONS: readonly {
         permission: 'alert_settings:view',
       },
       { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
+      { href: '/api-keys', label: 'apiKeys', icon: 'accounts', permission: 'users:view' },
     ],
   },
 ];

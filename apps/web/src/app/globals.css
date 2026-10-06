@@ -3330,3 +3330,13 @@ fieldset > .line > .line-remove-button:hover {
   line-height: 1.1rem;
   text-align: center;
 }
+
+/* A secret shown once (a new API key): wraps, selectable. */
+.secret {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius, 6px);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
