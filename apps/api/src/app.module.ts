@@ -8,6 +8,7 @@ import { ConsolidationsModule } from './consolidations/consolidations.module.js'
 import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { CustomsModule } from './customs/customs.module.js';
+import { AlertsModule } from './alerts/alerts.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { ExpensesModule } from './expenses/expenses.module.js';
@@ -49,6 +50,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     PayablesModule,
     ExpensesModule,
     ReportsModule,
+    AlertsModule,
   ],
 })
 export class AppModule {}

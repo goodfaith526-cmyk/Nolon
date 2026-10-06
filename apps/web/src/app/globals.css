@@ -3309,3 +3309,24 @@ fieldset > .line > .line-remove-button {
 fieldset > .line > .line-remove-button:hover {
   color: var(--bad);
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Alerts: the bell in the top bar and its count.
+   --------------------------------------------------------------------------------------------- */
+.alerts-bell {
+  position: relative;
+}
+
+.alert-count {
+  position: absolute;
+  inset-block-start: 0.1rem;
+  inset-inline-end: 0.1rem;
+  min-inline-size: 1.1rem;
+  padding-inline: 0.25rem;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1.1rem;
+  text-align: center;
+}

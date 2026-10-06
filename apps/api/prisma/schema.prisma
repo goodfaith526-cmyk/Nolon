@@ -180,6 +180,7 @@ model User {
   driverProfile         Driver?
   tripsCreated          Trip[]            @relation("TripCreatedBy")
   consolidationsCreated Consolidation[]   @relation("ConsolidationCreatedBy")
+  alertSettingsUpdated  AlertSetting[]    @relation("AlertSettingUpdatedBy")
   tripExpensesCreated   TripExpense[]     @relation("TripExpenseCreatedBy")
   tripExpensesCancelled TripExpense[]     @relation("TripExpenseCancelledBy")
   podsCreated           ProofOfDelivery[] @relation("PodCreatedBy")
@@ -2283,4 +2284,27 @@ model AuditEvent {
   @@index([occurredAt])
   @@index([entity, entityId])
   @@map("audit_events")
+}
+
+/// The five internal alerts of scope section 15. Fixed: the screens change only their days.
+enum AlertKind {
+  SHIPMENT_PAST_ETA
+  INVOICE_OVERDUE
+  CUSTOMS_STALLED
+  STORAGE_EXCEEDED
+  TRIP_LATE
+
+  @@map("alert_kind")
+}
+
+/// How many days each alert waits before it shows (one row per kind, added by the migration).
+model AlertSetting {
+  kind        AlertKind @id
+  days        Int
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updatedBy User? @relation("AlertSettingUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@map("alert_settings")
 }

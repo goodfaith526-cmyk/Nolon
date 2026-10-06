@@ -7,6 +7,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
 import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
@@ -94,6 +95,29 @@ export class WarehouseReportsService {
         JOIN "warehouses" w ON w."id" = h."warehouse_id"
         JOIN "branches" b ON b."id" = h."branch_id"
       )`;
+  }
+
+  /**
+   * Alert 4: goods held in a warehouse for more than `days` days (since the holding started, in
+   * the shipment's branch), longest first. One row per shipment and warehouse; `number` is left
+   * empty: the shipment's number comes from the shipments module.
+   */
+  async heldTooLong(user: AuthUser, days: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        ${this.holdings(branchIds)}
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT "shipment_id" AS "refId", '' AS "number", "branchCode",
+                 "warehouseCode" AS "detail", "heldSince" AS "since",
+                 ("today" - "heldSince")::int AS "days"
+          FROM held
+        ) long
+        WHERE "days" > ${days}
+        ORDER BY "days" DESC, "refId", "detail"
+        LIMIT ${limit}`,
+    );
   }
 
   /** Report 6: goods on hand now, longest held first, with the totals of all of them. */
