@@ -25,6 +25,8 @@ const envSchema = z.object({
   PUBLIC_WEB_URL: emptyAsUnset(z.string().url().optional()),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
+  /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */
+  AGENT_TOKEN_TTL_MINUTES: z.coerce.number().int().min(5).max(10).default(10),
   /**
    * Exact number of reverse proxies in front of the API (Express `trust proxy`). The client IP is
    * taken from X-Forwarded-For only through these hops. 0 ignores the header.
