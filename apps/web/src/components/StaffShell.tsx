@@ -9,6 +9,7 @@ import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
 import { useFoldedSections } from '@/lib/nav-folds';
+import { AlertsBell } from './alerts/Alerts';
 import { icons } from './Icons';
 
 interface NavLink {
@@ -22,6 +23,7 @@ interface NavLink {
     | 'shipments'
     | 'warehouses'
     | 'trips'
+    | 'consolidations'
     | 'vehicles'
     | 'drivers'
     | 'carriers'
@@ -42,7 +44,9 @@ interface NavLink {
     | 'chartOfAccounts'
     | 'fxRates'
     | 'periods'
-    | 'users';
+    | 'users'
+    | 'alertSettings'
+    | 'apiKeys';
   icon: keyof typeof icons;
   permission?: Permission;
 }
@@ -86,6 +90,12 @@ const NAV_SECTIONS: readonly {
     title: 'operations',
     links: [
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
+      {
+        href: '/consolidations',
+        label: 'consolidations',
+        icon: 'ship',
+        permission: 'consolidation:view',
+      },
       { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
       {
         href: '/warehouses',
@@ -218,7 +228,14 @@ const NAV_SECTIONS: readonly {
         icon: 'balance',
         permission: 'manual_journals:approve',
       },
+      {
+        href: '/alerts/settings',
+        label: 'alertSettings',
+        icon: 'bell',
+        permission: 'alert_settings:view',
+      },
       { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
+      { href: '/api-keys', label: 'apiKeys', icon: 'accounts', permission: 'users:view' },
     ],
   },
 ];
@@ -359,6 +376,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
             </button>
             <div className="topbar-spacer" />
             <div className="topbar-actions">
+              <AlertsBell />
               <Link href={pathname} locale={otherLocale} className="button ghost">
                 {icons.globe}
                 <span>{t('switchLocale')}</span>

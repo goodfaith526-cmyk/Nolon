@@ -14,6 +14,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate, fromDbDateOrNull } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
 import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
@@ -201,6 +202,30 @@ export class ShipmentReportsService {
       })),
       truncated: capped.truncated,
     };
+  }
+
+  /**
+   * Alert 1: shipments not delivered, closed or cancelled whose ETA is more than `graceDays`
+   * before today (in the shipment's branch), longest late first.
+   */
+  async pastEta(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT s."id" AS "refId", s."number", b."code" AS "branchCode", c."name" AS "detail",
+                 s."eta" AS "since", (${localDay(Prisma.sql`now()`)} - s."eta")::int AS "days"
+          FROM "shipments" s
+          JOIN "branches" b ON b."id" = s."branch_id"
+          JOIN "customers" c ON c."id" = s."customer_id"
+          WHERE ${shipmentVisibleIn('s', branchIds)}
+            AND s."status" <> 'CANCELLED' AND NOT ${IS_DELIVERED} AND s."eta" IS NOT NULL
+        ) late
+        WHERE "days" > ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
   }
 
   /**

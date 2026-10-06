@@ -179,6 +179,12 @@ export const icons = {
       <path d="M6 16v-5M10 16V6M14 16v-8M18 16v-3" />
     </Icon>
   ),
+  bell: (
+    <Icon>
+      <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" />
+      <path d="M10 20a2 2 0 0 0 4 0" />
+    </Icon>
+  ),
   calendar: (
     <Icon>
       <rect x="3" y="5" width="18" height="16" rx="2" />

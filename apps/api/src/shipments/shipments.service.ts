@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type {
   BookingService,
+  LoadType,
   Page,
   Permission,
   ShipmentActionsDto,
@@ -19,6 +20,7 @@ import type {
   ShipmentStatusRequest,
   ShipmentSummaryDto,
   ShipmentUpdateRequest,
+  ShippingMode,
 } from '@nolon/shared';
 import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -542,6 +544,41 @@ export class ShipmentsService {
    */
   async relocateInTx(tx: Tx, id: string, locationId: string): Promise<void> {
     await tx.shipment.update({ where: { id }, data: { currentLocationId: locationId } });
+  }
+
+  /**
+   * For consolidation, inside its transaction (the caller holds the shipment lock): what decides
+   * whether the shipment can go in a consolidated container (an LCL sea shipment NOLON carries).
+   */
+  async shapeInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ mode: ShippingMode; loadType: LoadType | null; services: BookingService[] }> {
+    return tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: { mode: true, loadType: true, services: true },
+    });
+  }
+
+  /**
+   * For consolidation, inside its transaction (the caller holds the shipment locks): the voyage of
+   * the container the shipments are in (annex B: the container's updates apply to its shipments).
+   * A field left out (undefined) is not touched; null clears it.
+   */
+  async setVoyageInTx(
+    tx: Tx,
+    ids: readonly string[],
+    voyage: {
+      carrierName?: string | null;
+      vesselName?: string | null;
+      voyageNumber?: string | null;
+      etd?: Date | null;
+      eta?: Date | null;
+    },
+  ): Promise<void> {
+    const data = Object.fromEntries(Object.entries(voyage).filter(([, v]) => v !== undefined));
+    if (ids.length === 0 || Object.keys(data).length === 0) return;
+    await tx.shipment.updateMany({ where: { id: { in: [...ids] } }, data });
   }
 
   /** For a proof of delivery without a trip, inside its transaction: the shipment's destination. */

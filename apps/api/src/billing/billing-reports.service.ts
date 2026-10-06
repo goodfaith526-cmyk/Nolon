@@ -10,6 +10,7 @@ import { toUsd } from '../accounting/journal-math.js';
 import { sum } from '../accounting/report-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec } from '../common/money.js';
 import {
@@ -38,6 +39,32 @@ export type InvoiceAging = Omit<ArAgingDto, 'customers' | 'totalAdvancesUsd' | '
 @Injectable()
 export class BillingReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Alert 2: approved invoices still open (less paid and credited) whose due date is more than
+   * `graceDays` before today (in the invoice's branch), longest overdue first.
+   */
+  async overdueInvoices(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT i."id" AS "refId", i."number", b."code" AS "branchCode", c."name" AS "detail",
+                 i."due_date" AS "since",
+                 ((now() AT TIME ZONE b."timezone")::date - i."due_date")::int AS "days"
+          FROM "customer_invoices" i
+          JOIN "branches" b ON b."id" = i."branch_id"
+          JOIN "customers" c ON c."id" = i."customer_id"
+          WHERE i."branch_id" IN ${uuidList(branchIds)}
+            AND i."status" = 'APPROVED' AND i."number" IS NOT NULL
+            AND i."total" - i."paid_amount" - i."credited_amount" > 0
+        ) overdue
+        WHERE "days" > ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
+  }
 
   /**
    * Open approved invoices as of a date: the total less the receipts allocated to it that were

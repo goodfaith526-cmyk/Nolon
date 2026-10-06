@@ -1925,6 +1925,9 @@ h3 {
 /* Trips: planned is neutral, under way is blue; completed and cancelled use the shared colors. */
 .badge-trip.badge-DEPARTED,
 .badge-trip.badge-ARRIVED,
+.badge-consolidation.badge-LOADED,
+.badge-consolidation.badge-DEPARTED,
+.badge-consolidation.badge-ARRIVED,
 .badge-kind-EXTERNAL {
   background: var(--info-soft);
   color: var(--info);
@@ -3305,4 +3308,35 @@ fieldset > .line > .line-remove-button {
 
 fieldset > .line > .line-remove-button:hover {
   color: var(--bad);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Alerts: the bell in the top bar and its count.
+   --------------------------------------------------------------------------------------------- */
+.alerts-bell {
+  position: relative;
+}
+
+.alert-count {
+  position: absolute;
+  inset-block-start: 0.1rem;
+  inset-inline-end: 0.1rem;
+  min-inline-size: 1.1rem;
+  padding-inline: 0.25rem;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1.1rem;
+  text-align: center;
+}
+
+/* A secret shown once (a new API key): wraps, selectable. */
+.secret {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius, 6px);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+  user-select: all;
 }

@@ -14,6 +14,7 @@ import { useLocalName } from '@/lib/master-data';
 import { todayString } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { AmountCell, EmptyRow, ReportTable } from '../finance/reports/ReportKit';
+import { AlertsSummary } from '../alerts/Alerts';
 import { Money } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
@@ -252,7 +253,7 @@ function CommonFigures({ data }: { data: ManagementDashboardDto }) {
           </tbody>
         </ReportTable>
       )}
-      <p className="muted">{t('noAlerts')}</p>
+      <AlertsSummary />
     </>
   );
 }

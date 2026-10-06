@@ -72,6 +72,7 @@ export const JOURNAL_SOURCES = [
   'SUPPLIER_PAYMENT',
   'EXPENSE',
   'OPENING_BALANCE',
+  'CONSOLIDATION_ALLOCATION',
 ] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 

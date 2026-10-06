@@ -2,6 +2,7 @@
 
 import {
   SUPPLIER_BILL_LINE_KINDS,
+  type BillableConsolidationDto,
   type BillableTripDto,
   type CreateSupplierBillRequest,
   type ExpenseCategoryDto,
@@ -32,6 +33,7 @@ interface LineDraft {
   /** The shipment's number as typed; resolved to its id on save. */
   shipmentNumber: string;
   tripId: string;
+  consolidationId: string;
   expenseCategoryCode: string;
   description: string;
   amount: string;
@@ -44,6 +46,7 @@ const emptyLine = (kind: SupplierBillLineKind = 'EXPENSE'): LineDraft => ({
   chargeTypeCode: '',
   shipmentNumber: '',
   tripId: '',
+  consolidationId: '',
   expenseCategoryCode: '',
   description: '',
   amount: '',
@@ -75,6 +78,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
   const [branchId, setBranchId] = useState(bill?.branchId ?? me.branches[0]?.id ?? '');
   const [currency, setCurrency] = useState(bill?.currency ?? 'USD');
   const [trips, setTrips] = useState<BillableTripDto[]>([]);
+  const [containers, setContainers] = useState<BillableConsolidationDto[]>([]);
   const categories = useApiList<ExpenseCategoryDto>('/accounting/expense-categories', true);
   const [lines, setLines] = useState<LineDraft[]>(() =>
     bill
@@ -84,6 +88,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
           chargeTypeCode: l.chargeTypeCode ?? '',
           shipmentNumber: l.shipmentNumber ?? '',
           tripId: l.tripId ?? '',
+          consolidationId: l.consolidationId ?? '',
           expenseCategoryCode: l.expenseCategoryCode ?? '',
           description: l.description ?? '',
           amount: l.amount,
@@ -115,6 +120,21 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
     };
   }, [supplierId, branchId, me]);
 
+  useEffect(() => {
+    if (!branchId || !can(me, 'suppliers:create')) return;
+    let cancelled = false;
+    api<BillableConsolidationDto[]>(`/consolidations/billable?branchId=${branchId}`)
+      .then((list) => {
+        if (!cancelled) setContainers(list);
+      })
+      .catch(() => {
+        // Without the list, container lines offer only the containers already on the bill.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, me]);
+
   if (!can(me, bill ? 'suppliers:update' : 'suppliers:create')) {
     return <p className="error">{tc('noAccess')}</p>;
   }
@@ -131,6 +151,20 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
         label: `${tr.tripNumber} · ${tr.carrierName} · ${tr.agreedCost} ${tr.currency}`,
       })),
   ].filter((c, i, all) => all.findIndex((x) => x.tripId === c.tripId) === i);
+
+  const containerChoices = [
+    ...(bill?.lines ?? []).flatMap((l) =>
+      l.consolidationId
+        ? [{ id: l.consolidationId, label: l.consolidationNumber ?? l.consolidationId }]
+        : [],
+    ),
+    ...containers.map((c) => ({
+      id: c.id,
+      label: `${c.number}${c.containerNumber ? ` · ${c.containerNumber}` : ''} · ${te(
+        `consolidation_${c.status}`,
+      )}`,
+    })),
+  ].filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
 
   const update = (key: number, patch: Partial<LineDraft>) =>
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -152,6 +186,9 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
       return { ...base, shipmentId: found, chargeTypeCode: l.chargeTypeCode };
     }
     if (l.kind === 'TRIP') return { ...base, tripId: l.tripId };
+    if (l.kind === 'CONSOLIDATION') {
+      return { ...base, consolidationId: l.consolidationId, chargeTypeCode: l.chargeTypeCode };
+    }
     return { ...base, expenseCategoryCode: l.expenseCategoryCode };
   }
 
@@ -300,6 +337,40 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
                     value={l.shipmentNumber}
                     onChange={(e) => update(l.key, { shipmentNumber: e.target.value })}
                   />
+                </label>
+                <label className="field">
+                  {t('chargeType')}
+                  <select
+                    required
+                    value={l.chargeTypeCode}
+                    onChange={(e) => update(l.key, { chargeTypeCode: e.target.value })}
+                  >
+                    <option value="">{t('chooseChargeType')}</option>
+                    {master.chargeTypes.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {name(c)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+            {l.kind === 'CONSOLIDATION' && (
+              <>
+                <label className="field">
+                  {t('consolidation')}
+                  <select
+                    required
+                    value={l.consolidationId}
+                    onChange={(e) => update(l.key, { consolidationId: e.target.value })}
+                  >
+                    <option value="">{t('chooseConsolidation')}</option>
+                    {containerChoices.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="field">
                   {t('chargeType')}

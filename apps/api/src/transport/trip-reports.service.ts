@@ -8,6 +8,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate } from '../common/dates.js';
 import {
   type AuditQuery,
@@ -19,6 +20,7 @@ import {
 } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { isDriverOnly } from './trip-scope.js';
 
 export interface TripReportQuery {
   from: string;
@@ -198,6 +200,37 @@ export class TripReportsService {
       all,
       truncated: capped.truncated,
     };
+  }
+
+  /**
+   * Alert 5: trips planned or on the road (not arrived) more than `graceDays` whole days after
+   * their planned arrival, longest late first. A Driver is alerted only of their own trips.
+   */
+  async late(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    const ownOnly = isDriverOnly(user)
+      ? Prisma.sql`AND dr."user_id" = ${user.id}::uuid`
+      : Prisma.empty;
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT t."id" AS "refId", t."number", b."code" AS "branchCode",
+                 coalesce(dr."name", c."name") AS "detail",
+                 (t."planned_arrival" AT TIME ZONE b."timezone")::date AS "since",
+                 floor(extract(epoch FROM now() - t."planned_arrival") / 86400)::int AS "days"
+          FROM "trips" t
+          JOIN "branches" b ON b."id" = t."branch_id"
+          LEFT JOIN "drivers" dr ON dr."id" = t."driver_id"
+          LEFT JOIN "carriers" c ON c."id" = t."carrier_id"
+          WHERE t."branch_id" IN ${uuidList(branchIds)}
+            AND t."status" IN ('PLANNED', 'DEPARTED') AND t."planned_arrival" < now()
+            ${ownOnly}
+        ) late
+        WHERE "days" >= ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
   }
 
   /** Branch dashboard: trips on the road (departed or arrived) and how many are planned. */

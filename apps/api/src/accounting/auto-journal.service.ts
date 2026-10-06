@@ -98,6 +98,7 @@ export interface CreditNoteForPosting {
 export type BillLineForPosting =
   | { kind: 'SHIPMENT_COST'; chargeTypeCode: string; shipmentId: string; amount: Decimal }
   | { kind: 'EXPENSE'; accountId: string; amount: Decimal }
+  | { kind: 'CONSOLIDATION'; consolidationId: string; amount: Decimal }
   | {
       kind: 'TRIP';
       tripId: string;
@@ -151,6 +152,28 @@ export interface ExpenseForPosting {
   amount: Decimal;
   expenseAccountId: string;
   cashAccountId: string;
+}
+
+/** Rule 13: one container cost on a supplier bill, shared between the container's shipments. */
+export interface ContainerCostForPosting {
+  /** The supplier bill line the cost came from (the entry's source). */
+  billLineId: string;
+  billNumber: string;
+  consolidationId: string;
+  consolidationNumber: string;
+  branchId: string;
+  supplierId: string;
+  /** YYYY-MM-DD: the day the container was closed, or the bill date when approved after it. */
+  entryDate: string;
+  /** The bill's currency and rate. */
+  currency: string;
+  fxRate: Decimal;
+  amount: Decimal;
+  chargeTypeCode: string;
+  /** The clearing account the bill debited (rule 7a), which this entry clears. */
+  clearingAccountId: string;
+  /** In `currency`, adding up to `amount` (consolidation-rules splitContainerCost). */
+  shares: readonly { shipmentId: string; amount: Decimal }[];
 }
 
 /** A customer's or supplier's open item at go-live (rule 15). */
@@ -220,6 +243,44 @@ export class AutoJournalService {
       result.set(line.entryId, list);
     }
     return result;
+  }
+
+  /**
+   * For a container cost (rule 13): the clearing account the bill's entry debited for the
+   * container, which the sharing-out credits back (even if the role was remapped since).
+   */
+  async clearingAccountOf(tx: Tx, billEntryId: string, consolidationId: string): Promise<string> {
+    const line = await tx.journalLine.findFirst({
+      where: { entryId: billEntryId, consolidationId, debit: { gt: 0 } },
+      select: { accountId: true },
+    });
+    if (!line) throw new Error('The bill entry has no clearing line for the container');
+    return line.accountId;
+  }
+
+  /** USD debited to each shipment by the given entries (a container's sharing-out entries). */
+  async debitUsdByShipment(entryIds: readonly string[]): Promise<Map<string, Decimal>> {
+    const result = new Map<string, Decimal>();
+    if (entryIds.length === 0) return result;
+    const rows = await this.prisma.journalLine.groupBy({
+      by: ['shipmentId'],
+      where: { entryId: { in: [...entryIds] }, shipmentId: { not: null } },
+      _sum: { debitUsd: true, creditUsd: true },
+    });
+    for (const row of rows) {
+      if (!row.shipmentId) continue;
+      result.set(row.shipmentId, (row._sum.debitUsd ?? ZERO).minus(row._sum.creditUsd ?? ZERO));
+    }
+    return result;
+  }
+
+  /** Debit - credit (USD) of the posted lines that carry the container (rules 7a and 13). */
+  async consolidationClearingUsd(consolidationId: string): Promise<Decimal> {
+    const sum = await this.prisma.journalLine.aggregate({
+      where: { consolidationId, entry: { status: 'POSTED' } },
+      _sum: { debitUsd: true, creditUsd: true },
+    });
+    return (sum._sum.debitUsd ?? ZERO).minus(sum._sum.creditUsd ?? ZERO);
   }
 
   /**
@@ -558,6 +619,8 @@ export class AutoJournalService {
    * - a shipment cost: the charge type's cost account (the reimbursable clearing account for a
    *   reimbursable charge), with the shipment;
    * - a general expense: the category's expense account;
+   * - a consolidated container's cost (rule 7a): the consolidation clearing account, with the
+   *   container, until closing the container shares it out (rule 13);
    * - a carrier's trip: the accrued transport account, with exactly what the trip's rule 11
    *   entry accrued there (amount, rate and USD value), so the accrual is cleared. Any USD
    *   difference between the billed and the accrued cost goes to the transport cost account the
@@ -598,6 +661,16 @@ export class AutoJournalService {
           supplierId: bill.supplierId,
           description: line.description,
         });
+      } else if (line.kind === 'CONSOLIDATION') {
+        lines.push({
+          ...common,
+          accountId: await this.accounts.roleAccount(tx, 'CONSOLIDATION_CLEARING'),
+          side: 'DEBIT',
+          amount: line.amount,
+          consolidationId: line.consolidationId,
+          supplierId: bill.supplierId,
+          description: line.description,
+        });
       } else {
         lines.push(...(await this.accrualClearingLines(tx, bill, line)));
       }
@@ -624,6 +697,62 @@ export class AutoJournalService {
       lines,
     );
     return { entry, payableAccountId };
+  }
+
+  /**
+   * Rule 13, a consolidated container's cost shared out: debit the charge type's cost account (the
+   * reimbursable clearing account for a reimbursable charge), one line per shipment with its share;
+   * credit the clearing account the bill debited, with the container, by the whole cost. Same
+   * currency and rate as the bill, so the container's clearing balance returns to zero. Shares of
+   * zero (an amount with fewer minor units than shipments) get no line.
+   */
+  async containerCostAllocated(
+    tx: Tx,
+    cost: ContainerCostForPosting,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const accountId = (await this.accounts.costAccounts(tx, [cost.chargeTypeCode])).get(
+      cost.chargeTypeCode,
+    );
+    if (!accountId) throw new Error(`No cost account for ${cost.chargeTypeCode}`);
+    const common = { branchId: cost.branchId, currency: cost.currency, fxRate: cost.fxRate };
+    let shared = ZERO;
+    const lines: LineSpec[] = [];
+    for (const share of cost.shares) {
+      shared = shared.plus(share.amount);
+      if (share.amount.isZero()) continue;
+      lines.push({
+        ...common,
+        accountId,
+        side: 'DEBIT',
+        amount: share.amount,
+        shipmentId: share.shipmentId,
+        supplierId: cost.supplierId,
+        description: cost.consolidationNumber,
+      });
+    }
+    if (!shared.eq(cost.amount)) throw new Error('The shares do not add up to the container cost');
+    lines.push({
+      ...common,
+      accountId: cost.clearingAccountId,
+      side: 'CREDIT',
+      amount: cost.amount,
+      consolidationId: cost.consolidationId,
+      supplierId: cost.supplierId,
+      description: cost.billNumber,
+    });
+    return this.journal.post(
+      tx,
+      {
+        branchId: cost.branchId,
+        entryDate: cost.entryDate,
+        description: `Container ${cost.consolidationNumber}: cost of bill ${cost.billNumber} shared by its shipments`,
+        source: 'CONSOLIDATION_ALLOCATION',
+        sourceId: cost.billLineId,
+        userId,
+      },
+      lines,
+    );
   }
 
   /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */

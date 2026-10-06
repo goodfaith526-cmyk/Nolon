@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { CustomsStatus } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate, fromDbDateOrNull } from '../common/dates.js';
 import {
   type AuditQuery,
@@ -38,6 +39,35 @@ export interface CustomsFileRow {
 @Injectable()
 export class CustomsReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Alert 3: customs files not cleared, of shipments not cancelled, with no change for more than
+   * `days` days (since their last update, in the shipment's branch), longest first. `number` is
+   * left empty: the shipment's number comes from the shipments module.
+   */
+  async stalled(user: AuthUser, days: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT x."shipment_id" AS "refId", '' AS "number", b."code" AS "branchCode",
+                 x."status"::text AS "detail",
+                 (x."updated_at" AT TIME ZONE b."timezone")::date AS "since",
+                 ((now() AT TIME ZONE b."timezone")::date
+                   - (x."updated_at" AT TIME ZONE b."timezone")::date)::int AS "days"
+          FROM "customs_clearances" x
+          JOIN "branches" b ON b."id" = x."branch_id"
+          WHERE ${shipmentIdVisibleIn(Prisma.sql`x."shipment_id"`, branchIds)}
+            AND x."status" <> 'CLEARED'
+            AND NOT EXISTS (SELECT 1 FROM "shipments" cs
+                            WHERE cs."id" = x."shipment_id" AND cs."status" = 'CANCELLED')
+        ) stalled
+        WHERE "days" > ${days}
+        ORDER BY "days" DESC, "refId"
+        LIMIT ${limit}`,
+    );
+  }
 
   async files(
     user: AuthUser,
