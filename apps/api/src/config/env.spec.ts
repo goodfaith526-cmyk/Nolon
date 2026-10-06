@@ -24,6 +24,27 @@ describe('loadEnv', () => {
     expect(env.LOGIN_IP_LIMIT_ENABLED).toBe(false);
   });
 
+  it('accepts an https assistant URL, and treats an empty one as unset', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    expect(loadEnv(base).AGENT_ASSISTANT_URL).toBeUndefined();
+    expect(loadEnv({ ...base, AGENT_ASSISTANT_URL: '' }).AGENT_ASSISTANT_URL).toBeUndefined();
+    expect(
+      loadEnv({ ...base, AGENT_ASSISTANT_URL: 'https://pilot.example.com/?tenant=nolon' })
+        .AGENT_ASSISTANT_URL,
+    ).toBe('https://pilot.example.com/?tenant=nolon');
+    expect(
+      loadEnv({ ...base, AGENT_ASSISTANT_URL: 'http://localhost:4100/?tenant=nolon' })
+        .AGENT_ASSISTANT_URL,
+    ).toBe('http://localhost:4100/?tenant=nolon');
+  });
+
+  it('rejects an assistant URL that is not https', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    for (const value of ['http://pilot.example.com/', 'javascript:alert(1)', 'not a url']) {
+      expect(() => loadEnv({ ...base, AGENT_ASSISTANT_URL: value })).toThrow(/AGENT_ASSISTANT_URL/);
+    }
+  });
+
   it('treats empty seed admin values as unset', () => {
     const env = loadEnv({
       DATABASE_URL: 'postgresql://u:p@localhost:5432/db',

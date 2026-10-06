@@ -27,6 +27,7 @@
     "pointAccounting": "Accounting"
   },
   "Shell": {
+    "assistant": "Assistant",
     "home": "Home",
     "users": "Users",
     "account": "My account",

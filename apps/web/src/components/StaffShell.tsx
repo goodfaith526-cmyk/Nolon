@@ -377,6 +377,17 @@ export function StaffShell({ children }: { children: ReactNode }) {
             <div className="topbar-spacer" />
             <div className="topbar-actions">
               <AlertsBell />
+              {me.assistantUrl ? (
+                <a
+                  href={me.assistantUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="button ghost"
+                >
+                  {icons.assistant}
+                  <span>{t('assistant')}</span>
+                </a>
+              ) : null}
               <Link href={pathname} locale={otherLocale} className="button ghost">
                 {icons.globe}
                 <span>{t('switchLocale')}</span>
