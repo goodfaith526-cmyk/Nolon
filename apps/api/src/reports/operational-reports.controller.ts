@@ -20,7 +20,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { dateString, parse } from '../common/validation.js';
 import { xlsxDownload } from './excel-response.js';
 import {
@@ -73,6 +73,7 @@ const exportQuery = z.object({ locale: z.enum(LOCALES).optional() });
 export class OperationalReportsController {
   constructor(private readonly reports: OperationalReportsService) {}
 
+  @AgentReadable()
   @Get('shipments')
   @RequirePermission('operational_reports:view', 'shipments:view')
   shipments(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ShipmentsReportDto> {
@@ -92,6 +93,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('late-shipments')
   @RequirePermission('operational_reports:view', 'shipments:view')
   lateShipments(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<LateShipmentsDto> {
@@ -133,6 +135,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('customer-activity')
   @RequirePermission('operational_reports:view', 'shipments:view', 'customers:view')
   customerActivity(
@@ -155,6 +158,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('warehouse-on-hand')
   @RequirePermission('operational_reports:view', 'warehouse:view')
   warehouseOnHand(

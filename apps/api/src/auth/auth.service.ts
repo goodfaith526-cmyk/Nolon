@@ -5,10 +5,12 @@ import {
   type AuthMeResponse,
   type Role,
 } from '@nolon/shared';
+import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
+import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
-import { lockCredentials } from './credential-lock.js';
+import { credentialStamp, lockCredentials } from './credential-lock.js';
 import { normalizeEmail } from './email.js';
 import { EMAIL_RULE, FailureLimiter, IP_RULE } from './login-rate-limiter.js';
 import { hashPassword, timingDummyHash, verifyPassword } from './password.js';
@@ -21,6 +23,8 @@ export interface LoginContext {
   ip: string | undefined;
   userAgent: string | undefined;
 }
+
+const USER_ACCESS = { roles: true, branches: { select: { branchId: true } } } as const;
 
 // lastSeenAt is a hint for admins, not a security control: refresh it at most this often.
 const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
@@ -118,36 +122,94 @@ export class AuthService {
   async resolveSession(token: string): Promise<AuthUser | null> {
     const session = await this.prisma.session.findUnique({
       where: { tokenHash: hashSessionToken(token) },
-      include: {
-        user: {
-          include: {
-            roles: true,
-            branches: { select: { branchId: true } },
-          },
-        },
-      },
+      include: { user: { include: USER_ACCESS } },
     });
     const now = new Date();
     if (!session || session.revokedAt !== null || session.expiresAt <= now) return null;
-    const { user } = session;
-    if (!user.isActive) return null;
+    if (!session.user.isActive) return null;
 
+    if (now.getTime() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
+      await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
+    }
+    return this.toAuthUser(session.user, session.id);
+  }
+
+  /**
+   * The staff member a delegated assistant token acts for (agent-auth), rebuilt from the database
+   * on every request like a session. Null for an unknown token. For a known token, `user` is null
+   * unless it is unexpired and unrevoked, its client is active, the staff session it came from is
+   * still valid and the user is active; `tokenId` is returned either way so the attempt can be
+   * logged. The user's current roles and branches apply, never more.
+   */
+  async resolveAgentToken(
+    token: string,
+  ): Promise<{ tokenId: string; user: AuthUser | null } | null> {
+    const row = await this.prisma.agentToken.findUnique({
+      where: { tokenHash: sha256Hex(token) },
+      include: {
+        agentClient: { select: { clientId: true, isActive: true } },
+        session: { select: { revokedAt: true, expiresAt: true } },
+        user: { include: USER_ACCESS },
+      },
+    });
+    if (!row) return null;
+    const now = new Date();
+    const valid =
+      row.revokedAt === null &&
+      row.expiresAt > now &&
+      row.agentClient.isActive &&
+      row.session.revokedAt === null &&
+      row.session.expiresAt > now &&
+      row.user.isActive;
+    if (!valid) return { tokenId: row.id, user: null };
+    const user = await this.toAuthUser(row.user, row.sessionId);
+    return {
+      tokenId: row.id,
+      user: { ...user, agent: { clientId: row.agentClient.clientId, tokenId: row.id } },
+    };
+  }
+
+  /**
+   * One append-only row per assistant request with a known token, refused ones included: the real
+   * user and the agent together, both taken from the token row.
+   */
+  async recordAgentAccess(
+    tokenId: string,
+    method: string,
+    route: string,
+    allowed: boolean,
+  ): Promise<void> {
+    await this.prisma.$executeRaw`
+      INSERT INTO "agent_access_events"
+        ("agent_token_id", "agent_client_id", "user_id", "method", "route", "allowed")
+      SELECT t."id", t."agent_client_id", t."user_id", ${method.slice(0, 10)}, ${route}, ${allowed}
+      FROM "agent_tokens" t WHERE t."id" = ${tokenId}::uuid`;
+  }
+
+  private async toAuthUser(
+    user: {
+      id: string;
+      email: string;
+      fullName: string;
+      preferredLocale: string;
+      passwordHash: string;
+      roles: { role: Role }[];
+      branches: { branchId: string }[];
+    },
+    sessionId: string,
+  ): Promise<AuthUser> {
     const roles: Role[] = user.roles.map((r) => r.role);
     const allBranches = hasAllBranchAccess(roles);
     const allowedBranchIds = allBranches
       ? (await this.prisma.branch.findMany({ select: { id: true } })).map((b) => b.id)
       : user.branches.map((b) => b.branchId);
-
-    if (now.getTime() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
-      await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
-    }
-
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
       preferredLocale: user.preferredLocale,
-      sessionId: session.id,
+      sessionId,
+      credentialStamp: credentialStamp(user.passwordHash),
       roles,
       permissions: new Set(permissionsForRoles(roles)),
       allBranches,
@@ -172,7 +234,8 @@ export class AuthService {
   /**
    * Writes the new hash only if the stored hash is still the one the current password was checked
    * against (compare-and-set under the user row lock), so a concurrent admin reset is never
-   * overwritten. Ends the user's other sessions in the same transaction.
+   * overwritten. Ends the user's other sessions and every assistant token and unused code of the
+   * user (including those issued from this session) in the same transaction.
    */
   async applyPasswordChange(
     user: AuthUser,
@@ -187,6 +250,7 @@ export class AuthService {
         where: { userId: user.id, revokedAt: null, id: { not: user.sessionId } },
         data: { revokedAt: new Date() },
       });
+      await revokeAgentAccess(tx, user.id);
       return true;
     });
   }

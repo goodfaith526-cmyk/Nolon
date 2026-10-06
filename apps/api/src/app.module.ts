@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccountingModule } from './accounting/accounting.module.js';
+import { AgentAuthModule } from './agent-auth/agent-auth.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { BookingsModule } from './bookings/bookings.module.js';
@@ -31,6 +32,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     ConfigModule,
     PrismaModule,
     AuthModule,
+    AgentAuthModule,
     UsersModule,
     HealthModule,
     CurrenciesModule,

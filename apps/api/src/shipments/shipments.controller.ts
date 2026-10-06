@@ -24,7 +24,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ShipmentsService } from './shipments.service.js';
 
@@ -88,6 +88,7 @@ const tokenParam = z.string().regex(/^[A-Za-z0-9_-]{32,64}$/);
 export class ShipmentsController {
   constructor(private readonly shipments: ShipmentsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('shipments:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<ShipmentSummaryDto>> {
@@ -100,6 +101,7 @@ export class ShipmentsController {
     return this.shipments.findIdByToken(user, parse(tokenParam, token));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('shipments:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<ShipmentDto> {
