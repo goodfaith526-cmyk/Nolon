@@ -1964,5 +1964,23 @@
     "col_rates_validTo": "Valid to",
     "col_rates_transitDays": "Transit days",
     "col_rates_notes": "Notes"
+  },
+  "AgentAuthorize": {
+    "title": "Signing in to the assistant",
+    "connecting": "Connecting your NOLON account to the assistant…",
+    "failed": "The assistant could not be connected."
+  },
+  "AgentClients": {
+    "title": "Staff assistant",
+    "hint": "A registered assistant platform can sign staff in with NOLON. It then reads, as that staff member, only the screens opened to it, with their own permissions and branches, for 10 minutes at a time. It cannot change anything. Revoking it ends every assistant sign-in at once.",
+    "redirectUri": "Return address (https)",
+    "audience": "Audience",
+    "tenant": "Tenant reference",
+    "clientId": "Client ID",
+    "create": "Register assistant",
+    "none": "No assistant registered.",
+    "createdTitle": "Copy the client secret now",
+    "revokeConfirm": "Revoke this assistant? Every staff sign-in through it ends at once.",
+    "revoked": "The assistant was revoked."
   }
 }
