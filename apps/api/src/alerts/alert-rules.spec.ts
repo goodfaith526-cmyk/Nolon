@@ -10,6 +10,7 @@ function user(roles: Role[]): AuthUser {
     fullName: 'U',
     preferredLocale: 'ar',
     sessionId: 's',
+    credentialStamp: 'c',
     roles,
     permissions: new Set(permissionsForRoles(roles)),
     allBranches: false,

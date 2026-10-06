@@ -8,6 +8,13 @@ export interface AuthUser {
   fullName: string;
   preferredLocale: string;
   sessionId: string;
+  /**
+   * SHA-256 of the password hash as it was when this request was authenticated (never the hash
+   * itself). A write that relies on the request's credentials (issuing an assistant code)
+   * re-checks it under the user row lock, so a request that started before a password change or
+   * reset cannot act after it.
+   */
+  credentialStamp: string;
   roles: Role[];
   permissions: ReadonlySet<Permission>;
   /** Administrator / Management: true, and allowedBranchIds lists every branch. */

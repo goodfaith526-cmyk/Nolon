@@ -10,7 +10,7 @@ import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
-import { lockCredentials } from './credential-lock.js';
+import { credentialStamp, lockCredentials } from './credential-lock.js';
 import { normalizeEmail } from './email.js';
 import { EMAIL_RULE, FailureLimiter, IP_RULE } from './login-rate-limiter.js';
 import { hashPassword, timingDummyHash, verifyPassword } from './password.js';
@@ -192,6 +192,7 @@ export class AuthService {
       email: string;
       fullName: string;
       preferredLocale: string;
+      passwordHash: string;
       roles: { role: Role }[];
       branches: { branchId: string }[];
     },
@@ -208,6 +209,7 @@ export class AuthService {
       fullName: user.fullName,
       preferredLocale: user.preferredLocale,
       sessionId,
+      credentialStamp: credentialStamp(user.passwordHash),
       roles,
       permissions: new Set(permissionsForRoles(roles)),
       allBranches,

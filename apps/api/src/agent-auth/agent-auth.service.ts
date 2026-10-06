@@ -19,6 +19,7 @@ import type {
   AgentTokenResponse,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { credentialStamp, lockCredentials } from '../auth/credential-lock.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -53,7 +54,8 @@ const clientInclude = { createdBy: { select: { fullName: true } } } as const;
  * redirect URI); the platform exchanges it server to server for a token of AGENT_TOKEN_TTL_MINUTES.
  * The token is bound to the staff session it came from: signing out, a password change or
  * deactivation ends it at once. There are no refresh tokens: the platform sends the user back
- * through /agent/authorize while their NOLON session lasts.
+ * through /agent/authorize while their NOLON session lasts. Issue, exchange and revocation all
+ * lock the user row first (see revokeAgentAccess).
  */
 @Injectable()
 export class AgentAuthService {
@@ -75,19 +77,39 @@ export class AgentAuthService {
       throw new BadRequestException('Unknown assistant or redirect address');
     }
     const code = newAuthCode();
-    // Both ends from one clock: the database refuses a code that lives longer than 60 seconds.
-    const now = new Date();
-    await this.prisma.agentAuthCode.create({
-      data: {
-        codeHash: sha256Hex(code),
-        agentClientId: client.id,
-        userId: user.id,
-        sessionId: user.sessionId,
-        codeChallenge: input.codeChallenge,
-        createdAt: now,
-        expiresAt: new Date(now.getTime() + AUTH_CODE_TTL_MS),
-      },
+    // Lock order everywhere: user row, then codes and tokens (see revokeAgentAccess). Under the
+    // user lock, a password change or reset has either committed (the stamp no longer matches
+    // and nothing is issued) or waits for this code and then spends it.
+    const issued = await this.prisma.$transaction(async (tx) => {
+      const current = await lockCredentials(tx, user.id);
+      if (!current?.isActive) return 'signed_out' as const;
+      if (credentialStamp(current.passwordHash) !== user.credentialStamp) return 'stale' as const;
+      const session = await tx.session.findUnique({
+        where: { id: user.sessionId },
+        select: { revokedAt: true, expiresAt: true },
+      });
+      // Both ends from one clock: the database refuses a code that lives longer than 60 seconds.
+      const now = new Date();
+      if (!session || session.revokedAt !== null || session.expiresAt <= now) {
+        return 'signed_out' as const;
+      }
+      await tx.agentAuthCode.create({
+        data: {
+          codeHash: sha256Hex(code),
+          agentClientId: client.id,
+          userId: user.id,
+          sessionId: user.sessionId,
+          codeChallenge: input.codeChallenge,
+          createdAt: now,
+          expiresAt: new Date(now.getTime() + AUTH_CODE_TTL_MS),
+        },
+      });
+      return 'issued' as const;
     });
+    if (issued === 'signed_out') throw new UnauthorizedException('Sign in again');
+    if (issued === 'stale') {
+      throw new ConflictException('Your password changed during the request; try again');
+    }
     const target = new URL(client.redirectUri);
     target.searchParams.set('code', code);
     target.searchParams.set('state', input.state);
@@ -107,6 +129,14 @@ export class AgentAuthService {
     const token = newAgentToken();
 
     const outcome = await this.prisma.$transaction(async (tx) => {
+      const owner = await tx.agentAuthCode.findUnique({
+        where: { codeHash },
+        select: { userId: true, agentClientId: true },
+      });
+      if (!owner || owner.agentClientId !== client.id) return { ok: false as const };
+      // User row first, then the code (the order of revokeAgentAccess): a password change or
+      // reset either spent this code before we got here, or waits and revokes the token we create.
+      await lockCredentials(tx, owner.userId);
       const code = await tx.agentAuthCode.findUnique({
         where: { codeHash },
         include: {
@@ -243,10 +273,16 @@ export class AgentAuthService {
 /**
  * Revokes every assistant token of the user and spends their unused codes. Call it inside the
  * transaction that changes or resets the password: a token must not outlive the credentials of
- * the user it acts for, even when the session it came from stays signed in. Codes go first: an exchange that already claimed one holds its row until it commits,
- * so the token it created is visible to the update below.
+ * the user it acts for, even when the session it came from stays signed in.
+ *
+ * Lock order, the same in code issue, code exchange, password change and reset: the user row
+ * (lockCredentials, a no-op when the caller already holds it), then codes, then tokens. Issue
+ * and exchange take the user lock before touching codes, so each of them either commits before
+ * this runs (and its code or token is revoked here) or runs after it and finds the new
+ * credentials (issue refuses a stale request; exchange finds its code spent).
  */
 export async function revokeAgentAccess(tx: Prisma.TransactionClient, userId: string) {
+  await lockCredentials(tx, userId);
   await tx.agentAuthCode.updateMany({
     where: { userId, usedAt: null },
     data: { usedAt: new Date() },

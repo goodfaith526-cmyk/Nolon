@@ -14,6 +14,7 @@ const user: AuthUser = {
   fullName: 'U',
   preferredLocale: 'ar',
   sessionId: 's',
+  credentialStamp: 'c',
   roles: ['SALES'],
   permissions: new Set(),
   allBranches: false,

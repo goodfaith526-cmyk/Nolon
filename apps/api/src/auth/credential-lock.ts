@@ -1,3 +1,4 @@
+import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import type { Prisma } from '../generated/prisma/client.js';
 
 export interface LockedCredentials {
@@ -19,4 +20,9 @@ export async function lockCredentials(
     SELECT password_hash, is_active FROM users WHERE id = ${userId}::uuid FOR UPDATE`;
   const row = rows[0];
   return row ? { passwordHash: row.password_hash, isActive: row.is_active } : null;
+}
+
+/** What AuthUser.credentialStamp holds for a password hash: changes whenever the password does. */
+export function credentialStamp(passwordHash: string): string {
+  return sha256Hex(passwordHash);
 }

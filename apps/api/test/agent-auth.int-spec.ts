@@ -17,6 +17,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { waitForLockWaiter } from './test-data.js';
 
 // Delegated sign-in of the staff AI assistant (agent-auth). Users here keep the agent-it- prefix:
 // agent_access_events is append-only and references them, so they are never deleted.
@@ -44,12 +45,8 @@ async function registerClient(name: string): Promise<AgentClientCreatedDto> {
   return res.body as AgentClientCreatedDto;
 }
 
-async function authorize(
-  cookie: string,
-  challenge: string,
-  c: AgentClientCreatedDto = client,
-): Promise<{ code: string; redirectTo: string }> {
-  const res = await t
+function authorizeRequest(cookie: string, challenge: string, c: AgentClientCreatedDto = client) {
+  return t
     .http()
     .post('/api/v1/agent-auth/authorize')
     .set('Origin', APP_ORIGIN)
@@ -60,8 +57,15 @@ async function authorize(
       state: 'state-1234',
       codeChallenge: challenge,
       codeChallengeMethod: 'S256',
-    })
-    .expect(200);
+    });
+}
+
+async function authorize(
+  cookie: string,
+  challenge: string,
+  c: AgentClientCreatedDto = client,
+): Promise<{ code: string; redirectTo: string }> {
+  const res = await authorizeRequest(cookie, challenge, c).expect(200);
   const { redirectTo } = res.body as AgentAuthorizeResponse;
   const code = new URL(redirectTo).searchParams.get('code');
   if (!code) throw new Error('No code');
@@ -104,6 +108,41 @@ async function accessLog(tokenId: string) {
     orderBy: { id: 'asc' },
   });
   return rows.map((r) => [r.method, r.route, r.allowed]);
+}
+
+function changePassword(cookie: string, newPassword: string) {
+  return t
+    .http()
+    .post('/api/v1/auth/password')
+    .set('Origin', APP_ORIGIN)
+    .set('Cookie', cookie)
+    .send({ currentPassword: PASSWORD, newPassword });
+}
+
+type Pending = PromiseLike<{ status: number; body: unknown }>;
+
+/**
+ * Holds the user row lock (as a credential change does) while `first` and then `second` reach it,
+ * then lets them go. PostgreSQL queues row-lock waiters in arrival order, so `first` gets the
+ * row before `second`: the interleaving is fixed, with no timing guesses.
+ */
+async function queuedOnUser(
+  userId: string,
+  first: () => Pending,
+  second: () => Pending,
+): Promise<[{ status: number; body: unknown }, { status: number; body: unknown }]> {
+  const pending = await t.prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+      const a = Promise.resolve(first());
+      await waitForLockWaiter(t.prisma, 1);
+      const b = Promise.resolve(second());
+      await waitForLockWaiter(t.prisma, 2);
+      return { all: Promise.all([a, b]) };
+    },
+    { timeout: 15_000 },
+  );
+  return pending.all;
 }
 
 async function sessionOf(userId: string): Promise<string> {
@@ -551,6 +590,121 @@ describe('ending a token', () => {
         data: { expiresAt: new Date(new Date(token.issuedAt).getTime() + 11 * 60_000) },
       }),
     ).rejects.toThrow(/agent_tokens_lifetime_check/);
+  });
+});
+
+describe('credential changes racing the assistant sign-in (lock order: user, then codes)', () => {
+  it('refuses a code to a request that authenticated before a password change it waited for', async () => {
+    const user = await staff();
+    const { challenge } = pkce();
+    const [changed, issued] = await queuedOnUser(
+      user.id,
+      () => changePassword(user.cookie, 'another-long-password'),
+      () => authorizeRequest(user.cookie, challenge),
+    );
+    expect(changed.status).toBe(204);
+    expect(issued.status).toBe(409);
+    expect(JSON.stringify(issued.body)).not.toContain('code=');
+    expect(await t.prisma.agentAuthCode.count({ where: { userId: user.id } })).toBe(0);
+
+    // Only the stale request is refused: the session that changed the password stays signed in,
+    // and a new request from it, made under the new password, works.
+    const fresh = pkce();
+    const { code } = await authorize(user.cookie, fresh.challenge);
+    await exchange(code, fresh.verifier).expect(200);
+  });
+
+  it('spends a code issued just before a password change that waited for it', async () => {
+    const user = await staff();
+    const { verifier, challenge } = pkce();
+    const [issued, changed] = await queuedOnUser(
+      user.id,
+      () => authorizeRequest(user.cookie, challenge),
+      () => changePassword(user.cookie, 'another-long-password'),
+    );
+    expect(issued.status).toBe(200);
+    expect(changed.status).toBe(204);
+    const code = new URL((issued.body as AgentAuthorizeResponse).redirectTo).searchParams.get(
+      'code',
+    );
+    if (!code) throw new Error('No code');
+    const row = await t.prisma.agentAuthCode.findFirstOrThrow({ where: { userId: user.id } });
+    expect(row.usedAt).not.toBeNull();
+    await exchange(code, verifier).expect(400);
+    expect(await t.prisma.agentToken.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it('refuses an exchange that waited behind a password change', async () => {
+    const user = await staff();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(user.cookie, challenge);
+    const [changed, exchanged] = await queuedOnUser(
+      user.id,
+      () => changePassword(user.cookie, 'another-long-password'),
+      () => exchange(code, verifier),
+    );
+    expect(changed.status).toBe(204);
+    expect(exchanged.status).toBe(400);
+    expect(JSON.stringify(exchanged.body)).not.toContain('nolag_');
+    expect(await t.prisma.agentToken.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it('revokes the token of an exchange that a password change waited for', async () => {
+    const user = await staff();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(user.cookie, challenge);
+    const [exchanged, changed] = await queuedOnUser(
+      user.id,
+      () => exchange(code, verifier),
+      () => changePassword(user.cookie, 'another-long-password'),
+    );
+    expect(exchanged.status).toBe(200);
+    expect(changed.status).toBe(204);
+    const token = exchanged.body as AgentTokenResponse;
+    const row = await t.prisma.agentToken.findUniqueOrThrow({ where: { id: token.jti } });
+    expect(row.revokedAt).not.toBeNull();
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+  });
+
+  it('refuses a code to a request that waited behind an Administrator reset', async () => {
+    const user = await staff();
+    const { challenge } = pkce();
+    const [reset, issued] = await queuedOnUser(
+      user.id,
+      () =>
+        t
+          .http()
+          .post(`/api/v1/users/${user.id}/password`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', adminCookie)
+          .send({ password: 'another-long-password' }),
+      () => authorizeRequest(user.cookie, challenge),
+    );
+    expect(reset.status).toBe(204);
+    expect(issued.status).toBe(409);
+    expect(await t.prisma.agentAuthCode.count({ where: { userId: user.id } })).toBe(0);
+    // The reset ended the session as well: nothing more can be asked from it.
+    await t.http().get('/api/v1/auth/me').set('Cookie', user.cookie).expect(401);
+  });
+
+  it('refuses an exchange that waited behind an Administrator reset', async () => {
+    const user = await staff();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(user.cookie, challenge);
+    const [reset, exchanged] = await queuedOnUser(
+      user.id,
+      () =>
+        t
+          .http()
+          .post(`/api/v1/users/${user.id}/password`)
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', adminCookie)
+          .send({ password: 'another-long-password' }),
+      () => exchange(code, verifier),
+    );
+    expect(reset.status).toBe(204);
+    expect(exchanged.status).toBe(400);
+    expect(await t.prisma.agentToken.count({ where: { userId: user.id } })).toBe(0);
   });
 });
 
