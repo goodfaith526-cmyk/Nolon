@@ -2444,6 +2444,8 @@ model AgentAccessEvent {
   userId        String   @map("user_id") @db.Uuid
   method        String   @db.VarChar(10)
   route         String   @db.VarChar(200)
+  /// False when the route is not open to the assistant or the user lacks the permission.
+  allowed       Boolean
 
   agentToken  AgentToken  @relation(fields: [agentTokenId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)

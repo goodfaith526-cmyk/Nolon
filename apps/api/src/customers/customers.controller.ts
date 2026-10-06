@@ -13,7 +13,7 @@ import {
 import type { CustomerDto, CustomerSummaryDto, Page } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
 import {
   countryCode,
   optionalText,
@@ -56,12 +56,14 @@ const partyBody = z
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('customers:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<CustomerSummaryDto>> {
     return this.customers.list(user, parse(pageQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('customers:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<CustomerDto> {

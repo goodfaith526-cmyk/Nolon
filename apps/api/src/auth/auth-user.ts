@@ -14,6 +14,11 @@ export interface AuthUser {
   allBranches: boolean;
   /** The only branches this user may read or write. Services filter on this list. */
   allowedBranchIds: readonly string[];
+  /**
+   * Set when the staff AI assistant acts for this user with a delegated token (agent-auth): the
+   * same roles and branches, on read-only routes marked @AgentReadable() only.
+   */
+  agent?: { clientId: string; tokenId: string };
 }
 
 export interface AuthenticatedRequest extends Request {

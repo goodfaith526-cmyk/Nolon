@@ -5,6 +5,7 @@ import {
   type AuthMeResponse,
   type Role,
 } from '@nolon/shared';
+import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
@@ -21,6 +22,8 @@ export interface LoginContext {
   ip: string | undefined;
   userAgent: string | undefined;
 }
+
+const USER_ACCESS = { roles: true, branches: { select: { branchId: true } } } as const;
 
 // lastSeenAt is a hint for admins, not a security control: refresh it at most this often.
 const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
@@ -118,36 +121,79 @@ export class AuthService {
   async resolveSession(token: string): Promise<AuthUser | null> {
     const session = await this.prisma.session.findUnique({
       where: { tokenHash: hashSessionToken(token) },
-      include: {
-        user: {
-          include: {
-            roles: true,
-            branches: { select: { branchId: true } },
-          },
-        },
-      },
+      include: { user: { include: USER_ACCESS } },
     });
     const now = new Date();
     if (!session || session.revokedAt !== null || session.expiresAt <= now) return null;
-    const { user } = session;
-    if (!user.isActive) return null;
+    if (!session.user.isActive) return null;
 
+    if (now.getTime() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
+      await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
+    }
+    return this.toAuthUser(session.user, session.id);
+  }
+
+  /**
+   * The staff member a delegated assistant token acts for (agent-auth), rebuilt from the database
+   * on every request like a session: null unless the token is known, unexpired and unrevoked, its
+   * client is active, the staff session it came from is still valid and the user is active. The
+   * user's current roles and branches apply, never more.
+   */
+  async resolveAgentToken(token: string): Promise<AuthUser | null> {
+    const row = await this.prisma.agentToken.findUnique({
+      where: { tokenHash: sha256Hex(token) },
+      include: {
+        agentClient: { select: { clientId: true, isActive: true } },
+        session: { select: { revokedAt: true, expiresAt: true } },
+        user: { include: USER_ACCESS },
+      },
+    });
+    const now = new Date();
+    if (!row || row.revokedAt !== null || row.expiresAt <= now) return null;
+    if (!row.agentClient.isActive) return null;
+    if (row.session.revokedAt !== null || row.session.expiresAt <= now) return null;
+    if (!row.user.isActive) return null;
+    const user = await this.toAuthUser(row.user, row.sessionId);
+    return { ...user, agent: { clientId: row.agentClient.clientId, tokenId: row.id } };
+  }
+
+  /** One append-only row per assistant request: the real user and the agent together. */
+  async recordAgentAccess(
+    user: AuthUser,
+    method: string,
+    route: string,
+    allowed: boolean,
+  ): Promise<void> {
+    if (!user.agent) return;
+    await this.prisma.$executeRaw`
+      INSERT INTO "agent_access_events"
+        ("agent_token_id", "agent_client_id", "user_id", "method", "route", "allowed")
+      SELECT t."id", t."agent_client_id", t."user_id", ${method.slice(0, 10)}, ${route}, ${allowed}
+      FROM "agent_tokens" t WHERE t."id" = ${user.agent.tokenId}::uuid`;
+  }
+
+  private async toAuthUser(
+    user: {
+      id: string;
+      email: string;
+      fullName: string;
+      preferredLocale: string;
+      roles: { role: Role }[];
+      branches: { branchId: string }[];
+    },
+    sessionId: string,
+  ): Promise<AuthUser> {
     const roles: Role[] = user.roles.map((r) => r.role);
     const allBranches = hasAllBranchAccess(roles);
     const allowedBranchIds = allBranches
       ? (await this.prisma.branch.findMany({ select: { id: true } })).map((b) => b.id)
       : user.branches.map((b) => b.branchId);
-
-    if (now.getTime() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
-      await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
-    }
-
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
       preferredLocale: user.preferredLocale,
-      sessionId: session.id,
+      sessionId,
       roles,
       permissions: new Set(permissionsForRoles(roles)),
       allBranches,

@@ -55,6 +55,7 @@ CREATE TABLE "agent_access_events" (
     "user_id" UUID NOT NULL,
     "method" VARCHAR(10) NOT NULL,
     "route" VARCHAR(200) NOT NULL,
+    "allowed" BOOLEAN NOT NULL,
 
     CONSTRAINT "agent_access_events_pkey" PRIMARY KEY ("id")
 );

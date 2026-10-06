@@ -25,7 +25,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -125,6 +125,7 @@ const receiptListQuery = pageQuery.extend({
 export class InvoicesController {
   constructor(private readonly invoices: InvoicesService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('customer_invoices:view')
   list(
@@ -134,6 +135,7 @@ export class InvoicesController {
     return this.invoices.list(user, parse(invoiceListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('customer_invoices:view')
   get(
@@ -230,6 +232,7 @@ export class CustomerStatementsController {
   constructor(private readonly statements: CustomerStatementService) {}
 
   /** Statement of account: the customer's invoices and receipts (it shows both). */
+  @AgentReadable()
   @Get(':customerId')
   @RequirePermission('customer_invoices:view', 'receipts:view')
   get(

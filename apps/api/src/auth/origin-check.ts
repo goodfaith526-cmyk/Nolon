@@ -26,9 +26,21 @@ export function isAllowedUnsafeRequest(
   return source !== undefined && allowedOrigins.includes(source);
 }
 
-export function originCheck(allowedOrigins: readonly string[]) {
+/**
+ * `exemptPaths`: exact paths of server-to-server endpoints that never read a session cookie
+ * (the assistant's token exchange and revocation), so a browser cannot be used against them.
+ */
+export function originCheck(
+  allowedOrigins: readonly string[],
+  exemptPaths: readonly string[] = [],
+) {
   const allowed = allowedOrigins.map((origin) => originOf(origin) ?? origin);
+  const exempt = new Set(exemptPaths);
   return (req: Request, res: Response, next: NextFunction): void => {
+    if (exempt.has(req.path)) {
+      next();
+      return;
+    }
     if (isAllowedUnsafeRequest(req.method, req.headers.origin, req.headers.referer, allowed)) {
       next();
       return;
