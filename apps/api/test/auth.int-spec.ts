@@ -110,6 +110,24 @@ describe('sign-in, sessions and permissions', () => {
       expect(me.permissions).toContain('customer_invoices:approve');
       expect(me.permissions).not.toContain('users:view');
       expect(me.branches.map((b) => b.code)).toEqual(['DXB', 'JED']);
+      expect(me.assistantUrl).toBeNull();
+    });
+
+    it('gives the configured assistant address in /auth/me', async () => {
+      const url = 'https://pilot.example.com/?tenant=nolon';
+      const withAssistant = await createTestApp({ AGENT_ASSISTANT_URL: url });
+      try {
+        const { email } = await createUser(withAssistant.prisma, ['SALES'], ['DXB']);
+        const cookie = await signIn(withAssistant, email);
+        const res = await withAssistant
+          .http()
+          .get('/api/v1/auth/me')
+          .set('Cookie', cookie)
+          .expect(200);
+        expect((res.body as AuthMeResponse).assistantUrl).toBe(url);
+      } finally {
+        await withAssistant.close();
+      }
     });
 
     it('gives Administrator every branch through the role', async () => {

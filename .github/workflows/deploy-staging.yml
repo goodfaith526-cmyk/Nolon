@@ -41,6 +41,9 @@ jobs:
       # Staging holds client data and is private by default. Set this repository variable to
       # `true` only to deliberately run it without basic auth.
       ALLOW_PUBLIC: ${{ vars.STAGING_ALLOW_PUBLIC }}
+      # The staff AI assistant's address (e.g. https://pilot.example.com/?tenant=nolon). Empty: no
+      # assistant button. Not secret.
+      ASSISTANT_URL: ${{ vars.STAGING_AGENT_ASSISTANT_URL }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -212,6 +215,10 @@ jobs:
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
             echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
             echo "SEED_DEMO_DATA=true"
+            case "$ASSISTANT_URL" in
+              *"'"*) echo "::error::STAGING_AGENT_ASSISTANT_URL must not contain a single quote"; exit 1 ;;
+            esac
+            echo "AGENT_ASSISTANT_URL='$ASSISTANT_URL'"
             # The first Administrator (checked above). The seed creates it only if missing.
             echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
             echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"

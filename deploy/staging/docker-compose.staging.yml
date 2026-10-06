@@ -48,6 +48,8 @@ services:
       # Until Caddy trusts the host nginx and passes the real client IP, every sign-in reaches the
       # API from one address, so only the per-email limit is on (docs/plans/01-auth-and-permissions.md S1).
       LOGIN_IP_LIMIT_ENABLED: 'false'
+      # Empty: no assistant button (repository variable STAGING_AGENT_ASSISTANT_URL).
+      AGENT_ASSISTANT_URL: ${AGENT_ASSISTANT_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

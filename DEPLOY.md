@@ -160,6 +160,13 @@ To run staging public on purpose, set the repository variable `STAGING_ALLOW_PUB
 That alone turns basic auth off (the secrets can stay), and the health check then requires 200.
 Delete the variable to make staging private again.
 
+### Staff AI assistant button
+
+Set the repository variable `STAGING_AGENT_ASSISTANT_URL` to the assistant's staff screen, for
+example `https://pilot.example.com/?tenant=nolon`, and deploy. Staff then see an "Assistant" button
+in the top bar. It must be https. Empty: no button. The assistant reads only what each staff
+member may read (NOLON rechecks roles and branches on every request).
+
 ### 5. GitHub secrets
 
 Settings > Secrets and variables > Actions > **Secrets** > New repository secret:

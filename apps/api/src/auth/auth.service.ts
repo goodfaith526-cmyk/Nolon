@@ -270,6 +270,7 @@ export class AuthService {
       permissions: [...user.permissions].sort(),
       allBranches: user.allBranches,
       branches,
+      assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
     };
   }
 }

@@ -23,6 +23,29 @@ const envSchema = z.object({
    * CORS origin (the web app's own address in every deployment so far).
    */
   PUBLIC_WEB_URL: emptyAsUnset(z.string().url().optional()),
+  /**
+   * Where staff open the AI assistant (the platform's staff screen, e.g.
+   * https://pilot.example.com/?tenant=nolon). Empty: no assistant button. HTTPS only, except
+   * localhost for development.
+   */
+  AGENT_ASSISTANT_URL: emptyAsUnset(
+    z
+      .string()
+      .url()
+      .refine(
+        (value) => {
+          // Runs even when .url() already failed: a value that is not a URL is just rejected.
+          if (!URL.canParse(value)) return false;
+          const url = new URL(value);
+          return (
+            url.protocol === 'https:' ||
+            (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+          );
+        },
+        { message: 'must be an https URL (http only for localhost)' },
+      )
+      .optional(),
+  ),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

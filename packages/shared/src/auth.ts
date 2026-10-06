@@ -191,4 +191,9 @@ export interface AuthMeResponse {
   permissions: Permission[];
   allBranches: boolean;
   branches: { id: string; code: string; nameEn: string; nameAr: string }[];
+  /**
+   * The staff AI assistant's address, or null when none is configured. The assistant reads only
+   * what this user may read: NOLON rechecks the user's roles and branches on every request.
+   */
+  assistantUrl: string | null;
 }

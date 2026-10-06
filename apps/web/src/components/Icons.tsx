@@ -74,6 +74,12 @@ export const icons = {
       <path d="M10 8l-4 4 4 4M6 12h10" />
     </Icon>
   ),
+  assistant: (
+    <Icon>
+      <path d="M5 5h14v10H9l-4 4z" />
+      <path d="M9 10h.01M12 10h.01M15 10h.01" />
+    </Icon>
+  ),
   menu: (
     <Icon>
       <path d="M4 6h16M4 12h16M4 18h16" />
