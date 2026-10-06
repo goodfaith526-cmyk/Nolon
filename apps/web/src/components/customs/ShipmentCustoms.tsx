@@ -242,7 +242,8 @@ export function ShipmentCustoms({
           )}
           <dt>{t('updated')}</dt>
           <dd>
-            {clearance.updatedByName} · {dateTime.format(new Date(clearance.updatedAt))}
+            <bdi>{clearance.updatedByName}</bdi> ·{' '}
+            <bdi>{dateTime.format(new Date(clearance.updatedAt))}</bdi>
           </dd>
         </dl>
       ) : (

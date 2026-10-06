@@ -248,8 +248,13 @@ export function ConsolidationDetail({ id }: { id: string }) {
           <dd>{c.carrierName ?? '—'}</dd>
           <dt>{t('vessel')}</dt>
           <dd>
-            {c.vesselName ?? '—'}
-            {c.voyageNumber && <bdi dir="ltr"> · {c.voyageNumber}</bdi>}
+            <bdi>{c.vesselName ?? '—'}</bdi>
+            {c.voyageNumber && (
+              <>
+                {' · '}
+                <bdi dir="ltr">{c.voyageNumber}</bdi>
+              </>
+            )}
           </dd>
           <dt>{t('masterBl')}</dt>
           <dd dir="ltr">{c.masterBlNumber ?? '—'}</dd>

@@ -141,7 +141,7 @@ export function ApiKeys() {
                   <td>
                     {c.name}
                     <div className="muted">
-                      {c.createdByName} · {dateTime(c.createdAt)}
+                      <bdi>{c.createdByName}</bdi> · <bdi>{dateTime(c.createdAt)}</bdi>
                     </div>
                   </td>
                   <td dir="ltr">{c.keyPrefix}…</td>
