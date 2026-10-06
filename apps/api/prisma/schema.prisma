@@ -254,6 +254,7 @@ model Session {
   agentAuthCodes AgentAuthCode[]
   agentTokens    AgentToken[]
 
+  @@unique([id, userId])
   @@index([userId])
   @@map("sessions")
 }
@@ -2399,11 +2400,15 @@ model AgentAuthCode {
   usedAt        DateTime? @map("used_at") @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session     Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  token       AgentToken?
+  agentClient AgentClient  @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Composite: the session must be this user's own.
+  session     Session      @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Cascade)
+  /// At most one: agent_tokens.auth_code_id is unique.
+  tokens      AgentToken[]
 
+  /// Target of agent_tokens' composite key: a token carries its code's client, user and session.
+  @@unique([id, userId, sessionId, agentClientId])
   @@index([agentClientId])
   @@index([userId])
   @@index([sessionId])
@@ -2425,9 +2430,12 @@ model AgentToken {
   agentClient  AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   session      Session            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  authCode     AgentAuthCode      @relation(fields: [authCodeId], references: [id], onDelete: Cascade)
+  /// Composite: client, user and session are exactly those of the code the token came from.
+  authCode     AgentAuthCode      @relation(fields: [authCodeId, userId, sessionId, agentClientId], references: [id, userId, sessionId, agentClientId], onDelete: Cascade)
   accessEvents AgentAccessEvent[]
 
+  /// Target of agent_access_events' composite key: an event carries its token's client and user.
+  @@unique([id, userId, agentClientId])
   @@index([agentClientId])
   @@index([userId])
   @@index([sessionId])
@@ -2447,7 +2455,8 @@ model AgentAccessEvent {
   /// False when the route is not open to the assistant or the user lacks the permission.
   allowed       Boolean
 
-  agentToken  AgentToken  @relation(fields: [agentTokenId], references: [id], onDelete: Restrict)
+  /// Composite: client and user are exactly those of the token.
+  agentToken  AgentToken  @relation(fields: [agentTokenId, userId, agentClientId], references: [id, userId, agentClientId], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   user        User        @relation(fields: [userId], references: [id], onDelete: Restrict)
 

@@ -12,6 +12,7 @@ import {
   type UpdateUserRequest,
   type UserSummary,
 } from '@nolon/shared';
+import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import { normalizeEmail } from '../auth/email.js';
 import { lockCredentials } from '../auth/credential-lock.js';
@@ -183,13 +184,17 @@ export class UsersService {
     });
   }
 
-  /** Admin reset: sets a new password and ends every open session of that user. */
+  /**
+   * Admin reset: sets a new password and ends every open session and assistant token of that
+   * user.
+   */
   async resetPassword(actorId: string, id: string, password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
     await this.prisma.$transaction(async (tx) => {
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       await tx.user.update({ where: { id }, data: { passwordHash } });
       await revokeSessions(tx, id);
+      await revokeAgentAccess(tx, id);
       const user = toSummary(await findOrThrow(tx, id));
       // The log says a reset happened, never anything about the password itself.
       await this.log(tx, actorId, 'UPDATED', user, user, [

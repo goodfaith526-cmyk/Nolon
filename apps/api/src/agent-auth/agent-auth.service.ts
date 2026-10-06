@@ -20,6 +20,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   isAllowedRedirectUri,
@@ -74,6 +75,8 @@ export class AgentAuthService {
       throw new BadRequestException('Unknown assistant or redirect address');
     }
     const code = newAuthCode();
+    // Both ends from one clock: the database refuses a code that lives longer than 60 seconds.
+    const now = new Date();
     await this.prisma.agentAuthCode.create({
       data: {
         codeHash: sha256Hex(code),
@@ -81,7 +84,8 @@ export class AgentAuthService {
         userId: user.id,
         sessionId: user.sessionId,
         codeChallenge: input.codeChallenge,
-        expiresAt: new Date(Date.now() + AUTH_CODE_TTL_MS),
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + AUTH_CODE_TTL_MS),
       },
     });
     const target = new URL(client.redirectUri);
@@ -234,6 +238,23 @@ export class AgentAuthService {
     }
     return client;
   }
+}
+
+/**
+ * Revokes every assistant token of the user and spends their unused codes. Call it inside the
+ * transaction that changes or resets the password: a token must not outlive the credentials of
+ * the user it acts for, even when the session it came from stays signed in. Codes go first: an exchange that already claimed one holds its row until it commits,
+ * so the token it created is visible to the update below.
+ */
+export async function revokeAgentAccess(tx: Prisma.TransactionClient, userId: string) {
+  await tx.agentAuthCode.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+  await tx.agentToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
 }
 
 function toDto(row: {

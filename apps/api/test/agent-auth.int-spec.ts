@@ -10,6 +10,7 @@ import type {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   APP_ORIGIN,
+  PASSWORD,
   type TestApp,
   branchId,
   createTestApp,
@@ -95,6 +96,22 @@ async function tokenFor(cookie: string): Promise<AgentTokenResponse> {
 
 function asAgent(path: string, token: string) {
   return t.http().get(path).set('Authorization', `Bearer ${token}`);
+}
+
+async function accessLog(tokenId: string) {
+  const rows = await t.prisma.agentAccessEvent.findMany({
+    where: { agentTokenId: tokenId },
+    orderBy: { id: 'asc' },
+  });
+  return rows.map((r) => [r.method, r.route, r.allowed]);
+}
+
+async function sessionOf(userId: string): Promise<string> {
+  const session = await t.prisma.session.findFirstOrThrow({
+    where: { userId, revokedAt: null },
+    orderBy: { createdAt: 'desc' },
+  });
+  return session.id;
 }
 
 async function staff(roles: Parameters<typeof createUser>[1] = ['SALES'], branches = ['DXB']) {
@@ -274,7 +291,7 @@ describe('code exchange', () => {
     const { code } = await authorize(user.cookie, challenge);
     await t.prisma.agentAuthCode.updateMany({
       where: { userId: user.id },
-      data: { createdAt: new Date(Date.now() - 120_000), expiresAt: new Date(Date.now() - 1000) },
+      data: { createdAt: new Date(Date.now() - 61_000), expiresAt: new Date(Date.now() - 1000) },
     });
     await exchange(code, verifier).expect(400);
   });
@@ -336,6 +353,41 @@ describe('acting with a token', () => {
       .expect(403);
   });
 
+  it('is held to the assistant rules on public routes too, and logged there', async () => {
+    const user = await staff();
+    const token = await tokenFor(user.cookie);
+    await asAgent('/api/v1/health', token.accessToken).expect(403);
+    await t
+      .http()
+      .post('/api/v1/auth/logout')
+      .set('Origin', APP_ORIGIN)
+      .set('Authorization', `Bearer ${token.accessToken}`)
+      .expect(403);
+    expect(await accessLog(token.jti)).toEqual([
+      ['GET', '/api/v1/health', false],
+      ['POST', '/api/v1/auth/logout', false],
+    ]);
+    // The token was not used to sign anyone out.
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(200);
+  });
+
+  it('refuses an unknown or malformed nolag_ token, even on a public route', async () => {
+    await asAgent('/api/v1/health', `nolag_${'A'.repeat(43)}`).expect(401);
+    await asAgent('/api/v1/health', 'nolag_short').expect(401);
+    await t.http().get('/api/v1/health').set('Authorization', 'bearer nolag_short').expect(401);
+  });
+
+  it('uses the token over a valid session cookie, even when the token is no longer valid', async () => {
+    const user = await staff();
+    const token = await tokenFor(user.cookie);
+    await t.prisma.agentToken.update({
+      where: { id: token.jti },
+      data: { revokedAt: new Date() },
+    });
+    await asAgent('/api/v1/auth/me', token.accessToken).set('Cookie', user.cookie).expect(401);
+    await t.http().get('/api/v1/auth/me').set('Cookie', user.cookie).expect(200);
+  });
+
   it('ignores a session cookie sent with the token', async () => {
     const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], PREFIX);
     const adminSession = await signIn(t, admin.email);
@@ -375,6 +427,8 @@ describe('ending a token', () => {
       data: { issuedAt: new Date(Date.now() - 300_000), expiresAt: new Date(Date.now() - 1000) },
     });
     await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+    // An attempt with an expired token is still logged, as refused.
+    expect(await accessLog(token.jti)).toEqual([['GET', '/api/v1/auth/me', false]]);
   });
 
   it('ends when the platform revokes it', async () => {
@@ -390,6 +444,8 @@ describe('ending a token', () => {
       })
       .expect(204);
     await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+    // An attempt with a revoked token is still logged, as refused.
+    expect(await accessLog(token.jti)).toEqual([['GET', '/api/v1/auth/me', false]]);
   });
 
   it('is not revoked by another client', async () => {
@@ -412,6 +468,54 @@ describe('ending a token', () => {
     const token = await tokenFor(user.cookie);
     await t.http().post('/api/v1/auth/logout').set('Origin', APP_ORIGIN).set('Cookie', user.cookie);
     await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+  });
+
+  it('ends every token of the user when they change their password, though the session stays', async () => {
+    const user = await staff();
+    const token = await tokenFor(user.cookie);
+    const fromOtherSession = await tokenFor(await signIn(t, user.email));
+    await t
+      .http()
+      .post('/api/v1/auth/password')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', user.cookie)
+      .send({ currentPassword: PASSWORD, newPassword: 'another-long-password' })
+      .expect(204);
+    await t.http().get('/api/v1/auth/me').set('Cookie', user.cookie).expect(200);
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+    await asAgent('/api/v1/auth/me', fromOtherSession.accessToken).expect(401);
+    const live = await t.prisma.agentToken.count({ where: { userId: user.id, revokedAt: null } });
+    expect(live).toBe(0);
+  });
+
+  it('spends a code issued before the password change', async () => {
+    const user = await staff();
+    const { verifier, challenge } = pkce();
+    const { code } = await authorize(user.cookie, challenge);
+    await t
+      .http()
+      .post('/api/v1/auth/password')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', user.cookie)
+      .send({ currentPassword: PASSWORD, newPassword: 'another-long-password' })
+      .expect(204);
+    await exchange(code, verifier).expect(400);
+    expect(await t.prisma.agentToken.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it('ends every token of the user when an Administrator resets the password', async () => {
+    const user = await staff();
+    const token = await tokenFor(user.cookie);
+    await t
+      .http()
+      .post(`/api/v1/users/${user.id}/password`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', adminCookie)
+      .send({ password: 'another-long-password' })
+      .expect(204);
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(401);
+    const row = await t.prisma.agentToken.findUniqueOrThrow({ where: { id: token.jti } });
+    expect(row.revokedAt).not.toBeNull();
   });
 
   it('ends at once when the staff member is deactivated', async () => {
@@ -447,5 +551,76 @@ describe('ending a token', () => {
         data: { expiresAt: new Date(new Date(token.issuedAt).getTime() + 11 * 60_000) },
       }),
     ).rejects.toThrow(/agent_tokens_lifetime_check/);
+  });
+});
+
+describe('database integrity', () => {
+  const HASH = () => randomBytes(32).toString('hex');
+
+  it('refuses a code that lives longer than 60 seconds', async () => {
+    const user = await staff();
+    await authorize(user.cookie, pkce().challenge);
+    const code = await t.prisma.agentAuthCode.findFirstOrThrow({ where: { userId: user.id } });
+    await expect(
+      t.prisma.agentAuthCode.update({
+        where: { id: code.id },
+        data: { expiresAt: new Date(code.createdAt.getTime() + 61_000) },
+      }),
+    ).rejects.toThrow(/agent_auth_codes_expiry_check/);
+    await t.prisma.agentAuthCode.update({
+      where: { id: code.id },
+      data: { expiresAt: new Date(code.createdAt.getTime() + 60_000) },
+    });
+  });
+
+  it('refuses a code for a session of another user', async () => {
+    const a = await staff();
+    const b = await staff();
+    const insert = (userId: string, sessionId: string) =>
+      t.prisma.$executeRaw`
+        INSERT INTO "agent_auth_codes"
+          ("id", "code_hash", "agent_client_id", "user_id", "session_id", "code_challenge",
+           "expires_at")
+        VALUES (gen_random_uuid(), ${HASH()}, ${client.client.id}::uuid, ${userId}::uuid,
+                ${sessionId}::uuid, ${pkce().challenge}, now() + interval '30 seconds')`;
+    await expect(insert(b.id, await sessionOf(a.id))).rejects.toThrow(
+      /agent_auth_codes_session_id_user_id_fkey/,
+    );
+    await insert(a.id, await sessionOf(a.id));
+  });
+
+  it('refuses a token whose user, session or client is not its code’s', async () => {
+    const a = await staff();
+    const b = await staff();
+    await authorize(a.cookie, pkce().challenge);
+    const code = await t.prisma.agentAuthCode.findFirstOrThrow({ where: { userId: a.id } });
+    const bSession = await sessionOf(b.id);
+    const insert = (userId: string, sessionId: string, clientId: string) =>
+      t.prisma.$executeRaw`
+        INSERT INTO "agent_tokens"
+          ("id", "token_hash", "agent_client_id", "user_id", "session_id", "auth_code_id",
+           "expires_at")
+        VALUES (gen_random_uuid(), ${HASH()}, ${clientId}::uuid, ${userId}::uuid,
+                ${sessionId}::uuid, ${code.id}::uuid, now() + interval '5 minutes')`;
+    const fk = /agent_tokens_auth_code_id_user_id_session_id_agent_client__fkey/;
+    await expect(insert(b.id, bSession, client.client.id)).rejects.toThrow(fk);
+    await expect(insert(a.id, bSession, client.client.id)).rejects.toThrow(fk);
+    await expect(insert(a.id, code.sessionId, otherClient.client.id)).rejects.toThrow(fk);
+    await insert(a.id, code.sessionId, client.client.id);
+  });
+
+  it('refuses an access row that gives a token to another user or client', async () => {
+    const a = await staff();
+    const b = await staff();
+    const token = await tokenFor(a.cookie);
+    const insert = (userId: string, clientId: string) =>
+      t.prisma.$executeRaw`
+        INSERT INTO "agent_access_events"
+          ("agent_token_id", "agent_client_id", "user_id", "method", "route", "allowed")
+        VALUES (${token.jti}::uuid, ${clientId}::uuid, ${userId}::uuid, 'GET', '/x', false)`;
+    const fk = /agent_access_events_agent_token_id_user_id_agent_client_id_fkey/;
+    await expect(insert(b.id, client.client.id)).rejects.toThrow(fk);
+    await expect(insert(a.id, otherClient.client.id)).rejects.toThrow(fk);
+    expect(await accessLog(token.jti)).toEqual([]);
   });
 });

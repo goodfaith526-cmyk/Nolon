@@ -67,9 +67,19 @@ export function pkceMatches(verifier: string, challenge: string): boolean {
   return computed.length === expected.length && timingSafeEqual(computed, expected);
 }
 
+const AGENT_BEARER_PATTERN = new RegExp(`^bearer\\s+${AGENT_TOKEN_PREFIX}`, 'i');
+
+/**
+ * True when the header presents an assistant token (`Bearer nolag_...`), well-formed or not. Such
+ * a request is the assistant's and is never treated as a staff or public request.
+ */
+export function isAgentAuthorization(header: string | undefined): boolean {
+  return header !== undefined && AGENT_BEARER_PATTERN.test(header.trim());
+}
+
 /** The token in an `Authorization: Bearer nolag_...` header, or null for any other header. */
 export function readAgentToken(header: string | undefined): string | null {
-  const match = header ? /^Bearer (\S+)$/.exec(header.trim()) : null;
+  const match = header ? /^bearer\s+(\S+)$/i.exec(header.trim()) : null;
   const token = match?.[1];
   return token && isAgentTokenShape(token) ? token : null;
 }

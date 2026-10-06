@@ -67,6 +67,9 @@ CREATE UNIQUE INDEX "agent_clients_client_id_key" ON "agent_clients"("client_id"
 CREATE UNIQUE INDEX "agent_auth_codes_code_hash_key" ON "agent_auth_codes"("code_hash");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "agent_auth_codes_id_user_id_session_id_agent_client_id_key" ON "agent_auth_codes"("id", "user_id", "session_id", "agent_client_id");
+
+-- CreateIndex
 CREATE INDEX "agent_auth_codes_agent_client_id_idx" ON "agent_auth_codes"("agent_client_id");
 
 -- CreateIndex
@@ -80,6 +83,9 @@ CREATE UNIQUE INDEX "agent_tokens_token_hash_key" ON "agent_tokens"("token_hash"
 
 -- CreateIndex
 CREATE UNIQUE INDEX "agent_tokens_auth_code_id_key" ON "agent_tokens"("auth_code_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "agent_tokens_id_user_id_agent_client_id_key" ON "agent_tokens"("id", "user_id", "agent_client_id");
 
 -- CreateIndex
 CREATE INDEX "agent_tokens_agent_client_id_idx" ON "agent_tokens"("agent_client_id");
@@ -96,6 +102,9 @@ CREATE INDEX "agent_access_events_user_id_occurred_at_idx" ON "agent_access_even
 -- CreateIndex
 CREATE INDEX "agent_access_events_agent_client_id_occurred_at_idx" ON "agent_access_events"("agent_client_id", "occurred_at");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "sessions_id_user_id_key" ON "sessions"("id", "user_id");
+
 -- AddForeignKey
 ALTER TABLE "agent_clients" ADD CONSTRAINT "agent_clients_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
@@ -109,7 +118,7 @@ ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_agent_client_id_
 ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_session_id_user_id_fkey" FOREIGN KEY ("session_id", "user_id") REFERENCES "sessions"("id", "user_id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_agent_client_id_fkey" FOREIGN KEY ("agent_client_id") REFERENCES "agent_clients"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -121,10 +130,10 @@ ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_user_id_fkey" FOREIGN KE
 ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_auth_code_id_fkey" FOREIGN KEY ("auth_code_id") REFERENCES "agent_auth_codes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_auth_code_id_user_id_session_id_agent_client__fkey" FOREIGN KEY ("auth_code_id", "user_id", "session_id", "agent_client_id") REFERENCES "agent_auth_codes"("id", "user_id", "session_id", "agent_client_id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_access_events" ADD CONSTRAINT "agent_access_events_agent_token_id_fkey" FOREIGN KEY ("agent_token_id") REFERENCES "agent_tokens"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "agent_access_events" ADD CONSTRAINT "agent_access_events_agent_token_id_user_id_agent_client_id_fkey" FOREIGN KEY ("agent_token_id", "user_id", "agent_client_id") REFERENCES "agent_tokens"("id", "user_id", "agent_client_id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agent_access_events" ADD CONSTRAINT "agent_access_events_agent_client_id_fkey" FOREIGN KEY ("agent_client_id") REFERENCES "agent_clients"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -141,7 +150,9 @@ ALTER TABLE "agent_clients" ADD CONSTRAINT "agent_clients_revoked_check" CHECK (
   OR ("revoked_at" IS NOT NULL AND "revoked_by_id" IS NOT NULL AND NOT "is_active"));
 ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_code_hash_check" CHECK ("code_hash" ~ '^[0-9a-f]{64}$');
 ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_challenge_check" CHECK ("code_challenge" ~ '^[A-Za-z0-9_-]{43}$');
-ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_expiry_check" CHECK ("expires_at" > "created_at");
+-- A code lives 60 seconds at most (AUTH_CODE_TTL_MS); the database refuses anything longer.
+ALTER TABLE "agent_auth_codes" ADD CONSTRAINT "agent_auth_codes_expiry_check" CHECK (
+  "expires_at" > "created_at" AND "expires_at" <= "created_at" + interval '60 seconds');
 ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_token_hash_check" CHECK ("token_hash" ~ '^[0-9a-f]{64}$');
 -- The longest token the API issues is 10 minutes; the database refuses anything longer.
 ALTER TABLE "agent_tokens" ADD CONSTRAINT "agent_tokens_lifetime_check" CHECK (

@@ -7,6 +7,7 @@ import {
   newClientId,
   newClientSecret,
   pkceMatches,
+  isAgentAuthorization,
   readAgentToken,
   secretMatches,
   sha256Hex,
@@ -48,6 +49,16 @@ describe('agent secrets', () => {
     expect(readAgentToken(token)).toBeNull();
     expect(readAgentToken(`Bearer nolcs_abcdef012345_${'a'.repeat(43)}`)).toBeNull();
     expect(readAgentToken(`Basic ${token}`)).toBeNull();
+  });
+
+  it('recognizes any nolag_ bearer header as the assistant, well-formed or not', () => {
+    const token = newAgentToken();
+    expect(isAgentAuthorization(`Bearer ${token}`)).toBe(true);
+    expect(isAgentAuthorization(`bearer  ${token}`)).toBe(true);
+    expect(isAgentAuthorization('Bearer nolag_short')).toBe(true);
+    expect(isAgentAuthorization(undefined)).toBe(false);
+    expect(isAgentAuthorization(`Bearer nolcs_abcdef012345_${'a'.repeat(43)}`)).toBe(false);
+    expect(isAgentAuthorization(`Basic ${token}`)).toBe(false);
   });
 
   it('allows https redirect URIs, and http only on localhost when asked', () => {

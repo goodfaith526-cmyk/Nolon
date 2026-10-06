@@ -5,6 +5,7 @@ import {
   type AuthMeResponse,
   type Role,
 } from '@nolon/shared';
+import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -135,11 +136,14 @@ export class AuthService {
 
   /**
    * The staff member a delegated assistant token acts for (agent-auth), rebuilt from the database
-   * on every request like a session: null unless the token is known, unexpired and unrevoked, its
-   * client is active, the staff session it came from is still valid and the user is active. The
-   * user's current roles and branches apply, never more.
+   * on every request like a session. Null for an unknown token. For a known token, `user` is null
+   * unless it is unexpired and unrevoked, its client is active, the staff session it came from is
+   * still valid and the user is active; `tokenId` is returned either way so the attempt can be
+   * logged. The user's current roles and branches apply, never more.
    */
-  async resolveAgentToken(token: string): Promise<AuthUser | null> {
+  async resolveAgentToken(
+    token: string,
+  ): Promise<{ tokenId: string; user: AuthUser | null } | null> {
     const row = await this.prisma.agentToken.findUnique({
       where: { tokenHash: sha256Hex(token) },
       include: {
@@ -148,28 +152,38 @@ export class AuthService {
         user: { include: USER_ACCESS },
       },
     });
+    if (!row) return null;
     const now = new Date();
-    if (!row || row.revokedAt !== null || row.expiresAt <= now) return null;
-    if (!row.agentClient.isActive) return null;
-    if (row.session.revokedAt !== null || row.session.expiresAt <= now) return null;
-    if (!row.user.isActive) return null;
+    const valid =
+      row.revokedAt === null &&
+      row.expiresAt > now &&
+      row.agentClient.isActive &&
+      row.session.revokedAt === null &&
+      row.session.expiresAt > now &&
+      row.user.isActive;
+    if (!valid) return { tokenId: row.id, user: null };
     const user = await this.toAuthUser(row.user, row.sessionId);
-    return { ...user, agent: { clientId: row.agentClient.clientId, tokenId: row.id } };
+    return {
+      tokenId: row.id,
+      user: { ...user, agent: { clientId: row.agentClient.clientId, tokenId: row.id } },
+    };
   }
 
-  /** One append-only row per assistant request: the real user and the agent together. */
+  /**
+   * One append-only row per assistant request with a known token, refused ones included: the real
+   * user and the agent together, both taken from the token row.
+   */
   async recordAgentAccess(
-    user: AuthUser,
+    tokenId: string,
     method: string,
     route: string,
     allowed: boolean,
   ): Promise<void> {
-    if (!user.agent) return;
     await this.prisma.$executeRaw`
       INSERT INTO "agent_access_events"
         ("agent_token_id", "agent_client_id", "user_id", "method", "route", "allowed")
       SELECT t."id", t."agent_client_id", t."user_id", ${method.slice(0, 10)}, ${route}, ${allowed}
-      FROM "agent_tokens" t WHERE t."id" = ${user.agent.tokenId}::uuid`;
+      FROM "agent_tokens" t WHERE t."id" = ${tokenId}::uuid`;
   }
 
   private async toAuthUser(
@@ -218,7 +232,8 @@ export class AuthService {
   /**
    * Writes the new hash only if the stored hash is still the one the current password was checked
    * against (compare-and-set under the user row lock), so a concurrent admin reset is never
-   * overwritten. Ends the user's other sessions in the same transaction.
+   * overwritten. Ends the user's other sessions and every assistant token and unused code of the
+   * user (including those issued from this session) in the same transaction.
    */
   async applyPasswordChange(
     user: AuthUser,
@@ -233,6 +248,7 @@ export class AuthService {
         where: { userId: user.id, revokedAt: null, id: { not: user.sessionId } },
         data: { revokedAt: new Date() },
       });
+      await revokeAgentAccess(tx, user.id);
       return true;
     });
   }
