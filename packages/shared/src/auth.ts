@@ -190,7 +190,18 @@ export interface AuthMeResponse {
   roles: Role[];
   permissions: Permission[];
   allBranches: boolean;
-  branches: { id: string; code: string; nameEn: string; nameAr: string }[];
+  /**
+   * The user's branches. `today` is the branch's local date (YYYY-MM-DD) in its IANA `timezone`:
+   * the day NOLON's date filters use for that branch, so "today" and "this month" match them.
+   */
+  branches: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    timezone: string;
+    today: string;
+  }[];
   /**
    * The staff AI assistant's address, or null when none is configured. The assistant reads only
    * what this user may read: NOLON rechecks the user's roles and branches on every request.

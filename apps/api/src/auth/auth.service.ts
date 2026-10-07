@@ -7,6 +7,7 @@ import {
 } from '@nolon/shared';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { sha256Hex } from '../agent-auth/agent-secrets.js';
+import { todayIn } from '../common/dates.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth-user.js';
@@ -255,12 +256,13 @@ export class AuthService {
     });
   }
 
-  async describe(user: AuthUser): Promise<AuthMeResponse> {
-    const branches = await this.prisma.branch.findMany({
+  async describe(user: AuthUser, now: Date = new Date()): Promise<AuthMeResponse> {
+    const rows = await this.prisma.branch.findMany({
       where: { id: { in: [...user.allowedBranchIds] } },
-      select: { id: true, code: true, nameEn: true, nameAr: true },
+      select: { id: true, code: true, nameEn: true, nameAr: true, timezone: true },
       orderBy: { code: 'asc' },
     });
+    const branches = rows.map((b) => ({ ...b, today: todayIn(b.timezone, now) }));
     return {
       id: user.id,
       email: user.email,
