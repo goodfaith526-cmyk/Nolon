@@ -317,7 +317,9 @@ describe('Customer Service API', () => {
       .get('/api/v1/customers')
       .set('Authorization', `Bearer ${ptsKey.key}`)
       .expect(401);
-    await cs(path, `${ptsKey.key.slice(0, -1)}A`).expect(401);
+    // Change the last character to one it is not, so the tampered key always differs.
+    const last = ptsKey.key.endsWith('A') ? 'B' : 'A';
+    await cs(path, `${ptsKey.key.slice(0, -1)}${last}`).expect(401);
     await cs(path, ptsKey.key.replace(/_[^_]+$/, `_${'x'.repeat(43)}`)).expect(401);
     await cs(path, 'not-a-key').expect(401);
     // Bad queries are refused, not widened.
