@@ -24,7 +24,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ConsolidationsService, MAX_CONTAINER_SHIPMENTS } from './consolidations.service.js';
 
@@ -82,6 +82,7 @@ const billableQuery = z.object({ branchId: z.uuid().optional() }).strict();
 export class ConsolidationsController {
   constructor(private readonly consolidations: ConsolidationsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('consolidation:view')
   list(
@@ -101,6 +102,7 @@ export class ConsolidationsController {
     return this.consolidations.billable(user, parse(billableQuery, query).branchId);
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('consolidation:view')
   get(
@@ -174,6 +176,7 @@ export class ConsolidationsController {
 export class ShipmentConsolidationsController {
   constructor(private readonly consolidations: ConsolidationsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('shipments:view')
   list(

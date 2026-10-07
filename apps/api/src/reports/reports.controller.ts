@@ -16,7 +16,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { dateString, parse } from '../common/validation.js';
 import { xlsxDownload } from './excel-response.js';
 import { type ReportFile, type ReportRequest, ReportsService } from './reports.service.js';
@@ -56,6 +56,7 @@ const exportQuery = z.object({ locale: z.enum(LOCALES).optional() });
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
 
+  @AgentReadable()
   @Get('accounts')
   @RequirePermission('financial_reports:view')
   accounts(@CurrentUser() user: AuthUser): Promise<ReportAccountOptionDto[]> {
@@ -75,6 +76,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('income-statement')
   @RequirePermission('financial_reports:view')
   incomeStatement(
@@ -97,6 +99,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('balance-sheet')
   @RequirePermission('financial_reports:view')
   balanceSheet(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<BalanceSheetDto> {
@@ -116,6 +119,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('general-ledger')
   @RequirePermission('financial_reports:view')
   generalLedger(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<GeneralLedgerDto> {
@@ -135,6 +139,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('ar-aging')
   @RequirePermission('financial_reports:view')
   arAging(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ArAgingDto> {
@@ -154,6 +159,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('ap-aging')
   @RequirePermission('financial_reports:view')
   apAging(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ApAgingDto> {
@@ -173,6 +179,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('shipment-profitability')
   @RequirePermission('shipment_profitability:view')
   shipmentProfitability(
@@ -195,6 +202,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('invoices-receipts')
   @RequirePermission('financial_reports:view')
   invoicesReceipts(
@@ -217,6 +225,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('cash-movement')
   @RequirePermission('financial_reports:view')
   cashMovement(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<CashMovementDto> {
@@ -236,6 +245,7 @@ export class ReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('open-accruals')
   @RequirePermission('financial_reports:view')
   openAccruals(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<OpenAccrualsDto> {

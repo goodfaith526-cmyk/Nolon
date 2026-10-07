@@ -113,6 +113,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('sales-conversion')
   @RequirePermission('operational_reports:view', 'quotations:view', 'bookings:view')
   salesConversion(
@@ -181,6 +182,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('warehouse-movements')
   @RequirePermission('operational_reports:view', 'warehouse:view')
   warehouseMovements(
@@ -203,6 +205,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('customs-files')
   @RequirePermission('operational_reports:view', 'customs:view')
   customsFiles(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<CustomsFilesDto> {
@@ -222,6 +225,7 @@ export class OperationalReportsController {
     });
   }
 
+  @AgentReadable()
   @Get('trips')
   @RequirePermission('operational_reports:view', 'transport_trips:view')
   trips(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<TripsReportDto> {

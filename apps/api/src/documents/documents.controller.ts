@@ -19,7 +19,7 @@ import { MAX_DOCUMENT_BYTES, type ShipmentDocumentDto } from '@nolon/shared';
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { optionalText, parse } from '../common/validation.js';
 import { DocumentsService } from './documents.service.js';
 import { attachmentDisposition } from './file-type.js';
@@ -44,6 +44,7 @@ const uploadBody = z
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('documents:view')
   list(

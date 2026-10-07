@@ -21,7 +21,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { optionalText, parse, requiredText } from '../common/validation.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
 import { WarehousesService } from './warehouses.service.js';
@@ -108,6 +108,7 @@ interface UploadedPart {
 export class WarehousesController {
   constructor(private readonly warehouses: WarehousesService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('warehouse:view')
   list(@CurrentUser() user: AuthUser): Promise<WarehouseDto[]> {
@@ -157,6 +158,7 @@ export class WarehousesController {
 export class ShipmentWarehouseController {
   constructor(private readonly movements: WarehouseMovementsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('warehouse:view')
   view(

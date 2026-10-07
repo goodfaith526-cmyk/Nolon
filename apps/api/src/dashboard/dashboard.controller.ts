@@ -2,7 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import type { BranchDashboardDto, DashboardDto, ManagementDashboardDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { dateString, parse } from '../common/validation.js';
 import { DashboardFiguresService } from './dashboard-figures.service.js';
 import { DashboardService } from './dashboard.service.js';
@@ -29,11 +29,13 @@ export class DashboardController {
     private readonly figures: DashboardFiguresService,
   ) {}
 
+  @AgentReadable()
   @Get()
   summary(@CurrentUser() user: AuthUser): Promise<DashboardDto> {
     return this.dashboard.summary(user);
   }
 
+  @AgentReadable()
   @Get('management')
   @RequirePermission('dashboards:view')
   management(
@@ -43,6 +45,7 @@ export class DashboardController {
     return this.figures.management(user, parse(dashboardQuery, query));
   }
 
+  @AgentReadable()
   @Get('branch')
   @RequirePermission('dashboards:view')
   branch(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<BranchDashboardDto> {

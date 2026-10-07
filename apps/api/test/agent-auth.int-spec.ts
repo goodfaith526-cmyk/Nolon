@@ -17,7 +17,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
-import { waitForLockWaiter } from './test-data.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 // Delegated sign-in of the staff AI assistant (agent-auth). Users here keep the agent-it- prefix:
 // agent_access_events is append-only and references them, so they are never deleted.
@@ -390,6 +390,88 @@ describe('acting with a token', () => {
       .set('Authorization', `Bearer ${token.accessToken}`)
       .send({})
       .expect(403);
+  });
+
+  it('reads every ERP area opened to the assistant, and nothing that exports or administers', async () => {
+    const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], PREFIX);
+    const token = await tokenFor(await signIn(t, admin.email));
+    for (const path of [
+      '/rates',
+      '/quotations',
+      '/bookings',
+      '/consolidations',
+      '/warehouses',
+      '/transport/vehicles',
+      '/transport/drivers',
+      '/transport/carriers',
+      '/trips',
+      '/receipts',
+      '/credit-notes',
+      '/suppliers',
+      '/supplier-bills',
+      '/supplier-payments',
+      '/expenses',
+      '/accounting/accounts',
+      '/accounting/periods',
+      '/accounting/journals',
+      '/accounting/expense-categories',
+      '/accounting/fx-rates',
+      '/master-data',
+      '/dashboard',
+      '/alerts',
+    ]) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(200);
+    }
+    // Opened, but the report needs its period: a 400 from validation, not a 403 from the guard.
+    for (const path of ['/reports/income-statement', '/reports/trips', '/reports/customs-files']) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(400);
+    }
+    for (const path of [
+      '/reports/ar-aging/export',
+      '/reports/trips/export',
+      '/reports/audit-log',
+      '/accounting/settings',
+      '/alerts/settings',
+      '/transport/driver-users',
+      '/api-clients',
+    ]) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(403);
+    }
+  });
+
+  it('keeps a single-branch staff member out of other branches on the newly opened reads', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const jedCustomer = (
+      await t
+        .http()
+        .post('/api/v1/customers')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', adminCookie)
+        .send({
+          branchId: jed,
+          kind: 'COMPANY',
+          name: 'Jeddah Only Trading',
+          phone: uniquePhone(),
+          preferredCurrency: 'USD',
+        })
+        .expect(201)
+    ).body as { id: string };
+    const manager = await staff(['BRANCH_MANAGER'], ['DXB']);
+    const token = await tokenFor(manager.cookie);
+
+    await asAgent(`/api/v1/dashboard/management?branchId=${jed}`, token.accessToken).expect(403);
+    await asAgent(`/api/v1/dashboard/branch?branchId=${jed}`, token.accessToken).expect(403);
+    await asAgent(
+      `/api/v1/reports/sales-conversion?from=2026-01-01&to=2026-12-31&branchId=${jed}`,
+      token.accessToken,
+    ).expect(403);
+    const bookings = (
+      await asAgent(`/api/v1/bookings?customerId=${jedCustomer.id}`, token.accessToken).expect(200)
+    ).body as Page<unknown>;
+    expect(bookings.total).toBe(0);
+    const own = (await asAgent('/api/v1/dashboard/management', token.accessToken).expect(200))
+      .body as { branchId: string | null };
+    expect(own.branchId).toBeNull();
   });
 
   it('is held to the assistant rules on public routes too, and logged there', async () => {

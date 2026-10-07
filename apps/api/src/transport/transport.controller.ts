@@ -35,7 +35,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -185,6 +185,7 @@ interface UploadedPart {
 export class FleetController {
   constructor(private readonly fleet: FleetService) {}
 
+  @AgentReadable()
   @Get('vehicles')
   @RequirePermission('transport_fleet:view')
   vehicles(@CurrentUser() user: AuthUser): Promise<VehicleDto[]> {
@@ -207,6 +208,7 @@ export class FleetController {
     return this.fleet.updateVehicle(user, id, parse(vehicleUpdateBody, body));
   }
 
+  @AgentReadable()
   @Get('drivers')
   @RequirePermission('transport_fleet:view')
   drivers(@CurrentUser() user: AuthUser): Promise<DriverDto[]> {
@@ -235,6 +237,7 @@ export class FleetController {
     return this.fleet.updateDriver(user, id, parse(driverUpdateBody, body));
   }
 
+  @AgentReadable()
   @Get('carriers')
   @RequirePermission('transport_fleet:view')
   carriers(): Promise<CarrierDto[]> {
@@ -265,12 +268,14 @@ export class TripsController {
     private readonly costs: TripCostsService,
   ) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('transport_trips:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<TripSummaryDto>> {
     return this.trips.list(user, parse(tripListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('transport_trips:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<TripDto> {
@@ -358,6 +363,7 @@ export class ShipmentTransportController {
     private readonly pods: PodService,
   ) {}
 
+  @AgentReadable()
   @Get('trips')
   @RequirePermission('transport_trips:view')
   shipmentTrips(
@@ -367,6 +373,7 @@ export class ShipmentTransportController {
     return this.trips.forShipment(user, shipmentId);
   }
 
+  @AgentReadable()
   @Get('pods')
   @RequirePermission('pod:view')
   podList(

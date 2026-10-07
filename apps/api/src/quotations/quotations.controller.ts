@@ -22,7 +22,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -72,12 +72,14 @@ const listQuery = pageQuery.extend({
 export class QuotationsController {
   constructor(private readonly quotations: QuotationsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('quotations:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<QuotationSummaryDto>> {
     return this.quotations.list(user, parse(listQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('quotations:view')
   get(

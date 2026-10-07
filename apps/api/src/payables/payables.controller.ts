@@ -27,7 +27,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -144,12 +144,14 @@ export class SuppliersController {
     private readonly bills: SupplierBillsService,
   ) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('suppliers:view')
   list(@Query() query: unknown): Promise<Page<SupplierSummaryDto>> {
     return this.suppliers.list(parse(supplierListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('suppliers:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<SupplierDto> {
@@ -194,6 +196,7 @@ export class SuppliersController {
   }
 
   /** Completed external trips of the supplier's carriers not billed yet. */
+  @AgentReadable()
   @Get(':id/billable-trips')
   @RequirePermission('suppliers:view', 'transport_trips:view')
   billableTrips(
@@ -209,6 +212,7 @@ export class SuppliersController {
 export class SupplierBillsController {
   constructor(private readonly bills: SupplierBillsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('suppliers:view')
   list(
@@ -218,6 +222,7 @@ export class SupplierBillsController {
     return this.bills.list(user, parse(billListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('suppliers:view')
   get(
@@ -279,6 +284,7 @@ export class SupplierBillsController {
 export class SupplierPaymentsController {
   constructor(private readonly payments: SupplierPaymentsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('supplier_payments:view')
   list(
@@ -288,6 +294,7 @@ export class SupplierPaymentsController {
     return this.payments.list(user, parse(paymentListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('supplier_payments:view')
   get(
