@@ -1,0 +1,300 @@
+name: Deploy production
+
+# Deploys one commit of main to production, by hand only (Actions > Deploy production > Run
+# workflow). It builds nothing: it runs the exact images that commit already ran on staging, so a
+# commit reaches production only after CI passed on it and the staging deploy of it succeeded.
+# The deploy job then waits for approval in the `production` environment. Setup and required
+# secrets: DEPLOY-PRODUCTION.md.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit of main to deploy (full SHA). Empty = the latest commit of main.
+        required: false
+        default: ''
+
+# One production deploy at a time, never cut off halfway; separate from staging's group.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check the commit passed CI and staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # CI and staging runs of the commit
+      packages: read # the staging images exist
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the commit
+        id: commit
+        env:
+          INPUT_COMMIT: ${{ inputs.commit }}
+        run: |
+          if [ -z "$INPUT_COMMIT" ]; then
+            sha="$(git rev-parse HEAD)"
+          elif [[ "$INPUT_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            sha="$INPUT_COMMIT"
+          else
+            echo "::error::commit must be a full 40-character SHA (or empty for the latest commit of main)"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+            echo "::error::$sha is not a commit of main"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Deploying $sha: $(git log -1 --format=%s "$sha")"
+
+      - name: CI passed and staging was deployed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          passed() {
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$1" --commit "$SHA" \
+              --status success --limit 1 --json databaseId --jq length
+          }
+          if [ "$(passed ci.yml)" != 1 ]; then
+            echo "::error::CI has not passed on $SHA."
+            exit 1
+          fi
+          if [ "$(passed deploy-staging.yml)" != 1 ]; then
+            echo "::error::$SHA was never deployed to staging successfully. Production runs only what staging ran first."
+            exit 1
+          fi
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: The staging images of this commit exist
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for image in api migrate web; do
+            if ! docker manifest inspect "$prefix/$image:$SHA" > /dev/null; then
+              echo "::error::$prefix/$image:$SHA is missing. Re-run Deploy staging on this commit first."
+              exit 1
+            fi
+          done
+
+  deploy:
+    name: Deploy to production
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # the server pulls the images with this job's token
+    # Required reviewers on this environment (Settings > Environments > production) make the job
+    # wait for approval; its secrets are released only then.
+    environment:
+      name: production
+      url: https://${{ vars.PRODUCTION_DOMAIN }}
+    env:
+      SHA: ${{ needs.check.outputs.sha }}
+      SITE_DOMAIN: ${{ vars.PRODUCTION_DOMAIN }}
+      # The port the host nginx forwards SITE_DOMAIN to (127.0.0.1 only). Must differ from staging's.
+      LOCAL_PORT: ${{ vars.PRODUCTION_LOCAL_PORT }}
+      DEPLOY_DIR: nolon-production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - name: Check required settings
+        env:
+          SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          POSTGRES_PASSWORD: ${{ secrets.PRODUCTION_POSTGRES_PASSWORD }}
+          SEED_ADMIN_EMAIL: ${{ secrets.PRODUCTION_SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.PRODUCTION_SEED_ADMIN_PASSWORD }}
+          # Staging's Caddy holds this port and the next one.
+          STAGING_PORT: ${{ vars.STAGING_LOCAL_PORT }}
+          BACKUP_AGE_RECIPIENT: ${{ vars.PRODUCTION_BACKUP_AGE_RECIPIENT }}
+          BACKUP_S3_ENDPOINT: ${{ vars.PRODUCTION_BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ vars.PRODUCTION_BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ vars.PRODUCTION_BACKUP_S3_REGION }}
+          BACKUP_KEEP_DAYS: ${{ vars.PRODUCTION_BACKUP_KEEP_DAYS }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.PRODUCTION_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.PRODUCTION_BACKUP_S3_SECRET_ACCESS_KEY }}
+        run: |
+          missing=""
+          for name in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS POSTGRES_PASSWORD SEED_ADMIN_EMAIL \
+            SEED_ADMIN_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing PRODUCTION_${name/SSH_KEY/SSH_PRIVATE_KEY}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the production environment:$missing (DEPLOY-PRODUCTION.md)"
+            exit 1
+          fi
+          if [[ ! "$SITE_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+            echo "::error::Variable PRODUCTION_DOMAIN must be a domain name, e.g. erp.example.com (DEPLOY-PRODUCTION.md)"
+            exit 1
+          fi
+          case "$SITE_DOMAIN" in
+            staging.*) echo "::error::PRODUCTION_DOMAIN must not be the staging address"; exit 1 ;;
+          esac
+          if [[ ! "$LOCAL_PORT" =~ ^[0-9]{4,5}$ ]] || [ "$LOCAL_PORT" -lt 1024 ] || [ "$LOCAL_PORT" -gt 65535 ]; then
+            echo "::error::Variable PRODUCTION_LOCAL_PORT must be a free port from 1024 to 65535, e.g. 8092"
+            exit 1
+          fi
+          if [[ "$STAGING_PORT" =~ ^[0-9]+$ ]] &&
+            { [ "$LOCAL_PORT" = "$STAGING_PORT" ] || [ "$LOCAL_PORT" = "$((STAGING_PORT + 1))" ]; }; then
+            echo "::error::PRODUCTION_LOCAL_PORT must differ from the ports staging uses"
+            exit 1
+          fi
+          if [ "${#POSTGRES_PASSWORD}" -lt 32 ] || [[ ! "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "::error::PRODUCTION_POSTGRES_PASSWORD must be letters and digits only, 32 or more (openssl rand -hex 24)"
+            exit 1
+          fi
+          case "$SEED_ADMIN_PASSWORD" in
+            *"'"*) echo "::error::PRODUCTION_SEED_ADMIN_PASSWORD must not contain a single quote"; exit 1 ;;
+          esac
+          if [ "${#SEED_ADMIN_PASSWORD}" -lt 16 ]; then
+            echo "::error::PRODUCTION_SEED_ADMIN_PASSWORD needs at least 16 characters"
+            exit 1
+          fi
+          # Backups: all five settings, or none yet (deploy.sh then warns on every deploy). The
+          # values themselves are checked on the server by backup-job.sh.
+          set_count=0
+          for name in BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET \
+            BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+            [ -z "${!name}" ] || set_count=$((set_count + 1))
+          done
+          if [ "$set_count" != 0 ] && [ "$set_count" != 5 ]; then
+            echo "::error::Backups need all of PRODUCTION_BACKUP_AGE_RECIPIENT, PRODUCTION_BACKUP_S3_ENDPOINT, PRODUCTION_BACKUP_S3_BUCKET (variables), PRODUCTION_BACKUP_S3_ACCESS_KEY_ID and PRODUCTION_BACKUP_S3_SECRET_ACCESS_KEY (secrets), or none of them"
+            exit 1
+          fi
+          for name in BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_REGION \
+            BACKUP_KEEP_DAYS BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+            case "${!name}" in
+              *"'"* | *$'\n'*) echo "::error::PRODUCTION_$name must not contain a quote or a line break"; exit 1 ;;
+            esac
+          done
+          if [ "$set_count" = 0 ]; then
+            echo "::warning::Backups are not set up yet: production must hold no real data until they are (DEPLOY-PRODUCTION.md, Backups)"
+          fi
+
+      # Fails in seconds on a bad key or host key, before anything changes on the server.
+      - name: Set up and check SSH
+        id: ssh
+        env:
+          SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          install -m 700 -d ~/.ssh
+          # Keys copied on Windows carry CRLF line endings, which OpenSSH rejects.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null; then
+            echo "::error::PRODUCTION_SSH_PRIVATE_KEY cannot be read as a private key. Paste the whole private key file (nolon-production-deploy, not the .pub), with its line breaks and no quotes."
+            exit 1
+          fi
+          # Known_hosts lines or bare host public keys (pinned to PRODUCTION_SSH_HOST).
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' | while read -r line; do
+            case "$line" in
+              '' | '#'*) ;;
+              ssh-* | ecdsa-*) echo "$SSH_HOST $line" ;;
+              *) echo "$line" ;;
+            esac
+          done > ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts > /dev/null; then
+            echo "::error::PRODUCTION_SSH_KNOWN_HOSTS has no key for PRODUCTION_SSH_HOST (DEPLOY.md, step 3)."
+            exit 1
+          fi
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" true; then
+            echo "::error::SSH to the server failed. 'Host key verification failed': PRODUCTION_SSH_KNOWN_HOSTS is not this server's key. 'Permission denied': the public half of PRODUCTION_SSH_PRIVATE_KEY is not in /home/deploy/.ssh/authorized_keys."
+            exit 1
+          fi
+
+      - name: Write server .env
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.PRODUCTION_POSTGRES_PASSWORD }}
+          SEED_ADMIN_EMAIL: ${{ secrets.PRODUCTION_SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.PRODUCTION_SEED_ADMIN_PASSWORD }}
+          BACKUP_AGE_RECIPIENT: ${{ vars.PRODUCTION_BACKUP_AGE_RECIPIENT }}
+          BACKUP_S3_ENDPOINT: ${{ vars.PRODUCTION_BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ vars.PRODUCTION_BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ vars.PRODUCTION_BACKUP_S3_REGION }}
+          BACKUP_KEEP_DAYS: ${{ vars.PRODUCTION_BACKUP_KEEP_DAYS }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.PRODUCTION_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.PRODUCTION_BACKUP_S3_SECRET_ACCESS_KEY }}
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          umask 077
+          {
+            echo "SITE_DOMAIN='$SITE_DOMAIN'"
+            echo "LOCAL_PORT='$LOCAL_PORT'"
+            echo "API_IMAGE='$prefix/api:$SHA'"
+            echo "MIGRATE_IMAGE='$prefix/migrate:$SHA'"
+            echo "WEB_IMAGE='$prefix/web:$SHA'"
+            echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
+            # The first Administrator, created by the base seed only if missing.
+            echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
+            echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"
+            # Backups (DEPLOY-PRODUCTION.md, Backups). Empty until set up.
+            for name in BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_REGION \
+              BACKUP_KEEP_DAYS BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+              echo "$name='${!name}'"
+            done
+          } > deploy/production/.env
+
+      - name: Copy files and deploy
+        env:
+          SSH_TARGET: ${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_SSH_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # shellcheck disable=SC2029 # expanding on the runner is the point
+          remote() { ssh "$SSH_TARGET" "$1"; }
+          dir="$DEPLOY_DIR"
+          # Private directory first, then the secrets file created with mode 600 from the start.
+          remote "umask 077 && mkdir -p $dir && chmod 700 $dir"
+          remote "umask 077 && cat > $dir/.env.tmp && mv $dir/.env.tmp $dir/.env" < deploy/production/.env
+          (cd deploy/production && scp docker-compose.production.yml Caddyfile deploy.sh backup.sh \
+            backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
+          # The job token can pull this repo's images only while the job runs; log out afterwards.
+          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          status=0
+          remote "bash $dir/deploy.sh" || status=$?
+          remote "docker logout ghcr.io" || true
+          exit "$status"
+
+      - name: Health check
+        run: |
+          curl --fail --silent --show-error --retry 20 --retry-delay 6 --retry-all-errors \
+            "https://$SITE_DOMAIN/api/v1/health"
+          echo
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' --retry 5 --retry-all-errors \
+            "https://$SITE_DOMAIN/ar")
+          echo "web /ar -> HTTP $code"
+          if [ "$code" != 200 ]; then
+            echo "::error::https://$SITE_DOMAIN/ar answered $code, expected 200"
+            exit 1
+          fi
+
+      - name: Show container logs on failure
+        if: failure() && steps.ssh.outcome == 'success'
+        env:
+          SSH_TARGET: ${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_SSH_HOST }}
+        run: |
+          # shellcheck disable=SC2029 # $DEPLOY_DIR is meant to expand here, on the runner.
+          ssh "$SSH_TARGET" "cd ~/$DEPLOY_DIR && docker compose -f docker-compose.production.yml ps -a && docker compose -f docker-compose.production.yml logs --tail 80" || true

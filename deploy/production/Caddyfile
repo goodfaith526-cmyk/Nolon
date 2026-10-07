@@ -1,0 +1,31 @@
+# Reverse proxy for production, behind the host nginx (DEPLOY-PRODUCTION.md). nginx terminates
+# HTTPS for the production domain and forwards to this Caddy on 127.0.0.1:<LOCAL_PORT>, plain HTTP.
+{
+	servers {
+		# nginx reaches Caddy from this machine (a loopback or Docker bridge address). Trusting
+		# those makes Caddy append to nginx's X-Forwarded-For instead of replacing it, so the API
+		# (TRUST_PROXY_HOPS=2) gets the client's real IP. Nothing outside the server can connect.
+		trusted_proxies static private_ranges
+	}
+}
+
+:80 {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# An internal business system: keep it out of search engines.
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
