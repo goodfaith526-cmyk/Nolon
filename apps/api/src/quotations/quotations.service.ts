@@ -13,8 +13,9 @@ import type {
   QuotationSummaryDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { localDayFilter } from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -29,6 +30,11 @@ import { DiscountExceedsLineError, computeQuotationAmounts } from './quotation-t
 export interface QuotationFilters extends PageQuery {
   status?: QuotationStatus;
   customerId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Created from / to (local day of the branch), both included. */
+  from?: string;
+  to?: string;
 }
 
 type QuotationWithDetails = Quotation & {
@@ -64,8 +70,10 @@ export class QuotationsService {
   ) {}
 
   async list(user: AuthUser, filters: QuotationFilters): Promise<Page<QuotationSummaryDto>> {
+    const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.QuotationWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.q

@@ -17,19 +17,20 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
-import { dateString, parse } from '../common/validation.js';
+import { dateString, parse, withoutLocale } from '../common/validation.js';
 import { xlsxDownload } from './excel-response.js';
 import { type ReportFile, type ReportRequest, ReportsService } from './reports.service.js';
 
 const branch = { branchId: z.uuid().optional() };
 const customer = { customerId: z.uuid().optional() };
 
-const periodBase = z.object({ from: dateString, to: dateString, ...branch });
+/** Report queries are strict: an unknown filter is a 400 (the export's `locale` is read apart). */
+const periodBase = z.strictObject({ from: dateString, to: dateString, ...branch });
 /** A period runs from `from` to `to`, both included; from is not after to. */
 const fromNotAfterTo = (q: { from: string; to: string }) => q.from <= q.to;
 const afterTo = { message: 'from is after to', path: ['to'] };
 
-const asOfQuery = z.object({ asOf: dateString, ...branch });
+const asOfQuery = z.strictObject({ asOf: dateString, ...branch });
 const agingQuery = asOfQuery.extend(customer);
 const apAgingQuery = asOfQuery.extend({ supplierId: z.uuid().optional() });
 const plainPeriod = periodBase.refine(fromNotAfterTo, afterTo);
@@ -72,7 +73,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'trial-balance',
-      query: parse(asOfQuery, query),
+      query: parse(asOfQuery, withoutLocale(query)),
     });
   }
 
@@ -95,7 +96,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'income-statement',
-      query: parse(plainPeriod, query),
+      query: parse(plainPeriod, withoutLocale(query)),
     });
   }
 
@@ -115,7 +116,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'balance-sheet',
-      query: parse(asOfQuery, query),
+      query: parse(asOfQuery, withoutLocale(query)),
     });
   }
 
@@ -135,7 +136,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'general-ledger',
-      query: parse(ledgerQuery, query),
+      query: parse(ledgerQuery, withoutLocale(query)),
     });
   }
 
@@ -155,7 +156,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'ar-aging',
-      query: parse(agingQuery, query),
+      query: parse(agingQuery, withoutLocale(query)),
     });
   }
 
@@ -175,7 +176,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'ap-aging',
-      query: parse(apAgingQuery, query),
+      query: parse(apAgingQuery, withoutLocale(query)),
     });
   }
 
@@ -198,7 +199,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'shipment-profitability',
-      query: parse(customerPeriod, query),
+      query: parse(customerPeriod, withoutLocale(query)),
     });
   }
 
@@ -221,7 +222,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'invoices-receipts',
-      query: parse(customerPeriod, query),
+      query: parse(customerPeriod, withoutLocale(query)),
     });
   }
 
@@ -241,7 +242,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'cash-movement',
-      query: parse(cashQuery, query),
+      query: parse(cashQuery, withoutLocale(query)),
     });
   }
 
@@ -261,7 +262,7 @@ export class ReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'open-accruals',
-      query: parse(asOfQuery, query),
+      query: parse(asOfQuery, withoutLocale(query)),
     });
   }
 

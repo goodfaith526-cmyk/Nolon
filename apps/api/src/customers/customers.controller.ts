@@ -10,10 +10,16 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import type { CustomerDto, CustomerSummaryDto, Page } from '@nolon/shared';
+import {
+  CUSTOMER_KINDS,
+  type CustomerDto,
+  type CustomerSummaryDto,
+  type Page,
+} from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { optionalFlag } from '../common/list-filters.js';
 import {
   countryCode,
   optionalText,
@@ -24,6 +30,12 @@ import {
 } from '../common/validation.js';
 import { createCustomerBody, email, updateCustomerBody } from './customer-schemas.js';
 import { CustomersService } from './customers.service.js';
+
+const listQuery = pageQuery.extend({
+  branchId: z.uuid().optional(),
+  kind: z.enum(CUSTOMER_KINDS).optional(),
+  isActive: optionalFlag,
+});
 
 const contactBody = z
   .object({
@@ -60,7 +72,7 @@ export class CustomersController {
   @Get()
   @RequirePermission('customers:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<CustomerSummaryDto>> {
-    return this.customers.list(user, parse(pageQuery, query));
+    return this.customers.list(user, parse(listQuery, query));
   }
 
   @AgentReadable()

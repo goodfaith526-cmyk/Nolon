@@ -8,7 +8,7 @@ import { DashboardFiguresService } from './dashboard-figures.service.js';
 import { DashboardService } from './dashboard.service.js';
 
 const dashboardQuery = z
-  .object({
+  .strictObject({
     from: dateString.optional(),
     to: dateString.optional(),
     branchId: z.uuid().optional(),

@@ -17,8 +17,9 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -31,6 +32,11 @@ import { relievedUsd } from './invoice-math.js';
 export interface ReceiptFilters extends PageQuery {
   status?: ReceiptStatus;
   customerId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Receipt date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -67,7 +73,8 @@ export class ReceiptsService {
 
   async list(user: AuthUser, filters: ReceiptFilters): Promise<Page<ReceiptSummaryDto>> {
     const where: Prisma.ReceiptWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      receiptDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.q

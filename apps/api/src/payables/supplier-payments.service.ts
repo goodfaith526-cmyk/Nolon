@@ -16,8 +16,9 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, requestedRate, roundMoney, sameRequestedRate } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -31,6 +32,11 @@ import { SuppliersService } from './suppliers.service.js';
 export interface SupplierPaymentFilters extends PageQuery {
   status?: SupplierPaymentStatus;
   supplierId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Payment date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -71,7 +77,8 @@ export class SupplierPaymentsService {
     filters: SupplierPaymentFilters,
   ): Promise<Page<SupplierPaymentSummaryDto>> {
     const where: Prisma.SupplierPaymentWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      paymentDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
       ...(filters.q

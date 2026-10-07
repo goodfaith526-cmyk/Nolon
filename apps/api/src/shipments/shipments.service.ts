@@ -24,12 +24,13 @@ import type {
 } from '@nolon/shared';
 import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, canAccessBranch } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
+import { dateRange, localDayFilter } from '../common/list-filters.js';
 import { toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -54,10 +55,20 @@ import {
 } from './state-machine.js';
 
 export interface ShipmentFilters extends PageQuery {
-  status?: ShipmentStatus;
+  /** Any of these statuses. */
+  status?: readonly ShipmentStatus[];
   customerId?: string;
   /** Only shipments that are neither closed nor cancelled. */
   activeOnly?: boolean;
+  mode?: ShippingMode;
+  /** Visible in this branch (its own or sharing it); 403 unless it is one of the user's. */
+  branchId?: string;
+  /** Created from / to (local day of the owning branch, both included). */
+  from?: string;
+  to?: string;
+  /** ETA from / to (both included). */
+  etaFrom?: string;
+  etaTo?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -111,17 +122,26 @@ export class ShipmentsService {
   ) {}
 
   async list(user: AuthUser, filters: ShipmentFilters): Promise<Page<ShipmentSummaryDto>> {
+    const { branchId, from, to } = filters;
+    if (branchId) assertBranchAccess(user, branchId);
+    const created = await localDayFilter(this.prisma, 'createdAt', from, to);
     const where: Prisma.ShipmentWhereInput = {
-      ...this.scope(user),
+      AND: [
+        this.scope(user),
+        ...(branchId ? [{ OR: [{ branchId }, { sharedBranches: { some: { branchId } } }] }] : []),
+        ...(created ? [created] : []),
+      ],
       ...(filters.status || filters.activeOnly
         ? {
             status: {
-              ...(filters.status ? { equals: filters.status } : {}),
+              ...(filters.status ? { in: [...filters.status] } : {}),
               ...(filters.activeOnly ? { notIn: [...FINISHED] } : {}),
             },
           }
         : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
+      ...(filters.mode ? { mode: filters.mode } : {}),
+      eta: dateRange(filters.etaFrom, filters.etaTo),
       ...(filters.q
         ? {
             OR: [

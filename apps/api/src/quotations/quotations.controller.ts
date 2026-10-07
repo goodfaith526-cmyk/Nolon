@@ -23,6 +23,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -63,10 +64,13 @@ const quotationFields = {
 const createBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();
 const updateBody = z.object(quotationFields).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
-const listQuery = pageQuery.extend({
-  status: z.enum(QUOTATION_STATUSES).optional(),
-  customerId: z.uuid().optional(),
-});
+const listQuery = pageQuery
+  .extend({
+    status: z.enum(QUOTATION_STATUSES).optional(),
+    customerId: z.uuid().optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 
 @Controller('quotations')
 export class QuotationsController {

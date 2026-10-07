@@ -23,6 +23,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { BookingsService } from './bookings.service.js';
 
@@ -88,10 +89,13 @@ const fromQuotationBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
-const listQuery = pageQuery.extend({
-  status: z.enum(BOOKING_STATUSES).optional(),
-  customerId: z.uuid().optional(),
-});
+const listQuery = pageQuery
+  .extend({
+    status: z.enum(BOOKING_STATUSES).optional(),
+    customerId: z.uuid().optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 
 @Controller('bookings')
 export class BookingsController {

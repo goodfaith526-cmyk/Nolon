@@ -11,6 +11,7 @@ import type {
   CustomerContactDto,
   CustomerDto,
   CustomerInput,
+  CustomerKind,
   CustomerSummaryDto,
   Page,
   PartyDto,
@@ -23,7 +24,7 @@ import {
   changedFields,
 } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
@@ -48,6 +49,13 @@ export const CUSTOMER_UNIQUE_RULE = 'customer-phone-tax';
 
 /** How tax numbers compare: case and surrounding spaces do not matter. */
 export const normalizeTaxNumber = (value: string) => value.trim().toUpperCase();
+
+export interface CustomerFilters extends PageQuery {
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  kind?: CustomerKind;
+  isActive?: boolean;
+}
 
 /** What a customer write would claim in its branch; `excludeId` is the customer being edited. */
 export interface CustomerKeys {
@@ -74,8 +82,12 @@ export class CustomersService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(user: AuthUser, query: PageQuery): Promise<Page<CustomerSummaryDto>> {
-    const where: Prisma.CustomerWhereInput = { ...branchScope(user) };
+  async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
+    const where: Prisma.CustomerWhereInput = {
+      ...listBranchScope(user, query.branchId),
+      ...(query.kind ? { kind: query.kind } : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
     if (query.q) {
       const q = query.q;
       where.OR = [

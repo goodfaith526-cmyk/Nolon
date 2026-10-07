@@ -13,6 +13,7 @@ import {
 import {
   CREDIT_NOTE_STATUSES,
   INVOICE_STATUSES,
+  PAYMENT_STATUSES,
   RECEIPT_STATUSES,
   type CreditNoteDto,
   type CreditNoteSummaryDto,
@@ -26,6 +27,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { branchPeriodFields, flag, periodInOrder } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -62,15 +64,18 @@ const updateInvoiceBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
-const invoiceListQuery = pageQuery.extend({
-  status: z.enum(INVOICE_STATUSES).optional(),
-  customerId: z.uuid().optional(),
-  shipmentId: z.uuid().optional(),
-  openOnly: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => v === 'true'),
-});
+const invoiceListQuery = pageQuery
+  .extend({
+    status: z.enum(INVOICE_STATUSES).optional(),
+    customerId: z.uuid().optional(),
+    shipmentId: z.uuid().optional(),
+    openOnly: flag,
+    /** Approved, not fully settled, due before today (branch-local). */
+    overdue: flag,
+    paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 
 const createReceiptBody = z
   .object({
@@ -97,11 +102,14 @@ const createCreditNoteBody = z
   .object({ requestId: z.uuid(), invoiceId: z.uuid(), ...creditNoteFields })
   .strict();
 const updateCreditNoteBody = z.object(creditNoteFields).strict();
-const creditNoteListQuery = pageQuery.extend({
-  status: z.enum(CREDIT_NOTE_STATUSES).optional(),
-  invoiceId: z.uuid().optional(),
-  customerId: z.uuid().optional(),
-});
+const creditNoteListQuery = pageQuery
+  .extend({
+    status: z.enum(CREDIT_NOTE_STATUSES).optional(),
+    invoiceId: z.uuid().optional(),
+    customerId: z.uuid().optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 const openingItemBody = z
   .object({
     requestId: z.uuid(),
@@ -116,10 +124,13 @@ const openingItemBody = z
   })
   .strict();
 
-const receiptListQuery = pageQuery.extend({
-  status: z.enum(RECEIPT_STATUSES).optional(),
-  customerId: z.uuid().optional(),
-});
+const receiptListQuery = pageQuery
+  .extend({
+    status: z.enum(RECEIPT_STATUSES).optional(),
+    customerId: z.uuid().optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 
 @Controller('customer-invoices')
 export class InvoicesController {

@@ -43,7 +43,11 @@ export function requiredText(max: number) {
   return z.string().trim().min(1).max(max);
 }
 
-export const pageQuery = z.object({
+/**
+ * Paging and free-text search of a list. Strict, like every list and report query extended from
+ * it: an unknown filter is a 400, never silently ignored (which would return unfiltered rows).
+ */
+export const pageQuery = z.strictObject({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).optional(),
@@ -56,3 +60,12 @@ export const fxRate = z
   .string()
   .regex(/^\d{1,10}(\.\d{1,8})?$/, 'Invalid exchange rate')
   .refine((v) => /[1-9]/.test(v), 'Exchange rate must be positive');
+
+/**
+ * An Excel export's query without its `locale` (read separately for the headers), so the report's
+ * own strict query schema can parse the rest.
+ */
+export function withoutLocale(query: unknown): unknown {
+  if (typeof query !== 'object' || query === null) return query;
+  return Object.fromEntries(Object.entries(query).filter(([key]) => key !== 'locale'));
+}

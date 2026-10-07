@@ -18,6 +18,7 @@ import {
   CONTAINER_NUMBER_PATTERN,
   MAX_SHARED_BRANCHES,
   SHIPMENT_STATUSES,
+  SHIPPING_MODES,
   type Page,
   type ShipmentDto,
   type ShipmentSummaryDto,
@@ -25,6 +26,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { flag, periodFields, periodsInOrder } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ShipmentsService } from './shipments.service.js';
 
@@ -73,14 +75,24 @@ const containerBody = z
   })
   .strict();
 
-const listQuery = pageQuery.extend({
-  status: z.enum(SHIPMENT_STATUSES).optional(),
-  customerId: z.uuid().optional(),
-  activeOnly: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => v === 'true'),
-});
+const listQuery = pageQuery
+  .extend({
+    /** One status, or several separated by commas (any of them). */
+    status: z
+      .string()
+      .transform((v) => [...new Set(v.split(',').map((s) => s.trim()))])
+      .pipe(z.array(z.enum(SHIPMENT_STATUSES)).min(1))
+      .optional(),
+    customerId: z.uuid().optional(),
+    activeOnly: flag,
+    mode: z.enum(SHIPPING_MODES).optional(),
+    branchId: z.uuid().optional(),
+    /** Created on (branch-local day). */
+    ...periodFields,
+    etaFrom: dateString.optional(),
+    etaTo: dateString.optional(),
+  })
+  .superRefine(periodsInOrder(['from', 'to'], ['etaFrom', 'etaTo']));
 
 const tokenParam = z.string().regex(/^[A-Za-z0-9_-]{32,64}$/);
 

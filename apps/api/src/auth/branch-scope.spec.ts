@@ -5,6 +5,7 @@ import {
   assertBranchAccess,
   branchScope,
   canAccessBranch,
+  listBranchScope,
   reportBranchIds,
 } from './branch-scope.js';
 
@@ -45,5 +46,11 @@ describe('branch scope', () => {
     expect(reportBranchIds(two, 'pts')).toEqual(['pts']);
     expect(() => reportBranchIds(two, 'krt')).toThrow(ForbiddenException);
     expect(reportBranchIds({ ...user, allowedBranchIds: [] })).toEqual([]);
+  });
+
+  it('a list branch filter narrows to one of the user branches, never wider', () => {
+    expect(listBranchScope(user)).toEqual({ branchId: { in: ['dxb'] } });
+    expect(listBranchScope(user, 'dxb')).toEqual({ branchId: { in: ['dxb'] } });
+    expect(() => listBranchScope(user, 'krt')).toThrow(ForbiddenException);
   });
 });

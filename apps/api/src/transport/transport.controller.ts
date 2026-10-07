@@ -36,6 +36,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -126,7 +127,16 @@ const tripBody = z
   })
   .strict();
 
-const tripListQuery = pageQuery.extend({ status: z.enum(TRIP_STATUSES).optional() });
+const tripListQuery = pageQuery
+  .extend({
+    status: z.enum(TRIP_STATUSES).optional(),
+    vehicleId: z.uuid().optional(),
+    driverId: z.uuid().optional(),
+    carrierId: z.uuid().optional(),
+    /** Planned departure (branch-local day). */
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 const moveBody = z
   .object({ status: z.enum(TRIP_MOVES), occurredAt: timestamp.optional() })
   .strict();

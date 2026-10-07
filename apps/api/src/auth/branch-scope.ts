@@ -34,3 +34,14 @@ export function reportBranchIds(user: AuthUser, branchId?: string | null): strin
   }
   return [...user.allowedBranchIds];
 }
+
+/**
+ * Prisma `where` fragment for a list filtered on `branchId`: that branch (403 when it is not one of
+ * the user's) or every branch the user may see. Never wider than `branchScope`.
+ */
+export function listBranchScope(
+  user: AuthUser,
+  branchId?: string | null,
+): { branchId: { in: string[] } } {
+  return { branchId: { in: reportBranchIds(user, branchId) } };
+}

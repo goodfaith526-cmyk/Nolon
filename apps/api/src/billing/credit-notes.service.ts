@@ -15,8 +15,9 @@ import type {
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
+import { dateRange } from '../common/list-filters.js';
 import { type Decimal, dec, roundMoney } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -30,6 +31,11 @@ export interface CreditNoteFilters extends PageQuery {
   status?: CreditNoteStatus;
   invoiceId?: string;
   customerId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Credit note date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -67,7 +73,8 @@ export class CreditNotesService {
 
   async list(user: AuthUser, filters: CreditNoteFilters): Promise<Page<CreditNoteSummaryDto>> {
     const where: Prisma.CreditNoteWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      creditDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.invoiceId ? { invoiceId: filters.invoiceId } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),

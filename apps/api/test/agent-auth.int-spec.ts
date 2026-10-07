@@ -520,7 +520,7 @@ describe('acting with a token', () => {
   it('logs every attempt with the real user and the agent, without query values', async () => {
     const user = await staff();
     const token = await tokenFor(user.cookie);
-    await asAgent('/api/v1/customers?search=secret-name', token.accessToken).expect(200);
+    await asAgent('/api/v1/customers?q=secret-name', token.accessToken).expect(200);
     await asAgent('/api/v1/users', token.accessToken).expect(403);
     const rows = await t.prisma.agentAccessEvent.findMany({
       where: { agentTokenId: token.jti },
@@ -536,6 +536,13 @@ describe('acting with a token', () => {
     await expect(t.prisma.$executeRawUnsafe('TRUNCATE "agent_access_events"')).rejects.toThrow(
       /cannot be changed/,
     );
+  });
+
+  it('gets a 400 for a filter a list does not have, never the unfiltered list', async () => {
+    const user = await staff();
+    const token = await tokenFor(user.cookie);
+    await asAgent('/api/v1/customers?search=secret-name', token.accessToken).expect(400);
+    await asAgent('/api/v1/shipments?branch=DXB', token.accessToken).expect(400);
   });
 });
 

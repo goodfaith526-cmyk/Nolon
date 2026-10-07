@@ -14,7 +14,7 @@ import { RATE_STATUSES, SHIPPING_MODES, type Page, type RateCardDto } from '@nol
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
-import { pageQuery, parse } from '../common/validation.js';
+import { dateString, pageQuery, parse } from '../common/validation.js';
 import { createRateBody, updateRateBody } from './rate-schemas.js';
 import { RatesService } from './rates.service.js';
 
@@ -23,6 +23,9 @@ const listQuery = pageQuery.extend({
   originLocationId: z.uuid().optional(),
   destinationLocationId: z.uuid().optional(),
   mode: z.enum(SHIPPING_MODES).optional(),
+  /** Valid on this date: valid from on or before it, valid to (if any) on or after it. */
+  validOn: dateString.optional(),
+  branchId: z.uuid().optional(),
 });
 
 @Controller('rates')

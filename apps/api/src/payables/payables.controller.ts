@@ -16,6 +16,7 @@ import {
   SUPPLIER_BILL_LINE_KINDS,
   SUPPLIER_BILL_STATUSES,
   SUPPLIER_PAYMENT_STATUSES,
+  PAYMENT_STATUSES,
   type BillableTripDto,
   type Page,
   type SupplierBillDto,
@@ -28,6 +29,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, flag, periodInOrder } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -62,7 +64,7 @@ const supplierListQuery = pageQuery.extend({
     .optional()
     .transform((v) => v === 'true'),
 });
-const billableTripsQuery = z.object({ branchId: z.uuid().optional() });
+const billableTripsQuery = z.strictObject({ branchId: z.uuid().optional() });
 
 const billLine = z
   .object({
@@ -90,14 +92,17 @@ const createBillBody = z
   .object({ requestId: z.uuid(), supplierId: z.uuid(), ...billFields })
   .strict();
 const updateBillBody = z.object(billFields).strict();
-const billListQuery = pageQuery.extend({
-  status: z.enum(SUPPLIER_BILL_STATUSES).optional(),
-  supplierId: z.uuid().optional(),
-  openOnly: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => v === 'true'),
-});
+const billListQuery = pageQuery
+  .extend({
+    status: z.enum(SUPPLIER_BILL_STATUSES).optional(),
+    supplierId: z.uuid().optional(),
+    openOnly: flag,
+    /** Approved, not fully paid, due before today (branch-local). */
+    overdue: flag,
+    paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 const openingBillBody = z
   .object({
     requestId: z.uuid(),
@@ -131,10 +136,13 @@ const createPaymentBody = z
       .max(100),
   })
   .strict();
-const paymentListQuery = pageQuery.extend({
-  status: z.enum(SUPPLIER_PAYMENT_STATUSES).optional(),
-  supplierId: z.uuid().optional(),
-});
+const paymentListQuery = pageQuery
+  .extend({
+    status: z.enum(SUPPLIER_PAYMENT_STATUSES).optional(),
+    supplierId: z.uuid().optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 
 /** Suppliers: master data shared by all branches (annex A, "suppliers and their bills"). */
 @Controller('suppliers')

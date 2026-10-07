@@ -9,6 +9,7 @@ import type {
   CreateSupplierBillRequest,
   OpeningSupplierItemRequest,
   Page,
+  PaymentStatus,
   SupplierBillDto,
   SupplierBillInput,
   SupplierBillLineInput,
@@ -20,8 +21,9 @@ import { ExpenseCategoriesService } from '../accounting/expense-categories.servi
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { beforeLocalToday, branchZones, dateRange } from '../common/list-filters.js';
 import {
   type Decimal,
   ZERO,
@@ -49,6 +51,15 @@ export interface SupplierBillFilters extends PageQuery {
   supplierId?: string;
   /** Approved bills with a balance left. */
   openOnly?: boolean;
+  /** Approved bills with a balance left, due before today in their branch's time zone. */
+  overdue?: boolean;
+  /** By what payments settled: none (UNPAID), part (PARTIAL) or all (PAID). */
+  paymentStatus?: PaymentStatus;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Bill date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -116,16 +127,22 @@ export class SupplierBillsService {
   ) {}
 
   async list(user: AuthUser, filters: SupplierBillFilters): Promise<Page<SupplierBillSummaryDto>> {
+    const open: Prisma.SupplierBillWhereInput[] = [];
+    if (filters.openOnly || filters.overdue) {
+      open.push({ status: 'APPROVED', paidAmount: { lt: this.prisma.supplierBill.fields.total } });
+    }
+    if (filters.overdue) {
+      open.push(beforeLocalToday(await branchZones(this.prisma), 'dueDate'));
+    }
+    if (filters.paymentStatus) {
+      open.push({ paidAmount: billPaymentFilter(filters.paymentStatus, this.prisma) });
+    }
     const where: Prisma.SupplierBillWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      billDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
-      ...(filters.openOnly
-        ? {
-            status: 'APPROVED',
-            paidAmount: { lt: this.prisma.supplierBill.fields.total },
-          }
-        : {}),
+      AND: open,
       ...(filters.q
         ? {
             OR: [
@@ -783,4 +800,14 @@ function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
       canCancel: cancellable && can('cancel'),
     },
   };
+}
+
+/** `paidAmount` filter for a payment status (bills have no credit notes: payments only). */
+function billPaymentFilter(
+  status: PaymentStatus,
+  prisma: PrismaService,
+): Prisma.DecimalFilter<'SupplierBill'> {
+  const total = prisma.supplierBill.fields.total;
+  if (status === 'UNPAID') return { equals: 0 };
+  return status === 'PAID' ? { gt: 0, gte: total } : { gt: 0, lt: total };
 }

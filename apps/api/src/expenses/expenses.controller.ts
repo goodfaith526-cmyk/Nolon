@@ -19,6 +19,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -44,10 +45,13 @@ const expenseFields = {
 };
 const createBody = z.object({ requestId: z.uuid(), branchId: z.uuid(), ...expenseFields }).strict();
 const updateBody = z.object(expenseFields).strict();
-const listQuery = pageQuery.extend({
-  status: z.enum(EXPENSE_STATUSES).optional(),
-  categoryCode: categoryCode.optional(),
-});
+const listQuery = pageQuery
+  .extend({
+    status: z.enum(EXPENSE_STATUSES).optional(),
+    categoryCode: categoryCode.optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 
 /** General expenses paid from cash or bank (annex C rule 12). */
