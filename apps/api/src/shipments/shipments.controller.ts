@@ -76,6 +76,10 @@ const containerBody = z
 const listQuery = pageQuery.extend({
   status: z.enum(SHIPMENT_STATUSES).optional(),
   customerId: z.uuid().optional(),
+  activeOnly: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 const tokenParam = z.string().regex(/^[A-Za-z0-9_-]{32,64}$/);

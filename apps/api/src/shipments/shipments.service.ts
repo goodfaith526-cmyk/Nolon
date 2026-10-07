@@ -40,6 +40,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
+  FINISHED,
   type HistoryEntry,
   canCancelStatus,
   canHold,
@@ -55,6 +56,8 @@ import {
 export interface ShipmentFilters extends PageQuery {
   status?: ShipmentStatus;
   customerId?: string;
+  /** Only shipments that are neither closed nor cancelled. */
+  activeOnly?: boolean;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -110,7 +113,14 @@ export class ShipmentsService {
   async list(user: AuthUser, filters: ShipmentFilters): Promise<Page<ShipmentSummaryDto>> {
     const where: Prisma.ShipmentWhereInput = {
       ...this.scope(user),
-      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.status || filters.activeOnly
+        ? {
+            status: {
+              ...(filters.status ? { equals: filters.status } : {}),
+              ...(filters.activeOnly ? { notIn: [...FINISHED] } : {}),
+            },
+          }
+        : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.q
         ? {

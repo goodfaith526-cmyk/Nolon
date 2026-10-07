@@ -113,7 +113,8 @@ const PRE_LOADING: readonly ShipmentStatus[] = [
   'ON_HOLD',
 ];
 
-const FINISHED: readonly ShipmentStatus[] = ['CLOSED', 'CANCELLED'];
+/** Closed or cancelled: nothing more happens to the shipment. Every other status is active. */
+export const FINISHED: readonly ShipmentStatus[] = ['CLOSED', 'CANCELLED'];
 
 export interface ShipmentShape {
   mode: ShippingMode;
