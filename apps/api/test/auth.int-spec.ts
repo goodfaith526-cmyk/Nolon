@@ -1,5 +1,7 @@
 import type { AuthMeResponse } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AuthUser } from '../src/auth/auth-user.js';
+import { AuthService } from '../src/auth/auth.service.js';
 import { hashSessionToken } from '../src/auth/session-token.js';
 import {
   APP_ORIGIN,
@@ -111,6 +113,53 @@ describe('sign-in, sessions and permissions', () => {
       expect(me.permissions).not.toContain('users:view');
       expect(me.branches.map((b) => b.code)).toEqual(['DXB', 'JED']);
       expect(me.assistantUrl).toBeNull();
+    });
+
+    it("gives each branch's time zone and local date in /auth/me, on both sides of UTC midnight", async () => {
+      const { email } = await createUser(t.prisma, ['SALES'], ['DXB', 'KRT']);
+      const cookie = await signIn(t, email);
+      const res = await t.http().get('/api/v1/auth/me').set('Cookie', cookie).expect(200);
+      const zones = await t.prisma.branch.findMany({
+        where: { code: { in: ['DXB', 'KRT'] } },
+        select: { code: true, timezone: true },
+        orderBy: { code: 'asc' },
+      });
+      expect((res.body as AuthMeResponse).branches.map((b) => [b.code, b.timezone])).toEqual(
+        zones.map((z) => [z.code, z.timezone]),
+      );
+
+      // 21:30 UTC on 31 October: already 1 November in Dubai (UTC+4), still 31 October in
+      // Khartoum (UTC+2). The month changes in one branch and not the other.
+      const auth = t.app.get(AuthService);
+      const branches = await t.prisma.branch.findMany({ where: { code: { in: ['DXB', 'KRT'] } } });
+      const user: AuthUser = {
+        id: 'u',
+        email,
+        fullName: 'Probe',
+        preferredLocale: 'en',
+        sessionId: 's',
+        credentialStamp: 'c',
+        roles: ['SALES'],
+        permissions: new Set(),
+        allBranches: false,
+        allowedBranchIds: branches.map((b) => b.id),
+      };
+      const localDays = async (at: string) =>
+        Object.fromEntries(
+          (await auth.describe(user, new Date(at))).branches.map((b) => [b.code, b.today]),
+        );
+      expect(await localDays('2026-10-31T21:30:00Z')).toEqual({
+        DXB: '2026-11-01',
+        KRT: '2026-10-31',
+      });
+      expect(await localDays('2026-10-31T19:59:00Z')).toEqual({
+        DXB: '2026-10-31',
+        KRT: '2026-10-31',
+      });
+      expect(await localDays('2026-10-31T22:00:00Z')).toEqual({
+        DXB: '2026-11-01',
+        KRT: '2026-11-01',
+      });
     });
 
     it('gives the configured assistant address in /auth/me', async () => {
