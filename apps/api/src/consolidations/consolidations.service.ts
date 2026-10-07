@@ -27,7 +27,7 @@ import {
   listBranchScope,
 } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
-import { dateRange } from '../common/list-filters.js';
+import { dateRange, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -60,7 +60,7 @@ export interface ContainerForCosts {
   closed: ClosedContainer | null;
 }
 
-export interface ConsolidationFilters extends PageQuery {
+export interface ConsolidationFilters extends PageQuery, RouteFilters {
   status?: ConsolidationStatus;
   /** One of the user's branches (403 otherwise); else all of them. */
   branchId?: string;
@@ -136,6 +136,7 @@ export class ConsolidationsService {
       ...listBranchScope(user, filters.branchId),
       etd: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
+      ...routeWhere(filters),
       ...(filters.q
         ? {
             OR: [

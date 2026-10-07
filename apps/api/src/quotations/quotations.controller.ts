@@ -23,7 +23,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
-import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
+import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
 import {
   amount,
   currencyCode,
@@ -68,6 +68,7 @@ const listQuery = pageQuery
   .extend({
     status: z.enum(QUOTATION_STATUSES).optional(),
     customerId: z.uuid().optional(),
+    ...routeFields,
     ...branchPeriodFields,
   })
   .superRefine(periodInOrder);
