@@ -15,7 +15,7 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { localDayFilter } from '../common/list-filters.js';
+import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -27,7 +27,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { RatesService } from '../rates/rates.service.js';
 import { DiscountExceedsLineError, computeQuotationAmounts } from './quotation-totals.js';
 
-export interface QuotationFilters extends PageQuery {
+export interface QuotationFilters extends PageQuery, RouteFilters {
   status?: QuotationStatus;
   customerId?: string;
   /** One of the user's branches (403 otherwise); else all of them. */
@@ -76,6 +76,7 @@ export class QuotationsService {
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
+      ...routeWhere(filters),
       ...(filters.q
         ? {
             OR: [

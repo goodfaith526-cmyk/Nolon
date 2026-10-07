@@ -12,6 +12,26 @@ import { dateString } from './validation.js';
 /** `from` / `to` query fields (YYYY-MM-DD, both included). */
 export const periodFields = { from: dateString.optional(), to: dateString.optional() };
 
+/** `originLocationId` / `destinationLocationId` of a list of routed documents. */
+export const routeFields = {
+  originLocationId: z.uuid().optional(),
+  destinationLocationId: z.uuid().optional(),
+};
+
+/** A list's route filter, for documents with origin and destination locations. */
+export interface RouteFilters {
+  originLocationId?: string;
+  destinationLocationId?: string;
+}
+
+/** Prisma `where` fragment for `routeFields`: only the ends that were given. */
+export function routeWhere(f: RouteFilters): RouteFilters {
+  return {
+    ...(f.originLocationId ? { originLocationId: f.originLocationId } : {}),
+    ...(f.destinationLocationId ? { destinationLocationId: f.destinationLocationId } : {}),
+  };
+}
+
 /** `branchId` (one of the user's; checked by the service) and `from` / `to` of a list. */
 export const branchPeriodFields = { branchId: z.uuid().optional(), ...periodFields };
 

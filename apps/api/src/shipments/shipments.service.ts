@@ -30,7 +30,12 @@ import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
-import { dateRange, localDayFilter } from '../common/list-filters.js';
+import {
+  dateRange,
+  localDayFilter,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -54,7 +59,7 @@ import {
   visitedStatuses,
 } from './state-machine.js';
 
-export interface ShipmentFilters extends PageQuery {
+export interface ShipmentFilters extends PageQuery, RouteFilters {
   /** Any of these statuses. */
   status?: readonly ShipmentStatus[];
   customerId?: string;
@@ -141,6 +146,7 @@ export class ShipmentsService {
         : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.mode ? { mode: filters.mode } : {}),
+      ...routeWhere(filters),
       eta: dateRange(filters.etaFrom, filters.etaTo),
       ...(filters.q
         ? {

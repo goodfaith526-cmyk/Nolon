@@ -27,6 +27,7 @@ describe('list filters', () => {
   const tag = `ZZLF${randomUUID().slice(0, 6).toUpperCase()}`;
   const ids: Record<string, string> = {};
   let period: { id: string; created: boolean };
+  let places = { jebelAli: '', portSudan: '' };
 
   const get = (path: string, cookie: string) =>
     t.http().get(`/api/v1${path}`).set('Cookie', cookie);
@@ -56,6 +57,8 @@ describe('list filters', () => {
     const jebelAli = await loc('AEJEA');
     const portSudan = await loc('SDPZU');
     const route = { originLocationId: jebelAli, destinationLocationId: portSudan };
+    // Seeded master locations: kept out of `ids`, which the cleanup deletes.
+    places = { jebelAli, portSudan };
     const usd = { currency: 'USD', fxRate: '1' };
 
     // Master rows.
@@ -724,6 +727,46 @@ describe('list filters', () => {
         sorted('shipSea', 'shipRoad', 'shipJedShared'),
       );
       await get(`${base()}&branchId=${jed}`, managerDxb).expect(403);
+    });
+  });
+
+  describe('route', () => {
+    it('origin and destination narrow shipments, quotations and bookings', async () => {
+      for (const [path, keys] of [
+        ['/shipments', ['shipSea', 'shipRoad', 'shipClosed', 'shipJedShared']],
+        ['/quotations', ['quoteMar10', 'quoteMar11', 'quoteJed']],
+      ] as const) {
+        const base = `${path}?pageSize=100&customerId=${ids.custDxbCompany}`;
+        const all = await listIds(base, managerBoth);
+        expect(all).toEqual(expect.arrayContaining(sorted(...keys)));
+        expect(await listIds(`${base}&originLocationId=${places.jebelAli}`, managerBoth)).toEqual(
+          all,
+        );
+        expect(
+          await listIds(
+            `${base}&originLocationId=${places.jebelAli}&destinationLocationId=${places.portSudan}`,
+            managerBoth,
+          ),
+        ).toEqual(all);
+        // The reverse route matches none of them.
+        expect(await listIds(`${base}&originLocationId=${places.portSudan}`, managerBoth)).toEqual(
+          [],
+        );
+        expect(
+          await listIds(`${base}&destinationLocationId=${places.jebelAli}`, managerBoth),
+        ).toEqual([]);
+        await get(`${base}&originLocationId=JEA`, managerBoth).expect(400);
+      }
+      const bookings = `/bookings?pageSize=100&customerId=${ids.custDxbCompany}`;
+      expect(
+        await listIds(`${bookings}&originLocationId=${places.portSudan}`, managerBoth),
+      ).toEqual([]);
+      expect(
+        (await listIds(`${bookings}&destinationLocationId=${places.portSudan}`, managerBoth))
+          .length,
+      ).toBeGreaterThan(0);
+      await get(`/consolidations?originLocationId=${places.portSudan}`, managerBoth).expect(200);
+      await get('/consolidations?destinationLocationId=x', managerBoth).expect(400);
     });
   });
 
