@@ -197,12 +197,14 @@ export class InvoicesController {
 export class ReceiptsController {
   constructor(private readonly receipts: ReceiptsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('receipts:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<ReceiptSummaryDto>> {
     return this.receipts.list(user, parse(receiptListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('receipts:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<ReceiptDto> {
@@ -248,6 +250,7 @@ export class CustomerStatementsController {
 export class CreditNotesController {
   constructor(private readonly creditNotes: CreditNotesService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('credit_notes:view')
   list(
@@ -257,6 +260,7 @@ export class CreditNotesController {
     return this.creditNotes.list(user, parse(creditNoteListQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('credit_notes:view')
   get(

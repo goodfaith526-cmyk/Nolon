@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put } from '
 import { CUSTOMS_STATUSES, type ShipmentCustomsDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -38,6 +38,7 @@ const feeBody = z
 export class CustomsController {
   constructor(private readonly customs: CustomsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('customs:view')
   get(

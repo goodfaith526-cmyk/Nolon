@@ -18,7 +18,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -55,12 +55,14 @@ const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('expenses:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<ExpenseSummaryDto>> {
     return this.expenses.list(user, parse(listQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('expenses:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<ExpenseDto> {

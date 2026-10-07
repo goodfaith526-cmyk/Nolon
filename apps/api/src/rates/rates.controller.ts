@@ -13,7 +13,7 @@ import {
 import { RATE_STATUSES, SHIPPING_MODES, type Page, type RateCardDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { pageQuery, parse } from '../common/validation.js';
 import { createRateBody, updateRateBody } from './rate-schemas.js';
 import { RatesService } from './rates.service.js';
@@ -29,12 +29,14 @@ const listQuery = pageQuery.extend({
 export class RatesController {
   constructor(private readonly rates: RatesService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('rates:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<RateCardDto>> {
     return this.rates.list(user, parse(listQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('rates:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<RateCardDto> {

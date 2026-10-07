@@ -31,7 +31,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import {
   amount,
   currencyCode,
@@ -151,6 +151,7 @@ export class AccountingController {
   ) {}
 
   /** Expense categories: everyone reads them for dropdowns; the chart's owners change them. */
+  @AgentReadable()
   @Get('expense-categories')
   @RequirePermission('master_data:view')
   listExpenseCategories(): Promise<ExpenseCategoryDto[]> {
@@ -179,6 +180,7 @@ export class AccountingController {
     return this.openingBalances.postAccounts(user, parse(openingAccountsBody, body));
   }
 
+  @AgentReadable()
   @Get('accounts')
   @RequirePermission('chart_of_accounts:view')
   listAccounts(): Promise<AccountDto[]> {
@@ -223,12 +225,14 @@ export class AccountingController {
     return this.accounts.setChargeTypePosting({ chargeTypeCode: code.toUpperCase(), ...input });
   }
 
+  @AgentReadable()
   @Get('fx-rates')
   @RequirePermission('fx_rates:view')
   listFxRates(@Query() query: unknown): Promise<FxRateDto[]> {
     return this.fxRates.list(parse(fxListQuery, query));
   }
 
+  @AgentReadable()
   @Get('fx-rates/lookup')
   @RequirePermission('fx_rates:view')
   async lookupFxRate(@Query() query: unknown): Promise<FxRateLookupDto> {
@@ -245,6 +249,7 @@ export class AccountingController {
     return this.fxRates.upsert(user.id, parse(fxRateBody, body));
   }
 
+  @AgentReadable()
   @Get('periods')
   @RequirePermission('chart_of_accounts:view')
   listPeriods(): Promise<FiscalPeriodDto[]> {
@@ -261,6 +266,7 @@ export class AccountingController {
     return this.periods.close(user.id, id);
   }
 
+  @AgentReadable()
   @Get('journals')
   @RequirePermission('manual_journals:view')
   listJournals(
@@ -270,6 +276,7 @@ export class AccountingController {
     return this.journal.list(user, parse(journalListQuery, query));
   }
 
+  @AgentReadable()
   @Get('journals/:id')
   @RequirePermission('manual_journals:view')
   getJournal(
@@ -326,6 +333,7 @@ export class AccountingController {
     return this.manual.reverse(user, id, parse(reverseBody, body));
   }
 
+  @AgentReadable()
   @Get('trial-balance')
   @RequirePermission('financial_reports:view')
   getTrialBalance(

@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Put } from '@nestjs/common';
 import { ALERT_KINDS, ALERT_MAX_DAYS, type AlertSettingDto, type AlertsDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { parse } from '../common/validation.js';
 import { AlertsService } from './alerts.service.js';
 
@@ -15,6 +15,7 @@ export class AlertsController {
   constructor(private readonly alerts: AlertsService) {}
 
   /** Every signed-in user: the alerts of the records they may see (none when there are none). */
+  @AgentReadable()
   @Get()
   list(@CurrentUser() user: AuthUser): Promise<AlertsDto> {
     return this.alerts.forUser(user);

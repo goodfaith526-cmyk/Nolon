@@ -6,7 +6,7 @@ import {
   type MasterDataDto,
 } from '@nolon/shared';
 import { z } from 'zod';
-import { RequirePermission } from '../auth/decorators.js';
+import { RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { countryCode, parse, requiredText } from '../common/validation.js';
 import { MasterDataService } from './master-data.service.js';
 
@@ -59,6 +59,7 @@ const documentTypeBody = z
 export class MasterDataController {
   constructor(private readonly masterData: MasterDataService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('master_data:view')
   all(): Promise<MasterDataDto> {

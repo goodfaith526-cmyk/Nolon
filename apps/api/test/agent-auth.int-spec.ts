@@ -392,6 +392,53 @@ describe('acting with a token', () => {
       .expect(403);
   });
 
+  it('reads every ERP area opened to the assistant, and nothing that exports or administers', async () => {
+    const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], PREFIX);
+    const token = await tokenFor(await signIn(t, admin.email));
+    for (const path of [
+      '/rates',
+      '/quotations',
+      '/bookings',
+      '/consolidations',
+      '/warehouses',
+      '/transport/vehicles',
+      '/transport/drivers',
+      '/transport/carriers',
+      '/trips',
+      '/receipts',
+      '/credit-notes',
+      '/suppliers',
+      '/supplier-bills',
+      '/supplier-payments',
+      '/expenses',
+      '/accounting/accounts',
+      '/accounting/periods',
+      '/accounting/journals',
+      '/accounting/expense-categories',
+      '/accounting/fx-rates',
+      '/master-data',
+      '/dashboard',
+      '/alerts',
+    ]) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(200);
+    }
+    // Opened, but the report needs its period: a 400 from validation, not a 403 from the guard.
+    for (const path of ['/reports/income-statement', '/reports/trips', '/reports/customs-files']) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(400);
+    }
+    for (const path of [
+      '/reports/ar-aging/export',
+      '/reports/trips/export',
+      '/reports/audit-log',
+      '/accounting/settings',
+      '/alerts/settings',
+      '/transport/driver-users',
+      '/api-clients',
+    ]) {
+      await asAgent(`/api/v1${path}`, token.accessToken).expect(403);
+    }
+  });
+
   it('is held to the assistant rules on public routes too, and logged there', async () => {
     const user = await staff();
     const token = await tokenFor(user.cookie);

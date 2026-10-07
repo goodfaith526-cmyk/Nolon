@@ -22,7 +22,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { BookingsService } from './bookings.service.js';
 
@@ -97,12 +97,14 @@ const listQuery = pageQuery.extend({
 export class BookingsController {
   constructor(private readonly bookings: BookingsService) {}
 
+  @AgentReadable()
   @Get()
   @RequirePermission('bookings:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<BookingSummaryDto>> {
     return this.bookings.list(user, parse(listQuery, query));
   }
 
+  @AgentReadable()
   @Get(':id')
   @RequirePermission('bookings:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<BookingDto> {
