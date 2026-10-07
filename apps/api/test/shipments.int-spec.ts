@@ -183,6 +183,23 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       expect(own.id).toBe(s.id);
     });
 
+    it('activeOnly leaves out cancelled and closed shipments', async () => {
+      const open = await confirmedShipment();
+      const gone = await confirmedShipment();
+      await post(`/shipments/${gone.id}/cancel`, cookies.opsDxb, { reason: 'x' }).expect(200);
+      const count = async (q: string, extra = '') =>
+        (
+          (await get(`/shipments?q=${q}${extra}`, cookies.salesDxb).expect(200))
+            .body as Page<ShipmentSummaryDto>
+        ).total;
+      expect(await count(gone.number)).toBe(1);
+      expect(await count(gone.number, '&activeOnly=true')).toBe(0);
+      expect(await count(open.number, '&activeOnly=true')).toBe(1);
+      expect(await count(gone.number, '&activeOnly=false')).toBe(1);
+      expect(await count(open.number, '&activeOnly=true&status=CANCELLED')).toBe(0);
+      await get('/shipments?activeOnly=yes', cookies.salesDxb).expect(400);
+    });
+
     it('a Driver sees no shipments until trips assign them', async () => {
       const s = await confirmedShipment();
       const list = (await get('/shipments', cookies.driver).expect(200))
