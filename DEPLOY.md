@@ -1,5 +1,7 @@
 # Staging deployment
 
+Production is a separate stack on the same server: [DEPLOY-PRODUCTION.md](DEPLOY-PRODUCTION.md).
+
 Staging runs on one Hetzner server with Docker Compose: PostgreSQL (persistent volume), the API,
 the web app and Caddy (automatic HTTPS from Let's Encrypt, basic auth in front of everything).
 

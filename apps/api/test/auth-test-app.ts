@@ -14,7 +14,7 @@ import { CurrentUser, RequirePermission } from '../src/auth/decorators.js';
 import { hashPassword } from '../src/auth/password.js';
 import { APP_ENV, type AppEnv, loadEnv } from '../src/config/env.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
-import { DEMO_BRANCHES } from '../src/seed/demo-data.js';
+import { BRANCHES } from '../src/seed/branches.js';
 
 export const APP_ORIGIN = 'http://app.test';
 export const PASSWORD = 'integration-test-password';
@@ -70,7 +70,7 @@ export async function createTestApp(overrides: Partial<AppEnv> = {}): Promise<Te
   configureApp(app, env);
   await app.init();
   const prisma = app.get(PrismaService);
-  for (const { code, ...fields } of DEMO_BRANCHES) {
+  for (const { code, ...fields } of BRANCHES) {
     await prisma.branch.upsert({ where: { code }, create: { code, ...fields }, update: {} });
   }
   return {

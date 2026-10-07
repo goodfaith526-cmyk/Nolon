@@ -1,0 +1,106 @@
+# Production stack. Runs on the same server as staging but shares nothing with it: its own
+# Compose project (containers, network and volumes prefixed `nolon-production`), its own database,
+# its own deploy directory and its own local port. The deploy job copies this file, the Caddyfile,
+# deploy.sh and a generated .env into ~/nolon-production and runs deploy.sh (DEPLOY-PRODUCTION.md).
+# Every ${VAR} below comes from that .env.
+name: nolon-production
+
+x-database-url: &database-url postgresql://nolon:${POSTGRES_PASSWORD:?}@postgres:5432/nolon?schema=public
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nolon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: nolon
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nolon -d nolon']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-off jobs, not a running service: `migrate deploy` by default, and the base seed
+  # (branches and the first Administrator, dist/seed/base-main.js). No demo data: ALLOW_DEMO_SEED
+  # is never set here, so the demo seed refuses to run.
+  migrate:
+    image: ${MIGRATE_IMAGE:?}
+    profiles: [jobs]
+    environment:
+      DATABASE_URL: *database-url
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_REQUIRE_ADMIN: 'true'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Backups (backup.sh, backup-job.sh): built on the server from backup.Dockerfile. The backup
+  # settings are empty until set up (DEPLOY-PRODUCTION.md, Backups); backup-job refuses to run then.
+  backup:
+    build:
+      context: .
+      dockerfile: backup.Dockerfile
+    image: nolon-production-backup:local
+    profiles: [jobs]
+    environment:
+      PGHOST: postgres
+      PGUSER: nolon
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: nolon
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: ${API_IMAGE:?}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database-url
+      CORS_ORIGINS: https://${SITE_DOMAIN:?}
+      # Host nginx, then this stack's Caddy (which trusts nginx and appends to X-Forwarded-For),
+      # so the API sees each client's real IP and the per-IP sign-in limit works
+      # (docs/plans/01-auth-and-permissions.md, S1).
+      TRUST_PROXY_HOPS: '2'
+      LOGIN_IP_LIMIT_ENABLED: 'true'
+      # The staff AI assistant stays off in production until it passes its own gates: no button.
+      AGENT_ASSISTANT_URL: ''
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: ${WEB_IMAGE:?}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # Production always sits behind the host nginx, which owns 80/443 and terminates HTTPS. Caddy
+    # listens on this machine only, on the port nginx forwards the production domain to.
+    ports:
+      - '127.0.0.1:${LOCAL_PORT:?}:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

@@ -143,5 +143,23 @@ jobs:
               echo "::error::Caddyfile accepted: ${args:-no BASIC_AUTH}"; exit 1
             fi
           done
+      - name: Production Compose file and Caddyfile are valid
+        working-directory: deploy/production
+        run: |
+          printf '%s\n' API_IMAGE=api WEB_IMAGE=web MIGRATE_IMAGE=migrate POSTGRES_PASSWORD=x \
+            SITE_DOMAIN=erp.example.com LOCAL_PORT=8092 > .env
+          docker compose -f docker-compose.production.yml --profile jobs config --quiet
+          # Caddy is published on this machine only, never on a public address.
+          if ! docker compose -f docker-compose.production.yml config --format json |
+            jq -e '[.services[].ports // [] | .[]] | length == 1 and all(.host_ip == "127.0.0.1")'; then
+            echo "::error::production must publish one port, on 127.0.0.1 only"; exit 1
+          fi
+          rm .env
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Production backup and restore round trip (deploy/production/test-backup.sh)
+        run: deploy/production/test-backup.sh
+      - name: Deploy scripts pass shellcheck
+        run: shellcheck deploy/*/*.sh
       - name: Workflows and deploy.sh pass actionlint (with shellcheck)
         run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color

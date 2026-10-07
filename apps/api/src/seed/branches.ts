@@ -12,10 +12,10 @@ export interface BranchSeed {
 }
 
 /**
- * Demo data for staging: the branches. Customers, rates, quotations and bookings are in
- * demo-commercial.ts.
+ * The five branches, loaded by the base seed in every environment (production included). Demo
+ * customers, rates, quotations and bookings are in demo-commercial.ts, staging only.
  */
-export const DEMO_BRANCHES: readonly BranchSeed[] = [
+export const BRANCHES: readonly BranchSeed[] = [
   {
     code: 'DXB',
     nameEn: 'NOLON Dubai',
