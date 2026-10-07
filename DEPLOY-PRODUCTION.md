@@ -33,7 +33,7 @@ Actions > **Deploy production** > Run workflow (branch `main`). Optionally give 
 2. **Approval**: the deploy job waits in the `production` environment until a required reviewer
    approves it. Its secrets are released only then.
 3. **Deploy**: writes the server `.env`, copies `deploy/production/` to `~/nolon-production`, and
-   runs `deploy.sh` there: pull images, start PostgreSQL, take a backup (once backups are set up),
+   runs `deploy.sh` there: pull images, start PostgreSQL, take a backup (`backup.sh pre-migrate`),
    `prisma migrate deploy`, base seed, start api/web/caddy and wait until their health checks pass.
 4. **Health check**: `https://<PRODUCTION_DOMAIN>/api/v1/health` and the web page answer 200.
 
@@ -157,9 +157,10 @@ host.
   bucket without Object Lock refuses the upload, so that is caught on the first run.
 - **Nothing is written to disk unencrypted.** pg_dump's output goes straight into age. rclone takes
   its settings from the environment, with no config file. The endpoint must be `https://`.
-- **Every migration has a backup right before it.** If backups are set up, a deploy stops when the
-  backup before its migrations fails. Until they are set up, each deploy prints a warning, and
-  **production must hold no real data.**
+- **No migration without a backup right before it.** `deploy.sh` runs `backup.sh pre-migrate`
+  first: a backup that must succeed, or the deploy stops before anything changes. Without backup
+  settings, only the first deploy onto an empty database goes through; every later deploy fails
+  until backups are set up (step 3 below). Tested in `test-backup.sh`.
 - **Restore is tested on every CI run** (`deploy/production/test-backup.sh`) against a local S3
   server with Object Lock: encryption, lock, a key that cannot delete, a wrong key, `restore-test`
   and `restore --replace`.

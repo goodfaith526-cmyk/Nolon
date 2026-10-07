@@ -25,16 +25,11 @@ compose --profile jobs build --quiet backup
 echo "==> Starting database"
 compose up -d --wait postgres
 
-# Every migration runs right after a fresh, verified off-server backup. A failed backup stops the
-# deploy before anything changes. The very first deploy has no data to back up.
-has_data="$(compose exec -T postgres psql -U nolon -d nolon -tAc \
-  "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")"
-if [ "$backups" = 1 ] && [ "$has_data" = t ]; then
-  echo "==> Backup before migrations"
-  ./backup.sh
-elif [ "$has_data" = t ]; then
-  echo "WARNING: backups are not set up; no backup was taken (DEPLOY-PRODUCTION.md, Backups)" >&2
-fi
+# Every migration runs right after a fresh, verified, locked off-server backup. On a database that
+# holds anything, a deploy without backups set up, or with a failed backup, stops here before
+# anything changes. Only the very first deploy, onto an empty database, has nothing to back up.
+echo "==> Backup before migrations"
+./backup.sh pre-migrate
 
 echo "==> Applying migrations (prisma migrate deploy)"
 compose run --rm migrate

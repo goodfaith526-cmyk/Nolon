@@ -169,4 +169,25 @@ out="$(./backup.sh 2>&1)" && fail "backup ran without settings"
 [[ "$out" == *"BACKUP_AGE_RECIPIENT is not set"* ]] || fail "unexpected failure without settings: $out"
 pass "bad keys, names, endpoints, retention and missing settings are refused"
 
+# What deploy.sh runs before every migration.
+set_env BACKUP_KEEP_DAYS ''
+set_env BACKUP_AGE_RECIPIENT "$(printf '%s\n' "$backup_key" | age_public)"
+count_backups() { ./backup.sh list | wc -l; }
+before_count="$(count_backups)"
+sleep 1 # backup names are per second
+out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate failed with backups set up: $out"
+[ "$(count_backups)" = $((before_count + 1)) ] || fail "pre-migrate took no backup: $out"
+set_env BACKUP_S3_BUCKET unlocked
+./backup.sh pre-migrate > /dev/null 2>&1 && fail "pre-migrate passed although the backup failed"
+pass "pre-migrate takes a backup, and fails when the backup fails"
+
+set_env BACKUP_S3_BUCKET ''
+out="$(./backup.sh pre-migrate 2>&1)" && fail "pre-migrate let a database with data migrate without backups"
+[[ "$out" == *"Refusing to migrate"* ]] || fail "unexpected pre-migrate failure without backups: $out"
+psql_in postgres "DROP DATABASE nolon WITH (FORCE)"
+psql_in postgres "CREATE DATABASE nolon"
+out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate refused the first deploy onto an empty database: $out"
+[[ "$out" == *"Empty database"* ]] || fail "unexpected pre-migrate output on an empty database: $out"
+pass "without backups, only an empty database (the first deploy) may be migrated"
+
 echo "All backup tests passed."

@@ -6,7 +6,10 @@
 #   ./backup.sh keygen         once: makes the backup key pair and shows both halves ONCE. The
 #                              private key goes off the server (your password manager); the
 #                              public key goes into the PRODUCTION_BACKUP_AGE_RECIPIENT variable.
-#   ./backup.sh                a backup now (deploy.sh also runs one before every migration)
+#   ./backup.sh                a backup now
+#   ./backup.sh pre-migrate    what deploy.sh runs before migrations: a backup, which must succeed.
+#                              Without backups set up it passes only on an empty database (the
+#                              first deploy); anything else is refused.
 #   ./backup.sh list           the backups in object storage
 #   ./backup.sh restore-test [NAME]
 #                              restores a backup (default: the newest) into a throwaway database,
@@ -38,6 +41,22 @@ case "${1:-}" in
     line="17 1 * * * cd $PWD && ./backup.sh >> \$HOME/nolon-production-backup.log 2>&1"
     { crontab -l 2> /dev/null | grep -vF "cd $PWD && ./backup.sh" || true; echo "$line"; } | crontab -
     echo "Daily backup installed: $line"
+    exit 0
+    ;;
+  pre-migrate)
+    tables="$(compose exec -T postgres psql -U nolon -d nolon -tAc \
+      "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')")"
+    [[ "$tables" =~ ^[0-9]+$ ]] || { echo "pre-migrate: cannot read the database ($tables)" >&2; exit 1; }
+    if [ "$tables" = 0 ]; then
+      echo "Empty database (first deploy): nothing to back up."
+      exit 0
+    fi
+    if ! grep -Eq "^BACKUP_S3_BUCKET='?[a-z0-9]" .env; then
+      echo "Refusing to migrate: the database holds data and backups are not set up" \
+        "(DEPLOY-PRODUCTION.md, Backups)." >&2
+      exit 1
+    fi
+    compose run --rm -T backup < /dev/null
     exit 0
     ;;
   restore | restore-test)
