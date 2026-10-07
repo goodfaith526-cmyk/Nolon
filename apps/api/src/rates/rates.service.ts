@@ -17,7 +17,7 @@ import type {
 } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
@@ -105,6 +105,10 @@ export interface RateFilters extends PageQuery {
   originLocationId?: string;
   destinationLocationId?: string;
   mode?: ShippingMode;
+  /** Valid on this date (YYYY-MM-DD). */
+  validOn?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
 }
 
 /**
@@ -123,13 +127,22 @@ export class RatesService {
 
   async list(user: AuthUser, filters: RateFilters): Promise<Page<RateCardDto>> {
     const where: Prisma.RateCardWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.originLocationId ? { originLocationId: filters.originLocationId } : {}),
       ...(filters.destinationLocationId
         ? { destinationLocationId: filters.destinationLocationId }
         : {}),
       ...(filters.mode ? { mode: filters.mode } : {}),
+      AND: [
+        ...(filters.validOn
+          ? [
+              { validFrom: { lte: toDbDate(filters.validOn) } },
+              { OR: [{ validTo: null }, { validTo: { gte: toDbDate(filters.validOn) } }] },
+            ]
+          : []),
+        ...(filters.q ? [{ OR: rateSearch(filters.q) }] : []),
+      ],
     };
     const [items, total] = await Promise.all([
       this.prisma.rateCard.findMany({
@@ -588,4 +601,16 @@ function toDto(r: RateCard): RateCardDto {
     approvedAt: r.approvedAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+/** `q` on a rate: its route (location code or name) or its container / charge type code. */
+function rateSearch(q: string): Prisma.RateCardWhereInput[] {
+  const text = { contains: q, mode: 'insensitive' } as const;
+  const location = { OR: [{ code: text }, { nameEn: text }, { nameAr: text }] };
+  return [
+    { origin: location },
+    { destination: location },
+    { containerTypeCode: text },
+    { chargeTypeCode: text },
+  ];
 }

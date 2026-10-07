@@ -16,8 +16,9 @@ import type {
   Page,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
+import { localDayFilter } from '../common/list-filters.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -33,6 +34,11 @@ import { cbmFromDimensions } from './cbm.js';
 export interface BookingFilters extends PageQuery {
   status?: BookingStatus;
   customerId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Created from / to (local day of the branch), both included. */
+  from?: string;
+  to?: string;
 }
 
 type BookingWithDetails = Booking & {
@@ -68,8 +74,10 @@ export class BookingsService {
   ) {}
 
   async list(user: AuthUser, filters: BookingFilters): Promise<Page<BookingSummaryDto>> {
+    const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.BookingWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.q

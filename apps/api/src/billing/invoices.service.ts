@@ -17,8 +17,10 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { beforeLocalToday, branchZones, dateRange } from '../common/list-filters.js';
+import { uuidList } from '../common/report-sql.js';
 import {
   type Decimal,
   dec,
@@ -44,6 +46,15 @@ export interface InvoiceFilters extends PageQuery {
   shipmentId?: string;
   /** Approved invoices with a balance left. */
   openOnly?: boolean;
+  /** Approved invoices with a balance left, due before today in their branch's time zone. */
+  overdue?: boolean;
+  /** By what payments and credit notes settled (as `paymentStatus` in the summary). */
+  paymentStatus?: PaymentStatus;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Invoice date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -86,14 +97,27 @@ export class InvoicesService {
   ) {}
 
   async list(user: AuthUser, filters: InvoiceFilters): Promise<Page<CustomerInvoiceSummaryDto>> {
+    const branchIds = reportBranchIds(user, filters.branchId);
+    const settled: Prisma.CustomerInvoiceWhereInput[] = [];
+    if (filters.openOnly || filters.overdue) {
+      const open = await this.settlementIds(branchIds, 'OPEN', filters.customerId);
+      settled.push({ status: 'APPROVED', id: { in: open } });
+    }
+    if (filters.overdue) {
+      settled.push(beforeLocalToday(await branchZones(this.prisma), 'dueDate'));
+    }
+    if (filters.paymentStatus === 'UNPAID') {
+      settled.push({ paidAmount: 0, creditedAmount: 0 });
+    } else if (filters.paymentStatus) {
+      const ids = await this.settlementIds(branchIds, filters.paymentStatus, filters.customerId);
+      settled.push({ id: { in: ids } });
+    }
     const where: Prisma.CustomerInvoiceWhereInput = {
-      ...branchScope(user),
+      branchId: { in: branchIds },
+      invoiceDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.shipmentId ? { shipmentId: filters.shipmentId } : {}),
-      ...(filters.openOnly
-        ? { status: 'APPROVED', id: { in: await this.openInvoiceIds(user, filters.customerId) } }
-        : {}),
       ...(filters.q
         ? {
             OR: [
@@ -103,6 +127,7 @@ export class InvoicesService {
             ],
           }
         : {}),
+      AND: settled,
     };
     const [items, total] = await Promise.all([
       this.prisma.customerInvoice.findMany({
@@ -121,14 +146,26 @@ export class InvoicesService {
     return toDto(await this.findScoped(user, id), user);
   }
 
-  /** Approved invoices of the user's branches with a balance left (payments and credit notes). */
-  private async openInvoiceIds(user: AuthUser, customerId?: string): Promise<string[]> {
-    if (user.allowedBranchIds.length === 0) return [];
+  /**
+   * Invoices of these branches by what payments and credit notes settled together: OPEN is approved
+   * with a balance left; PARTIAL and PAID as `paymentStatus` (a sum of two columns, so in SQL).
+   */
+  private async settlementIds(
+    branchIds: readonly string[],
+    settlement: 'OPEN' | 'PARTIAL' | 'PAID',
+    customerId?: string,
+  ): Promise<string[]> {
+    if (branchIds.length === 0) return [];
+    const settled = Prisma.sql`("paid_amount" + "credited_amount")`;
+    const condition = {
+      OPEN: Prisma.sql`"status" = 'APPROVED' AND ${settled} < "total"`,
+      PARTIAL: Prisma.sql`${settled} > 0 AND ${settled} < "total"`,
+      PAID: Prisma.sql`${settled} <> 0 AND ${settled} >= "total"`,
+    }[settlement];
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "customer_invoices"
-      WHERE "status" = 'APPROVED'
-        AND "paid_amount" + "credited_amount" < "total"
-        AND "branch_id" IN (${Prisma.join(user.allowedBranchIds.map((b) => Prisma.sql`${b}::uuid`))})
+      WHERE ${condition}
+        AND "branch_id" IN ${uuidList(branchIds)}
         ${customerId ? Prisma.sql`AND "customer_id" = ${customerId}::uuid` : Prisma.empty}`;
     return rows.map((r) => r.id);
   }

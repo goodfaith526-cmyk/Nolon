@@ -25,6 +25,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { branchPeriodFields, periodInOrder } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ConsolidationsService, MAX_CONTAINER_SHIPMENTS } from './consolidations.service.js';
 
@@ -66,7 +67,12 @@ const updateBody = z
   .object({ containerTypeCode: containerType.optional(), ...detailFields })
   .strict();
 
-const listQuery = pageQuery.extend({ status: z.enum(CONSOLIDATION_STATUSES).optional() });
+const listQuery = pageQuery
+  .extend({
+    status: z.enum(CONSOLIDATION_STATUSES).optional(),
+    ...branchPeriodFields,
+  })
+  .superRefine(periodInOrder);
 const moveBody = z
   .object({
     status: z.enum(CONSOLIDATION_MOVES),

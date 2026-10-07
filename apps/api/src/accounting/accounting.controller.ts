@@ -80,12 +80,12 @@ const chargeTypePostingBody = z
 const fxRateBody = z
   .object({ currency: currencyCode, rateDate: dateString, rate: fxRate })
   .strict();
-const fxListQuery = z.object({
+const fxListQuery = z.strictObject({
   currency: currencyCode.optional(),
   from: dateString.optional(),
   to: dateString.optional(),
 });
-const fxLookupQuery = z.object({ currency: currencyCode, date: dateString });
+const fxLookupQuery = z.strictObject({ currency: currencyCode, date: dateString });
 
 const journalLine = z
   .object({
@@ -113,7 +113,7 @@ const journalListQuery = pageQuery.extend({
   from: dateString.optional(),
   to: dateString.optional(),
 });
-const trialBalanceQuery = z.object({ asOf: dateString, branchId: z.uuid().optional() });
+const trialBalanceQuery = z.strictObject({ asOf: dateString, branchId: z.uuid().optional() });
 const expenseCategoryBody = z
   .object({
     nameEn: requiredText(200),

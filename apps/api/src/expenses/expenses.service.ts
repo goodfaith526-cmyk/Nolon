@@ -18,9 +18,10 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { ExpenseCategoriesService } from '../accounting/expense-categories.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { dateRange } from '../common/list-filters.js';
 import { dec, requestedRate, roundMoney, sameRequestedRate } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -32,6 +33,11 @@ import { PrismaService } from '../prisma/prisma.service.js';
 export interface ExpenseFilters extends PageQuery {
   status?: ExpenseStatus;
   categoryCode?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Expense date from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -64,7 +70,8 @@ export class ExpensesService {
   async list(user: AuthUser, filters: ExpenseFilters): Promise<Page<ExpenseSummaryDto>> {
     forbidDriver(user);
     const where: Prisma.ExpenseWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      expenseDate: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.categoryCode ? { categoryCode: filters.categoryCode } : {}),
       ...(filters.q

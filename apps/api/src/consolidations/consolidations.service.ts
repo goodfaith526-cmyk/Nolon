@@ -20,8 +20,14 @@ import type {
 } from '@nolon/shared';
 import { seesConsolidationCosts } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
+import {
+  assertBranchAccess,
+  branchScope,
+  canAccessBranch,
+  listBranchScope,
+} from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
+import { dateRange } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -56,6 +62,11 @@ export interface ContainerForCosts {
 
 export interface ConsolidationFilters extends PageQuery {
   status?: ConsolidationStatus;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** ETD from / to, both included. */
+  from?: string;
+  to?: string;
 }
 
 /** At most this many shipments in one container. */
@@ -122,7 +133,8 @@ export class ConsolidationsService {
     filters: ConsolidationFilters,
   ): Promise<Page<ConsolidationSummaryDto>> {
     const where: Prisma.ConsolidationWhereInput = {
-      ...branchScope(user),
+      ...listBranchScope(user, filters.branchId),
+      etd: dateRange(filters.from, filters.to),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.q
         ? {

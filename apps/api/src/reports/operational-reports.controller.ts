@@ -21,7 +21,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
-import { dateString, parse } from '../common/validation.js';
+import { dateString, parse, withoutLocale } from '../common/validation.js';
 import { xlsxDownload } from './excel-response.js';
 import {
   type OperationalReportRequest,
@@ -29,7 +29,8 @@ import {
 } from './operational-reports.service.js';
 
 /** A period runs from `from` to `to`, both included; from is not after to. */
-const period = z.object({ from: dateString, to: dateString, branchId: z.uuid().optional() });
+/** Report queries are strict: an unknown filter is a 400 (the export's `locale` is read apart). */
+const period = z.strictObject({ from: dateString, to: dateString, branchId: z.uuid().optional() });
 const ordered = <T extends { from: string; to: string }>(schema: z.ZodType<T>) =>
   schema.refine((q) => q.from <= q.to, { message: 'from is after to', path: ['to'] });
 
@@ -41,7 +42,10 @@ const shipmentsQuery = ordered(
     status: z.enum(SHIPMENT_STATUSES).optional(),
   }),
 );
-const onHandQuery = z.object({ branchId: z.uuid().optional(), warehouseId: z.uuid().optional() });
+const onHandQuery = z.strictObject({
+  branchId: z.uuid().optional(),
+  warehouseId: z.uuid().optional(),
+});
 const movementsQuery = ordered(
   period.extend({
     warehouseId: z.uuid().optional(),
@@ -89,7 +93,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'shipments',
-      query: parse(shipmentsQuery, query),
+      query: parse(shipmentsQuery, withoutLocale(query)),
     });
   }
 
@@ -109,7 +113,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'late-shipments',
-      query: parse(customerPeriod, query),
+      query: parse(customerPeriod, withoutLocale(query)),
     });
   }
 
@@ -132,7 +136,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'sales-conversion',
-      query: parse(customerPeriod, query),
+      query: parse(customerPeriod, withoutLocale(query)),
     });
   }
 
@@ -155,7 +159,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'customer-activity',
-      query: parse(customerPeriod, query),
+      query: parse(customerPeriod, withoutLocale(query)),
     });
   }
 
@@ -178,7 +182,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'warehouse-on-hand',
-      query: parse(onHandQuery, query),
+      query: parse(onHandQuery, withoutLocale(query)),
     });
   }
 
@@ -201,7 +205,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'warehouse-movements',
-      query: parse(movementsQuery, query),
+      query: parse(movementsQuery, withoutLocale(query)),
     });
   }
 
@@ -221,7 +225,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'customs-files',
-      query: parse(customsQuery, query),
+      query: parse(customsQuery, withoutLocale(query)),
     });
   }
 
@@ -239,7 +243,10 @@ export class OperationalReportsController {
     @Query() query: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    return this.download(user, query, res, { report: 'trips', query: parse(tripsQuery, query) });
+    return this.download(user, query, res, {
+      report: 'trips',
+      query: parse(tripsQuery, withoutLocale(query)),
+    });
   }
 
   @Get('audit-log')
@@ -257,7 +264,7 @@ export class OperationalReportsController {
   ): Promise<StreamableFile> {
     return this.download(user, query, res, {
       report: 'audit-log',
-      query: parse(auditQuery, query),
+      query: parse(auditQuery, withoutLocale(query)),
     });
   }
 

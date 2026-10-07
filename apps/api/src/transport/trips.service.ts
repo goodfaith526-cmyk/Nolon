@@ -20,8 +20,9 @@ import { seesTransportCosts } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, canAccessBranch } from '../auth/branch-scope.js';
+import { assertBranchAccess, canAccessBranch, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, todayIn } from '../common/dates.js';
+import { localDayFilter } from '../common/list-filters.js';
 import {
   type Decimal,
   ZERO,
@@ -67,6 +68,14 @@ interface KindFields {
 
 export interface TripFilters extends PageQuery {
   status?: TripStatus;
+  vehicleId?: string;
+  driverId?: string;
+  carrierId?: string;
+  /** One of the user's branches (403 otherwise); else all of them. */
+  branchId?: string;
+  /** Planned departure from / to (local day of the branch), both included. */
+  from?: string;
+  to?: string;
 }
 
 const summaryInclude = {
@@ -135,9 +144,21 @@ export class TripsService {
   ) {}
 
   async list(user: AuthUser, filters: TripFilters): Promise<Page<TripSummaryDto>> {
+    const departure = await localDayFilter(
+      this.prisma,
+      'plannedDeparture',
+      filters.from,
+      filters.to,
+    );
     const where: Prisma.TripWhereInput = {
       ...tripScope(user),
+      // Narrows the scope's branches to the requested one (403 outside them), never widens it.
+      ...listBranchScope(user, filters.branchId),
       ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.vehicleId ? { vehicleId: filters.vehicleId } : {}),
+      ...(filters.driverId ? { driverId: filters.driverId } : {}),
+      ...(filters.carrierId ? { carrierId: filters.carrierId } : {}),
+      AND: departure,
       ...(filters.q ? { number: { contains: filters.q, mode: 'insensitive' } } : {}),
     };
     const [items, total] = await Promise.all([
