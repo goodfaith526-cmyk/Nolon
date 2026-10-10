@@ -1,4 +1,15 @@
 import type { DecimalString } from './currencies.js';
+import {
+  DRAFT_FIELD_MATCHES,
+  DRAFT_FIELD_SOURCES,
+  DRAFT_STATUSES,
+  DRAFT_TTL_DAYS,
+  type DraftFieldMatch,
+  type DraftFieldMeta,
+  type DraftFieldSource,
+  type DraftRejectRequest,
+  type DraftStatus,
+} from './drafts.js';
 import type { GoodsReceiptRequest } from './warehouse.js';
 
 /**
@@ -8,12 +19,10 @@ import type { GoodsReceiptRequest } from './warehouse.js';
  * can create a draft and nothing else.
  */
 
-/** A draft past its expiry that was never decided reads as EXPIRED; nothing can change it. */
-export const GRN_DRAFT_STATUSES = ['DRAFT', 'APPROVED', 'REJECTED', 'EXPIRED'] as const;
-export type GrnDraftStatus = (typeof GRN_DRAFT_STATUSES)[number];
-
-/** Days a draft stays open for review (owner decision, 2026-10-10). */
-export const GRN_DRAFT_TTL_DAYS = 7;
+/** The generic draft rules (drafts.ts), under the names the GRN draft code uses. */
+export const GRN_DRAFT_STATUSES = DRAFT_STATUSES;
+export type GrnDraftStatus = DraftStatus;
+export const GRN_DRAFT_TTL_DAYS = DRAFT_TTL_DAYS;
 
 /** Lines per draft, and the line fields a draft carries. */
 export const GRN_DRAFT_MAX_LINES = 300;
@@ -31,16 +40,10 @@ export const GRN_DRAFT_LINE_FIELDS = [
 ] as const;
 export type GrnDraftLineField = (typeof GRN_DRAFT_LINE_FIELDS)[number];
 
-/** Who filled a value: the assistant from the document, or a person on the review screen. */
-export const GRN_FIELD_SOURCES = ['AI', 'STAFF'] as const;
-export type GrnFieldSource = (typeof GRN_FIELD_SOURCES)[number];
-
-/**
- * What code could check about an AI-filled value. MATCHED means only that the value was found in
- * the source at the stated position, not that its column, unit or meaning is right.
- */
-export const GRN_FIELD_MATCHES = ['MATCHED', 'UNVERIFIED', 'MISMATCH'] as const;
-export type GrnFieldMatch = (typeof GRN_FIELD_MATCHES)[number];
+export const GRN_FIELD_SOURCES = DRAFT_FIELD_SOURCES;
+export type GrnFieldSource = DraftFieldSource;
+export const GRN_FIELD_MATCHES = DRAFT_FIELD_MATCHES;
+export type GrnFieldMatch = DraftFieldMatch;
 
 /** Closed list of warnings the assistant's code may attach to a draft. */
 export const GRN_DRAFT_WARNINGS = [
@@ -65,11 +68,7 @@ export interface GrnDraftLineValues {
   cbm: DecimalString | null;
 }
 
-export interface GrnDraftFieldMeta {
-  filledBy: GrnFieldSource;
-  /** Null for a value a person typed. */
-  match: GrnFieldMatch | null;
-}
+export type GrnDraftFieldMeta = DraftFieldMeta;
 
 export interface GrnDraftLineDto extends GrnDraftLineValues {
   lineNo: number;
@@ -148,10 +147,7 @@ export interface GrnDraftApproveRequest extends GoodsReceiptRequest {
   version: number;
 }
 
-export interface GrnDraftRejectRequest {
-  version: number;
-  reason: string;
-}
+export type GrnDraftRejectRequest = DraftRejectRequest;
 
 /** The document type the assistant reads (a row of the document types master). */
 export const PACKING_LIST_DOCUMENT_TYPE = 'PACKING_LIST';
