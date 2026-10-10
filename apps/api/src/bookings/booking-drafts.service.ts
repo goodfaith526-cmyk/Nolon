@@ -26,11 +26,11 @@ import {
   draftStatus,
   requestHash,
   requireOpen,
+  stateFilter,
 } from '../drafts/draft-rules.js';
 import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { stateFilter } from '../quotations/quotation-drafts.service.js';
 import { BookingsService, type PreparedBooking } from './bookings.service.js';
 
 const LABEL = 'booking draft';

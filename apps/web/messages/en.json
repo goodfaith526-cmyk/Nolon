@@ -2052,6 +2052,8 @@
     "kind": "Entry type",
     "kind_quotations": "Quotations",
     "kind_bookings": "Bookings",
+    "kind_trips": "Trips",
+    "kind_releases": "Goods releases",
     "status_DRAFT": "To review",
     "status_APPROVED": "Approved",
     "status_REJECTED": "Rejected",
@@ -2078,6 +2080,11 @@
     "quotationApproveHint": "Approving creates a draft quotation priced by NOLON. You can still edit it before sending it to the customer.",
     "bookingTitle": "Booking draft for {customer}",
     "bookingApproveHint": "Approving creates a draft booking. It is not confirmed and has no shipment until you confirm it.",
-    "fromQuotation": "From quotation"
+    "fromQuotation": "From quotation",
+    "tripTitle": "Trip draft: {route}",
+    "tripApproveHint": "Approving plans the trip and schedules its shipments, as planning it yourself would. The trip can still be changed or cancelled while it is planned.",
+    "releaseTitle": "Goods release draft for {shipment}",
+    "releaseApproveHint": "Approving issues the release note now, dated at the approval, if the warehouse still holds these packages.",
+    "shipment": "Shipment"
   }
 }

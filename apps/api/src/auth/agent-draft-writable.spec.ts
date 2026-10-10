@@ -20,6 +20,14 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
   },
   {
+    file: join('transport', 'trip-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('transport_trips:create'\)\n\s*create\(/,
+  },
+  {
+    file: join('warehouse', 'goods-release-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('warehouse:create'\)\n\s*create\(/,
+  },
+  {
     file: join('warehouse', 'grn-drafts.controller.ts'),
     handler:
       /^\s*@Post\(\)\n\s*@RequirePermission\('warehouse:create', 'documents:view'\)\n\s*create\(/,

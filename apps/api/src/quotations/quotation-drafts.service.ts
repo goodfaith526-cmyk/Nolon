@@ -23,6 +23,7 @@ import {
   draftStatus,
   requestHash,
   requireOpen,
+  stateFilter,
 } from '../drafts/draft-rules.js';
 import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -295,17 +296,6 @@ export class QuotationDraftsService {
     if (!draft) throw new NotFoundException('Quotation draft not found');
     return draft;
   }
-}
-
-/** Where-fragment for a status, EXPIRED being an undecided draft past its expiry. */
-export function stateFilter(
-  status: DraftStatus | undefined,
-  now: Date,
-): { state?: 'DRAFT' | 'APPROVED' | 'REJECTED'; expiresAt?: { gt: Date } | { lte: Date } } {
-  if (status === undefined) return {};
-  if (status === 'DRAFT') return { state: 'DRAFT', expiresAt: { gt: now } };
-  if (status === 'EXPIRED') return { state: 'DRAFT', expiresAt: { lte: now } };
-  return { state: status };
 }
 
 function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {

@@ -1,9 +1,14 @@
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import type { DraftState } from './draft-rules.js';
+import { type DraftState, requireOpen } from './draft-rules.js';
 
 /**
  * Who may do what with an entry draft, the same for every type. The staff assistant (a delegated
@@ -49,13 +54,50 @@ export class DraftsService {
   }
 }
 
+/**
+ * The decision skeleton every draft type shares, inside one transaction: `lockParents` takes the
+ * type's parent locks first (e.g. the shipment), then the draft row is locked. An approval of an
+ * approved draft does nothing (returns false); otherwise the draft must be open at `version`,
+ * `record` writes the entry through its own service and `mark` stores the decision.
+ */
+export async function decideInTx(
+  tx: Prisma.TransactionClient,
+  spec: {
+    table: DraftTable;
+    id: string;
+    version: number;
+    label: string;
+    approving: boolean;
+    lockParents?: () => Promise<void>;
+    record?: () => Promise<void>;
+  },
+): Promise<boolean> {
+  await spec.lockParents?.();
+  const locked = await lockDraftRow(tx, spec.table, spec.id);
+  if (!locked) throw new NotFoundException(`${capitalise(spec.label)} not found`);
+  if (spec.approving && locked.state === 'APPROVED') return false;
+  requireOpen(locked, spec.version, spec.label);
+  await spec.record?.();
+  return true;
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** A key reused for another request: reveals nothing about the stored draft. */
 export function keyReused(): ConflictException {
   return new ConflictException('This idempotency key was used for another request');
 }
 
 /** Draft tables a row lock may name (a closed list: the name goes into the SQL text). */
-export const DRAFT_TABLES = ['grn_drafts', 'quotation_drafts', 'booking_drafts'] as const;
+export const DRAFT_TABLES = [
+  'grn_drafts',
+  'quotation_drafts',
+  'booking_drafts',
+  'trip_drafts',
+  'goods_release_drafts',
+] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 
 /** A draft row as locked for a change. */

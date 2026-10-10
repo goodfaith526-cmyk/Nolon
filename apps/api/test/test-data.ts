@@ -17,6 +17,10 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   // Trips and PODs (inland transport); fleet records of the tests are named ZZ...
   await prisma.podPhoto.deleteMany({ where: { pod: { shipment: createdBy } } });
   await prisma.proofOfDelivery.deleteMany({ where: { shipment: createdBy } });
+  // Trip drafts are created by the assistant's agent-it- users, for it- shipments.
+  await prisma.tripDraft.deleteMany({
+    where: { OR: [{ shipments: { some: { shipment: createdBy } } }, { trip: createdBy }] },
+  });
   await prisma.tripShipment.deleteMany({
     where: { OR: [{ shipment: createdBy }, { trip: createdBy }] },
   });
@@ -25,6 +29,7 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.driver.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
   await prisma.carrier.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
   await prisma.grnDraft.deleteMany({ where: { shipment: createdBy } });
+  await prisma.goodsReleaseDraft.deleteMany({ where: { shipment: createdBy } });
   await prisma.warehouseMovementPhoto.deleteMany({ where: { movement: { shipment: createdBy } } });
   await prisma.warehouseMovement.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsFee.deleteMany({ where: { shipment: createdBy } });

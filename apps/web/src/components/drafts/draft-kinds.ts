@@ -7,6 +7,8 @@ import type { Permission } from '@nolon/shared';
 export const DRAFT_KINDS = [
   { key: 'quotations', api: '/quotation-drafts', view: 'quotations:view' },
   { key: 'bookings', api: '/booking-drafts', view: 'bookings:view' },
+  { key: 'trips', api: '/trip-drafts', view: 'transport_trips:view' },
+  { key: 'releases', api: '/release-drafts', view: 'warehouse:view' },
 ] as const satisfies readonly { key: string; api: string; view: Permission }[];
 
 export type DraftKind = (typeof DRAFT_KINDS)[number]['key'];

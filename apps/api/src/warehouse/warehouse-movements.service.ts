@@ -60,6 +60,13 @@ const NUMBER_PREFIX: Record<WarehouseMovementKind, string> = { RECEIPT: 'GRN', R
 /** Shipment documents of this type hold the movement photos (documents master data). */
 const PHOTO_DOCUMENT_TYPE = 'PHOTO';
 
+/** A goods release checked by prepareRelease, ready for releaseInTx. */
+export interface PreparedRelease {
+  shipmentId: string;
+  branchId: string;
+  occurredAt: Date;
+}
+
 /** A goods receipt checked by prepareReceipt, ready for receiveInTx. */
 export interface PreparedReceipt {
   shipment: { id: string; branchId: string; status: ShipmentStatus; packages: number };
@@ -258,60 +265,80 @@ export class WarehouseMovementsService {
     shipmentId: string,
     input: GoodsReleaseRequest,
   ): Promise<WarehouseMovementDto> {
+    const prepared = await this.prepareRelease(user, shipmentId, input);
+    const id = await this.prisma.$transaction((tx) => this.releaseInTx(tx, user, prepared, input));
+    return this.getMovement(user, shipmentId, id);
+  }
+
+  /** The checks of a goods release that need no lock; releaseInTx then records it. */
+  async prepareRelease(
+    user: AuthUser,
+    shipmentId: string,
+    input: GoodsReleaseRequest,
+  ): Promise<PreparedRelease> {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     if (shipment.status === 'CLOSED') {
       throw new ConflictException('A closed shipment cannot release goods');
     }
-    const occurredAt = occurredAtOf(input.occurredAt);
-    const id = await this.prisma.$transaction(async (tx) => {
-      // Exclusive: a concurrent release of the same shipment waits here, then sees this one.
-      const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
-      if (status === 'CLOSED')
-        throw new ConflictException('A closed shipment cannot release goods');
-      const warehouse = await this.warehouses.requireForMovement(
-        tx,
-        user,
-        input.warehouseId,
-        null,
-        'release',
-      );
-      const held = await tx.warehouseMovement.findMany({
-        where: { shipmentId, warehouseId: warehouse.id, shipment: shipmentScope(user) },
-        select: {
-          kind: true,
-          warehouseId: true,
-          packages: true,
-          weightKg: true,
-          occurredAt: true,
-          createdAt: true,
-        },
-      });
-      const releasable = releasableAt(held, warehouse.id, occurredAt);
-      if (!canRelease(releasable, input.packages)) {
-        throw new ConflictException(
-          `Cannot release ${input.packages} packages: at most ${releasable} can leave this warehouse at that time`,
-        );
-      }
-      const number = await this.nextNumber(tx, 'RELEASE', warehouse);
-      const movement = await tx.warehouseMovement.create({
-        data: {
-          number,
-          kind: 'RELEASE',
-          branchId: shipment.branchId,
-          shipmentId,
-          warehouseId: warehouse.id,
-          packages: input.packages,
-          weightKg: input.weightKg ? dec(input.weightKg) : null,
-          partyName: input.partyName ?? null,
-          note: input.note ?? null,
-          occurredAt,
-          createdById: user.id,
-        },
-        select: { id: true },
-      });
-      return movement.id;
+    return { shipmentId, branchId: shipment.branchId, occurredAt: occurredAtOf(input.occurredAt) };
+  }
+
+  /**
+   * Records a prepared goods release inside the caller's transaction and returns the movement id.
+   * Takes the shipment row lock first (exclusive): a concurrent release of the same shipment waits
+   * here, then sees this one. A caller that locks other rows takes this lock before them.
+   */
+  async releaseInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedRelease,
+    input: GoodsReleaseRequest,
+  ): Promise<string> {
+    const { shipmentId, occurredAt } = prepared;
+    const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+    if (status === 'CLOSED') throw new ConflictException('A closed shipment cannot release goods');
+    const warehouse = await this.warehouses.requireForMovement(
+      tx,
+      user,
+      input.warehouseId,
+      null,
+      'release',
+    );
+    const held = await tx.warehouseMovement.findMany({
+      where: { shipmentId, warehouseId: warehouse.id, shipment: shipmentScope(user) },
+      select: {
+        kind: true,
+        warehouseId: true,
+        packages: true,
+        weightKg: true,
+        occurredAt: true,
+        createdAt: true,
+      },
     });
-    return this.getMovement(user, shipmentId, id);
+    const releasable = releasableAt(held, warehouse.id, occurredAt);
+    if (!canRelease(releasable, input.packages)) {
+      throw new ConflictException(
+        `Cannot release ${input.packages} packages: at most ${releasable} can leave this warehouse at that time`,
+      );
+    }
+    const number = await this.nextNumber(tx, 'RELEASE', warehouse);
+    const movement = await tx.warehouseMovement.create({
+      data: {
+        number,
+        kind: 'RELEASE',
+        branchId: prepared.branchId,
+        shipmentId,
+        warehouseId: warehouse.id,
+        packages: input.packages,
+        weightKg: input.weightKg ? dec(input.weightKg) : null,
+        partyName: input.partyName ?? null,
+        note: input.note ?? null,
+        occurredAt,
+        createdById: user.id,
+      },
+      select: { id: true },
+    });
+    return movement.id;
   }
 
   /** Adds a photo to a movement. The photo is a shipment document of type PHOTO. */

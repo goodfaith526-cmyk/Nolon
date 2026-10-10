@@ -2052,6 +2052,8 @@
     "kind": "نوع الإدخال",
     "kind_quotations": "عروض الأسعار",
     "kind_bookings": "الحجوزات",
+    "kind_trips": "الرحلات",
+    "kind_releases": "أذونات الإفراج",
     "status_DRAFT": "للمراجعة",
     "status_APPROVED": "معتمدة",
     "status_REJECTED": "مرفوضة",
@@ -2078,6 +2080,11 @@
     "quotationApproveHint": "الاعتماد بيعمل عرض سعر مسودة بتسعير نولون، وتقدر تعدّله قبل ما ترسله للعميل.",
     "bookingTitle": "مسودة حجز لـ {customer}",
     "bookingApproveHint": "الاعتماد بيعمل حجز مسودة، ما مؤكد وما عندو شحنة لحدي ما تأكده إنت.",
-    "fromQuotation": "من عرض السعر"
+    "fromQuotation": "من عرض السعر",
+    "tripTitle": "مسودة رحلة: {route}",
+    "tripApproveHint": "الاعتماد يخطط الرحلة ويجدول شحناتها كما لو خططتها بنفسك. يمكن تعديل الرحلة أو إلغاؤها ما دامت مخططة.",
+    "releaseTitle": "مسودة إذن إفراج للشحنة {shipment}",
+    "releaseApproveHint": "الاعتماد يصدر إذن الإفراج الآن بتاريخ الاعتماد، إذا كان المستودع ما زال يحتفظ بهذه الطرود.",
+    "shipment": "الشحنة"
   }
 }
