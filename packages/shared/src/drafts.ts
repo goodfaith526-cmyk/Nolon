@@ -1,3 +1,5 @@
+import type { DecimalString } from './currencies.js';
+
 /**
  * Entry drafts proposed by the staff AI assistant (erp-agents docs/packing-list-grn-drafts.md,
  * the first type). The assistant proposes; a person reviews, edits, approves or rejects; an
@@ -42,4 +44,45 @@ export interface DraftActions {
 export interface DraftRejectRequest {
   version: number;
   reason: string;
+}
+
+/** What the assistant gets back: ids, status and counts, never the values it sent. */
+export interface EntryDraftSummaryDto {
+  id: string;
+  status: DraftStatus;
+  version: number;
+  lineCount: number;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** Common to every draft a person reviews. */
+export interface EntryDraftReviewFields {
+  id: string;
+  branchId: string;
+  /** What the draft is about, for lists: the customer, the route, the shipment... */
+  subject: string;
+  status: DraftStatus;
+  version: number;
+  expiresAt: string;
+  createdAt: string;
+  /** The staff member the assistant acted for. */
+  createdByName: string;
+  decidedByName: string | null;
+  decidedAt: string | null;
+  rejectReason: string | null;
+  actions: DraftActions;
+}
+
+/**
+ * Whether the draft would be accepted by NOLON now, worked out on every read by the same checks
+ * an approval runs (nothing is written). `message` is NOLON's own refusal.
+ */
+export type EntryDraftCheck =
+  | { ok: true; total: DecimalString | null; currency: string | null }
+  | { ok: false; message: string };
+
+/** POST .../approve: the version the person reviewed. */
+export interface EntryDraftApproveRequest {
+  version: number;
 }

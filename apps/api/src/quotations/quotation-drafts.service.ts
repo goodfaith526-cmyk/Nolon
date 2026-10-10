@@ -340,6 +340,7 @@ function baseFields(
     branchId: d.branchId,
     customerId: d.customerId,
     customerName: d.customer.name,
+    subject: d.customer.name,
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),

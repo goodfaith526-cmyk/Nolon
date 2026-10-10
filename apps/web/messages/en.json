@@ -2057,7 +2057,7 @@
     "status_REJECTED": "Rejected",
     "status_EXPIRED": "Expired",
     "proposedAt": "Proposed",
-    "customer": "Customer",
+    "subject": "Subject",
     "proposedForColumn": "Proposed for",
     "lines": "Lines",
     "review": "Review",

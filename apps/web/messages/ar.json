@@ -2057,7 +2057,7 @@
     "status_REJECTED": "مرفوضة",
     "status_EXPIRED": "منتهية",
     "proposedAt": "تاريخ الاقتراح",
-    "customer": "العميل",
+    "subject": "الموضوع",
     "proposedForColumn": "مقترحة لـ",
     "lines": "البنود",
     "review": "مراجعة",

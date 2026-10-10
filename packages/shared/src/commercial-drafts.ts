@@ -3,8 +3,7 @@ import type {
   CreateBookingRequest,
   CreateQuotationRequest,
 } from './commercial.js';
-import type { DecimalString } from './currencies.js';
-import type { DraftActions, DraftStatus } from './drafts.js';
+import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
 /**
  * Quotation and booking drafts proposed by the staff AI assistant (entry drafts, drafts.ts). The
@@ -12,42 +11,6 @@ import type { DraftActions, DraftStatus } from './drafts.js';
  * ordinary DRAFT quotation or booking (still editable, not sent or confirmed) through NOLON's own
  * service with that person's permissions and branches, or rejects it with a reason.
  */
-
-/** What the assistant gets back: ids, status and counts, never the values it sent. */
-export interface EntryDraftSummaryDto {
-  id: string;
-  status: DraftStatus;
-  version: number;
-  lineCount: number;
-  expiresAt: string;
-  createdAt: string;
-}
-
-/** Common to every draft a person reviews. */
-export interface EntryDraftReviewFields {
-  id: string;
-  branchId: string;
-  customerId: string;
-  customerName: string;
-  status: DraftStatus;
-  version: number;
-  expiresAt: string;
-  createdAt: string;
-  /** The staff member the assistant acted for. */
-  createdByName: string;
-  decidedByName: string | null;
-  decidedAt: string | null;
-  rejectReason: string | null;
-  actions: DraftActions;
-}
-
-/**
- * Whether the draft would be accepted by NOLON now, worked out on every read by the same checks
- * an approval runs (nothing is written). `message` is NOLON's own refusal.
- */
-export type EntryDraftCheck =
-  | { ok: true; total: DecimalString | null; currency: string | null }
-  | { ok: false; message: string };
 
 // ---------------------------------------------------------------------------------------------
 // Quotations
@@ -59,7 +22,13 @@ export interface QuotationDraftCreateRequest extends CreateQuotationRequest {
   idempotencyKey: string;
 }
 
-export interface QuotationDraftDto extends EntryDraftReviewFields {
+/** Drafts made for a customer: the customer is in the reviewer's branches. */
+export interface CustomerDraftFields {
+  customerId: string;
+  customerName: string;
+}
+
+export interface QuotationDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   /** The proposed request, as stored. */
   request: CreateQuotationRequest;
   check: EntryDraftCheck | null;
@@ -89,7 +58,7 @@ export type BookingDraftRequest =
   | (BookingFromQuotationRequest & { quotationId: string; quotationNumber: string })
   | (CreateBookingRequest & { quotationId?: undefined });
 
-export interface BookingDraftDto extends EntryDraftReviewFields {
+export interface BookingDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   request: BookingDraftRequest;
   check: EntryDraftCheck | null;
   /** The booking an approval created. */
@@ -101,8 +70,3 @@ export type BookingDraftListItemDto = Omit<BookingDraftDto, 'request' | 'check'>
   lineCount: number;
   sourceQuotationNumber: string | null;
 };
-
-/** POST .../approve: the version the person reviewed. */
-export interface EntryDraftApproveRequest {
-  version: number;
-}

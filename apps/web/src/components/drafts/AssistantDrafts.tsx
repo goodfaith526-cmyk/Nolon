@@ -92,7 +92,7 @@ export function AssistantDrafts() {
             <thead>
               <tr>
                 <th>{t('proposedAt')}</th>
-                <th>{t('customer')}</th>
+                <th>{t('subject')}</th>
                 <th>{t('proposedForColumn')}</th>
                 <th>{t('lines')}</th>
                 <th>{tc('status')}</th>
@@ -103,7 +103,7 @@ export function AssistantDrafts() {
               {items.map((d) => (
                 <tr key={d.id}>
                   <td>{dateTime.format(new Date(d.createdAt))}</td>
-                  <td>{d.customerName}</td>
+                  <td>{d.subject}</td>
                   <td>{d.createdByName}</td>
                   <td>{d.lineCount}</td>
                   <td>
