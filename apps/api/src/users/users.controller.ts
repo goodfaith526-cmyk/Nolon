@@ -9,12 +9,15 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import {
+  ASSISTANT_DECIDABLE_KINDS,
   LOCALES,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   ROLES,
+  type AssistantApprovalGrantsDto,
   type UserSummary,
 } from '@nolon/shared';
 import { z } from 'zod';
@@ -45,6 +48,12 @@ const updateBody = z
   .strict();
 
 const resetBody = z.object({ password });
+
+const assistantApprovalsBody = z
+  .object({
+    kinds: z.array(z.enum(ASSISTANT_DECIDABLE_KINDS)).max(ASSISTANT_DECIDABLE_KINDS.length),
+  })
+  .strict();
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
@@ -109,5 +118,26 @@ export class UsersController {
     @Body() body: unknown,
   ): Promise<void> {
     return this.users.resetPassword(actor.id, id, parse(resetBody, body).password);
+  }
+
+  /** Draft kinds the user may approve or reject from inside the assistant chat. */
+  @Get(':id/assistant-approvals')
+  @RequirePermission('users:view')
+  assistantApprovals(@Param('id', ParseUUIDPipe) id: string): Promise<AssistantApprovalGrantsDto> {
+    return this.users.assistantApprovals(id);
+  }
+
+  @Put(':id/assistant-approvals')
+  @RequirePermission('users:update')
+  setAssistantApprovals(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<AssistantApprovalGrantsDto> {
+    return this.users.setAssistantApprovals(
+      actor.id,
+      id,
+      parse(assistantApprovalsBody, body).kinds,
+    );
   }
 }

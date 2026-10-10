@@ -87,6 +87,7 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
           {t('rejectedBy', { name: draft.decidedByName ?? '', reason: draft.rejectReason ?? '' })}
         </p>
       )}
+      {draft.decidedFromAssistant && <p className="muted">{t('decidedInAssistant')}</p>}
       {draft.check &&
         (draft.check.ok ? (
           <p className="notice ok">

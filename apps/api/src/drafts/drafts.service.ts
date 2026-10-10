@@ -4,11 +4,33 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { AssistantDecidableKind, AssistantDraftDto } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { type DraftState, requireOpen } from './draft-rules.js';
+import { type DraftState, contentHashOf, requireOpen } from './draft-rules.js';
+import { referenceNames } from './reference-names.js';
+
+const ASSISTANT_DECISION: unique symbol = Symbol('assistant decision');
+
+/**
+ * Proof that a decision from the assistant's chat passed authorizeAssistant: only that method
+ * builds one, so a draft service decides with a delegated token only after it.
+ */
+export interface AssistantDecision {
+  readonly [ASSISTANT_DECISION]: true;
+  readonly draftId: string;
+  /** What the card showed an approval would record (resolvedKey), when the type resolves any. */
+  readonly resolved: string | null;
+}
+
+/** How a person decides: on the review screen with their session, or in the assistant chat. */
+export type DecisionVia = 'SESSION' | AssistantDecision;
+
+export function decidedVia(via: DecisionVia): 'SESSION' | 'ASSISTANT' {
+  return via === 'SESSION' ? 'SESSION' : 'ASSISTANT';
+}
 
 /**
  * Who may do what with an entry draft, the same for every type. The staff assistant (a delegated
@@ -36,6 +58,111 @@ export class DraftsService {
    */
   requireHuman(user: AuthUser, refusal: string): void {
     if (user.agent) throw new ForbiddenException(refusal);
+  }
+
+  /**
+   * A decision on the review screen needs a person's session. A decision from the assistant's
+   * chat needs the delegated token and the proof authorizeAssistant gave for this same draft.
+   */
+  requireDecider(user: AuthUser, via: DecisionVia, refusal: string, draftId: string): void {
+    if (via === 'SESSION') return this.requireHuman(user, refusal);
+    if (!user.agent || via[ASSISTANT_DECISION] !== true || via.draftId !== draftId) {
+      throw new ForbiddenException(refusal);
+    }
+  }
+
+  /**
+   * An approval from the assistant's chat records only what its card showed: the type passes what
+   * it resolved for the record it is about to write (resolvedKey), and anything else asks for a
+   * reload. The review screen shows the live values, so a session approval is not bound.
+   */
+  requireResolved(via: DecisionVia, resolved: string, label: string): void {
+    if (via !== 'SESSION' && via.resolved !== resolved) {
+      throw new ConflictException(`This ${label} changed since you opened it: reload it`);
+    }
+  }
+
+  /**
+   * What the assistant's chat card shows: the draft as `draft` (already read through the type's
+   * own scope), its content hash, and whether the user holds the grant for its kind. Only a draft
+   * this assistant client created for this same user; any other reads as not found.
+   */
+  async assistantView<D extends { id: string; request: unknown }>(
+    user: AuthUser,
+    kind: AssistantDecidableKind,
+    table: DraftTable,
+    draft: D,
+    label: string,
+    resolved: string | null = null,
+  ): Promise<AssistantDraftDto<D>> {
+    await this.requireOwnDraft(user, table, draft.id, label);
+    const names = await referenceNames(this.prisma, user, draft.request);
+    return {
+      kind,
+      contentHash: contentHashOf({ ...draft, names, resolved }),
+      canDecideFromAssistant: await this.hasGrant(user.id, kind),
+      draft,
+      names,
+    };
+  }
+
+  /**
+   * Checks a decision from the assistant's chat, before the type decides in its own transaction:
+   * a draft this assistant client created for this same user (else not found), a grant for the
+   * kind (else forbidden), and for an approval the content the card showed (else conflict). The
+   * version is checked under the row lock by the decision itself.
+   */
+  async authorizeAssistant<D extends { id: string; request: unknown }>(
+    user: AuthUser,
+    kind: AssistantDecidableKind,
+    table: DraftTable,
+    draft: D,
+    label: string,
+    contentHash: string | null,
+    resolved: string | null = null,
+  ): Promise<AssistantDecision> {
+    await this.requireOwnDraft(user, table, draft.id, label);
+    if (!(await this.hasGrant(user.id, kind))) {
+      throw new ForbiddenException(
+        `Deciding a ${label} from the assistant is not turned on for you`,
+      );
+    }
+    // The names are hashed too: a rate card's price is in its name, so a repricing since the
+    // card was shown asks for a reload instead of approving a price nobody saw.
+    const names =
+      contentHash === null ? {} : await referenceNames(this.prisma, user, draft.request);
+    if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names, resolved })) {
+      throw new ConflictException(`This ${label} changed since you opened it: reload it`);
+    }
+    return { [ASSISTANT_DECISION]: true, draftId: draft.id, resolved };
+  }
+
+  private async requireOwnDraft(
+    user: AuthUser,
+    table: DraftTable,
+    id: string,
+    label: string,
+  ): Promise<void> {
+    const agentClientId = await this.agentClientOf(
+      user,
+      `Only the assistant reads a ${label} here`,
+    );
+    requireDraftTable(table);
+    const rows = await this.prisma.$queryRaw<{ created_by_id: string; agent_client_id: string }[]>`
+      SELECT "created_by_id", "agent_client_id" FROM ${Prisma.raw(`"${table}"`)}
+      WHERE "id" = ${id}::uuid`;
+    const row = rows[0];
+    if (!row || row.created_by_id !== user.id || row.agent_client_id !== agentClientId) {
+      throw new NotFoundException(`${capitalise(label)} not found`);
+    }
+  }
+
+  private async hasGrant(userId: string, kind: AssistantDecidableKind): Promise<boolean> {
+    const grant = await this.prisma.assistantApprovalGrant.findUnique({
+      where: { userId_kind: { userId, kind } },
+      select: { kind: true },
+    });
+    return grant !== null;
   }
 
   /**
@@ -120,9 +247,7 @@ export async function lockDraftRow(
   table: DraftTable,
   id: string,
 ): Promise<LockedDraftRow | null> {
-  if (!(DRAFT_TABLES as readonly string[]).includes(table)) {
-    throw new Error(`Not a draft table: ${table}`);
-  }
+  requireDraftTable(table);
   const rows = await tx.$queryRaw<
     { id: string; state: DraftState; version: number; expires_at: Date }[]
   >`
@@ -132,4 +257,10 @@ export async function lockDraftRow(
   return row
     ? { id: row.id, state: row.state, version: row.version, expiresAt: row.expires_at }
     : null;
+}
+
+function requireDraftTable(table: string): void {
+  if (!(DRAFT_TABLES as readonly string[]).includes(table)) {
+    throw new Error(`Not a draft table: ${table}`);
+  }
 }

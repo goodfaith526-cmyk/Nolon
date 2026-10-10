@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  type AssistantDraftDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
   type EntryDraftSummaryDto,
@@ -19,6 +20,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftDecidable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
@@ -31,6 +33,9 @@ import { quotationCreateBody } from './quotations.controller.js';
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 const createBody = quotationCreateBody.extend({ idempotencyKey }).strict();
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const assistantApproveBody = z
+  .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
@@ -99,5 +104,42 @@ export class QuotationDraftsController {
     @Body() body: unknown,
   ): Promise<QuotationDraftDto> {
     return this.drafts.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** The chat card's read: only a draft the assistant created for this same user. */
+  @AgentReadable()
+  @Get(':id/assistant')
+  @RequirePermission('quotations:view')
+  forAssistant(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<AssistantDraftDto<QuotationDraftDto>> {
+    return this.drafts.forAssistant(user, id);
+  }
+
+  /** The person approves in the assistant's chat (a click, never a model call). */
+  @AgentDraftDecidable()
+  @Post(':id/assistant-approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('quotations:create')
+  approveFromAssistant(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<QuotationDraftDto> {
+    return this.drafts.approveFromAssistant(user, id, parse(assistantApproveBody, body));
+  }
+
+  /** The person rejects in the assistant's chat. */
+  @AgentDraftDecidable()
+  @Post(':id/assistant-reject')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('quotations:create')
+  rejectFromAssistant(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<QuotationDraftDto> {
+    return this.drafts.rejectFromAssistant(user, id, parse(rejectBody, body));
   }
 }
