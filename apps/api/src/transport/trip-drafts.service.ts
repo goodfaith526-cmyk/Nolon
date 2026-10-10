@@ -27,9 +27,20 @@ import { DraftsService, decideInTx, keyReused } from '../drafts/drafts.service.j
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
+import { forbidDriverOnly } from './trip-scope.js';
 import { TripsService } from './trips.service.js';
 
 const LABEL = 'trip draft';
+
+/**
+ * Trip drafts are office planning. A Driver sees only the trips assigned to them (annex A), and a
+ * draft has no driver of its own yet, so a Driver-only user gets none of them, read or write; a
+ * user whose other roles grant trips sees the branch's drafts as they see its trips.
+ */
+function draftScope(user: AuthUser): Prisma.TripDraftWhereInput {
+  forbidDriverOnly(user, 'see or decide trip drafts');
+  return branchScope(user);
+}
 const ASSISTANT_ONLY = 'Trip drafts are proposed by the assistant';
 const HUMAN_ONLY = 'Only a person can decide on a trip draft';
 
@@ -106,6 +117,7 @@ export class TripDraftsService {
 
   async create(user: AuthUser, body: TripDraftCreateRequest): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
+    draftScope(user);
     const { idempotencyKey, ...input } = body;
     // The checks of a real trip that need no lock; nothing is written.
     const prepared = await this.trips.prepareCreate(user, input);
@@ -159,7 +171,7 @@ export class TripDraftsService {
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const draft = await this.prisma.tripDraft.findFirst({
-      where: { agentClientId, createdById: user.id, idempotencyKey, ...branchScope(user) },
+      where: { agentClientId, createdById: user.id, idempotencyKey, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Trip draft not found');
@@ -169,7 +181,7 @@ export class TripDraftsService {
   async list(user: AuthUser, status?: DraftStatus): Promise<TripDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.tripDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: { ...draftScope(user), ...stateFilter(status, now) },
       include: details,
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -312,7 +324,7 @@ export class TripDraftsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
     const draft = await this.prisma.tripDraft.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Trip draft not found');
