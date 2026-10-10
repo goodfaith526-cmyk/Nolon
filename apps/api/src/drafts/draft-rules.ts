@@ -209,6 +209,24 @@ export function rejectedFields(
   };
 }
 
+/**
+ * Fingerprint of what an approval would record now, as the type's service resolved it (rate card
+ * prices, totals): decimals by value, dates as instants. Bound to the chat card, so a value that
+ * changed since the card was shown asks for a reload instead of being recorded unseen.
+ */
+export function resolvedKey(value: unknown): string {
+  const normal = (v: unknown): unknown => {
+    if (v instanceof Prisma.Decimal) return v.toString();
+    if (v instanceof Date) return v.toISOString();
+    if (Array.isArray(v)) return v.map(normal);
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, normal(x)]));
+    }
+    return v;
+  };
+  return requestHash(normal(value));
+}
+
 /** Review fields that change between reads without the draft changing. */
 const VOLATILE_REVIEW_FIELDS = new Set(['actions', 'check', 'status']);
 

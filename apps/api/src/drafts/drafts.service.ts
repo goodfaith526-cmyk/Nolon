@@ -21,6 +21,8 @@ const ASSISTANT_DECISION: unique symbol = Symbol('assistant decision');
 export interface AssistantDecision {
   readonly [ASSISTANT_DECISION]: true;
   readonly draftId: string;
+  /** What the card showed an approval would record (resolvedKey), when the type resolves any. */
+  readonly resolved: string | null;
 }
 
 /** How a person decides: on the review screen with their session, or in the assistant chat. */
@@ -70,6 +72,17 @@ export class DraftsService {
   }
 
   /**
+   * An approval from the assistant's chat records only what its card showed: the type passes what
+   * it resolved for the record it is about to write (resolvedKey), and anything else asks for a
+   * reload. The review screen shows the live values, so a session approval is not bound.
+   */
+  requireResolved(via: DecisionVia, resolved: string, label: string): void {
+    if (via !== 'SESSION' && via.resolved !== resolved) {
+      throw new ConflictException(`This ${label} changed since you opened it: reload it`);
+    }
+  }
+
+  /**
    * What the assistant's chat card shows: the draft as `draft` (already read through the type's
    * own scope), its content hash, and whether the user holds the grant for its kind. Only a draft
    * this assistant client created for this same user; any other reads as not found.
@@ -80,12 +93,13 @@ export class DraftsService {
     table: DraftTable,
     draft: D,
     label: string,
+    resolved: string | null = null,
   ): Promise<AssistantDraftDto<D>> {
     await this.requireOwnDraft(user, table, draft.id, label);
     const names = await referenceNames(this.prisma, user, draft.request);
     return {
       kind,
-      contentHash: contentHashOf({ ...draft, names }),
+      contentHash: contentHashOf({ ...draft, names, resolved }),
       canDecideFromAssistant: await this.hasGrant(user.id, kind),
       draft,
       names,
@@ -105,6 +119,7 @@ export class DraftsService {
     draft: D,
     label: string,
     contentHash: string | null,
+    resolved: string | null = null,
   ): Promise<AssistantDecision> {
     await this.requireOwnDraft(user, table, draft.id, label);
     if (!(await this.hasGrant(user.id, kind))) {
@@ -116,10 +131,10 @@ export class DraftsService {
     // card was shown asks for a reload instead of approving a price nobody saw.
     const names =
       contentHash === null ? {} : await referenceNames(this.prisma, user, draft.request);
-    if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names })) {
+    if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names, resolved })) {
       throw new ConflictException(`This ${label} changed since you opened it: reload it`);
     }
-    return { [ASSISTANT_DECISION]: true, draftId: draft.id };
+    return { [ASSISTANT_DECISION]: true, draftId: draft.id, resolved };
   }
 
   private async requireOwnDraft(

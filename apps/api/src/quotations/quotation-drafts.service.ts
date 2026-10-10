@@ -25,6 +25,7 @@ import {
   draftStatus,
   requestHash,
   requireOpen,
+  resolvedKey,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
@@ -240,6 +241,8 @@ export class QuotationDraftsService {
     requireOpen(current, version, LABEL);
     // The request is the one at `version`; the lock below refuses if it changed since.
     const prepared = await this.quotations.prepareCreate(user, requestOf(current));
+    // From the chat: the prices the card showed (rate cards resolved), or a reload.
+    this.drafts.requireResolved(via, resolvedKey(prepared), LABEL);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
       if (!locked) throw new NotFoundException('Quotation draft not found');
@@ -264,7 +267,32 @@ export class QuotationDraftsService {
   /** The draft as the assistant's chat card shows it (erp-agents docs/chat-draft-approval.md). */
   async forAssistant(user: AuthUser, id: string): Promise<AssistantDraftDto<QuotationDraftDto>> {
     const draft = await this.get(user, id);
-    return this.drafts.assistantView(user, 'quotation', 'quotation_drafts', draft, LABEL);
+    return this.drafts.assistantView(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      await this.resolved(user, id),
+    );
+  }
+
+  /** What an approval would record now, with rate card prices resolved (null if refused). */
+  private async resolved(user: AuthUser, id: string): Promise<string | null> {
+    const draft = await this.findScoped(user, id);
+    if (draftStatus(draft.state, draft.expiresAt, new Date()) !== 'DRAFT') return null;
+    try {
+      return resolvedKey(await this.quotations.prepareCreate(user, requestOf(draft)));
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /** A person approves in the assistant's chat the content the card showed them. */
@@ -281,6 +309,7 @@ export class QuotationDraftsService {
       draft,
       LABEL,
       input.contentHash,
+      await this.resolved(user, id),
     );
     return this.approve(user, id, input.version, decision);
   }

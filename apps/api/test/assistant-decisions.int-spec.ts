@@ -39,7 +39,7 @@ let client: AgentClientCreatedDto;
 let otherClient: AgentClientCreatedDto;
 let customer: CustomerDto;
 
-const ids = { sales: '', salesPeer: '' };
+const ids = { sales: '', salesPeer: '', salesDxb: '' };
 const cookies = { admin: '', sales: '', salesDxb: '' };
 const tokens = { sales: '', salesOther: '', salesPeer: '' };
 
@@ -105,6 +105,7 @@ beforeAll(async () => {
   const salesDxb = await createUser(t.prisma, ['SALES'], ['DXB']);
   ids.sales = sales.id;
   ids.salesPeer = salesPeer.id;
+  ids.salesDxb = salesDxb.id;
   cookies.admin = await signIn(t, admin.email);
   cookies.sales = await signIn(t, sales.email);
   cookies.salesDxb = await signIn(t, salesDxb.email);
@@ -284,6 +285,59 @@ describe('deciding in the chat', () => {
     } finally {
       await t.prisma.customer.update({ where: { id: customer.id }, data: { number } });
     }
+  });
+
+  it('records only the rate card price the card showed: a repricing asks for a reload', async () => {
+    await grant(ids.sales, ['quotation']).expect(200);
+    const today = new Date().toISOString().slice(0, 10);
+    const rate = await t.prisma.rateCard.create({
+      data: {
+        branchId: customer.branchId,
+        originLocationId: route.origin,
+        destinationLocationId: route.destination,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'CONTAINER',
+        unit: 'PER_SHIPMENT',
+        price: '100',
+        currency: 'USD',
+        validFrom: new Date(`${today}T00:00:00Z`),
+        status: 'APPROVED',
+        approvedById: ids.salesDxb,
+        approvedAt: new Date(),
+        createdById: ids.salesDxb,
+      },
+    });
+    const body = {
+      ...quotationRequest(),
+      originLocationId: route.origin,
+      destinationLocationId: route.destination,
+      lines: [{ rateCardId: rate.id, quantity: '1' }],
+    };
+    const id = (
+      (await r.agentPost('/quotation-drafts', tokens.sales, body).expect(201))
+        .body as EntryDraftSummaryDto
+    ).id;
+    const shown = await card(id);
+    expect(shown.draft.check).toMatchObject({ ok: true, total: '100' });
+    await t.prisma.rateCard.update({ where: { id: rate.id }, data: { price: '10000' } });
+    const approve = (contentHash: string) =>
+      r.agentPost(`/quotation-drafts/${id}/assistant-approve`, tokens.sales, {
+        version: 1,
+        contentHash,
+      });
+    await approve(shown.contentHash).expect(409);
+    expect(
+      (await t.prisma.quotationDraft.findUniqueOrThrow({ where: { id } })).quotationId,
+    ).toBeNull();
+    // Reloaded, the card shows the new price, and that is what is recorded.
+    const reloaded = await card(id);
+    expect(reloaded.draft.check).toMatchObject({ ok: true, total: '10000' });
+    const approved = (await approve(reloaded.contentHash).expect(200)).body as QuotationDraftDto;
+    const quotation = (
+      await r.get(`/quotations/${approved.quotationId}`, cookies.salesDxb).expect(200)
+    ).body as QuotationDto;
+    expect(quotation.total).toBe('10000');
   });
 
   it('rejects with a reason, recorded as from the assistant', async () => {
