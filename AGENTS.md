@@ -38,17 +38,17 @@ another module's tables or internals.
    inside a migration, not only in application code. Corrections are made with a reversing
    entry. Never drop, disable or bypass these triggers.
 4. **No risky migration without the owner's OK.** Migrations are generated with `pnpm db:migrate`,
-   committed, and reviewed in the PR. CI ("Migration review") classifies every new migration:
-   - **Additive**: new tables, enum types and values, nullable or defaulted columns, indexes, and
-     constraints, triggers, functions and seed rows on objects the PR creates; no accounting table
-     or type. It merges on a strict Codex review and green CI.
-   - **Anything else** (drops, renames, type or constraint changes on existing objects, new NOT
-     NULL without a default, a unique index or trigger on an existing table, data changes, views,
-     grants), and anything that names an accounting table or type: CI fails until the PR carries
-     the `migration-signed-off` label. Before that label: explain the change to the owner in plain
-     language, take a backup of the target database and test its restore, and get the owner's
-     explicit OK in their own words. An agent adds the label only after that OK; a push that
-     changes migrations removes it.
+   committed, and reviewed in the PR. CI ("Migration review") checks every new migration against a
+   small allowed subset of additive SQL, and fails closed on anything else:
+   - **Additive**: new tables and enum types, added enum values, plain indexes, nullable or
+     constant-defaulted columns, foreign keys on new nullable columns, and constraints, unique
+     indexes, trigger functions and seed rows on tables the PR creates; nothing that names an
+     accounting table or type. It merges on a strict Codex review and green CI.
+   - **Anything else**, or anything the check cannot parse: CI fails until the PR carries the label
+     `migration-ok-<digest>` that the check prints, which names the exact migrations reviewed (any
+     later change to them needs a new label). Before that label: explain the change to the owner
+     in plain language, take a backup of the target database and test its restore, and get the
+     owner's explicit OK in their own words. An agent adds the label only after that OK.
 
    Never edit or delete a migration that is already on `main`; add a new one (CI fails if one
    changes). Call out destructive or locking changes in the PR description.
