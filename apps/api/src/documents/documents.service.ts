@@ -21,7 +21,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { cleanFileName, detectContentType, isXlsxWorkbook } from './file-type.js';
-import { sheetPreview } from './sheet-preview.js';
+import { isolatedSheetPreview } from './isolated-sheet-preview.js';
 
 export interface UploadInput {
   typeCode: string;
@@ -232,14 +232,14 @@ export class DocumentsService {
     if (file.contentType !== XLSX_CONTENT_TYPE) {
       throw new NotFoundException('This document is not a spreadsheet');
     }
-    // Each preview is bounded in bytes and time (sheet-preview.ts); this bounds how many run at
-    // once in this process.
+    // Each preview runs in its own worker with memory and time limits (isolated-sheet-preview.ts);
+    // this bounds how many run at once in this process.
     if (this.sheetPreviews >= MAX_PARALLEL_SHEET_PREVIEWS) {
       throw new ServiceUnavailableException('Other spreadsheets are being read; try again');
     }
     this.sheetPreviews++;
     try {
-      const preview = await sheetPreview(file.data);
+      const preview = await isolatedSheetPreview(file.data);
       if (!preview) throw new NotFoundException('The spreadsheet cannot be read');
       return preview;
     } finally {
