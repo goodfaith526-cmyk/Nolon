@@ -119,7 +119,7 @@ export function ShipmentDocuments({ shipmentId }: { shipmentId: string }) {
               name="file"
               type="file"
               required
-              accept="application/pdf,image/jpeg,image/png,image/webp"
+              accept="application/pdf,image/jpeg,image/png,image/webp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             />
           </label>
           <label className="field">

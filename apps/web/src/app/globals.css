@@ -3340,3 +3340,96 @@ fieldset > .line > .line-remove-button:hover {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* GRN drafts from the assistant: the source file next to the lines, AI-filled values marked. */
+.badge-grn-draft.badge-DRAFT {
+  --badge-bg: var(--info-soft);
+  --badge-fg: var(--info);
+}
+.badge-grn-draft.badge-APPROVED {
+  --badge-bg: var(--ok-soft);
+  --badge-fg: var(--ok);
+}
+.badge-grn-draft.badge-REJECTED,
+.badge-grn-draft.badge-EXPIRED {
+  --badge-bg: var(--neutral-soft);
+  --badge-fg: var(--neutral);
+}
+
+.card.grn-drafts {
+  max-inline-size: none;
+}
+
+.grn-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.grn-pdf {
+  inline-size: 100%;
+  block-size: 60vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.grn-image {
+  max-inline-size: 100%;
+  max-block-size: 60vh;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.grn-sheet {
+  max-block-size: 50vh;
+  overflow: auto;
+}
+.grn-sheet .grn-row-used {
+  background: var(--info-soft);
+}
+
+.grn-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.grn-legend li {
+  padding-block: 0.125rem;
+  padding-inline: 0.5rem;
+  border-radius: var(--radius-sm);
+}
+
+.grn-warnings {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  color: var(--warn);
+}
+
+/* Who filled a value: the colour sits behind the cell, so it shows in inputs and plain text. */
+.grn-cell.grn-ai.grn-matched {
+  background: var(--ok-soft);
+}
+.grn-cell.grn-ai.grn-unverified {
+  background: var(--warn-soft);
+}
+.grn-cell.grn-ai.grn-mismatch {
+  background: var(--bad-soft);
+  box-shadow: inset 0 0 0 1px var(--bad);
+}
+.grn-cell.grn-staff {
+  background: var(--surface-alt);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.grn-lines input {
+  inline-size: 100%;
+  min-inline-size: 5rem;
+}
+.grn-lines .grn-f-description input {
+  min-inline-size: 14rem;
+}
+.grn-lines .grn-f-marks input {
+  min-inline-size: 8rem;
+}

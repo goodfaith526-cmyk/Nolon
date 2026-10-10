@@ -18,6 +18,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import {
   MAX_DOCUMENT_BYTES,
   type PackingListContentDto,
+  type SheetPreviewDto,
   type ShipmentDocumentDto,
 } from '@nolon/shared';
 import type { Response } from 'express';
@@ -110,6 +111,41 @@ export class DocumentsController {
       'Cache-Control': 'private, no-store',
     });
     return new StreamableFile(file.data);
+  }
+
+  /**
+   * A PDF or image shown inline next to a GRN draft. Its type is the one detected at upload (PDF
+   * or image, never HTML or SVG), sniffing is off, and only NOLON itself may
+   * frame it. (No CSP sandbox: browsers refuse to show a PDF in one.)
+   */
+  @Get(':documentId/preview')
+  @RequirePermission('documents:view')
+  async preview(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const file = await this.documents.preview(user, shipmentId, documentId);
+    res.set({
+      'Content-Type': file.contentType,
+      'Content-Disposition': 'inline',
+      'Content-Security-Policy': "frame-ancestors 'self'",
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    });
+    return new StreamableFile(file.data);
+  }
+
+  /** The first sheet of an .xlsx document as text cells (formulas are not evaluated). */
+  @Get(':documentId/sheet')
+  @RequirePermission('documents:view')
+  sheet(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+  ): Promise<SheetPreviewDto> {
+    return this.documents.sheet(user, shipmentId, documentId);
   }
 
   @Delete(':documentId')

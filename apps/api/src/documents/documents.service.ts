@@ -11,6 +11,7 @@ import {
   PACKING_LIST_DOCUMENT_TYPE,
   XLSX_CONTENT_TYPE,
   type PackingListContentDto,
+  type SheetPreviewDto,
   type ShipmentDocumentDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -19,6 +20,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { cleanFileName, detectContentType, isXlsxWorkbook } from './file-type.js';
+import { sheetPreview } from './sheet-preview.js';
 
 export interface UploadInput {
   typeCode: string;
@@ -202,6 +204,29 @@ export class DocumentsService {
     });
     if (!document) throw new NotFoundException('Packing list not found');
     return document;
+  }
+
+  /**
+   * A PDF or image document to show inline on a review screen (the controller serves it
+   * sandboxed). 404 for other types: spreadsheets are shown through `sheet`.
+   */
+  async preview(user: AuthUser, shipmentId: string, documentId: string): Promise<DocumentFile> {
+    const file = await this.file(user, shipmentId, documentId);
+    if (file.contentType !== 'application/pdf' && !file.contentType.startsWith('image/')) {
+      throw new NotFoundException('No preview for this document');
+    }
+    return file;
+  }
+
+  /** The first sheet of an .xlsx document as text cells; 404 for other types. */
+  async sheet(user: AuthUser, shipmentId: string, documentId: string): Promise<SheetPreviewDto> {
+    const file = await this.file(user, shipmentId, documentId);
+    if (file.contentType !== XLSX_CONTENT_TYPE) {
+      throw new NotFoundException('This document is not a spreadsheet');
+    }
+    const preview = await sheetPreview(file.data);
+    if (!preview) throw new NotFoundException('The spreadsheet cannot be read');
+    return preview;
   }
 
   /** Soft delete: the file disappears from the shipment; who uploaded and deleted it remains. */

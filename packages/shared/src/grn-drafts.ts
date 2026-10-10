@@ -170,3 +170,18 @@ export interface PackingListContentDto {
   sha256: string;
   dataBase64: string;
 }
+
+/** Rows and columns of a spreadsheet packing list shown next to a draft, at most. */
+export const SHEET_PREVIEW_MAX_ROWS = 500;
+export const SHEET_PREVIEW_MAX_COLUMNS = 30;
+
+/**
+ * GET /shipments/:id/documents/:documentId/sheet: the first sheet of an .xlsx packing list as
+ * plain text cells (formulas show their stored result; nothing is evaluated), for the review
+ * screen. Row and column numbers are 1-based, as in Excel.
+ */
+export interface SheetPreviewDto {
+  sheetName: string;
+  rows: { rowNumber: number; cells: string[] }[];
+  truncated: boolean;
+}

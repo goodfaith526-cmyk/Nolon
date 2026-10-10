@@ -10,6 +10,7 @@ import type {
   GrnDraftSummaryDto,
   PackingListContentDto,
   ShipmentDocumentDto,
+  SheetPreviewDto,
   ShipmentDto,
   WarehouseDto,
 } from '@nolon/shared';
@@ -298,6 +299,44 @@ describe('packing list files', () => {
       `/shipments/${s.id}/documents/${doc.id}/packing-list-content`,
       tokens.whJed,
     ).expect(404);
+  });
+  it('the review screen shows a PDF inline and an .xlsx as cells; other branches and the assistant get nothing', async () => {
+    const s = await confirmedShipment();
+    const pdf = await packingList(s.id);
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('PL');
+    sheet.addRow(['Marks', 'Cartons', 'Total']);
+    sheet.addRow(['NOL/1', 6, { formula: 'B2*2', result: 12 }]);
+    const data = Buffer.from(await workbook.xlsx.writeBuffer());
+    const xlsx = (await upload(s.id, data, 'PACKING_LIST', 'list.xlsx').expect(201))
+      .body as ShipmentDocumentDto;
+    const base = `/shipments/${s.id}/documents`;
+
+    const inline = await get(`${base}/${pdf.id}/preview`, cookies.whDxb).expect(200);
+    expect(inline.headers['content-type']).toBe('application/pdf');
+    expect(inline.headers['content-disposition']).toBe('inline');
+    expect(inline.headers['content-security-policy']).toBe("frame-ancestors 'self'");
+    expect(inline.headers['x-content-type-options']).toBe('nosniff');
+    await get(`${base}/${xlsx.id}/preview`, cookies.whDxb).expect(404);
+
+    const cells = (await get(`${base}/${xlsx.id}/sheet`, cookies.whDxb).expect(200))
+      .body as SheetPreviewDto;
+    expect(cells).toEqual({
+      sheetName: 'PL',
+      truncated: false,
+      rows: [
+        { rowNumber: 1, cells: ['Marks', 'Cartons', 'Total'] },
+        { rowNumber: 2, cells: ['NOL/1', '6', '12'] },
+      ],
+    });
+    await get(`${base}/${pdf.id}/sheet`, cookies.whDxb).expect(404);
+
+    for (const id of [pdf.id, xlsx.id]) {
+      await get(`${base}/${id}/preview`, cookies.whJed).expect(404);
+      await get(`${base}/${id}/sheet`, cookies.whJed).expect(404);
+      await agentGet(`${base}/${id}/preview`, tokens.whDxb).expect(403);
+      await agentGet(`${base}/${id}/sheet`, tokens.whDxb).expect(403);
+    }
   });
 });
 
