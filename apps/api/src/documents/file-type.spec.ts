@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { attachmentDisposition, cleanFileName, detectContentType } from './file-type.js';
+import { packStoredZip } from '../common/zip-guard.js';
+import {
+  attachmentDisposition,
+  cleanFileName,
+  detectContentType,
+  isXlsxWorkbook,
+} from './file-type.js';
+
+const zip = (...names: string[]) =>
+  packStoredZip(
+    names.map((name) => ({
+      name: Buffer.from(name),
+      utf8Name: true,
+      content: Buffer.from('<x/>'),
+    })),
+  );
 
 const bytes = (...values: (number | string)[]) =>
   new Uint8Array(
@@ -36,5 +51,19 @@ describe('file names', () => {
     const header = attachmentDisposition('بوليصة.pdf');
     expect(header).toContain('filename="______.pdf"');
     expect(header).toContain(`filename*=UTF-8''${encodeURIComponent('بوليصة.pdf')}`);
+  });
+});
+
+describe('isXlsxWorkbook', () => {
+  it('accepts a zip with a workbook part', () => {
+    expect(isXlsxWorkbook(zip('[Content_Types].xml', 'xl/workbook.xml'))).toBe(true);
+  });
+
+  it('refuses a macro-enabled workbook, a zip without a workbook and anything not a zip', () => {
+    expect(isXlsxWorkbook(zip('[Content_Types].xml', 'xl/workbook.xml', 'xl/vbaProject.bin'))).toBe(
+      false,
+    );
+    expect(isXlsxWorkbook(zip('[Content_Types].xml', 'word/document.xml'))).toBe(false);
+    expect(isXlsxWorkbook(Buffer.from('%PDF-1.7\n'))).toBe(false);
   });
 });

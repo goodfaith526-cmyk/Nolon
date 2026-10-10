@@ -6,13 +6,19 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { MAX_DOCUMENT_BYTES, type ShipmentDocumentDto } from '@nolon/shared';
+import {
+  MAX_DOCUMENT_BYTES,
+  PACKING_LIST_DOCUMENT_TYPE,
+  XLSX_CONTENT_TYPE,
+  type PackingListContentDto,
+  type ShipmentDocumentDto,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { Document, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
-import { cleanFileName, detectContentType } from './file-type.js';
+import { cleanFileName, detectContentType, isXlsxWorkbook } from './file-type.js';
 
 export interface UploadInput {
   typeCode: string;
@@ -85,9 +91,19 @@ export class DocumentsService {
     if (input.data.length > MAX_DOCUMENT_BYTES) {
       throw new PayloadTooLargeException('Files are limited to 10 MB');
     }
-    const contentType = detectContentType(input.data);
-    if (!contentType)
-      throw new BadRequestException('Only PDF, JPEG, PNG and WebP files are accepted');
+    const contentType =
+      detectContentType(input.data) ??
+      // Packing lists often come as spreadsheets: a checked .xlsx is accepted for that type only.
+      (input.typeCode === PACKING_LIST_DOCUMENT_TYPE && isXlsxWorkbook(input.data)
+        ? XLSX_CONTENT_TYPE
+        : null);
+    if (!contentType) {
+      throw new BadRequestException(
+        input.typeCode === PACKING_LIST_DOCUMENT_TYPE
+          ? 'Only PDF, JPEG, PNG, WebP and .xlsx files are accepted'
+          : 'Only PDF, JPEG, PNG and WebP files are accepted',
+      );
+    }
     return { ...input, contentType };
   }
 
@@ -132,6 +148,60 @@ export class DocumentsService {
       contentType: document.contentType,
       data: Buffer.from(document.content.data),
     };
+  }
+
+  /**
+   * A packing list's bytes for the staff assistant to read, as JSON: its detected type, size and
+   * sha256, never its file name. 404 for any other document type, a deleted document, or a
+   * shipment the user cannot see.
+   */
+  async packingListContent(
+    user: AuthUser,
+    shipmentId: string,
+    documentId: string,
+  ): Promise<PackingListContentDto> {
+    await this.shipments.requireAccessible(user, shipmentId);
+    const document = await this.prisma.document.findFirst({
+      where: {
+        id: documentId,
+        shipmentId,
+        typeCode: PACKING_LIST_DOCUMENT_TYPE,
+        deletedAt: null,
+      },
+      include: { content: true },
+    });
+    if (!document?.content) throw new NotFoundException('Packing list not found');
+    return {
+      documentId: document.id,
+      contentType: document.contentType,
+      sizeBytes: document.sizeBytes,
+      sha256: document.sha256,
+      dataBase64: Buffer.from(document.content.data).toString('base64'),
+    };
+  }
+
+  /**
+   * A packing list of the shipment, for a GRN draft: not deleted, with these bytes (sha256).
+   * 404 otherwise. The caller has checked access to the shipment.
+   */
+  async requirePackingList(
+    tx: Tx,
+    shipmentId: string,
+    documentId: string,
+    sha256: string,
+  ): Promise<{ id: string }> {
+    const document = await tx.document.findFirst({
+      where: {
+        id: documentId,
+        shipmentId,
+        typeCode: PACKING_LIST_DOCUMENT_TYPE,
+        deletedAt: null,
+        sha256,
+      },
+      select: { id: true },
+    });
+    if (!document) throw new NotFoundException('Packing list not found');
+    return document;
   }
 
   /** Soft delete: the file disappears from the shipment; who uploaded and deleted it remains. */

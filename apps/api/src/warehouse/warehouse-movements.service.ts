@@ -8,6 +8,7 @@ import type {
   GoodsReceiptRequest,
   GoodsReleaseRequest,
   Permission,
+  ShipmentStatus,
   ShipmentWarehouseDto,
   WarehouseBalanceDto,
   WarehouseMovementDto,
@@ -58,6 +59,12 @@ const NUMBER_PREFIX: Record<WarehouseMovementKind, string> = { RECEIPT: 'GRN', R
 
 /** Shipment documents of this type hold the movement photos (documents master data). */
 const PHOTO_DOCUMENT_TYPE = 'PHOTO';
+
+/** A goods receipt checked by prepareReceipt, ready for receiveInTx. */
+export interface PreparedReceipt {
+  shipment: { id: string; branchId: string; status: ShipmentStatus; packages: number };
+  occurredAt: Date;
+}
 
 export interface PhotoUpload {
   fileName: string;
@@ -144,6 +151,20 @@ export class WarehouseMovementsService {
     shipmentId: string,
     input: GoodsReceiptRequest,
   ): Promise<WarehouseMovementDto> {
+    const prepared = await this.prepareReceipt(user, shipmentId, input);
+    const id = await this.prisma.$transaction((tx) => this.receiveInTx(tx, user, prepared, input));
+    return this.getMovement(user, shipmentId, id);
+  }
+
+  /**
+   * The checks of a goods receipt that need no lock: the shipment is visible to the user and
+   * active, and the request is complete. Then receiveInTx records it.
+   */
+  async prepareReceipt(
+    user: AuthUser,
+    shipmentId: string,
+    input: GoodsReceiptRequest,
+  ): Promise<PreparedReceipt> {
     const shipment = await this.shipments.childContext(user, shipmentId);
     if (!isActive(shipment.status)) {
       throw new ConflictException('A closed or cancelled shipment cannot receive goods');
@@ -151,67 +172,80 @@ export class WarehouseMovementsService {
     if (input.extraPackagesConfirmed && !input.note) {
       throw new BadRequestException('Say in the note why there are extra packages');
     }
-    const occurredAt = occurredAtOf(input.occurredAt);
-    const id = await this.prisma.$transaction(async (tx) => {
-      const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
-      if (!isActive(status)) {
-        throw new ConflictException('A closed or cancelled shipment cannot receive goods');
-      }
-      const warehouse = await this.warehouses.requireForMovement(
-        tx,
-        user,
-        input.warehouseId,
-        input.storageLocationId ?? null,
-        'receipt',
-      );
-      // Under the exclusive shipment lock: every earlier receipt and release is counted.
-      const logged = await tx.warehouseMovement.findMany({
-        where: { shipmentId, shipment: shipmentScope(user) },
-        select: {
-          kind: true,
-          warehouseId: true,
-          packages: true,
-          weightKg: true,
-          occurredAt: true,
-          createdAt: true,
-        },
-      });
-      const extra = extraPackagesOnReceipt(shipment.packages, logged, occurredAt, input.packages);
-      if (extra > 0 && !input.extraPackagesConfirmed) {
-        throw new ConflictException(
-          `This receipt would hold ${extra} more packages than the ${shipment.packages} on the ` +
-            'cargo lines: confirm the extra packages and say why in the note',
-        );
-      }
-      const number = await this.nextNumber(tx, 'RECEIPT', warehouse);
-      const applied = input.shipmentStatus
-        ? await this.shipments.advanceInTx(tx, user, shipmentId, input.shipmentStatus, {
-            occurredAt,
-            note: number,
-          })
-        : false;
-      const movement = await tx.warehouseMovement.create({
-        data: {
-          number,
-          kind: 'RECEIPT',
-          branchId: shipment.branchId,
-          shipmentId,
-          warehouseId: warehouse.id,
-          storageLocationId: warehouse.storageLocationId,
-          packages: input.packages,
-          weightKg: input.weightKg ? dec(input.weightKg) : null,
-          condition: input.condition,
-          partyName: input.partyName ?? null,
-          note: input.note ?? null,
-          occurredAt,
-          statusApplied: applied ? (input.shipmentStatus ?? null) : null,
-          createdById: user.id,
-        },
-        select: { id: true },
-      });
-      return movement.id;
+    return { shipment, occurredAt: occurredAtOf(input.occurredAt) };
+  }
+
+  /**
+   * Records a prepared goods receipt inside the caller's transaction and returns the movement id,
+   * so another write (a GRN draft approval) commits or rolls back together with it. Takes the
+   * shipment row lock first (exclusive); a caller that locks other rows must take this lock
+   * before them (ShipmentsService.lockForChildWrite), so every path locks in the same order.
+   */
+  async receiveInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedReceipt,
+    input: GoodsReceiptRequest,
+  ): Promise<string> {
+    const { shipment, occurredAt } = prepared;
+    const shipmentId = shipment.id;
+    const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+    if (!isActive(status)) {
+      throw new ConflictException('A closed or cancelled shipment cannot receive goods');
+    }
+    const warehouse = await this.warehouses.requireForMovement(
+      tx,
+      user,
+      input.warehouseId,
+      input.storageLocationId ?? null,
+      'receipt',
+    );
+    // Under the exclusive shipment lock: every earlier receipt and release is counted.
+    const logged = await tx.warehouseMovement.findMany({
+      where: { shipmentId, shipment: shipmentScope(user) },
+      select: {
+        kind: true,
+        warehouseId: true,
+        packages: true,
+        weightKg: true,
+        occurredAt: true,
+        createdAt: true,
+      },
     });
-    return this.getMovement(user, shipmentId, id);
+    const extra = extraPackagesOnReceipt(shipment.packages, logged, occurredAt, input.packages);
+    if (extra > 0 && !input.extraPackagesConfirmed) {
+      throw new ConflictException(
+        `This receipt would hold ${extra} more packages than the ${shipment.packages} on the ` +
+          'cargo lines: confirm the extra packages and say why in the note',
+      );
+    }
+    const number = await this.nextNumber(tx, 'RECEIPT', warehouse);
+    const applied = input.shipmentStatus
+      ? await this.shipments.advanceInTx(tx, user, shipmentId, input.shipmentStatus, {
+          occurredAt,
+          note: number,
+        })
+      : false;
+    const movement = await tx.warehouseMovement.create({
+      data: {
+        number,
+        kind: 'RECEIPT',
+        branchId: shipment.branchId,
+        shipmentId,
+        warehouseId: warehouse.id,
+        storageLocationId: warehouse.storageLocationId,
+        packages: input.packages,
+        weightKg: input.weightKg ? dec(input.weightKg) : null,
+        condition: input.condition,
+        partyName: input.partyName ?? null,
+        note: input.note ?? null,
+        occurredAt,
+        statusApplied: applied ? (input.shipmentStatus ?? null) : null,
+        createdById: user.id,
+      },
+      select: { id: true },
+    });
+    return movement.id;
   }
 
   /**

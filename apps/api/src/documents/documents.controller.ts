@@ -15,7 +15,11 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { MAX_DOCUMENT_BYTES, type ShipmentDocumentDto } from '@nolon/shared';
+import {
+  MAX_DOCUMENT_BYTES,
+  type PackingListContentDto,
+  type ShipmentDocumentDto,
+} from '@nolon/shared';
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -76,6 +80,18 @@ export class DocumentsController {
       note: fields.note,
       data: file.buffer,
     });
+  }
+
+  /** The staff assistant reads a packing list as JSON (no file name, no download headers). */
+  @AgentReadable()
+  @Get(':documentId/packing-list-content')
+  @RequirePermission('documents:view')
+  packingListContent(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+  ): Promise<PackingListContentDto> {
+    return this.documents.packingListContent(user, shipmentId, documentId);
   }
 
   @Get(':documentId/file')

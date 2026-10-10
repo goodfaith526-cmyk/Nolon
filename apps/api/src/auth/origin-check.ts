@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { isAgentAuthorization } from '../agent-auth/agent-secrets.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -29,6 +30,12 @@ export function isAllowedUnsafeRequest(
 /**
  * `exemptPaths`: exact paths of server-to-server endpoints that never read a session cookie
  * (the assistant's token exchange and revocation), so a browser cannot be used against them.
+ *
+ * A request carrying the assistant's bearer token (Authorization: Bearer nolag_...) is exempt
+ * too: the auth guard then authenticates it by that token only and ignores any cookie, and a page
+ * on another site can neither read such a token nor send an Authorization header without a CORS
+ * preflight, which only the allowed origins pass. It reaches only the routes opened to the
+ * assistant (AuthGuard).
  */
 export function originCheck(
   allowedOrigins: readonly string[],
@@ -37,7 +44,7 @@ export function originCheck(
   const allowed = allowedOrigins.map((origin) => originOf(origin) ?? origin);
   const exempt = new Set(exemptPaths);
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (exempt.has(req.path)) {
+    if (exempt.has(req.path) || isAgentAuthorization(req.headers.authorization)) {
       next();
       return;
     }

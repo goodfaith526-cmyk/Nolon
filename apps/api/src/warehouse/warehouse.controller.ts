@@ -67,7 +67,7 @@ const weightKg = z
   .regex(/^\d{1,9}(\.\d{1,3})?$/, 'Invalid weight')
   .nullish();
 
-const receiptBody = z
+export const receiptBody = z
   .object({
     warehouseId: z.uuid(),
     storageLocationId: z.uuid().nullish(),
