@@ -1,5 +1,5 @@
 # Staging stack on the Hetzner server. The deploy job copies this file, the Caddyfile,
-# deploy.sh and a generated .env into the deploy directory and runs deploy.sh.
+# deploy.sh, the backup scripts and a generated .env into the deploy directory and runs deploy.sh.
 # Every ${VAR} below comes from that .env (see DEPLOY.md).
 # The project name keeps containers, the network and volumes prefixed `nolon-staging`, apart from
 # anything else running on the server.
@@ -35,6 +35,32 @@ services:
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       # The seed fails (and so the deploy) if no active Administrator exists afterwards.
       SEED_REQUIRE_ADMIN: 'true'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Backups (backup.sh, backup-job.sh, backup.Dockerfile from deploy/production): built on the
+  # server, the same tools as production. Their backups go under staging/ in the bucket. The
+  # settings are empty until set up (DEPLOY.md, Backups); backup-job refuses to run then.
+  backup:
+    build:
+      context: .
+      dockerfile: backup.Dockerfile
+    image: nolon-staging-backup:local
+    profiles: [jobs]
+    environment:
+      PGHOST: postgres
+      PGUSER: nolon
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: nolon
+      BACKUP_PREFIX: staging
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
     depends_on:
       postgres:
         condition: service_healthy

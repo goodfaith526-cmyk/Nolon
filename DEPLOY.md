@@ -205,4 +205,43 @@ docker compose -f docker-compose.staging.yml logs -f api
 ./deploy.sh        # re-run the last deploy (needs `docker login ghcr.io` if images were pruned)
 ```
 
-Database backups are not set up yet; staging holds demo data only.
+## Backups
+
+Staging holds the client's trial data and the staff assistant's drafts, so it is backed up the
+same way as production (DEPLOY-PRODUCTION.md, Backups): the same tools (`backup.sh`,
+`backup-job.sh`, `backup.Dockerfile` from `deploy/production`, copied here by the deploy job),
+encrypted on the server to a public key, uploaded locked with S3 Object Lock, under `staging/` in
+the bucket. Daily at 01:47 UTC, and before every migration once set up. CI runs the full round
+trip for the staging stack too (`deploy/production/test-backup.sh staging`).
+
+Until the settings below exist, staging still deploys, with a warning, and migrates without a
+backup. Once they exist, a failed backup stops the deploy before any migration.
+
+### Setup, once
+
+1. **Bucket**: one bucket can serve staging and production (each has its own folder). Create it as
+   DEPLOY-PRODUCTION.md, Backups, step 1 says: private, **with Object Lock**, a lifecycle rule for
+   noncurrent versions, and S3 credentials.
+2. **Key pair** (server, in `~/nolon-staging`, after a deploy that includes the backup tools):
+   `./backup.sh keygen`. Copy the private key into your password manager. Never paste it in a chat
+   or a screenshot. Reusing production's public key is allowed; then one private key opens both.
+3. **GitHub** (Settings > Secrets and variables > Actions):
+
+   | Kind     | Name                                  | Value                                             |
+   | -------- | ------------------------------------- | ------------------------------------------------- |
+   | Variable | `STAGING_BACKUP_AGE_RECIPIENT`        | The public key from `keygen` (starts with `age1`) |
+   | Variable | `STAGING_BACKUP_S3_ENDPOINT`          | e.g. `https://hel1.your-objectstorage.com`        |
+   | Variable | `STAGING_BACKUP_S3_REGION`            | e.g. `hel1`                                       |
+   | Variable | `STAGING_BACKUP_S3_BUCKET`            | The bucket name                                   |
+   | Variable | `STAGING_BACKUP_KEEP_DAYS`            | Optional, 7 or more, default 35                   |
+   | Secret   | `STAGING_BACKUP_S3_ACCESS_KEY_ID`     | From step 1                                       |
+   | Secret   | `STAGING_BACKUP_S3_SECRET_ACCESS_KEY` | From step 1                                       |
+
+4. **Deploy** again (Actions > Deploy staging > Run workflow). It takes a backup before migrating
+   and installs the daily one (`crontab -l`; log `~/nolon-staging-backup.log`).
+5. **Restore test** (server, in `~/nolon-staging`): `./backup.sh restore-test`. It asks for the
+   private key (hidden as you type) and must end with `RESTORE TEST PASSED`. The date of the last
+   pass is in `last-restore-test`.
+
+`./backup.sh list` shows the backups; `./backup.sh restore <name> --database <db> [--replace]`
+restores one (DEPLOY-PRODUCTION.md, Restore).
