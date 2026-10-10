@@ -11,6 +11,7 @@ export const IS_PUBLIC = 'auth:isPublic';
 export const REQUIRED_PERMISSIONS = 'auth:requiredPermissions';
 export const AGENT_READABLE = 'auth:agentReadable';
 export const AGENT_DRAFT_WRITABLE = 'auth:agentDraftWritable';
+export const AGENT_DRAFT_DECIDABLE = 'auth:agentDraftDecidable';
 
 /** Opts a route out of the session guard. Every other route requires a signed-in user. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -33,6 +34,15 @@ export const AgentReadable = () => SetMetadata(AGENT_READABLE, true);
  * approval, an edit, a delete or a posting.
  */
 export const AgentDraftWritable = () => SetMetadata(AGENT_DRAFT_WRITABLE, true);
+
+/**
+ * Opens a POST route to the staff assistant's chat for a person's decision on a draft the
+ * assistant created for them (erp-agents docs/chat-draft-approval.md): the person clicks, the
+ * model never calls it. The service checks the draft's creator and assistant client, the
+ * person's grant for the kind and the content they saw. Only the routes listed in
+ * agent-draft-decidable.spec.ts carry it.
+ */
+export const AgentDraftDecidable = () => SetMetadata(AGENT_DRAFT_DECIDABLE, true);
 
 /** The user the guard attached. Only valid on routes that are not @Public(). */
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

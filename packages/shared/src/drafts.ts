@@ -70,6 +70,8 @@ export interface EntryDraftReviewFields {
   createdByName: string;
   decidedByName: string | null;
   decidedAt: string | null;
+  /** The person decided in the assistant's chat (assistant approval), not on the review screen. */
+  decidedFromAssistant: boolean;
   rejectReason: string | null;
   actions: DraftActions;
 }
@@ -85,4 +87,40 @@ export type EntryDraftCheck =
 /** POST .../approve: the version the person reviewed. */
 export interface EntryDraftApproveRequest {
   version: number;
+}
+
+/**
+ * Entry kinds a person may approve or reject from the assistant's chat (erp-agents
+ * docs/chat-draft-approval.md), once an admin granted that kind to them. GRN drafts are not among
+ * them: their approval needs the receipt details a person enters on the review screen.
+ */
+export const ASSISTANT_DECIDABLE_KINDS = [
+  'quotation',
+  'booking',
+  'trip',
+  'goods_release',
+  'invoice',
+  'receipt',
+] as const;
+export type AssistantDecidableKind = (typeof ASSISTANT_DECIDABLE_KINDS)[number];
+
+/** A draft as the assistant's chat card shows it, with what an approval must repeat. */
+export interface AssistantDraftDto<D> {
+  kind: AssistantDecidableKind;
+  /** Fingerprint of the proposed content; an approval sends it back with the version. */
+  contentHash: string;
+  /** The user holds the grant for this kind (the route's permission is checked on decision). */
+  canDecideFromAssistant: boolean;
+  draft: D;
+}
+
+export interface AssistantDraftApproveRequest {
+  version: number;
+  contentHash: string;
+}
+
+/** The kinds a user may decide from the assistant's chat. */
+export interface AssistantApprovalGrantsDto {
+  userId: string;
+  kinds: AssistantDecidableKind[];
 }

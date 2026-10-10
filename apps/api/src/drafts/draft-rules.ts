@@ -168,16 +168,21 @@ export async function checkDraft(
 }
 
 /** The fields of a decision, as the draft row stores them. */
-export function approvedFields(user: { id: string }): {
+export function approvedFields(
+  user: { id: string },
+  via: 'SESSION' | 'ASSISTANT' = 'SESSION',
+): {
   state: 'APPROVED';
   decidedById: string;
   decidedAt: Date;
+  decidedVia: 'SESSION' | 'ASSISTANT';
   version: { increment: number };
 } {
   return {
     state: 'APPROVED',
     decidedById: user.id,
     decidedAt: new Date(),
+    decidedVia: via,
     version: { increment: 1 },
   };
 }
@@ -185,11 +190,13 @@ export function approvedFields(user: { id: string }): {
 export function rejectedFields(
   user: { id: string },
   reason: string,
+  via: 'SESSION' | 'ASSISTANT' = 'SESSION',
 ): {
   state: 'REJECTED';
   rejectReason: string;
   decidedById: string;
   decidedAt: Date;
+  decidedVia: 'SESSION' | 'ASSISTANT';
   version: { increment: number };
 } {
   return {
@@ -197,6 +204,22 @@ export function rejectedFields(
     rejectReason: reason,
     decidedById: user.id,
     decidedAt: new Date(),
+    decidedVia: via,
     version: { increment: 1 },
   };
+}
+
+/** Review fields that change between reads without the draft changing. */
+const VOLATILE_REVIEW_FIELDS = new Set(['actions', 'check', 'status']);
+
+/**
+ * Fingerprint of a draft as a person reads it (its DTO, without the fields recomputed on every
+ * read). An approval from the assistant's chat repeats it, so what is approved is what the card
+ * showed; any change in between (a renamed customer included) asks for a reload.
+ */
+export function contentHashOf(draft: object): string {
+  const stable = Object.fromEntries(
+    Object.entries(draft).filter(([key]) => !VOLATILE_REVIEW_FIELDS.has(key)),
+  );
+  return requestHash(stable);
 }

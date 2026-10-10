@@ -148,7 +148,10 @@
     "failed": "Something went wrong. Try again.",
     "resetTitle": "Reset password for {name}",
     "confirmPassword": "Confirm password",
-    "passwordMismatch": "The two passwords do not match."
+    "passwordMismatch": "The two passwords do not match.",
+    "assistantApprovals": "Assistant approvals",
+    "assistantApprovalsTitle": "Assistant approvals: {name}",
+    "assistantApprovalsHint": "Drafts the assistant prepares for this user that they may approve or reject inside the assistant chat. They still need the usual permission for each entry. Goods receipts are always approved on the review screen."
   },
   "Roles": {
     "ADMINISTRATOR": "Administrator",
@@ -2091,6 +2094,7 @@
     "invoiceTitle": "Invoice draft for {shipment} ({customer})",
     "invoiceApproveHint": "Approving creates a draft invoice. Nothing is posted: the invoice is approved, numbered and posted separately, as usual.",
     "receiptTitle": "Receipt draft from {customer}",
-    "receiptApproveHint": "Approving records the receipt and posts its journal entry, and settles the invoices listed, in your name. Check the amount against the bank or cash first."
+    "receiptApproveHint": "Approving records the receipt and posts its journal entry, and settles the invoices listed, in your name. Check the amount against the bank or cash first.",
+    "decidedInAssistant": "Decided in the assistant chat."
   }
 }

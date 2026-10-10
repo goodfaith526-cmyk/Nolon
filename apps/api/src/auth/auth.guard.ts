@@ -11,6 +11,7 @@ import type { AuthenticatedRequest } from './auth-user.js';
 import { AuthService } from './auth.service.js';
 import { isAgentAuthorization, readAgentToken } from '../agent-auth/agent-secrets.js';
 import {
+  AGENT_DRAFT_DECIDABLE,
   AGENT_DRAFT_WRITABLE,
   AGENT_READABLE,
   IS_PUBLIC,
@@ -24,8 +25,8 @@ import { SESSION_COOKIE, readCookie } from './session-token.js';
  *
  * A request carrying `Authorization: Bearer nolag_...` is the staff AI assistant acting for a
  * user (agent-auth). That header wins over the session cookie and over @Public(): the request is
- * authenticated by the token only, may only GET routes marked @AgentReadable() and POST the one
- * draft route marked @AgentDraftWritable(), and every attempt
+ * authenticated by the token only, may only GET routes marked @AgentReadable() and POST the
+ * draft routes marked @AgentDraftWritable() or @AgentDraftDecidable(), and every attempt
  * with a known token (expired, revoked or refused ones included) is logged with the user and the
  * agent.
  */
@@ -66,13 +67,14 @@ export class AuthGuard implements CanActivate {
     const resolved = token ? await this.auth.resolveAgentToken(token) : null;
     if (!resolved) throw new UnauthorizedException('Not signed in');
     const { tokenId, user } = resolved;
-    // @Public() routes too: only GET routes marked @AgentReadable(), and POST on the draft route
-    // marked @AgentDraftWritable(), are open to the assistant.
+    // @Public() routes too: only GET routes marked @AgentReadable(), and POST on the draft routes
+    // marked @AgentDraftWritable() or @AgentDraftDecidable(), are open to the assistant.
     const marked = (key: string) =>
       this.reflector.getAllAndOverride<boolean>(key, targets) === true;
     const open =
       (request.method === 'GET' && marked(AGENT_READABLE)) ||
-      (request.method === 'POST' && marked(AGENT_DRAFT_WRITABLE));
+      (request.method === 'POST' &&
+        (marked(AGENT_DRAFT_WRITABLE) || marked(AGENT_DRAFT_DECIDABLE)));
     const permitted =
       user !== null && !required?.some((permission) => !user.permissions.has(permission));
     await this.auth.recordAgentAccess(

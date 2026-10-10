@@ -1,10 +1,13 @@
 'use client';
 
 import {
+  ASSISTANT_DECIDABLE_KINDS,
   LOCALES,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   ROLES,
+  type AssistantApprovalGrantsDto,
+  type AssistantDecidableKind,
   type Locale,
   type Role,
   type UserSummary,
@@ -19,7 +22,18 @@ type Mode =
   | { kind: 'list' }
   | { kind: 'create' }
   | { kind: 'edit'; user: UserSummary }
-  | { kind: 'reset'; user: UserSummary };
+  | { kind: 'reset'; user: UserSummary }
+  | { kind: 'assistant'; user: UserSummary };
+
+/** The draft list's label for each kind a person may decide from the assistant chat. */
+const KIND_LABEL: Record<AssistantDecidableKind, string> = {
+  quotation: 'kind_quotations',
+  booking: 'kind_bookings',
+  trip: 'kind_trips',
+  goods_release: 'kind_releases',
+  invoice: 'kind_invoices',
+  receipt: 'kind_receipts',
+};
 
 export function UsersAdmin() {
   const t = useTranslations('Users');
@@ -116,6 +130,24 @@ export function UsersAdmin() {
         />
       )}
 
+      {mode.kind === 'assistant' && (
+        <AssistantApprovalsForm
+          key={mode.user.id}
+          user={mode.user}
+          onCancel={() => setMode({ kind: 'list' })}
+          onSubmit={(kinds) =>
+            run(
+              () =>
+                api(`/users/${mode.user.id}/assistant-approvals`, {
+                  method: 'PUT',
+                  body: { kinds },
+                }),
+              t('saved'),
+            )
+          }
+        />
+      )}
+
       {(mode.kind === 'create' || mode.kind === 'edit') && (
         <UserForm
           key={mode.kind === 'edit' ? mode.user.id : 'new'}
@@ -170,6 +202,9 @@ export function UsersAdmin() {
                         </button>
                         <button type="button" onClick={() => setMode({ kind: 'reset', user })}>
                           {t('resetPassword')}
+                        </button>
+                        <button type="button" onClick={() => setMode({ kind: 'assistant', user })}>
+                          {t('assistantApprovals')}
                         </button>
                         {user.id !== me.id && (
                           <button type="button" onClick={() => toggleActive(user)}>
@@ -307,6 +342,73 @@ function UserForm({
 
       <div className="actions">
         <button type="submit" className="primary" disabled={busy}>
+          {t('save')}
+        </button>
+        <button type="button" onClick={onCancel}>
+          {t('cancel')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Which assistant drafts the user may approve or reject inside the assistant chat. Goods receipts
+ * are never listed: their approval needs details a person enters on the review screen.
+ */
+function AssistantApprovalsForm({
+  user,
+  onCancel,
+  onSubmit,
+}: {
+  user: UserSummary;
+  onCancel: () => void;
+  onSubmit: (kinds: AssistantDecidableKind[]) => Promise<void>;
+}) {
+  const t = useTranslations('Users');
+  const tDrafts = useTranslations('Drafts');
+  const [granted, setGranted] = useState<AssistantDecidableKind[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api<AssistantApprovalGrantsDto>(`/users/${user.id}/assistant-approvals`)
+      .then((grants) => setGranted(grants.kinds))
+      .catch(() => setFailed(true));
+  }, [user.id]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    await onSubmit(ASSISTANT_DECIDABLE_KINDS.filter((k) => form.getAll('kinds').includes(k)));
+    setBusy(false);
+  }
+
+  return (
+    <form className="card stack" onSubmit={(e) => void submit(e)}>
+      <h2>{t('assistantApprovalsTitle', { name: user.fullName })}</h2>
+      <p className="muted">{t('assistantApprovalsHint')}</p>
+      {failed && <p className="error">{t('loadFailed')}</p>}
+      {granted === null ? (
+        !failed && <p className="muted">{t('loading')}</p>
+      ) : (
+        <div className="checks">
+          {ASSISTANT_DECIDABLE_KINDS.map((kind) => (
+            <label key={kind}>
+              <input
+                type="checkbox"
+                name="kinds"
+                value={kind}
+                defaultChecked={granted.includes(kind)}
+              />
+              {tDrafts(KIND_LABEL[kind])}
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="actions">
+        <button type="submit" className="primary" disabled={busy || granted === null}>
           {t('save')}
         </button>
         <button type="button" onClick={onCancel}>

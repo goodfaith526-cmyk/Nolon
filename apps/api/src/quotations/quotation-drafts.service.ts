@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AssistantDraftApproveRequest,
+  AssistantDraftDto,
   CreateQuotationRequest,
   DraftStatus,
   EntryDraftCheck,
@@ -25,7 +27,13 @@ import {
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
+import {
+  type DecisionVia,
+  DraftsService,
+  decidedVia,
+  keyReused,
+  lockDraftRow,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from './quotations.service.js';
@@ -220,8 +228,13 @@ export class QuotationDraftsService {
    * QuotationsService with their permissions and branches, in the same transaction as the
    * approval. Approving an approved draft returns it as it is, without a second quotation.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<QuotationDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    via: DecisionVia = 'SESSION',
+  ): Promise<QuotationDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
@@ -240,6 +253,7 @@ export class QuotationDraftsService {
           quotationId: quotation.id,
           decidedById: user.id,
           decidedAt: new Date(),
+          decidedVia: decidedVia(via),
           version: { increment: 1 },
         },
       });
@@ -247,12 +261,55 @@ export class QuotationDraftsService {
     return this.get(user, id);
   }
 
-  async reject(
+  /** The draft as the assistant's chat card shows it (erp-agents docs/chat-draft-approval.md). */
+  async forAssistant(user: AuthUser, id: string): Promise<AssistantDraftDto<QuotationDraftDto>> {
+    const draft = await this.get(user, id);
+    return this.drafts.assistantView(user, 'quotation', 'quotation_drafts', draft, LABEL);
+  }
+
+  /** A person approves in the assistant's chat the content the card showed them. */
+  async approveFromAssistant(
+    user: AuthUser,
+    id: string,
+    input: AssistantDraftApproveRequest,
+  ): Promise<QuotationDraftDto> {
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      input.contentHash,
+    );
+    return this.approve(user, id, input.version, decision);
+  }
+
+  /** A person rejects in the assistant's chat. */
+  async rejectFromAssistant(
     user: AuthUser,
     id: string,
     input: { version: number; reason: string },
   ): Promise<QuotationDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      null,
+    );
+    return this.reject(user, id, input, decision);
+  }
+
+  async reject(
+    user: AuthUser,
+    id: string,
+    input: { version: number; reason: string },
+    via: DecisionVia = 'SESSION',
+  ): Promise<QuotationDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
@@ -265,6 +322,7 @@ export class QuotationDraftsService {
           rejectReason: input.reason,
           decidedById: user.id,
           decidedAt: new Date(),
+          decidedVia: decidedVia(via),
           version: { increment: 1 },
         },
       });
@@ -337,6 +395,7 @@ function baseFields(
     createdAt: d.createdAt.toISOString(),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
+    decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },
