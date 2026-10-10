@@ -73,7 +73,8 @@
     "openingBalances": "Opening balances",
     "consolidations": "Containers (LCL)",
     "alertSettings": "Alert days",
-    "apiKeys": "API keys"
+    "apiKeys": "API keys",
+    "assistantDrafts": "Drafts from the assistant"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -2044,5 +2045,39 @@
     "warning_TOTAL_CBM_MISMATCH": "The lines do not add up to the volume on the document.",
     "warning_SOURCE_NOT_VERIFIABLE": "The file is a scan or photo: no value could be checked against it.",
     "warning_NET_ABOVE_GROSS": "A line has a net weight above its gross weight."
+  },
+  "Drafts": {
+    "title": "Drafts from the assistant",
+    "hint": "Entries the assistant proposed for staff. Nothing is recorded until a person opens a draft and approves it; approving runs NOLON's own checks with your permissions.",
+    "kind": "Entry type",
+    "kind_quotations": "Quotations",
+    "kind_bookings": "Bookings",
+    "status_DRAFT": "To review",
+    "status_APPROVED": "Approved",
+    "status_REJECTED": "Rejected",
+    "status_EXPIRED": "Expired",
+    "proposedAt": "Proposed",
+    "subject": "Subject",
+    "proposedForColumn": "Proposed for",
+    "lines": "Lines",
+    "review": "Review",
+    "proposedFor": "Proposed by the assistant for {name}",
+    "expires": "open until {at}",
+    "notRecorded": "This is a proposal. Nothing is recorded until it is approved.",
+    "approvedBy": "Approved by {name}:",
+    "rejectedBy": "Rejected by {name}: {reason}",
+    "checkOk": "NOLON would accept this draft now.",
+    "checkTotal": "Total as NOLON prices it:",
+    "checkFailed": "NOLON would refuse this draft now: {message}",
+    "approve": "Approve",
+    "reject": "Reject draft",
+    "rejectReason": "Reason for rejecting",
+    "approvedNotice": "Approved.",
+    "rejectedNotice": "Draft rejected.",
+    "quotationTitle": "Quotation draft for {customer}",
+    "quotationApproveHint": "Approving creates a draft quotation priced by NOLON. You can still edit it before sending it to the customer.",
+    "bookingTitle": "Booking draft for {customer}",
+    "bookingApproveHint": "Approving creates a draft booking. It is not confirmed and has no shipment until you confirm it.",
+    "fromQuotation": "From quotation"
   }
 }

@@ -77,9 +77,9 @@ const bookingFields = {
   items,
 };
 
-const createBody = z.object({ customerId: z.uuid(), ...bookingFields }).strict();
+export const bookingCreateBody = z.object({ customerId: z.uuid(), ...bookingFields }).strict();
 const updateBody = z.object(bookingFields).strict();
-const fromQuotationBody = z
+export const bookingFromQuotationBody = z
   .object({
     services: services.optional(),
     ...partyRefs,
@@ -119,7 +119,7 @@ export class BookingsController {
   @Post()
   @RequirePermission('bookings:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<BookingDto> {
-    return this.bookings.create(user, parse(createBody, body));
+    return this.bookings.create(user, parse(bookingCreateBody, body));
   }
 
   @Post('from-quotation/:quotationId')
@@ -129,7 +129,11 @@ export class BookingsController {
     @Param('quotationId', ParseUUIDPipe) quotationId: string,
     @Body() body: unknown,
   ): Promise<BookingDto> {
-    return this.bookings.createFromQuotation(user, quotationId, parse(fromQuotationBody, body));
+    return this.bookings.createFromQuotation(
+      user,
+      quotationId,
+      parse(bookingFromQuotationBody, body),
+    );
   }
 
   @Patch(':id')

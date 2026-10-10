@@ -61,7 +61,7 @@ const quotationFields = {
   lines: z.array(lineBody).min(1).max(50),
 };
 
-const createBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();
+export const quotationCreateBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();
 const updateBody = z.object(quotationFields).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 const listQuery = pageQuery
@@ -97,7 +97,7 @@ export class QuotationsController {
   @Post()
   @RequirePermission('quotations:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<QuotationDto> {
-    return this.quotations.create(user, parse(createBody, body));
+    return this.quotations.create(user, parse(quotationCreateBody, body));
   }
 
   @Patch(':id')

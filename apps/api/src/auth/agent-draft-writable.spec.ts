@@ -12,6 +12,14 @@ const SRC = join(import.meta.dirname, '..');
 /** Controller file, then the decorators and handler that follow the marker, exactly. */
 const ALLOWED: readonly { file: string; handler: RegExp }[] = [
   {
+    file: join('bookings', 'booking-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('bookings:create'\)\n\s*create\(/,
+  },
+  {
+    file: join('quotations', 'quotation-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
+  },
+  {
     file: join('warehouse', 'grn-drafts.controller.ts'),
     handler:
       /^\s*@Post\(\)\n\s*@RequirePermission\('warehouse:create', 'documents:view'\)\n\s*create\(/,

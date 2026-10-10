@@ -108,9 +108,7 @@ export class BookingsService {
   }
 
   async create(user: AuthUser, input: CreateBookingRequest): Promise<BookingDto> {
-    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
-    const prepared = await this.prepare(customer.id, input);
-    return this.insert(user, customer.branchId, customer.id, null, prepared);
+    return this.insert(user, await this.prepareCreate(user, input));
   }
 
   async createFromQuotation(
@@ -118,6 +116,26 @@ export class BookingsService {
     quotationId: string,
     input: BookingFromQuotationRequest,
   ): Promise<BookingDto> {
+    return this.insert(user, await this.prepareFromQuotation(user, quotationId, input));
+  }
+
+  /**
+   * Checks a create request for this user without writing (customer in the user's branches and
+   * active, route, parties, cargo lines). insertInTx then records it, so a caller (an approved
+   * assistant draft) can do so inside its own transaction.
+   */
+  async prepareCreate(user: AuthUser, input: CreateBookingRequest): Promise<PreparedBooking> {
+    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
+    const prepared = await this.prepare(customer.id, input);
+    return { branchId: customer.branchId, customerId: customer.id, quotationId: null, ...prepared };
+  }
+
+  /** As prepareCreate, for a booking made from an approved quotation of the user's branches. */
+  async prepareFromQuotation(
+    user: AuthUser,
+    quotationId: string,
+    input: BookingFromQuotationRequest,
+  ): Promise<PreparedBooking> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
     const prepared = await this.prepare(customer.id, {
@@ -135,10 +153,35 @@ export class BookingsService {
       specialInstructions: input.specialInstructions,
       items: input.items ?? [],
     });
+    return {
+      branchId: quotation.branchId,
+      customerId: customer.id,
+      quotationId: quotation.id,
+      ...prepared,
+    };
+  }
+
+  /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
+  async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
+    const branch = await tx.branch.findUniqueOrThrow({ where: { id: prepared.branchId } });
+    const year = todayIn(branch.timezone).slice(0, 4);
+    const number = formatDocumentNumber('BK', await nextSequenceValue(tx, 'BOOKING', year), year);
     try {
-      return await this.insert(user, quotation.branchId, customer.id, quotation.id, prepared);
+      const created = await tx.booking.create({
+        data: {
+          ...prepared.header,
+          number,
+          branchId: prepared.branchId,
+          customerId: prepared.customerId,
+          quotationId: prepared.quotationId,
+          createdById: user.id,
+          items: { create: prepared.items },
+        },
+        select: { id: true },
+      });
+      return created.id;
     } catch (error) {
-      if (isUniqueViolation(error)) {
+      if (prepared.quotationId && isUniqueViolation(error)) {
         throw new ConflictException('This quotation already has a booking');
       }
       throw error;
@@ -210,31 +253,9 @@ export class BookingsService {
     return this.get(user, id);
   }
 
-  private async insert(
-    user: AuthUser,
-    branchId: string,
-    customerId: string,
-    quotationId: string | null,
-    prepared: Awaited<ReturnType<BookingsService['prepare']>>,
-  ): Promise<BookingDto> {
-    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: branchId } });
-    const year = todayIn(branch.timezone).slice(0, 4);
-    const created = await this.prisma.$transaction(async (tx) => {
-      const number = formatDocumentNumber('BK', await nextSequenceValue(tx, 'BOOKING', year), year);
-      return tx.booking.create({
-        data: {
-          ...prepared.header,
-          number,
-          branchId,
-          customerId,
-          quotationId,
-          createdById: user.id,
-          items: { create: prepared.items },
-        },
-        include: details,
-      });
-    });
-    return toDto(created);
+  private async insert(user: AuthUser, prepared: PreparedBooking): Promise<BookingDto> {
+    const id = await this.prisma.$transaction((tx) => this.insertInTx(tx, user, prepared));
+    return this.get(user, id);
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<BookingWithDetails> {
@@ -318,6 +339,14 @@ export class BookingsService {
       volumeCbm,
     };
   }
+}
+
+export interface PreparedBooking {
+  branchId: string;
+  customerId: string;
+  quotationId: string | null;
+  header: Awaited<ReturnType<BookingsService['prepare']>>['header'];
+  items: Awaited<ReturnType<BookingsService['prepare']>>['items'];
 }
 
 /** Status compare-and-set: two concurrent transitions cannot both win. */

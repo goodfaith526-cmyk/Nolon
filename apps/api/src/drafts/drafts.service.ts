@@ -55,7 +55,7 @@ export function keyReused(): ConflictException {
 }
 
 /** Draft tables a row lock may name (a closed list: the name goes into the SQL text). */
-export const DRAFT_TABLES = ['grn_drafts'] as const;
+export const DRAFT_TABLES = ['grn_drafts', 'quotation_drafts', 'booking_drafts'] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 
 /** A draft row as locked for a change. */

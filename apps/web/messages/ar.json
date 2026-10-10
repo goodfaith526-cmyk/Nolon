@@ -73,7 +73,8 @@
     "openingBalances": "الأرصدة الافتتاحية",
     "consolidations": "الحاويات المجمعة",
     "alertSettings": "مدد التنبيهات",
-    "apiKeys": "مفاتيح API"
+    "apiKeys": "مفاتيح API",
+    "assistantDrafts": "مسودات المساعد"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -2044,5 +2045,39 @@
     "warning_TOTAL_CBM_MISMATCH": "مجموع السطور لا يساوي الحجم في المستند.",
     "warning_SOURCE_NOT_VERIFIABLE": "الملف صورة أو مسح ضوئي: لم يمكن مطابقة أي قيمة معه.",
     "warning_NET_ABOVE_GROSS": "في أحد السطور وزن صافٍ أكبر من الوزن القائم."
+  },
+  "Drafts": {
+    "title": "مسودات المساعد",
+    "hint": "إدخالات اقترحها المساعد للموظفين. ما في حاجة بتتسجّل قبل ما شخص يفتح المسودة ويعتمدها، والاعتماد بيمر بفحوصات نولون نفسها وبصلاحياتك.",
+    "kind": "نوع الإدخال",
+    "kind_quotations": "عروض الأسعار",
+    "kind_bookings": "الحجوزات",
+    "status_DRAFT": "للمراجعة",
+    "status_APPROVED": "معتمدة",
+    "status_REJECTED": "مرفوضة",
+    "status_EXPIRED": "منتهية",
+    "proposedAt": "تاريخ الاقتراح",
+    "subject": "الموضوع",
+    "proposedForColumn": "مقترحة لـ",
+    "lines": "البنود",
+    "review": "مراجعة",
+    "proposedFor": "اقترحها المساعد لـ {name}",
+    "expires": "مفتوحة حتى {at}",
+    "notRecorded": "دي مسودة مقترحة. ما بتتسجّل إلا بعد الاعتماد.",
+    "approvedBy": "اعتمدها {name}:",
+    "rejectedBy": "رفضها {name}: {reason}",
+    "checkOk": "نولون بيقبل المسودة دي هسي.",
+    "checkTotal": "الإجمالي بتسعير نولون:",
+    "checkFailed": "نولون بيرفض المسودة دي هسي: {message}",
+    "approve": "اعتماد",
+    "reject": "رفض المسودة",
+    "rejectReason": "سبب الرفض",
+    "approvedNotice": "تم الاعتماد.",
+    "rejectedNotice": "تم رفض المسودة.",
+    "quotationTitle": "مسودة عرض سعر لـ {customer}",
+    "quotationApproveHint": "الاعتماد بيعمل عرض سعر مسودة بتسعير نولون، وتقدر تعدّله قبل ما ترسله للعميل.",
+    "bookingTitle": "مسودة حجز لـ {customer}",
+    "bookingApproveHint": "الاعتماد بيعمل حجز مسودة، ما مؤكد وما عندو شحنة لحدي ما تأكده إنت.",
+    "fromQuotation": "من عرض السعر"
   }
 }
