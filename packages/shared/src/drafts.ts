@@ -112,6 +112,11 @@ export interface AssistantDraftDto<D> {
   /** The user holds the grant for this kind (the route's permission is checked on decision). */
   canDecideFromAssistant: boolean;
   draft: D;
+  /**
+   * A readable name for each id in the draft's proposed values that the user may see. The card
+   * shows names, never bare ids; an id missing here sends the person to the review screen.
+   */
+  names: Record<string, string>;
 }
 
 export interface AssistantDraftApproveRequest {

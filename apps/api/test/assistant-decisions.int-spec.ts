@@ -8,6 +8,8 @@ import type {
   QuotationDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AuthUser } from '../src/auth/auth-user.js';
+import { referenceNames } from '../src/drafts/reference-names.js';
 import {
   type TestApp,
   branchId,
@@ -182,6 +184,25 @@ describe('the chat card', () => {
     expect(shown.draft).toMatchObject({ id, status: 'DRAFT', version: 1 });
     // The same content reads with the same hash.
     expect((await card(id)).contentHash).toBe(shown.contentHash);
+  });
+
+  it('names every id in the proposed values, so the card never shows a bare id', async () => {
+    const shown = await card(await newDraft());
+    expect(shown.names).toEqual({
+      [customer.id]: `${customer.number} Chat Approval Test Trading`,
+      [route.origin]: expect.stringMatching(/^AEJEA /) as unknown,
+      [route.destination]: expect.stringMatching(/^SDPZU /) as unknown,
+    });
+  });
+
+  it('names only what the user may see, leaving out another branch’s records', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const outsider = { allowedBranchIds: [jed] } as unknown as AuthUser;
+    const names = await referenceNames(t.prisma, outsider, {
+      customerId: customer.id,
+      originLocationId: route.origin,
+    });
+    expect(Object.keys(names)).toEqual([route.origin]);
   });
 
   it('is not found for another user or another assistant client, and refused to a session', async () => {

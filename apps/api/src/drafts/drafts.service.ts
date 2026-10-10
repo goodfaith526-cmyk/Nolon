@@ -10,6 +10,7 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { type DraftState, contentHashOf, requireOpen } from './draft-rules.js';
+import { referenceNames } from './reference-names.js';
 
 const ASSISTANT_DECISION: unique symbol = Symbol('assistant decision');
 
@@ -73,7 +74,7 @@ export class DraftsService {
    * own scope), its content hash, and whether the user holds the grant for its kind. Only a draft
    * this assistant client created for this same user; any other reads as not found.
    */
-  async assistantView<D extends { id: string }>(
+  async assistantView<D extends { id: string; request: unknown }>(
     user: AuthUser,
     kind: AssistantDecidableKind,
     table: DraftTable,
@@ -86,6 +87,7 @@ export class DraftsService {
       contentHash: contentHashOf(draft),
       canDecideFromAssistant: await this.hasGrant(user.id, kind),
       draft,
+      names: await referenceNames(this.prisma, user, draft.request),
     };
   }
 
