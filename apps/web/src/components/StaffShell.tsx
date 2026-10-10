@@ -10,6 +10,7 @@ import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
 import { useFoldedSections } from '@/lib/nav-folds';
 import { AlertsBell } from './alerts/Alerts';
+import { DRAFT_VIEW_PERMISSIONS } from './drafts/draft-kinds';
 import { icons } from './Icons';
 
 interface NavLink {
@@ -46,9 +47,11 @@ interface NavLink {
     | 'periods'
     | 'users'
     | 'alertSettings'
-    | 'apiKeys';
+    | 'apiKeys'
+    | 'assistantDrafts';
   icon: keyof typeof icons;
-  permission?: Permission;
+  /** Shown with this permission, or with any of these. */
+  permission?: Permission | readonly Permission[];
 }
 
 type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
@@ -75,6 +78,12 @@ const NAV_SECTIONS: readonly {
   {
     title: 'commercial',
     links: [
+      {
+        href: '/drafts',
+        label: 'assistantDrafts',
+        icon: 'assistant',
+        permission: DRAFT_VIEW_PERMISSIONS,
+      },
       { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
       { href: '/rates', label: 'rates', icon: 'rates', permission: 'rates:view' },
       {
@@ -255,6 +264,12 @@ export function can(me: AuthMeResponse, permission: Permission): boolean {
   return me.permissions.includes(permission);
 }
 
+function canSee(me: AuthMeResponse, permission: NavLink['permission']): boolean {
+  if (permission === undefined) return true;
+  if (typeof permission === 'string') return can(me, permission);
+  return permission.some((p) => can(me, p));
+}
+
 /** Loads the session for every staff page; sends the visitor to sign-in when there is none. */
 export function StaffShell({ children }: { children: ReactNode }) {
   const t = useTranslations('Shell');
@@ -312,7 +327,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
           </Link>
           <nav className="sidebar-nav">
             {NAV_SECTIONS.map((section, index) => {
-              const links = section.links.filter((l) => !l.permission || can(me, l.permission));
+              const links = section.links.filter((l) => canSee(me, l.permission));
               if (links.length === 0) return null;
               const { title } = section;
               // A section holding the current page never folds.

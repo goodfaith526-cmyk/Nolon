@@ -137,30 +137,42 @@ export class QuotationsService {
   }
 
   async create(user: AuthUser, input: CreateQuotationRequest): Promise<QuotationDto> {
+    const prepared = await this.prepareCreate(user, input);
+    const created = await this.prisma.$transaction((tx) => this.insertInTx(tx, user, prepared));
+    return toDto(created);
+  }
+
+  /**
+   * Checks a create request for this user and prices it (customer in the user's branches and
+   * active, route, currency, rates, valid-until), without writing. insertInTx then records it, so
+   * a caller (an approved assistant draft) can do so inside its own transaction.
+   */
+  async prepareCreate(user: AuthUser, input: CreateQuotationRequest) {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     const branchId = customer.branchId;
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
-    const created = await this.prisma.$transaction(async (tx) => {
-      const year = today.slice(0, 4);
-      const number = formatDocumentNumber(
-        'QT',
-        await nextSequenceValue(tx, 'QUOTATION', year),
-        year,
-      );
-      return tx.quotation.create({
-        data: {
-          ...prepared.header,
-          number,
-          branchId,
-          customerId: customer.id,
-          createdById: user.id,
-          lines: { create: prepared.lines },
-        },
-        include: details,
-      });
+    return { customerId: customer.id, branchId, year: today.slice(0, 4), ...prepared };
+  }
+
+  async insertInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
+  ): Promise<QuotationWithDetails> {
+    const { year } = prepared;
+    const number = formatDocumentNumber('QT', await nextSequenceValue(tx, 'QUOTATION', year), year);
+    return tx.quotation.create({
+      data: {
+        ...prepared.header,
+        number,
+        branchId: prepared.branchId,
+        customerId: prepared.customerId,
+        createdById: user.id,
+        lines: { create: prepared.lines },
+      },
+      include: details,
     });
-    return toDto(created);
   }
 
   /** Drafts only; the lines are replaced as a whole. */
