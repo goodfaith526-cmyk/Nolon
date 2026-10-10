@@ -37,12 +37,22 @@ another module's tables or internals.
    cannot be updated or deleted. This is enforced in PostgreSQL by triggers written as raw SQL
    inside a migration, not only in application code. Corrections are made with a reversing
    entry. Never drop, disable or bypass these triggers.
-4. **No migration without review.** Migrations are generated with `pnpm db:migrate`, committed,
-   and reviewed by a human before merge. CODEOWNERS only requests that review; nothing blocks a
-   merge without it, so the reviewer must check for migrations in every PR. CI fails if a migration
-   already on `main` is modified or deleted. Never edit or delete a
-   migration that is already on `main`; add a new one. Call out destructive or locking changes
-   (drops, renames, type changes, new NOT NULL on existing tables) in the PR description.
+4. **No risky migration without the owner's OK.** Migrations are generated with `pnpm db:migrate`,
+   committed, and reviewed in the PR. CI ("Migration review") classifies every new migration:
+   - **Additive**: new tables, enum types and values, nullable or defaulted columns, indexes, and
+     constraints, triggers, functions and seed rows on objects the PR creates; no accounting table
+     or type. It merges on a strict Codex review and green CI.
+   - **Anything else** (drops, renames, type or constraint changes on existing objects, new NOT
+     NULL without a default, a unique index or trigger on an existing table, data changes, views,
+     grants), and anything that names an accounting table or type: CI fails until the PR carries
+     the `migration-signed-off` label. Before that label: explain the change to the owner in plain
+     language, take a backup of the target database and test its restore, and get the owner's
+     explicit OK in their own words. An agent adds the label only after that OK; a push that
+     changes migrations removes it.
+
+   Never edit or delete a migration that is already on `main`; add a new one (CI fails if one
+   changes). Call out destructive or locking changes in the PR description.
+
 5. **No business logic in controllers or in Next.js.** Controllers parse, validate, authorize,
    call one service method and map the result. Rules, calculations, state transitions and
    posting live in services. `apps/web` renders and calls the API; it decides nothing.
@@ -84,7 +94,8 @@ another module's tables or internals.
    pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
    pnpm db:check && pnpm test:integration   # needs the local database
    ```
-5. Open a PR. CI must be green; a human reviews the diff and merges to `main`.
+5. Open a PR. CI must be green; Codex reviews the diff (and the owner signs off non-additive
+   migrations, rule 4) before it merges to `main`.
 
 ## Commands
 
