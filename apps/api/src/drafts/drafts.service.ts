@@ -97,6 +97,8 @@ export const DRAFT_TABLES = [
   'booking_drafts',
   'trip_drafts',
   'goods_release_drafts',
+  'invoice_drafts',
+  'receipt_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 
