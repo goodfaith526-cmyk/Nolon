@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
   GRN_DRAFT_LINE_FIELDS,
+  GRN_DRAFT_WARNINGS,
   type GrnDraftFieldMeta,
   type GrnDraftLineField,
   type GrnDraftLineValues,
   type GrnDraftStatus,
+  type GrnDraftWarning,
   type GrnFieldMatch,
 } from '@nolon/shared';
 import { type Decimal, dec } from '../common/money.js';
@@ -175,4 +177,54 @@ export interface StoredTotals {
   grossKg: Decimal | null;
   netKg: Decimal | null;
   cbm: Decimal | null;
+}
+
+/**
+ * Warnings that follow from the values themselves. They are never taken from the assistant or
+ * stored: they are worked out from the stated totals and the current lines each time a draft is
+ * read, so an edit that opens or closes a difference shows at once.
+ */
+const DERIVED_WARNINGS = new Set<GrnDraftWarning>([
+  'TOTAL_PACKAGES_MISMATCH',
+  'TOTAL_GROSS_MISMATCH',
+  'TOTAL_NET_MISMATCH',
+  'TOTAL_CBM_MISMATCH',
+  'NET_ABOVE_GROSS',
+]);
+
+/** The warnings the assistant may report and that are stored (about the file, not the values). */
+export function reportedWarnings(warnings: readonly GrnDraftWarning[]): GrnDraftWarning[] {
+  return GRN_DRAFT_WARNINGS.filter((w) => !DERIVED_WARNINGS.has(w) && warnings.includes(w));
+}
+
+/**
+ * A draft's warnings: the stored reported ones plus those the stated totals and the current lines
+ * give. A total stated on the document differs when the lines add up to another value or carry
+ * none. Net above gross is checked on each line and on the line totals.
+ */
+export function draftWarnings(
+  stored: readonly string[],
+  stated: StoredTotals,
+  lines: readonly StoredLineValues[],
+): GrnDraftWarning[] {
+  const sums = lineTotals(lines);
+  const differs = (a: Decimal | null, b: Decimal | null) =>
+    a !== null && (b === null || !a.equals(b));
+  const found = new Set<GrnDraftWarning>(
+    reportedWarnings(stored.filter((w): w is GrnDraftWarning => isWarning(w))),
+  );
+  if (stated.packages !== null && stated.packages !== sums.packages) {
+    found.add('TOTAL_PACKAGES_MISMATCH');
+  }
+  if (differs(stated.grossKg, sums.grossKg)) found.add('TOTAL_GROSS_MISMATCH');
+  if (differs(stated.netKg, sums.netKg)) found.add('TOTAL_NET_MISMATCH');
+  if (differs(stated.cbm, sums.cbm)) found.add('TOTAL_CBM_MISMATCH');
+  const netAboveGross = (v: { grossKg: Decimal | null; netKg: Decimal | null }) =>
+    v.grossKg !== null && v.netKg !== null && v.netKg.greaterThan(v.grossKg);
+  if (lines.some(netAboveGross) || netAboveGross(sums)) found.add('NET_ABOVE_GROSS');
+  return GRN_DRAFT_WARNINGS.filter((w) => found.has(w));
+}
+
+function isWarning(value: string): value is GrnDraftWarning {
+  return (GRN_DRAFT_WARNINGS as readonly string[]).includes(value);
 }

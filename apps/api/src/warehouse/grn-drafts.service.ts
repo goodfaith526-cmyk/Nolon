@@ -30,10 +30,12 @@ import {
   type StoredLineValues,
   type StoredTotals,
   draftStatus,
+  draftWarnings,
   lineTotals,
   metaAfterEdit,
   metaForAiLine,
   payloadHash,
+  reportedWarnings,
   storedValues,
 } from './grn-draft-rules.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
@@ -134,14 +136,15 @@ export class GrnDraftsService {
       netKg: decimalOrNull(input.statedTotals.netKg),
       cbm: decimalOrNull(input.statedTotals.cbm),
     };
-    const warnings = [...new Set(input.warnings)];
     const hash = payloadHash({
       documentId: input.documentId,
       documentSha256: input.documentSha256,
       statedTotals,
-      warnings,
+      warnings: [...new Set(input.warnings)],
       lines,
     });
+    // Only what the assistant reports about the file is stored; the rest is worked out on read.
+    const warnings = reportedWarnings(input.warnings);
     const scope = { agentClientId, createdById: user.id, idempotencyKey: input.idempotencyKey };
     const sameRequest = (row: {
       shipmentId: string;
@@ -498,6 +501,15 @@ function metaJson(meta: FieldMeta): Prisma.InputJsonObject {
   return json;
 }
 
+function statedTotals(d: DraftWithDetails): StoredTotals {
+  return {
+    packages: d.statedPackages,
+    grossKg: d.statedGrossKg,
+    netKg: d.statedNetKg,
+    cbm: d.statedCbm,
+  };
+}
+
 function totalsDto(t: StoredTotals): GrnDraftTotals {
   return {
     packages: t.packages,
@@ -515,7 +527,7 @@ function toSummary(d: DraftWithDetails, now: Date): GrnDraftSummaryDto {
     version: d.version,
     lineCount: d.lines.length,
     lineTotals: totalsDto(lineTotals(d.lines.map(rowValues))),
-    warnings: d.warnings as GrnDraftWarning[],
+    warnings: draftWarnings(d.warnings, statedTotals(d), d.lines.map(rowValues)),
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
   };
@@ -545,12 +557,7 @@ function toDto(d: DraftWithDetails, user: AuthUser, now: Date): GrnDraftDto {
   return {
     ...summary,
     documentId: d.documentId,
-    statedTotals: totalsDto({
-      packages: d.statedPackages,
-      grossKg: d.statedGrossKg,
-      netKg: d.statedNetKg,
-      cbm: d.statedCbm,
-    }),
+    statedTotals: totalsDto(statedTotals(d)),
     lines: d.lines.map(toLineDto),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,

@@ -192,16 +192,18 @@ export class DocumentsService {
     documentId: string,
     sha256: string,
   ): Promise<{ id: string }> {
-    const document = await tx.document.findFirst({
-      where: {
-        id: documentId,
-        shipmentId,
-        typeCode: PACKING_LIST_DOCUMENT_TYPE,
-        deletedAt: null,
-        sha256,
-      },
-      select: { id: true },
-    });
+    // FOR SHARE: until the caller's transaction ends, the row cannot be deleted (soft or hard) or
+    // changed, so a draft or GRN never commits against a packing list removed after this check.
+    // A removal already in progress is waited for, and the row then no longer matches.
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "documents"
+      WHERE "id" = ${documentId}::uuid
+        AND "shipment_id" = ${shipmentId}::uuid
+        AND "type_code" = ${PACKING_LIST_DOCUMENT_TYPE}
+        AND "deleted_at" IS NULL
+        AND "sha256" = ${sha256}
+      FOR SHARE`;
+    const document = rows[0];
     if (!document) throw new NotFoundException('Packing list not found');
     return document;
   }

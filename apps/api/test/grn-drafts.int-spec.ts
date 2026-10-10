@@ -667,6 +667,111 @@ describe('a person reviews the draft', () => {
     expect(await movementCount(s.id)).toBe(1);
   });
 
+  it('a packing list being deleted makes approval and creation wait, then refuse', async () => {
+    const { s, draft, doc } = await draftOn();
+    const pending = await t.prisma.$transaction(
+      async (tx) => {
+        // A removal in progress, not yet committed: it holds the document row.
+        await tx.$executeRaw`UPDATE "documents" SET "deleted_at" = now(), "deleted_by_id" = "uploaded_by_id" WHERE "id" = ${doc.id}::uuid`;
+        const approve = Promise.resolve(
+          post(`/shipments/${s.id}/grn-drafts/${draft.id}/approve`, cookies.whDxb, receipt(1)),
+        );
+        const create = Promise.resolve(createDraft(s.id, draftBody(doc)));
+        await waitForLockWaiter(t.prisma, 2);
+        return [approve, create];
+      },
+      { timeout: 15_000 },
+    );
+    const [approve, create] = await Promise.all(pending);
+    expect(approve?.status).toBe(409);
+    expect(create?.status).toBe(404);
+    expect(await movementCount(s.id)).toBe(0);
+    const row = await t.prisma.grnDraft.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(row).toMatchObject({ state: 'DRAFT', version: 1 });
+  });
+
+  it('a delete that comes while an approval is under way waits until the GRN is recorded', async () => {
+    const { s, draft, doc } = await draftOn();
+    // Pauses the approval inside its transaction, after the packing list check, at the GRN
+    // insert, until the test lets go of an advisory lock.
+    const fn = `grn_pause_${draft.id.replace(/-/g, '')}`;
+    await t.prisma.$executeRawUnsafe(`
+      CREATE FUNCTION "${fn}"() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."shipment_id" = '${s.id}'::uuid THEN
+          PERFORM pg_advisory_xact_lock(hashtext('${fn}'));
+        END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql`);
+    await t.prisma.$executeRawUnsafe(
+      `CREATE TRIGGER "${fn}" BEFORE INSERT ON "warehouse_movements" FOR EACH ROW EXECUTE FUNCTION "${fn}"()`,
+    );
+    try {
+      const pending = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtext('${fn}'))`);
+          const approve = Promise.resolve(
+            post(`/shipments/${s.id}/grn-drafts/${draft.id}/approve`, cookies.whDxb, receipt(1)),
+          );
+          await waitForLockWaiter(t.prisma, 1);
+          const remove = Promise.resolve(
+            del(`/shipments/${s.id}/documents/${doc.id}`, cookies.admin),
+          );
+          await waitForLockWaiter(t.prisma, 2);
+          return [approve, remove];
+        },
+        { timeout: 15_000 },
+      );
+      const [approve, remove] = await Promise.all(pending);
+      expect(approve?.status).toBe(201);
+      expect(remove?.status).toBe(204);
+    } finally {
+      await t.prisma.$executeRawUnsafe(`DROP TRIGGER "${fn}" ON "warehouse_movements"`);
+      await t.prisma.$executeRawUnsafe(`DROP FUNCTION "${fn}"()`);
+    }
+    expect(await movementCount(s.id)).toBe(1);
+    const row = await t.prisma.grnDraft.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(row.state).toBe('APPROVED');
+    const document = await t.prisma.document.findUniqueOrThrow({ where: { id: doc.id } });
+    expect(document.deletedAt).not.toBeNull();
+  });
+
+  it('total warnings follow the lines: an edit opens or closes them, the assistant cannot', async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    const created = (
+      await createDraft(
+        s.id,
+        draftBody(doc, PDF, { warnings: ['TOTAL_GROSS_MISMATCH', 'SOURCE_NOT_VERIFIABLE'] }),
+      ).expect(201)
+    ).body as GrnDraftSummaryDto;
+    // The lines add up to the stated 10 packages and 1000 kg: only the note about the file stays.
+    expect(created.warnings).toEqual(['SOURCE_NOT_VERIFIABLE']);
+    const path = `/shipments/${s.id}/grn-drafts/${created.id}`;
+    const line = (packageCount: number, grossKg: string) => ({ packageCount, grossKg });
+    const opened = (
+      await patch(path, cookies.whDxb, {
+        version: 1,
+        lines: [line(6, '600.5'), { ...line(3, '399.5'), netKg: '400' }],
+      }).expect(200)
+    ).body as GrnDraftDto;
+    expect(opened.warnings).toEqual([
+      'TOTAL_PACKAGES_MISMATCH',
+      'SOURCE_NOT_VERIFIABLE',
+      'NET_ABOVE_GROSS',
+    ]);
+    const list = (await get(`/shipments/${s.id}/grn-drafts`, cookies.whDxb).expect(200))
+      .body as GrnDraftSummaryDto[];
+    expect(list[0]?.warnings).toEqual(opened.warnings);
+    const closed = (
+      await patch(path, cookies.whDxb, {
+        version: 2,
+        lines: [line(6, '600.50'), line(4, '399.5')],
+      }).expect(200)
+    ).body as GrnDraftDto;
+    expect(closed.warnings).toEqual(['SOURCE_NOT_VERIFIABLE']);
+  });
+
   it('an expired draft, a stale version, a deleted source or another branch cannot be approved', async () => {
     const stale = await draftOn();
     await post(

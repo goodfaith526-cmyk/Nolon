@@ -3,10 +3,12 @@ import { dec } from '../common/money.js';
 import {
   canonicalJson,
   draftStatus,
+  draftWarnings,
   lineTotals,
   metaAfterEdit,
   metaForAiLine,
   payloadHash,
+  reportedWarnings,
   storedValues,
 } from './grn-draft-rules.js';
 
@@ -99,5 +101,59 @@ describe('GRN draft request hash', () => {
     expect(
       payloadHash(request([{ description: 'x' }, { description: 'y' }], 'b'.repeat(64))),
     ).not.toBe(base);
+  });
+});
+
+describe('GRN draft warnings', () => {
+  const stated = { packages: 10, grossKg: dec('1000'), netKg: null, cbm: dec('2.5') };
+  const lines = (...values: Parameters<typeof storedValues>[0][]) => values.map(storedValues);
+
+  it('none when the lines add up to every stated total, decimals compared by value', () => {
+    expect(
+      draftWarnings(
+        [],
+        stated,
+        lines(
+          { packageCount: 6, grossKg: '600.50', cbm: '1.5' },
+          { packageCount: 4, grossKg: '399.5', cbm: '1' },
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it('appears when an edit opens a difference, and a total no line carries differs', () => {
+    expect(
+      draftWarnings(
+        [],
+        stated,
+        lines({ packageCount: 6, grossKg: '600.5' }, { packageCount: 3, grossKg: '399.5' }),
+      ),
+    ).toEqual(['TOTAL_PACKAGES_MISMATCH', 'TOTAL_CBM_MISMATCH']);
+  });
+
+  it('clears when an edit closes it, whatever was stored or reported before', () => {
+    const stored = ['TOTAL_PACKAGES_MISMATCH', 'TOTAL_GROSS_MISMATCH', 'NET_ABOVE_GROSS'];
+    expect(
+      draftWarnings(stored, { ...stated, cbm: null }, lines({ packageCount: 10, grossKg: '1000' })),
+    ).toEqual([]);
+  });
+
+  it('flags net above gross on a line or on the totals; keeps what the assistant saw in the file', () => {
+    const none = { packages: null, grossKg: null, netKg: null, cbm: null };
+    expect(draftWarnings([], none, lines({ grossKg: '10', netKg: '10.001' }))).toEqual([
+      'NET_ABOVE_GROSS',
+    ]);
+    expect(draftWarnings([], none, lines({ grossKg: '10' }, { netKg: '11' }))).toEqual([
+      'NET_ABOVE_GROSS',
+    ]);
+    expect(draftWarnings(['SOURCE_NOT_VERIFIABLE', 'bogus'], none, [])).toEqual([
+      'SOURCE_NOT_VERIFIABLE',
+    ]);
+  });
+
+  it('stores only the warnings about the file from what the assistant reports', () => {
+    expect(reportedWarnings(['TOTAL_GROSS_MISMATCH', 'SOURCE_NOT_VERIFIABLE'])).toEqual([
+      'SOURCE_NOT_VERIFIABLE',
+    ]);
   });
 });
