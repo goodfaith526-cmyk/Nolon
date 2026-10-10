@@ -29,8 +29,8 @@ export const AgentReadable = () => SetMetadata(AGENT_READABLE, true);
 
 /**
  * Opens a POST route to the staff AI assistant for creating a draft that only a person can
- * approve (Document Pilot). One route carries it: creating a GRN draft from a packing list
- * (agent-draft-writable.spec.ts). Never an approval, an edit, a delete or a posting.
+ * approve. Only the draft creations listed in agent-draft-writable.spec.ts carry it. Never an
+ * approval, an edit, a delete or a posting.
  */
 export const AgentDraftWritable = () => SetMetadata(AGENT_DRAFT_WRITABLE, true);
 

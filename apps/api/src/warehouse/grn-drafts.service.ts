@@ -1,11 +1,5 @@
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import {
-  GRN_DRAFT_TTL_DAYS,
   type GoodsReceiptRequest,
   type GrnDraftDto,
   type GrnDraftLineDto,
@@ -18,8 +12,9 @@ import {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
-import { isUniqueViolation } from '../common/prisma-errors.js';
 import { DocumentsService } from '../documents/documents.service.js';
+import { draftExpiry, metaJson, requireOpen } from '../drafts/draft-rules.js';
+import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
@@ -42,7 +37,9 @@ import { WarehouseMovementsService } from './warehouse-movements.service.js';
 
 type Tx = Prisma.TransactionClient;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const LABEL = 'GRN draft';
+const ASSISTANT_ONLY = 'GRN drafts are proposed by the assistant';
+const HUMAN_ONLY = 'Only a person can change a GRN draft';
 
 export interface GrnDraftCreateInput {
   idempotencyKey: string;
@@ -73,14 +70,14 @@ const draftDetails = {
 type DraftWithDetails = Prisma.GrnDraftGetPayload<{ include: typeof draftDetails }>;
 type DraftLineRow = DraftWithDetails['lines'][number];
 
-/** A draft row as locked for a change (SELECT ... FOR UPDATE). */
+/** A draft row as locked for a change (SELECT ... FOR UPDATE), with its source document. */
 interface LockedDraft {
   id: string;
   state: 'DRAFT' | 'APPROVED' | 'REJECTED';
   version: number;
-  expires_at: Date;
-  document_id: string;
-  document_sha256: string;
+  expiresAt: Date;
+  documentId: string;
+  documentSha256: string;
 }
 
 /**
@@ -101,6 +98,7 @@ export class GrnDraftsService {
     private readonly shipments: ShipmentsService,
     private readonly documents: DocumentsService,
     private readonly movements: WarehouseMovementsService,
+    private readonly drafts: DraftsService,
   ) {}
 
   /**
@@ -115,7 +113,7 @@ export class GrnDraftsService {
     shipmentId: string,
     input: GrnDraftCreateInput,
   ): Promise<GrnDraftSummaryDto> {
-    const agentClientId = await this.agentClientOf(user);
+    const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const shipment = await this.shipments.childContext(user, shipmentId);
     if (!isActive(shipment.status)) {
       throw new ConflictException('A closed or cancelled shipment takes no GRN draft');
@@ -190,7 +188,7 @@ export class GrnDraftsService {
             shipmentId,
             documentId: input.documentId,
             documentSha256: input.documentSha256,
-            expiresAt: new Date(Date.now() + GRN_DRAFT_TTL_DAYS * DAY_MS),
+            expiresAt: draftExpiry(),
             payloadHash: hash,
             statedPackages: statedTotals.packages,
             statedGrossKg: statedTotals.grossKg,
@@ -214,14 +212,7 @@ export class GrnDraftsService {
         return draft.id;
       });
 
-    let id: string;
-    try {
-      id = await attempt();
-    } catch (error) {
-      // A concurrent create with the same key inserted first: this one now finds it.
-      if (!isUniqueViolation(error)) throw error;
-      id = await attempt();
-    }
+    const id = await this.drafts.createIdempotently(attempt);
     return toSummary(await this.findDraft(user, shipmentId, id), new Date());
   }
 
@@ -235,7 +226,7 @@ export class GrnDraftsService {
     shipmentId: string,
     idempotencyKey: string,
   ): Promise<GrnDraftSummaryDto> {
-    const agentClientId = await this.agentClientOf(user);
+    const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     await this.shipments.childContext(user, shipmentId);
     const draft = await this.prisma.grnDraft.findFirst({
       where: {
@@ -283,7 +274,7 @@ export class GrnDraftsService {
     draftId: string,
     input: GrnDraftUpdateInput,
   ): Promise<GrnDraftDto> {
-    this.requireHuman(user);
+    this.drafts.requireHuman(user, HUMAN_ONLY);
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     await this.prisma.$transaction(async (tx) => {
       await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
@@ -330,7 +321,7 @@ export class GrnDraftsService {
     draftId: string,
     input: GoodsReceiptRequest & { version: number },
   ): Promise<GrnDraftDto> {
-    this.requireHuman(user);
+    this.drafts.requireHuman(user, HUMAN_ONLY);
     const { version, ...receipt } = input;
     // Already approved: return it as it is, even if the shipment has moved on since.
     const current = await this.findDraft(user, shipmentId, draftId);
@@ -340,9 +331,9 @@ export class GrnDraftsService {
       await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       const draft = await this.lockDraft(tx, user, shipmentId, draftId);
       if (draft.state === 'APPROVED') return;
-      requireOpen(draft, version);
+      requireOpen(draft, version, LABEL);
       await this.documents
-        .requirePackingList(tx, shipmentId, draft.document_id, draft.document_sha256)
+        .requirePackingList(tx, shipmentId, draft.documentId, draft.documentSha256)
         .catch((error: unknown) => {
           if (error instanceof NotFoundException) {
             throw new ConflictException('The source packing list was deleted or changed');
@@ -370,7 +361,7 @@ export class GrnDraftsService {
     draftId: string,
     input: { version: number; reason: string },
   ): Promise<GrnDraftDto> {
-    this.requireHuman(user);
+    this.drafts.requireHuman(user, HUMAN_ONLY);
     await this.shipments.requireAccessible(user, shipmentId);
     await this.prisma.$transaction(async (tx) => {
       await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
@@ -389,25 +380,6 @@ export class GrnDraftsService {
     return this.get(user, shipmentId, draftId);
   }
 
-  /** The assistant client a delegated token belongs to; drafts are created by the assistant only. */
-  private async agentClientOf(user: AuthUser): Promise<string> {
-    if (!user.agent) throw new ForbiddenException('GRN drafts are proposed by the assistant');
-    const token = await this.prisma.agentToken.findUnique({
-      where: { id: user.agent.tokenId },
-      select: { agentClientId: true },
-    });
-    if (!token) throw new ForbiddenException('GRN drafts are proposed by the assistant');
-    return token.agentClientId;
-  }
-
-  /**
-   * Edits and decisions are a person's. The guard already refuses assistant tokens on these
-   * routes; this keeps the rule if a route is ever opened by mistake.
-   */
-  private requireHuman(user: AuthUser): void {
-    if (user.agent) throw new ForbiddenException('Only a person can change a GRN draft');
-  }
-
   private async lockDraft(
     tx: Tx,
     user: AuthUser,
@@ -420,13 +392,14 @@ export class GrnDraftsService {
       select: { id: true },
     });
     if (!visible) throw new NotFoundException('GRN draft not found');
-    const rows = await tx.$queryRaw<LockedDraft[]>`
-      SELECT "id", "state"::text AS "state", "version", "expires_at", "document_id",
-             "document_sha256"
-      FROM "grn_drafts" WHERE "id" = ${draftId}::uuid FOR UPDATE`;
-    const row = rows[0];
+    const row = await lockDraftRow(tx, 'grn_drafts', draftId);
     if (!row) throw new NotFoundException('GRN draft not found');
-    return row;
+    // The source document of a locked row cannot change under us.
+    const source = await tx.grnDraft.findUniqueOrThrow({
+      where: { id: draftId },
+      select: { documentId: true, documentSha256: true },
+    });
+    return { ...row, ...source };
   }
 
   private async lockOpenDraft(
@@ -437,7 +410,7 @@ export class GrnDraftsService {
     version: number,
   ): Promise<LockedDraft> {
     const draft = await this.lockDraft(tx, user, shipmentId, draftId);
-    requireOpen(draft, version);
+    requireOpen(draft, version, LABEL);
     return draft;
   }
 
@@ -452,20 +425,6 @@ export class GrnDraftsService {
     });
     if (!draft) throw new NotFoundException('GRN draft not found');
     return draft;
-  }
-}
-
-function keyReused(): ConflictException {
-  return new ConflictException('This idempotency key was used for another request');
-}
-
-/** An undecided, unexpired draft at the version the person read. */
-function requireOpen(draft: LockedDraft, version: number): void {
-  const status = draftStatus(draft.state, draft.expires_at, new Date());
-  if (status === 'EXPIRED') throw new ConflictException('This GRN draft has expired');
-  if (status !== 'DRAFT') throw new ConflictException('This GRN draft is already decided');
-  if (draft.version !== version) {
-    throw new ConflictException('This GRN draft changed since you opened it: reload it');
   }
 }
 
@@ -490,15 +449,6 @@ function rowValues(row: DraftLineRow): StoredLineValues {
 /** field_meta is only ever written by this service, from validated values. */
 function rowMeta(row: DraftLineRow): FieldMeta {
   return row.fieldMeta as FieldMeta;
-}
-
-/** The field metadata as a JSON object (only the fields that hold a value). */
-function metaJson(meta: FieldMeta): Prisma.InputJsonObject {
-  const json: Record<string, Prisma.InputJsonObject> = {};
-  for (const [field, entry] of Object.entries(meta)) {
-    if (entry) json[field] = { filledBy: entry.filledBy, match: entry.match };
-  }
-  return json;
 }
 
 function statedTotals(d: DraftWithDetails): StoredTotals {
