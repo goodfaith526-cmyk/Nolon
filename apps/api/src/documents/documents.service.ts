@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   MAX_DOCUMENT_BYTES,
@@ -36,6 +37,9 @@ export interface PreparedUpload extends UploadInput {
 
 type Tx = Prisma.TransactionClient;
 
+/** Spreadsheet previews read at the same time in one API process. */
+const MAX_PARALLEL_SHEET_PREVIEWS = 2;
+
 export interface DocumentFile {
   fileName: string;
   contentType: string;
@@ -48,6 +52,8 @@ export interface DocumentFile {
  */
 @Injectable()
 export class DocumentsService {
+  private sheetPreviews = 0;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
@@ -226,9 +232,19 @@ export class DocumentsService {
     if (file.contentType !== XLSX_CONTENT_TYPE) {
       throw new NotFoundException('This document is not a spreadsheet');
     }
-    const preview = await sheetPreview(file.data);
-    if (!preview) throw new NotFoundException('The spreadsheet cannot be read');
-    return preview;
+    // Each preview is bounded in bytes and time (sheet-preview.ts); this bounds how many run at
+    // once in this process.
+    if (this.sheetPreviews >= MAX_PARALLEL_SHEET_PREVIEWS) {
+      throw new ServiceUnavailableException('Other spreadsheets are being read; try again');
+    }
+    this.sheetPreviews++;
+    try {
+      const preview = await sheetPreview(file.data);
+      if (!preview) throw new NotFoundException('The spreadsheet cannot be read');
+      return preview;
+    } finally {
+      this.sheetPreviews--;
+    }
   }
 
   /** Soft delete: the file disappears from the shipment; who uploaded and deleted it remains. */
