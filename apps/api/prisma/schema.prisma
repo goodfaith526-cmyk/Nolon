@@ -65,6 +65,8 @@ model Branch {
   grnDraftLines      GrnDraftLine[]
   quotationDrafts    QuotationDraft[]
   bookingDrafts      BookingDraft[]
+  tripDrafts         TripDraft[]
+  releaseDrafts      GoodsReleaseDraft[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -185,6 +187,10 @@ model User {
   quotationDraftsDecided QuotationDraft[]    @relation("QuotationDraftDecidedBy")
   bookingDraftsCreated   BookingDraft[]      @relation("BookingDraftCreatedBy")
   bookingDraftsDecided   BookingDraft[]      @relation("BookingDraftDecidedBy")
+  tripDraftsCreated      TripDraft[]         @relation("TripDraftCreatedBy")
+  tripDraftsDecided      TripDraft[]         @relation("TripDraftDecidedBy")
+  releaseDraftsCreated   GoodsReleaseDraft[] @relation("GoodsReleaseDraftCreatedBy")
+  releaseDraftsDecided   GoodsReleaseDraft[] @relation("GoodsReleaseDraftDecidedBy")
   customsUpdated         CustomsClearance[]  @relation("CustomsUpdatedBy")
   customsFeesCreated     CustomsFee[]        @relation("CustomsFeeCreatedBy")
 
@@ -850,6 +856,9 @@ model Shipment {
   sharedBranches     ShipmentBranch[]
   consolidationLinks ConsolidationShipment[]
 
+  tripDraftLinks TripDraftShipment[]
+  releaseDrafts  GoodsReleaseDraft[]
+
   @@index([branchId, status])
   @@index([customerId])
   @@map("shipments")
@@ -1453,6 +1462,8 @@ model Warehouse {
   storageLocations StorageLocation[]
   movements        WarehouseMovement[]
 
+  releaseDrafts GoodsReleaseDraft[]
+
   @@index([branchId])
   @@map("warehouses")
 }
@@ -1532,6 +1543,8 @@ model WarehouseMovement {
   createdBy       User                     @relation("WarehouseMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   photos          WarehouseMovementPhoto[]
   grnDraft        GrnDraft?
+
+  releaseDraft GoodsReleaseDraft?
 
   @@index([shipmentId, warehouseId])
   @@index([warehouseId])
@@ -1836,6 +1849,8 @@ model Trip {
   shipments    TripShipment[]
   expenses     TripExpense[]
   pods         ProofOfDelivery[]
+
+  draft TripDraft? @relation("TripDraftResult")
 
   @@index([branchId, status])
   @@index([driverId])
@@ -2497,6 +2512,9 @@ model AgentClient {
   quotationDrafts QuotationDraft[]
   bookingDrafts   BookingDraft[]
 
+  tripDrafts    TripDraft[]
+  releaseDrafts GoodsReleaseDraft[]
+
   @@map("agent_clients")
 }
 
@@ -2728,4 +2746,110 @@ model BookingDraftItem {
 
   @@id([draftId, lineNo])
   @@map("booking_draft_items")
+}
+
+/**
+ * A trip proposed by the staff AI assistant (entry drafts). Only a person approves it, which plans
+ * an ordinary trip through TripsService (PLANNED, its shipments scheduled), with that person's
+ * permissions and branches. branch_id is the trip's branch, one of the user's.
+ */
+model TripDraft {
+  id                    String          @id @default(uuid()) @db.Uuid
+  branchId              String          @map("branch_id") @db.Uuid
+  state                 EntryDraftState @default(DRAFT)
+  version               Int             @default(1)
+  expiresAt             DateTime        @map("expires_at") @db.Timestamptz(3)
+  agentClientId         String          @map("agent_client_id") @db.Uuid
+  createdById           String          @map("created_by_id") @db.Uuid
+  idempotencyKey        String          @map("idempotency_key") @db.VarChar(100)
+  payloadHash           String          @map("payload_hash") @db.Char(64)
+  kind                  TripKind
+  originLocationId      String          @map("origin_location_id") @db.Uuid
+  destinationLocationId String          @map("destination_location_id") @db.Uuid
+  plannedDeparture      DateTime?       @map("planned_departure") @db.Timestamptz(3)
+  plannedArrival        DateTime?       @map("planned_arrival") @db.Timestamptz(3)
+  vehicleId             String?         @map("vehicle_id") @db.Uuid
+  driverId              String?         @map("driver_id") @db.Uuid
+  carrierId             String?         @map("carrier_id") @db.Uuid
+  agreedCost            Decimal?        @map("agreed_cost") @db.Decimal(18, 4)
+  currency              String?         @db.Char(3)
+  externalVehicle       String?         @map("external_vehicle") @db.VarChar(100)
+  externalDriver        String?         @map("external_driver") @db.VarChar(200)
+  notes                 String?         @db.VarChar(2000)
+  decidedById           String?         @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?       @map("decided_at") @db.Timestamptz(3)
+  rejectReason          String?         @map("reject_reason") @db.VarChar(500)
+  tripId                String?         @unique @map("trip_id") @db.Uuid
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  agentClient AgentClient         @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User                @relation("TripDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?               @relation("TripDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  trip        Trip?               @relation("TripDraftResult", fields: [tripId], references: [id], onDelete: Restrict)
+  shipments   TripDraftShipment[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@map("trip_drafts")
+}
+
+/**
+ * A shipment the trip draft puts on the trip, in the order proposed.
+ */
+model TripDraftShipment {
+  draftId    String @map("draft_id") @db.Uuid
+  lineNo     Int    @map("line_no")
+  shipmentId String @map("shipment_id") @db.Uuid
+
+  draft    TripDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  shipment Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+
+  @@id([draftId, lineNo])
+  @@unique([draftId, shipmentId])
+  @@index([shipmentId])
+  @@map("trip_draft_shipments")
+}
+
+/**
+ * A goods release (delivery out of a warehouse) proposed by the staff AI assistant. Only a person
+ * approves it, which issues an ordinary goods release note through WarehouseMovementsService,
+ * dated at the approval, with that person's permissions. branch_id is the shipment's.
+ */
+model GoodsReleaseDraft {
+  id             String          @id @default(uuid()) @db.Uuid
+  branchId       String          @map("branch_id") @db.Uuid
+  shipmentId     String          @map("shipment_id") @db.Uuid
+  state          EntryDraftState @default(DRAFT)
+  version        Int             @default(1)
+  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String          @map("agent_client_id") @db.Uuid
+  createdById    String          @map("created_by_id") @db.Uuid
+  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String          @map("payload_hash") @db.Char(64)
+  warehouseId    String          @map("warehouse_id") @db.Uuid
+  packages       Int
+  weightKg       Decimal?        @map("weight_kg") @db.Decimal(12, 3)
+  partyName      String?         @map("party_name") @db.VarChar(200)
+  note           String?         @db.VarChar(1000)
+  decidedById    String?         @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
+  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
+  movementId     String?         @unique @map("movement_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  warehouse   Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  agentClient AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User               @relation("GoodsReleaseDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?              @relation("GoodsReleaseDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  movement    WarehouseMovement? @relation(fields: [movementId], references: [id], onDelete: Restrict)
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@index([shipmentId])
+  @@map("goods_release_drafts")
 }

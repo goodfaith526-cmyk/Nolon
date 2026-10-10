@@ -107,7 +107,7 @@ const carrierUpdateBody = z
 
 const timestamp = z.iso.datetime({ offset: true });
 
-const tripBody = z
+export const tripBody = z
   .object({
     branchId: z.uuid(),
     kind: z.enum(TRIP_KINDS),

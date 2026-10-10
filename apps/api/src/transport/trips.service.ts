@@ -130,6 +130,15 @@ export const MAX_TRIP_SHIPMENTS = 100;
  * driver, carrier and currency before it reads them. While the trip has posted expenses (split
  * over its shipments), its shipments are fixed.
  */
+export interface PreparedTrip {
+  input: TripInput;
+  plannedDeparture: Date | null;
+  plannedArrival: Date | null;
+  shipmentIds: string[];
+  numbers: Map<string, string>;
+  timezone: string;
+}
+
 @Injectable()
 export class TripsService {
   constructor(
@@ -250,6 +259,17 @@ export class TripsService {
   }
 
   async create(user: AuthUser, input: TripInput): Promise<TripDto> {
+    const prepared = await this.prepareCreate(user, input);
+    const id = await this.prisma.$transaction((tx) => this.insertInTx(tx, user, prepared));
+    return this.get(user, id);
+  }
+
+  /**
+   * The checks of a new trip that need no lock: the user may plan trips in the branch, the route,
+   * times and kind are consistent, and every shipment is visible and listed once. insertInTx then
+   * records it, so a caller (an approved assistant draft) can do so in its own transaction.
+   */
+  async prepareCreate(user: AuthUser, input: TripInput): Promise<PreparedTrip> {
     forbidDriverOnly(user, 'plan trips');
     assertBranchAccess(user, input.branchId);
     await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
@@ -268,30 +288,40 @@ export class TripsService {
       where: { id: input.branchId },
       select: { timezone: true },
     });
-    const id = await this.prisma.$transaction(async (tx) => {
-      // Fleet and currency are checked here, under their row locks (see kindFields).
-      const kindFields = await this.kindFields(tx, user, input);
-      const year = todayIn(branch.timezone).slice(0, 4);
-      const number = formatDocumentNumber('TRP', await nextSequenceValue(tx, 'TRIP', year), year);
-      const trip = await tx.trip.create({
-        data: {
-          number,
-          branchId: input.branchId,
-          kind: input.kind,
-          originLocationId: input.originLocationId,
-          destinationLocationId: input.destinationLocationId,
-          plannedDeparture,
-          plannedArrival,
-          notes: input.notes ?? null,
-          createdById: user.id,
-          ...kindFields,
-        },
-        select: { id: true, number: true, branchId: true },
-      });
-      await this.scheduleShipments(tx, user, trip, shipmentIds, numbers);
-      return trip.id;
+    return {
+      input,
+      plannedDeparture,
+      plannedArrival,
+      shipmentIds,
+      numbers,
+      timezone: branch.timezone,
+    };
+  }
+
+  /** Records a prepared trip (PLANNED) and schedules its shipments in the caller's transaction. */
+  async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedTrip): Promise<string> {
+    const { input, plannedDeparture, plannedArrival, shipmentIds, numbers } = prepared;
+    // Fleet and currency are checked here, under their row locks (see kindFields).
+    const kindFields = await this.kindFields(tx, user, input);
+    const year = todayIn(prepared.timezone).slice(0, 4);
+    const number = formatDocumentNumber('TRP', await nextSequenceValue(tx, 'TRIP', year), year);
+    const trip = await tx.trip.create({
+      data: {
+        number,
+        branchId: input.branchId,
+        kind: input.kind,
+        originLocationId: input.originLocationId,
+        destinationLocationId: input.destinationLocationId,
+        plannedDeparture,
+        plannedArrival,
+        notes: input.notes ?? null,
+        createdById: user.id,
+        ...kindFields,
+      },
+      select: { id: true, number: true, branchId: true },
     });
-    return this.get(user, id);
+    await this.scheduleShipments(tx, user, trip, shipmentIds, numbers);
+    return trip.id;
   }
 
   /** Puts another shipment on a planned trip (it moves to TRIP_SCHEDULED). */

@@ -82,7 +82,7 @@ export const receiptBody = z
   })
   .strict();
 
-const releaseBody = z
+export const releaseBody = z
   .object({
     warehouseId: z.uuid(),
     packages,

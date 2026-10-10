@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
-import { ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   DRAFT_TTL_DAYS,
   type DraftFieldMatch,
   type DraftFieldMeta,
   type DraftStatus,
+  type EntryDraftCheck,
 } from '@nolon/shared';
 import { Prisma } from '../generated/prisma/client.js';
 
@@ -126,4 +132,71 @@ export function metaJson(meta: Partial<Record<string, DraftFieldMeta>>): Prisma.
     if (entry) json[field] = { filledBy: entry.filledBy, match: entry.match };
   }
   return json;
+}
+
+/** Where-fragment for a status, EXPIRED being an undecided draft past its expiry. */
+export function stateFilter(
+  status: DraftStatus | undefined,
+  now: Date,
+): { state?: DraftState; expiresAt?: { gt: Date } | { lte: Date } } {
+  if (status === undefined) return {};
+  if (status === 'DRAFT') return { state: 'DRAFT', expiresAt: { gt: now } };
+  if (status === 'EXPIRED') return { state: 'DRAFT', expiresAt: { lte: now } };
+  return { state: status };
+}
+
+/**
+ * Whether NOLON would accept a draft now: runs `prepare` (the same checks as an approval, without
+ * writing) and turns a refusal into its message.
+ */
+export async function checkDraft(
+  prepare: () => Promise<{ total: string | null; currency: string | null }>,
+): Promise<EntryDraftCheck> {
+  try {
+    return { ok: true, ...(await prepare()) };
+  } catch (error) {
+    if (
+      error instanceof BadRequestException ||
+      error instanceof NotFoundException ||
+      error instanceof ConflictException ||
+      error instanceof ForbiddenException
+    ) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+}
+
+/** The fields of a decision, as the draft row stores them. */
+export function approvedFields(user: { id: string }): {
+  state: 'APPROVED';
+  decidedById: string;
+  decidedAt: Date;
+  version: { increment: number };
+} {
+  return {
+    state: 'APPROVED',
+    decidedById: user.id,
+    decidedAt: new Date(),
+    version: { increment: 1 },
+  };
+}
+
+export function rejectedFields(
+  user: { id: string },
+  reason: string,
+): {
+  state: 'REJECTED';
+  rejectReason: string;
+  decidedById: string;
+  decidedAt: Date;
+  version: { increment: number };
+} {
+  return {
+    state: 'REJECTED',
+    rejectReason: reason,
+    decidedById: user.id,
+    decidedAt: new Date(),
+    version: { increment: 1 },
+  };
 }
