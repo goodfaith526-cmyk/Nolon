@@ -1,0 +1,32 @@
+name: Migration review
+
+# AGENTS.md rule 4: an additive migration merges on review and green CI; any other migration needs
+# a tested backup and the owner's explicit OK. The OK is a label naming the digest of the exact
+# migrations reviewed (`migration-ok-<digest>`, printed by this check). Every run compares it with
+# the migrations at the head it checks, so a later change to them, in any push, needs a new OK.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: migration-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  additive:
+    name: Migrations are additive or signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - name: Review new migrations
+        env:
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node apps/api/src/migration-review/additive-migrations.ts "origin/${{ github.base_ref }}"
