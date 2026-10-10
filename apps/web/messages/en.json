@@ -2054,6 +2054,8 @@
     "kind_bookings": "Bookings",
     "kind_trips": "Trips",
     "kind_releases": "Goods releases",
+    "kind_invoices": "Invoices",
+    "kind_receipts": "Receipts",
     "status_DRAFT": "To review",
     "status_APPROVED": "Approved",
     "status_REJECTED": "Rejected",
@@ -2085,6 +2087,10 @@
     "tripApproveHint": "Approving plans the trip and schedules its shipments, as planning it yourself would. The trip can still be changed or cancelled while it is planned.",
     "releaseTitle": "Goods release draft for {shipment}",
     "releaseApproveHint": "Approving issues the release note now, dated at the approval, if the warehouse still holds these packages.",
-    "shipment": "Shipment"
+    "shipment": "Shipment",
+    "invoiceTitle": "Invoice draft for {shipment} ({customer})",
+    "invoiceApproveHint": "Approving creates a draft invoice. Nothing is posted: the invoice is approved, numbered and posted separately, as usual.",
+    "receiptTitle": "Receipt draft from {customer}",
+    "receiptApproveHint": "Approving records the receipt and posts its journal entry, and settles the invoices listed, in your name. Check the amount against the bank or cash first."
   }
 }

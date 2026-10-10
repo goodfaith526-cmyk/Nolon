@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module.js';
+import { DraftsModule } from '../drafts/drafts.module.js';
 import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
@@ -14,7 +15,11 @@ import {
 import { CreditNotesService } from './credit-notes.service.js';
 import { CustomerStatementService } from './customer-statement.service.js';
 import { BillingReportsService } from './billing-reports.service.js';
+import { InvoiceDraftsController } from './invoice-drafts.controller.js';
+import { InvoiceDraftsService } from './invoice-drafts.service.js';
 import { InvoicesService } from './invoices.service.js';
+import { ReceiptDraftsController } from './receipt-drafts.controller.js';
+import { ReceiptDraftsService } from './receipt-drafts.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
 @Module({
@@ -22,6 +27,7 @@ import { ReceiptsService } from './receipts.service.js';
     AccountingModule,
     CurrenciesModule,
     CustomersModule,
+    DraftsModule,
     MasterDataModule,
     QuotationsModule,
     ShipmentsModule,
@@ -31,6 +37,8 @@ import { ReceiptsService } from './receipts.service.js';
     ReceiptsController,
     CreditNotesController,
     CustomerStatementsController,
+    InvoiceDraftsController,
+    ReceiptDraftsController,
   ],
   providers: [
     InvoicesService,
@@ -38,6 +46,8 @@ import { ReceiptsService } from './receipts.service.js';
     CreditNotesService,
     BillingReportsService,
     CustomerStatementService,
+    InvoiceDraftsService,
+    ReceiptDraftsService,
   ],
   exports: [BillingReportsService],
 })

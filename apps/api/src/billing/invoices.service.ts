@@ -59,6 +59,26 @@ export interface InvoiceFilters extends PageQuery {
 
 type Tx = Prisma.TransactionClient;
 
+/** A draft invoice checked by prepareForShipment, ready for insertInTx. */
+export interface PreparedInvoice {
+  branchId: string;
+  customerId: string;
+  shipmentId: string;
+  currency: string;
+  fxRate: Decimal;
+  invoiceDate: string;
+  dueDate: string;
+  notes: string | null;
+  lines: {
+    chargeTypeCode: string;
+    description: string | null;
+    quantity: Decimal;
+    unitPrice: Decimal;
+    lineTotal: Decimal;
+  }[];
+  total: Decimal;
+}
+
 const details = {
   lines: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
@@ -353,6 +373,79 @@ export class InvoicesService {
       include: details,
     });
     return toDto(created, user);
+  }
+
+  /**
+   * The checks of a draft invoice for a shipment with the given values (an assistant's invoice
+   * draft), as update() checks them, without writing; insertInTx then records it. The fx rate is
+   * the rate table's for the invoice date.
+   */
+  async prepareForShipment(
+    user: AuthUser,
+    shipmentId: string,
+    input: Omit<CustomerInvoiceInput, 'fxRate'>,
+  ): Promise<PreparedInvoice> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    if (shipment.status === 'CANCELLED') {
+      throw new ConflictException('A cancelled shipment is not invoiced');
+    }
+    await this.customers.requireCustomer(user, shipment.customerId);
+    if (input.dueDate < input.invoiceDate) {
+      throw new BadRequestException('The due date is before the invoice date');
+    }
+    const currency = await this.currencies.requireActive(input.currency);
+    for (const line of input.lines) await this.masterData.requireChargeType(line.chargeTypeCode);
+    const fxRate = await this.fxRates.resolve(currency.code, input.invoiceDate);
+    const lines = input.lines.map((l) => ({
+      chargeTypeCode: l.chargeTypeCode,
+      description: l.description ?? null,
+      quantity: dec(l.quantity),
+      unitPrice: dec(l.unitPrice),
+    }));
+    const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
+    return {
+      branchId: shipment.branchId,
+      customerId: shipment.customerId,
+      shipmentId: shipment.id,
+      currency: currency.code,
+      fxRate,
+      invoiceDate: input.invoiceDate,
+      dueDate: input.dueDate,
+      notes: input.notes ?? null,
+      lines: lines.map((l, i) => ({ ...l, lineTotal: lineTotals[i] ?? dec(0) })),
+      total,
+    };
+  }
+
+  /** Records a prepared DRAFT invoice inside the caller's transaction; posts nothing. */
+  async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedInvoice): Promise<string> {
+    const created = await tx.customerInvoice.create({
+      data: {
+        branchId: prepared.branchId,
+        customerId: prepared.customerId,
+        shipmentId: prepared.shipmentId,
+        currency: prepared.currency,
+        fxRate: prepared.fxRate,
+        invoiceDate: toDbDate(prepared.invoiceDate),
+        dueDate: toDbDate(prepared.dueDate),
+        notes: prepared.notes,
+        total: prepared.total,
+        totalUsd: toUsd(prepared.total, prepared.fxRate, prepared.currency),
+        createdById: user.id,
+        lines: {
+          create: prepared.lines.map((l, index) => ({
+            lineNo: index + 1,
+            chargeTypeCode: l.chargeTypeCode,
+            description: l.description,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            lineTotal: l.lineTotal,
+          })),
+        },
+      },
+      select: { id: true },
+    });
+    return created.id;
   }
 
   /** Drafts only; the lines are replaced as a whole. */
