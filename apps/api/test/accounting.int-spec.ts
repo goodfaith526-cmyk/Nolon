@@ -37,8 +37,10 @@ describe('accounting: journals, invoices, receipts, periods', () => {
   let cashSdg: AccountDto;
   let cashUsd: AccountDto;
   let accounts: Map<string, AccountDto>;
-  const year = randomInt(1901, 2000);
-  const d = (monthDay: string) => `${year}-${monthDay}`;
+  // Closing a period is global, so this file keeps years no other file dates anything in.
+  const year = randomInt(100, 600);
+  const yyyy = String(year).padStart(4, '0');
+  const d = (monthDay: string) => `${yyyy}-${monthDay}`;
   const cookies = {
     admin: '',
     financePts: '',
@@ -212,7 +214,7 @@ describe('accounting: journals, invoices, receipts, periods', () => {
     it('approving posts the receivable against each charge’s revenue account', async () => {
       const invoice = await approvedInvoice();
       expect(invoice.status).toBe('APPROVED');
-      expect(invoice.number).toMatch(new RegExp(`^NOL-INV-${year}-\\d{6}$`));
+      expect(invoice.number).toMatch(new RegExp(`^NOL-INV-${yyyy}-\\d{6}$`));
       expect(invoice).toMatchObject({
         total: '1000000.5',
         totalUsd: '1666.67',
@@ -334,7 +336,7 @@ describe('accounting: journals, invoices, receipts, periods', () => {
           allocations: [{ invoiceId: invoice.id, amount: '500000' }],
         }).expect(201)
       ).body as ReceiptDto;
-      expect(first.number).toMatch(new RegExp(`^NOL-RC-${year}-\\d{6}$`));
+      expect(first.number).toMatch(new RegExp(`^NOL-RC-${yyyy}-\\d{6}$`));
       expect(first).toMatchObject({ allocated: '500000', unallocated: '0', status: 'POSTED' });
       expect(first.allocations[0]).toMatchObject({ amount: '500000', relievedUsd: '833.33' });
       const firstEntry = await journal(first.journalEntryId);

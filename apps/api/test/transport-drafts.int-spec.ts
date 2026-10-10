@@ -50,7 +50,16 @@ let carrier: CarrierDto;
 let warehouse: WarehouseDto;
 let jedWarehouse: WarehouseDto;
 
-const cookies = { admin: '', opsDxb: '', opsJed: '', salesDxb: '', whDxb: '', whJed: '' };
+const cookies = {
+  admin: '',
+  opsDxb: '',
+  opsJed: '',
+  salesDxb: '',
+  whDxb: '',
+  whJed: '',
+  driverDxb: '',
+  driverOpsDxb: '',
+};
 const agentCookies = { opsAgent: '', whAgent: '', salesAgent: '', opsJedAgent: '' };
 const tokens = { ops: '', wh: '', sales: '', opsJed: '' };
 
@@ -151,6 +160,8 @@ beforeAll(async () => {
     salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
     whDxb: await createUser(t.prisma, ['WAREHOUSE'], ['DXB']),
     whJed: await createUser(t.prisma, ['WAREHOUSE'], ['JED']),
+    driverDxb: await createUser(t.prisma, ['DRIVER'], ['DXB']),
+    driverOpsDxb: await createUser(t.prisma, ['DRIVER', 'OPERATIONS'], ['DXB']),
   };
   for (const key of Object.keys(people) as (keyof typeof people)[]) {
     cookies[key] = await signIn(t, people[key].email);
@@ -324,6 +335,40 @@ describe('trip drafts: a person reviews', () => {
     const sales = (await r.get(`/trip-drafts/${draft.id}`, cookies.salesDxb).expect(200))
       .body as TripDraftDto;
     expect(sales.actions.canDecide).toBe(false);
+  });
+
+  it('shows no draft to a Driver-only user, who sees only their own trips', async () => {
+    const shipment = await roadShipment();
+    const draft = await tripDraft(tripRequest([shipment.id]));
+    // A Driver has trips:view, limited to the trips assigned to them; a draft is no one's yet.
+    await r.get('/trip-drafts', cookies.driverDxb).expect(403);
+    await r.get(`/trip-drafts/${draft.id}`, cookies.driverDxb).expect(403);
+    await r
+      .post(`/trip-drafts/${draft.id}/approve`, cookies.driverDxb, { version: draft.version })
+      .expect(403);
+    await r
+      .post(`/trip-drafts/${draft.id}/reject`, cookies.driverDxb, {
+        version: draft.version,
+        reason: 'no',
+      })
+      .expect(403);
+    // Another role that grants trips lifts the limit, as it does on trips.
+    const list = (await r.get('/trip-drafts', cookies.driverOpsDxb).expect(200))
+      .body as TripDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(draft.id);
+    await r.get(`/trip-drafts/${draft.id}`, cookies.driverOpsDxb).expect(200);
+  });
+
+  it('gives a Driver-only user no draft list of any kind', async () => {
+    for (const path of [
+      '/trip-drafts',
+      '/release-drafts',
+      '/quotation-drafts',
+      '/booking-drafts',
+    ]) {
+      const res = await r.get(path, cookies.driverDxb);
+      expect(res.status, path).toBe(403);
+    }
   });
 
   it('shows the agreed cost of an external trip only to those who see transport costs', async () => {
