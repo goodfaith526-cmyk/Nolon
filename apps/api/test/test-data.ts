@@ -24,6 +24,7 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.vehicle.deleteMany({ where: { plateNumber: { startsWith: 'ZZ' } } });
   await prisma.driver.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
   await prisma.carrier.deleteMany({ where: { name: { startsWith: 'ZZ' } } });
+  await prisma.grnDraft.deleteMany({ where: { shipment: createdBy } });
   await prisma.warehouseMovementPhoto.deleteMany({ where: { movement: { shipment: createdBy } } });
   await prisma.warehouseMovement.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsFee.deleteMany({ where: { shipment: createdBy } });

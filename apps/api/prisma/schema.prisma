@@ -61,6 +61,8 @@ model Branch {
   warehouses         Warehouse[]
   storageLocations   StorageLocation[]
   warehouseMovements WarehouseMovement[]
+  grnDrafts          GrnDraft[]
+  grnDraftLines      GrnDraftLine[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -175,6 +177,8 @@ model User {
   receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
 
   warehouseMovements WarehouseMovement[] @relation("WarehouseMovementCreatedBy")
+  grnDraftsCreated   GrnDraft[]          @relation("GrnDraftCreatedBy")
+  grnDraftsDecided   GrnDraft[]          @relation("GrnDraftDecidedBy")
   customsUpdated     CustomsClearance[]  @relation("CustomsUpdatedBy")
   customsFeesCreated CustomsFee[]        @relation("CustomsFeeCreatedBy")
 
@@ -825,6 +829,7 @@ model Shipment {
   journalLines       JournalLine[]
   invoices           CustomerInvoice[]
   movements          WarehouseMovement[]
+  grnDrafts          GrnDraft[]
   customs            CustomsClearance?
   customsFees        CustomsFee[]
   tripLinks          TripShipment[]
@@ -977,6 +982,7 @@ model Document {
   movement   WarehouseMovementPhoto?
   podSigned  ProofOfDelivery?        @relation("PodSignature")
   podPhoto   PodPhoto?
+  grnDrafts  GrnDraft[]
 
   @@index([shipmentId])
   @@index([branchId])
@@ -1513,6 +1519,7 @@ model WarehouseMovement {
   storageLocation StorageLocation?         @relation(fields: [storageLocationId], references: [id], onDelete: Restrict)
   createdBy       User                     @relation("WarehouseMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   photos          WarehouseMovementPhoto[]
+  grnDraft        GrnDraft?
 
   @@index([shipmentId, warehouseId])
   @@index([warehouseId])
@@ -1536,6 +1543,96 @@ model WarehouseMovementPhoto {
   @@id([movementId, documentId])
   @@index([branchId])
   @@map("warehouse_movement_photos")
+}
+
+enum GrnDraftState {
+  DRAFT
+  APPROVED
+  REJECTED
+
+  @@map("grn_draft_state")
+}
+
+/**
+ * A goods received note proposed by the staff AI assistant from a shipment's packing list
+ * (Document Pilot). Only a person approves it, which records an ordinary goods receipt
+ * (movement_id). The assistant creates drafts and nothing else; a repeat with the same
+ * idempotency key, from the same client for the same user, returns the same draft. An undecided
+ * draft past expires_at reads as expired and can no longer change. branch_id is the shipment's.
+ */
+model GrnDraft {
+  id             String        @id @default(uuid()) @db.Uuid
+  branchId       String        @map("branch_id") @db.Uuid
+  shipmentId     String        @map("shipment_id") @db.Uuid
+  /// The packing list read, and its bytes' sha256 at that time.
+  documentId     String        @map("document_id") @db.Uuid
+  documentSha256 String        @map("document_sha256") @db.Char(64)
+  state          GrnDraftState @default(DRAFT)
+  /// Optimistic lock: every change sends the version it read and bumps it.
+  version        Int           @default(1)
+  expiresAt      DateTime      @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String        @map("agent_client_id") @db.Uuid
+  /// The staff member the assistant acted for.
+  createdById    String        @map("created_by_id") @db.Uuid
+  idempotencyKey String        @map("idempotency_key") @db.VarChar(100)
+  /// sha256 of the normalised create request; a key reused with another request is refused.
+  payloadHash    String        @map("payload_hash") @db.Char(64)
+  /// Totals printed on the document, as the assistant read them.
+  statedPackages Int?          @map("stated_packages")
+  statedGrossKg  Decimal?      @map("stated_gross_kg") @db.Decimal(12, 3)
+  statedNetKg    Decimal?      @map("stated_net_kg") @db.Decimal(12, 3)
+  statedCbm      Decimal?      @map("stated_cbm") @db.Decimal(12, 3)
+  /// Codes from GRN_DRAFT_WARNINGS (@nolon/shared), validated on write.
+  warnings       String[]      @db.VarChar(40)
+  decidedById    String?       @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?     @map("decided_at") @db.Timestamptz(3)
+  rejectReason   String?       @map("reject_reason") @db.VarChar(500)
+  movementId     String?       @unique @map("movement_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  document    Document           @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  agentClient AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User               @relation("GrnDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?              @relation("GrnDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  movement    WarehouseMovement? @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  lines       GrnDraftLine[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("grn_drafts")
+}
+
+/**
+ * One line of a draft GRN. field_meta records, per field holding a value, who filled it (AI or
+ * STAFF) and what code could check about an AI value (MATCHED, UNVERIFIED, MISMATCH).
+ */
+model GrnDraftLine {
+  draftId      String   @map("draft_id") @db.Uuid
+  lineNo       Int      @map("line_no")
+  branchId     String   @map("branch_id") @db.Uuid
+  marks        String?  @db.VarChar(200)
+  description  String?  @db.VarChar(500)
+  packageCount Int?     @map("package_count")
+  packageType  String?  @map("package_type") @db.VarChar(50)
+  quantity     Decimal? @db.Decimal(14, 3)
+  unit         String?  @db.VarChar(20)
+  grossKg      Decimal? @map("gross_kg") @db.Decimal(12, 3)
+  netKg        Decimal? @map("net_kg") @db.Decimal(12, 3)
+  cbm          Decimal? @db.Decimal(12, 3)
+  sourcePage   Int?     @map("source_page")
+  sourceRow    Int?     @map("source_row")
+  fieldMeta    Json     @map("field_meta")
+
+  draft  GrnDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  branch Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([draftId, lineNo])
+  @@index([branchId])
+  @@map("grn_draft_lines")
 }
 
 enum CustomsStatus {
@@ -2384,6 +2481,7 @@ model AgentClient {
   codes        AgentAuthCode[]
   tokens       AgentToken[]
   accessEvents AgentAccessEvent[]
+  grnDrafts    GrnDraft[]
 
   @@map("agent_clients")
 }

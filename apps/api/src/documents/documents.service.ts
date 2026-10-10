@@ -5,14 +5,23 @@ import {
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { MAX_DOCUMENT_BYTES, type ShipmentDocumentDto } from '@nolon/shared';
+import {
+  MAX_DOCUMENT_BYTES,
+  PACKING_LIST_DOCUMENT_TYPE,
+  XLSX_CONTENT_TYPE,
+  type PackingListContentDto,
+  type SheetPreviewDto,
+  type ShipmentDocumentDto,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { Document, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
-import { cleanFileName, detectContentType } from './file-type.js';
+import { cleanFileName, detectContentType, isXlsxWorkbook } from './file-type.js';
+import { isolatedSheetPreview } from './isolated-sheet-preview.js';
 
 export interface UploadInput {
   typeCode: string;
@@ -28,6 +37,9 @@ export interface PreparedUpload extends UploadInput {
 
 type Tx = Prisma.TransactionClient;
 
+/** Spreadsheet previews read at the same time in one API process. */
+const MAX_PARALLEL_SHEET_PREVIEWS = 2;
+
 export interface DocumentFile {
   fileName: string;
   contentType: string;
@@ -40,6 +52,8 @@ export interface DocumentFile {
  */
 @Injectable()
 export class DocumentsService {
+  private sheetPreviews = 0;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
@@ -85,9 +99,19 @@ export class DocumentsService {
     if (input.data.length > MAX_DOCUMENT_BYTES) {
       throw new PayloadTooLargeException('Files are limited to 10 MB');
     }
-    const contentType = detectContentType(input.data);
-    if (!contentType)
-      throw new BadRequestException('Only PDF, JPEG, PNG and WebP files are accepted');
+    const contentType =
+      detectContentType(input.data) ??
+      // Packing lists often come as spreadsheets: a checked .xlsx is accepted for that type only.
+      (input.typeCode === PACKING_LIST_DOCUMENT_TYPE && isXlsxWorkbook(input.data)
+        ? XLSX_CONTENT_TYPE
+        : null);
+    if (!contentType) {
+      throw new BadRequestException(
+        input.typeCode === PACKING_LIST_DOCUMENT_TYPE
+          ? 'Only PDF, JPEG, PNG, WebP and .xlsx files are accepted'
+          : 'Only PDF, JPEG, PNG and WebP files are accepted',
+      );
+    }
     return { ...input, contentType };
   }
 
@@ -132,6 +156,95 @@ export class DocumentsService {
       contentType: document.contentType,
       data: Buffer.from(document.content.data),
     };
+  }
+
+  /**
+   * A packing list's bytes for the staff assistant to read, as JSON: its detected type, size and
+   * sha256, never its file name. 404 for any other document type, a deleted document, or a
+   * shipment the user cannot see.
+   */
+  async packingListContent(
+    user: AuthUser,
+    shipmentId: string,
+    documentId: string,
+  ): Promise<PackingListContentDto> {
+    await this.shipments.requireAccessible(user, shipmentId);
+    const document = await this.prisma.document.findFirst({
+      where: {
+        id: documentId,
+        shipmentId,
+        typeCode: PACKING_LIST_DOCUMENT_TYPE,
+        deletedAt: null,
+      },
+      include: { content: true },
+    });
+    if (!document?.content) throw new NotFoundException('Packing list not found');
+    return {
+      documentId: document.id,
+      contentType: document.contentType,
+      sizeBytes: document.sizeBytes,
+      sha256: document.sha256,
+      dataBase64: Buffer.from(document.content.data).toString('base64'),
+    };
+  }
+
+  /**
+   * A packing list of the shipment, for a GRN draft: not deleted, with these bytes (sha256).
+   * 404 otherwise. The caller has checked access to the shipment.
+   */
+  async requirePackingList(
+    tx: Tx,
+    shipmentId: string,
+    documentId: string,
+    sha256: string,
+  ): Promise<{ id: string }> {
+    // FOR SHARE: until the caller's transaction ends, the row cannot be deleted (soft or hard) or
+    // changed, so a draft or GRN never commits against a packing list removed after this check.
+    // A removal already in progress is waited for, and the row then no longer matches.
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "documents"
+      WHERE "id" = ${documentId}::uuid
+        AND "shipment_id" = ${shipmentId}::uuid
+        AND "type_code" = ${PACKING_LIST_DOCUMENT_TYPE}
+        AND "deleted_at" IS NULL
+        AND "sha256" = ${sha256}
+      FOR SHARE`;
+    const document = rows[0];
+    if (!document) throw new NotFoundException('Packing list not found');
+    return document;
+  }
+
+  /**
+   * A PDF or image document to show inline on a review screen (the controller serves it
+   * sandboxed). 404 for other types: spreadsheets are shown through `sheet`.
+   */
+  async preview(user: AuthUser, shipmentId: string, documentId: string): Promise<DocumentFile> {
+    const file = await this.file(user, shipmentId, documentId);
+    if (file.contentType !== 'application/pdf' && !file.contentType.startsWith('image/')) {
+      throw new NotFoundException('No preview for this document');
+    }
+    return file;
+  }
+
+  /** The first sheet of an .xlsx document as text cells; 404 for other types. */
+  async sheet(user: AuthUser, shipmentId: string, documentId: string): Promise<SheetPreviewDto> {
+    const file = await this.file(user, shipmentId, documentId);
+    if (file.contentType !== XLSX_CONTENT_TYPE) {
+      throw new NotFoundException('This document is not a spreadsheet');
+    }
+    // Each preview runs in its own worker with memory and time limits (isolated-sheet-preview.ts);
+    // this bounds how many run at once in this process.
+    if (this.sheetPreviews >= MAX_PARALLEL_SHEET_PREVIEWS) {
+      throw new ServiceUnavailableException('Other spreadsheets are being read; try again');
+    }
+    this.sheetPreviews++;
+    try {
+      const preview = await isolatedSheetPreview(file.data);
+      if (!preview) throw new NotFoundException('The spreadsheet cannot be read');
+      return preview;
+    } finally {
+      this.sheetPreviews--;
+    }
   }
 
   /** Soft delete: the file disappears from the shipment; who uploaded and deleted it remains. */

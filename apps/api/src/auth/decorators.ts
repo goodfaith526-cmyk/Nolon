@@ -10,6 +10,7 @@ import type { AuthUser, AuthenticatedRequest } from './auth-user.js';
 export const IS_PUBLIC = 'auth:isPublic';
 export const REQUIRED_PERMISSIONS = 'auth:requiredPermissions';
 export const AGENT_READABLE = 'auth:agentReadable';
+export const AGENT_DRAFT_WRITABLE = 'auth:agentDraftWritable';
 
 /** Opts a route out of the session guard. Every other route requires a signed-in user. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -25,6 +26,13 @@ export const RequirePermission = (...permissions: Permission[]) =>
  * pilot needs; never a write, an export or account administration.
  */
 export const AgentReadable = () => SetMetadata(AGENT_READABLE, true);
+
+/**
+ * Opens a POST route to the staff AI assistant for creating a draft that only a person can
+ * approve (Document Pilot). One route carries it: creating a GRN draft from a packing list
+ * (agent-draft-writable.spec.ts). Never an approval, an edit, a delete or a posting.
+ */
+export const AgentDraftWritable = () => SetMetadata(AGENT_DRAFT_WRITABLE, true);
 
 /** The user the guard attached. Only valid on routes that are not @Public(). */
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

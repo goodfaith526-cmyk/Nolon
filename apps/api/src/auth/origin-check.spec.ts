@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isAllowedUnsafeRequest } from './origin-check.js';
+import type { NextFunction, Request, Response } from 'express';
+import { isAllowedUnsafeRequest, originCheck } from './origin-check.js';
 
 const allowed = ['https://app.test'];
 
@@ -27,5 +28,32 @@ describe('isAllowedUnsafeRequest', () => {
     expect(isAllowedUnsafeRequest('POST', 'https://evil.test', 'https://app.test/', allowed)).toBe(
       false,
     );
+  });
+});
+
+describe('originCheck', () => {
+  function run(headers: Record<string, string>): number {
+    let status = 0;
+    const res = {
+      status: (code: number) => {
+        status = code;
+        return { json: () => undefined };
+      },
+    } as unknown as Response;
+    const next: NextFunction = () => {
+      status = 200;
+    };
+    originCheck(allowed)({ method: 'POST', path: '/api/v1/x', headers } as Request, res, next);
+    return status;
+  }
+
+  it('lets an assistant bearer request through without an Origin (server to server)', () => {
+    expect(run({ authorization: 'Bearer nolag_abc' })).toBe(200);
+  });
+
+  it('still blocks a cookie request from nowhere or elsewhere, and other bearer tokens', () => {
+    expect(run({ cookie: 'nolon_session=x' })).toBe(403);
+    expect(run({ cookie: 'nolon_session=x', origin: 'https://evil.test' })).toBe(403);
+    expect(run({ authorization: 'Bearer something-else' })).toBe(403);
   });
 });

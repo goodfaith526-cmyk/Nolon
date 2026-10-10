@@ -23,7 +23,7 @@ import {
   cellText,
   rawCell,
 } from './cells.js';
-import { repackZip } from './zip-guard.js';
+import { repackZip } from '../common/zip-guard.js';
 
 /**
  * The developer-defined import templates (scope 18): column definitions, reading an uploaded
@@ -132,7 +132,7 @@ async function openWorkbook(file: UploadedWorkbook | undefined): Promise<ExcelJS
   if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
     throw fileError('NOT_XLSX', 'Only .xlsx workbooks are accepted');
   }
-  // exceljs only ever sees the archive rebuilt from entries inflated under the cap (zip-guard.ts).
+  // exceljs only ever sees the archive rebuilt from entries inflated under the cap (common/zip-guard.ts).
   const verified = repackZip(file.buffer, ZIP_LIMITS);
   if (!verified) {
     throw fileError('UNREADABLE', 'The file is not a readable .xlsx workbook');

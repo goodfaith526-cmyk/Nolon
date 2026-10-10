@@ -20,6 +20,7 @@ import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { StatusBadge } from '../StatusBadge';
 import { PrintLink } from '../print/PrintLink';
+import { GrnDrafts } from './GrnDrafts';
 
 type Form = 'receipt' | 'release' | null;
 
@@ -251,6 +252,17 @@ export function ShipmentWarehouse({
             remaining: data.remainingPackages,
           })}
         </p>
+
+        <GrnDrafts
+          shipmentId={shipmentId}
+          warehouses={warehouses}
+          receiptStatuses={actions.receiptStatuses}
+          defaultReceiptStatus={actions.defaultReceiptStatus}
+          onApproved={() => {
+            load();
+            onShipmentChanged();
+          }}
+        />
 
         {form === 'receipt' && selectedWarehouse && (
           <form className="card stack" onSubmit={onReceive}>
