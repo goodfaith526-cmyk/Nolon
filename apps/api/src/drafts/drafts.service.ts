@@ -82,12 +82,13 @@ export class DraftsService {
     label: string,
   ): Promise<AssistantDraftDto<D>> {
     await this.requireOwnDraft(user, table, draft.id, label);
+    const names = await referenceNames(this.prisma, user, draft.request);
     return {
       kind,
-      contentHash: contentHashOf(draft),
+      contentHash: contentHashOf({ ...draft, names }),
       canDecideFromAssistant: await this.hasGrant(user.id, kind),
       draft,
-      names: await referenceNames(this.prisma, user, draft.request),
+      names,
     };
   }
 
@@ -97,7 +98,7 @@ export class DraftsService {
    * kind (else forbidden), and for an approval the content the card showed (else conflict). The
    * version is checked under the row lock by the decision itself.
    */
-  async authorizeAssistant<D extends { id: string }>(
+  async authorizeAssistant<D extends { id: string; request: unknown }>(
     user: AuthUser,
     kind: AssistantDecidableKind,
     table: DraftTable,
@@ -111,7 +112,11 @@ export class DraftsService {
         `Deciding a ${label} from the assistant is not turned on for you`,
       );
     }
-    if (contentHash !== null && contentHash !== contentHashOf(draft)) {
+    // The names are hashed too: a rate card's price is in its name, so a repricing since the
+    // card was shown asks for a reload instead of approving a price nobody saw.
+    const names =
+      contentHash === null ? {} : await referenceNames(this.prisma, user, draft.request);
+    if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names })) {
       throw new ConflictException(`This ${label} changed since you opened it: reload it`);
     }
     return { [ASSISTANT_DECISION]: true, draftId: draft.id };

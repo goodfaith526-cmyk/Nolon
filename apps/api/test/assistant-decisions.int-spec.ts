@@ -267,6 +267,25 @@ describe('deciding in the chat', () => {
     expect(quotation).toMatchObject({ status: 'DRAFT', total: '2999.5' });
   });
 
+  it('asks for a reload when a name the card showed changed (a repriced rate card, say)', async () => {
+    await grant(ids.sales, ['quotation']).expect(200);
+    const id = await newDraft();
+    const shown = await card(id);
+    const number = customer.number;
+    await t.prisma.customer.update({ where: { id: customer.id }, data: { number: `${number}-R` } });
+    try {
+      await r
+        .agentPost(`/quotation-drafts/${id}/assistant-approve`, tokens.sales, {
+          version: 1,
+          contentHash: shown.contentHash,
+        })
+        .expect(409);
+      expect((await card(id)).contentHash).not.toBe(shown.contentHash);
+    } finally {
+      await t.prisma.customer.update({ where: { id: customer.id }, data: { number } });
+    }
+  });
+
   it('rejects with a reason, recorded as from the assistant', async () => {
     const id = await newDraft();
     const rejected = (
