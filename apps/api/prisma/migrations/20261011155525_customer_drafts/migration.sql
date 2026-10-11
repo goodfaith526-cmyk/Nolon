@@ -55,14 +55,14 @@ ALTER TABLE "customer_drafts" ADD CONSTRAINT "customer_drafts_customer_id_fkey" 
 
 -- A draft's decision fields agree with its state: only an approval carries the customer it
 -- created, only a rejection a reason, and an open draft carries neither. A customer draft is
--- decided on the review screen only (it is not among the kinds the assistant's chat decides).
+-- approved on the review screen only (it is not among the kinds the assistant's chat decides).
 ALTER TABLE "customer_drafts" ADD CONSTRAINT "customer_drafts_decision_check" CHECK (
   ("state" = 'DRAFT' AND "decided_at" IS NULL AND "decided_by_id" IS NULL
      AND "decided_via" IS NULL AND "customer_id" IS NULL AND "reject_reason" IS NULL)
   OR ("state" = 'APPROVED' AND "decided_at" IS NOT NULL AND "decided_by_id" IS NOT NULL
      AND "decided_via" = 'SESSION' AND "customer_id" IS NOT NULL AND "reject_reason" IS NULL)
   OR ("state" = 'REJECTED' AND "decided_at" IS NOT NULL AND "decided_by_id" IS NOT NULL
-     AND "decided_via" = 'SESSION' AND "customer_id" IS NULL AND "reject_reason" IS NOT NULL)
+     AND "decided_via" IS NOT NULL AND "customer_id" IS NULL AND "reject_reason" IS NOT NULL)
 );
 ALTER TABLE "customer_drafts" ADD CONSTRAINT "customer_drafts_version_check" CHECK (
   "version" >= 1

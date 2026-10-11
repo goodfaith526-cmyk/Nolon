@@ -2563,8 +2563,8 @@ model AgentClient {
   tripDrafts    TripDraft[]
   releaseDrafts GoodsReleaseDraft[]
 
-  invoiceDrafts InvoiceDraft[]
-  receiptDrafts ReceiptDraft[]
+  invoiceDrafts  InvoiceDraft[]
+  receiptDrafts  ReceiptDraft[]
   customerDrafts CustomerDraft[]
 
   @@map("agent_clients")
@@ -2939,7 +2939,8 @@ model CustomerDraft {
   notes          String?          @db.VarChar(2000)
   decidedById    String?          @map("decided_by_id") @db.Uuid
   decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
-  /// Always SESSION: a customer draft is decided on the review screen only.
+  /// SESSION: decided on the review screen (always, for an approval); ASSISTANT: closed from the
+  /// assistant's chat.
   decidedVia     DraftDecidedVia? @map("decided_via")
   rejectReason   String?          @map("reject_reason") @db.VarChar(500)
   customerId     String?          @unique @map("customer_id") @db.Uuid
