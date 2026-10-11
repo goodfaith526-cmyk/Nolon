@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Encrypted off-server backups of the production database. Runs on the server, from
-# ~/nolon-production; the work happens in the backup container (backup-job.sh), so nothing is
-# installed on the host. Settings come from .env (DEPLOY-PRODUCTION.md, Backups).
+# Encrypted off-server backups of the database. Runs on the server, from ~/nolon-production (or
+# ~/nolon-staging: NOLON_STACK=staging in .env); the work happens in the backup container
+# (backup-job.sh), so nothing is installed on the host. Settings come from .env
+# (DEPLOY-PRODUCTION.md or DEPLOY.md, Backups).
 #
 #   ./backup.sh keygen         once: makes the backup key pair and shows both halves ONCE. The
 #                              private key goes off the server (your password manager); the
@@ -16,12 +17,20 @@
 #                              checks it, drops it. Asks for the private key (hidden).
 #   ./backup.sh restore NAME --database DB [--replace]
 #                              restores a backup into database DB. Asks for the private key.
-#   ./backup.sh install-cron   a daily backup at 01:17 UTC (deploy.sh does this when backups
-#                              are set up). Log: ~/nolon-production-backup.log
+#   ./backup.sh install-cron   a daily backup at 01:17 UTC, staging at 01:47 (deploy.sh does this
+#                              when backups are set up). Log: ~/nolon-<stack>-backup.log
 set -euo pipefail
 cd "$(dirname "$0")"
 
-compose() { docker compose -f docker-compose.production.yml "$@"; }
+stack="$(sed -n "s/^NOLON_STACK='\{0,1\}\([a-z]*\)'\{0,1\}$/\1/p" .env 2> /dev/null || true)"
+stack="${stack:-production}"
+case "$stack" in
+  production) cron_minute=17 ;;
+  staging) cron_minute=47 ;;
+  *) echo "NOLON_STACK in .env must be production or staging" >&2; exit 1 ;;
+esac
+
+compose() { docker compose -f "docker-compose.$stack.yml" "$@"; }
 
 case "${1:-}" in
   keygen)
@@ -38,7 +47,7 @@ case "${1:-}" in
     exit 0
     ;;
   install-cron)
-    line="17 1 * * * cd $PWD && ./backup.sh >> \$HOME/nolon-production-backup.log 2>&1"
+    line="$cron_minute 1 * * * cd $PWD && ./backup.sh >> \$HOME/nolon-$stack-backup.log 2>&1"
     { crontab -l 2> /dev/null | grep -vF "cd $PWD && ./backup.sh" || true; echo "$line"; } | crontab -
     echo "Daily backup installed: $line"
     exit 0
@@ -53,7 +62,7 @@ case "${1:-}" in
     fi
     if ! grep -Eq "^BACKUP_S3_BUCKET='?[a-z0-9]" .env; then
       echo "Refusing to migrate: the database holds data and backups are not set up" \
-        "(DEPLOY-PRODUCTION.md, Backups)." >&2
+        "(DEPLOY-PRODUCTION.md or DEPLOY.md, Backups)." >&2
       exit 1
     fi
     compose run --rm -T backup < /dev/null

@@ -158,7 +158,9 @@ jobs:
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Production backup and restore round trip (deploy/production/test-backup.sh)
-        run: deploy/production/test-backup.sh
+        run: deploy/production/test-backup.sh production
+      - name: Staging backup and restore round trip (same tools, staging stack)
+        run: deploy/production/test-backup.sh staging
       - name: Deploy scripts pass shellcheck
         run: shellcheck deploy/*/*.sh
       - name: Workflows and deploy.sh pass actionlint (with shellcheck)

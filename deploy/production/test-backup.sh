@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Tests backup.sh end to end with Docker: the real backup image, a PostgreSQL holding every
 # migration, and a local S3 server with Object Lock (versitygw) on the stack's network. A backup is
-# encrypted, uploaded and locked, then restored and checked. CI runs this; so can anyone with
-# Docker. A backup is only as good as a tested restore.
+# encrypted, uploaded and locked, then restored and checked. CI runs this for both stacks
+# (`test-backup.sh production`, `test-backup.sh staging`); so can anyone with Docker. A backup is
+# only as good as a tested restore.
 set -euo pipefail
+stack="${1:-production}"
+case "$stack" in
+  production) stack_dir=production ;;
+  staging) stack_dir=staging ;;
+  *) echo "usage: test-backup.sh [production|staging]" >&2; exit 2 ;;
+esac
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
-export COMPOSE_PROJECT_NAME="nolon-backup-test-$$"
+export COMPOSE_PROJECT_NAME="nolon-backup-test-$stack-$$"
 s3_name="$COMPOSE_PROJECT_NAME-s3"
 s3_port=19000
 s3="http://127.0.0.1:$s3_port"
@@ -16,7 +23,7 @@ s3_image=versity/versitygw@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80
 
 cleanup() {
   docker rm -f "$s3_name" > /dev/null 2>&1 || true
-  (cd "$work" && docker compose -f docker-compose.production.yml --profile jobs down -v \
+  (cd "$work" && docker compose -f "docker-compose.$stack.yml" --profile jobs down -v \
     --remove-orphans > /dev/null 2>&1) || true
   rm -rf "$work"
 }
@@ -27,9 +34,10 @@ fail() {
 }
 pass() { echo "ok - $*"; }
 
-cp "$here"/{docker-compose.production.yml,backup.sh,backup-job.sh,backup.Dockerfile} "$work/"
+cp "$here"/{backup.sh,backup-job.sh,backup.Dockerfile} "$work/"
+cp "$here/../$stack_dir/docker-compose.$stack.yml" "$work/"
 cd "$work"
-compose() { docker compose -f docker-compose.production.yml "$@"; }
+compose() { docker compose -f "docker-compose.$stack.yml" "$@"; }
 
 age_key() { compose run --rm -T --no-deps --entrypoint age-keygen backup 2> /dev/null | grep '^AGE-SECRET-KEY-'; }
 age_public() { compose run --rm -T --no-deps --entrypoint age-keygen backup -y; }
@@ -49,6 +57,10 @@ BACKUP_KEEP_DAYS=''
 BACKUP_S3_ACCESS_KEY_ID='test-access'
 BACKUP_S3_SECRET_ACCESS_KEY='test-secret-key'
 ENV
+if [ "$stack" = staging ]; then
+  # What the staging deploy job adds; production is the default when NOLON_STACK is missing.
+  printf '%s\n' "NOLON_STACK=staging" "SITE_ADDRESS=':80'" "BASIC_AUTH=off" >> .env
+fi
 set_env() {
   grep -v "^$1=" .env > .env.tmp || true
   echo "$1='$2'" >> .env.tmp
@@ -94,18 +106,18 @@ s3_call -fo /dev/null -X PUT "$s3/unlocked"
 
 out="$(./backup.sh 2>&1)" || fail "backup failed: $out"
 name="$(./backup.sh list | awk '{ print $NF }')"
-[[ "$name" =~ ^nolon-production-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || fail "expected one backup: $name"
-s3_call -fo "$work/object" "$s3/backups/production/$name"
+[[ "$name" =~ ^nolon-$stack-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || fail "expected one backup: $name"
+s3_call -fo "$work/object" "$s3/backups/$stack/$name"
 [ -s "$work/object" ] || fail "the backup object is empty"
 head -c 40 "$work/object" | grep -q 'age-encryption.org/v1' || fail "the backup is not age-encrypted"
 grep -q 'customer-note-' "$work/object" && fail "plain data found in the backup object"
 pass "backup is encrypted, uploaded, listed, and holds no plain data"
 
-retention="$(s3_call "$s3/backups/production/$name?retention")"
+retention="$(s3_call "$s3/backups/$stack/$name?retention")"
 [[ "$retention" == *"<Mode>COMPLIANCE</Mode>"* ]] || fail "the backup is not locked: $retention"
-version="$(s3_call -I "$s3/backups/production/$name" | tr -d '\r' | awk 'tolower($1) == "x-amz-version-id:" { print $2 }')"
+version="$(s3_call -I "$s3/backups/$stack/$name" | tr -d '\r' | awk 'tolower($1) == "x-amz-version-id:" { print $2 }')"
 [ -n "$version" ] || fail "no version id for $name"
-[ "$(s3_call -o /dev/null -w '%{http_code}' -X DELETE "$s3/backups/production/$name?versionId=$version")" = 403 ] ||
+[ "$(s3_call -o /dev/null -w '%{http_code}' -X DELETE "$s3/backups/$stack/$name?versionId=$version")" = 403 ] ||
   fail "the server's storage key could delete a locked backup"
 pass "the backup is locked in COMPLIANCE mode, and the server's key cannot delete it"
 
@@ -190,4 +202,4 @@ out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate refused the first dep
 [[ "$out" == *"Empty database"* ]] || fail "unexpected pre-migrate output on an empty database: $out"
 pass "without backups, only an empty database (the first deploy) may be migrated"
 
-echo "All backup tests passed."
+echo "All backup tests passed ($stack)."

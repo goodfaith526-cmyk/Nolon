@@ -61,7 +61,34 @@ jobs:
           BASIC_AUTH_HASH: ${{ secrets.STAGING_BASIC_AUTH_HASH }}
           SEED_ADMIN_EMAIL: ${{ secrets.STAGING_SEED_ADMIN_EMAIL }}
           SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
+          BACKUP_AGE_RECIPIENT: ${{ vars.STAGING_BACKUP_AGE_RECIPIENT }}
+          BACKUP_S3_ENDPOINT: ${{ vars.STAGING_BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ vars.STAGING_BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ vars.STAGING_BACKUP_S3_REGION }}
+          BACKUP_KEEP_DAYS: ${{ vars.STAGING_BACKUP_KEEP_DAYS }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.STAGING_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.STAGING_BACKUP_S3_SECRET_ACCESS_KEY }}
         run: |
+          # Backups: all five settings, or none yet (deploy.sh then warns on every deploy). The
+          # values themselves are checked on the server by backup-job.sh.
+          set_count=0
+          for name in BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET \
+            BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+            [ -z "${!name}" ] || set_count=$((set_count + 1))
+          done
+          if [ "$set_count" != 0 ] && [ "$set_count" != 5 ]; then
+            echo "::error::Backups need all of STAGING_BACKUP_AGE_RECIPIENT, STAGING_BACKUP_S3_ENDPOINT, STAGING_BACKUP_S3_BUCKET (variables), STAGING_BACKUP_S3_ACCESS_KEY_ID and STAGING_BACKUP_S3_SECRET_ACCESS_KEY (secrets), or none of them"
+            exit 1
+          fi
+          for name in BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_REGION \
+            BACKUP_KEEP_DAYS BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY; do
+            case "${!name}" in
+              *"'"* | *$'\n'*) echo "::error::STAGING_$name must not contain a quote or a line break"; exit 1 ;;
+            esac
+          done
+          if [ "$set_count" = 0 ]; then
+            echo "::warning::Staging backups are not set up: deploys migrate without a backup (DEPLOY.md, Backups)"
+          fi
           missing=""
           for name in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS POSTGRES_PASSWORD; do
             [ -n "${!name}" ] || missing="$missing STAGING_${name/SSH_KEY/SSH_PRIVATE_KEY}"
@@ -198,6 +225,13 @@ jobs:
           BASIC_AUTH_HASH: ${{ secrets.STAGING_BASIC_AUTH_HASH }}
           SEED_ADMIN_EMAIL: ${{ secrets.STAGING_SEED_ADMIN_EMAIL }}
           SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
+          BACKUP_AGE_RECIPIENT: ${{ vars.STAGING_BACKUP_AGE_RECIPIENT }}
+          BACKUP_S3_ENDPOINT: ${{ vars.STAGING_BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ vars.STAGING_BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ vars.STAGING_BACKUP_S3_REGION }}
+          BACKUP_KEEP_DAYS: ${{ vars.STAGING_BACKUP_KEEP_DAYS }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.STAGING_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.STAGING_BACKUP_S3_SECRET_ACCESS_KEY }}
         run: |
           # Single quotes keep Compose from expanding the `$` signs inside the bcrypt hash.
           umask 077
@@ -215,6 +249,16 @@ jobs:
             echo "WEB_IMAGE='${{ steps.images.outputs.web }}'"
             echo "POSTGRES_PASSWORD='$POSTGRES_PASSWORD'"
             echo "SEED_DEMO_DATA=true"
+            # Tells backup.sh which stack it serves (compose file, bucket folder, cron time).
+            echo "NOLON_STACK=staging"
+            # Off-server backups (checked above: all or none; empty means not set up yet).
+            echo "BACKUP_AGE_RECIPIENT='$BACKUP_AGE_RECIPIENT'"
+            echo "BACKUP_S3_ENDPOINT='$BACKUP_S3_ENDPOINT'"
+            echo "BACKUP_S3_BUCKET='$BACKUP_S3_BUCKET'"
+            echo "BACKUP_S3_REGION='$BACKUP_S3_REGION'"
+            echo "BACKUP_KEEP_DAYS='$BACKUP_KEEP_DAYS'"
+            echo "BACKUP_S3_ACCESS_KEY_ID='$BACKUP_S3_ACCESS_KEY_ID'"
+            echo "BACKUP_S3_SECRET_ACCESS_KEY='$BACKUP_S3_SECRET_ACCESS_KEY'"
             case "$ASSISTANT_URL" in
               *"'"*) echo "::error::STAGING_AGENT_ASSISTANT_URL must not contain a single quote"; exit 1 ;;
             esac
@@ -248,6 +292,8 @@ jobs:
           remote "umask 077 && cat > $dir/.env.tmp && mv $dir/.env.tmp $dir/.env" < deploy/staging/.env
           scp deploy/staging/docker-compose.staging.yml deploy/staging/Caddyfile \
             deploy/staging/deploy.sh "$SSH_TARGET:$dir/"
+          # The backup tools are production's, shared (DEPLOY.md, Backups).
+          (cd deploy/production && scp backup.sh backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
           printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
           status=0

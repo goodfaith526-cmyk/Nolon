@@ -12,11 +12,28 @@ if ! grep -Eqx "BASIC_AUTH=(on|off)" .env; then
   exit 1
 fi
 
+# Backups are set up once their settings are in .env (DEPLOY.md, Backups).
+backups=0
+if grep -Eq "^BACKUP_S3_BUCKET='?[a-z0-9]" .env; then backups=1; fi
+
 echo "==> Pulling images"
-compose --profile jobs pull --quiet
+compose --profile jobs pull --quiet --ignore-buildable
+
+echo "==> Building the backup tools image"
+compose --profile jobs build --quiet backup
 
 echo "==> Starting database"
 compose up -d --wait postgres
+
+# With backups set up, every migration runs right after a fresh, verified, locked off-server
+# backup, and a failed backup stops the deploy before anything changes. Without them staging still
+# deploys (it ran without backups before), with a warning on every deploy.
+if [ "$backups" = 1 ]; then
+  echo "==> Backup before migrations"
+  ./backup.sh pre-migrate
+else
+  echo "WARNING: staging backups are not set up; migrating without a backup (DEPLOY.md, Backups)" >&2
+fi
 
 echo "==> Applying migrations (prisma migrate deploy)"
 compose run --rm migrate
@@ -28,6 +45,10 @@ fi
 
 echo "==> Starting api, web and caddy"
 compose up -d --wait --remove-orphans api web caddy
+
+if [ "$backups" = 1 ]; then
+  ./backup.sh install-cron
+fi
 
 echo "==> Removing old NOLON images (other projects' images are left alone)"
 docker image prune -af --filter label=com.nolon.stack=staging >/dev/null

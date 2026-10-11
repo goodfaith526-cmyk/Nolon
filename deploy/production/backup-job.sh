@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Runs inside the backup container (backup.Dockerfile), started by ./backup.sh on the host. The
-# database is reached over the stack's network as PGHOST/PGUSER/PGPASSWORD/PGDATABASE.
+# database is reached over the stack's network as PGHOST/PGUSER/PGPASSWORD/PGDATABASE. The same
+# image serves production and staging; BACKUP_PREFIX (set by the stack's compose file) keeps their
+# backups apart in the bucket, and a restore only accepts backups of its own stack.
 #
 #   backup-job                     a backup now: pg_dump, encrypted to the public key, uploaded,
 #                                  read back and compared, locked, old ones pruned
@@ -38,7 +40,11 @@ if [[ ! "$endpoint" =~ ^https://[^/]+$ ]] &&
 fi
 [[ "$BACKUP_S3_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || die "BACKUP_S3_BUCKET is not a bucket name"
 region="${BACKUP_S3_REGION:-us-east-1}"
-prefix=production
+prefix="${BACKUP_PREFIX:-production}"
+case "$prefix" in
+  production | staging) ;;
+  *) die "BACKUP_PREFIX must be production or staging" ;;
+esac
 
 # rclone reads its remote from the environment: no rclone config file with keys on disk.
 export RCLONE_CONFIG=/dev/null
@@ -148,7 +154,7 @@ restore() {
   echo "==> restored into $database"
   if [ "$exists" = 1 ]; then
     echo "==> the previous $database is kept as $before. Once the restore is checked, drop it:"
-    echo "    docker compose -f docker-compose.production.yml exec postgres dropdb -U nolon $before"
+    echo "    docker compose -f docker-compose.$prefix.yml exec postgres dropdb -U nolon $before"
   fi
 }
 
