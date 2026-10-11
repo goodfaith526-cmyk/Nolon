@@ -68,7 +68,7 @@ export interface CustomerKeys {
 const sameTaxNumber = (a: string, b: string | null) =>
   b !== null && normalizeTaxNumber(a) === normalizeTaxNumber(b);
 
-type CustomerWithDetails = Customer & { contacts: CustomerContact[]; parties: Party[] };
+export type CustomerWithDetails = Customer & { contacts: CustomerContact[]; parties: Party[] };
 
 /**
  * Customers, their authorized contacts and their shipper/consignee/notify address book (scope 6).
@@ -119,28 +119,45 @@ export class CustomersService {
    * A duplicate is a 409.
    */
   async create(user: AuthUser, input: CreateCustomerRequest): Promise<CustomerDto> {
+    await this.prepareCreate(user, input);
+    const created = await this.prisma.$transaction((tx) => this.createInTx(tx, user, input));
+    return toDto(created);
+  }
+
+  /**
+   * The checks of a create that need no lock (branch access, references); nothing is written.
+   * createInTx then records it, so a caller (an approved assistant draft) can do so inside its own
+   * transaction.
+   */
+  async prepareCreate(user: AuthUser, input: CreateCustomerRequest): Promise<void> {
     assertBranchAccess(user, input.branchId);
     await this.checkReferences(input);
+  }
+
+  /** Records a customer checked by prepareCreate, under the branch's customer lock. */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    input: CreateCustomerRequest,
+  ): Promise<CustomerWithDetails> {
+    assertBranchAccess(user, input.branchId);
     const { branchId, ...fields } = input;
-    const created = await this.prisma.$transaction(async (tx) => {
-      if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
-        throw new BadRequestException('Unknown or inactive branch');
-      }
-      await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
-      throwFirstConflict(await this.duplicateIssues(tx, [input]));
-      const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
-      const customer = await tx.customer.create({
-        data: { ...toData(fields), number, branchId, createdById: user.id },
-        include: details,
-      });
-      await this.audit.record(
-        tx,
-        user,
-        auditRecord(customer, 'CREATED', changedFields(null, auditFields(customer), AUDIT_FIELDS)),
-      );
-      return customer;
+    if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
+      throw new BadRequestException('Unknown or inactive branch');
+    }
+    await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
+    throwFirstConflict(await this.duplicateIssues(tx, [input]));
+    const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
+    const customer = await tx.customer.create({
+      data: { ...toData(fields), number, branchId, createdById: user.id },
+      include: details,
     });
-    return toDto(created);
+    await this.audit.record(
+      tx,
+      user,
+      auditRecord(customer, 'CREATED', changedFields(null, auditFields(customer), AUDIT_FIELDS)),
+    );
+    return customer;
   }
 
   /**

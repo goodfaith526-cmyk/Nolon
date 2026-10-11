@@ -70,6 +70,7 @@ model Branch {
   releaseDrafts      GoodsReleaseDraft[]
   invoiceDrafts      InvoiceDraft[]
   receiptDrafts      ReceiptDraft[]
+  customerDrafts     CustomerDraft[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -198,6 +199,8 @@ model User {
   invoiceDraftsDecided      InvoiceDraft[]           @relation("InvoiceDraftDecidedBy")
   receiptDraftsCreated      ReceiptDraft[]           @relation("ReceiptDraftCreatedBy")
   receiptDraftsDecided      ReceiptDraft[]           @relation("ReceiptDraftDecidedBy")
+  customerDraftsCreated     CustomerDraft[]          @relation("CustomerDraftCreatedBy")
+  customerDraftsDecided     CustomerDraft[]          @relation("CustomerDraftDecidedBy")
   assistantApprovalGrants   AssistantApprovalGrant[] @relation("AssistantApprovalGrantUser")
   assistantApprovalsGranted AssistantApprovalGrant[] @relation("AssistantApprovalGrantedBy")
   customsUpdated            CustomsClearance[]       @relation("CustomsUpdatedBy")
@@ -466,6 +469,7 @@ model Customer {
 
   invoiceDrafts InvoiceDraft[]
   receiptDrafts ReceiptDraft[]
+  draft         CustomerDraft?
 
   @@index([branchId])
   @@index([phone])
@@ -2561,6 +2565,7 @@ model AgentClient {
 
   invoiceDrafts InvoiceDraft[]
   receiptDrafts ReceiptDraft[]
+  customerDrafts CustomerDraft[]
 
   @@map("agent_clients")
 }
@@ -2907,6 +2912,49 @@ model GoodsReleaseDraft {
   @@index([branchId, state])
   @@index([shipmentId])
   @@map("goods_release_drafts")
+}
+
+/// A new customer proposed by the staff AI assistant (entry drafts), e.g. for a booking whose
+/// customer is not in NOLON yet. An approval creates the customer through CustomersService, with
+/// the person's permissions and branches and the branch's duplicate phone check. Decided on the
+/// review screen only.
+model CustomerDraft {
+  id             String           @id @default(uuid()) @db.Uuid
+  branchId       String           @map("branch_id") @db.Uuid
+  state          EntryDraftState  @default(DRAFT)
+  version        Int              @default(1)
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String           @map("agent_client_id") @db.Uuid
+  createdById    String           @map("created_by_id") @db.Uuid
+  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String           @map("payload_hash") @db.Char(64)
+  kind           CustomerKind
+  name           String           @db.VarChar(200)
+  companyName    String?          @map("company_name") @db.VarChar(200)
+  phone          String           @db.VarChar(20)
+  whatsapp       String?          @db.VarChar(20)
+  email          String?          @db.VarChar(254)
+  city           String?          @db.VarChar(100)
+  address        String?          @db.VarChar(500)
+  notes          String?          @db.VarChar(2000)
+  decidedById    String?          @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// Always SESSION: a customer draft is decided on the review screen only.
+  decidedVia     DraftDecidedVia? @map("decided_via")
+  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
+  customerId     String?          @unique @map("customer_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User        @relation("CustomerDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?       @relation("CustomerDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@map("customer_drafts")
 }
 
 /// A customer invoice proposed by the staff AI assistant for a shipment (entry drafts). An
