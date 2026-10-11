@@ -320,7 +320,17 @@ describe('deciding in the chat', () => {
     ).id;
     const shown = await card(id);
     expect(shown.draft.check).toMatchObject({ ok: true, total: '100' });
+    // The review screen shows the same prices, and binds its approval to them the same way.
+    const screen = (await r.get(`/quotation-drafts/${id}`, cookies.sales).expect(200))
+      .body as QuotationDraftDto;
+    expect(screen.pricing).toMatchObject({ total: '100', lines: [{ unitPrice: '100' }] });
     await t.prisma.rateCard.update({ where: { id: rate.id }, data: { price: '10000' } });
+    await r
+      .post(`/quotation-drafts/${id}/approve`, cookies.sales, {
+        version: 1,
+        pricingKey: screen.pricing?.key,
+      })
+      .expect(409);
     const approve = (contentHash: string) =>
       r.agentPost(`/quotation-drafts/${id}/assistant-approve`, tokens.sales, {
         version: 1,
@@ -377,8 +387,15 @@ describe('deciding in the chat', () => {
         contentHash: 'a'.repeat(64),
       })
       .expect(403);
+    const screen = (await r.get(`/quotation-drafts/${id}`, cookies.salesDxb).expect(200))
+      .body as QuotationDraftDto;
     const approved = (
-      await r.post(`/quotation-drafts/${id}/approve`, cookies.salesDxb, { version: 1 }).expect(200)
+      await r
+        .post(`/quotation-drafts/${id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: screen.pricing?.key,
+        })
+        .expect(200)
     ).body as QuotationDraftDto;
     expect(approved.decidedFromAssistant).toBe(false);
     expect((await t.prisma.quotationDraft.findUniqueOrThrow({ where: { id } })).decidedVia).toBe(

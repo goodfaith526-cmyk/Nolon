@@ -14,6 +14,7 @@ import type {
   QuotationDraftCreateRequest,
   QuotationDraftDto,
   QuotationDraftListItemDto,
+  QuotationDraftPricing,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -217,11 +218,11 @@ export class QuotationDraftsService {
   async get(user: AuthUser, id: string): Promise<QuotationDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
-    const check =
+    const { check, pricing } =
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
-        ? await this.check(user, draft)
-        : null;
-    return toDto(draft, user, now, check);
+        ? await this.priced(user, draft)
+        : { check: null, pricing: null };
+    return toDto(draft, user, now, check, pricing);
   }
 
   /**
@@ -234,6 +235,7 @@ export class QuotationDraftsService {
     id: string,
     version: number,
     via: DecisionVia = 'SESSION',
+    pricingKey: string | null = null,
   ): Promise<QuotationDraftDto> {
     this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
@@ -241,8 +243,9 @@ export class QuotationDraftsService {
     requireOpen(current, version, LABEL);
     // The request is the one at `version`; the lock below refuses if it changed since.
     const prepared = await this.quotations.prepareCreate(user, requestOf(current));
-    // From the chat: the prices the card showed (rate cards resolved), or a reload.
-    this.drafts.requireResolved(via, resolvedKey(prepared), LABEL);
+    // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
+    // chat card; this same `prepared` is what is inserted. Anything else asks for a reload.
+    this.drafts.requireResolved(via, resolvedKey(prepared), LABEL, pricingKey);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
       if (!locked) throw new NotFoundException('Quotation draft not found');
@@ -273,26 +276,8 @@ export class QuotationDraftsService {
       'quotation_drafts',
       draft,
       LABEL,
-      await this.resolved(user, id),
+      draft.pricing?.key ?? null,
     );
-  }
-
-  /** What an approval would record now, with rate card prices resolved (null if refused). */
-  private async resolved(user: AuthUser, id: string): Promise<string | null> {
-    const draft = await this.findScoped(user, id);
-    if (draftStatus(draft.state, draft.expiresAt, new Date()) !== 'DRAFT') return null;
-    try {
-      return resolvedKey(await this.quotations.prepareCreate(user, requestOf(draft)));
-    } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException ||
-        error instanceof ConflictException
-      ) {
-        return null;
-      }
-      throw error;
-    }
   }
 
   /** A person approves in the assistant's chat the content the card showed them. */
@@ -309,7 +294,7 @@ export class QuotationDraftsService {
       draft,
       LABEL,
       input.contentHash,
-      await this.resolved(user, id),
+      draft.pricing?.key ?? null,
     );
     return this.approve(user, id, input.version, decision);
   }
@@ -359,17 +344,28 @@ export class QuotationDraftsService {
     return this.get(user, id);
   }
 
-  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
+  /** Whether NOLON would accept the draft now and, if so, the prices it would record. */
+  private async priced(
+    user: AuthUser,
+    draft: DraftRow,
+  ): Promise<{ check: EntryDraftCheck; pricing: QuotationDraftPricing | null }> {
     try {
       const prepared = await this.quotations.prepareCreate(user, requestOf(draft));
-      return { ok: true, total: toDecimalString(prepared.header.total), currency: draft.currency };
+      return {
+        check: {
+          ok: true,
+          total: toDecimalString(prepared.header.total),
+          currency: draft.currency,
+        },
+        pricing: pricingOf(prepared),
+      };
     } catch (error) {
       if (
         error instanceof BadRequestException ||
         error instanceof NotFoundException ||
         error instanceof ConflictException
       ) {
-        return { ok: false, message: error.message };
+        return { check: { ok: false, message: error.message }, pricing: null };
       }
       throw error;
     }
@@ -401,15 +397,37 @@ function toDto(
   user: AuthUser,
   now: Date,
   check: EntryDraftCheck | null,
+  pricing: QuotationDraftPricing | null,
 ): QuotationDraftDto {
-  return { ...baseFields(d, user, now), request: requestOf(d), check };
+  return { ...baseFields(d, user, now), request: requestOf(d), check, pricing };
+}
+
+/** The prices an approval would record, and their fingerprint (what the approval sends back). */
+export function pricingOf(
+  prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
+): QuotationDraftPricing {
+  return {
+    key: resolvedKey(prepared),
+    lines: prepared.lines.map((l) => ({
+      chargeTypeCode: l.chargeTypeCode,
+      unit: l.unit,
+      quantity: toDecimalString(l.quantity),
+      unitPrice: toDecimalString(l.unitPrice),
+      minimumCharge: toDecimalString(l.minimumCharge),
+      discount: toDecimalString(l.discount),
+      lineTotal: toDecimalString(l.lineTotal),
+    })),
+    subtotal: toDecimalString(prepared.header.subtotal),
+    discountTotal: toDecimalString(prepared.header.discountTotal),
+    total: toDecimalString(prepared.header.total),
+  };
 }
 
 function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<QuotationDraftDto, 'request' | 'check'> {
+): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
   return {

@@ -288,11 +288,17 @@ describe('quotation drafts: a person reviews', () => {
   it('approves into an ordinary DRAFT quotation, priced by NOLON, once', async () => {
     const draft = await quotationDraft();
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 2 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 2,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(409);
     const approved = (
       await r
-        .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+        .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: draft.pricing?.key,
+        })
         .expect(200)
     ).body as QuotationDraftDto;
     expect(approved).toMatchObject({ status: 'APPROVED', version: 2, check: null });
@@ -303,7 +309,10 @@ describe('quotation drafts: a person reviews', () => {
     expect(quotation).toMatchObject({ status: 'DRAFT', total: '2999.5', customerId: customer.id });
     // Again: the same draft back, no second quotation.
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(200);
     expect(
       await t.prisma.quotation.count({
@@ -321,16 +330,41 @@ describe('quotation drafts: a person reviews', () => {
       .expect(409);
   });
 
+  it('records exactly the prices the person reviewed, and refuses anything else', async () => {
+    const draft = await quotationDraft();
+    expect(draft.pricing).toMatchObject({
+      total: '2999.5',
+      lines: [{ chargeTypeCode: 'FREIGHT', unitPrice: '1500.5', lineTotal: '2999.5' }],
+    });
+    const approve = (body: object) =>
+      r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, body);
+    await approve({ version: 1 }).expect(400);
+    await approve({ version: 1, pricingKey: 'a'.repeat(64) }).expect(409);
+    expect(
+      (await t.prisma.quotationDraft.findUniqueOrThrow({ where: { id: draft.id } })).quotationId,
+    ).toBeNull();
+    await approve({ version: 1, pricingKey: draft.pricing?.key }).expect(200);
+  });
+
   it('refuses approval to a user of another branch or without quotations:create', async () => {
     const draft = await quotationDraft();
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesJed, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesJed, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(404);
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.opsDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(403);
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.branchMgrDxb, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.branchMgrDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(403);
     const still = (await r.get(`/quotation-drafts/${draft.id}`, cookies.salesDxb).expect(200))
       .body as QuotationDraftDto;
@@ -341,8 +375,14 @@ describe('quotation drafts: a person reviews', () => {
     const draft = await quotationDraft();
     const before = await t.prisma.quotation.count();
     const results = await Promise.all([
-      r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }),
-      r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }),
+      r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      }),
+      r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      }),
     ]);
     expect(results.map((res) => res.status).sort()).toEqual([200, 200]);
     expect(await t.prisma.quotation.count()).toBe(before + 1);
@@ -363,7 +403,10 @@ describe('quotation drafts: a person reviews', () => {
     ).body as QuotationDraftDto;
     expect(rejected).toMatchObject({ status: 'REJECTED', rejectReason: 'Wrong customer' });
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 2 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 2,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(409);
   });
 
@@ -378,7 +421,10 @@ describe('quotation drafts: a person reviews', () => {
     expect(expired).toMatchObject({ status: 'EXPIRED', check: null });
     expect(expired.actions.canDecide).toBe(false);
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(409);
     const listed = (await r.get('/quotation-drafts?status=EXPIRED', cookies.salesDxb).expect(200))
       .body as QuotationDraftListItemDto[];
@@ -395,7 +441,10 @@ describe('quotation drafts: a person reviews', () => {
       .body as QuotationDraftDto;
     expect(stale.check).toEqual({ ok: false, message: 'Valid-until is in the past' });
     await r
-      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+      .post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: draft.pricing?.key,
+      })
       .expect(400);
   });
 });
@@ -464,7 +513,10 @@ describe('booking drafts', () => {
     const qDraft = await quotationDraft();
     const approvedQ = (
       await r
-        .post(`/quotation-drafts/${qDraft.id}/approve`, cookies.salesDxb, { version: 1 })
+        .post(`/quotation-drafts/${qDraft.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: qDraft.pricing?.key,
+        })
         .expect(200)
     ).body as QuotationDraftDto;
     const quotationId = approvedQ.quotationId!;
@@ -574,6 +626,7 @@ describe('approval waits for a concurrent rejection and then refuses', () => {
     });
     const approval = r.post(`/quotation-drafts/${draft.id}/approve`, cookies.salesDxb, {
       version: 1,
+      pricingKey: draft.pricing?.key,
     });
     const pending = approval.then((res) => res);
     await waitForLockWaiter(t.prisma);

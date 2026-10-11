@@ -23,6 +23,7 @@ export function QuotationDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const q = draft.request;
+  const pricing = draft.pricing;
 
   return (
     <DraftFrame
@@ -35,6 +36,7 @@ export function QuotationDraftReview({ id }: { id: string }) {
           ? { label: draft.quotationNumber ?? '', href: `/quotations/${draft.quotationId}` }
           : null
       }
+      approveBody={pricing ? { pricingKey: pricing.key } : null}
       onChanged={setRecord}
     >
       <dl className="details">
@@ -68,25 +70,52 @@ export function QuotationDraftReview({ id }: { id: string }) {
               <th>{tq('quantity')}</th>
               <th>{tq('unitPrice')}</th>
               <th>{tq('discount')}</th>
+              {pricing && <th>{tq('lineTotal')}</th>}
             </tr>
           </thead>
           <tbody>
-            {q.lines.map((line, i) => (
-              <tr key={i}>
-                <td>
-                  {line.rateCardId ? tq('fromRate') : (line.chargeTypeCode ?? '—')}
-                  {line.description ? ` · ${line.description}` : ''}
-                </td>
-                <td>{line.unit ? te(`unit_${line.unit}`) : '—'}</td>
-                <td dir="ltr">{line.quantity}</td>
-                <td>
-                  {line.unitPrice ? <Money value={line.unitPrice} currency={q.currency} /> : '—'}
-                </td>
-                <td>
-                  {line.discount ? <Money value={line.discount} currency={q.currency} /> : '—'}
-                </td>
-              </tr>
-            ))}
+            {q.lines.map((line, i) => {
+              // While open, the prices an approval records (a rate card line at its price now).
+              const priced = pricing?.lines[i];
+              return (
+                <tr key={i}>
+                  <td>
+                    {line.rateCardId ? `${t('rateLine')} · ` : ''}
+                    {priced?.chargeTypeCode ?? line.chargeTypeCode ?? '—'}
+                    {line.description ? ` · ${line.description}` : ''}
+                  </td>
+                  <td>
+                    {(priced?.unit ?? line.unit) ? te(`unit_${priced?.unit ?? line.unit}`) : '—'}
+                  </td>
+                  <td dir="ltr">{line.quantity}</td>
+                  <td>
+                    {(priced?.unitPrice ?? line.unitPrice) ? (
+                      <Money
+                        value={priced?.unitPrice ?? line.unitPrice ?? ''}
+                        currency={q.currency}
+                      />
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td>
+                    {(priced?.discount ?? line.discount) ? (
+                      <Money
+                        value={priced?.discount ?? line.discount ?? ''}
+                        currency={q.currency}
+                      />
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  {pricing && (
+                    <td>
+                      <Money value={priced?.lineTotal ?? ''} currency={q.currency} />
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

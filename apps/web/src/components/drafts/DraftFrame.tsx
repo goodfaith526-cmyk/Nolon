@@ -16,8 +16,9 @@ export function DraftStatusBadge({ status }: { status: DraftStatus }) {
 /**
  * The parts every draft review shares: who it was proposed for and when, what NOLON says about
  * it now, the decision, and the entry an approval created. `children` shows the proposed values.
- * Approving sends only the version the person is looking at; NOLON records the entry with its
- * own checks and that person's permissions.
+ * Approving sends the version the person is looking at (and `approveBody`, what else they were
+ * shown, such as a quotation's prices); NOLON records the entry with its own checks and that
+ * person's permissions, or refuses it if anything changed since.
  */
 export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraftCheck | null }>({
   draft,
@@ -25,6 +26,7 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
   title,
   approveHint,
   result,
+  approveBody,
   onChanged,
   children,
 }: {
@@ -34,6 +36,8 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
   approveHint: string;
   /** The created entry, once approved: its label and link. */
   result: { label: string; href: string } | null;
+  /** Sent with an approval beyond the version; null when the draft cannot be approved now. */
+  approveBody?: Record<string, unknown> | null;
   onChanged: (draft: D) => void;
   children: ReactNode;
 }) {
@@ -51,7 +55,9 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
     setNotice(null);
     try {
       const body =
-        action === 'approve' ? { version: draft.version } : { version: draft.version, reason };
+        action === 'approve'
+          ? { ...approveBody, version: draft.version }
+          : { version: draft.version, reason };
       const saved = await api<D>(`${apiPath}/${draft.id}/${action}`, { method: 'POST', body });
       setRejecting(false);
       setNotice({ ok: true, text: t(action === 'approve' ? 'approvedNotice' : 'rejectedNotice') });
@@ -121,7 +127,7 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
               <button
                 type="button"
                 className="primary"
-                disabled={busy || draft.check?.ok === false}
+                disabled={busy || draft.check?.ok === false || approveBody === null}
                 onClick={() => void decide('approve')}
               >
                 {t('approve')}

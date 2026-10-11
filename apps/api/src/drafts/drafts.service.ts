@@ -72,12 +72,19 @@ export class DraftsService {
   }
 
   /**
-   * An approval from the assistant's chat records only what its card showed: the type passes what
-   * it resolved for the record it is about to write (resolvedKey), and anything else asks for a
-   * reload. The review screen shows the live values, so a session approval is not bound.
+   * An approval records only what the person was shown: the type passes what it resolved for the
+   * record it is about to write (resolvedKey), and it must be what the chat card showed (proved
+   * by authorizeAssistant) or, on the review screen, the key the screen sent back. Anything else
+   * asks for a reload.
    */
-  requireResolved(via: DecisionVia, resolved: string, label: string): void {
-    if (via !== 'SESSION' && via.resolved !== resolved) {
+  requireResolved(
+    via: DecisionVia,
+    resolved: string,
+    label: string,
+    sessionKey: string | null,
+  ): void {
+    const shown = via === 'SESSION' ? sessionKey : via.resolved;
+    if (shown !== resolved) {
       throw new ConflictException(`This ${label} changed since you opened it: reload it`);
     }
   }

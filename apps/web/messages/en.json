@@ -2095,6 +2095,7 @@
     "invoiceApproveHint": "Approving creates a draft invoice. Nothing is posted: the invoice is approved, numbered and posted separately, as usual.",
     "receiptTitle": "Receipt draft from {customer}",
     "receiptApproveHint": "Approving records the receipt and posts its journal entry, and settles the invoices listed, in your name. Check the amount against the bank or cash first.",
-    "decidedInAssistant": "Decided in the assistant chat."
+    "decidedInAssistant": "Decided in the assistant chat.",
+    "rateLine": "Rate card"
   }
 }

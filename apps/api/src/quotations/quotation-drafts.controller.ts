@@ -32,7 +32,9 @@ import { quotationCreateBody } from './quotations.controller.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 const createBody = quotationCreateBody.extend({ idempotencyKey }).strict();
-const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const approveBody = z
+  .object({ version: z.number().int().min(1), pricingKey: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
 const assistantApproveBody = z
   .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
   .strict();
@@ -92,7 +94,8 @@ export class QuotationDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<QuotationDraftDto> {
-    return this.drafts.approve(user, id, parse(approveBody, body).version);
+    const { version, pricingKey } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, 'SESSION', pricingKey);
   }
 
   @Post(':id/reject')
