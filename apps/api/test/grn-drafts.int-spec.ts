@@ -15,6 +15,7 @@ import type {
   WarehouseDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DraftRetentionService } from '../src/drafts/draft-retention.service.js';
 import { packStoredZip } from '../src/common/zip-guard.js';
 import {
   APP_ORIGIN,
@@ -675,6 +676,37 @@ describe('a person reviews the draft', () => {
     expect(await t.prisma.grnDraftProposal.findUnique({ where: { draftId: past.draftId } })).toBe(
       null,
     );
+  });
+
+  it('the retention purge removes a rejected GRN draft 90 days on; its proposal waits for its own date', async () => {
+    const purge = (now: Date) => t.app.get(DraftRetentionService).purge(now);
+    const DAY = 24 * 60 * 60 * 1000;
+    const base = Date.now();
+    const { s, draft } = await draftOn();
+    const path = `/shipments/${s.id}/grn-drafts/${draft.id}`;
+    await post(`${path}/reject`, cookies.whDxb, { version: 1, reason: 'Wrong file' }).expect(201);
+    const where = { draftId: draft.id };
+    const proposal = await t.prisma.grnDraftProposal.findUniqueOrThrow({ where });
+    await purge(new Date(base + 89 * DAY));
+    expect(await t.prisma.grnDraft.count({ where: { id: draft.id } })).toBe(1);
+    await purge(new Date(base + 90 * DAY + 60_000));
+    expect(await t.prisma.grnDraft.count({ where: { id: draft.id } })).toBe(0);
+    expect(await t.prisma.grnDraftLine.count({ where })).toBe(0);
+    // The proposal is kept until its retain_until (expiry + 90 days), by the database's clock.
+    expect(await t.prisma.grnDraftProposal.findUniqueOrThrow({ where })).toEqual(proposal);
+    await purge(new Date(base + 3650 * DAY));
+    expect(await t.prisma.grnDraftProposal.findUniqueOrThrow({ where })).toEqual(proposal);
+    // Once it is due and its draft is gone, the purge removes it.
+    const due = await t.prisma.grnDraftProposal.create({
+      data: {
+        draftId: randomUUID(),
+        branchId: proposal.branchId,
+        lines: [],
+        retainUntil: new Date(Date.now() - 1000),
+      },
+    });
+    await purge(new Date());
+    expect(await t.prisma.grnDraftProposal.count({ where: { draftId: due.draftId } })).toBe(0);
   });
 
   it('approval records exactly one GRN through the receipt path; a second approval returns it', async () => {

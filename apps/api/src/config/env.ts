@@ -60,6 +60,8 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((value) => value === 'true'),
+  /** Hours between runs of the draft retention purge (drafts/draft-retention.service.ts); 0 = off. */
+  DRAFT_PURGE_EVERY_HOURS: z.coerce.number().int().min(0).max(168).default(6),
   /** Seed only: the first Administrator, created if missing. Never committed. Empty = unset. */
   SEED_ADMIN_EMAIL: emptyAsUnset(z.string().email().optional()),
   SEED_ADMIN_PASSWORD: emptyAsUnset(z.string().min(12).max(200).optional()),

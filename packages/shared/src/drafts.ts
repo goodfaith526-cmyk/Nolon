@@ -22,6 +22,13 @@ export const DRAFT_TTL_DAYS = 7;
  */
 export const DRAFT_PROPOSAL_RETENTION_DAYS = 90;
 
+/**
+ * Days an undecided draft is kept after its expiry, and a rejected draft after its rejection,
+ * before the retention purge removes it with its lines (data governance v2.1, section 4). An
+ * approved draft is kept: it is the record behind the entry it created.
+ */
+export const DRAFT_RETENTION_DAYS = 90;
+
 /** Who filled a value: the assistant, or a person on the review screen. */
 export const DRAFT_FIELD_SOURCES = ['AI', 'STAFF'] as const;
 export type DraftFieldSource = (typeof DRAFT_FIELD_SOURCES)[number];
