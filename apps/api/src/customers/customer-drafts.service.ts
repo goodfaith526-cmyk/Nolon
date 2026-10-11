@@ -26,6 +26,7 @@ import {
   DraftsService,
   decideInTx,
   keyReused,
+  lockReplacedInTx,
   replaceInTx,
   withReplaced,
   withReplacedBy,
@@ -105,17 +106,19 @@ export class CustomerDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, branchId, ...input } = body;
-    // The checks of a real create that need no lock; nothing is written. A phone already taken
-    // is refused now too (409), so the assistant can say so instead of proposing a duplicate; it
-    // is checked again under the lock on approval.
+    // The checks of a real create that need no lock; nothing is written.
     await this.customers.prepareCreate(user, createRequestOf(branchId, input));
-    throwFirstConflict(
-      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
-    );
     const hash = withReplaced(customerRequestHash(branchId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'customer_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.customerDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -124,15 +127,13 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
-        if (replacesDraftId !== null) {
-          await replaceInTx(tx, {
-            table: 'customer_drafts',
-            id: replacesDraftId,
-            agentClientId,
-            userId: user.id,
-            label: LABEL,
-          });
-        }
+        // Only a new request: a phone already taken is refused (409), so the assistant can say so
+        // instead of proposing a duplicate; it is checked again under the lock on approval. A
+        // replay is answered above even after its own approval took the phone.
+        throwFirstConflict(
+          await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
+        );
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.customerDraft.create({
           data: {
             ...scope,

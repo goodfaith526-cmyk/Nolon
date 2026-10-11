@@ -31,6 +31,7 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  lockReplacedInTx,
   replaceInTx,
   withReplaced,
   withReplacedBy,
@@ -140,6 +141,13 @@ export class TripDraftsService {
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'trip_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.tripDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -148,15 +156,7 @@ export class TripDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
-        if (replacesDraftId !== null) {
-          await replaceInTx(tx, {
-            table: 'trip_drafts',
-            id: replacesDraftId,
-            agentClientId,
-            userId: user.id,
-            label: LABEL,
-          });
-        }
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.tripDraft.create({
           data: {
             ...scope,

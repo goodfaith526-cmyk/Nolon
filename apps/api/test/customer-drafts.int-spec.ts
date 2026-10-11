@@ -32,10 +32,11 @@ let r: ReturnType<typeof requests>;
 let client: AgentClientCreatedDto;
 let dxb: string;
 let jed: string;
+let movedAgentId: string;
 
 const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '' };
-const agentCookies = { salesAgent: '', opsAgent: '', salesAgent2: '' };
-const tokens = { sales: '', ops: '', sales2: '' };
+const agentCookies = { salesAgent: '', opsAgent: '', salesAgent2: '', movedAgent: '' };
+const tokens = { sales: '', ops: '', sales2: '', moved: '' };
 
 function customerRequest(extra: object = {}) {
   return {
@@ -76,7 +77,9 @@ beforeAll(async () => {
     salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
     salesAgent2: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
+    movedAgent: await createUser(t.prisma, ['SALES'], ['DXB', 'JED'], AGENT_PREFIX),
   };
+  movedAgentId = assistantUsers.movedAgent.id;
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
   }
@@ -84,6 +87,7 @@ beforeAll(async () => {
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
   tokens.ops = await tokenFor(t, agentCookies.opsAgent, client);
   tokens.sales2 = await tokenFor(t, agentCookies.salesAgent2, client);
+  tokens.moved = await tokenFor(t, agentCookies.movedAgent, client);
 });
 
 afterAll(async () => {
@@ -202,6 +206,9 @@ describe('customer drafts: a person reviews', () => {
       .post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
       .expect(200);
     expect(await t.prisma.customer.count({ where: { phone: body.phone } })).toBe(1);
+    // A retry of the original request returns the draft, though its customer now has the phone.
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: draft.id, status: 'APPROVED' });
   });
 
   it('refuses approval to another branch or a user who cannot create customers', async () => {
@@ -237,6 +244,10 @@ describe('customer drafts: a person reviews', () => {
     const still = (await r.get(`/customer-drafts/${draft.id}`, cookies.salesDxb).expect(200))
       .body as CustomerDraftDto;
     expect(still).toMatchObject({ status: 'DRAFT', version: 1 });
+    // A retry of the original request still returns the draft; a new key with the phone is refused.
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay.id).toBe(draft.id);
+    await createDraft({ ...body, idempotencyKey: draftKey() }).expect(409);
   });
 
   it('two concurrent approvals create one customer', async () => {
@@ -331,5 +342,67 @@ describe("replacing a draft at the person's request", () => {
     const quotationDraftId = '00000000-0000-4000-8000-000000000000';
     await createDraft({ ...customerRequest(), replacesDraftId: quotationDraftId }).expect(404);
     await createDraft({ ...customerRequest(), replacesDraftId: 'not-a-uuid' }).expect(400);
+  });
+
+  it('refuses a draft in a branch the user no longer holds, and leaves it open', async () => {
+    const created = (await createDraft(customerRequest(), tokens.moved).expect(201))
+      .body as EntryDraftSummaryDto;
+    await t.prisma.userBranch.deleteMany({ where: { userId: movedAgentId, branchId: dxb } });
+    const before = await t.prisma.customerDraft.count();
+    await createDraft(
+      { ...customerRequest({ branchId: jed }), replacesDraftId: created.id },
+      tokens.moved,
+    ).expect(404);
+    expect(await t.prisma.customerDraft.count()).toBe(before);
+    const old = (await r.get(`/customer-drafts/${created.id}`, cookies.salesDxb).expect(200))
+      .body as CustomerDraftDto;
+    expect(old).toMatchObject({ status: 'DRAFT', version: 1 });
+  });
+
+  /**
+   * Holds the old draft's row lock in another transaction until `count` requests are queued
+   * behind it, then lets them all go: they always reach the old draft together.
+   */
+  async function allWaitingOn(oldId: string, count: number, requests: () => Promise<unknown>[]) {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let locked = () => {};
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "customer_drafts" WHERE "id" = ${oldId}::uuid FOR UPDATE`;
+        locked();
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    const pending = Promise.all(requests());
+    for (let i = 0; i < 200; i += 1) {
+      const rows = await t.prisma.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+      if ((rows[0]?.n ?? 0) >= count) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    release();
+    await holder;
+    return (await pending) as { status: number; body: unknown }[];
+  }
+
+  it('identical replacements at once make one draft; another key at once is refused', async () => {
+    const old = await customerDraft();
+    const body = { ...customerRequest({ city: 'Kassala' }), replacesDraftId: old.id };
+    const same = await allWaitingOn(old.id, 2, () => [createDraft(body), createDraft(body)]);
+    expect(same.map((x) => x.status)).toEqual([201, 201]);
+    const ids = new Set(same.map((x) => (x.body as EntryDraftSummaryDto).id));
+    expect(ids.size).toBe(1);
+
+    const other = await customerDraft();
+    const racing = await allWaitingOn(other.id, 2, () => [
+      createDraft({ ...customerRequest(), replacesDraftId: other.id }),
+      createDraft({ ...customerRequest(), replacesDraftId: other.id }),
+    ]);
+    expect(racing.map((x) => x.status).sort()).toEqual([201, 409]);
+    expect(await t.prisma.customerDraft.count({ where: { replacesDraftId: other.id } })).toBe(1);
   });
 });

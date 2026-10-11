@@ -224,17 +224,29 @@ function capitalise(text: string): string {
 /** Why a replaced draft was closed (shown with a link to the draft that replaced it). */
 export const REPLACED_REASON = 'Replaced by a newer draft';
 
+/** An open draft locked for replacement, checked to be the caller's and in their branches. */
+export interface LockedReplacement {
+  table: DraftTable;
+  id: string;
+  userId: string;
+  label: string;
+  state: DraftState;
+  version: number;
+  expiresAt: Date;
+}
+
 /**
- * Closes the draft a new one replaces, in the new draft's transaction: the person asked the
- * assistant for changes to a draft they read, and the assistant proposes the whole draft again.
- * Only an open draft of the same kind that this assistant client created for this same user can
- * be replaced (else not found, or a conflict when decided or expired); it is closed as rejected
- * from the assistant, so it can never be approved after its replacement exists.
+ * Locks the draft a new one replaces, before the new request's key is looked up: an identical
+ * retry waits on this lock and then finds the request that won, rather than finding the old
+ * draft already closed. Only the same person through the same client replaces a draft, and only
+ * in a branch they still hold; anything else reads as not found.
  */
-export async function replaceInTx(
+export async function lockReplacedInTx(
   tx: Prisma.TransactionClient,
-  spec: { table: DraftTable; id: string; agentClientId: string; userId: string; label: string },
-): Promise<void> {
+  id: string | null,
+  spec: { table: DraftTable; agentClientId: string; user: AuthUser; label: string },
+): Promise<LockedReplacement | null> {
+  if (id === null) return null;
   requireDraftTable(spec.table);
   const rows = await tx.$queryRaw<
     {
@@ -243,25 +255,53 @@ export async function replaceInTx(
       expires_at: Date;
       created_by_id: string;
       agent_client_id: string;
+      branch_id: string;
     }[]
   >`
-    SELECT "state"::text AS "state", "version", "expires_at", "created_by_id", "agent_client_id"
-    FROM ${Prisma.raw(`"${spec.table}"`)} WHERE "id" = ${spec.id}::uuid FOR UPDATE`;
+    SELECT "state"::text AS "state", "version", "expires_at", "created_by_id", "agent_client_id",
+           "branch_id"
+    FROM ${Prisma.raw(`"${spec.table}"`)} WHERE "id" = ${id}::uuid FOR UPDATE`;
   const row = rows[0];
-  if (!row || row.created_by_id !== spec.userId || row.agent_client_id !== spec.agentClientId) {
+  if (
+    !row ||
+    row.created_by_id !== spec.user.id ||
+    row.agent_client_id !== spec.agentClientId ||
+    !spec.user.allowedBranchIds.includes(row.branch_id)
+  ) {
     throw new NotFoundException(`The ${spec.label} to replace was not found`);
   }
+  return {
+    table: spec.table,
+    id,
+    userId: spec.user.id,
+    label: spec.label,
+    state: row.state,
+    version: row.version,
+    expiresAt: row.expires_at,
+  };
+}
+
+/**
+ * Closes the draft a new one replaces, in the new draft's transaction: the person asked the
+ * assistant for changes to a draft they read, and the assistant proposes the whole draft again.
+ * It must still be open (else a conflict); it is closed as rejected from the assistant, so it can
+ * never be approved after its replacement exists.
+ */
+export async function replaceInTx(
+  tx: Prisma.TransactionClient,
+  locked: LockedReplacement,
+): Promise<void> {
   requireOpen(
-    { state: row.state, expiresAt: row.expires_at, version: row.version },
-    row.version,
-    spec.label,
+    { state: locked.state, expiresAt: locked.expiresAt, version: locked.version },
+    locked.version,
+    locked.label,
   );
   await tx.$executeRaw`
-    UPDATE ${Prisma.raw(`"${spec.table}"`)}
+    UPDATE ${Prisma.raw(`"${locked.table}"`)}
     SET "state" = 'REJECTED', "reject_reason" = ${REPLACED_REASON},
-        "decided_by_id" = ${spec.userId}::uuid, "decided_at" = CURRENT_TIMESTAMP,
+        "decided_by_id" = ${locked.userId}::uuid, "decided_at" = CURRENT_TIMESTAMP,
         "decided_via" = 'ASSISTANT', "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP
-    WHERE "id" = ${spec.id}::uuid`;
+    WHERE "id" = ${locked.id}::uuid`;
 }
 
 /** The draft that replaced this one, if any. */
