@@ -108,6 +108,9 @@ export class GoodsReleaseDraftsService {
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        if (replacesDraftId !== null) {
+          await this.lockReplacementShipments(tx, replacesDraftId, shipmentId);
+        }
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
         const replaced = await lockReplacedInTx(tx, replacesDraftId, {
           table: 'goods_release_drafts',
@@ -144,6 +147,27 @@ export class GoodsReleaseDraftsService {
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * An approval locks its shipment and then the draft; a replacement closes the old draft and
+   * inserts a new one under a shipment, so it takes the same order: the shipments first (the old
+   * draft's and the new one's, in id order), then the old draft. Otherwise each could wait on the
+   * other. A draft's shipment never changes, so it is read before the lock.
+   */
+  private async lockReplacementShipments(
+    tx: Prisma.TransactionClient,
+    replacesDraftId: string,
+    shipmentId: string,
+  ): Promise<void> {
+    const old = await tx.goodsReleaseDraft.findUnique({
+      where: { id: replacesDraftId },
+      select: { shipmentId: true },
+    });
+    const ids = [...new Set([shipmentId, ...(old ? [old.shipmentId] : [])])].sort();
+    for (const id of ids) {
+      await this.shipments.lockForChildWrite(tx, id, { exclusive: true });
+    }
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
