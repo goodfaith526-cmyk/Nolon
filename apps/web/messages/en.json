@@ -2047,7 +2047,9 @@
     "warning_TOTAL_NET_MISMATCH": "The lines do not add up to the net weight on the document.",
     "warning_TOTAL_CBM_MISMATCH": "The lines do not add up to the volume on the document.",
     "warning_SOURCE_NOT_VERIFIABLE": "The file is a scan or photo: no value could be checked against it.",
-    "warning_NET_ABOVE_GROSS": "A line has a net weight above its gross weight."
+    "warning_NET_ABOVE_GROSS": "A line has a net weight above its gross weight.",
+    "proposalTitle": "The assistant's original proposal ({n} lines)",
+    "proposalHint": "Kept as the assistant proposed it, whatever is edited above."
   },
   "Drafts": {
     "title": "Drafts from the assistant",

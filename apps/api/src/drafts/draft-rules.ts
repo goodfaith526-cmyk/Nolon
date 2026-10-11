@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DRAFT_PROPOSAL_RETENTION_DAYS,
   DRAFT_TTL_DAYS,
   type DraftFieldMatch,
   type DraftFieldMeta,
@@ -28,6 +29,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** When a draft created now stops being open for review. */
 export function draftExpiry(now: Date = new Date()): Date {
   return new Date(now.getTime() + DRAFT_TTL_DAYS * DAY_MS);
+}
+
+/** Until when the record of an assistant's proposal is kept, for a draft expiring then. */
+export function proposalRetainedUntil(expiresAt: Date): Date {
+  return new Date(expiresAt.getTime() + DRAFT_PROPOSAL_RETENTION_DAYS * DAY_MS);
 }
 
 /** An undecided draft past its expiry reads as EXPIRED. */
