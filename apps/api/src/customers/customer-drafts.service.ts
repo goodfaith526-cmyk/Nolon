@@ -94,13 +94,8 @@ export class CustomerDraftsService {
   async create(user: AuthUser, body: CustomerDraftCreateRequest): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, branchId, ...input } = body;
-    // The checks of a real create that need no lock; nothing is written. A phone already taken
-    // is refused now too (409), so the assistant can say so instead of proposing a duplicate; it
-    // is checked again under the lock on approval.
+    // The checks of a real create that need no lock; nothing is written.
     await this.customers.prepareCreate(user, createRequestOf(branchId, input));
-    throwFirstConflict(
-      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
-    );
     const hash = customerRequestHash(branchId, input);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
@@ -113,6 +108,12 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // Only a new request: a phone already taken is refused (409), so the assistant can say so
+        // instead of proposing a duplicate; it is checked again under the lock on approval. A
+        // replay is answered above even after its own approval took the phone.
+        throwFirstConflict(
+          await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
+        );
         const draft = await tx.customerDraft.create({
           data: {
             ...scope,

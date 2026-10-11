@@ -200,6 +200,9 @@ describe('customer drafts: a person reviews', () => {
       .post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
       .expect(200);
     expect(await t.prisma.customer.count({ where: { phone: body.phone } })).toBe(1);
+    // A retry of the original request returns the draft, though its customer now has the phone.
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: draft.id, status: 'APPROVED' });
   });
 
   it('refuses approval to another branch or a user who cannot create customers', async () => {
@@ -235,6 +238,10 @@ describe('customer drafts: a person reviews', () => {
     const still = (await r.get(`/customer-drafts/${draft.id}`, cookies.salesDxb).expect(200))
       .body as CustomerDraftDto;
     expect(still).toMatchObject({ status: 'DRAFT', version: 1 });
+    // A retry of the original request still returns the draft; a new key with the phone is refused.
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay.id).toBe(draft.id);
+    await createDraft({ ...body, idempotencyKey: draftKey() }).expect(409);
   });
 
   it('two concurrent approvals create one customer', async () => {
