@@ -191,6 +191,8 @@
     "route": "{from} to {to}",
     "change": "Change",
     "customerSearch": "Customer name, number or phone",
+    "customerNotFound": "No customer matches this search.",
+    "addNewCustomer": "Add a new customer",
     "remove": "Remove"
   },
   "Customers": {

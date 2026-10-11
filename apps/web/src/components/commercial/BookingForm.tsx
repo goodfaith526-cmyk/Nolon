@@ -192,7 +192,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             <p>{t('sectionCustomerHint')}</p>
           </header>
           <div className="form-section-body">
-            <CustomerPicker value={customer} onChange={setCustomer} />
+            <CustomerPicker value={customer} onChange={setCustomer} allowCreate />
           </div>
         </section>
       )}

@@ -191,6 +191,8 @@
     "route": "من {from} إلى {to}",
     "change": "تغيير",
     "customerSearch": "اسم العميل أو رقمه أو هاتفه",
+    "customerNotFound": "لا يوجد عميل بهذا البحث.",
+    "addNewCustomer": "إضافة عميل جديد",
     "remove": "حذف"
   },
   "Customers": {

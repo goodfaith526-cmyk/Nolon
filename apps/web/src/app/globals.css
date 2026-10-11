@@ -3433,3 +3433,18 @@ fieldset > .line > .line-remove-button:hover {
 .grn-lines .grn-f-marks input {
   min-inline-size: 8rem;
 }
+
+/* A form opened over the page (e.g. a new customer from the booking form's customer picker). */
+.form-dialog {
+  inline-size: min(56rem, calc(100vw - 2rem));
+  max-block-size: calc(100vh - 2rem);
+  padding: 0;
+  border: none;
+  border-radius: 0.75rem;
+  background: transparent;
+  overflow: auto;
+}
+
+.form-dialog::backdrop {
+  background: rgb(15 27 45 / 0.45);
+}
