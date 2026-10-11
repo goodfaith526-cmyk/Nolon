@@ -13,7 +13,12 @@ import {
 import type { AuthUser } from '../auth/auth-user.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
 import { DocumentsService } from '../documents/documents.service.js';
-import { draftExpiry, metaJson, requireOpen } from '../drafts/draft-rules.js';
+import {
+  draftExpiry,
+  metaJson,
+  proposalRetainedUntil,
+  requireOpen,
+} from '../drafts/draft-rules.js';
 import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -181,6 +186,7 @@ export class GrnDraftsService {
           if (!sameRequest(existing)) throw keyReused();
           return existing.id;
         }
+        const expiresAt = draftExpiry();
         const draft = await tx.grnDraft.create({
           data: {
             ...scope,
@@ -188,7 +194,7 @@ export class GrnDraftsService {
             shipmentId,
             documentId: input.documentId,
             documentSha256: input.documentSha256,
-            expiresAt: draftExpiry(),
+            expiresAt,
             payloadHash: hash,
             statedPackages: statedTotals.packages,
             statedGrossKg: statedTotals.grossKg,
@@ -203,6 +209,7 @@ export class GrnDraftsService {
           data: {
             draftId: draft.id,
             branchId: shipment.branchId,
+            retainUntil: proposalRetainedUntil(expiresAt),
             lines: lines.map((line) => ({
               ...lineDto(line.lineNo, line.values, line, line.meta),
               fields: metaJson(line.meta),

@@ -15,6 +15,13 @@ export type DraftStatus = (typeof DRAFT_STATUSES)[number];
 /** Days a draft stays open for review (owner decision, 2026-10-10). */
 export const DRAFT_TTL_DAYS = 7;
 
+/**
+ * Days after a draft's expiry during which the record of what the assistant proposed cannot be
+ * removed (data governance v2.1, section 4: 90 days from expiry or rejection, to be confirmed).
+ * A draft is decided before it expires, so this is never less than 90 days after a decision.
+ */
+export const DRAFT_PROPOSAL_RETENTION_DAYS = 90;
+
 /** Who filled a value: the assistant, or a person on the review screen. */
 export const DRAFT_FIELD_SOURCES = ['AI', 'STAFF'] as const;
 export type DraftFieldSource = (typeof DRAFT_FIELD_SOURCES)[number];

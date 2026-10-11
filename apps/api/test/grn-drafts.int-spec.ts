@@ -628,23 +628,53 @@ describe('a person reviews the draft', () => {
     await expect(
       t.prisma.grnDraftProposal.update({ where, data: { draftId: randomUUID() } }),
     ).rejects.toThrow(/kept as written/);
-    await expect(t.prisma.grnDraftProposal.delete({ where })).rejects.toThrow(/kept as written/);
+    await expect(t.prisma.grnDraftProposal.delete({ where })).rejects.toThrow(/kept until/);
     await expect(t.prisma.$executeRawUnsafe('TRUNCATE "grn_draft_proposals"')).rejects.toThrow(
       /kept as written/,
     );
     await expect(
       t.prisma.grnDraftProposal.create({
-        data: { draftId: draft.id, branchId: proposal.branchId, lines: [] },
+        data: {
+          draftId: draft.id,
+          branchId: proposal.branchId,
+          lines: [],
+          retainUntil: proposal.retainUntil,
+        },
       }),
     ).rejects.toThrow(/Unique constraint/);
   });
 
-  it('removing a draft (maintenance only) leaves its proposal on record', async () => {
+  it('the proposal is kept for the retention period, then the retention purge can remove it', async () => {
     const { draft } = await draftOn();
     const where = { draftId: draft.id };
     const proposal = await t.prisma.grnDraftProposal.findUniqueOrThrow({ where });
+    const expiresAt = (await t.prisma.grnDraft.findUniqueOrThrow({ where: { id: draft.id } }))
+      .expiresAt;
+    // 90 days after the draft's expiry, so never under 90 days after a decision.
+    expect(proposal.retainUntil.getTime() - expiresAt.getTime()).toBe(90 * 24 * 60 * 60 * 1000);
+    // Removing the draft (maintenance) leaves the proposal on record, with its retention.
     await t.prisma.grnDraft.delete({ where: { id: draft.id } });
     expect(await t.prisma.grnDraftProposal.findUniqueOrThrow({ where })).toEqual(proposal);
+    await expect(t.prisma.grnDraftProposal.delete({ where })).rejects.toThrow(/kept until/);
+    // Past its retention, a proposal can be removed one row at a time, never by TRUNCATE.
+    const past = await t.prisma.grnDraftProposal.create({
+      data: {
+        draftId: randomUUID(),
+        branchId: proposal.branchId,
+        lines: [],
+        retainUntil: new Date(Date.now() - 1000),
+      },
+    });
+    await expect(
+      t.prisma.grnDraftProposal.update({ where: { draftId: past.draftId }, data: { lines: [] } }),
+    ).rejects.toThrow(/kept as written/);
+    await expect(t.prisma.$executeRawUnsafe('TRUNCATE "grn_draft_proposals"')).rejects.toThrow(
+      /kept as written/,
+    );
+    await t.prisma.grnDraftProposal.delete({ where: { draftId: past.draftId } });
+    expect(await t.prisma.grnDraftProposal.findUnique({ where: { draftId: past.draftId } })).toBe(
+      null,
+    );
   });
 
   it('approval records exactly one GRN through the receipt path; a second approval returns it', async () => {

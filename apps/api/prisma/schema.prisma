@@ -1664,16 +1664,19 @@ model GrnDraftLine {
 /**
  * The lines exactly as the assistant proposed a GRN draft, written in the same transaction as the
  * draft, so what the AI suggested stays on record after a person edits the lines. Triggers refuse
- * any change and any removal. draft_id names the draft without a foreign key on purpose: a key
- * would let the database clear or cascade it, and maintenance that removes a draft (e.g. test
- * cleanup) leaves its proposal on record. lines holds one GrnDraftLineDto per line (decimals as
- * strings, sourcePage, sourceRow, and per field who filled it and the assistant's match).
+ * any change, and any removal before retain_until (the draft's expiry plus the retention period,
+ * DRAFT_PROPOSAL_RETENTION_DAYS); after it, the retention purge may remove it with its draft.
+ * draft_id names the draft without a foreign key on purpose: a key would let the database clear
+ * or cascade it before then. lines holds one GrnDraftLineDto per line (decimals as strings,
+ * sourcePage, sourceRow, and per field who filled it and the assistant's match).
  */
 model GrnDraftProposal {
-  draftId   String   @id @map("draft_id") @db.Uuid
-  branchId  String   @map("branch_id") @db.Uuid
-  lines     Json
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  draftId     String   @id @map("draft_id") @db.Uuid
+  branchId    String   @map("branch_id") @db.Uuid
+  lines       Json
+  /// Before this, the proposal cannot be removed.
+  retainUntil DateTime @map("retain_until") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
 
