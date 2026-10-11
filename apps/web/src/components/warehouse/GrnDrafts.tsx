@@ -489,6 +489,48 @@ function GrnDraftReview({
           )}
         </form>
 
+        {draft.proposedLines && (
+          <details>
+            <summary>{t('proposalTitle', { n: draft.proposedLines.length })}</summary>
+            <p className="muted">{t('proposalHint')}</p>
+            <div className="table-scroll">
+              <table className="grn-lines">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    {GRN_DRAFT_LINE_FIELDS.map((f) => (
+                      <th key={f}>{t(`field_${f}`)}</th>
+                    ))}
+                    <th>{t('sourceAt')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {draft.proposedLines.map((line) => (
+                    <tr key={line.lineNo}>
+                      <td>{line.lineNo}</td>
+                      {GRN_DRAFT_LINE_FIELDS.map((f) => (
+                        <td key={f} className={`grn-f-${f}`}>
+                          {/* Text read from a document is shown as text, never as markup. */}
+                          <span dir={TEXT_FIELDS.has(f) ? 'auto' : 'ltr'}>
+                            {line[f] === null ? '—' : String(line[f])}
+                          </span>
+                        </td>
+                      ))}
+                      <td className="muted" dir="ltr">
+                        {line.sourceRow
+                          ? t('row', { n: line.sourceRow })
+                          : line.sourcePage
+                            ? t('page', { n: line.sourcePage })
+                            : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+
         {draft.actions.canDecide && (
           <>
             {dirty ? (

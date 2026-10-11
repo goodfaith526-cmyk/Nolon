@@ -105,6 +105,11 @@ export interface GrnDraftDto extends GrnDraftSummaryDto {
   /** The totals printed on the document, as the assistant read them. */
   statedTotals: GrnDraftTotals;
   lines: GrnDraftLineDto[];
+  /**
+   * The lines exactly as the assistant proposed them, kept after a person edits the draft; null
+   * for a draft created before the proposal was recorded.
+   */
+  proposedLines: GrnDraftLineDto[] | null;
   createdByName: string;
   decidedByName: string | null;
   decidedAt: string | null;

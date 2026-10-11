@@ -591,6 +591,62 @@ describe('a person reviews the draft', () => {
     await get(path, cookies.whJed).expect(404);
   });
 
+  it('the assistant’s proposal stays on record after edits and approval; the database keeps it as it was', async () => {
+    const { s, draft } = await draftOn();
+    const path = `/shipments/${s.id}/grn-drafts/${draft.id}`;
+    const fresh = (await get(path, cookies.whDxb).expect(200)).body as GrnDraftDto;
+    expect(fresh.proposedLines).toEqual(fresh.lines);
+    expect(fresh.proposedLines?.[0]).toMatchObject({
+      packageCount: 6,
+      grossKg: '600.5',
+      sourcePage: 1,
+      fields: { packageCount: { filledBy: 'AI', match: 'MATCHED' } },
+    });
+    // A person swaps the numbers, drops a line and adds one: the proposal does not move.
+    await patch(path, cookies.whDxb, {
+      version: 1,
+      lines: [{ lineNo: 1, description: 'Cotton shirts', packageCount: 4, grossKg: '399.5' }],
+    }).expect(200);
+    await patch(path, cookies.whDxb, {
+      version: 2,
+      lines: [{ description: 'Belts', packageCount: 9 }],
+    }).expect(200);
+    await post(`${path}/approve`, cookies.whDxb, receipt(3)).expect(201);
+    const approved = (await get(path, cookies.whDxb).expect(200)).body as GrnDraftDto;
+    expect(approved.lines).toHaveLength(1);
+    expect(approved.lines[0]).toMatchObject({ description: 'Belts', packageCount: 9 });
+    expect(approved.proposedLines).toEqual(fresh.proposedLines);
+
+    // Not even the application's own connection can change, remove or replace it.
+    const proposal = await t.prisma.grnDraftProposal.findUniqueOrThrow({
+      where: { draftId: draft.id },
+    });
+    const where = { draftId: draft.id };
+    await expect(t.prisma.grnDraftProposal.update({ where, data: { lines: [] } })).rejects.toThrow(
+      /kept as written/,
+    );
+    await expect(
+      t.prisma.grnDraftProposal.update({ where, data: { draftId: randomUUID() } }),
+    ).rejects.toThrow(/kept as written/);
+    await expect(t.prisma.grnDraftProposal.delete({ where })).rejects.toThrow(/kept as written/);
+    await expect(t.prisma.$executeRawUnsafe('TRUNCATE "grn_draft_proposals"')).rejects.toThrow(
+      /kept as written/,
+    );
+    await expect(
+      t.prisma.grnDraftProposal.create({
+        data: { draftId: draft.id, branchId: proposal.branchId, lines: [] },
+      }),
+    ).rejects.toThrow(/Unique constraint/);
+  });
+
+  it('removing a draft (maintenance only) leaves its proposal on record', async () => {
+    const { draft } = await draftOn();
+    const where = { draftId: draft.id };
+    const proposal = await t.prisma.grnDraftProposal.findUniqueOrThrow({ where });
+    await t.prisma.grnDraft.delete({ where: { id: draft.id } });
+    expect(await t.prisma.grnDraftProposal.findUniqueOrThrow({ where })).toEqual(proposal);
+  });
+
   it('approval records exactly one GRN through the receipt path; a second approval returns it', async () => {
     const { s, draft } = await draftOn();
     const path = `/shipments/${s.id}/grn-drafts/${draft.id}`;

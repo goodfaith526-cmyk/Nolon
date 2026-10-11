@@ -198,6 +198,17 @@ export class GrnDraftsService {
           },
           select: { id: true },
         });
+        // The proposal as the assistant made it, kept as a record whatever a person edits later.
+        await tx.grnDraftProposal.create({
+          data: {
+            draftId: draft.id,
+            branchId: shipment.branchId,
+            lines: lines.map((line) => ({
+              ...lineDto(line.lineNo, line.values, line, line.meta),
+              fields: metaJson(line.meta),
+            })),
+          },
+        });
         await tx.grnDraftLine.createMany({
           data: lines.map((line) => ({
             draftId: draft.id,
@@ -261,7 +272,7 @@ export class GrnDraftsService {
 
   async get(user: AuthUser, shipmentId: string, draftId: string): Promise<GrnDraftDto> {
     await this.shipments.requireAccessible(user, shipmentId);
-    return toDto(await this.findDraft(user, shipmentId, draftId), user, new Date());
+    return this.toDto(await this.findDraft(user, shipmentId, draftId), user);
   }
 
   /**
@@ -325,7 +336,7 @@ export class GrnDraftsService {
     const { version, ...receipt } = input;
     // Already approved: return it as it is, even if the shipment has moved on since.
     const current = await this.findDraft(user, shipmentId, draftId);
-    if (current.state === 'APPROVED') return toDto(current, user, new Date());
+    if (current.state === 'APPROVED') return this.toDto(current, user);
     const prepared = await this.movements.prepareReceipt(user, shipmentId, receipt);
     await this.prisma.$transaction(async (tx) => {
       await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
@@ -414,6 +425,15 @@ export class GrnDraftsService {
     return draft;
   }
 
+  /** The draft with the assistant's proposal, read from its record. */
+  private async toDto(draft: DraftWithDetails, user: AuthUser): Promise<GrnDraftDto> {
+    const proposal = await this.prisma.grnDraftProposal.findUnique({
+      where: { draftId: draft.id },
+      select: { lines: true },
+    });
+    return toDto(draft, proposal, user, new Date());
+  }
+
   private async findDraft(
     user: AuthUser,
     shipmentId: string,
@@ -483,25 +503,44 @@ function toSummary(d: DraftWithDetails, now: Date): GrnDraftSummaryDto {
   };
 }
 
-function toLineDto(row: DraftLineRow): GrnDraftLineDto {
+function lineDto(
+  lineNo: number,
+  values: StoredLineValues,
+  source: { sourcePage: number | null; sourceRow: number | null },
+  meta: FieldMeta,
+): GrnDraftLineDto {
   return {
-    lineNo: row.lineNo,
-    marks: row.marks,
-    description: row.description,
-    packageCount: row.packageCount,
-    packageType: row.packageType,
-    quantity: toDecimalStringOrNull(row.quantity),
-    unit: row.unit,
-    grossKg: toDecimalStringOrNull(row.grossKg),
-    netKg: toDecimalStringOrNull(row.netKg),
-    cbm: toDecimalStringOrNull(row.cbm),
-    sourcePage: row.sourcePage,
-    sourceRow: row.sourceRow,
-    fields: rowMeta(row),
+    lineNo,
+    marks: values.marks,
+    description: values.description,
+    packageCount: values.packageCount,
+    packageType: values.packageType,
+    quantity: toDecimalStringOrNull(values.quantity),
+    unit: values.unit,
+    grossKg: toDecimalStringOrNull(values.grossKg),
+    netKg: toDecimalStringOrNull(values.netKg),
+    cbm: toDecimalStringOrNull(values.cbm),
+    sourcePage: source.sourcePage,
+    sourceRow: source.sourceRow,
+    fields: meta,
   };
 }
 
-function toDto(d: DraftWithDetails, user: AuthUser, now: Date): GrnDraftDto {
+function toLineDto(row: DraftLineRow): GrnDraftLineDto {
+  return lineDto(row.lineNo, rowValues(row), row, rowMeta(row));
+}
+
+/** grn_draft_proposals.lines is only ever written by create, as GrnDraftLineDto objects. */
+function proposedLines(proposal: { lines: Prisma.JsonValue } | null): GrnDraftLineDto[] | null {
+  return proposal ? (proposal.lines as unknown as GrnDraftLineDto[]) : null;
+}
+
+function toDto(
+  d: DraftWithDetails,
+  proposal: { lines: Prisma.JsonValue } | null,
+  user: AuthUser,
+  now: Date,
+): GrnDraftDto {
   const summary = toSummary(d, now);
   const open = summary.status === 'DRAFT' && user.permissions.has('warehouse:create');
   return {
@@ -509,6 +548,7 @@ function toDto(d: DraftWithDetails, user: AuthUser, now: Date): GrnDraftDto {
     documentId: d.documentId,
     statedTotals: totalsDto(statedTotals(d)),
     lines: d.lines.map(toLineDto),
+    proposedLines: proposedLines(proposal),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
     decidedAt: d.decidedAt?.toISOString() ?? null,
