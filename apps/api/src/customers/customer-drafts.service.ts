@@ -22,7 +22,14 @@ import {
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, decideInTx, keyReused } from '../drafts/drafts.service.js';
+import {
+  DraftsService,
+  decideInTx,
+  keyReused,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CustomersService } from './customers.service.js';
@@ -91,7 +98,11 @@ export class CustomerDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: CustomerDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: CustomerDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, branchId, ...input } = body;
     // The checks of a real create that need no lock; nothing is written. A phone already taken
@@ -101,7 +112,7 @@ export class CustomerDraftsService {
     throwFirstConflict(
       await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
     );
-    const hash = customerRequestHash(branchId, input);
+    const hash = withReplaced(customerRequestHash(branchId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
@@ -113,9 +124,19 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replacesDraftId !== null) {
+          await replaceInTx(tx, {
+            table: 'customer_drafts',
+            id: replacesDraftId,
+            agentClientId,
+            userId: user.id,
+            label: LABEL,
+          });
+        }
         const draft = await tx.customerDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
@@ -159,6 +180,10 @@ export class CustomerDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<CustomerDraftDto> {
+    return withReplacedBy(this.prisma, 'customer_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<CustomerDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -271,6 +296,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('customers:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     subject: d.name,
     status,
@@ -279,7 +305,7 @@ function baseFields(
     createdAt: d.createdAt.toISOString(),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
-    decidedFromAssistant: false,
+    decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },

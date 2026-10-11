@@ -9,7 +9,9 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { type DraftState, contentHashOf, requireOpen } from './draft-rules.js';
+import { z } from 'zod';
+import { parse } from '../common/validation.js';
+import { type DraftState, contentHashOf, requestHash, requireOpen } from './draft-rules.js';
 import { referenceNames } from './reference-names.js';
 
 const ASSISTANT_DECISION: unique symbol = Symbol('assistant decision');
@@ -217,6 +219,94 @@ export async function decideInTx(
 
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Why a replaced draft was closed (shown with a link to the draft that replaced it). */
+export const REPLACED_REASON = 'Replaced by a newer draft';
+
+/**
+ * Closes the draft a new one replaces, in the new draft's transaction: the person asked the
+ * assistant for changes to a draft they read, and the assistant proposes the whole draft again.
+ * Only an open draft of the same kind that this assistant client created for this same user can
+ * be replaced (else not found, or a conflict when decided or expired); it is closed as rejected
+ * from the assistant, so it can never be approved after its replacement exists.
+ */
+export async function replaceInTx(
+  tx: Prisma.TransactionClient,
+  spec: { table: DraftTable; id: string; agentClientId: string; userId: string; label: string },
+): Promise<void> {
+  requireDraftTable(spec.table);
+  const rows = await tx.$queryRaw<
+    {
+      state: DraftState;
+      version: number;
+      expires_at: Date;
+      created_by_id: string;
+      agent_client_id: string;
+    }[]
+  >`
+    SELECT "state"::text AS "state", "version", "expires_at", "created_by_id", "agent_client_id"
+    FROM ${Prisma.raw(`"${spec.table}"`)} WHERE "id" = ${spec.id}::uuid FOR UPDATE`;
+  const row = rows[0];
+  if (!row || row.created_by_id !== spec.userId || row.agent_client_id !== spec.agentClientId) {
+    throw new NotFoundException(`The ${spec.label} to replace was not found`);
+  }
+  requireOpen(
+    { state: row.state, expiresAt: row.expires_at, version: row.version },
+    row.version,
+    spec.label,
+  );
+  await tx.$executeRaw`
+    UPDATE ${Prisma.raw(`"${spec.table}"`)}
+    SET "state" = 'REJECTED', "reject_reason" = ${REPLACED_REASON},
+        "decided_by_id" = ${spec.userId}::uuid, "decided_at" = CURRENT_TIMESTAMP,
+        "decided_via" = 'ASSISTANT', "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP
+    WHERE "id" = ${spec.id}::uuid`;
+}
+
+/** The draft that replaced this one, if any. */
+export async function replacedByOf(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  id: string,
+): Promise<string | null> {
+  requireDraftTable(table);
+  const rows = await client.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM ${Prisma.raw(`"${table}"`)} WHERE "replaces_draft_id" = ${id}::uuid LIMIT 1`;
+  return rows[0]?.id ?? null;
+}
+
+/** A draft as a person reads it, with the draft that replaced it when it was replaced. */
+export async function withReplacedBy<D extends { id: string; status: string }>(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  draft: D,
+): Promise<D & { replacedByDraftId: string | null }> {
+  const replacedByDraftId =
+    draft.status === 'REJECTED' ? await replacedByOf(client, table, draft.id) : null;
+  return { ...draft, replacedByDraftId };
+}
+
+/**
+ * The idempotency hash of a create: the type's own request hash, bound to the draft it replaces
+ * when it replaces one (unchanged otherwise).
+ */
+export function withReplaced(hash: string, replacesDraftId: string | null): string {
+  return replacesDraftId === null
+    ? hash
+    : requestHash({ hash, replacesDraftId: replacesDraftId.toLowerCase() });
+}
+
+/**
+ * Splits `replacesDraftId` off a create body, before the type's own schema reads the rest (which
+ * may be a union): a uuid, or absent.
+ */
+export function splitReplaced(body: unknown): { replacesDraftId: string | null; rest: unknown } {
+  if (body === null || typeof body !== 'object' || !Object.hasOwn(body, 'replacesDraftId')) {
+    return { replacesDraftId: null, rest: body };
+  }
+  const { replacesDraftId, ...rest } = body as Record<string, unknown>;
+  return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
 /** A key reused for another request: reveals nothing about the stored draft. */

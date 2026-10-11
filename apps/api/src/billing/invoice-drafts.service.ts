@@ -31,6 +31,9 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -100,12 +103,16 @@ export class InvoiceDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: InvoiceDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: InvoiceDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, shipmentId, ...input } = body;
     // The checks of a real draft invoice; nothing is written.
     const prepared = await this.invoices.prepareForShipment(user, shipmentId, input);
-    const hash = invoiceRequestHash({ shipmentId, ...input });
+    const hash = withReplaced(invoiceRequestHash({ shipmentId, ...input }), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
@@ -117,9 +124,19 @@ export class InvoiceDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replacesDraftId !== null) {
+          await replaceInTx(tx, {
+            table: 'invoice_drafts',
+            id: replacesDraftId,
+            agentClientId,
+            userId: user.id,
+            label: LABEL,
+          });
+        }
         const draft = await tx.invoiceDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             shipmentId: prepared.shipmentId,
             customerId: prepared.customerId,
@@ -170,6 +187,10 @@ export class InvoiceDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<InvoiceDraftDto> {
+    return withReplacedBy(this.prisma, 'invoice_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<InvoiceDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -323,6 +344,7 @@ function baseFields(
     status === 'DRAFT' && !user.agent && user.permissions.has('customer_invoices:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
     customerName: d.customer.name,

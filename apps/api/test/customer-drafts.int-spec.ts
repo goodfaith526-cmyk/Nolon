@@ -34,8 +34,8 @@ let dxb: string;
 let jed: string;
 
 const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '' };
-const agentCookies = { salesAgent: '', opsAgent: '' };
-const tokens = { sales: '', ops: '' };
+const agentCookies = { salesAgent: '', opsAgent: '', salesAgent2: '' };
+const tokens = { sales: '', ops: '', sales2: '' };
 
 function customerRequest(extra: object = {}) {
   return {
@@ -75,6 +75,7 @@ beforeAll(async () => {
   const assistantUsers = {
     salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
+    salesAgent2: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
@@ -82,6 +83,7 @@ beforeAll(async () => {
   client = await registerClient(t, cookies.admin, 'Customer draft platform');
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
   tokens.ops = await tokenFor(t, agentCookies.opsAgent, client);
+  tokens.sales2 = await tokenFor(t, agentCookies.salesAgent2, client);
 });
 
 afterAll(async () => {
@@ -284,5 +286,50 @@ describe('customer drafts: a person reviews', () => {
     await expect(
       t.prisma.customerDraft.update({ where: { id: draft.id }, data: { state: 'APPROVED' } }),
     ).rejects.toThrow(/customer_drafts_decision_check/);
+  });
+});
+
+describe("replacing a draft at the person's request", () => {
+  it('closes the old draft and links both ways; the old one can no longer be approved', async () => {
+    const old = await customerDraft();
+    const body = { ...customerRequest({ city: 'Port Sudan' }), replacesDraftId: old.id };
+    const created = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    const again = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(again.id).toBe(created.id);
+    const fresh = (await r.get(`/customer-drafts/${created.id}`, cookies.salesDxb).expect(200))
+      .body as CustomerDraftDto;
+    expect(fresh).toMatchObject({ status: 'DRAFT', replacesDraftId: old.id });
+    const closed = (await r.get(`/customer-drafts/${old.id}`, cookies.salesDxb).expect(200))
+      .body as CustomerDraftDto;
+    expect(closed).toMatchObject({
+      status: 'REJECTED',
+      replacedByDraftId: created.id,
+      decidedFromAssistant: true,
+      rejectReason: 'Replaced by a newer draft',
+    });
+    await r
+      .post(`/customer-drafts/${old.id}/approve`, cookies.salesDxb, { version: 2 })
+      .expect(409);
+  });
+
+  it("refuses another user's draft, a decided draft, a draft of another kind and a bad id", async () => {
+    const count = () => t.prisma.customerDraft.count();
+    const others = await customerDraft(customerRequest());
+    const othersByKey = (await createDraft(customerRequest(), tokens.sales2).expect(201))
+      .body as EntryDraftSummaryDto;
+    let before = await count();
+    await createDraft({ ...customerRequest(), replacesDraftId: othersByKey.id }).expect(404);
+    expect(await count()).toBe(before);
+
+    await r
+      .post(`/customer-drafts/${others.id}/reject`, cookies.salesDxb, { version: 1, reason: 'No' })
+      .expect(200);
+    before = await count();
+    await createDraft({ ...customerRequest(), replacesDraftId: others.id }).expect(409);
+    expect(await count()).toBe(before);
+
+    const quotationDraftId = '00000000-0000-4000-8000-000000000000';
+    await createDraft({ ...customerRequest(), replacesDraftId: quotationDraftId }).expect(404);
+    await createDraft({ ...customerRequest(), replacesDraftId: 'not-a-uuid' }).expect(400);
   });
 });

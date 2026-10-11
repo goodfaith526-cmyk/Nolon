@@ -30,6 +30,9 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -93,13 +96,14 @@ export class GoodsReleaseDraftsService {
   async create(
     user: AuthUser,
     body: GoodsReleaseDraftCreateRequest,
+    replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, shipmentId, ...input } = body;
     // The checks of a real release that need no lock; nothing is written.
     const prepared = await this.movements.prepareRelease(user, shipmentId, input);
     await this.requireWarehouse(user, input.warehouseId);
-    const hash = releaseRequestHash(shipmentId, input);
+    const hash = withReplaced(releaseRequestHash(shipmentId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
@@ -111,9 +115,19 @@ export class GoodsReleaseDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replacesDraftId !== null) {
+          await replaceInTx(tx, {
+            table: 'goods_release_drafts',
+            id: replacesDraftId,
+            agentClientId,
+            userId: user.id,
+            label: LABEL,
+          });
+        }
         const draft = await tx.goodsReleaseDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             shipmentId,
             expiresAt: draftExpiry(),
@@ -159,6 +173,10 @@ export class GoodsReleaseDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {
+    return withReplacedBy(this.prisma, 'goods_release_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -324,6 +342,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('warehouse:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     subject: d.shipment.number,
     status,

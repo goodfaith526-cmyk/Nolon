@@ -31,6 +31,9 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -123,13 +126,17 @@ export class TripDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: TripDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: TripDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     draftScope(user);
     const { idempotencyKey, ...input } = body;
     // The checks of a real trip that need no lock; nothing is written.
     const prepared = await this.trips.prepareCreate(user, input);
-    const hash = tripRequestHash(input);
+    const hash = withReplaced(tripRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
@@ -141,9 +148,19 @@ export class TripDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replacesDraftId !== null) {
+          await replaceInTx(tx, {
+            table: 'trip_drafts',
+            id: replacesDraftId,
+            agentClientId,
+            userId: user.id,
+            label: LABEL,
+          });
+        }
         const draft = await tx.tripDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: input.branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
@@ -202,6 +219,10 @@ export class TripDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<TripDraftDto> {
+    return withReplacedBy(this.prisma, 'trip_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<TripDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     // Trip costs are Restricted (annex A): hidden from those who may not see them, as on a trip.
@@ -415,6 +436,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('transport_trips:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     subject: routes.get(d.id) ?? '',
     status,

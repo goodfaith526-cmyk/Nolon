@@ -88,6 +88,10 @@ export interface EntryDraftReviewFields {
   decidedFromAssistant: boolean;
   rejectReason: string | null;
   actions: DraftActions;
+  /** The draft this one replaced, when the person asked the assistant for changes. */
+  replacesDraftId: string | null;
+  /** The draft that replaced this one (read on a single draft only). */
+  replacedByDraftId?: string | null;
 }
 
 /**
