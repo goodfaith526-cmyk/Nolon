@@ -130,10 +130,13 @@ function opt(form: FormData, key: string): string | null {
 
 export function CustomerForm({
   customer,
+  initialName,
   onCancel,
   onSaved,
 }: {
   customer?: CustomerDto;
+  /** A new customer's name to start from (what was searched for). */
+  initialName?: string;
   onCancel: () => void;
   onSaved: (c: CustomerDto) => void;
 }) {
@@ -215,7 +218,12 @@ export function CustomerForm({
         </label>
         <label className="field">
           {t('name')}
-          <input name="name" required maxLength={200} defaultValue={customer?.name} />
+          <input
+            name="name"
+            required
+            maxLength={200}
+            defaultValue={customer?.name ?? initialName}
+          />
         </label>
         <label className="field">
           {t('companyName')}

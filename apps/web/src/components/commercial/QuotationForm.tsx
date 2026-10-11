@@ -182,7 +182,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <p>{t('sectionCustomerHint')}</p>
           </header>
           <div className="form-section-body">
-            <CustomerPicker value={customer} onChange={setCustomer} />
+            <CustomerPicker value={customer} onChange={setCustomer} allowCreate />
           </div>
         </section>
       )}
