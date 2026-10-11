@@ -41,6 +41,17 @@ export interface ReceiptFilters extends PageQuery {
 
 type Tx = Prisma.TransactionClient;
 
+/** A receipt checked by prepareCreate, ready for createInTx. */
+export interface PreparedReceipt {
+  customerId: string;
+  /** The customer's branch: a receipt belongs to it. */
+  branchId: string;
+  currency: string;
+  decimals: number;
+  amount: Prisma.Decimal;
+  fxRate: Prisma.Decimal;
+}
+
 const details = {
   customer: { select: { name: true } },
   cashAccount: { select: { code: true, nameEn: true, nameAr: true } },
@@ -105,8 +116,16 @@ export class ReceiptsService {
   }
 
   async create(user: AuthUser, input: CreateReceiptRequest): Promise<ReceiptDto> {
+    const prepared = await this.prepareCreate(user, input);
+    const receiptId = await this.prisma.$transaction((tx) =>
+      this.createInTx(tx, user, prepared, input),
+    );
+    return this.get(user, receiptId);
+  }
+
+  /** The checks of a receipt that need no lock; createInTx then records and posts it. */
+  async prepareCreate(user: AuthUser, input: CreateReceiptRequest): Promise<PreparedReceipt> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
-    const branchId = customer.branchId;
     const currency = await this.currencies.requireActive(input.currency);
     const amount = dec(input.amount);
     const decimals = currency.decimalPlaces;
@@ -122,108 +141,130 @@ export class ReceiptsService {
       throw new BadRequestException('The allocations are more than the amount received');
     }
     const fxRate = await this.fxRates.resolve(currency.code, input.receiptDate, input.fxRate);
+    return {
+      customerId: customer.id,
+      branchId: customer.branchId,
+      currency: currency.code,
+      decimals,
+      amount,
+      fxRate,
+    };
+  }
+
+  /**
+   * Records a prepared receipt, posts its entry and settles the invoices inside the caller's
+   * transaction, so another write (a receipt draft approval) commits or rolls back with it.
+   * Returns the receipt id.
+   */
+  async createInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedReceipt,
+    input: CreateReceiptRequest,
+  ): Promise<string> {
+    const { branchId, amount, fxRate, decimals } = prepared;
+    const customer = { id: prepared.customerId };
+    const currency = { code: prepared.currency };
+    const invoiceIds = input.allocations.map((a) => a.invoiceId);
     const receiptId = randomUUID();
+    await this.accounts.requireCash(tx, input.cashAccountId, branchId, currency.code);
+    // Lock the invoices in a fixed order so two receipts for the same invoices cannot deadlock.
+    const invoices = await lockInvoices(tx, [...invoiceIds].sort());
+    const allocations = input.allocations.map((a) => {
+      const invoice = invoices.get(a.invoiceId);
+      if (!invoice || invoice.customerId !== customer.id) {
+        throw new BadRequestException('An allocation is to an invoice of another customer');
+      }
+      if (invoice.status !== 'APPROVED') {
+        throw new BadRequestException(`Invoice ${invoice.number ?? ''} is not approved`);
+      }
+      if (invoice.currency !== currency.code) {
+        throw new BadRequestException(
+          `Invoice ${invoice.number ?? ''} is in ${invoice.currency}; receive it in that currency`,
+        );
+      }
+      const share = dec(a.amount);
+      const outstanding = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
+      if (!share.gt(0) || !roundMoney(share, decimals).eq(share)) {
+        throw new BadRequestException('Allocated amounts must be positive');
+      }
+      if (share.gt(outstanding)) {
+        throw new BadRequestException(
+          `Invoice ${invoice.number ?? ''} has ${outstanding.toFixed()} ${invoice.currency} left`,
+        );
+      }
+      return {
+        invoice,
+        amount: share,
+        relievedUsd: relievedUsd(
+          settledSoFar(invoice),
+          share,
+          invoice.fxRate,
+          invoice.currency,
+          USD_DECIMALS,
+        ),
+      };
+    });
 
-    await this.prisma.$transaction(async (tx) => {
-      await this.accounts.requireCash(tx, input.cashAccountId, branchId, currency.code);
-      // Lock the invoices in a fixed order so two receipts for the same invoices cannot deadlock.
-      const invoices = await lockInvoices(tx, [...invoiceIds].sort());
-      const allocations = input.allocations.map((a) => {
-        const invoice = invoices.get(a.invoiceId);
-        if (!invoice || invoice.customerId !== customer.id) {
-          throw new BadRequestException('An allocation is to an invoice of another customer');
-        }
-        if (invoice.status !== 'APPROVED') {
-          throw new BadRequestException(`Invoice ${invoice.number ?? ''} is not approved`);
-        }
-        if (invoice.currency !== currency.code) {
-          throw new BadRequestException(
-            `Invoice ${invoice.number ?? ''} is in ${invoice.currency}; receive it in that currency`,
-          );
-        }
-        const share = dec(a.amount);
-        const outstanding = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
-        if (!share.gt(0) || !roundMoney(share, decimals).eq(share)) {
-          throw new BadRequestException('Allocated amounts must be positive');
-        }
-        if (share.gt(outstanding)) {
-          throw new BadRequestException(
-            `Invoice ${invoice.number ?? ''} has ${outstanding.toFixed()} ${invoice.currency} left`,
-          );
-        }
-        return {
-          invoice,
-          amount: share,
-          relievedUsd: relievedUsd(
-            settledSoFar(invoice),
-            share,
-            invoice.fxRate,
-            invoice.currency,
-            USD_DECIMALS,
-          ),
-        };
-      });
-
-      const year = input.receiptDate.slice(0, 4);
-      const number = formatDocumentNumber('RC', await nextSequenceValue(tx, 'RECEIPT', year), year);
-      const entry = await this.autoJournal.receiptRecorded(
-        tx,
-        {
-          id: receiptId,
-          number,
-          branchId,
-          customerId: customer.id,
-          receiptDate: toDbDate(input.receiptDate),
-          currency: currency.code,
-          fxRate,
-          amount,
-          cashAccountId: input.cashAccountId,
-          allocations: allocations.map((a) => ({
-            invoiceNumber: a.invoice.number ?? '',
-            receivableAccountId: requireReceivable(a.invoice),
-            shipmentId: a.invoice.shipmentId,
-            invoiceFxRate: a.invoice.fxRate,
+    const year = input.receiptDate.slice(0, 4);
+    const number = formatDocumentNumber('RC', await nextSequenceValue(tx, 'RECEIPT', year), year);
+    const entry = await this.autoJournal.receiptRecorded(
+      tx,
+      {
+        id: receiptId,
+        number,
+        branchId,
+        customerId: customer.id,
+        receiptDate: toDbDate(input.receiptDate),
+        currency: currency.code,
+        fxRate,
+        amount,
+        cashAccountId: input.cashAccountId,
+        allocations: allocations.map((a) => ({
+          invoiceNumber: a.invoice.number ?? '',
+          receivableAccountId: requireReceivable(a.invoice),
+          shipmentId: a.invoice.shipmentId,
+          invoiceFxRate: a.invoice.fxRate,
+          amount: a.amount,
+          relievedUsd: a.relievedUsd,
+        })),
+      },
+      user.id,
+    );
+    await tx.receipt.create({
+      data: {
+        id: receiptId,
+        number,
+        branchId,
+        customerId: customer.id,
+        receiptDate: toDbDate(input.receiptDate),
+        currency: currency.code,
+        fxRate,
+        amount,
+        cashAccountId: input.cashAccountId,
+        reference: input.reference ?? null,
+        notes: input.notes ?? null,
+        journalEntryId: entry.id,
+        createdById: user.id,
+        allocations: {
+          create: allocations.map((a) => ({
+            invoiceId: a.invoice.id,
             amount: a.amount,
             relievedUsd: a.relievedUsd,
           })),
         },
-        user.id,
-      );
-      await tx.receipt.create({
+      },
+    });
+    for (const a of allocations) {
+      await tx.customerInvoice.update({
+        where: { id: a.invoice.id },
         data: {
-          id: receiptId,
-          number,
-          branchId,
-          customerId: customer.id,
-          receiptDate: toDbDate(input.receiptDate),
-          currency: currency.code,
-          fxRate,
-          amount,
-          cashAccountId: input.cashAccountId,
-          reference: input.reference ?? null,
-          notes: input.notes ?? null,
-          journalEntryId: entry.id,
-          createdById: user.id,
-          allocations: {
-            create: allocations.map((a) => ({
-              invoiceId: a.invoice.id,
-              amount: a.amount,
-              relievedUsd: a.relievedUsd,
-            })),
-          },
+          paidAmount: { increment: a.amount },
+          paidUsd: { increment: a.relievedUsd },
         },
       });
-      for (const a of allocations) {
-        await tx.customerInvoice.update({
-          where: { id: a.invoice.id },
-          data: {
-            paidAmount: { increment: a.amount },
-            paidUsd: { increment: a.relievedUsd },
-          },
-        });
-      }
-    });
-    return this.get(user, receiptId);
+    }
+    return receiptId;
   }
 
   /**

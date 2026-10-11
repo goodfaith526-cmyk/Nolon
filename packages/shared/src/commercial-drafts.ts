@@ -3,6 +3,7 @@ import type {
   CreateBookingRequest,
   CreateQuotationRequest,
 } from './commercial.js';
+import type { DecimalString } from './currencies.js';
 import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
 /**
@@ -28,16 +29,45 @@ export interface CustomerDraftFields {
   customerName: string;
 }
 
+/**
+ * What approving would record now: every line priced as NOLON prices it (a rate card line at
+ * the rate's current price). The person reviews these prices; the approval sends `key` back and
+ * records exactly them, or is refused (409) when anything changed since, a rate card included.
+ */
+export interface QuotationDraftPricing {
+  key: string;
+  lines: {
+    chargeTypeCode: string;
+    unit: string;
+    quantity: DecimalString;
+    unitPrice: DecimalString;
+    minimumCharge: DecimalString;
+    discount: DecimalString;
+    lineTotal: DecimalString;
+  }[];
+  subtotal: DecimalString;
+  discountTotal: DecimalString;
+  total: DecimalString;
+}
+
+/** POST /quotation-drafts/:id/approve: the version and the pricing the person reviewed. */
+export interface QuotationDraftApproveRequest {
+  version: number;
+  pricingKey: string;
+}
+
 export interface QuotationDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   /** The proposed request, as stored. */
   request: CreateQuotationRequest;
   check: EntryDraftCheck | null;
+  /** While open and accepted by NOLON: the prices an approval would record. */
+  pricing: QuotationDraftPricing | null;
   /** The quotation an approval created. */
   quotationId: string | null;
   quotationNumber: string | null;
 }
 
-export type QuotationDraftListItemDto = Omit<QuotationDraftDto, 'request' | 'check'> & {
+export type QuotationDraftListItemDto = Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> & {
   lineCount: number;
 };
 

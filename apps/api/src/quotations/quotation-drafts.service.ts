@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AssistantDraftApproveRequest,
+  AssistantDraftDto,
   CreateQuotationRequest,
   DraftStatus,
   EntryDraftCheck,
@@ -12,6 +14,7 @@ import type {
   QuotationDraftCreateRequest,
   QuotationDraftDto,
   QuotationDraftListItemDto,
+  QuotationDraftPricing,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -23,9 +26,16 @@ import {
   draftStatus,
   requestHash,
   requireOpen,
+  resolvedKey,
   stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
+import {
+  type DecisionVia,
+  DraftsService,
+  decidedVia,
+  keyReused,
+  lockDraftRow,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from './quotations.service.js';
@@ -208,11 +218,11 @@ export class QuotationDraftsService {
   async get(user: AuthUser, id: string): Promise<QuotationDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
-    const check =
+    const { check, pricing } =
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
-        ? await this.check(user, draft)
-        : null;
-    return toDto(draft, user, now, check);
+        ? await this.priced(user, draft)
+        : { check: null, pricing: null };
+    return toDto(draft, user, now, check, pricing);
   }
 
   /**
@@ -220,13 +230,22 @@ export class QuotationDraftsService {
    * QuotationsService with their permissions and branches, in the same transaction as the
    * approval. Approving an approved draft returns it as it is, without a second quotation.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<QuotationDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    via: DecisionVia = 'SESSION',
+    pricingKey: string | null = null,
+  ): Promise<QuotationDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
     // The request is the one at `version`; the lock below refuses if it changed since.
     const prepared = await this.quotations.prepareCreate(user, requestOf(current));
+    // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
+    // chat card; this same `prepared` is what is inserted. Anything else asks for a reload.
+    this.drafts.requireResolved(via, resolvedKey(prepared), LABEL, pricingKey);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
       if (!locked) throw new NotFoundException('Quotation draft not found');
@@ -240,6 +259,7 @@ export class QuotationDraftsService {
           quotationId: quotation.id,
           decidedById: user.id,
           decidedAt: new Date(),
+          decidedVia: decidedVia(via),
           version: { increment: 1 },
         },
       });
@@ -247,12 +267,63 @@ export class QuotationDraftsService {
     return this.get(user, id);
   }
 
-  async reject(
+  /** The draft as the assistant's chat card shows it (erp-agents docs/chat-draft-approval.md). */
+  async forAssistant(user: AuthUser, id: string): Promise<AssistantDraftDto<QuotationDraftDto>> {
+    const draft = await this.get(user, id);
+    return this.drafts.assistantView(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      draft.pricing?.key ?? null,
+    );
+  }
+
+  /** A person approves in the assistant's chat the content the card showed them. */
+  async approveFromAssistant(
+    user: AuthUser,
+    id: string,
+    input: AssistantDraftApproveRequest,
+  ): Promise<QuotationDraftDto> {
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      input.contentHash,
+      draft.pricing?.key ?? null,
+    );
+    return this.approve(user, id, input.version, decision);
+  }
+
+  /** A person rejects in the assistant's chat. */
+  async rejectFromAssistant(
     user: AuthUser,
     id: string,
     input: { version: number; reason: string },
   ): Promise<QuotationDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'quotation',
+      'quotation_drafts',
+      draft,
+      LABEL,
+      null,
+    );
+    return this.reject(user, id, input, decision);
+  }
+
+  async reject(
+    user: AuthUser,
+    id: string,
+    input: { version: number; reason: string },
+    via: DecisionVia = 'SESSION',
+  ): Promise<QuotationDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
@@ -265,6 +336,7 @@ export class QuotationDraftsService {
           rejectReason: input.reason,
           decidedById: user.id,
           decidedAt: new Date(),
+          decidedVia: decidedVia(via),
           version: { increment: 1 },
         },
       });
@@ -272,17 +344,28 @@ export class QuotationDraftsService {
     return this.get(user, id);
   }
 
-  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
+  /** Whether NOLON would accept the draft now and, if so, the prices it would record. */
+  private async priced(
+    user: AuthUser,
+    draft: DraftRow,
+  ): Promise<{ check: EntryDraftCheck; pricing: QuotationDraftPricing | null }> {
     try {
       const prepared = await this.quotations.prepareCreate(user, requestOf(draft));
-      return { ok: true, total: toDecimalString(prepared.header.total), currency: draft.currency };
+      return {
+        check: {
+          ok: true,
+          total: toDecimalString(prepared.header.total),
+          currency: draft.currency,
+        },
+        pricing: pricingOf(prepared),
+      };
     } catch (error) {
       if (
         error instanceof BadRequestException ||
         error instanceof NotFoundException ||
         error instanceof ConflictException
       ) {
-        return { ok: false, message: error.message };
+        return { check: { ok: false, message: error.message }, pricing: null };
       }
       throw error;
     }
@@ -314,15 +397,37 @@ function toDto(
   user: AuthUser,
   now: Date,
   check: EntryDraftCheck | null,
+  pricing: QuotationDraftPricing | null,
 ): QuotationDraftDto {
-  return { ...baseFields(d, user, now), request: requestOf(d), check };
+  return { ...baseFields(d, user, now), request: requestOf(d), check, pricing };
+}
+
+/** The prices an approval would record, and their fingerprint (what the approval sends back). */
+export function pricingOf(
+  prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
+): QuotationDraftPricing {
+  return {
+    key: resolvedKey(prepared),
+    lines: prepared.lines.map((l) => ({
+      chargeTypeCode: l.chargeTypeCode,
+      unit: l.unit,
+      quantity: toDecimalString(l.quantity),
+      unitPrice: toDecimalString(l.unitPrice),
+      minimumCharge: toDecimalString(l.minimumCharge),
+      discount: toDecimalString(l.discount),
+      lineTotal: toDecimalString(l.lineTotal),
+    })),
+    subtotal: toDecimalString(prepared.header.subtotal),
+    discountTotal: toDecimalString(prepared.header.discountTotal),
+    total: toDecimalString(prepared.header.total),
+  };
 }
 
 function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<QuotationDraftDto, 'request' | 'check'> {
+): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
   return {
@@ -337,6 +442,7 @@ function baseFields(
     createdAt: d.createdAt.toISOString(),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
+    decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },

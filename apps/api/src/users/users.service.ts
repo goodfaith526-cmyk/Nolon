@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import {
   hasAllBranchAccess,
+  type AssistantApprovalGrantsDto,
+  type AssistantDecidableKind,
   type AuditChangeDto,
   type CreateUserRequest,
   type Role,
@@ -184,6 +186,48 @@ export class UsersService {
     });
   }
 
+  /** The draft kinds this user may approve or reject from inside the assistant chat. */
+  async assistantApprovals(id: string): Promise<AssistantApprovalGrantsDto> {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) throw new NotFoundException('User not found');
+    return { userId: id, kinds: await grantedKinds(this.prisma, id) };
+  }
+
+  /**
+   * Replaces the set of draft kinds the user may decide from the assistant chat. Granted by an
+   * administrator in a session; the change is audited on the user account.
+   */
+  async setAssistantApprovals(
+    actorId: string,
+    id: string,
+    kinds: readonly AssistantDecidableKind[],
+  ): Promise<AssistantApprovalGrantsDto> {
+    const wanted = unique(kinds).sort();
+    return this.prisma.$transaction(async (tx) => {
+      if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
+      const user = toSummary(await findOrThrow(tx, id));
+      const before = await grantedKinds(tx, id);
+      await tx.assistantApprovalGrant.deleteMany({
+        where: { userId: id, kind: { notIn: wanted } },
+      });
+      await tx.assistantApprovalGrant.createMany({
+        data: wanted
+          .filter((kind) => !before.includes(kind))
+          .map((kind) => ({ userId: id, kind, grantedById: actorId })),
+      });
+      if (before.join(',') !== wanted.join(',')) {
+        await this.log(tx, actorId, 'UPDATED', user, user, [
+          {
+            field: 'assistantApprovals',
+            before: before.join(', ') || null,
+            after: wanted.join(', ') || null,
+          },
+        ]);
+      }
+      return { userId: id, kinds: wanted };
+    });
+  }
+
   /**
    * Admin reset: sets a new password and ends every open session and assistant token of that
    * user.
@@ -248,6 +292,18 @@ export class UsersService {
       },
     );
   }
+}
+
+async function grantedKinds(
+  db: Tx | PrismaService,
+  userId: string,
+): Promise<AssistantDecidableKind[]> {
+  const rows = await db.assistantApprovalGrant.findMany({
+    where: { userId },
+    select: { kind: true },
+    orderBy: { kind: 'asc' },
+  });
+  return rows.map((r) => r.kind as AssistantDecidableKind);
 }
 
 function unique<T>(values: readonly T[]): T[] {

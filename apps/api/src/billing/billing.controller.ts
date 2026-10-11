@@ -44,7 +44,7 @@ import { CreditNotesService } from './credit-notes.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
-const invoiceLine = z
+export const invoiceLine = z
   .object({
     chargeTypeCode: z.string().trim().toUpperCase().min(1).max(20),
     description: optionalText(500),
@@ -77,7 +77,7 @@ const invoiceListQuery = pageQuery
   })
   .superRefine(periodInOrder);
 
-const createReceiptBody = z
+export const createReceiptBody = z
   .object({
     customerId: z.uuid(),
     receiptDate: dateString,
