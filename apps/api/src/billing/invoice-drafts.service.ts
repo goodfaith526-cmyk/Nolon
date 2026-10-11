@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  AssistantDraftApproveRequest,
+  AssistantDraftDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -23,7 +25,13 @@ import {
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, decideInTx, keyReused } from '../drafts/drafts.service.js';
+import {
+  type DecisionVia,
+  DraftsService,
+  decidedVia,
+  decideInTx,
+  keyReused,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { InvoicesService } from './invoices.service.js';
@@ -175,8 +183,13 @@ export class InvoiceDraftsService {
    * A person approves the version they reviewed: a DRAFT invoice is created in the same
    * transaction as the approval. Approving an approved draft returns it as it is.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<InvoiceDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    via: DecisionVia = 'SESSION',
+  ): Promise<InvoiceDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
@@ -197,19 +210,62 @@ export class InvoiceDraftsService {
       if (decided) {
         await tx.invoiceDraft.update({
           where: { id },
-          data: { ...approvedFields(user), invoiceId },
+          data: { ...approvedFields(user, decidedVia(via)), invoiceId },
         });
       }
     });
     return this.get(user, id);
   }
 
-  async reject(
+  /** The draft as the assistant's chat card shows it (erp-agents docs/chat-draft-approval.md). */
+  async forAssistant(user: AuthUser, id: string): Promise<AssistantDraftDto<InvoiceDraftDto>> {
+    const draft = await this.get(user, id);
+    return this.drafts.assistantView(user, 'invoice', 'invoice_drafts', draft, LABEL);
+  }
+
+  /** A person approves in the assistant's chat the content the card showed them. */
+  async approveFromAssistant(
+    user: AuthUser,
+    id: string,
+    input: AssistantDraftApproveRequest,
+  ): Promise<InvoiceDraftDto> {
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'invoice',
+      'invoice_drafts',
+      draft,
+      LABEL,
+      input.contentHash,
+    );
+    return this.approve(user, id, input.version, decision);
+  }
+
+  /** A person rejects in the assistant's chat. */
+  async rejectFromAssistant(
     user: AuthUser,
     id: string,
     input: { version: number; reason: string },
   ): Promise<InvoiceDraftDto> {
-    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const draft = await this.get(user, id);
+    const decision = await this.drafts.authorizeAssistant(
+      user,
+      'invoice',
+      'invoice_drafts',
+      draft,
+      LABEL,
+      null,
+    );
+    return this.reject(user, id, input, decision);
+  }
+
+  async reject(
+    user: AuthUser,
+    id: string,
+    input: { version: number; reason: string },
+    via: DecisionVia = 'SESSION',
+  ): Promise<InvoiceDraftDto> {
+    this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       await decideInTx(tx, {
@@ -219,7 +275,10 @@ export class InvoiceDraftsService {
         label: LABEL,
         approving: false,
       });
-      await tx.invoiceDraft.update({ where: { id }, data: rejectedFields(user, input.reason) });
+      await tx.invoiceDraft.update({
+        where: { id },
+        data: rejectedFields(user, input.reason, decidedVia(via)),
+      });
     });
     return this.get(user, id);
   }
@@ -274,6 +333,7 @@ function baseFields(
     createdAt: d.createdAt.toISOString(),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
+    decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },

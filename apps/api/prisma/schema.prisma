@@ -182,23 +182,25 @@ model User {
   receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
   receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
 
-  warehouseMovements     WarehouseMovement[] @relation("WarehouseMovementCreatedBy")
-  grnDraftsCreated       GrnDraft[]          @relation("GrnDraftCreatedBy")
-  grnDraftsDecided       GrnDraft[]          @relation("GrnDraftDecidedBy")
-  quotationDraftsCreated QuotationDraft[]    @relation("QuotationDraftCreatedBy")
-  quotationDraftsDecided QuotationDraft[]    @relation("QuotationDraftDecidedBy")
-  bookingDraftsCreated   BookingDraft[]      @relation("BookingDraftCreatedBy")
-  bookingDraftsDecided   BookingDraft[]      @relation("BookingDraftDecidedBy")
-  tripDraftsCreated      TripDraft[]         @relation("TripDraftCreatedBy")
-  tripDraftsDecided      TripDraft[]         @relation("TripDraftDecidedBy")
-  releaseDraftsCreated   GoodsReleaseDraft[] @relation("GoodsReleaseDraftCreatedBy")
-  releaseDraftsDecided   GoodsReleaseDraft[] @relation("GoodsReleaseDraftDecidedBy")
-  invoiceDraftsCreated   InvoiceDraft[]      @relation("InvoiceDraftCreatedBy")
-  invoiceDraftsDecided   InvoiceDraft[]      @relation("InvoiceDraftDecidedBy")
-  receiptDraftsCreated   ReceiptDraft[]      @relation("ReceiptDraftCreatedBy")
-  receiptDraftsDecided   ReceiptDraft[]      @relation("ReceiptDraftDecidedBy")
-  customsUpdated         CustomsClearance[]  @relation("CustomsUpdatedBy")
-  customsFeesCreated     CustomsFee[]        @relation("CustomsFeeCreatedBy")
+  warehouseMovements        WarehouseMovement[]      @relation("WarehouseMovementCreatedBy")
+  grnDraftsCreated          GrnDraft[]               @relation("GrnDraftCreatedBy")
+  grnDraftsDecided          GrnDraft[]               @relation("GrnDraftDecidedBy")
+  quotationDraftsCreated    QuotationDraft[]         @relation("QuotationDraftCreatedBy")
+  quotationDraftsDecided    QuotationDraft[]         @relation("QuotationDraftDecidedBy")
+  bookingDraftsCreated      BookingDraft[]           @relation("BookingDraftCreatedBy")
+  bookingDraftsDecided      BookingDraft[]           @relation("BookingDraftDecidedBy")
+  tripDraftsCreated         TripDraft[]              @relation("TripDraftCreatedBy")
+  tripDraftsDecided         TripDraft[]              @relation("TripDraftDecidedBy")
+  releaseDraftsCreated      GoodsReleaseDraft[]      @relation("GoodsReleaseDraftCreatedBy")
+  releaseDraftsDecided      GoodsReleaseDraft[]      @relation("GoodsReleaseDraftDecidedBy")
+  invoiceDraftsCreated      InvoiceDraft[]           @relation("InvoiceDraftCreatedBy")
+  invoiceDraftsDecided      InvoiceDraft[]           @relation("InvoiceDraftDecidedBy")
+  receiptDraftsCreated      ReceiptDraft[]           @relation("ReceiptDraftCreatedBy")
+  receiptDraftsDecided      ReceiptDraft[]           @relation("ReceiptDraftDecidedBy")
+  assistantApprovalGrants   AssistantApprovalGrant[] @relation("AssistantApprovalGrantUser")
+  assistantApprovalsGranted AssistantApprovalGrant[] @relation("AssistantApprovalGrantedBy")
+  customsUpdated            CustomsClearance[]       @relation("CustomsUpdatedBy")
+  customsFeesCreated        CustomsFee[]             @relation("CustomsFeeCreatedBy")
 
   driverProfile         Driver?
   tripsCreated          Trip[]             @relation("TripCreatedBy")
@@ -2632,33 +2634,35 @@ enum EntryDraftState {
  * draft. branch_id is the customer's.
  */
 model QuotationDraft {
-  id                    String          @id @default(uuid()) @db.Uuid
-  branchId              String          @map("branch_id") @db.Uuid
-  customerId            String          @map("customer_id") @db.Uuid
-  state                 EntryDraftState @default(DRAFT)
-  version               Int             @default(1)
-  expiresAt             DateTime        @map("expires_at") @db.Timestamptz(3)
-  agentClientId         String          @map("agent_client_id") @db.Uuid
+  id                    String           @id @default(uuid()) @db.Uuid
+  branchId              String           @map("branch_id") @db.Uuid
+  customerId            String           @map("customer_id") @db.Uuid
+  state                 EntryDraftState  @default(DRAFT)
+  version               Int              @default(1)
+  expiresAt             DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId         String           @map("agent_client_id") @db.Uuid
   /// The staff member the assistant acted for.
-  createdById           String          @map("created_by_id") @db.Uuid
-  idempotencyKey        String          @map("idempotency_key") @db.VarChar(100)
+  createdById           String           @map("created_by_id") @db.Uuid
+  idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
   /// sha256 of the normalised create request; a key reused with another request is refused.
-  payloadHash           String          @map("payload_hash") @db.Char(64)
-  originLocationId      String          @map("origin_location_id") @db.Uuid
-  destinationLocationId String          @map("destination_location_id") @db.Uuid
+  payloadHash           String           @map("payload_hash") @db.Char(64)
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
   mode                  ShippingMode
-  loadType              LoadType?       @map("load_type")
-  cargoType             CargoType       @map("cargo_type")
-  cargoDescription      String?         @map("cargo_description") @db.VarChar(2000)
-  currency              String          @db.Char(3)
-  validUntil            DateTime        @map("valid_until") @db.Date
-  terms                 String?         @db.VarChar(4000)
-  decidedById           String?         @map("decided_by_id") @db.Uuid
-  decidedAt             DateTime?       @map("decided_at") @db.Timestamptz(3)
-  rejectReason          String?         @map("reject_reason") @db.VarChar(500)
-  quotationId           String?         @unique @map("quotation_id") @db.Uuid
-  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  loadType              LoadType?        @map("load_type")
+  cargoType             CargoType        @map("cargo_type")
+  cargoDescription      String?          @map("cargo_description") @db.VarChar(2000)
+  currency              String           @db.Char(3)
+  validUntil            DateTime         @map("valid_until") @db.Date
+  terms                 String?          @db.VarChar(4000)
+  decidedById           String?          @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia            DraftDecidedVia? @map("decided_via")
+  rejectReason          String?          @map("reject_reason") @db.VarChar(500)
+  quotationId           String?          @unique @map("quotation_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer    Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -2727,6 +2731,8 @@ model BookingDraft {
   specialInstructions   String?          @map("special_instructions") @db.VarChar(2000)
   decidedById           String?          @map("decided_by_id") @db.Uuid
   decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
   bookingId             String?          @unique @map("booking_id") @db.Uuid
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -2775,34 +2781,36 @@ model BookingDraftItem {
  * permissions and branches. branch_id is the trip's branch, one of the user's.
  */
 model TripDraft {
-  id                    String          @id @default(uuid()) @db.Uuid
-  branchId              String          @map("branch_id") @db.Uuid
-  state                 EntryDraftState @default(DRAFT)
-  version               Int             @default(1)
-  expiresAt             DateTime        @map("expires_at") @db.Timestamptz(3)
-  agentClientId         String          @map("agent_client_id") @db.Uuid
-  createdById           String          @map("created_by_id") @db.Uuid
-  idempotencyKey        String          @map("idempotency_key") @db.VarChar(100)
-  payloadHash           String          @map("payload_hash") @db.Char(64)
+  id                    String           @id @default(uuid()) @db.Uuid
+  branchId              String           @map("branch_id") @db.Uuid
+  state                 EntryDraftState  @default(DRAFT)
+  version               Int              @default(1)
+  expiresAt             DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId         String           @map("agent_client_id") @db.Uuid
+  createdById           String           @map("created_by_id") @db.Uuid
+  idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash           String           @map("payload_hash") @db.Char(64)
   kind                  TripKind
-  originLocationId      String          @map("origin_location_id") @db.Uuid
-  destinationLocationId String          @map("destination_location_id") @db.Uuid
-  plannedDeparture      DateTime?       @map("planned_departure") @db.Timestamptz(3)
-  plannedArrival        DateTime?       @map("planned_arrival") @db.Timestamptz(3)
-  vehicleId             String?         @map("vehicle_id") @db.Uuid
-  driverId              String?         @map("driver_id") @db.Uuid
-  carrierId             String?         @map("carrier_id") @db.Uuid
-  agreedCost            Decimal?        @map("agreed_cost") @db.Decimal(18, 4)
-  currency              String?         @db.Char(3)
-  externalVehicle       String?         @map("external_vehicle") @db.VarChar(100)
-  externalDriver        String?         @map("external_driver") @db.VarChar(200)
-  notes                 String?         @db.VarChar(2000)
-  decidedById           String?         @map("decided_by_id") @db.Uuid
-  decidedAt             DateTime?       @map("decided_at") @db.Timestamptz(3)
-  rejectReason          String?         @map("reject_reason") @db.VarChar(500)
-  tripId                String?         @unique @map("trip_id") @db.Uuid
-  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  plannedDeparture      DateTime?        @map("planned_departure") @db.Timestamptz(3)
+  plannedArrival        DateTime?        @map("planned_arrival") @db.Timestamptz(3)
+  vehicleId             String?          @map("vehicle_id") @db.Uuid
+  driverId              String?          @map("driver_id") @db.Uuid
+  carrierId             String?          @map("carrier_id") @db.Uuid
+  agreedCost            Decimal?         @map("agreed_cost") @db.Decimal(18, 4)
+  currency              String?          @db.Char(3)
+  externalVehicle       String?          @map("external_vehicle") @db.VarChar(100)
+  externalDriver        String?          @map("external_driver") @db.VarChar(200)
+  notes                 String?          @db.VarChar(2000)
+  decidedById           String?          @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia            DraftDecidedVia? @map("decided_via")
+  rejectReason          String?          @map("reject_reason") @db.VarChar(500)
+  tripId                String?          @unique @map("trip_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
   agentClient AgentClient         @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
@@ -2839,27 +2847,29 @@ model TripDraftShipment {
  * dated at the approval, with that person's permissions. branch_id is the shipment's.
  */
 model GoodsReleaseDraft {
-  id             String          @id @default(uuid()) @db.Uuid
-  branchId       String          @map("branch_id") @db.Uuid
-  shipmentId     String          @map("shipment_id") @db.Uuid
-  state          EntryDraftState @default(DRAFT)
-  version        Int             @default(1)
-  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String          @map("agent_client_id") @db.Uuid
-  createdById    String          @map("created_by_id") @db.Uuid
-  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String          @map("payload_hash") @db.Char(64)
-  warehouseId    String          @map("warehouse_id") @db.Uuid
+  id             String           @id @default(uuid()) @db.Uuid
+  branchId       String           @map("branch_id") @db.Uuid
+  shipmentId     String           @map("shipment_id") @db.Uuid
+  state          EntryDraftState  @default(DRAFT)
+  version        Int              @default(1)
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String           @map("agent_client_id") @db.Uuid
+  createdById    String           @map("created_by_id") @db.Uuid
+  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String           @map("payload_hash") @db.Char(64)
+  warehouseId    String           @map("warehouse_id") @db.Uuid
   packages       Int
-  weightKg       Decimal?        @map("weight_kg") @db.Decimal(12, 3)
-  partyName      String?         @map("party_name") @db.VarChar(200)
-  note           String?         @db.VarChar(1000)
-  decidedById    String?         @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
-  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
-  movementId     String?         @unique @map("movement_id") @db.Uuid
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  weightKg       Decimal?         @map("weight_kg") @db.Decimal(12, 3)
+  partyName      String?          @map("party_name") @db.VarChar(200)
+  note           String?          @db.VarChar(1000)
+  decidedById    String?          @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia     DraftDecidedVia? @map("decided_via")
+  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
+  movementId     String?          @unique @map("movement_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
@@ -2879,27 +2889,29 @@ model GoodsReleaseDraft {
 /// approval creates an ordinary DRAFT invoice (no entry is posted); invoice approval stays a
 /// separate human step.
 model InvoiceDraft {
-  id             String          @id @default(uuid()) @db.Uuid
-  branchId       String          @map("branch_id") @db.Uuid
-  shipmentId     String          @map("shipment_id") @db.Uuid
-  customerId     String          @map("customer_id") @db.Uuid
-  state          EntryDraftState @default(DRAFT)
-  version        Int             @default(1)
-  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String          @map("agent_client_id") @db.Uuid
-  createdById    String          @map("created_by_id") @db.Uuid
-  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String          @map("payload_hash") @db.Char(64)
-  currency       String          @db.Char(3)
-  invoiceDate    DateTime        @map("invoice_date") @db.Date
-  dueDate        DateTime        @map("due_date") @db.Date
-  notes          String?         @db.VarChar(2000)
-  decidedById    String?         @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
-  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
-  invoiceId      String?         @unique @map("invoice_id") @db.Uuid
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id             String           @id @default(uuid()) @db.Uuid
+  branchId       String           @map("branch_id") @db.Uuid
+  shipmentId     String           @map("shipment_id") @db.Uuid
+  customerId     String           @map("customer_id") @db.Uuid
+  state          EntryDraftState  @default(DRAFT)
+  version        Int              @default(1)
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String           @map("agent_client_id") @db.Uuid
+  createdById    String           @map("created_by_id") @db.Uuid
+  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String           @map("payload_hash") @db.Char(64)
+  currency       String           @db.Char(3)
+  invoiceDate    DateTime         @map("invoice_date") @db.Date
+  dueDate        DateTime         @map("due_date") @db.Date
+  notes          String?          @db.VarChar(2000)
+  decidedById    String?          @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia     DraftDecidedVia? @map("decided_via")
+  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
+  invoiceId      String?          @unique @map("invoice_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
@@ -2933,28 +2945,30 @@ model InvoiceDraftLine {
 /// A customer receipt proposed by the staff AI assistant (entry drafts). An approval records an
 /// ordinary receipt and posts its entry through ReceiptsService, with the approver's permissions.
 model ReceiptDraft {
-  id             String          @id @default(uuid()) @db.Uuid
-  branchId       String          @map("branch_id") @db.Uuid
-  customerId     String          @map("customer_id") @db.Uuid
-  state          EntryDraftState @default(DRAFT)
-  version        Int             @default(1)
-  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String          @map("agent_client_id") @db.Uuid
-  createdById    String          @map("created_by_id") @db.Uuid
-  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String          @map("payload_hash") @db.Char(64)
-  receiptDate    DateTime        @map("receipt_date") @db.Date
-  currency       String          @db.Char(3)
-  amount         Decimal         @db.Decimal(18, 4)
-  cashAccountId  String          @map("cash_account_id") @db.Uuid
-  reference      String?         @db.VarChar(100)
-  notes          String?         @db.VarChar(2000)
-  decidedById    String?         @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
-  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
-  receiptId      String?         @unique @map("receipt_id") @db.Uuid
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id             String           @id @default(uuid()) @db.Uuid
+  branchId       String           @map("branch_id") @db.Uuid
+  customerId     String           @map("customer_id") @db.Uuid
+  state          EntryDraftState  @default(DRAFT)
+  version        Int              @default(1)
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String           @map("agent_client_id") @db.Uuid
+  createdById    String           @map("created_by_id") @db.Uuid
+  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String           @map("payload_hash") @db.Char(64)
+  receiptDate    DateTime         @map("receipt_date") @db.Date
+  currency       String           @db.Char(3)
+  amount         Decimal          @db.Decimal(18, 4)
+  cashAccountId  String           @map("cash_account_id") @db.Uuid
+  reference      String?          @db.VarChar(100)
+  notes          String?          @db.VarChar(2000)
+  decidedById    String?          @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
+  decidedVia     DraftDecidedVia? @map("decided_via")
+  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
+  receiptId      String?          @unique @map("receipt_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer    Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -2984,4 +2998,27 @@ model ReceiptDraftAllocation {
   @@unique([draftId, invoiceId])
   @@index([invoiceId])
   @@map("receipt_draft_allocations")
+}
+
+/// A kind of entry draft a user may approve or reject from the assistant's chat (erp-agents
+/// docs/chat-draft-approval.md). No row: only the review screen. Granted by an admin.
+model AssistantApprovalGrant {
+  userId      String   @map("user_id") @db.Uuid
+  kind        String   @db.VarChar(40)
+  grantedById String   @map("granted_by_id") @db.Uuid
+  grantedAt   DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+
+  user      User @relation("AssistantApprovalGrantUser", fields: [userId], references: [id], onDelete: Restrict)
+  grantedBy User @relation("AssistantApprovalGrantedBy", fields: [grantedById], references: [id], onDelete: Restrict)
+
+  @@id([userId, kind])
+  @@map("assistant_approval_grants")
+}
+
+/// Where a person decided an entry draft: the review screen or the assistant chat.
+enum DraftDecidedVia {
+  SESSION
+  ASSISTANT
+
+  @@map("draft_decided_via")
 }
