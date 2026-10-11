@@ -37,6 +37,9 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.document.deleteMany({ where: { shipment: createdBy } });
   await prisma.shipment.deleteMany({ where: createdBy });
   // Entry drafts are created by the assistant's agent-it- users, for it- customers.
+  await prisma.customerDraft.deleteMany({
+    where: { createdBy: { email: { startsWith: 'agent-it-' } } },
+  });
   await prisma.bookingDraft.deleteMany({ where: { customer: createdBy } });
   await prisma.quotationDraft.deleteMany({ where: { customer: createdBy } });
   // Approved from the assistant's chat, a booking or quotation is created by the agent-it- user.

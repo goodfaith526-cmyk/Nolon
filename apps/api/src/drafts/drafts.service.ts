@@ -233,6 +233,7 @@ export const DRAFT_TABLES = [
   'goods_release_drafts',
   'invoice_drafts',
   'receipt_drafts',
+  'customer_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

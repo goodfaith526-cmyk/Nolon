@@ -2,6 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import { BookingDraftReview } from './BookingDraftReview';
+import { CustomerDraftReview } from './CustomerDraftReview';
 import { InvoiceDraftReview } from './InvoiceDraftReview';
 import { QuotationDraftReview } from './QuotationDraftReview';
 import { ReceiptDraftReview } from './ReceiptDraftReview';
@@ -11,6 +12,7 @@ import { TripDraftReview } from './TripDraftReview';
 /** The review screen of one draft, by entry type. */
 export function DraftReviewPage({ kind, id }: { kind: string; id: string }) {
   const tc = useTranslations('Common');
+  if (kind === 'customers') return <CustomerDraftReview id={id} />;
   if (kind === 'quotations') return <QuotationDraftReview id={id} />;
   if (kind === 'bookings') return <BookingDraftReview id={id} />;
   if (kind === 'trips') return <TripDraftReview id={id} />;
