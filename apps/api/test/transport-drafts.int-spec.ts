@@ -365,6 +365,8 @@ describe('trip drafts: a person reviews', () => {
       '/release-drafts',
       '/quotation-drafts',
       '/booking-drafts',
+      '/invoice-drafts',
+      '/receipt-drafts',
     ]) {
       const res = await r.get(path, cookies.driverDxb);
       expect(res.status, path).toBe(403);

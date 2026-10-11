@@ -67,6 +67,8 @@ model Branch {
   bookingDrafts      BookingDraft[]
   tripDrafts         TripDraft[]
   releaseDrafts      GoodsReleaseDraft[]
+  invoiceDrafts      InvoiceDraft[]
+  receiptDrafts      ReceiptDraft[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -191,6 +193,10 @@ model User {
   tripDraftsDecided      TripDraft[]         @relation("TripDraftDecidedBy")
   releaseDraftsCreated   GoodsReleaseDraft[] @relation("GoodsReleaseDraftCreatedBy")
   releaseDraftsDecided   GoodsReleaseDraft[] @relation("GoodsReleaseDraftDecidedBy")
+  invoiceDraftsCreated   InvoiceDraft[]      @relation("InvoiceDraftCreatedBy")
+  invoiceDraftsDecided   InvoiceDraft[]      @relation("InvoiceDraftDecidedBy")
+  receiptDraftsCreated   ReceiptDraft[]      @relation("ReceiptDraftCreatedBy")
+  receiptDraftsDecided   ReceiptDraft[]      @relation("ReceiptDraftDecidedBy")
   customsUpdated         CustomsClearance[]  @relation("CustomsUpdatedBy")
   customsFeesCreated     CustomsFee[]        @relation("CustomsFeeCreatedBy")
 
@@ -454,6 +460,9 @@ model Customer {
 
   quotationDrafts QuotationDraft[]
   bookingDrafts   BookingDraft[]
+
+  invoiceDrafts InvoiceDraft[]
+  receiptDrafts ReceiptDraft[]
 
   @@index([branchId])
   @@index([phone])
@@ -859,6 +868,8 @@ model Shipment {
   tripDraftLinks TripDraftShipment[]
   releaseDrafts  GoodsReleaseDraft[]
 
+  invoiceDrafts InvoiceDraft[]
+
   @@index([branchId, status])
   @@index([customerId])
   @@map("shipments")
@@ -1071,6 +1082,8 @@ model Account {
   supplierPayments  SupplierPayment[]
   expenseCategories ExpenseCategory[]
   expenses          Expense[]
+
+  receiptDrafts ReceiptDraft[]
 
   @@map("accounts")
 }
@@ -1349,6 +1362,9 @@ model CustomerInvoice {
   allocations       ReceiptAllocation[]
   creditNotes       CreditNote[]
 
+  draft                   InvoiceDraft?            @relation("InvoiceDraftResult")
+  receiptDraftAllocations ReceiptDraftAllocation[]
+
   @@index([branchId, status])
   @@index([customerId])
   @@index([shipmentId])
@@ -1414,6 +1430,8 @@ model Receipt {
   createdBy     User                @relation("ReceiptCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   cancelledBy   User?               @relation("ReceiptCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
   allocations   ReceiptAllocation[]
+
+  draft ReceiptDraft? @relation("ReceiptDraftResult")
 
   @@index([branchId, receiptDate])
   @@index([customerId])
@@ -2515,6 +2533,9 @@ model AgentClient {
   tripDrafts    TripDraft[]
   releaseDrafts GoodsReleaseDraft[]
 
+  invoiceDrafts InvoiceDraft[]
+  receiptDrafts ReceiptDraft[]
+
   @@map("agent_clients")
 }
 
@@ -2852,4 +2873,115 @@ model GoodsReleaseDraft {
   @@index([branchId, state])
   @@index([shipmentId])
   @@map("goods_release_drafts")
+}
+
+/// A customer invoice proposed by the staff AI assistant for a shipment (entry drafts). An
+/// approval creates an ordinary DRAFT invoice (no entry is posted); invoice approval stays a
+/// separate human step.
+model InvoiceDraft {
+  id             String          @id @default(uuid()) @db.Uuid
+  branchId       String          @map("branch_id") @db.Uuid
+  shipmentId     String          @map("shipment_id") @db.Uuid
+  customerId     String          @map("customer_id") @db.Uuid
+  state          EntryDraftState @default(DRAFT)
+  version        Int             @default(1)
+  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String          @map("agent_client_id") @db.Uuid
+  createdById    String          @map("created_by_id") @db.Uuid
+  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String          @map("payload_hash") @db.Char(64)
+  currency       String          @db.Char(3)
+  invoiceDate    DateTime        @map("invoice_date") @db.Date
+  dueDate        DateTime        @map("due_date") @db.Date
+  notes          String?         @db.VarChar(2000)
+  decidedById    String?         @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
+  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
+  invoiceId      String?         @unique @map("invoice_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  customer    Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  agentClient AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User               @relation("InvoiceDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?              @relation("InvoiceDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  invoice     CustomerInvoice?   @relation("InvoiceDraftResult", fields: [invoiceId], references: [id], onDelete: Restrict)
+  lines       InvoiceDraftLine[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@index([shipmentId])
+  @@map("invoice_drafts")
+}
+
+model InvoiceDraftLine {
+  draftId        String  @map("draft_id") @db.Uuid
+  lineNo         Int     @map("line_no")
+  chargeTypeCode String  @map("charge_type_code") @db.VarChar(20)
+  description    String? @db.VarChar(500)
+  quantity       Decimal @db.Decimal(18, 4)
+  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+
+  draft InvoiceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@id([draftId, lineNo])
+  @@map("invoice_draft_lines")
+}
+
+/// A customer receipt proposed by the staff AI assistant (entry drafts). An approval records an
+/// ordinary receipt and posts its entry through ReceiptsService, with the approver's permissions.
+model ReceiptDraft {
+  id             String          @id @default(uuid()) @db.Uuid
+  branchId       String          @map("branch_id") @db.Uuid
+  customerId     String          @map("customer_id") @db.Uuid
+  state          EntryDraftState @default(DRAFT)
+  version        Int             @default(1)
+  expiresAt      DateTime        @map("expires_at") @db.Timestamptz(3)
+  agentClientId  String          @map("agent_client_id") @db.Uuid
+  createdById    String          @map("created_by_id") @db.Uuid
+  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
+  payloadHash    String          @map("payload_hash") @db.Char(64)
+  receiptDate    DateTime        @map("receipt_date") @db.Date
+  currency       String          @db.Char(3)
+  amount         Decimal         @db.Decimal(18, 4)
+  cashAccountId  String          @map("cash_account_id") @db.Uuid
+  reference      String?         @db.VarChar(100)
+  notes          String?         @db.VarChar(2000)
+  decidedById    String?         @map("decided_by_id") @db.Uuid
+  decidedAt      DateTime?       @map("decided_at") @db.Timestamptz(3)
+  rejectReason   String?         @map("reject_reason") @db.VarChar(500)
+  receiptId      String?         @unique @map("receipt_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer    Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  cashAccount Account                  @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  agentClient AgentClient              @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User                     @relation("ReceiptDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?                    @relation("ReceiptDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  receipt     Receipt?                 @relation("ReceiptDraftResult", fields: [receiptId], references: [id], onDelete: Restrict)
+  allocations ReceiptDraftAllocation[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@index([customerId])
+  @@map("receipt_drafts")
+}
+
+model ReceiptDraftAllocation {
+  draftId   String  @map("draft_id") @db.Uuid
+  lineNo    Int     @map("line_no")
+  invoiceId String  @map("invoice_id") @db.Uuid
+  amount    Decimal @db.Decimal(18, 4)
+
+  draft   ReceiptDraft    @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  invoice CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@id([draftId, lineNo])
+  @@unique([draftId, invoiceId])
+  @@index([invoiceId])
+  @@map("receipt_draft_allocations")
 }
