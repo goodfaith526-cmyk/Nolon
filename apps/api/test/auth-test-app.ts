@@ -58,7 +58,13 @@ export interface TestApp {
 }
 
 export async function createTestApp(overrides: Partial<AppEnv> = {}): Promise<TestApp> {
-  const env: AppEnv = { ...loadEnv(), CORS_ORIGINS: [APP_ORIGIN], ...overrides };
+  // The draft retention purge runs only when a test calls it.
+  const env: AppEnv = {
+    ...loadEnv(),
+    CORS_ORIGINS: [APP_ORIGIN],
+    DRAFT_PURGE_EVERY_HOURS: 0,
+    ...overrides,
+  };
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
     controllers: [ProbeController],

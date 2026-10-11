@@ -25,6 +25,7 @@ import {
   requests,
   tokenFor,
 } from './agent-drafts-helpers.js';
+import { DraftRetentionService } from '../src/drafts/draft-retention.service.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 // Quotation and booking drafts proposed by the staff assistant (entry drafts). The assistant's
@@ -639,5 +640,72 @@ describe('approval waits for a concurrent rejection and then refuses', () => {
         where: { customerId: customer.id, createdAt: { gte: new Date(draft.createdAt) } },
       }),
     ).toBe(0);
+  });
+});
+
+describe('drafts: the retention purge (data governance v2.1, section 4)', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const purge = (now: Date) => t.app.get(DraftRetentionService).purge(now);
+  const exists = async (id: string) => ({
+    draft: (await t.prisma.quotationDraft.count({ where: { id } })) === 1,
+    lines: await t.prisma.quotationDraftLine.count({ where: { draftId: id } }),
+  });
+
+  it('removes rejected and expired drafts with their lines 90 days on; keeps open and approved ones', async () => {
+    const base = Date.now();
+    const open = await quotationDraft();
+    const expired = await quotationDraft();
+    await t.prisma.quotationDraft.update({
+      where: { id: expired.id },
+      data: { expiresAt: new Date(base - 1000) },
+    });
+    const rejected = await quotationDraft();
+    await r
+      .post(`/quotation-drafts/${rejected.id}/reject`, cookies.salesDxb, {
+        version: 1,
+        reason: 'Wrong customer',
+      })
+      .expect(200);
+    const approved = await quotationDraft();
+    const quotation = (
+      await r
+        .post(`/quotation-drafts/${approved.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: approved.pricing?.key,
+        })
+        .expect(200)
+    ).body as QuotationDraftDto;
+    const all = [open, expired, rejected, approved];
+
+    // 89 days on: everything is still kept.
+    expect(await purge(new Date(base + 89 * DAY))).toMatchObject({ skipped: false });
+    for (const d of all) expect(await exists(d.id), d.id).toEqual({ draft: true, lines: 1 });
+
+    // 90 days after the rejection and the expiry: those two go, lines with them.
+    await purge(new Date(base + 90 * DAY + 60_000));
+    expect(await exists(rejected.id)).toEqual({ draft: false, lines: 0 });
+    expect(await exists(expired.id)).toEqual({ draft: false, lines: 0 });
+    // The open draft expires in 7 days: kept until 90 days after that.
+    expect(await exists(open.id)).toEqual({ draft: true, lines: 1 });
+    expect(await exists(approved.id)).toEqual({ draft: true, lines: 1 });
+
+    await purge(new Date(base + 98 * DAY));
+    expect(await exists(open.id)).toEqual({ draft: false, lines: 0 });
+    // An approved draft is the record behind its quotation: kept, years on too.
+    await purge(new Date(base + 3650 * DAY));
+    expect(await exists(approved.id)).toEqual({ draft: true, lines: 1 });
+    expect(quotation.quotationNumber).toBeTruthy();
+    expect(
+      await t.prisma.quotation.count({ where: { number: quotation.quotationNumber ?? '' } }),
+    ).toBe(1);
+  });
+
+  it('runs one purge at a time: a second one skips while the first holds the lock', async () => {
+    await t.prisma.$transaction(async (tx) => {
+      // The lock function returns void, which a raw query cannot read: select a boolean instead.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(${72_031_011}) IS NULL AS held`;
+      expect(await purge(new Date())).toEqual({ skipped: true });
+    });
+    expect(await purge(new Date())).toMatchObject({ skipped: false });
   });
 });
