@@ -625,7 +625,10 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
           ...lines(otherRoute.id),
         ]),
       ).expect(400);
-      expect(refusal.body).toMatchObject({ fields: ['lines.1.rateCardId'] });
+      expect(refusal.body).toMatchObject({
+        code: 'RATE_NOT_USABLE',
+        fields: ['lines.1.rateCardId'],
+      });
       const manual = await post(
         '/quotations',
         cookies.salesDxb,
@@ -908,6 +911,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         await refused({ items: [pallet, { ...pallet, heightCm: '100', widthCm: '50' }] }),
       ).toMatchObject({
         message: 'Give length, width and height together',
+        code: 'DIMENSIONS_TOGETHER',
         fields: ['items.1.lengthCm'],
       });
       expect(await refused({ items: [{ cargoType: 'CONTAINER', quantity: 1 }] })).toMatchObject({
@@ -921,6 +925,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       expect(await refused({ services: [] })).toMatchObject({ message: ['services'] });
       expect(await refused({ mode: 'ROAD' })).toMatchObject({ fields: ['loadType'] });
       expect(await refused({ destinationLocationId: jeddah })).toMatchObject({
+        code: 'SAME_ROUTE',
         fields: ['originLocationId', 'destinationLocationId'],
       });
     });

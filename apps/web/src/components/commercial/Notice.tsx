@@ -50,6 +50,7 @@ export function revealFailure(form: HTMLFormElement | null): void {
 export function useFailureText(): (e: unknown) => string {
   const t = useTranslations('Common');
   const tf = useTranslations('Fields');
+  const reason = useRefusalReason();
   const locale = useLocale();
   return useCallback(
     (e: unknown) => {
@@ -60,6 +61,8 @@ export function useFailureText(): (e: unknown) => string {
             line: (n) => t('lineNo', { n }),
             list: (parts) => new Intl.ListFormat(locale, { type: 'conjunction' }).format(parts),
             fields: (fields) => t('invalidFields', { fields }),
+            because: (why, fields) => t('invalidBecause', { reason: why, fields }),
+            reason,
             detail: (detail) => t('invalidDetail', { detail }),
             generic: () => t('invalidInput'),
           });
@@ -73,8 +76,41 @@ export function useFailureText(): (e: unknown) => string {
           return t('failed');
       }
     },
-    [t, tf, locale],
+    [t, tf, reason, locale],
   );
+}
+
+/**
+ * Why the API refused a save on named fields, in the page language when it sent a known code
+ * (`Refusals`), else in its own words; null when it named no rule.
+ */
+export function useRefusalReason(): (e: unknown) => string | null {
+  const tr = useTranslations('Refusals');
+  return useCallback(
+    (e: unknown) => {
+      if (!(e instanceof ApiError) || e.fields.length === 0) return null;
+      if (e.code && tr.has(e.code)) return tr(e.code);
+      return e.reason;
+    },
+    [tr],
+  );
+}
+
+/** Where to say why a save was refused: under the first field the API named. */
+export interface FieldNoteState {
+  path: string;
+  text: string;
+}
+
+export function fieldNote(e: unknown, reason: string | null): FieldNoteState | null {
+  const first = e instanceof ApiError ? e.fields[0] : undefined;
+  return first !== undefined && reason ? { path: first, text: reason } : null;
+}
+
+/** The reason under a field, when the last refused save named it first. */
+export function FieldNote({ note, path }: { note: FieldNoteState | null; path: string }) {
+  if (note?.path !== path) return null;
+  return <small className="field-error">{note.text}</small>;
 }
 
 export interface InvalidInputWords {
@@ -82,19 +118,22 @@ export interface InvalidInputWords {
   line: (n: number) => string;
   list: (parts: string[]) => string;
   fields: (fields: string) => string;
+  because: (reason: string, fields: string) => string;
+  reason: (e: unknown) => string | null;
   detail: (detail: string) => string;
   generic: () => string;
 }
 
 /**
- * A refused save (400) in words: the fields the API named ("Weight (kg) (line 1)"), else the
- * API's own reason when it gave one, else the generic "check the fields".
+ * A refused save (400) in words: the fields the API named ("Weight (kg) (line 1)") with the rule's
+ * reason when there is one, else the API's own reason, else the generic "check the fields".
  */
 export function invalidInputText(e: unknown, words: InvalidInputWords): string {
   if (!(e instanceof ApiError)) return words.generic();
   if (e.fields.length > 0) {
-    const names = [...new Set(e.fields.map((path) => fieldName(path, words)))];
-    return words.fields(words.list(names));
+    const names = words.list([...new Set(e.fields.map((path) => fieldName(path, words)))]);
+    const reason = words.reason(e);
+    return reason ? words.because(reason, names) : words.fields(names);
   }
   const reason = e.message.trim();
   return reason && reason !== 'Bad Request' ? words.detail(reason) : words.generic();

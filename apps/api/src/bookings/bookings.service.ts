@@ -284,14 +284,21 @@ export class BookingsService {
 
   /** `customerId` null: a booking for a customer not in NOLON yet, which names no parties. */
   private async prepare(customerId: string | null, input: BookingInput) {
-    await onFields(['originLocationId', 'destinationLocationId'], () =>
+    const route = ['originLocationId', 'destinationLocationId'];
+    if (input.originLocationId === input.destinationLocationId) {
+      throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+    }
+    await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
     if (input.mode !== 'SEA' && input.loadType) {
-      throw fieldRefusal('FCL/LCL applies to sea shipments only', ['loadType']);
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
     }
     const services: BookingService[] = [...new Set(input.services)];
-    if (services.length === 0) throw fieldRefusal('Choose at least one service', ['services']);
+    if (services.length === 0)
+      throw fieldRefusal('SERVICE_REQUIRED', 'Choose at least one service', ['services']);
     const parties = [input.shipperId, input.consigneeId, input.notifyPartyId];
     if (customerId !== null) {
       await this.customers.requireOwnParties(customerId, parties);
@@ -326,12 +333,24 @@ export class BookingsService {
     const containerType = [`${path}.containerTypeCode`];
     if (item.cargoType === 'CONTAINER') {
       if (!item.containerTypeCode) {
-        throw fieldRefusal('A container line needs a container type', containerType);
+        throw fieldRefusal(
+          'CONTAINER_TYPE_REQUIRED',
+          'A container line needs a container type',
+          containerType,
+        );
       }
       const code = item.containerTypeCode;
-      await onFields(containerType, () => this.masterData.requireContainerType(code));
+      await onFields(
+        containerType,
+        () => this.masterData.requireContainerType(code),
+        'UNKNOWN_CONTAINER_TYPE',
+      );
     } else if (item.containerTypeCode) {
-      throw fieldRefusal('Container type applies to container lines only', containerType);
+      throw fieldRefusal(
+        'CONTAINER_TYPE_NOT_APPLICABLE',
+        'Container type applies to container lines only',
+        containerType,
+      );
     }
     const length = item.lengthCm ? dec(item.lengthCm) : null;
     const width = item.widthCm ? dec(item.widthCm) : null;
@@ -341,6 +360,7 @@ export class BookingsService {
       // The missing ones are named: those are the fields to fill in.
       const missing = (['lengthCm', 'widthCm', 'heightCm'] as const).filter((k) => !item[k]);
       throw fieldRefusal(
+        'DIMENSIONS_TOGETHER',
         'Give length, width and height together',
         missing.map((k) => `${path}.${k}`),
       );
@@ -356,6 +376,7 @@ export class BookingsService {
         ? ['lengthCm', 'widthCm', 'heightCm', 'quantity']
         : ['volumeCbm', 'quantity'];
       throw fieldRefusal(
+        'VOLUME_TOO_LARGE',
         'Volume is too large; check the dimensions and quantity',
         fields.map((k) => `${path}.${k}`),
       );

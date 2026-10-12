@@ -34,6 +34,10 @@ import {
   type NoticeState,
   revealFailure,
   useFailureText,
+  FieldNote,
+  fieldNote,
+  type FieldNoteState,
+  useRefusalReason,
 } from './Notice';
 import { PartyForm } from './PartyForm';
 import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
@@ -139,6 +143,9 @@ export function BookingForm({
   const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
   // The fields the last refused save named, marked on the form until the next save.
   const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
+  // Why it was refused, said under the first field the API named.
+  const [note, setNote] = useState<FieldNoteState | null>(null);
+  const refusalReason = useRefusalReason();
   const formRef = useRef<HTMLFormElement>(null);
   const mark = (path: string) => invalidProps(invalid, path);
   const markGroup = (path: string) => invalidGroupProps(invalid, path);
@@ -215,6 +222,7 @@ export function BookingForm({
     setBusy(true);
     setNotice(null);
     setInvalid(new Set());
+    setNote(null);
     setRefused(null);
     const sent = consolidation
       ? { ...fields, customerId: customer?.id ?? '' }
@@ -237,6 +245,7 @@ export function BookingForm({
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
       setInvalid(invalidFields(err));
+      setNote(fieldNote(err, refusalReason(err)));
       setRefused(
         refusedForm(err, {
           form: 'booking',
@@ -276,6 +285,7 @@ export function BookingForm({
           </button>
         )}
       </span>
+      <FieldNote note={note} path={field} />
     </label>
   );
 
@@ -330,6 +340,7 @@ export function BookingForm({
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="originLocationId" />
           </label>
           <label className="field">
             {t('destination')}
@@ -344,6 +355,7 @@ export function BookingForm({
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="destinationLocationId" />
           </label>
           <label className="field">
             {t('mode')}
@@ -359,6 +371,7 @@ export function BookingForm({
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="mode" />
           </label>
           {mode === 'SEA' && (
             <label className="field">
@@ -375,6 +388,7 @@ export function BookingForm({
                   </option>
                 ))}
               </select>
+              <FieldNote note={note} path="loadType" />
             </label>
           )}
           <label className="field">
@@ -390,6 +404,7 @@ export function BookingForm({
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="cargoType" />
           </label>
           <label className="field">
             {t('requestedDeparture')}
@@ -399,6 +414,7 @@ export function BookingForm({
               {...mark('requestedDeparture')}
               defaultValue={booking?.requestedDeparture ?? consolidation?.etd ?? ''}
             />
+            <FieldNote note={note} path="requestedDeparture" />
           </label>
         </div>
       </section>
@@ -429,6 +445,7 @@ export function BookingForm({
               {te(`service_${s}`)}
             </label>
           ))}
+          <FieldNote note={note} path="services" />
         </div>
       </section>
 
@@ -461,6 +478,7 @@ export function BookingForm({
                     </option>
                   ))}
                 </select>
+                <FieldNote note={note} path={`items.${index}.cargoType`} />
               </label>
               {i.cargoType === 'CONTAINER' && (
                 <label className="field">
@@ -478,6 +496,7 @@ export function BookingForm({
                         </option>
                       ))}
                   </select>
+                  <FieldNote note={note} path={`items.${index}.containerTypeCode`} />
                 </label>
               )}
               <label className="field">
@@ -490,6 +509,7 @@ export function BookingForm({
                   value={i.quantity}
                   onChange={(e) => updateItem(i.key, { quantity: e.target.value })}
                 />
+                <FieldNote note={note} path={`items.${index}.quantity`} />
               </label>
               {(['lengthCm', 'widthCm', 'heightCm', 'weightKg', 'volumeCbm'] as const).map((k) => (
                 <label key={k} className="field">
@@ -505,6 +525,7 @@ export function BookingForm({
                     disabled={k === 'volumeCbm' && hasDimensions(i)}
                     onChange={(e) => updateItem(i.key, { [k]: asciiDigits(e.target.value) })}
                   />
+                  <FieldNote note={note} path={`items.${index}.${k}`} />
                 </label>
               ))}
               <label className="field">
@@ -514,6 +535,7 @@ export function BookingForm({
                   value={i.description}
                   onChange={(e) => updateItem(i.key, { description: e.target.value })}
                 />
+                <FieldNote note={note} path={`items.${index}.description`} />
               </label>
               <button
                 type="button"
@@ -553,6 +575,7 @@ export function BookingForm({
               {...mark('cargoDescription')}
               defaultValue={booking?.cargoDescription ?? ''}
             />
+            <FieldNote note={note} path="cargoDescription" />
           </label>
           <label className="field">
             {t('specialInstructions')}
@@ -562,6 +585,7 @@ export function BookingForm({
               {...mark('specialInstructions')}
               defaultValue={booking?.specialInstructions ?? ''}
             />
+            <FieldNote note={note} path="specialInstructions" />
           </label>
         </div>
       </section>

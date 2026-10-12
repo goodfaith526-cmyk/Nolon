@@ -270,33 +270,45 @@ export class QuotationsService {
   }
 
   private async prepare(branchId: string, today: string, input: QuotationInput) {
-    await onFields(['originLocationId', 'destinationLocationId'], () =>
+    const route = ['originLocationId', 'destinationLocationId'];
+    if (input.originLocationId === input.destinationLocationId) {
+      throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+    }
+    await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
     if (input.mode !== 'SEA' && input.loadType) {
-      throw fieldRefusal('FCL/LCL applies to sea shipments only', ['loadType']);
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
     }
-    const currency = await onFields(['currency'], () =>
-      this.currencies.requireActive(input.currency),
+    const currency = await onFields(
+      ['currency'],
+      () => this.currencies.requireActive(input.currency),
+      'CURRENCY_NOT_ACTIVE',
     );
-    if (input.validUntil < today) throw fieldRefusal('Valid-until is in the past', ['validUntil']);
+    if (input.validUntil < today)
+      throw fieldRefusal('VALID_UNTIL_PAST', 'Valid-until is in the past', ['validUntil']);
 
     const resolved = [];
     for (const [index, line] of input.lines.entries()) {
       const path = `lines.${index}`;
       if (line.rateCardId) {
         const rateCardId = line.rateCardId;
-        const rate = await onFields([`${path}.rateCardId`], () =>
-          this.rates.requireUsableRate(rateCardId, {
-            branchId,
-            onDate: today,
-            currency: input.currency,
-            originLocationId: input.originLocationId,
-            destinationLocationId: input.destinationLocationId,
-            mode: input.mode,
-            loadType: input.loadType ?? null,
-            cargoType: input.cargoType,
-          }),
+        const rate = await onFields(
+          [`${path}.rateCardId`],
+          () =>
+            this.rates.requireUsableRate(rateCardId, {
+              branchId,
+              onDate: today,
+              currency: input.currency,
+              originLocationId: input.originLocationId,
+              destinationLocationId: input.destinationLocationId,
+              mode: input.mode,
+              loadType: input.loadType ?? null,
+              cargoType: input.cargoType,
+            }),
+          'RATE_NOT_USABLE',
         );
         resolved.push({
           rateCardId: rate.id,
@@ -316,13 +328,16 @@ export class QuotationsService {
             line.unitPrice === undefined && 'unitPrice',
           ].filter((k): k is string => k !== false);
           throw fieldRefusal(
+            'MANUAL_LINE_INCOMPLETE',
             'A line without a rate needs a charge type, unit and price',
             missing.map((k) => `${path}.${k}`),
           );
         }
         const chargeTypeCode = line.chargeTypeCode;
-        await onFields([`${path}.chargeTypeCode`], () =>
-          this.masterData.requireChargeType(chargeTypeCode),
+        await onFields(
+          [`${path}.chargeTypeCode`],
+          () => this.masterData.requireChargeType(chargeTypeCode),
+          'UNKNOWN_CHARGE_TYPE',
         );
         resolved.push({
           rateCardId: null,
@@ -342,7 +357,9 @@ export class QuotationsService {
       amounts = computeQuotationAmounts(resolved, currency.decimalPlaces);
     } catch (error) {
       if (error instanceof DiscountExceedsLineError) {
-        throw fieldRefusal(error.message, [`lines.${error.lineNo - 1}.discount`]);
+        throw fieldRefusal('DISCOUNT_EXCEEDS_LINE', error.message, [
+          `lines.${error.lineNo - 1}.discount`,
+        ]);
       }
       throw error;
     }

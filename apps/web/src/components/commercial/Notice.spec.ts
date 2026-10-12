@@ -9,6 +9,8 @@ const words: InvalidInputWords = {
   line: (n) => `line ${n}`,
   list: (parts) => parts.join(' and '),
   fields: (fields) => `Check: ${fields}`,
+  because: (reason, fields) => `${reason} Check: ${fields}`,
+  reason: (e) => (e instanceof ApiError && e.code === 'SAME_ROUTE' ? 'Pick two places.' : null),
   detail: (detail) => `Not saved: ${detail}`,
   generic: () => 'Check the fields',
 };
@@ -32,6 +34,19 @@ describe('invalidInputText', () => {
     );
     expect(invalidInputText(new ApiError(400, 'Bad Request'), words)).toBe('Check the fields');
     expect(invalidInputText(new Error('offline'), words)).toBe('Check the fields');
+  });
+});
+
+describe('invalidInputText with a broken rule', () => {
+  it('gives the reason for its code before the fields', () => {
+    const e = new ApiError(
+      400,
+      'x',
+      ['originLocationId'],
+      'Origin and destination must differ',
+      'SAME_ROUTE',
+    );
+    expect(invalidInputText(e, words)).toBe('Pick two places. Check: originLocationId');
   });
 });
 
@@ -68,6 +83,7 @@ describe('api() refusals', () => {
         new Response(
           JSON.stringify({
             message: 'Give length, width and height together',
+            code: 'DIMENSIONS_TOGETHER',
             fields: ['items.1.lengthCm'],
             statusCode: 400,
           }),
@@ -79,6 +95,8 @@ describe('api() refusals', () => {
       expect(error).toBeInstanceOf(ApiError);
       expect((error as ApiError).message).toBe('Give length, width and height together');
       expect((error as ApiError).fields).toEqual(['items.1.lengthCm']);
+      expect((error as ApiError).reason).toBe('Give length, width and height together');
+      expect((error as ApiError).code).toBe('DIMENSIONS_TOGETHER');
     } finally {
       globalThis.fetch = original;
     }

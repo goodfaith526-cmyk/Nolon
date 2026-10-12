@@ -167,6 +167,7 @@
   "Common": {
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
     "invalidFields": "لم يُحفظ. راجع: {fields}.",
+    "invalidBecause": "لم يُحفظ: {reason} راجع: {fields}.",
     "invalidDetail": "لم يُحفظ: {detail}",
     "lineNo": "السطر {n}",
     "noAccess": "ليس لديك صلاحية لهذا.",
@@ -2214,5 +2215,21 @@
     "note": "ملاحظة",
     "etd": "تاريخ المغادرة المتوقع",
     "eta": "تاريخ الوصول المتوقع"
+  },
+  "Refusals": {
+    "SAME_ROUTE": "يجب أن يختلف «من» عن «إلى».",
+    "LOAD_TYPE_SEA_ONLY": "FCL/LCL للشحن البحري فقط.",
+    "SERVICE_REQUIRED": "اختر خدمة واحدة على الأقل.",
+    "CONTAINER_TYPE_REQUIRED": "بند الحاوية يحتاج نوع الحاوية.",
+    "CONTAINER_TYPE_NOT_APPLICABLE": "نوع الحاوية لبنود الحاويات فقط.",
+    "UNKNOWN_CONTAINER_TYPE": "نوع الحاوية هذا غير معروف أو موقوف.",
+    "DIMENSIONS_TOGETHER": "اكتب الطول والعرض والارتفاع معًا، أو اتركها كلها واكتب الحجم (CBM).",
+    "VOLUME_TOO_LARGE": "الحجم كبير جدًا: راجع الأبعاد والعدد.",
+    "VALID_UNTIL_PAST": "تاريخ «صالح حتى» في الماضي.",
+    "CURRENCY_NOT_ACTIVE": "هذه العملة غير معروفة أو موقوفة.",
+    "RATE_NOT_USABLE": "هذا السعر لا ينطبق على عرض السعر هذا (المسار أو نمط الشحن أو التحميل أو البضاعة أو العملة أو التاريخ).",
+    "MANUAL_LINE_INCOMPLETE": "البند بدون سعر محفوظ يحتاج البند والوحدة والسعر.",
+    "UNKNOWN_CHARGE_TYPE": "هذا البند غير معروف أو موقوف.",
+    "DISCOUNT_EXCEEDS_LINE": "الخصم أكبر من مبلغ البند."
   }
 }
