@@ -5,11 +5,15 @@ import type {
 } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import { draftEvidencePaths } from '../drafts/draft-evidence.js';
+import { withReplaced } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { evidenceLine } from './new-customer-booking-drafts.controller.js';
 import {
+  CUSTOMER_APPROVED_REFUSAL,
+  CUSTOMER_CLOSED_REFUSAL,
   bookingRequestOf,
   customerNotReady,
+  requireReplaceablePair,
   newCustomerBookingHash,
   splitEvidence,
   storedRequest,
@@ -116,5 +120,52 @@ describe('bookings for a new customer: approval waits for the customer', () => {
     expect(customerNotReady(linked('DRAFT'))).toMatch(/Approve the new customer first/);
     expect(customerNotReady(linked('REJECTED'))).toMatch(/rejected/);
     expect(customerNotReady(linked('EXPIRED'))).toMatch(/expired/);
+  });
+});
+
+describe('bookings for a new customer: replacing a pair', () => {
+  const now = new Date('2026-10-12T10:00:00Z');
+  const later = new Date('2026-10-19T10:00:00Z');
+  const earlier = new Date('2026-10-05T10:00:00Z');
+  const open = { state: 'DRAFT' as const, expiresAt: later, version: 1 };
+
+  it('replaces a pair whose booking draft and customer draft are both open', () => {
+    expect(() => requireReplaceablePair(open, open, now)).not.toThrow();
+    expect(() => requireReplaceablePair({ ...open, version: 3 }, open, now)).not.toThrow();
+  });
+
+  it('refuses a booking draft already decided or expired', () => {
+    for (const booking of [
+      { ...open, state: 'APPROVED' as const },
+      { ...open, state: 'REJECTED' as const },
+    ]) {
+      expect(() => requireReplaceablePair(booking, open, now)).toThrow(/already decided/);
+    }
+    expect(() => requireReplaceablePair({ ...open, expiresAt: earlier }, open, now)).toThrow(
+      /expired/,
+    );
+  });
+
+  it('refuses a pair whose customer is approved: a new pair would add a second customer', () => {
+    expect(() =>
+      requireReplaceablePair(open, { ...open, state: 'APPROVED', version: 2 }, now),
+    ).toThrow(CUSTOMER_APPROVED_REFUSAL);
+  });
+
+  it('refuses a pair whose customer draft was rejected or expired', () => {
+    expect(() =>
+      requireReplaceablePair(open, { ...open, state: 'REJECTED', version: 2 }, now),
+    ).toThrow(CUSTOMER_CLOSED_REFUSAL);
+    expect(() => requireReplaceablePair(open, { ...open, expiresAt: earlier }, now)).toThrow(
+      CUSTOMER_CLOSED_REFUSAL,
+    );
+  });
+
+  it('binds the hash of a replacement to the draft it replaces', () => {
+    const base = newCustomerBookingHash(BRANCH, customer, booking);
+    const a = withReplaced(base, 'A5D3F1C2-1111-4222-8333-944455550001');
+    expect(a).not.toBe(base);
+    expect(withReplaced(base, 'a5d3f1c2-1111-4222-8333-944455550001')).toBe(a);
+    expect(withReplaced(base, 'a5d3f1c2-1111-4222-8333-944455550002')).not.toBe(a);
   });
 });
