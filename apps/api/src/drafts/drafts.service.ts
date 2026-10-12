@@ -377,6 +377,32 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
+/**
+ * The draft stored under an idempotency key, read before a create checks anything on live data, so
+ * a replay is answered with the draft it made (whatever happened since: approved, or the records
+ * moved on), not refused by checks that only a new draft must pass. Null when the key is new; a
+ * key stored with another request is refused (keyReused). The caller reads the draft back through
+ * its scope, so access is still checked as of now. The lookup inside the create's transaction
+ * stays: it settles concurrent creates under one key.
+ */
+export async function storedDraftUnderKey(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: { agentClientId: string; createdById: string; idempotencyKey: string },
+  hash: string,
+): Promise<string | null> {
+  requireDraftTable(table);
+  const rows = await client.$queryRaw<{ id: string; payload_hash: string }[]>`
+    SELECT "id", "payload_hash" FROM ${Prisma.raw(`"${table}"`)}
+    WHERE "agent_client_id" = ${scope.agentClientId}::uuid
+      AND "created_by_id" = ${scope.createdById}::uuid
+      AND "idempotency_key" = ${scope.idempotencyKey}`;
+  const row = rows[0];
+  if (!row) return null;
+  if (row.payload_hash !== hash) throw keyReused();
+  return row.id;
+}
+
 /** A key reused for another request: reveals nothing about the stored draft. */
 export function keyReused(): ConflictException {
   return new ConflictException('This idempotency key was used for another request');

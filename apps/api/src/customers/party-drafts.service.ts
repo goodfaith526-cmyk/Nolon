@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  DraftEvidence,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -10,6 +11,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
+import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
@@ -27,6 +29,7 @@ import {
   lockReplacedInTx,
   replaceInTx,
   replacementParentIds,
+  storedDraftUnderKey,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -59,9 +62,14 @@ export function partyRequestOf(d: DraftRow): PartyDraftRequest {
   };
 }
 
-/** sha256 of the normalised request (customer included): ids lower case, absent fields null. */
-export function partyRequestHash(customerId: string, input: PartyDraftRequest): string {
+/** sha256 of the normalised request and the staff member's words (customer included): ids lower case, absent fields null. */
+export function partyRequestHash(
+  customerId: string,
+  input: PartyDraftRequest,
+  evidence: readonly DraftEvidence[] = [],
+): string {
   return requestHash({
+    ...evidenceHashPart(evidence),
     customerId: customerId.toLowerCase(),
     name: input.name,
     companyName: input.companyName ?? null,
@@ -94,11 +102,15 @@ export class PartyDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, customerId, ...input } = body;
+    const { idempotencyKey, customerId, evidence = [], ...input } = body;
+    const hash = withReplaced(partyRequestHash(customerId, input, evidence), replacesDraftId);
+    const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'party_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
     // The checks of a real addParty that need no lock; nothing is written.
     const prepared = await this.customers.prepareAddParty(user, customerId);
-    const hash = withReplaced(partyRequestHash(customerId, input), replacesDraftId);
-    const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // An approval locks the customer, then the draft: a replacement takes the same order.
@@ -130,6 +142,7 @@ export class PartyDraftsService {
             customerId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
+            evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
             name: input.name,
             companyName: input.companyName ?? null,
             phone: input.phone ?? null,
@@ -178,7 +191,12 @@ export class PartyDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    return { ...baseFields(draft, user, now), request: partyRequestOf(draft), check };
+    return {
+      ...baseFields(draft, user, now),
+      request: partyRequestOf(draft),
+      evidence: evidenceOf(draft.evidence),
+      check,
+    };
   }
 
   /**
@@ -186,11 +204,18 @@ export class PartyDraftsService {
    * the approval. Locks the customer first, then the draft row, as every party change does.
    * Approving an approved draft returns it as it is.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<PartyDraftDto> {
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    confirmed: readonly string[] = [],
+  ): Promise<PartyDraftDto> {
     this.drafts.requireDecider(user, 'SESSION', HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Each value ticked against the staff member's words on the review screen.
+    requireConfirmed(evidenceOf(current.evidence), confirmed);
     await this.customers.prepareAddParty(user, current.customerId);
     await this.prisma.$transaction(async (tx) => {
       let partyId = '';
@@ -278,7 +303,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<PartyDraftDto, 'request' | 'check'> {
+): Omit<PartyDraftDto, 'request' | 'check' | 'evidence'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('customers:update');
   return {

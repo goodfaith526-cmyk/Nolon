@@ -2972,6 +2972,8 @@ model CustomerDraft {
   city            String?          @db.VarChar(100)
   address         String?          @db.VarChar(500)
   notes           String?          @db.VarChar(2000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
   /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
@@ -3160,6 +3162,8 @@ model ShipmentStatusDraft {
   status          ShipmentStatus
   locationId      String?          @map("location_id") @db.Uuid
   note            String?          @db.VarChar(1000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
   /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
@@ -3200,6 +3204,8 @@ model PartyDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   name            String           @db.VarChar(200)
   companyName     String?          @map("company_name") @db.VarChar(200)
   phone           String?          @db.VarChar(20)

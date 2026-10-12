@@ -26,6 +26,7 @@ import {
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
+import { confirmedFields, draftEvidence } from '../drafts/draft-evidence.js';
 import { splitReplaced } from '../drafts/drafts.service.js';
 import { optionalText, parse, requiredText } from '../common/validation.js';
 import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js';
@@ -43,9 +44,12 @@ const createBody = z
       .refine((s) => !excluded.includes(s), 'This status cannot be proposed by the assistant'),
     locationId: z.uuid().nullish(),
     note: optionalText(1000),
+    evidence: draftEvidence(['shipmentId', 'status', 'locationId']),
   })
   .strict();
-const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const approveBody = z
+  .object({ version: z.number().int().min(1), confirmed: confirmedFields })
+  .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
@@ -106,7 +110,8 @@ export class ShipmentStatusDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<ShipmentStatusDraftDto> {
-    return this.drafts.approve(user, id, parse(approveBody, body).version);
+    const { version, confirmed } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, confirmed);
   }
 
   @Post(':id/reject')

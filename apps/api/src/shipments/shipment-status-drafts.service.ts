@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  DraftEvidence,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -9,6 +10,7 @@ import type {
   ShipmentStatusDraftRequest,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
@@ -23,6 +25,7 @@ import {
   DraftsService,
   decideInTx,
   keyReused,
+  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
   replacementParentIds,
@@ -31,7 +34,6 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { shipmentScope } from './shipment-scope.js';
 import { ShipmentsService } from './shipments.service.js';
 import { permissionForTransition } from './state-machine.js';
 
@@ -52,9 +54,14 @@ export function statusRequestOf(d: DraftRow): ShipmentStatusDraftRequest {
   return { status: d.status, locationId: d.locationId, note: d.note };
 }
 
-/** sha256 of the normalised request (shipment included): ids lower case. */
-export function statusRequestHash(shipmentId: string, input: ShipmentStatusDraftRequest): string {
+/** sha256 of the normalised request and the staff member's words (shipment included): ids lower case. */
+export function statusRequestHash(
+  shipmentId: string,
+  input: ShipmentStatusDraftRequest,
+  evidence: readonly DraftEvidence[] = [],
+): string {
   return requestHash({
+    ...evidenceHashPart(evidence),
     shipmentId: shipmentId.toLowerCase(),
     status: input.status,
     locationId: input.locationId ? input.locationId.toLowerCase() : null,
@@ -66,8 +73,9 @@ export function statusRequestHash(shipmentId: string, input: ShipmentStatusDraft
  * Shipment status changes proposed by the staff AI assistant (entry drafts, src/drafts). A person
  * approves a draft on the review screen, which moves the shipment through the state machine in
  * the same transaction, dated at the approval, with their permissions (the move is checked again
- * under the shipment lock); or rejects it. Access follows the shipment. There is no decision from
- * the assistant's chat.
+ * under the shipment lock); or rejects it. Access follows the shipment as the user may see it
+ * (ShipmentsService.visibleWhere): a Driver only reaches the shipments of their own trips. There
+ * is no decision from the assistant's chat.
  */
 @Injectable()
 export class ShipmentStatusDraftsService {
@@ -83,11 +91,15 @@ export class ShipmentStatusDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, shipmentId, ...input } = body;
+    const { idempotencyKey, shipmentId, evidence = [], ...input } = body;
+    const hash = withReplaced(statusRequestHash(shipmentId, input, evidence), replacesDraftId);
+    const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'shipment_status_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
     // The checks of a real status change that need no lock; nothing is written.
     const prepared = await this.shipments.prepareStatusChange(user, shipmentId, input);
-    const hash = withReplaced(statusRequestHash(shipmentId, input), replacesDraftId);
-    const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // An approval locks the shipment, then the draft: a replacement takes the same order.
@@ -126,6 +138,7 @@ export class ShipmentStatusDraftsService {
             shipmentId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
+            evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
             status: input.status,
             locationId: input.locationId ?? null,
             note: input.note ?? null,
@@ -141,7 +154,12 @@ export class ShipmentStatusDraftsService {
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const draft = await this.prisma.shipmentStatusDraft.findFirst({
-      where: { agentClientId, createdById: user.id, idempotencyKey, shipment: shipmentScope(user) },
+      where: {
+        agentClientId,
+        createdById: user.id,
+        idempotencyKey,
+        shipment: this.shipments.visibleWhere(user),
+      },
       include: details,
     });
     if (!draft) throw new NotFoundException('Shipment status draft not found');
@@ -151,7 +169,7 @@ export class ShipmentStatusDraftsService {
   async list(user: AuthUser, status?: DraftStatus): Promise<ShipmentStatusDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.shipmentStatusDraft.findMany({
-      where: { shipment: shipmentScope(user), ...stateFilter(status, now) },
+      where: { shipment: this.shipments.visibleWhere(user), ...stateFilter(status, now) },
       include: details,
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -174,7 +192,12 @@ export class ShipmentStatusDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    return { ...baseFields(draft, user, now), request: statusRequestOf(draft), check };
+    return {
+      ...baseFields(draft, user, now),
+      request: statusRequestOf(draft),
+      evidence: evidenceOf(draft.evidence),
+      check,
+    };
   }
 
   /**
@@ -182,11 +205,18 @@ export class ShipmentStatusDraftsService {
    * the approval, dated now. Locks the shipment first, then the draft row, as every shipment child
    * write does. Approving an approved draft returns it as it is.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<ShipmentStatusDraftDto> {
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    confirmed: readonly string[] = [],
+  ): Promise<ShipmentStatusDraftDto> {
     this.drafts.requireDecider(user, 'SESSION', HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Each value ticked against the staff member's words on the review screen.
+    requireConfirmed(evidenceOf(current.evidence), confirmed);
     const request = statusRequestOf(current);
     await this.shipments.prepareStatusChange(user, current.shipmentId, request);
     await this.prisma.$transaction(async (tx) => {
@@ -250,7 +280,7 @@ export class ShipmentStatusDraftsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
     const draft = await this.prisma.shipmentStatusDraft.findFirst({
-      where: { id, shipment: shipmentScope(user) },
+      where: { id, shipment: this.shipments.visibleWhere(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Shipment status draft not found');
@@ -278,7 +308,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<ShipmentStatusDraftDto, 'request' | 'check'> {
+): Omit<ShipmentStatusDraftDto, 'request' | 'check' | 'evidence'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && canMove(user, d.status);
   return {

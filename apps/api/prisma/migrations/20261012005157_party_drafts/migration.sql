@@ -10,6 +10,7 @@ CREATE TABLE "party_drafts" (
     "created_by_id" UUID NOT NULL,
     "idempotency_key" VARCHAR(100) NOT NULL,
     "payload_hash" CHAR(64) NOT NULL,
+    "evidence" JSONB NOT NULL DEFAULT '[]',
     "name" VARCHAR(200) NOT NULL,
     "company_name" VARCHAR(200),
     "phone" VARCHAR(20),
@@ -69,6 +70,10 @@ ALTER TABLE "party_drafts" ADD CONSTRAINT "party_drafts_decision_check" CHECK (
      AND "decided_via" = 'SESSION' AND "reject_reason" IS NULL AND "party_id" IS NOT NULL)
   OR ("state" = 'REJECTED' AND "decided_at" IS NOT NULL AND "decided_by_id" IS NOT NULL
      AND "decided_via" IS NOT NULL AND "reject_reason" IS NOT NULL AND "party_id" IS NULL)
+);
+-- The words are a JSON array (drafts/draft-evidence.ts).
+ALTER TABLE "party_drafts" ADD CONSTRAINT "party_drafts_evidence_check" CHECK (
+  jsonb_typeof("evidence") = 'array'
 );
 ALTER TABLE "party_drafts" ADD CONSTRAINT "party_drafts_version_check" CHECK (
   "version" >= 1

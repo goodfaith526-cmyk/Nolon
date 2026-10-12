@@ -70,6 +70,22 @@ export interface EntryDraftSummaryDto {
   createdAt: string;
 }
 
+/**
+ * The staff member's own words for one value of a draft (`field`: its path in the request, such
+ * as `status` or `shipmentId`), as the assistant checked them against the conversation. Drafts
+ * decided on the review screen only carry them, and the person ticks each value against its
+ * words before approving.
+ */
+export interface DraftEvidence {
+  field: string;
+  quote: string;
+}
+
+/** The words of a review-screen draft, and what an approval sends back: each field it ticked. */
+export interface EvidenceReviewFields {
+  evidence: DraftEvidence[];
+}
+
 /** Common to every draft a person reviews. */
 export interface EntryDraftReviewFields {
   id: string;
