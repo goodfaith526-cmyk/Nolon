@@ -2,11 +2,11 @@
 
 import type { CustomerSummaryDto, Page } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { api } from '@/lib/api';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
+import { FormDialog } from './FormDialog';
 
 /**
  * Search customers by name, number or phone and pick one. With `allowCreate`, someone who may
@@ -116,11 +116,6 @@ export function CustomerPicker({
   );
 }
 
-/**
- * The customer form in a modal dialog. It is rendered at the end of the page, outside the form
- * the picker sits in (a form inside a form is not valid HTML), and its submit stops here: React
- * passes events up through a portal, and the outer form must not submit with it.
- */
 function NewCustomerDialog({
   initialName,
   onClose,
@@ -130,30 +125,9 @@ function NewCustomerDialog({
   onClose: () => void;
   onSaved: (c: CustomerSummaryDto) => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', '');
-    return () => {
-      if (dialog.open && typeof dialog.close === 'function') dialog.close();
-    };
-  }, []);
-
-  return createPortal(
-    <dialog
-      ref={ref}
-      className="form-dialog"
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
-      }}
-      onSubmit={(e) => e.stopPropagation()}
-    >
+  return (
+    <FormDialog onClose={onClose}>
       <CustomerForm initialName={initialName} onCancel={onClose} onSaved={onSaved} />
-    </dialog>,
-    document.body,
+    </FormDialog>
   );
 }

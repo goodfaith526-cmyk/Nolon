@@ -3,6 +3,7 @@ import type {
   AuditLogDto,
   BookingDto,
   CustomerDto,
+  CustomerPartyAddedDto,
   MasterDataDto,
   Page,
   QuotationDto,
@@ -222,6 +223,30 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await get('/customers', cookies.opsDxb).expect(200);
       await post('/customers', cookies.opsDxb, customerBody(dxb)).expect(403);
       await post('/customers', cookies.financeDxb, customerBody(dxb)).expect(403);
+    });
+
+    it('adds a party only with customers:update, in the user’s own branches', async () => {
+      const own = await createCustomer(cookies.salesDxb, dxb);
+      const jedCustomer = await createCustomer(cookies.salesJed, jed);
+      const party = { name: 'Omdurman Trading' };
+      await post(`/customers/${own.id}/parties`, cookies.opsDxb, party).expect(403);
+      await post(`/customers/${own.id}/parties`, cookies.financeDxb, party).expect(403);
+      await post(`/customers/${own.id}/parties`, cookies.driver, party).expect(403);
+      await post(`/customers/${jedCustomer.id}/parties`, cookies.salesDxb, party).expect(404);
+      const untouched = (await get(`/customers/${own.id}`, cookies.salesDxb).expect(200))
+        .body as CustomerDto;
+      expect(untouched.parties).toEqual([]);
+      const added = (
+        await post(`/customers/${own.id}/parties`, cookies.salesDxb, party).expect(201)
+      ).body as CustomerPartyAddedDto;
+      expect(added.parties.map((p) => p.id)).toEqual([added.addedPartyId]);
+      // Two parties with the same name: the answer names the one this request created.
+      const again = (
+        await post(`/customers/${own.id}/parties`, cookies.salesDxb, party).expect(201)
+      ).body as CustomerPartyAddedDto;
+      expect(again.parties).toHaveLength(2);
+      expect(again.addedPartyId).not.toBe(added.addedPartyId);
+      expect(again.parties.map((p) => p.id)).toContain(again.addedPartyId);
     });
 
     it('validates phone format, currency and the credit limit pair', async () => {
