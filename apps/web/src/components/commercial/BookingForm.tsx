@@ -19,8 +19,11 @@ import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
+import { can, useMe } from '../StaffShell';
 import { CustomerPicker } from './CustomerPicker';
+import { FormDialog } from './FormDialog';
 import { Notice, type NoticeState, useFailureText } from './Notice';
+import { PartyForm } from './PartyForm';
 
 interface ItemState {
   key: number;
@@ -51,6 +54,8 @@ const emptyItem = (cargoType: CargoType): ItemState => ({
 
 const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
 
+type PartyField = 'shipperId' | 'consigneeId' | 'notifyPartyId';
+
 /** New direct booking, or edit of a draft. CBM is computed by the API from the dimensions. */
 export function BookingForm({ booking }: { booking?: BookingDto }) {
   const t = useTranslations('Bookings');
@@ -60,6 +65,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
   const master = useMasterData();
   const failure = useFailureText();
   const router = useRouter();
+  const me = useMe();
 
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
@@ -84,6 +90,12 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
     })) ?? [emptyItem('CONTAINER')],
   );
   const [busy, setBusy] = useState(false);
+  const [partyIds, setPartyIds] = useState<Record<PartyField, string>>({
+    shipperId: booking?.shipperId ?? '',
+    consigneeId: booking?.consigneeId ?? '',
+    notifyPartyId: booking?.notifyPartyId ?? '',
+  });
+  const [addingParty, setAddingParty] = useState<PartyField | null>(null);
 
   // Until the user picks, the route defaults to the first two active locations.
   const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
@@ -167,17 +179,29 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
   if (!master) return <p className="muted">{tc('loading')}</p>;
   const locations = master.locations.filter((l) => l.isActive);
   const parties = (details?.id === customerId ? details?.parties : undefined) ?? [];
-  const partySelect = (field: 'shipperId' | 'consigneeId' | 'notifyPartyId') => (
+  const mayAddParty = !!customerId && details?.id === customerId && can(me, 'customers:update');
+  const partySelect = (field: PartyField) => (
     <label className="field">
       {t(field)}
-      <select name={field} defaultValue={booking?.[field] ?? ''}>
-        <option value="">—</option>
-        {parties.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
+      <span className="row">
+        <select
+          name={field}
+          value={partyIds[field]}
+          onChange={(e) => setPartyIds((all) => ({ ...all, [field]: e.target.value }))}
+        >
+          <option value="">—</option>
+          {parties.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        {mayAddParty && (
+          <button type="button" onClick={() => setAddingParty(field)}>
+            {t('addNewParty')}
+          </button>
+        )}
+      </span>
     </label>
   );
 
@@ -192,7 +216,14 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             <p>{t('sectionCustomerHint')}</p>
           </header>
           <div className="form-section-body">
-            <CustomerPicker value={customer} onChange={setCustomer} allowCreate />
+            <CustomerPicker
+              value={customer}
+              onChange={(c) => {
+                setCustomer(c);
+                setPartyIds({ shipperId: '', consigneeId: '', notifyPartyId: '' });
+              }}
+              allowCreate
+            />
           </div>
         </section>
       )}
@@ -430,6 +461,22 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
           {tc('save')}
         </button>
       </div>
+      {addingParty && details && (
+        <FormDialog onClose={() => setAddingParty(null)}>
+          <PartyForm
+            customerId={details.id}
+            title={t(addingParty)}
+            onCancel={() => setAddingParty(null)}
+            onSaved={(c) => {
+              const known = new Set(parties.map((p) => p.id));
+              const added = c.parties.find((p) => !known.has(p.id));
+              setDetails(c);
+              if (added) setPartyIds((all) => ({ ...all, [addingParty]: added.id }));
+              setAddingParty(null);
+            }}
+          />
+        </FormDialog>
+      )}
     </form>
   );
 }

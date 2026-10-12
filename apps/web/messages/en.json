@@ -479,6 +479,7 @@
     "shipperId": "Shipper",
     "consigneeId": "Consignee",
     "notifyPartyId": "Notify party",
+    "addNewParty": "Add new",
     "services": "Services",
     "cargoDescription": "Cargo description",
     "items": "Cargo lines",
