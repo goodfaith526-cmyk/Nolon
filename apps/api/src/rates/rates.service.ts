@@ -166,21 +166,35 @@ export class RatesService {
    * it. A duplicate is a 409.
    */
   async create(user: AuthUser, input: CreateRateCardRequest): Promise<RateCardDto> {
+    await this.prepareCreate(user, input);
+    return toDto(await this.prisma.$transaction((tx) => this.createInTx(tx, user, input)));
+  }
+
+  /** The checks of create that need no lock (branch access, the rate's rules); nothing is written. */
+  async prepareCreate(user: AuthUser, input: CreateRateCardRequest): Promise<void> {
     assertBranchAccess(user, input.branchId);
     await this.validate(input);
+  }
+
+  /**
+   * create's write, in the caller's transaction (an approved rate card draft): a DRAFT rate,
+   * under the branch's rate lock, with its audit row. The caller ran prepareCreate.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    input: CreateRateCardRequest,
+  ): Promise<RateCard> {
     const { branchId, ...fields } = input;
-    const rate = await this.prisma.$transaction(async (tx) => {
-      await lockBranchRule(tx, RATE_UNIQUE_RULE, [branchId]);
-      throwFirstConflict(await this.duplicateIssues(tx, [input]));
-      const created = await tx.rateCard.create({
-        data: { ...toData(fields), branchId, createdById: user.id },
-      });
-      await this.log(tx, user, 'CREATED', [created], (r) =>
-        changedFields(null, auditFields(r), RATE_AUDIT_FIELDS),
-      );
-      return created;
+    await lockBranchRule(tx, RATE_UNIQUE_RULE, [branchId]);
+    throwFirstConflict(await this.duplicateIssues(tx, [input]));
+    const created = await tx.rateCard.create({
+      data: { ...toData(fields), branchId, createdById: user.id },
     });
-    return toDto(rate);
+    await this.log(tx, user, 'CREATED', [created], (r) =>
+      changedFields(null, auditFields(r), RATE_AUDIT_FIELDS),
+    );
+    return created;
   }
 
   /**
