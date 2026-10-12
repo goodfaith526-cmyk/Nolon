@@ -23,7 +23,8 @@ import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-fi
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { PageQuery } from '../common/validation.js';
+import { onFields } from '../common/rule-issues.js';
+import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -283,12 +284,14 @@ export class BookingsService {
 
   /** `customerId` null: a booking for a customer not in NOLON yet, which names no parties. */
   private async prepare(customerId: string | null, input: BookingInput) {
-    await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
+    await onFields(['originLocationId', 'destinationLocationId'], () =>
+      this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
+    );
     if (input.mode !== 'SEA' && input.loadType) {
-      throw new BadRequestException('FCL/LCL applies to sea shipments only');
+      throw fieldRefusal('FCL/LCL applies to sea shipments only', ['loadType']);
     }
     const services: BookingService[] = [...new Set(input.services)];
-    if (services.length === 0) throw new BadRequestException('Choose at least one service');
+    if (services.length === 0) throw fieldRefusal('Choose at least one service', ['services']);
     const parties = [input.shipperId, input.consigneeId, input.notifyPartyId];
     if (customerId !== null) {
       await this.customers.requireOwnParties(customerId, parties);
@@ -297,7 +300,7 @@ export class BookingsService {
     }
     const items = [];
     for (const [index, item] of input.items.entries()) {
-      items.push({ lineNo: index + 1, ...(await this.prepareItem(item)) });
+      items.push({ lineNo: index + 1, ...(await this.prepareItem(item, `items.${index}`)) });
     }
     return {
       header: {
@@ -318,21 +321,29 @@ export class BookingsService {
     };
   }
 
-  private async prepareItem(item: BookingItemInput) {
+  /** One cargo line; a refusal names its fields under `path` (`items.<index>`). */
+  private async prepareItem(item: BookingItemInput, path: string) {
+    const containerType = [`${path}.containerTypeCode`];
     if (item.cargoType === 'CONTAINER') {
       if (!item.containerTypeCode) {
-        throw new BadRequestException('A container line needs a container type');
+        throw fieldRefusal('A container line needs a container type', containerType);
       }
-      await this.masterData.requireContainerType(item.containerTypeCode);
+      const code = item.containerTypeCode;
+      await onFields(containerType, () => this.masterData.requireContainerType(code));
     } else if (item.containerTypeCode) {
-      throw new BadRequestException('Container type applies to container lines only');
+      throw fieldRefusal('Container type applies to container lines only', containerType);
     }
     const length = item.lengthCm ? dec(item.lengthCm) : null;
     const width = item.widthCm ? dec(item.widthCm) : null;
     const height = item.heightCm ? dec(item.heightCm) : null;
     const dimensions = [length, width, height].filter((d) => d !== null).length;
     if (dimensions !== 0 && dimensions !== 3) {
-      throw new BadRequestException('Give length, width and height together');
+      // The missing ones are named: those are the fields to fill in.
+      const missing = (['lengthCm', 'widthCm', 'heightCm'] as const).filter((k) => !item[k]);
+      throw fieldRefusal(
+        'Give length, width and height together',
+        missing.map((k) => `${path}.${k}`),
+      );
     }
     const volumeCbm =
       length && width && height
@@ -341,7 +352,13 @@ export class BookingsService {
           ? dec(item.volumeCbm)
           : null;
     if (volumeCbm?.gt(MAX_VOLUME_CBM)) {
-      throw new BadRequestException('Volume is too large; check the dimensions and quantity');
+      const fields = length
+        ? ['lengthCm', 'widthCm', 'heightCm', 'quantity']
+        : ['volumeCbm', 'quantity'];
+      throw fieldRefusal(
+        'Volume is too large; check the dimensions and quantity',
+        fields.map((k) => `${path}.${k}`),
+      );
     }
     return {
       cargoType: item.cargoType,

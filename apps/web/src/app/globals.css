@@ -3155,6 +3155,12 @@ html[dir='rtl'] .report-card::after {
   padding-block: 1.25rem 1.25rem;
 }
 
+/* Why save is not offered yet: on the start side, before the buttons. */
+.form-footer > p {
+  margin: 0;
+  margin-inline-end: auto;
+}
+
 @media (max-width: 900px) {
   .form-section {
     grid-template-columns: minmax(0, 1fr);

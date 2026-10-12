@@ -65,6 +65,9 @@ const emptyItem = (cargoType: CargoType): ItemState => ({
   volumeCbm: '',
 });
 
+const DIMENSIONS: readonly string[] = ['lengthCm', 'widthCm', 'heightCm'];
+const hasDimensions = (i: ItemState) => i.lengthCm !== '' || i.widthCm !== '' || i.heightCm !== '';
+
 const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
 
 type PartyField = 'shipperId' | 'consigneeId' | 'notifyPartyId';
@@ -496,7 +499,10 @@ export function BookingForm({
                     dir="ltr"
                     {...mark(`items.${index}.${k}`)}
                     value={i[k]}
-                    disabled={k === 'volumeCbm' && i.lengthCm !== ''}
+                    // Once one dimension is typed the other two are asked for here, and the API
+                    // computes the CBM from them.
+                    required={DIMENSIONS.includes(k) && hasDimensions(i)}
+                    disabled={k === 'volumeCbm' && hasDimensions(i)}
                     onChange={(e) => updateItem(i.key, { [k]: asciiDigits(e.target.value) })}
                   />
                 </label>
@@ -561,6 +567,7 @@ export function BookingForm({
       </section>
 
       <div className="actions form-footer">
+        {!booking && customer === null && <p className="muted">{t('pickCustomerToSave')}</p>}
         <button type="button" onClick={() => router.back()}>
           {tc('cancel')}
         </button>

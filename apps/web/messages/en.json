@@ -520,7 +520,8 @@
     "dimensions": "L × W × H (cm)",
     "openShipment": "Open shipment",
     "addToContainer": "New LCL booking in container {number}",
-    "addToContainerHint": "The booking leaves from the container's port of loading, sea LCL. Saving confirms it, creates its shipment and puts it in the container."
+    "addToContainerHint": "The booking leaves from the container's port of loading, sea LCL. Saving confirms it, creates its shipment and puts it in the container.",
+    "pickCustomerToSave": "Choose the customer at the top of the form to save."
   },
   "Shipments": {
     "title": "Shipments",

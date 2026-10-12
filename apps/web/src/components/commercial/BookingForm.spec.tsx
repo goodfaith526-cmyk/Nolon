@@ -259,6 +259,20 @@ describe('BookingForm refused save', () => {
     // An Arabic keyboard's digits are read as 0-9.
     typeInto(weight(), '١٢٫٥');
     expect(weight().value).toBe('12.5');
+    // One dimension asks for the other two here, and the CBM then comes from them.
+    const input = (k: string) =>
+      [...document.querySelectorAll('label.field')]
+        .find((l) => l.textContent?.startsWith(k))
+        ?.querySelector('input') as HTMLInputElement;
+    expect(input('lengthCm').required).toBe(false);
+    typeInto(input('heightCm'), '100');
+    expect(['lengthCm', 'widthCm', 'heightCm'].map((k) => input(k).required)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(input('volumeCbm').disabled).toBe(true);
+    typeInto(input('heightCm'), '');
 
     act(() => {
       (document.querySelector('form') as HTMLFormElement).requestSubmit();

@@ -616,11 +616,24 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     it('refuses a rate for another route, mode, load or cargo type', async () => {
       const lines = (rateCardId: string) => [{ rateCardId, quantity: '1' }];
       const otherRoute = await approvedRate({ originLocationId: jeddah });
-      await post(
+      // The refusal names the line's rate, for the form to mark.
+      const refusal = await post(
         '/quotations',
         cookies.salesDxb,
-        quotationBody(customer.id, lines(otherRoute.id)),
+        quotationBody(customer.id, [
+          { chargeTypeCode: 'FREIGHT', unit: 'PER_SHIPMENT', unitPrice: '1', quantity: '1' },
+          ...lines(otherRoute.id),
+        ]),
       ).expect(400);
+      expect(refusal.body).toMatchObject({ fields: ['lines.1.rateCardId'] });
+      const manual = await post(
+        '/quotations',
+        cookies.salesDxb,
+        quotationBody(customer.id, [{ unit: 'PER_SHIPMENT', quantity: '1' }]),
+      ).expect(400);
+      expect(manual.body).toMatchObject({
+        fields: ['lines.0.chargeTypeCode', 'lines.0.unitPrice'],
+      });
       const lcl = await approvedRate({ loadType: 'LCL' });
       await post('/quotations', cookies.salesDxb, quotationBody(customer.id, lines(lcl.id))).expect(
         400,
@@ -884,18 +897,32 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         cookies.salesDxb,
         directBooking({ consigneeId: foreignParty.parties[0]?.id }),
       ).expect(400);
-      await post(
-        '/bookings',
-        cookies.salesDxb,
-        directBooking({ items: [{ cargoType: 'PALLET', quantity: 1, lengthCm: '100' }] }),
-      ).expect(400);
-      await post(
-        '/bookings',
-        cookies.salesDxb,
-        directBooking({ items: [{ cargoType: 'CONTAINER', quantity: 1 }] }),
-      ).expect(400);
-      await post('/bookings', cookies.salesDxb, directBooking({ services: [] })).expect(400);
-      await post('/bookings', cookies.salesDxb, directBooking({ mode: 'ROAD' })).expect(400);
+      // A broken rule gives its reason and names the fields to fix, for the form to mark.
+      const refused = async (body: object) =>
+        (await post('/bookings', cookies.salesDxb, directBooking(body)).expect(400)).body as {
+          message: string;
+          fields?: string[];
+        };
+      const pallet = { cargoType: 'PALLET', quantity: 1 };
+      expect(
+        await refused({ items: [pallet, { ...pallet, heightCm: '100', widthCm: '50' }] }),
+      ).toMatchObject({
+        message: 'Give length, width and height together',
+        fields: ['items.1.lengthCm'],
+      });
+      expect(await refused({ items: [{ cargoType: 'CONTAINER', quantity: 1 }] })).toMatchObject({
+        fields: ['items.0.containerTypeCode'],
+      });
+      expect(
+        await refused({
+          items: [{ cargoType: 'CONTAINER', quantity: 1, containerTypeCode: 'XX' }],
+        }),
+      ).toMatchObject({ fields: ['items.0.containerTypeCode'] });
+      expect(await refused({ services: [] })).toMatchObject({ message: ['services'] });
+      expect(await refused({ mode: 'ROAD' })).toMatchObject({ fields: ['loadType'] });
+      expect(await refused({ destinationLocationId: jeddah })).toMatchObject({
+        fields: ['originLocationId', 'destinationLocationId'],
+      });
     });
 
     it('rejects measurements that would overflow or be rounded by the database', async () => {
