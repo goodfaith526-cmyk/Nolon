@@ -30,6 +30,7 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
   replacementShipmentIds,
@@ -102,11 +103,15 @@ export class GoodsReleaseDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, shipmentId, ...input } = body;
+    const hash = withReplaced(releaseRequestHash(shipmentId, input), replacesDraftId);
+    const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'goods_release_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
     // The checks of a real release that need no lock; nothing is written.
     const prepared = await this.movements.prepareRelease(user, shipmentId, input);
     await this.requireWarehouse(user, input.warehouseId);
-    const hash = withReplaced(releaseRequestHash(shipmentId, input), replacesDraftId);
-    const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         if (replacesDraftId !== null) {

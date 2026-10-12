@@ -23,6 +23,7 @@ import {
   DraftsService,
   decideInTx,
   keyReused,
+  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
   replacementShipmentIds,
@@ -31,7 +32,6 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { shipmentScope } from './shipment-scope.js';
 import { ShipmentsService } from './shipments.service.js';
 import { permissionForTransition } from './state-machine.js';
 
@@ -66,8 +66,9 @@ export function statusRequestHash(shipmentId: string, input: ShipmentStatusDraft
  * Shipment status changes proposed by the staff AI assistant (entry drafts, src/drafts). A person
  * approves a draft on the review screen, which moves the shipment through the state machine in
  * the same transaction, dated at the approval, with their permissions (the move is checked again
- * under the shipment lock); or rejects it. Access follows the shipment. There is no decision from
- * the assistant's chat.
+ * under the shipment lock); or rejects it. Access follows the shipment as the user may see it
+ * (ShipmentsService.visibleWhere): a Driver only reaches the shipments of their own trips. There
+ * is no decision from the assistant's chat.
  */
 @Injectable()
 export class ShipmentStatusDraftsService {
@@ -84,10 +85,14 @@ export class ShipmentStatusDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, shipmentId, ...input } = body;
-    // The checks of a real status change that need no lock; nothing is written.
-    const prepared = await this.shipments.prepareStatusChange(user, shipmentId, input);
     const hash = withReplaced(statusRequestHash(shipmentId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'shipment_status_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
+    // The checks of a real status change that need no lock; nothing is written.
+    const prepared = await this.shipments.prepareStatusChange(user, shipmentId, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // An approval locks the shipment, then the draft: a replacement takes the same order.
@@ -141,7 +146,12 @@ export class ShipmentStatusDraftsService {
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const draft = await this.prisma.shipmentStatusDraft.findFirst({
-      where: { agentClientId, createdById: user.id, idempotencyKey, shipment: shipmentScope(user) },
+      where: {
+        agentClientId,
+        createdById: user.id,
+        idempotencyKey,
+        shipment: this.shipments.visibleWhere(user),
+      },
       include: details,
     });
     if (!draft) throw new NotFoundException('Shipment status draft not found');
@@ -151,7 +161,7 @@ export class ShipmentStatusDraftsService {
   async list(user: AuthUser, status?: DraftStatus): Promise<ShipmentStatusDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.shipmentStatusDraft.findMany({
-      where: { shipment: shipmentScope(user), ...stateFilter(status, now) },
+      where: { shipment: this.shipments.visibleWhere(user), ...stateFilter(status, now) },
       include: details,
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -250,7 +260,7 @@ export class ShipmentStatusDraftsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
     const draft = await this.prisma.shipmentStatusDraft.findFirst({
-      where: { id, shipment: shipmentScope(user) },
+      where: { id, shipment: this.shipments.visibleWhere(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Shipment status draft not found');

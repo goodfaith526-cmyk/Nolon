@@ -1055,6 +1055,11 @@ export class ShipmentsService {
    * on trips assigned to them (their driver record is linked to their user), cancelled trips
    * excepted; the trip in one of their branches, the shipment visible in one of them.
    */
+  /** The shipments this user may see (scope below): for records read through their shipment. */
+  visibleWhere(user: AuthUser): Prisma.ShipmentWhereInput {
+    return this.scope(user);
+  }
+
   private scope(user: AuthUser): Prisma.ShipmentWhereInput {
     if (limitedToOwnTrips(user, 'shipments')) {
       return {
