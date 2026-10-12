@@ -3,6 +3,7 @@ import { AccountingModule } from '../accounting/accounting.module.js';
 import { AuditModule } from '../audit/audit.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { BookingsModule } from '../bookings/bookings.module.js';
+import { ConsolidationsModule } from '../consolidations/consolidations.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { CustomsModule } from '../customs/customs.module.js';
 import { DocumentsModule } from '../documents/documents.module.js';
@@ -27,6 +28,7 @@ import { ReportsService } from './reports.service.js';
     AuditModule,
     BillingModule,
     BookingsModule,
+    ConsolidationsModule,
     CustomersModule,
     CustomsModule,
     DocumentsModule,
