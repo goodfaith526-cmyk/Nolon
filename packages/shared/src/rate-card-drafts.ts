@@ -1,5 +1,11 @@
 import type { RateCardInput } from './commercial.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type { CurrencyCode, DecimalString } from './currencies.js';
+import type {
+  DraftEvidence,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  EvidenceReviewFields,
+} from './drafts.js';
 
 /**
  * A selling rate the staff assistant proposes (entry drafts, drafts.ts). A person approves it on
@@ -12,9 +18,11 @@ export type RateCardDraftRequest = RateCardInput;
 export interface RateCardDraftCreateRequest extends RateCardDraftRequest {
   idempotencyKey: string;
   branchId: string;
+  /** The staff member's words for the values, shown beside them on the review screen. */
+  evidence?: DraftEvidence[];
 }
 
-export interface RateCardDraftDto extends EntryDraftReviewFields {
+export interface RateCardDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
   branchCode: string;
   originCode: string;
   destinationCode: string;
@@ -24,6 +32,8 @@ export interface RateCardDraftDto extends EntryDraftReviewFields {
   rateCardId: string | null;
 }
 
-export type RateCardDraftListItemDto = Omit<RateCardDraftDto, 'request' | 'check'> & {
+export type RateCardDraftListItemDto = Omit<RateCardDraftDto, 'request' | 'check' | 'evidence'> & {
   lineCount: number;
+  price: DecimalString;
+  currency: CurrencyCode;
 };

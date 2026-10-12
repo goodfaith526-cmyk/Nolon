@@ -420,6 +420,7 @@ export const DRAFT_TABLES = [
   'customer_drafts',
   'shipment_status_drafts',
   'party_drafts',
+  'rate_card_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

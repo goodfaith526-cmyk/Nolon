@@ -36,6 +36,10 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
   },
   {
+    file: join('rates', 'rate-card-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('rates:create'\)\n\s*create\(/,
+  },
+  {
     file: join('shipments', 'shipment-status-drafts.controller.ts'),
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('shipments:view'\)\n\s*create\(/,
   },

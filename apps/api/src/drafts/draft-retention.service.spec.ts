@@ -13,7 +13,7 @@ describe('draft retention purge', () => {
     // A new draft type is purged too, or this fails: its model ends in Draft.
     const drafts = Object.values(Prisma.ModelName).filter((m) => m.endsWith('Draft'));
     expect(Object.keys(PURGED_DRAFT_MODELS).sort()).toEqual([...drafts].sort());
-    expect(drafts.length).toBe(10);
+    expect(drafts.length).toBe(11);
   });
 
   it('removes what was rejected or expired 90 days before the purge', () => {
@@ -53,6 +53,7 @@ describe('draft retention purge: proposals', () => {
           'customerDraft',
           'shipmentStatusDraft',
           'partyDraft',
+          'rateCardDraft',
         ].map((m) => [m, { deleteMany: () => Promise.resolve({ count: 0 }) }]),
       ),
     };

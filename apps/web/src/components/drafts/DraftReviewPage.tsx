@@ -6,6 +6,7 @@ import { CustomerDraftReview } from './CustomerDraftReview';
 import { InvoiceDraftReview } from './InvoiceDraftReview';
 import { PartyDraftReview } from './PartyDraftReview';
 import { QuotationDraftReview } from './QuotationDraftReview';
+import { RateCardDraftReview } from './RateCardDraftReview';
 import { ReceiptDraftReview } from './ReceiptDraftReview';
 import { ReleaseDraftReview } from './ReleaseDraftReview';
 import { ShipmentStatusDraftReview } from './ShipmentStatusDraftReview';
@@ -16,6 +17,7 @@ export function DraftReviewPage({ kind, id }: { kind: string; id: string }) {
   const tc = useTranslations('Common');
   if (kind === 'customers') return <CustomerDraftReview id={id} />;
   if (kind === 'parties') return <PartyDraftReview id={id} />;
+  if (kind === 'rate-cards') return <RateCardDraftReview id={id} />;
   if (kind === 'quotations') return <QuotationDraftReview id={id} />;
   if (kind === 'bookings') return <BookingDraftReview id={id} />;
   if (kind === 'trips') return <TripDraftReview id={id} />;

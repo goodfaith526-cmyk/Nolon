@@ -9,6 +9,7 @@ CREATE TABLE "rate_card_drafts" (
     "created_by_id" UUID NOT NULL,
     "idempotency_key" VARCHAR(100) NOT NULL,
     "payload_hash" CHAR(64) NOT NULL,
+    "evidence" JSONB NOT NULL DEFAULT '[]',
     "origin_location_id" UUID NOT NULL,
     "destination_location_id" UUID NOT NULL,
     "mode" "shipping_mode" NOT NULL,
@@ -52,6 +53,12 @@ CREATE UNIQUE INDEX "rate_card_drafts_agent_client_id_created_by_id_idempotency_
 ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_branch_id_fkey" FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_origin_location_id_fkey" FOREIGN KEY ("origin_location_id") REFERENCES "locations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_destination_location_id_fkey" FOREIGN KEY ("destination_location_id") REFERENCES "locations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_rate_card_id_fkey" FOREIGN KEY ("rate_card_id") REFERENCES "rate_cards"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -70,6 +77,10 @@ ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_decision_check" 
      AND "decided_via" = 'SESSION' AND "reject_reason" IS NULL AND "rate_card_id" IS NOT NULL)
   OR ("state" = 'REJECTED' AND "decided_at" IS NOT NULL AND "decided_by_id" IS NOT NULL
      AND "decided_via" IS NOT NULL AND "reject_reason" IS NOT NULL AND "rate_card_id" IS NULL)
+);
+-- The words are a JSON array (drafts/draft-evidence.ts).
+ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_evidence_check" CHECK (
+  jsonb_typeof("evidence") = 'array'
 );
 ALTER TABLE "rate_card_drafts" ADD CONSTRAINT "rate_card_drafts_version_check" CHECK (
   "version" >= 1

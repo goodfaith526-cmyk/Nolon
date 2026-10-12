@@ -339,6 +339,8 @@ model Location {
 
   ratesFrom          RateCard[]            @relation("RateOrigin")
   ratesTo            RateCard[]            @relation("RateDestination")
+  rateDraftsFrom     RateCardDraft[]       @relation("RateDraftOrigin")
+  rateDraftsTo       RateCardDraft[]       @relation("RateDraftDestination")
   quotationsFrom     Quotation[]           @relation("QuotationOrigin")
   quotationsTo       Quotation[]           @relation("QuotationDestination")
   bookingsFrom       Booking[]             @relation("BookingOrigin")
@@ -3254,6 +3256,8 @@ model RateCardDraft {
   createdById           String           @map("created_by_id") @db.Uuid
   idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
   payloadHash           String           @map("payload_hash") @db.Char(64)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence              Json             @default("[]")
   originLocationId      String           @map("origin_location_id") @db.Uuid
   destinationLocationId String           @map("destination_location_id") @db.Uuid
   mode                  ShippingMode
@@ -3284,6 +3288,8 @@ model RateCardDraft {
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin      Location    @relation("RateDraftOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location    @relation("RateDraftDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
   rateCard    RateCard?   @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User        @relation("RateCardDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
