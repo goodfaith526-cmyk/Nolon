@@ -304,6 +304,34 @@ export async function replaceInTx(
     WHERE "id" = ${locked.id}::uuid`;
 }
 
+/** The parent row an approval locks before the draft, per kind that has one. */
+const PARENT_COLUMNS = {
+  goods_release_drafts: 'shipment_id',
+  shipment_status_drafts: 'shipment_id',
+  party_drafts: 'customer_id',
+} as const;
+
+/**
+ * For kinds whose approval locks the draft's parent (a shipment, a customer) before the draft:
+ * the parents a replacement locks before it locks the old draft, so a replacement and an approval
+ * take their locks in the same order and cannot wait on each other. The old draft's parent and
+ * the new one's, deduplicated, in id order. A draft's parent never changes, so it is read without
+ * a lock; a missing old draft is answered by lockReplacedInTx.
+ */
+export async function replacementParentIds(
+  tx: Prisma.TransactionClient,
+  table: keyof typeof PARENT_COLUMNS,
+  replacesDraftId: string,
+  parentId: string,
+): Promise<string[]> {
+  requireDraftTable(table);
+  const column = PARENT_COLUMNS[table];
+  const rows = await tx.$queryRaw<{ parent_id: string }[]>`
+    SELECT ${Prisma.raw(`"${column}"`)} AS "parent_id" FROM ${Prisma.raw(`"${table}"`)}
+    WHERE "id" = ${replacesDraftId}::uuid`;
+  return [...new Set([parentId, ...rows.map((r) => r.parent_id)])].sort();
+}
+
 /** The draft that replaced this one, if any. */
 export async function replacedByOf(
   client: Prisma.TransactionClient,
@@ -349,6 +377,32 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
+/**
+ * The draft stored under an idempotency key, read before a create checks anything on live data, so
+ * a replay is answered with the draft it made (whatever happened since: approved, or the records
+ * moved on), not refused by checks that only a new draft must pass. Null when the key is new; a
+ * key stored with another request is refused (keyReused). The caller reads the draft back through
+ * its scope, so access is still checked as of now. The lookup inside the create's transaction
+ * stays: it settles concurrent creates under one key.
+ */
+export async function storedDraftUnderKey(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: { agentClientId: string; createdById: string; idempotencyKey: string },
+  hash: string,
+): Promise<string | null> {
+  requireDraftTable(table);
+  const rows = await client.$queryRaw<{ id: string; payload_hash: string }[]>`
+    SELECT "id", "payload_hash" FROM ${Prisma.raw(`"${table}"`)}
+    WHERE "agent_client_id" = ${scope.agentClientId}::uuid
+      AND "created_by_id" = ${scope.createdById}::uuid
+      AND "idempotency_key" = ${scope.idempotencyKey}`;
+  const row = rows[0];
+  if (!row) return null;
+  if (row.payload_hash !== hash) throw keyReused();
+  return row.id;
+}
+
 /** A key reused for another request: reveals nothing about the stored draft. */
 export function keyReused(): ConflictException {
   return new ConflictException('This idempotency key was used for another request');
@@ -364,6 +418,8 @@ export const DRAFT_TABLES = [
   'invoice_drafts',
   'receipt_drafts',
   'customer_drafts',
+  'shipment_status_drafts',
+  'party_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

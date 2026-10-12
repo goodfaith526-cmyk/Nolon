@@ -432,6 +432,36 @@ export class CustomersService {
     return this.get(user, customer.id);
   }
 
+  /** For a party draft: the checks of addParty that need no lock (the customer in the user's branches). */
+  async prepareAddParty(user: AuthUser, customerId: string): Promise<{ branchId: string }> {
+    const customer = await this.findScoped(user, customerId);
+    return { branchId: customer.branchId };
+  }
+
+  /** Locks the customer row, as every party change does: the lock an approval takes first. */
+  async lockForPartyWrite(tx: Prisma.TransactionClient, customerId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customerId}::uuid FOR UPDATE`;
+  }
+
+  /**
+   * addParty in the caller's transaction (an approved party draft), with its audit log row; the id
+   * of the new party. The caller checked access.
+   */
+  async addPartyInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    customerId: string,
+    input: PartyInput,
+  ): Promise<string> {
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
+    let partyId = '';
+    await this.writePartiesInTx(tx, user, customer, async () => {
+      partyId = (await tx.party.create({ data: { ...input, customerId }, select: { id: true } }))
+        .id;
+    });
+    return partyId;
+  }
+
   async updateParty(
     user: AuthUser,
     customerId: string,
@@ -454,15 +484,21 @@ export class CustomersService {
     customer: Customer,
     write: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<void> {
-    const read = (tx: Prisma.TransactionClient) =>
-      tx.party.findMany({ where: { customerId: customer.id } });
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customer.id}::uuid FOR UPDATE`;
-      const before = await read(tx);
-      await write(tx);
-      const changes = childChanges('party', before, await read(tx), PARTY_AUDIT_FIELDS);
-      await this.audit.record(tx, user, auditRecord(customer, 'UPDATED', changes));
-    });
+    await this.prisma.$transaction((tx) => this.writePartiesInTx(tx, user, customer, write));
+  }
+
+  private async writePartiesInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    customer: Customer,
+    write: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    const read = () => tx.party.findMany({ where: { customerId: customer.id } });
+    await this.lockForPartyWrite(tx, customer.id);
+    const before = await read();
+    await write(tx);
+    const changes = childChanges('party', before, await read(), PARTY_AUDIT_FIELDS);
+    await this.audit.record(tx, user, auditRecord(customer, 'UPDATED', changes));
   }
 
   /**

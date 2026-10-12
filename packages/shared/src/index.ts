@@ -26,3 +26,5 @@ export * from './commercial-drafts.js';
 export * from './transport-drafts.js';
 export * from './billing-drafts.js';
 export * from './customer-drafts.js';
+export * from './shipment-status-drafts.js';
+export * from './party-drafts.js';

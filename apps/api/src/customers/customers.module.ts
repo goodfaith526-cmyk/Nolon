@@ -9,11 +9,18 @@ import { CustomersImportController } from './customers-import.controller.js';
 import { CustomersImportService } from './customers-import.service.js';
 import { CustomersController } from './customers.controller.js';
 import { CustomersService } from './customers.service.js';
+import { PartyDraftsController } from './party-drafts.controller.js';
+import { PartyDraftsService } from './party-drafts.service.js';
 
 @Module({
   imports: [AuditModule, CurrenciesModule, ImportsModule, DraftsModule],
-  controllers: [CustomersImportController, CustomersController, CustomerDraftsController],
-  providers: [CustomersService, CustomersImportService, CustomerDraftsService],
+  controllers: [
+    CustomersImportController,
+    CustomersController,
+    CustomerDraftsController,
+    PartyDraftsController,
+  ],
+  providers: [CustomersService, CustomersImportService, CustomerDraftsService, PartyDraftsService],
   exports: [CustomersService],
 })
 export class CustomersModule {}

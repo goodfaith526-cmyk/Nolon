@@ -9,9 +9,11 @@ export const DRAFT_KINDS = [
   { key: 'bookings', api: '/booking-drafts', view: 'bookings:view' },
   { key: 'trips', api: '/trip-drafts', view: 'transport_trips:view' },
   { key: 'releases', api: '/release-drafts', view: 'warehouse:view' },
+  { key: 'shipment-statuses', api: '/shipment-status-drafts', view: 'shipments:view' },
   { key: 'invoices', api: '/invoice-drafts', view: 'customer_invoices:view' },
   { key: 'receipts', api: '/receipt-drafts', view: 'receipts:view' },
   { key: 'customers', api: '/customer-drafts', view: 'customers:view' },
+  { key: 'parties', api: '/party-drafts', view: 'customers:view' },
 ] as const satisfies readonly { key: string; api: string; view: Permission }[];
 
 export type DraftKind = (typeof DRAFT_KINDS)[number]['key'];

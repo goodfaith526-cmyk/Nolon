@@ -1,5 +1,10 @@
 import type { CustomerKind } from './commercial.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftEvidence,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  EvidenceReviewFields,
+} from './drafts.js';
 
 /**
  * A new customer the staff assistant proposes (entry drafts, drafts.ts), so that a booking or a
@@ -24,9 +29,10 @@ export interface CustomerDraftRequest {
 export interface CustomerDraftCreateRequest extends CustomerDraftRequest {
   idempotencyKey: string;
   branchId: string;
+  evidence?: DraftEvidence[];
 }
 
-export interface CustomerDraftDto extends EntryDraftReviewFields {
+export interface CustomerDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
   branchCode: string;
   request: CustomerDraftRequest;
   check: EntryDraftCheck | null;
@@ -34,7 +40,7 @@ export interface CustomerDraftDto extends EntryDraftReviewFields {
   customerNumber: string | null;
 }
 
-export type CustomerDraftListItemDto = Omit<CustomerDraftDto, 'request' | 'check'> & {
+export type CustomerDraftListItemDto = Omit<CustomerDraftDto, 'request' | 'check' | 'evidence'> & {
   lineCount: number;
   phone: string;
 };

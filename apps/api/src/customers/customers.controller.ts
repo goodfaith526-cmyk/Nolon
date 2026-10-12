@@ -20,15 +20,8 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { optionalFlag } from '../common/list-filters.js';
-import {
-  countryCode,
-  optionalText,
-  pageQuery,
-  parse,
-  phone,
-  requiredText,
-} from '../common/validation.js';
-import { createCustomerBody, email, updateCustomerBody } from './customer-schemas.js';
+import { optionalText, pageQuery, parse, phone, requiredText } from '../common/validation.js';
+import { createCustomerBody, email, partyBody, updateCustomerBody } from './customer-schemas.js';
 import { CustomersService } from './customers.service.js';
 
 const listQuery = pageQuery.extend({
@@ -49,18 +42,6 @@ const contactBody = z
     canReceiveDocuments: z.boolean().optional(),
     isPrimary: z.boolean().optional(),
     isActive: z.boolean().optional(),
-  })
-  .strict();
-
-const partyBody = z
-  .object({
-    name: requiredText(200),
-    companyName: optionalText(200),
-    phone: phone.nullish(),
-    email,
-    countryCode: countryCode.nullish(),
-    city: optionalText(100),
-    address: optionalText(500),
   })
   .strict();
 

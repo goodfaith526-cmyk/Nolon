@@ -24,6 +24,7 @@ import {
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
+import { confirmedFields, draftEvidence } from '../drafts/draft-evidence.js';
 import { splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { customerFields } from './customer-schemas.js';
@@ -44,9 +45,12 @@ const createBody = z
     city: customerFields.city,
     address: customerFields.address,
     notes: customerFields.notes,
+    evidence: draftEvidence(['branchId', 'name', 'phone', 'whatsapp']),
   })
   .strict();
-const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const approveBody = z
+  .object({ version: z.number().int().min(1), confirmed: confirmedFields })
+  .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
@@ -105,7 +109,8 @@ export class CustomerDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<CustomerDraftDto> {
-    return this.drafts.approve(user, id, parse(approveBody, body).version);
+    const { version, confirmed } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, confirmed);
   }
 
   @Post(':id/reject')

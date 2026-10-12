@@ -443,7 +443,58 @@ export class ShipmentsService {
       throw new BadRequestException('The time of a status change cannot be in the future');
     }
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEvent(user, id, (shipment, path) => {
+    await this.applyEvent(user, id, this.statusPlan(user, { ...input, occurredAt }));
+    return this.get(user, id);
+  }
+
+  /**
+   * The checks of a status change that need no lock, against the shipment as it is now (entry
+   * drafts): access, the location, the move and the permission it needs. Nothing is written; the
+   * same checks run again under the shipment lock when the change is applied.
+   */
+  async prepareStatusChange(
+    user: AuthUser,
+    id: string,
+    input: { status: ShipmentStatus; locationId?: string | null },
+  ): Promise<{ branchId: string }> {
+    const shipment = await this.findScoped(user, id);
+    if (input.locationId) await this.masterData.requireLocation(input.locationId);
+    this.statusPlan(user, { ...input, occurredAt: new Date() })(
+      shipment,
+      replayHistory(shipment.events),
+    );
+    return { branchId: shipment.branchId };
+  }
+
+  /**
+   * A status change dated now, in the caller's transaction (an approved entry draft). The caller
+   * checked access; the move and its permission are checked here under the shipment lock.
+   */
+  async changeStatusInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    input: { status: ShipmentStatus; locationId?: string | null; note?: string | null },
+  ): Promise<void> {
+    if (input.locationId) await this.masterData.requireLocation(input.locationId);
+    await this.applyEventInTx(
+      tx,
+      user,
+      id,
+      this.statusPlan(user, { ...input, occurredAt: new Date() }),
+    );
+  }
+
+  private statusPlan(
+    user: AuthUser,
+    input: {
+      status: ShipmentStatus;
+      occurredAt: Date;
+      locationId?: string | null;
+      note?: string | null;
+    },
+  ): Planner {
+    return (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(input.status)) {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
@@ -451,7 +502,7 @@ export class ShipmentsService {
       return {
         kind: 'STATUS',
         status: input.status,
-        occurredAt,
+        occurredAt: input.occurredAt,
         locationId: input.locationId ?? null,
         note: input.note ?? null,
         update: {
@@ -463,8 +514,7 @@ export class ShipmentsService {
             ? (tx) => this.bookingLifecycle.completeForShipment(tx, shipment.bookingId)
             : undefined,
       };
-    });
-    return this.get(user, id);
+    };
   }
 
   async hold(
@@ -1005,6 +1055,11 @@ export class ShipmentsService {
    * on trips assigned to them (their driver record is linked to their user), cancelled trips
    * excepted; the trip in one of their branches, the shipment visible in one of them.
    */
+  /** The shipments this user may see (scope below): for records read through their shipment. */
+  visibleWhere(user: AuthUser): Prisma.ShipmentWhereInput {
+    return this.scope(user);
+  }
+
   private scope(user: AuthUser): Prisma.ShipmentWhereInput {
     if (limitedToOwnTrips(user, 'shipments')) {
       return {

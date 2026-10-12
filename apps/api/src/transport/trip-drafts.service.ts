@@ -31,6 +31,7 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
   withReplaced,
@@ -135,10 +136,14 @@ export class TripDraftsService {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     draftScope(user);
     const { idempotencyKey, ...input } = body;
-    // The checks of a real trip that need no lock; nothing is written.
-    const prepared = await this.trips.prepareCreate(user, input);
     const hash = withReplaced(tripRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'trip_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
+    // The checks of a real trip that need no lock; nothing is written.
+    const prepared = await this.trips.prepareCreate(user, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
