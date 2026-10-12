@@ -32,7 +32,7 @@ import {
   keyReused,
   lockReplacedInTx,
   replaceInTx,
-  replacementShipmentIds,
+  replacementParentIds,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -110,7 +110,7 @@ export class GoodsReleaseDraftsService {
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         if (replacesDraftId !== null) {
-          const ids = await replacementShipmentIds(
+          const ids = await replacementParentIds(
             tx,
             'goods_release_drafts',
             replacesDraftId,

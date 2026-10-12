@@ -25,7 +25,7 @@ import {
   keyReused,
   lockReplacedInTx,
   replaceInTx,
-  replacementShipmentIds,
+  replacementParentIds,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -92,7 +92,7 @@ export class ShipmentStatusDraftsService {
       this.prisma.$transaction(async (tx) => {
         // An approval locks the shipment, then the draft: a replacement takes the same order.
         if (replacesDraftId !== null) {
-          const ids = await replacementShipmentIds(
+          const ids = await replacementParentIds(
             tx,
             'shipment_status_drafts',
             replacesDraftId,

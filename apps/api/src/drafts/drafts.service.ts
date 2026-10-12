@@ -304,23 +304,32 @@ export async function replaceInTx(
     WHERE "id" = ${locked.id}::uuid`;
 }
 
+/** The parent row an approval locks before the draft, per kind that has one. */
+const PARENT_COLUMNS = {
+  goods_release_drafts: 'shipment_id',
+  shipment_status_drafts: 'shipment_id',
+  party_drafts: 'customer_id',
+} as const;
+
 /**
- * For kinds whose approval locks the draft's shipment before the draft (goods release, shipment
- * status): the shipments a replacement locks before it locks the old draft, so a replacement and
- * an approval take their locks in the same order and cannot wait on each other. The old draft's
- * shipment and the new one's, deduplicated, in id order. A draft's shipment never changes, so it
- * is read without a lock; a missing old draft is answered by lockReplacedInTx.
+ * For kinds whose approval locks the draft's parent (a shipment, a customer) before the draft:
+ * the parents a replacement locks before it locks the old draft, so a replacement and an approval
+ * take their locks in the same order and cannot wait on each other. The old draft's parent and
+ * the new one's, deduplicated, in id order. A draft's parent never changes, so it is read without
+ * a lock; a missing old draft is answered by lockReplacedInTx.
  */
-export async function replacementShipmentIds(
+export async function replacementParentIds(
   tx: Prisma.TransactionClient,
-  table: 'goods_release_drafts' | 'shipment_status_drafts',
+  table: keyof typeof PARENT_COLUMNS,
   replacesDraftId: string,
-  shipmentId: string,
+  parentId: string,
 ): Promise<string[]> {
   requireDraftTable(table);
-  const rows = await tx.$queryRaw<{ shipment_id: string }[]>`
-    SELECT "shipment_id" FROM ${Prisma.raw(`"${table}"`)} WHERE "id" = ${replacesDraftId}::uuid`;
-  return [...new Set([shipmentId, ...rows.map((r) => r.shipment_id)])].sort();
+  const column = PARENT_COLUMNS[table];
+  const rows = await tx.$queryRaw<{ parent_id: string }[]>`
+    SELECT ${Prisma.raw(`"${column}"`)} AS "parent_id" FROM ${Prisma.raw(`"${table}"`)}
+    WHERE "id" = ${replacesDraftId}::uuid`;
+  return [...new Set([parentId, ...rows.map((r) => r.parent_id)])].sort();
 }
 
 /** The draft that replaced this one, if any. */
@@ -384,6 +393,7 @@ export const DRAFT_TABLES = [
   'receipt_drafts',
   'customer_drafts',
   'shipment_status_drafts',
+  'party_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

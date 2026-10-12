@@ -72,6 +72,7 @@ model Branch {
   receiptDrafts      ReceiptDraft[]
   customerDrafts     CustomerDraft[]
   statusDrafts       ShipmentStatusDraft[]
+  partyDrafts        PartyDraft[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -204,6 +205,8 @@ model User {
   customerDraftsDecided     CustomerDraft[]          @relation("CustomerDraftDecidedBy")
   statusDraftsCreated       ShipmentStatusDraft[]    @relation("ShipmentStatusDraftCreatedBy")
   statusDraftsDecided       ShipmentStatusDraft[]    @relation("ShipmentStatusDraftDecidedBy")
+  partyDraftsCreated        PartyDraft[]             @relation("PartyDraftCreatedBy")
+  partyDraftsDecided        PartyDraft[]             @relation("PartyDraftDecidedBy")
   assistantApprovalGrants   AssistantApprovalGrant[] @relation("AssistantApprovalGrantUser")
   assistantApprovalsGranted AssistantApprovalGrant[] @relation("AssistantApprovalGrantedBy")
   customsUpdated            CustomsClearance[]       @relation("CustomsUpdatedBy")
@@ -474,6 +477,7 @@ model Customer {
   invoiceDrafts InvoiceDraft[]
   receiptDrafts ReceiptDraft[]
   draft         CustomerDraft?
+  partyDrafts   PartyDraft[]
 
   @@index([branchId])
   @@index([phone])
@@ -526,6 +530,8 @@ model Party {
   shipmentsShipper   Shipment[] @relation("ShipmentShipper")
   shipmentsConsignee Shipment[] @relation("ShipmentConsignee")
   shipmentsNotify    Shipment[] @relation("ShipmentNotify")
+
+  draft PartyDraft?
 
   @@index([customerId])
   @@map("parties")
@@ -2572,6 +2578,7 @@ model AgentClient {
   receiptDrafts  ReceiptDraft[]
   customerDrafts CustomerDraft[]
   statusDrafts   ShipmentStatusDraft[]
+  partyDrafts    PartyDraft[]
 
   @@map("agent_clients")
 }
@@ -3171,4 +3178,53 @@ model ShipmentStatusDraft {
   @@index([branchId, state])
   @@index([replacesDraftId])
   @@map("shipment_status_drafts")
+}
+
+/// A party (shipper, consignee or notify party) of a customer, proposed by the staff AI assistant
+/// (entry drafts). A person approves it on the review screen, which adds the party to the customer
+/// with their permissions; a booking can then name it.
+model PartyDraft {
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  customerId      String           @map("customer_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  name            String           @db.VarChar(200)
+  companyName     String?          @map("company_name") @db.VarChar(200)
+  phone           String?          @db.VarChar(20)
+  email           String?          @db.VarChar(254)
+  countryCode     String?          @map("country_code") @db.Char(2)
+  city            String?          @db.VarChar(100)
+  address         String?          @db.VarChar(500)
+  /// The party the approval added.
+  partyId         String?          @unique @map("party_id") @db.Uuid
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
+  /// SESSION: decided on the review screen (always, for an approval); ASSISTANT: closed from the
+  /// assistant's chat (replaced by a newer draft).
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  party       Party?      @relation(fields: [partyId], references: [id], onDelete: Restrict)
+  agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User        @relation("PartyDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?       @relation("PartyDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([customerId, state])
+  @@index([branchId, state])
+  @@index([replacesDraftId])
+  @@map("party_drafts")
 }
