@@ -58,3 +58,29 @@ describe('asciiDigits', () => {
     expect(asciiDigits('١٢٣٤٬٥٦٧')).toBe('1234\u066c567');
   });
 });
+
+describe('api() refusals', () => {
+  it('keeps the fields a broken rule names, with its reason', async () => {
+    const { api } = await import('@/lib/api');
+    const original = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            message: 'Give length, width and height together',
+            fields: ['items.1.lengthCm'],
+            statusCode: 400,
+          }),
+          { status: 400 },
+        ),
+      ));
+    try {
+      const error = await api('/bookings', { method: 'POST', body: {} }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).message).toBe('Give length, width and height together');
+      expect((error as ApiError).fields).toEqual(['items.1.lengthCm']);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

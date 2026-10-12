@@ -12,6 +12,14 @@ export function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   return result.data;
 }
 
+/**
+ * 400 for a broken business rule on named request fields (paths such as `items.0.lengthCm`): the
+ * message says why, `fields` lets the form mark them, as `parse` does for malformed input.
+ */
+export function fieldRefusal(message: string, fields: readonly string[]): BadRequestException {
+  return new BadRequestException({ message, fields, error: 'Bad Request', statusCode: 400 });
+}
+
 /** Non-negative amount with at most 14 integer and 4 decimal digits (fits Decimal(18,4)). */
 export const amount = z.string().regex(/^\d{1,14}(\.\d{1,4})?$/, 'Invalid amount');
 

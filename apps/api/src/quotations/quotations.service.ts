@@ -18,7 +18,8 @@ import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { onFields } from '../common/rule-issues.js';
+import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma, Quotation, QuotationLine } from '../generated/prisma/client.js';
@@ -269,26 +270,34 @@ export class QuotationsService {
   }
 
   private async prepare(branchId: string, today: string, input: QuotationInput) {
-    await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
+    await onFields(['originLocationId', 'destinationLocationId'], () =>
+      this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
+    );
     if (input.mode !== 'SEA' && input.loadType) {
-      throw new BadRequestException('FCL/LCL applies to sea shipments only');
+      throw fieldRefusal('FCL/LCL applies to sea shipments only', ['loadType']);
     }
-    const currency = await this.currencies.requireActive(input.currency);
-    if (input.validUntil < today) throw new BadRequestException('Valid-until is in the past');
+    const currency = await onFields(['currency'], () =>
+      this.currencies.requireActive(input.currency),
+    );
+    if (input.validUntil < today) throw fieldRefusal('Valid-until is in the past', ['validUntil']);
 
     const resolved = [];
-    for (const line of input.lines) {
+    for (const [index, line] of input.lines.entries()) {
+      const path = `lines.${index}`;
       if (line.rateCardId) {
-        const rate = await this.rates.requireUsableRate(line.rateCardId, {
-          branchId,
-          onDate: today,
-          currency: input.currency,
-          originLocationId: input.originLocationId,
-          destinationLocationId: input.destinationLocationId,
-          mode: input.mode,
-          loadType: input.loadType ?? null,
-          cargoType: input.cargoType,
-        });
+        const rateCardId = line.rateCardId;
+        const rate = await onFields([`${path}.rateCardId`], () =>
+          this.rates.requireUsableRate(rateCardId, {
+            branchId,
+            onDate: today,
+            currency: input.currency,
+            originLocationId: input.originLocationId,
+            destinationLocationId: input.destinationLocationId,
+            mode: input.mode,
+            loadType: input.loadType ?? null,
+            cargoType: input.cargoType,
+          }),
+        );
         resolved.push({
           rateCardId: rate.id,
           chargeTypeCode: rate.chargeTypeCode,
@@ -301,11 +310,20 @@ export class QuotationsService {
         });
       } else {
         if (!line.unit || line.unitPrice === undefined || !line.chargeTypeCode) {
-          throw new BadRequestException(
+          const missing = [
+            !line.chargeTypeCode && 'chargeTypeCode',
+            !line.unit && 'unit',
+            line.unitPrice === undefined && 'unitPrice',
+          ].filter((k): k is string => k !== false);
+          throw fieldRefusal(
             'A line without a rate needs a charge type, unit and price',
+            missing.map((k) => `${path}.${k}`),
           );
         }
-        await this.masterData.requireChargeType(line.chargeTypeCode);
+        const chargeTypeCode = line.chargeTypeCode;
+        await onFields([`${path}.chargeTypeCode`], () =>
+          this.masterData.requireChargeType(chargeTypeCode),
+        );
         resolved.push({
           rateCardId: null,
           chargeTypeCode: line.chargeTypeCode,
@@ -323,7 +341,9 @@ export class QuotationsService {
     try {
       amounts = computeQuotationAmounts(resolved, currency.decimalPlaces);
     } catch (error) {
-      if (error instanceof DiscountExceedsLineError) throw new BadRequestException(error.message);
+      if (error instanceof DiscountExceedsLineError) {
+        throw fieldRefusal(error.message, [`lines.${error.lineNo - 1}.discount`]);
+      }
       throw error;
     }
     // Every line amount is at most the subtotal, so one check keeps all of them in Decimal(18, 4).

@@ -28,12 +28,15 @@ export async function api<T = void>(
     let message = res.statusText;
     let fields: string[] = [];
     try {
-      const data = (await res.json()) as { message?: unknown };
+      const data = (await res.json()) as { message?: unknown; fields?: unknown };
       if (typeof data.message === 'string') message = data.message;
-      // A request that fails validation is answered with the list of its invalid fields.
+      // A request that fails validation is answered with the list of its invalid fields; a
+      // broken rule with its reason in `message` and the fields it is about in `fields`.
       if (Array.isArray(data.message)) {
         fields = data.message.filter((f): f is string => typeof f === 'string');
         message = fields.join(', ');
+      } else if (Array.isArray(data.fields)) {
+        fields = data.fields.filter((f): f is string => typeof f === 'string');
       }
     } catch {
       // Body was not JSON; keep the status text.
