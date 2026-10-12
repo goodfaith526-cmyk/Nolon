@@ -10,7 +10,8 @@ import { CustomerForm } from './Customers';
 
 /**
  * Search customers by name, number or phone and pick one. With `allowCreate`, someone who may
- * create customers can add one from here when the search does not find them, and it is picked.
+ * create customers can add one from here at any time, without searching first (the typed text
+ * becomes the new customer's name), and it is picked.
  */
 export function CustomerPicker({
   value,
@@ -79,6 +80,11 @@ export function CustomerPicker({
         <button type="button" onClick={() => void search()}>
           {t('search')}
         </button>
+        {mayCreate && (
+          <button type="button" onClick={() => setAdding(true)}>
+            {t('addNewCustomer')}
+          </button>
+        )}
       </div>
       {failed && <p className="error">{t('failed')}</p>}
       {results.length > 0 && (
@@ -96,13 +102,6 @@ export function CustomerPicker({
         </ul>
       )}
       {searched && results.length === 0 && <p className="muted">{t('customerNotFound')}</p>}
-      {mayCreate && searched && (
-        <div className="row">
-          <button type="button" onClick={() => setAdding(true)}>
-            {t('addNewCustomer')}
-          </button>
-        </div>
-      )}
       {adding && (
         <NewCustomerDialog
           initialName={q.trim()}
