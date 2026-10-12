@@ -38,6 +38,8 @@ export interface CustomerDraftDto extends EntryDraftReviewFields, EvidenceReview
   check: EntryDraftCheck | null;
   customerId: string | null;
   customerNumber: string | null;
+  /** The booking proposed with this new customer in one request, if any. */
+  bookingDraftId: string | null;
 }
 
 export type CustomerDraftListItemDto = Omit<CustomerDraftDto, 'request' | 'check' | 'evidence'> & {

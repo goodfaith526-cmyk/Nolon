@@ -2089,6 +2089,7 @@
     "kind_customers": "New customers",
     "kind_parties": "Shippers, consignees and notify parties",
     "kind_rate-cards": "Selling rates",
+    "kind_new-customer-bookings": "Bookings for new customers",
     "kind_shipment-statuses": "Shipment status updates",
     "replacesEarlier": "This draft replaces an earlier one, at your request to the assistant.",
     "earlierDraft": "Earlier draft",
@@ -2150,7 +2151,16 @@
     "receiptTitle": "Receipt draft from {customer}",
     "receiptApproveHint": "Approving records the receipt and posts its journal entry, and settles the invoices listed, in your name. Check the amount against the bank or cash first.",
     "decidedInAssistant": "Decided in the assistant chat.",
-    "rateLine": "Rate card"
+    "rateLine": "Rate card",
+    "newCustomerBookingTitle": "Booking draft for a new customer: {customer}",
+    "newCustomerBookingApproveHint": "Approving creates a draft booking for the customer approved from the customer draft. It is not confirmed and has no shipment until you confirm it. Add the shipper, consignee and notify party on the booking.",
+    "newCustomer": "New customer",
+    "openCustomerDraft": "Open the customer draft",
+    "approveCustomerFirst": "Approve the customer first: a booking needs a customer in NOLON. Open the customer draft, check it and approve it, then come back to approve this booking.",
+    "customerNotApproved": "The customer draft was rejected or has expired, so this booking cannot be approved. Reject it, or ask the assistant for a new one.",
+    "lineValue": "Line {line}: {field}",
+    "bookingWithCustomer": "A booking was proposed with this customer:",
+    "openBookingDraft": "Open the booking draft"
   },
   "Fields": {
     "customerId": "Customer",

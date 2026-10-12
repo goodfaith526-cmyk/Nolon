@@ -21,6 +21,6 @@ import { PartyDraftsService } from './party-drafts.service.js';
     PartyDraftsController,
   ],
   providers: [CustomersService, CustomersImportService, CustomerDraftsService, PartyDraftsService],
-  exports: [CustomersService],
+  exports: [CustomersService, CustomerDraftsService],
 })
 export class CustomersModule {}

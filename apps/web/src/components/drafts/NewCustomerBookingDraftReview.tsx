@@ -1,0 +1,166 @@
+'use client';
+
+import type { NewCustomerBookingDraftDto } from '@nolon/shared';
+import { useLocale, useTranslations } from 'next-intl';
+import { useState } from 'react';
+import { Link } from '@/i18n/navigation';
+import { useLocationName, useMasterData } from '@/lib/master-data';
+import { Notice } from '../commercial/Notice';
+import { useRecord } from '../finance/common';
+import { DraftFrame, DraftStatusBadge } from './DraftFrame';
+import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+
+const LINE_FIELD = /^items\[(\d+)\]\.(quantity|weightKg|volumeCbm)$/;
+
+/**
+ * A booking the assistant proposed for a new customer: the customer draft it waits for, the
+ * booking as proposed, the staff member's words, and the decision. Approve stays off until the
+ * customer draft is approved.
+ */
+export function NewCustomerBookingDraftReview({ id }: { id: string }) {
+  const t = useTranslations('Drafts');
+  const tb = useTranslations('Bookings');
+  const tcu = useTranslations('Customers');
+  const tc = useTranslations('Common');
+  const te = useTranslations('Enums');
+  const locale = useLocale();
+  const master = useMasterData();
+  const locationName = useLocationName(master);
+  const {
+    record: draft,
+    notice,
+    setRecord,
+  } = useRecord<NewCustomerBookingDraftDto>(`/new-customer-booking-drafts/${id}`);
+  const [ticked, setTicked] = useState<string[]>([]);
+  if (notice) return <Notice notice={notice} />;
+  if (!draft) return <p className="muted">{tc('loading')}</p>;
+  const b = draft.request;
+  const customer = draft.customer;
+  const customerReady = customer.status === 'APPROVED' && customer.customerId !== null;
+  const words = confirmedBody(draft.evidence, ticked);
+
+  const values: Record<string, { label: string; value: string }> = {
+    originLocationId: { label: tb('origin'), value: locationName(b.originLocationId) },
+    destinationLocationId: {
+      label: tb('destination'),
+      value: locationName(b.destinationLocationId),
+    },
+  };
+  for (const e of draft.evidence) {
+    const match = LINE_FIELD.exec(e.field);
+    const item = match ? b.items[Number(match[1])] : undefined;
+    if (!match || !item) continue;
+    const line = Number(match[1]) + 1;
+    const field = match[2] as 'quantity' | 'weightKg' | 'volumeCbm';
+    values[e.field] = {
+      label: t('lineValue', { line, field: tb(field) }),
+      value: String(item[field] ?? '—'),
+    };
+  }
+
+  return (
+    <DraftFrame
+      draft={draft}
+      apiPath="/new-customer-booking-drafts"
+      title={t('newCustomerBookingTitle', { customer: customer.name })}
+      approveHint={t('newCustomerBookingApproveHint')}
+      result={
+        draft.bookingId
+          ? { label: draft.bookingNumber ?? '', href: `/bookings/${draft.bookingId}` }
+          : null
+      }
+      approveBody={customerReady ? words : null}
+      onChanged={setRecord}
+    >
+      <div className="card stack">
+        <div className="row">
+          <h2>{t('newCustomer')}</h2>
+          <DraftStatusBadge status={customer.status} />
+        </div>
+        <dl className="details">
+          <dt>{t('customer')}</dt>
+          <dd>
+            {customer.customerId ? (
+              <Link href={`/customers/${customer.customerId}`}>
+                {customer.name}
+                {customer.customerNumber ? ` (${customer.customerNumber})` : ''}
+              </Link>
+            ) : (
+              customer.name
+            )}
+          </dd>
+          <dt>{t('phone')}</dt>
+          <dd dir="ltr">{customer.phone}</dd>
+        </dl>
+        <p>
+          <Link href={`/drafts/customers/${customer.draftId}`}>{t('openCustomerDraft')}</Link>
+        </p>
+        {draft.status === 'DRAFT' && customer.status === 'DRAFT' && (
+          <p className="notice">{t('approveCustomerFirst')}</p>
+        )}
+        {draft.status === 'DRAFT' &&
+          (customer.status === 'REJECTED' || customer.status === 'EXPIRED') && (
+            <p className="error">{t('customerNotApproved')}</p>
+          )}
+      </div>
+      <dl className="details">
+        <dt>{tcu('branch')}</dt>
+        <dd dir="ltr">{draft.branchCode}</dd>
+        <dt>{tb('route')}</dt>
+        <dd>
+          {tc('route', {
+            from: locationName(b.originLocationId),
+            to: locationName(b.destinationLocationId),
+          })}
+        </dd>
+        <dt>{tb('mode')}</dt>
+        <dd>
+          {te(`mode_${b.mode}`)}
+          {b.loadType ? ` · ${b.loadType}` : ''} · {te(`cargo_${b.cargoType}`)}
+        </dd>
+        <dt>{tb('cargoDescription')}</dt>
+        <dd>{b.cargoDescription ?? '—'}</dd>
+        <dt>{tb('services')}</dt>
+        <dd>{new Intl.ListFormat(locale).format(b.services.map((s) => te(`service_${s}`)))}</dd>
+        <dt>{tb('requestedDeparture')}</dt>
+        <dd dir="ltr">{b.requestedDeparture ?? '—'}</dd>
+        <dt>{tb('specialInstructions')}</dt>
+        <dd>{b.specialInstructions ?? '—'}</dd>
+      </dl>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{tb('cargoType')}</th>
+              <th>{tb('itemDescription')}</th>
+              <th>{tb('quantity')}</th>
+              <th>{tb('weightKg')}</th>
+              <th>{tb('volumeCbm')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {b.items.map((item, i) => (
+              <tr key={i}>
+                <td>
+                  {te(`cargo_${item.cargoType}`)}
+                  {item.containerTypeCode ? ` ${item.containerTypeCode}` : ''}
+                </td>
+                <td>{item.description ?? '—'}</td>
+                <td dir="ltr">{item.quantity}</td>
+                <td dir="ltr">{item.weightKg ?? '—'}</td>
+                <td dir="ltr">{item.volumeCbm ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <EvidenceChecklist
+        evidence={draft.evidence}
+        values={values}
+        ticked={ticked}
+        onChange={setTicked}
+        editable={draft.actions.canDecide}
+      />
+    </DraftFrame>
+  );
+}

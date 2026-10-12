@@ -40,7 +40,7 @@ const dimensionCm = decimalColumn(8, 2, true); // Decimal(10, 2)
 const weightKg = decimalColumn(9, 3, false); // Decimal(12, 3)
 const volumeCbm = decimalColumn(8, 4, false); // Decimal(12, 4)
 
-const itemBody = z
+export const itemBody = z
   .object({
     cargoType: z.enum(CARGO_TYPES),
     containerTypeCode: z.string().trim().toUpperCase().max(10).nullish(),
@@ -63,7 +63,7 @@ const partyRefs = {
 const services = z.array(z.enum(BOOKING_SERVICES)).min(1).max(BOOKING_SERVICES.length);
 const items = z.array(itemBody).max(100);
 
-const bookingFields = {
+export const bookingFields = {
   originLocationId: z.uuid(),
   destinationLocationId: z.uuid(),
   mode: z.enum(SHIPPING_MODES),

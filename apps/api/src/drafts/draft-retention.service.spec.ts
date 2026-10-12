@@ -13,13 +13,37 @@ describe('draft retention purge', () => {
     // A new draft type is purged too, or this fails: its model ends in Draft.
     const drafts = Object.values(Prisma.ModelName).filter((m) => m.endsWith('Draft'));
     expect(Object.keys(PURGED_DRAFT_MODELS).sort()).toEqual([...drafts].sort());
-    expect(drafts.length).toBe(11);
+    expect(drafts.length).toBe(12);
   });
 
   it('removes what was rejected or expired 90 days before the purge', () => {
     expect(retentionCutoff(new Date('2027-01-31T00:00:00Z')).toISOString()).toBe(
       '2026-11-02T00:00:00.000Z',
     );
+  });
+});
+
+describe('draft retention purge: bookings for a new customer', () => {
+  it('removes a booking before its customer draft, and keeps a customer draft still named', async () => {
+    const calls: { model: string; args: unknown }[] = [];
+    const recorder = (model: string) => ({
+      deleteMany: (args: unknown) => {
+        calls.push({ model, args });
+        return Promise.resolve({ count: 0 });
+      },
+    });
+    const tx = Object.fromEntries(
+      ['newCustomerBookingDraft', 'customerDraft'].map((m) => [m, recorder(m)]),
+    );
+    const cutoff = new Date('2026-01-01T00:00:00Z');
+    // In the purge's order (the object's), the two linked models only.
+    for (const [model, purge] of Object.entries(PURGED_DRAFT_MODELS)) {
+      if (model === 'NewCustomerBookingDraft' || model === 'CustomerDraft') {
+        await purge(tx as unknown as Prisma.TransactionClient, cutoff);
+      }
+    }
+    expect(calls.map((c) => c.model)).toEqual(['newCustomerBookingDraft', 'customerDraft']);
+    expect(calls[1]?.args).toMatchObject({ where: { newCustomerBookingDraft: { is: null } } });
   });
 });
 
@@ -54,6 +78,7 @@ describe('draft retention purge: proposals', () => {
           'shipmentStatusDraft',
           'partyDraft',
           'rateCardDraft',
+          'newCustomerBookingDraft',
         ].map((m) => [m, { deleteMany: () => Promise.resolve({ count: 0 }) }]),
       ),
     };
