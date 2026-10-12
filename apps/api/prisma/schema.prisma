@@ -2959,6 +2959,8 @@ model CustomerDraft {
   city            String?          @db.VarChar(100)
   address         String?          @db.VarChar(500)
   notes           String?          @db.VarChar(2000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
   /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
@@ -3147,6 +3149,8 @@ model ShipmentStatusDraft {
   status          ShipmentStatus
   locationId      String?          @map("location_id") @db.Uuid
   note            String?          @db.VarChar(1000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
   /// The draft of this kind it replaced, at the person's request through the assistant. No foreign

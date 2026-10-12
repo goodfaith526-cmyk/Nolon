@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  DraftEvidence,
   CreateCustomerRequest,
   CustomerDraftCreateRequest,
   CustomerDraftDto,
@@ -12,6 +13,7 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
+import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
@@ -64,9 +66,14 @@ export function customerRequestOf(d: DraftRow): CustomerDraftRequest {
   };
 }
 
-/** sha256 of the normalised request (branch included): ids lower case, absent fields null. */
-export function customerRequestHash(branchId: string, input: CustomerDraftRequest): string {
+/** sha256 of the normalised request and the staff member's words (branch included): ids lower case, absent fields null. */
+export function customerRequestHash(
+  branchId: string,
+  input: CustomerDraftRequest,
+  evidence: readonly DraftEvidence[] = [],
+): string {
   return requestHash({
+    ...evidenceHashPart(evidence),
     branchId: branchId.toLowerCase(),
     kind: input.kind,
     name: input.name,
@@ -106,8 +113,8 @@ export class CustomerDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, branchId, ...input } = body;
-    const hash = withReplaced(customerRequestHash(branchId, input), replacesDraftId);
+    const { idempotencyKey, branchId, evidence = [], ...input } = body;
+    const hash = withReplaced(customerRequestHash(branchId, input, evidence), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
@@ -146,6 +153,7 @@ export class CustomerDraftsService {
             branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
+            evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
             kind: input.kind,
             name: input.name,
             companyName: input.companyName ?? null,
@@ -196,18 +204,30 @@ export class CustomerDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    return { ...baseFields(draft, user, now), request: customerRequestOf(draft), check };
+    return {
+      ...baseFields(draft, user, now),
+      request: customerRequestOf(draft),
+      evidence: evidenceOf(draft.evidence),
+      check,
+    };
   }
 
   /**
    * A person approves the version they reviewed: the customer is created in the same transaction
    * as the approval. Approving an approved draft returns it as it is.
    */
-  async approve(user: AuthUser, id: string, version: number): Promise<CustomerDraftDto> {
+  async approve(
+    user: AuthUser,
+    id: string,
+    version: number,
+    confirmed: readonly string[] = [],
+  ): Promise<CustomerDraftDto> {
     this.drafts.requireHuman(user, HUMAN_ONLY);
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Each value ticked against the staff member's words on the review screen.
+    requireConfirmed(evidenceOf(current.evidence), confirmed);
     const request = createRequestOf(current.branchId, customerRequestOf(current));
     await this.customers.prepareCreate(user, request);
     await this.prisma.$transaction(async (tx) => {
@@ -297,7 +317,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<CustomerDraftDto, 'request' | 'check'> {
+): Omit<CustomerDraftDto, 'request' | 'check' | 'evidence'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('customers:create');
   return {

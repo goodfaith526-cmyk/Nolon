@@ -527,3 +527,49 @@ describe('shipment status drafts: replacing a draft', () => {
     );
   });
 });
+
+describe("shipment status drafts: the staff member's words", () => {
+  it('shows the words next to the values and approves only once each is ticked', async () => {
+    const shipment = await roadShipment();
+    const evidence = [
+      { field: 'shipmentId', quote: shipment.number },
+      { field: 'locationId', quote: 'بورتسودان' },
+      // Words that do not give the value: code cannot tell, the person can.
+      { field: 'status', quote: 'وصلت الميناء' },
+    ];
+    const draft = await statusDraft(statusRequest(shipment.id, { evidence }));
+    expect(draft.evidence).toEqual(evidence);
+    const approve = (confirmed?: string[]) =>
+      r.post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, {
+        version: 1,
+        ...(confirmed ? { confirmed } : {}),
+      });
+    await approve().expect(400);
+    await approve(['shipmentId', 'locationId']).expect(400);
+    expect(await shipmentStatus(shipment.id)).toBe('CREATED');
+    // The person reads "arrived at the port" against TRIP_SCHEDULED and rejects it instead.
+    await r
+      .post(`/shipment-status-drafts/${draft.id}/reject`, cookies.opsDxb, {
+        version: 1,
+        reason: 'The words say arrived at the port',
+      })
+      .expect(200);
+    const ticked = await statusDraft(
+      statusRequest(shipment.id, { evidence: evidence.slice(0, 2) }),
+    );
+    await r
+      .post(`/shipment-status-drafts/${ticked.id}/approve`, cookies.opsDxb, {
+        version: 1,
+        confirmed: ['locationId', 'shipmentId'],
+      })
+      .expect(200);
+    expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
+  });
+
+  it('refuses words for a field it does not bind', async () => {
+    const shipment = await roadShipment();
+    await createDraft(
+      statusRequest(shipment.id, { evidence: [{ field: 'note', quote: 'x' }] }),
+    ).expect(400);
+  });
+});
