@@ -421,6 +421,7 @@ export const DRAFT_TABLES = [
   'shipment_status_drafts',
   'party_drafts',
   'rate_card_drafts',
+  'new_customer_booking_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

@@ -9,6 +9,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  NewCustomerBookingDraftCustomer,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
@@ -26,6 +27,7 @@ import {
 } from '../drafts/draft-rules.js';
 import {
   DraftsService,
+  type LockedReplacement,
   decideInTx,
   keyReused,
   storedDraftUnderKey,
@@ -47,6 +49,7 @@ const details = {
   createdBy: { select: { fullName: true } },
   decidedBy: { select: { fullName: true } },
   customer: { select: { number: true } },
+  newCustomerBookingDraft: { select: { id: true } },
 } satisfies Prisma.CustomerDraftInclude;
 
 type DraftRow = Prisma.CustomerDraftGetPayload<{ include: typeof details }>;
@@ -139,37 +142,139 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
-        // Only a new request: a phone already taken is refused (409), so the assistant can say so
-        // instead of proposing a duplicate; it is checked again under the lock on approval. A
-        // replay is answered above even after its own approval took the phone.
-        throwFirstConflict(
-          await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
-        );
-        if (replaced) await replaceInTx(tx, replaced);
-        const draft = await tx.customerDraft.create({
-          data: {
-            ...scope,
-            replacesDraftId,
-            branchId,
-            expiresAt: draftExpiry(),
-            payloadHash: hash,
-            evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
-            kind: input.kind,
-            name: input.name,
-            companyName: input.companyName ?? null,
-            phone: input.phone,
-            whatsapp: input.whatsapp ?? null,
-            email: input.email ?? null,
-            city: input.city ?? null,
-            address: input.address ?? null,
-            notes: input.notes ?? null,
-          },
-          select: { id: true },
+        return this.insertNewInTx(tx, {
+          scope,
+          hash,
+          branchId,
+          input,
+          evidence,
+          replacesDraftId,
+          replaced,
         });
-        return draft.id;
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * The checks a new customer draft passes before any lock, for a caller that creates one inside
+   * its own transaction (createInTx): the branch is the user's, the references exist.
+   */
+  async prepareNew(user: AuthUser, branchId: string, input: CustomerDraftRequest): Promise<void> {
+    await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+  }
+
+  /**
+   * Creates a customer draft in the caller's transaction (a booking for a new customer, proposed
+   * in one request with it); its id. The caller ran prepareNew and answered a replay of its own
+   * request first, so the key is new here: one a customer draft already holds is refused as
+   * reused. A phone already taken in the branch is refused (409), as on create.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    spec: {
+      agentClientId: string;
+      idempotencyKey: string;
+      branchId: string;
+      input: CustomerDraftRequest;
+      evidence: readonly DraftEvidence[];
+    },
+  ): Promise<string> {
+    const { agentClientId, idempotencyKey, branchId, input, evidence } = spec;
+    const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    const existing = await tx.customerDraft.findUnique({
+      where: { agentClientId_createdById_idempotencyKey: scope },
+      select: { id: true },
+    });
+    if (existing) throw keyReused();
+    return this.insertNewInTx(tx, {
+      scope,
+      hash: customerRequestHash(branchId, input, evidence),
+      branchId,
+      input,
+      evidence,
+      replacesDraftId: null,
+      replaced: null,
+    });
+  }
+
+  /**
+   * The customer drafts a booking for a new customer waits for, by id, as its review screen shows
+   * them. The caller read the booking drafts through their own branch scope; a customer draft is
+   * in the same branch as its booking draft.
+   */
+  async linkedOf(ids: readonly string[]): Promise<Map<string, NewCustomerBookingDraftCustomer>> {
+    const now = new Date();
+    const drafts = await this.prisma.customerDraft.findMany({
+      where: { id: { in: [...new Set(ids)] } },
+      select: {
+        id: true,
+        state: true,
+        expiresAt: true,
+        name: true,
+        phone: true,
+        customerId: true,
+        customer: { select: { number: true } },
+      },
+    });
+    return new Map(
+      drafts.map((d) => [
+        d.id,
+        {
+          draftId: d.id,
+          status: draftStatus(d.state, d.expiresAt, now),
+          name: d.name,
+          phone: d.phone,
+          customerId: d.customerId,
+          customerNumber: d.customer?.number ?? null,
+        },
+      ]),
+    );
+  }
+
+  /** A new request's draft: the phone is free in the branch, the replaced draft is closed. */
+  private async insertNewInTx(
+    tx: Prisma.TransactionClient,
+    spec: {
+      scope: { agentClientId: string; createdById: string; idempotencyKey: string };
+      hash: string;
+      branchId: string;
+      input: CustomerDraftRequest;
+      evidence: readonly DraftEvidence[];
+      replacesDraftId: string | null;
+      replaced: LockedReplacement | null;
+    },
+  ): Promise<string> {
+    const { scope, hash, branchId, input, evidence, replacesDraftId, replaced } = spec;
+    // Only a new request: a phone already taken is refused (409), so the assistant can say so
+    // instead of proposing a duplicate; it is checked again under the lock on approval. A
+    // replay is answered before this, even after its own approval took the phone.
+    throwFirstConflict(
+      await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
+    );
+    if (replaced) await replaceInTx(tx, replaced);
+    const draft = await tx.customerDraft.create({
+      data: {
+        ...scope,
+        replacesDraftId,
+        branchId,
+        expiresAt: draftExpiry(),
+        payloadHash: hash,
+        evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
+        kind: input.kind,
+        name: input.name,
+        companyName: input.companyName ?? null,
+        phone: input.phone,
+        whatsapp: input.whatsapp ?? null,
+        email: input.email ?? null,
+        city: input.city ?? null,
+        address: input.address ?? null,
+        notes: input.notes ?? null,
+      },
+      select: { id: true },
+    });
+    return draft.id;
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -338,5 +443,6 @@ function baseFields(
     branchCode: d.branch.code,
     customerId: d.customerId,
     customerNumber: d.customer?.number ?? null,
+    bookingDraftId: d.newCustomerBookingDraft?.id ?? null,
   };
 }

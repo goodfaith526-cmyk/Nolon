@@ -51,8 +51,14 @@ export const PURGED_DRAFT_MODELS = {
     tx.goodsReleaseDraft.deleteMany({ where: removable(cutoff) }),
   InvoiceDraft: (tx: Tx, cutoff: Date) => tx.invoiceDraft.deleteMany({ where: removable(cutoff) }),
   ReceiptDraft: (tx: Tx, cutoff: Date) => tx.receiptDraft.deleteMany({ where: removable(cutoff) }),
+  // Before the customer drafts it names (a foreign key): a customer draft is kept while a
+  // booking for it is.
+  NewCustomerBookingDraft: (tx: Tx, cutoff: Date) =>
+    tx.newCustomerBookingDraft.deleteMany({ where: removable(cutoff) }),
   CustomerDraft: (tx: Tx, cutoff: Date) =>
-    tx.customerDraft.deleteMany({ where: removable(cutoff) }),
+    tx.customerDraft.deleteMany({
+      where: { ...removable(cutoff), newCustomerBookingDraft: { is: null } },
+    }),
   ShipmentStatusDraft: (tx: Tx, cutoff: Date) =>
     tx.shipmentStatusDraft.deleteMany({ where: removable(cutoff) }),
   PartyDraft: (tx: Tx, cutoff: Date) => tx.partyDraft.deleteMany({ where: removable(cutoff) }),

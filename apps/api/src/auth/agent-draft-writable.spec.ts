@@ -24,6 +24,11 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('bookings:create'\)\n\s*create\(/,
   },
   {
+    file: join('bookings', 'new-customer-booking-drafts.controller.ts'),
+    handler:
+      /^\s*@Post\(\)\n\s*@RequirePermission\('bookings:create', 'customers:create'\)\n\s*create\(/,
+  },
+  {
     file: join('customers', 'customer-drafts.controller.ts'),
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('customers:create'\)\n\s*create\(/,
   },
