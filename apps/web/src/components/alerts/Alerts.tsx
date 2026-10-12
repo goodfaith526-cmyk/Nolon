@@ -60,7 +60,7 @@ export function AlertsBell() {
   );
 }
 
-/** All the user's alerts, by kind, longest waiting first. */
+/** All the user's alerts, by kind, most urgent first. */
 export function Alerts() {
   const t = useTranslations('Alerts');
   const tc = useTranslations('Common');
@@ -106,7 +106,7 @@ export function Alerts() {
                       <th>{t('number')}</th>
                       <th>{t(`detail_${g.kind}`)}</th>
                       <th>{t(`since_${g.kind}`)}</th>
-                      <th>{t('days')}</th>
+                      <th>{t.has(`days_${g.kind}`) ? t(`days_${g.kind}`) : t('days')}</th>
                     </tr>
                   </thead>
                   <tbody>

@@ -24,14 +24,21 @@ describe('which alerts concern a user', () => {
   it('follows what each role may see (annex A)', () => {
     expect(kindsOf(['ADMINISTRATOR'])).toEqual([...ALERT_KINDS]);
     expect(kindsOf(['FINANCE'])).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'INVOICE_OVERDUE',
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
     ]);
-    expect(kindsOf(['WAREHOUSE'])).toEqual(['SHIPMENT_PAST_ETA', 'STORAGE_EXCEEDED', 'TRIP_LATE']);
+    expect(kindsOf(['WAREHOUSE'])).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
+      'SHIPMENT_PAST_ETA',
+      'STORAGE_EXCEEDED',
+      'TRIP_LATE',
+    ]);
     expect(kindsOf(['CUSTOMS'])).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
@@ -41,6 +48,7 @@ describe('which alerts concern a user', () => {
   it('gives a driver only their late trips, unless another role shows them shipments', () => {
     expect(kindsOf(['DRIVER'])).toEqual(['TRIP_LATE']);
     expect(kindsOf(['DRIVER', 'WAREHOUSE'])).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',

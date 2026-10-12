@@ -11,7 +11,7 @@ import { useRecord } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { useDateTime } from '../transport/common';
 
-/** How many days each of the five alerts waits: the only thing about alerts that can change. */
+/** How many days each alert waits: the only thing about alerts that can change. */
 export function AlertSettings() {
   const t = useTranslations('Alerts');
   const tc = useTranslations('Common');
@@ -104,7 +104,7 @@ export function AlertSettings() {
                   {s.updatedByName ? (
                     <>
                       {s.updatedByName}
-                      <div className="muted">{dateTime(s.updatedAt)}</div>
+                      {s.updatedAt && <div className="muted">{dateTime(s.updatedAt)}</div>}
                     </>
                   ) : (
                     '—'

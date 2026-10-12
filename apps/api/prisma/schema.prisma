@@ -2494,11 +2494,13 @@ enum AlertKind {
   CUSTOMS_STALLED
   STORAGE_EXCEEDED
   TRIP_LATE
+  SHIPMENT_ARRIVING_SOON
 
   @@map("alert_kind")
 }
 
-/// How many days each alert waits before it shows (one row per kind, added by the migration).
+/// How many days each alert waits before it shows (one row per kind, added by a migration; a kind
+/// without a row uses its default in AlertsService until the Administrator sets it).
 model AlertSetting {
   kind        AlertKind @id
   days        Int
