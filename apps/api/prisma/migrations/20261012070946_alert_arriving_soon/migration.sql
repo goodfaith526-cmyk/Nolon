@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "alert_kind" ADD VALUE 'SHIPMENT_ARRIVING_SOON';

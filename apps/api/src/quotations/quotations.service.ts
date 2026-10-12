@@ -17,7 +17,7 @@ import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -152,7 +152,7 @@ export class QuotationsService {
     const branchId = customer.branchId;
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
-    return { customerId: customer.id, branchId, year: today.slice(0, 4), ...prepared };
+    return { customerId: customer.id, branchId, ...prepared };
   }
 
   async insertInTx(
@@ -160,8 +160,7 @@ export class QuotationsService {
     user: AuthUser,
     prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
   ): Promise<QuotationWithDetails> {
-    const { year } = prepared;
-    const number = formatDocumentNumber('QT', await nextSequenceValue(tx, 'QUOTATION', year), year);
+    const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
     return tx.quotation.create({
       data: {
         ...prepared.header,

@@ -6,6 +6,9 @@ import {
 } from '@nestjs/common';
 import type {
   BillableConsolidationDto,
+  BookingService,
+  ConsolidationBookingDto,
+  ConsolidationBookingRequest,
   ConsolidationDto,
   ConsolidationInput,
   ConsolidationMoveRequest,
@@ -35,6 +38,7 @@ import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentBranches } from '../shipments/shipment-scope.js';
+import { BookingsService } from '../bookings/bookings.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive, stageApplies } from '../shipments/state-machine.js';
 import {
@@ -126,6 +130,7 @@ export class ConsolidationsService {
     private readonly shipments: ShipmentsService,
     private readonly masterData: MasterDataService,
     private readonly costs: ContainerCostsRegistry,
+    private readonly bookings: BookingsService,
   ) {}
 
   async list(
@@ -319,6 +324,67 @@ export class ConsolidationsService {
       await this.addShipments(tx, container, [shipmentId], numbers);
     });
     return this.get(user, id);
+  }
+
+  /**
+   * An LCL sea booking made from the container's page: it leaves from the container's port of
+   * loading and carries NOLON's main freight. In one transaction the booking is recorded, confirmed
+   * (creating its shipment) and its shipment put in the container, so a container that closed or
+   * filled up meanwhile leaves no booking behind.
+   */
+  async createBooking(
+    user: AuthUser,
+    id: string,
+    input: ConsolidationBookingRequest,
+  ): Promise<ConsolidationBookingDto> {
+    const existing = await this.findScoped(user, id);
+    if (!isOpen(existing.status)) {
+      throw new ConflictException('Bookings are added only while the container is open');
+    }
+    const services: BookingService[] = input.services.includes('MAIN_FREIGHT')
+      ? input.services
+      : ['MAIN_FREIGHT', ...input.services];
+    const prepared = await this.bookings.prepareCreate(user, {
+      ...input,
+      services,
+      mode: 'SEA',
+      loadType: 'LCL',
+      originLocationId: existing.originLocationId,
+    });
+    return this.prisma.$transaction(async (tx) => {
+      const container = await lockContainer(tx, id);
+      if (!isOpen(container.status)) {
+        throw new ConflictException('Bookings are added only while the container is open');
+      }
+      const count = await tx.consolidationShipment.count({ where: { consolidationId: id } });
+      if (count >= MAX_CONTAINER_SHIPMENTS) {
+        throw new ConflictException(
+          `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
+        );
+      }
+      const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      const shipment = await this.bookings.confirmInTx(tx, user, bookingId);
+      const booking = await tx.booking.findUniqueOrThrow({
+        where: { id: bookingId },
+        select: { number: true },
+      });
+      const shipmentRow = await tx.shipment.findUniqueOrThrow({
+        where: { id: shipment.id },
+        select: { number: true },
+      });
+      await this.addShipments(
+        tx,
+        container,
+        [shipment.id],
+        new Map([[shipment.id, shipmentRow.number]]),
+      );
+      return {
+        bookingId,
+        bookingNumber: booking.number,
+        shipmentId: shipment.id,
+        shipmentNumber: shipmentRow.number,
+      };
+    });
   }
 
   /** Takes a shipment out of an open container; it can go in another one. */
@@ -720,6 +786,11 @@ export class ConsolidationsService {
       actions: {
         canEdit: has('consolidation:update') && isEditable(c.status),
         canEditShipments: has('consolidation:update') && isOpen(c.status),
+        canAddBooking:
+          has('consolidation:update') &&
+          has('bookings:create') &&
+          has('bookings:approve') &&
+          isOpen(c.status),
         moves: has('consolidation:update') ? [...consolidationMoves(c.status)] : [],
         canCancel: has('consolidation:cancel') && isOpen(c.status),
       },

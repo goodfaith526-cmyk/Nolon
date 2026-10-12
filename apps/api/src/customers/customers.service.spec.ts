@@ -56,7 +56,7 @@ describe('CustomersService.duplicateIssues', () => {
     {
       id: 'c1',
       branchId: 'b1',
-      number: 'NOL-CUS-000001',
+      number: 'CS00001',
       phone: '+249900000001',
       taxNumber: 'TX-1',
     },
@@ -78,6 +78,6 @@ describe('CustomersService.duplicateIssues', () => {
       [],
       [],
     ]);
-    expect(issues[0]?.[0]?.message).toContain('NOL-CUS-000001');
+    expect(issues[0]?.[0]?.message).toContain('CS00001');
   });
 });

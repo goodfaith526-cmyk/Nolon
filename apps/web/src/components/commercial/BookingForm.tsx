@@ -8,6 +8,8 @@ import {
   type BookingDto,
   type BookingService,
   type CargoType,
+  type ConsolidationBookingDto,
+  type ConsolidationDto,
   type CustomerDto,
   type CustomerSummaryDto,
   type LoadType,
@@ -56,8 +58,18 @@ const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
 
 type PartyField = 'shipperId' | 'consigneeId' | 'notifyPartyId';
 
-/** New direct booking, or edit of a draft. CBM is computed by the API from the dimensions. */
-export function BookingForm({ booking }: { booking?: BookingDto }) {
+/**
+ * New direct booking, or edit of a draft. CBM is computed by the API from the dimensions. With
+ * `consolidation`, an LCL sea booking from that container's port of loading: saving confirms it
+ * and puts its shipment in the container.
+ */
+export function BookingForm({
+  booking,
+  consolidation,
+}: {
+  booking?: BookingDto;
+  consolidation?: ConsolidationDto;
+}) {
   const t = useTranslations('Bookings');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
@@ -70,10 +82,16 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
   const [originChoice, setOrigin] = useState(booking?.originLocationId ?? '');
-  const [destinationChoice, setDestination] = useState(booking?.destinationLocationId ?? '');
+  const [destinationChoice, setDestination] = useState(
+    booking?.destinationLocationId ?? consolidation?.destinationLocationId ?? '',
+  );
   const [mode, setMode] = useState<ShippingMode>(booking?.mode ?? 'SEA');
-  const [loadType, setLoadType] = useState<LoadType>(booking?.loadType ?? 'FCL');
-  const [cargoType, setCargoType] = useState<CargoType>(booking?.cargoType ?? 'CONTAINER');
+  const [loadType, setLoadType] = useState<LoadType>(
+    booking?.loadType ?? (consolidation ? 'LCL' : 'FCL'),
+  );
+  const [cargoType, setCargoType] = useState<CargoType>(
+    booking?.cargoType ?? (consolidation ? 'GENERAL' : 'CONTAINER'),
+  );
   const [services, setServices] = useState<BookingService[]>(booking?.services ?? ['MAIN_FREIGHT']);
   const [items, setItems] = useState<ItemState[]>(
     booking?.items.map((i) => ({
@@ -87,7 +105,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
       heightCm: i.heightCm ?? '',
       weightKg: i.weightKg ?? '',
       volumeCbm: i.lengthCm ? '' : (i.volumeCbm ?? ''),
-    })) ?? [emptyItem('CONTAINER')],
+    })) ?? [emptyItem(consolidation ? 'GENERAL' : 'CONTAINER')],
   );
   const [busy, setBusy] = useState(false);
   const [partyIds, setPartyIds] = useState<Record<PartyField, string>>({
@@ -99,7 +117,8 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
 
   // Until the user picks, the route defaults to the first two active locations.
   const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
-  const origin = originChoice || (activeLocations[0]?.id ?? '');
+  const origin =
+    consolidation?.originLocationId ?? (originChoice || (activeLocations[0]?.id ?? ''));
   const destination = destinationChoice || (activeLocations[1]?.id ?? '');
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
@@ -140,11 +159,9 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
       const v = form.get(key);
       return typeof v === 'string' ? orNull(v) : null;
     };
-    const body = {
-      originLocationId: origin,
+    // A container's booking takes its port of loading, mode and load type from the container.
+    const fields = {
       destinationLocationId: destination,
-      mode,
-      loadType: mode === 'SEA' ? loadType : null,
       cargoType,
       cargoDescription: text('cargoDescription'),
       services,
@@ -165,9 +182,23 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
         volumeCbm: orNull(i.volumeCbm),
       })),
     };
+    const body = {
+      ...fields,
+      originLocationId: origin,
+      mode,
+      loadType: mode === 'SEA' ? loadType : null,
+    };
     setBusy(true);
     setNotice(null);
     try {
+      if (consolidation) {
+        await api<ConsolidationBookingDto>(`/consolidations/${consolidation.id}/bookings`, {
+          method: 'POST',
+          body: { ...fields, customerId: customer?.id ?? '' },
+        });
+        router.push(`/consolidations/${consolidation.id}`);
+        return;
+      }
       const saved = booking
         ? await api<BookingDto>(`/bookings/${booking.id}`, { method: 'PATCH', body })
         : await api<BookingDto>('/bookings', {
@@ -212,7 +243,14 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
 
   return (
     <form className="stack form-page" onSubmit={(e) => void submit(e)}>
-      <h1>{booking ? t('editTitle', { number: booking.number }) : t('add')}</h1>
+      <h1>
+        {booking
+          ? t('editTitle', { number: booking.number })
+          : consolidation
+            ? t('addToContainer', { number: consolidation.number })
+            : t('add')}
+      </h1>
+      {consolidation && <p className="muted">{t('addToContainerHint')}</p>}
       <Notice notice={notice} />
       {!booking && (
         <section className="form-section">
@@ -241,7 +279,11 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
         <div className="form-section-body form-grid">
           <label className="field">
             {t('origin')}
-            <select value={origin} onChange={(e) => setOrigin(e.target.value)}>
+            <select
+              value={origin}
+              disabled={consolidation !== undefined}
+              onChange={(e) => setOrigin(e.target.value)}
+            >
               {locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {name(l)} ({l.code})
@@ -261,7 +303,11 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
           </label>
           <label className="field">
             {t('mode')}
-            <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
+            <select
+              value={mode}
+              disabled={consolidation !== undefined}
+              onChange={(e) => setMode(e.target.value as ShippingMode)}
+            >
               {SHIPPING_MODES.map((m) => (
                 <option key={m} value={m}>
                   {te(`mode_${m}`)}
@@ -272,7 +318,11 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
           {mode === 'SEA' && (
             <label className="field">
               {t('loadType')}
-              <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
+              <select
+                value={loadType}
+                disabled={consolidation !== undefined}
+                onChange={(e) => setLoadType(e.target.value as LoadType)}
+              >
                 {LOAD_TYPES.map((l) => (
                   <option key={l} value={l}>
                     {l}
@@ -296,7 +346,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             <input
               name="requestedDeparture"
               type="date"
-              defaultValue={booking?.requestedDeparture ?? ''}
+              defaultValue={booking?.requestedDeparture ?? consolidation?.etd ?? ''}
             />
           </label>
         </div>

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BookingsModule } from '../bookings/bookings.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import {
@@ -10,7 +11,7 @@ import { ContainerCostsRegistry } from './container-costs.registry.js';
 
 /** Consolidated (LCL) containers (annex B, consolidation). Payables posts their costs. */
 @Module({
-  imports: [MasterDataModule, ShipmentsModule],
+  imports: [BookingsModule, MasterDataModule, ShipmentsModule],
   controllers: [ConsolidationsController, ShipmentConsolidationsController],
   providers: [ConsolidationsService, ContainerCostsRegistry],
   exports: [ConsolidationsService, ContainerCostsRegistry],

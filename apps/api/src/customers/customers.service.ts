@@ -28,7 +28,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import {
   type RuleIssue,
@@ -148,7 +148,7 @@ export class CustomersService {
     }
     await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
     throwFirstConflict(await this.duplicateIssues(tx, [input]));
-    const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
+    const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
       data: { ...toData(fields), number, branchId, createdById: user.id },
       include: details,
@@ -195,7 +195,7 @@ export class CustomersService {
       return {
         ...toData(fields),
         id,
-        number: formatDocumentNumber('CUS', first + BigInt(i)),
+        number: formatShortNumber('CS', first + BigInt(i)),
         branchId,
         createdById: user.id,
       };

@@ -198,7 +198,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     it('creates a customer in the user’s branch with a running number', async () => {
       const a = await createCustomer(cookies.salesDxb, dxb);
       const b = await createCustomer(cookies.salesDxb, dxb);
-      expect(a.number).toMatch(/^NOL-CUS-\d{6}$/);
+      expect(a.number).toMatch(/^CS\d{5,}$/);
       expect(b.number).not.toBe(a.number);
       expect(a.branchId).toBe(dxb);
       expect(a.preferredCurrency).toBe('USD');
@@ -589,7 +589,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         ]),
       ).expect(201);
       const q = res.body as QuotationDto;
-      expect(q.number).toMatch(/^NOL-QT-\d{4}-\d{6}$/);
+      expect(q.number).toMatch(/^QT\d{5,}$/);
       expect(q.status).toBe('DRAFT');
       expect(q.branchId).toBe(dxb);
       expect(q.lines.map((l) => l.lineTotal)).toEqual(['2500.5', '150', '35.1']);
@@ -816,7 +816,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       ]);
       expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
       const booking = results.find((r) => r.status === 201)?.body as BookingDto;
-      expect(booking.number).toMatch(/^NOL-BK-\d{4}-\d{6}$/);
+      expect(booking.number).toMatch(/^BK\d{5,}$/);
       expect(booking.quotationId).toBe(q.id);
       expect(booking.customerId).toBe(customer.id);
       expect(booking.originLocationId).toBe(jebelAli);
