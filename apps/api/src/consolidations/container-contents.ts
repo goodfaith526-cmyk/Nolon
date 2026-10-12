@@ -31,7 +31,7 @@ const text = (value: Decimal | null): DecimalString | null =>
   value === null ? null : toDecimalString(value);
 
 /**
- * What is in a container: its shipments in the order they were put in, those the user may see
+ * What is in a container: its shipments in the order given, those the user may see
  * only (`visible`), each with its cargo lines added up, and the container's totals. A line
  * without a weight or volume adds nothing; a shipment with none of them shows null.
  */

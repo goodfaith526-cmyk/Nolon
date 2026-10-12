@@ -115,8 +115,8 @@ export class ConsolidationReportsService {
     const links = await this.prisma.consolidationShipment.findMany({
       where: { consolidationId: { in: rows.map((r) => r.id) } },
       select: { consolidationId: true, shipmentId: true },
-      // In the order they were put in; those put in together by shipment number.
-      orderBy: [{ addedAt: 'asc' }, { shipment: { number: 'asc' } }],
+      // By shipment number: shipments put in together share no meaningful order.
+      orderBy: { shipment: { number: 'asc' } },
     });
     const visible = new Map(
       (
