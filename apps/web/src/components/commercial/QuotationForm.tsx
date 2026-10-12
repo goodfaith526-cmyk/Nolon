@@ -15,13 +15,22 @@ import {
   type ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { asciiDigits } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { CustomerPicker } from './CustomerPicker';
-import { Notice, type NoticeState, useFailureText } from './Notice';
+import {
+  invalidFields,
+  invalidGroupProps,
+  invalidProps,
+  Notice,
+  type NoticeState,
+  revealFailure,
+  useFailureText,
+} from './Notice';
 
 interface LineState {
   key: number;
@@ -83,6 +92,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const origin = originChoice || (activeLocations[0]?.id ?? '');
   const destination = destinationChoice || (activeLocations[1]?.id ?? '');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // The fields the last refused save named, marked on the form until the next save.
+  const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
+  const formRef = useRef<HTMLFormElement>(null);
+  const mark = (path: string) => invalidProps(invalid, path);
+  const markGroup = (path: string) => invalidGroupProps(invalid, path);
+  useEffect(() => {
+    if (notice && !notice.ok) revealFailure(formRef.current);
+  }, [notice, invalid]);
 
   const branchId = quotation?.branchId ?? customer?.branchId;
 
@@ -145,6 +162,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     };
     setBusy(true);
     setNotice(null);
+    setInvalid(new Set());
     try {
       const saved = quotation
         ? await api<QuotationDto>(`/quotations/${quotation.id}`, { method: 'PATCH', body })
@@ -155,6 +173,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
       router.push(`/quotations/${saved.id}`);
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
+      setInvalid(invalidFields(err));
       setBusy(false);
     }
   }
@@ -171,7 +190,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   ));
 
   return (
-    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
+    <form ref={formRef} className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>{quotation ? t('editTitle', { number: quotation.number }) : t('add')}</h1>
       <Notice notice={notice} />
 
@@ -181,7 +200,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <h2>{t('customer')}</h2>
             <p>{t('sectionCustomerHint')}</p>
           </header>
-          <div className="form-section-body">
+          <div className="form-section-body" {...markGroup('customerId')}>
             <CustomerPicker value={customer} onChange={setCustomer} allowCreate />
           </div>
         </section>
@@ -195,19 +214,33 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         <div className="form-section-body form-grid">
           <label className="field">
             {t('origin')}
-            <select value={origin} onChange={(e) => setOrigin(e.target.value)} required>
+            <select
+              {...mark('originLocationId')}
+              value={origin}
+              onChange={(e) => setOrigin(e.target.value)}
+              required
+            >
               {locationOptions}
             </select>
           </label>
           <label className="field">
             {t('destination')}
-            <select value={destination} onChange={(e) => setDestination(e.target.value)} required>
+            <select
+              {...mark('destinationLocationId')}
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              required
+            >
               {locationOptions}
             </select>
           </label>
           <label className="field">
             {t('mode')}
-            <select value={mode} onChange={(e) => setMode(e.target.value as ShippingMode)}>
+            <select
+              {...mark('mode')}
+              value={mode}
+              onChange={(e) => setMode(e.target.value as ShippingMode)}
+            >
               {SHIPPING_MODES.map((m) => (
                 <option key={m} value={m}>
                   {te(`mode_${m}`)}
@@ -218,7 +251,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
           {mode === 'SEA' && (
             <label className="field">
               {t('loadType')}
-              <select value={loadType} onChange={(e) => setLoadType(e.target.value as LoadType)}>
+              <select
+                {...mark('loadType')}
+                value={loadType}
+                onChange={(e) => setLoadType(e.target.value as LoadType)}
+              >
                 {LOAD_TYPES.map((l) => (
                   <option key={l} value={l}>
                     {l}
@@ -229,7 +266,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
           )}
           <label className="field">
             {t('cargoType')}
-            <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
+            <select
+              {...mark('cargoType')}
+              value={cargoType}
+              onChange={(e) => setCargoType(e.target.value as CargoType)}
+            >
               {CARGO_TYPES.map((c) => (
                 <option key={c} value={c}>
                   {te(`cargo_${c}`)}
@@ -242,6 +283,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <textarea
               name="cargoDescription"
               rows={2}
+              {...mark('cargoDescription')}
               defaultValue={quotation?.cargoDescription ?? ''}
             />
           </label>
@@ -256,7 +298,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         <div className="form-section-body form-grid">
           <label className="field">
             {t('currency')}
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <select
+              {...mark('currency')}
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+            >
               {master.currencies
                 .filter((c) => c.isActive)
                 .map((c) => (
@@ -268,7 +314,13 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
           </label>
           <label className="field">
             {t('validUntil')}
-            <input name="validUntil" type="date" required defaultValue={quotation?.validUntil} />
+            <input
+              name="validUntil"
+              type="date"
+              required
+              {...mark('validUntil')}
+              defaultValue={quotation?.validUntil}
+            />
           </label>
         </div>
       </section>
@@ -280,7 +332,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         </header>
         <div className="form-section-body stack">
           {branchId && rates.length === 0 && <p className="muted">{t('noRates')}</p>}
-          <div className="line-items" role="table" aria-label={t('lines')}>
+          <div className="line-items" role="table" aria-label={t('lines')} {...markGroup('lines')}>
             <div className="line-items-head" role="row">
               <span role="columnheader">#</span>
               <span role="columnheader">{t('rate')}</span>
@@ -299,6 +351,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                 <label className="cell" role="cell" data-label={t('rate')}>
                   <select
                     aria-label={t('rate')}
+                    {...mark(`lines.${index}.rateCardId`)}
                     value={l.rateCardId}
                     onChange={(e) => updateLine(l.key, { rateCardId: e.target.value })}
                   >
@@ -319,6 +372,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     <label className="cell" role="cell" data-label={t('chargeType')}>
                       <select
                         aria-label={t('chargeType')}
+                        {...mark(`lines.${index}.chargeTypeCode`)}
                         value={l.chargeTypeCode}
                         onChange={(e) => updateLine(l.key, { chargeTypeCode: e.target.value })}
                       >
@@ -334,6 +388,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     <label className="cell" role="cell" data-label={t('unit')}>
                       <select
                         aria-label={t('unit')}
+                        {...mark(`lines.${index}.unit`)}
                         value={l.unit}
                         onChange={(e) => updateLine(l.key, { unit: e.target.value as RateUnit })}
                       >
@@ -351,8 +406,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                         inputMode="decimal"
                         dir="ltr"
                         pattern="\d{1,14}(\.\d{1,4})?"
+                        {...mark(`lines.${index}.unitPrice`)}
                         value={l.unitPrice}
-                        onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
+                        onChange={(e) =>
+                          updateLine(l.key, { unitPrice: asciiDigits(e.target.value) })
+                        }
                       />
                     </label>
                   </>
@@ -364,8 +422,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     inputMode="decimal"
                     dir="ltr"
                     pattern="\d{1,14}(\.\d{1,4})?"
+                    {...mark(`lines.${index}.quantity`)}
                     value={l.quantity}
-                    onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
+                    onChange={(e) => updateLine(l.key, { quantity: asciiDigits(e.target.value) })}
                   />
                 </label>
                 <label className="cell" role="cell" data-label={t('discount')}>
@@ -375,8 +434,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     dir="ltr"
                     pattern="\d{1,14}(\.\d{1,4})?"
                     placeholder="0"
+                    {...mark(`lines.${index}.discount`)}
                     value={l.discount}
-                    onChange={(e) => updateLine(l.key, { discount: e.target.value })}
+                    onChange={(e) => updateLine(l.key, { discount: asciiDigits(e.target.value) })}
                   />
                 </label>
                 <span className="cell line-remove" role="cell">
@@ -416,7 +476,12 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         <div className="form-section-body">
           <label className="field">
             <span className="visually-hidden">{t('terms')}</span>
-            <textarea name="terms" rows={3} defaultValue={quotation?.terms ?? ''} />
+            <textarea
+              name="terms"
+              rows={3}
+              {...mark('terms')}
+              defaultValue={quotation?.terms ?? ''}
+            />
           </label>
         </div>
       </section>
