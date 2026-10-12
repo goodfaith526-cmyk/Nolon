@@ -12,7 +12,7 @@ import type {
  * AI agent later) may read about a customer, with its own API key. It reads only the
  * customer-safe database views (cs_*), so nothing classified Internal or Restricted (costs,
  * margins, credit limits, internal notes, hold and cancel reasons, who did what) can reach it.
- * Records are named by their numbers (NOL-CUS-..., NOL-SHP-..., NOL-INV-...).
+ * Records are named by their numbers (CS00001, NOL-SHP-..., NOL-INV-...).
  */
 
 /** Requests carry the key as `Authorization: Bearer <key>`. */

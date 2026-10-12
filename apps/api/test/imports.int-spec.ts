@@ -424,7 +424,7 @@ describe('Excel import of customers and rates', () => {
         orderBy: { number: 'asc' },
       });
       expect(saved.map((c) => c.phone)).toEqual(phones);
-      expect(saved.every((c) => c.branchId === dxb && /^NOL-CUS-\d{6}$/.test(c.number))).toBe(true);
+      expect(saved.every((c) => c.branchId === dxb && /^CS\d{5,}$/.test(c.number))).toBe(true);
       expect(new Set(saved.map((c) => c.number)).size).toBe(3);
       expect(saved[0]?.creditLimit?.toFixed()).toBe('5000.25');
       expect(saved[1]?.creditLimit?.toFixed()).toBe('99999999999999.5');

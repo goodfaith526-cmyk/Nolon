@@ -1,7 +1,7 @@
 import type { BookingService, BranchCode, CargoType, RateUnit } from '@nolon/shared';
 import { toDbDate } from '../common/dates.js';
 import { dec } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { computeQuotationAmounts } from '../quotations/quotation-totals.js';
 
@@ -200,7 +200,6 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
     if (!id) throw new Error(`Demo data: location ${code} missing`);
     return id;
   };
-  const year = isoDate(0).slice(0, 4);
   const usd = await prisma.currency.findUniqueOrThrow({ where: { code: 'USD' } });
 
   await prisma.$transaction(
@@ -210,7 +209,7 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
         { id: string; branchId: string; consigneeId: string | null }
       >();
       for (const c of CUSTOMERS) {
-        const number = formatDocumentNumber('CUS', await nextSequenceValue(tx, 'CUSTOMER'));
+        const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
         const created = await tx.customer.create({
           data: {
             number,
@@ -317,11 +316,7 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
           };
         });
         const amounts = computeQuotationAmounts(lines, usd.decimalPlaces);
-        const number = formatDocumentNumber(
-          'QT',
-          await nextSequenceValue(tx, 'QUOTATION', year),
-          year,
-        );
+        const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
         const now = new Date();
         return tx.quotation.create({
           data: {
@@ -433,11 +428,7 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
       }) => {
         const customer = customers.get(input.customer);
         if (!customer) throw new Error(`Demo data: customer ${input.customer} missing`);
-        const number = formatDocumentNumber(
-          'BK',
-          await nextSequenceValue(tx, 'BOOKING', year),
-          year,
-        );
+        const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
         await tx.booking.create({
           data: {
             number,

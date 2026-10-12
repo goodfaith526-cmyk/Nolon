@@ -24,7 +24,7 @@ const { CustomerPicker } = await import('./CustomerPicker');
 
 const saved = {
   id: 'c1',
-  number: 'NOL-CUS-000009',
+  number: 'CS00009',
   branchId: 'b1',
   kind: 'INDIVIDUAL',
   name: 'Tariq Ismail',

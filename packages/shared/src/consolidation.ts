@@ -1,4 +1,4 @@
-import type { DateString } from './commercial.js';
+import type { CreateBookingRequest, DateString } from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { Permission } from './auth.js';
 import type { ShipmentStatus } from './shipments.js';
@@ -114,6 +114,8 @@ export interface ConsolidationDto extends ConsolidationSummaryDto {
   actions: {
     canEdit: boolean;
     canEditShipments: boolean;
+    /** Whether an LCL booking can be made from the container (POST /consolidations/:id/bookings). */
+    canAddBooking: boolean;
     moves: ConsolidationMove[];
     canCancel: boolean;
   };
@@ -157,6 +159,23 @@ export interface ConsolidationMoveRequest {
   status: ConsolidationMove;
   /** When it happened; now when omitted. Never in the future. */
   occurredAt?: string;
+}
+
+/**
+ * POST /consolidations/:id/bookings: an LCL sea booking made from the container's page. It leaves
+ * from the container's port of loading; NOLON confirms it, creates its shipment and puts that in
+ * the container, all at once. The container must be open.
+ */
+export type ConsolidationBookingRequest = Omit<
+  CreateBookingRequest,
+  'mode' | 'loadType' | 'originLocationId'
+>;
+
+export interface ConsolidationBookingDto {
+  bookingId: string;
+  bookingNumber: string;
+  shipmentId: string;
+  shipmentNumber: string;
 }
 
 /** The container a shipment is in, on the shipment page. */

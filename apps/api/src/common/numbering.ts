@@ -35,8 +35,16 @@ export async function nextSequenceRange(tx: Tx, docType: string, count: number):
   return value;
 }
 
-/** NOL-QT-2026-000001 (yearly) or NOL-CUS-000001 (never resets). */
+/** NOL-SHP-2026-000001 (yearly) or NOL-SUP-000001 (never resets). */
 export function formatDocumentNumber(prefix: string, value: bigint, year?: string): string {
   const serial = value.toString().padStart(6, '0');
   return year ? `NOL-${prefix}-${year}-${serial}` : `NOL-${prefix}-${serial}`;
+}
+
+/**
+ * The client's short numbers for bookings, quotations and customers: BK00001, QT00001, CS00001.
+ * Five digits, no year, never reset; the 100,000th record simply gets six digits.
+ */
+export function formatShortNumber(prefix: 'BK' | 'QT' | 'CS', value: bigint): string {
+  return `${prefix}${value.toString().padStart(5, '0')}`;
 }

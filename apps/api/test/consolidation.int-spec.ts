@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import type {
   AccountDto,
   BookingDto,
+  ConsolidationBookingDto,
   ConsolidationDto,
   CustomerDto,
   JournalEntryDto,
@@ -552,5 +553,69 @@ describe('consolidated LCL containers', () => {
     expect(view.shipments.find((s) => s.shipmentId === light)?.allocatedUsd).toBe('25');
     expect(view.shipments.find((s) => s.shipmentId === heavy)?.allocatedUsd).toBe('75');
     expect(view.clearingBalanceUsd).toBe('0');
+  });
+
+  it('makes an LCL booking from inside an open container, confirmed and in the container', async () => {
+    const created = (await newContainer([]).expect(201)).body as ConsolidationDto;
+    const path = `/consolidations/${created.id}/bookings`;
+    expect((await container(created.id, cookies.opsJed)).actions.canAddBooking).toBe(true);
+    // Finance sees the container but makes no bookings.
+    expect((await container(created.id, cookies.financeJed)).actions.canAddBooking).toBe(false);
+    const body = {
+      customerId: customers[0].id,
+      destinationLocationId: portSudan,
+      cargoType: 'GENERAL',
+      services: ['CUSTOMS'],
+      items: [{ cargoType: 'GENERAL', quantity: 3, weightKg: '300', volumeCbm: '2.5' }],
+    };
+    const bookingsOf = () => t.prisma.booking.count({ where: { customerId: customers[0].id } });
+    const before = await bookingsOf();
+
+    // Sales may not change containers, Warehouse only views them, PTS does not see JED's.
+    await post(path, cookies.salesJed, body).expect(403);
+    await post(path, cookies.warehouseJed, body).expect(403);
+    await post(path, cookies.opsPts, body).expect(404);
+    // The route and mode are the container's, never the request's.
+    await post(path, cookies.opsJed, { ...body, mode: 'ROAD' }).expect(400);
+    await post(path, cookies.opsJed, { ...body, originLocationId: khartoum }).expect(400);
+    // No cargo line: nothing is confirmed, so nothing is left behind.
+    await post(path, cookies.opsJed, { ...body, items: [] }).expect(400);
+    await post(path, cookies.opsJed, { ...body, customerId: randomUUID() }).expect(404);
+    expect(await bookingsOf()).toBe(before);
+
+    const made = (await post(path, cookies.opsJed, body).expect(201))
+      .body as ConsolidationBookingDto;
+    expect(made.bookingNumber).toMatch(/^BK\d{5,}$/);
+    const booking = (await get(`/bookings/${made.bookingId}`, cookies.opsJed).expect(200))
+      .body as BookingDto;
+    expect(booking).toMatchObject({
+      status: 'CONFIRMED',
+      mode: 'SEA',
+      loadType: 'LCL',
+      originLocationId: jeddahPort,
+      destinationLocationId: portSudan,
+      shipmentId: made.shipmentId,
+    });
+    // NOLON carries the main freight in its own container.
+    expect([...booking.services].sort()).toEqual(['CUSTOMS', 'MAIN_FREIGHT']);
+    const view = await container(created.id, cookies.opsJed);
+    expect(view.shipments.map((s) => s.shipmentNumber)).toEqual([made.shipmentNumber]);
+    expect((await shipmentOf(made.shipmentId)).vesselName).toBe('MSC Aurora');
+
+    // Once the container is closed, no booking is made from it and none is left behind.
+    await t.prisma.shipmentEvent.updateMany({
+      where: { shipmentId: made.shipmentId },
+      data: { occurredAt: new Date(at('01-02')) },
+    });
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      containerNumber: 'MSCU1234565',
+    }).expect(200);
+    await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+      status: 'CLOSED',
+      occurredAt: at('05-01'),
+    }).expect(200);
+    expect((await container(created.id, cookies.opsJed)).actions.canAddBooking).toBe(false);
+    await post(path, cookies.opsJed, body).expect(409);
+    expect(await bookingsOf()).toBe(before + 1);
   });
 });
