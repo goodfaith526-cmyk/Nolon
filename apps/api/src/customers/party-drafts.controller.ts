@@ -26,12 +26,21 @@ import {
 } from '../auth/decorators.js';
 import { splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
+import { confirmedFields, draftEvidence } from '../drafts/draft-evidence.js';
 import { partyBody } from './customer-schemas.js';
 import { PartyDraftsService } from './party-drafts.service.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-const createBody = partyBody.extend({ idempotencyKey, customerId: z.uuid() }).strict();
-const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const createBody = partyBody
+  .extend({
+    idempotencyKey,
+    customerId: z.uuid(),
+    evidence: draftEvidence(['customerId', 'name', 'phone']),
+  })
+  .strict();
+const approveBody = z
+  .object({ version: z.number().int().min(1), confirmed: confirmedFields })
+  .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
@@ -87,7 +96,8 @@ export class PartyDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<PartyDraftDto> {
-    return this.drafts.approve(user, id, parse(approveBody, body).version);
+    const { version, confirmed } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, confirmed);
   }
 
   @Post(':id/reject')

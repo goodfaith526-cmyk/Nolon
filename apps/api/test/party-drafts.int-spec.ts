@@ -348,3 +348,57 @@ describe('party drafts: replacing a draft', () => {
     expect(await t.prisma.partyDraft.count({ where: { replacesDraftId: draft.id } })).toBe(0);
   });
 });
+
+describe("party drafts: replay and the staff member's words", () => {
+  it('a replay after the approval returns the saved draft, not a new party', async () => {
+    const customer = await newCustomer();
+    const body = partyRequest(customer.id);
+    const draft = await partyDraft(body);
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }).expect(200);
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: draft.id, status: 'APPROVED' });
+    await createDraft({ ...body, name: 'Someone Else' }).expect(409);
+    expect(await partiesOf(customer.id)).toBe(1);
+  });
+
+  it('keeps the words with the draft and approves only once each value is ticked', async () => {
+    const customer = await newCustomer();
+    const evidence = [
+      { field: 'name', quote: 'المستلم عمر حسن' },
+      { field: 'phone', quote: 'رقمه 0912000111' },
+      { field: 'customerId', quote: 'لعميلنا شركة التجارة' },
+    ];
+    const body = partyRequest(customer.id, { evidence });
+    const draft = await partyDraft(body);
+    expect(draft.evidence).toEqual(evidence);
+    // Other words under the same key are another request.
+    await createDraft({ ...body, evidence: evidence.slice(0, 2) }).expect(409);
+    const approve = (confirmed?: string[]) =>
+      r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        ...(confirmed ? { confirmed } : {}),
+      });
+    await approve().expect(400);
+    await approve(['name', 'phone']).expect(400);
+    expect(await partiesOf(customer.id)).toBe(0);
+    await approve(['customerId', 'phone', 'name']).expect(200);
+    expect(await partiesOf(customer.id)).toBe(1);
+  });
+
+  it('refuses words for a field it does not bind, or the same field twice', async () => {
+    const customer = await newCustomer();
+    const before = await t.prisma.partyDraft.count();
+    await createDraft(
+      partyRequest(customer.id, { evidence: [{ field: 'address', quote: 'x' }] }),
+    ).expect(400);
+    await createDraft(
+      partyRequest(customer.id, {
+        evidence: [
+          { field: 'name', quote: 'a' },
+          { field: 'name', quote: 'b' },
+        ],
+      }),
+    ).expect(400);
+    expect(await t.prisma.partyDraft.count()).toBe(before);
+  });
+});

@@ -1,5 +1,10 @@
 import type { PartyInput } from './commercial.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftEvidence,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  EvidenceReviewFields,
+} from './drafts.js';
 
 /**
  * A party (shipper, consignee or notify party) of a customer that the staff assistant proposes
@@ -12,9 +17,11 @@ export type PartyDraftRequest = PartyInput;
 export interface PartyDraftCreateRequest extends PartyDraftRequest {
   idempotencyKey: string;
   customerId: string;
+  /** The staff member's words for the values, shown beside them on the review screen. */
+  evidence?: DraftEvidence[];
 }
 
-export interface PartyDraftDto extends EntryDraftReviewFields {
+export interface PartyDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
   customerId: string;
   customerNumber: string;
   customerName: string;
@@ -24,6 +31,6 @@ export interface PartyDraftDto extends EntryDraftReviewFields {
   partyId: string | null;
 }
 
-export type PartyDraftListItemDto = Omit<PartyDraftDto, 'request' | 'check'> & {
+export type PartyDraftListItemDto = Omit<PartyDraftDto, 'request' | 'check' | 'evidence'> & {
   lineCount: number;
 };

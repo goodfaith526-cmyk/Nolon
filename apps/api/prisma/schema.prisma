@@ -3198,6 +3198,8 @@ model PartyDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   name            String           @db.VarChar(200)
   companyName     String?          @map("company_name") @db.VarChar(200)
   phone           String?          @db.VarChar(20)
