@@ -176,6 +176,11 @@ export interface CustomerDto extends CustomerSummaryDto {
   parties: PartyDto[];
 }
 
+/** The answer to adding a party: the customer, and the id of the party this request created. */
+export interface CustomerPartyAddedDto extends CustomerDto {
+  addedPartyId: string;
+}
+
 export interface CustomerInput {
   kind: CustomerKind;
   name: string;

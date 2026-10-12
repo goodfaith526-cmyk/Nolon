@@ -13,6 +13,7 @@ import {
 import {
   CUSTOMER_KINDS,
   type CustomerDto,
+  type CustomerPartyAddedDto,
   type CustomerSummaryDto,
   type Page,
 } from '@nolon/shared';
@@ -126,7 +127,7 @@ export class CustomersController {
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
-  ): Promise<CustomerDto> {
+  ): Promise<CustomerPartyAddedDto> {
     return this.customers.addParty(user, id, parse(partyBody, body));
   }
 

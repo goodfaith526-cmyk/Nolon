@@ -10,6 +10,7 @@ import type {
   CreateCustomerRequest,
   CustomerContactDto,
   CustomerDto,
+  CustomerPartyAddedDto,
   CustomerInput,
   CustomerKind,
   CustomerSummaryDto,
@@ -424,12 +425,20 @@ export class CustomersService {
     }
   }
 
-  async addParty(user: AuthUser, customerId: string, input: PartyInput): Promise<CustomerDto> {
+  async addParty(
+    user: AuthUser,
+    customerId: string,
+    input: PartyInput,
+  ): Promise<CustomerPartyAddedDto> {
     const customer = await this.findScoped(user, customerId);
+    let addedPartyId = '';
     await this.writeParties(user, customer, async (tx) => {
-      await tx.party.create({ data: { ...input, customerId: customer.id } });
+      ({ id: addedPartyId } = await tx.party.create({
+        data: { ...input, customerId: customer.id },
+        select: { id: true },
+      }));
     });
-    return this.get(user, customer.id);
+    return { ...(await this.get(user, customer.id)), addedPartyId };
   }
 
   /** For a party draft: the checks of addParty that need no lock (the customer in the user's branches). */

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { BookingDto, CustomerDto } from '@nolon/shared';
+import type { BookingDto, CustomerDto, CustomerPartyAddedDto } from '@nolon/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -127,9 +127,16 @@ describe('BookingForm parties', () => {
     const name = dialog?.querySelector('input[name="name"]') as HTMLInputElement;
     typeInto(name, 'Omdurman Trading');
 
-    api.mockResolvedValueOnce(
-      customer([party('p0', 'Old shipper'), party('p1', 'Omdurman Trading')]),
-    );
+    // Someone else added "Another desk" to the same customer meanwhile: only this save's party is
+    // selected, by the id the API returns, whatever the list order.
+    api.mockResolvedValueOnce({
+      ...customer([
+        party('p0', 'Old shipper'),
+        party('p2', 'Another desk'),
+        party('p1', 'Omdurman Trading'),
+      ]),
+      addedPartyId: 'p1',
+    });
     act(() => {
       (dialog?.querySelector('form') as HTMLFormElement).requestSubmit();
     });
@@ -143,7 +150,7 @@ describe('BookingForm parties', () => {
     expect(document.querySelector('dialog.form-dialog')).toBeNull();
     expect(select('consigneeId').value).toBe('p1');
     expect(select('shipperId').value).toBe('');
-    expect([...select('shipperId').options].map((o) => o.value)).toEqual(['', 'p0', 'p1']);
+    expect([...select('shipperId').options].map((o) => o.value)).toEqual(['', 'p0', 'p2', 'p1']);
   });
 
   it('drops a party saved for a customer the booking no longer has', async () => {
@@ -154,14 +161,14 @@ describe('BookingForm parties', () => {
       phone: '+249912345678',
       isActive: true,
     });
-    let finishSave: (c: CustomerDto) => void = () => {};
+    let finishSave: (c: CustomerPartyAddedDto) => void = () => {};
     api.mockImplementation((path: string) => {
       if (path.startsWith('/customers?')) {
         const id = path.includes('Second') ? 'c2' : 'c1';
         return Promise.resolve({ items: [summary(id, id)], total: 1, page: 1, pageSize: 20 });
       }
       if (path === '/customers/c1/parties') {
-        return new Promise<CustomerDto>((resolve) => {
+        return new Promise<CustomerPartyAddedDto>((resolve) => {
           finishSave = resolve;
         });
       }
@@ -195,7 +202,10 @@ describe('BookingForm parties', () => {
     click(buttonByText('change'));
     expect(document.querySelector('dialog.form-dialog')).toBeNull();
     await pick('Second', 'c2');
-    finishSave({ ...customer([party('c1-p', 'c1 party'), party('late', 'Late party')]) });
+    finishSave({
+      ...customer([party('c1-p', 'c1 party'), party('late', 'Late party')]),
+      addedPartyId: 'late',
+    });
     await flush();
 
     expect(select('consigneeId').value).toBe('');

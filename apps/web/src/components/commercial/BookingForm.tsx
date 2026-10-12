@@ -475,10 +475,8 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             onCancel={() => setAddingParty(null)}
             onSaved={(c) => {
               if (c.id !== currentCustomer.current) return;
-              const known = new Set(parties.map((p) => p.id));
-              const added = c.parties.find((p) => !known.has(p.id));
               setDetails(c);
-              if (added) setPartyIds((all) => ({ ...all, [addingParty]: added.id }));
+              setPartyIds((all) => ({ ...all, [addingParty]: c.addedPartyId }));
               setAddingParty(null);
             }}
           />

@@ -1,13 +1,16 @@
 'use client';
 
-import type { CustomerDto } from '@nolon/shared';
+import type { CustomerPartyAddedDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
-/** Adds a party (shipper, consignee, notify party) to a customer; `onSaved` gets the customer. */
+/**
+ * Adds a party (shipper, consignee, notify party) to a customer; `onSaved` gets the customer and
+ * the id of the party this save created.
+ */
 export function PartyForm({
   customerId,
   initialName = '',
@@ -18,7 +21,7 @@ export function PartyForm({
   customerId: string;
   initialName?: string;
   title?: string;
-  onSaved: (customer: CustomerDto) => void;
+  onSaved: (customer: CustomerPartyAddedDto) => void;
   onCancel: () => void;
 }) {
   const t = useTranslations('Customers');
@@ -34,7 +37,7 @@ export function PartyForm({
     setNotice(null);
     try {
       onSaved(
-        await api<CustomerDto>(`/customers/${customerId}/parties`, {
+        await api<CustomerPartyAddedDto>(`/customers/${customerId}/parties`, {
           method: 'POST',
           body: {
             name: field(form, 'name'),

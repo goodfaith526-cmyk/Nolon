@@ -3,6 +3,7 @@ import type {
   AuditLogDto,
   BookingDto,
   CustomerDto,
+  CustomerPartyAddedDto,
   MasterDataDto,
   Page,
   QuotationDto,
@@ -237,8 +238,15 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       expect(untouched.parties).toEqual([]);
       const added = (
         await post(`/customers/${own.id}/parties`, cookies.salesDxb, party).expect(201)
-      ).body as CustomerDto;
-      expect(added.parties.map((p) => p.name)).toEqual(['Omdurman Trading']);
+      ).body as CustomerPartyAddedDto;
+      expect(added.parties.map((p) => p.id)).toEqual([added.addedPartyId]);
+      // Two parties with the same name: the answer names the one this request created.
+      const again = (
+        await post(`/customers/${own.id}/parties`, cookies.salesDxb, party).expect(201)
+      ).body as CustomerPartyAddedDto;
+      expect(again.parties).toHaveLength(2);
+      expect(again.addedPartyId).not.toBe(added.addedPartyId);
+      expect(again.parties.map((p) => p.id)).toContain(again.addedPartyId);
     });
 
     it('validates phone format, currency and the credit limit pair', async () => {
