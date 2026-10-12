@@ -4,10 +4,12 @@ import { limitedToOwnTrips } from '../auth/own-trips.js';
 
 /**
  * Whether `kind` concerns the user: they see its records. A Driver sees shipments only through
- * their own trips, so the late shipments alert (of all the branch's shipments) is not theirs.
+ * their own trips, so the shipment alerts (of all the branch's shipments) are not theirs.
  */
 export function concerns(user: AuthUser, kind: AlertKind): boolean {
   if (!user.permissions.has(ALERT_PERMISSIONS[kind])) return false;
-  if (kind === 'SHIPMENT_PAST_ETA') return !limitedToOwnTrips(user, 'shipments');
+  if (kind === 'SHIPMENT_PAST_ETA' || kind === 'SHIPMENT_ARRIVING_SOON') {
+    return !limitedToOwnTrips(user, 'shipments');
+  }
   return true;
 }

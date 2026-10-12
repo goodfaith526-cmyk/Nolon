@@ -19,6 +19,12 @@ import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
 import { concerns } from './alert-rules.js';
 
+/**
+ * Starting waits of alerts added after alert_settings was created: used until the Administrator
+ * sets one (then a row holds it). Days before the ETA for SHIPMENT_ARRIVING_SOON.
+ */
+const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = { SHIPMENT_ARRIVING_SOON: 3 };
+
 /** Alerts whose rows point at a shipment by id only: its number comes from the shipments module. */
 const BY_SHIPMENT: readonly AlertKind[] = ['CUSTOMS_STALLED', 'STORAGE_EXCEEDED'];
 
@@ -39,7 +45,7 @@ export class AlertsService {
     private readonly trips: TripReportsService,
   ) {}
 
-  /** The alerts this user is concerned by, each kind with its rows (most overdue first). */
+  /** The alerts this user is concerned by, each kind with its rows (most urgent first). */
   async forUser(user: AuthUser): Promise<AlertsDto> {
     const kinds = ALERT_KINDS.filter((kind) => concerns(user, kind));
     if (kinds.length === 0) return { groups: [], total: 0 };
@@ -59,23 +65,35 @@ export class AlertsService {
     const rows = await this.prisma.alertSetting.findMany({
       include: { updatedBy: { select: { fullName: true } } },
     });
-    return ALERT_KINDS.flatMap((kind) => {
+    return ALERT_KINDS.flatMap((kind): AlertSettingDto[] => {
       const row = rows.find((r) => r.kind === kind);
-      return row
-        ? [
-            {
-              kind,
-              days: row.days,
-              updatedAt: row.updatedAt.toISOString(),
-              updatedByName: row.updatedBy?.fullName ?? null,
-            },
-          ]
-        : [];
+      if (row) {
+        return [
+          {
+            kind,
+            days: row.days,
+            updatedAt: row.updatedAt.toISOString(),
+            updatedByName: row.updatedBy?.fullName ?? null,
+          },
+        ];
+      }
+      // Never set: its starting wait, shown as not changed by anyone.
+      const days = DEFAULT_DAYS[kind];
+      return days === undefined ? [] : [{ kind, days, updatedAt: null, updatedByName: null }];
     });
   }
 
   /** Changes how many days one alert waits: the only change the screens make to alerts. */
   async updateSetting(user: AuthUser, kind: AlertKind, days: number): Promise<AlertSettingDto[]> {
+    if (DEFAULT_DAYS[kind] !== undefined) {
+      // An alert with a starting wait may have no row yet: the first change adds it.
+      await this.prisma.alertSetting.upsert({
+        where: { kind },
+        create: { kind, days, updatedById: user.id },
+        update: { days, updatedById: user.id },
+      });
+      return this.settings();
+    }
     const { count } = await this.prisma.alertSetting.updateMany({
       where: { kind },
       data: { days, updatedById: user.id },
@@ -86,11 +104,16 @@ export class AlertsService {
 
   private async waits(): Promise<Map<AlertKind, number>> {
     const rows = await this.prisma.alertSetting.findMany();
-    return new Map(rows.map((r) => [r.kind, r.days]));
+    return new Map([
+      ...(Object.entries(DEFAULT_DAYS) as [AlertKind, number][]),
+      ...rows.map((r): [AlertKind, number] => [r.kind, r.days]),
+    ]);
   }
 
   private rows(user: AuthUser, kind: AlertKind, days: number): Promise<AlertRows> {
     switch (kind) {
+      case 'SHIPMENT_ARRIVING_SOON':
+        return this.shipmentReports.arrivingSoon(user, days, ALERT_LIST_LIMIT);
       case 'SHIPMENT_PAST_ETA':
         return this.shipmentReports.pastEta(user, days, ALERT_LIST_LIMIT);
       case 'INVOICE_OVERDUE':

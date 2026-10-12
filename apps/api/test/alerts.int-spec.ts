@@ -25,7 +25,8 @@ import {
 } from './auth-test-app.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
 
-const DEFAULT_WAITS: Record<AlertKind, number> = {
+/** Starting waits of the alerts the first migration seeded (each has a row). */
+const DEFAULT_WAITS: Partial<Record<AlertKind, number>> = {
   SHIPMENT_PAST_ETA: 0,
   INVOICE_OVERDUE: 0,
   CUSTOMS_STALLED: 3,
@@ -34,7 +35,7 @@ const DEFAULT_WAITS: Record<AlertKind, number> = {
 };
 
 /**
- * Scenario 18: the five internal alerts. Each test record is made to wait since a day older than
+ * Scenario 18: the internal alerts. Each test record is made to wait since a day older than
  * any other suite's records (year 600-900), so it heads its alert's list.
  */
 describe('internal alerts', () => {
@@ -55,6 +56,10 @@ describe('internal alerts', () => {
     trip: '',
     recentTrip: '',
     invoice: '',
+    arrivingShared: '',
+    arrivingOwn: '',
+    arrivingLater: '',
+    arrived: '',
   };
   const cookies = {
     admin: '',
@@ -68,6 +73,7 @@ describe('internal alerts', () => {
     managerDxb: '',
     financePts: '',
     salesPts: '',
+    opsPts: '',
   };
 
   const get = (path: string, cookie: string) =>
@@ -129,6 +135,7 @@ describe('internal alerts', () => {
       // Approved invoices post entries that are never deleted: their users stay (LEDGER_PREFIX).
       financePts: await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX),
       salesPts: await createUser(t.prisma, ['SALES'], ['PTS'], LEDGER_PREFIX),
+      opsPts: await createUser(t.prisma, ['OPERATIONS'], ['PTS']),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
@@ -151,6 +158,27 @@ describe('internal alerts', () => {
     const twoDaysAgo = new Date(Date.parse(todayIn(branch.timezone)) - 2 * 86_400_000);
     await t.prisma.shipment.update({ where: { id: ids.late }, data: { eta: new Date(old) } });
     await t.prisma.shipment.update({ where: { id: ids.recent }, data: { eta: twoDaysAgo } });
+
+    // Alert 6, arriving soon: on the way with the ETA close. One worked on in Port Sudan too (the
+    // office it is coming to), one only Dubai's, one further off, one that has already arrived.
+    const inDays = (n: number) => new Date(Date.parse(todayIn(branch.timezone)) + n * 86_400_000);
+    ids.arrivingShared = await shipment(cookies.opsDxb, dxbRoute, ['MAIN_FREIGHT']);
+    ids.arrivingOwn = await shipment(cookies.opsDxb, dxbRoute, ['MAIN_FREIGHT']);
+    ids.arrivingLater = await shipment(cookies.opsDxb, dxbRoute, ['MAIN_FREIGHT']);
+    ids.arrived = await shipment(cookies.opsDxb, dxbRoute, ['MAIN_FREIGHT']);
+    await t.prisma.shipmentBranch.create({
+      data: { shipmentId: ids.arrivingShared, branchId: pts },
+    });
+    await t.prisma.shipment.update({
+      where: { id: ids.arrivingShared },
+      data: { eta: inDays(2), status: 'IN_TRANSIT' },
+    });
+    await t.prisma.shipment.update({ where: { id: ids.arrivingOwn }, data: { eta: inDays(0) } });
+    await t.prisma.shipment.update({ where: { id: ids.arrivingLater }, data: { eta: inDays(5) } });
+    await t.prisma.shipment.update({
+      where: { id: ids.arrived },
+      data: { eta: inDays(1), status: 'ROAD_ARRIVED' },
+    });
 
     // Alert 3: a customs file submitted and left since then.
     ids.customs = await shipment(cookies.opsDxb, dxbRoute, ['MAIN_FREIGHT', 'CUSTOMS']);
@@ -257,6 +285,8 @@ describe('internal alerts', () => {
         data: { days, updatedById: null },
       });
     }
+    // Arriving soon had no row: back to its starting wait.
+    await t.prisma.alertSetting.deleteMany({ where: { kind: 'SHIPMENT_ARRIVING_SOON' } });
     await deleteCommercialTestData(t.prisma);
     await deleteTestUsers(t.prisma);
     await t.close();
@@ -265,6 +295,7 @@ describe('internal alerts', () => {
   it('shows each alert to the staff it concerns, longest waiting first', async () => {
     const ops = await alerts(cookies.opsDxb);
     expect(ops.groups.map((g) => g.kind)).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'INVOICE_OVERDUE',
       'CUSTOMS_STALLED',
@@ -309,12 +340,14 @@ describe('internal alerts', () => {
     // Warehouse staff: no customs files, no invoices.
     const store = await alerts(cookies.warehouseDxb);
     expect(store.groups.map((g) => g.kind)).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
     ]);
     // Customs staff: no trips, no invoices.
     expect((await alerts(cookies.customsDxb)).groups.map((g) => g.kind)).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
@@ -326,6 +359,57 @@ describe('internal alerts', () => {
       [ids.trip, ids.recentTrip].sort(),
     );
     await get('/alerts', '').expect(401);
+  });
+
+  it('tells the receiving office about shipments arriving soon, soonest first', async () => {
+    // Port Sudan works on the shared shipment, so the alert is theirs, not Dubai's.
+    const ptsOps = await alerts(cookies.opsPts);
+    expect(find(ptsOps, 'SHIPMENT_ARRIVING_SOON', ids.arrivingShared)).toMatchObject({
+      branchCode: 'DXB',
+      detail: customer.name,
+      days: 2,
+    });
+    expect(find(ptsOps, 'SHIPMENT_ARRIVING_SOON', ids.arrivingOwn)).toBeUndefined();
+
+    const dxbOps = await alerts(cookies.opsDxb);
+    const group = dxbOps.groups.find((g) => g.kind === 'SHIPMENT_ARRIVING_SOON');
+    expect(group?.thresholdDays).toBe(3);
+    expect(find(dxbOps, 'SHIPMENT_ARRIVING_SOON', ids.arrivingOwn)?.days).toBe(0);
+    expect(find(dxbOps, 'SHIPMENT_ARRIVING_SOON', ids.arrivingShared)).toBeUndefined();
+    // Further off than the wait, or already arrived: not listed.
+    expect(find(dxbOps, 'SHIPMENT_ARRIVING_SOON', ids.arrivingLater)).toBeUndefined();
+    expect(find(dxbOps, 'SHIPMENT_ARRIVING_SOON', ids.arrived)).toBeUndefined();
+    // Soonest first; listed once however often it is asked.
+    const days = group?.items.map((i) => i.days) ?? [];
+    expect(days).toEqual([...days].sort((a, b) => a - b));
+    expect(group?.items.filter((i) => i.refId === ids.arrivingOwn)).toHaveLength(1);
+
+    // Other branches and roles: nothing.
+    const jed = (await alerts(cookies.opsJed)).groups.flatMap((g) => g.items);
+    expect(jed.map((i) => i.refId)).not.toContain(ids.arrivingOwn);
+    expect((await alerts(cookies.financePts)).groups.map((g) => g.kind)).toContain(
+      'SHIPMENT_ARRIVING_SOON',
+    );
+    expect((await alerts(cookies.driver)).groups.map((g) => g.kind)).toEqual(['TRIP_LATE']);
+
+    // A later ETA moves it out at once; an earlier one brings it back.
+    await t.prisma.shipment.update({
+      where: { id: ids.arrivingShared },
+      data: { eta: new Date(Date.now() + 20 * 86_400_000) },
+    });
+    expect(
+      find(await alerts(cookies.opsPts), 'SHIPMENT_ARRIVING_SOON', ids.arrivingShared),
+    ).toBeUndefined();
+
+    // Looking further ahead lists the later one; the setting row is added on the first change.
+    await setWait('SHIPMENT_ARRIVING_SOON', 5);
+    expect(
+      find(await alerts(cookies.opsDxb), 'SHIPMENT_ARRIVING_SOON', ids.arrivingLater)?.days,
+    ).toBe(5);
+    await setWait('SHIPMENT_ARRIVING_SOON', 4);
+    expect(
+      find(await alerts(cookies.opsDxb), 'SHIPMENT_ARRIVING_SOON', ids.arrivingLater),
+    ).toBeUndefined();
   });
 
   it('waits the days the administrator sets, then drops what is done', async () => {
@@ -363,7 +447,10 @@ describe('internal alerts', () => {
   it('lets only the administrator change the days, within 0 to 365', async () => {
     const settings = (await get('/alerts/settings', cookies.admin).expect(200))
       .body as AlertSettingDto[];
-    expect(settings.map((s) => s.kind)).toEqual(Object.keys(DEFAULT_WAITS));
+    expect(settings.map((s) => s.kind)).toEqual([
+      'SHIPMENT_ARRIVING_SOON',
+      ...Object.keys(DEFAULT_WAITS),
+    ]);
     await get('/alerts/settings', cookies.management).expect(403);
     await get('/alerts/settings', cookies.managerDxb).expect(403);
     await put('/alerts/settings/CUSTOMS_STALLED', cookies.management, { days: 5 }).expect(403);

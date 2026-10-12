@@ -17,7 +17,7 @@ import { reportBranchIds } from '../auth/branch-scope.js';
 import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { fromDbDate, fromDbDateOrNull } from '../common/dates.js';
 import { type Decimal, ZERO, dec } from '../common/money.js';
-import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
+import { type AuditQuery, andIf, overLimit, sqlDate, uuidList } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { shipmentVisibleIn } from './shipment-scope.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -65,6 +65,36 @@ const ROUTE_JOINS = Prisma.sql`
 const localDay = (column: Prisma.Sql) => Prisma.sql`(${column} AT TIME ZONE b."timezone")::date`;
 
 /** Whether the shipment has been delivered (alias s). */
+/**
+ * Statuses of a shipment on the way: loaded or moving, or still at origin, and not yet arrived at
+ * a port (ARRIVED_PORT) or a city (ROAD_ARRIVED). TRIP_SCHEDULED is left out: it also follows an
+ * arrival (the next road leg), so it does not say the shipment is still coming.
+ */
+const ON_THE_WAY = [
+  'CREATED',
+  'PICKUP_SCHEDULED',
+  'RECEIVED_ORIGIN_WAREHOUSE',
+  'CONSOLIDATED',
+  'LOADED',
+  'DEPARTED',
+  'IN_TRANSIT',
+  'ROAD_DEPARTED',
+  'ROAD_IN_TRANSIT',
+] as const;
+
+/**
+ * The receiving office (alias s): one of `branchIds` shares the shipment, or owns it while no
+ * branch shares it.
+ */
+function receivedIn(alias: string, branchIds: readonly string[]): Prisma.Sql {
+  const s = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(EXISTS (
+      SELECT 1 FROM "shipment_branches" sb
+      WHERE sb."shipment_id" = ${s}."id" AND sb."branch_id" IN ${uuidList(branchIds)})
+    OR (${s}."branch_id" IN ${uuidList(branchIds)}
+      AND NOT EXISTS (SELECT 1 FROM "shipment_branches" sb WHERE sb."shipment_id" = ${s}."id")))`;
+}
+
 const IS_DELIVERED = Prisma.sql`s."status" IN ('DELIVERED', 'CLOSED')`;
 
 /**
@@ -224,6 +254,34 @@ export class ShipmentReportsService {
         ) late
         WHERE "days" > ${graceDays}
         ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
+  }
+
+  /**
+   * Alert SHIPMENT_ARRIVING_SOON: shipments still on the way (not yet arrived at a port or city,
+   * nor further on, nor on hold or cancelled) whose ETA is today or within `aheadDays` days, soonest
+   * first. Each goes to the office that receives it: the branches sharing the shipment, or the
+   * owning branch when none does. Worked out when asked, so a changed ETA moves it at once and a
+   * shipment shows once per user, however often they look.
+   */
+  async arrivingSoon(user: AuthUser, aheadDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT s."id" AS "refId", s."number", b."code" AS "branchCode", c."name" AS "detail",
+                 s."eta" AS "since", (s."eta" - ${localDay(Prisma.sql`now()`)})::int AS "days"
+          FROM "shipments" s
+          JOIN "branches" b ON b."id" = s."branch_id"
+          JOIN "customers" c ON c."id" = s."customer_id"
+          WHERE ${receivedIn('s', branchIds)}
+            AND s."status"::text IN (${Prisma.join([...ON_THE_WAY])})
+            AND s."eta" IS NOT NULL
+        ) coming
+        WHERE "days" BETWEEN 0 AND ${aheadDays}
+        ORDER BY "days", "number"
         LIMIT ${limit}`,
     );
   }
