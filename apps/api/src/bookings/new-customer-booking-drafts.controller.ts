@@ -28,6 +28,7 @@ import {
 import { parse, requiredText } from '../common/validation.js';
 import { customerFields } from '../customers/customer-schemas.js';
 import { confirmedPaths, draftEvidencePaths } from '../drafts/draft-evidence.js';
+import { splitReplaced } from '../drafts/drafts.service.js';
 import { bookingFields, itemBody } from './bookings.controller.js';
 import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.service.js';
 
@@ -132,7 +133,10 @@ export class NewCustomerBookingDraftsController {
     @CurrentUser() user: AuthUser,
     @Body() body: unknown,
   ): Promise<NewCustomerBookingDraftSummaryDto> {
-    return this.drafts.create(user, parse(createBody, body));
+    // replacesDraftId: the booking draft (with its customer draft) this pair replaces, when the
+    // person asked for changes.
+    const { replacesDraftId, rest } = splitReplaced(body);
+    return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
   }
 
   @AgentReadable()

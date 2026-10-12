@@ -2,6 +2,7 @@ import type {
   AgentClientCreatedDto,
   BookingDto,
   CustomerDraftDto,
+  EntryDraftSummaryDto,
   NewCustomerBookingDraftDto,
   NewCustomerBookingDraftListItemDto,
   NewCustomerBookingDraftSummaryDto,
@@ -37,8 +38,15 @@ let jebelAli: string;
 let portSudan: string;
 
 const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '', financeDxb: '' };
-const agentCookies = { salesAgent: '', opsAgent: '', financeAgent: '' };
-const tokens = { sales: '', ops: '', finance: '' };
+const agentCookies = {
+  salesAgent: '',
+  salesAgent2: '',
+  movedAgent: '',
+  opsAgent: '',
+  financeAgent: '',
+};
+const tokens = { sales: '', sales2: '', moved: '', ops: '', finance: '' };
+let movedAgentId = '';
 
 const API = '/new-customer-booking-drafts';
 
@@ -65,8 +73,11 @@ function request(extra: object = {}, booking: object = {}) {
 
 const createDraft = (body: object, token = tokens.sales) => r.agentPost(API, token, body);
 
-async function created(body: object = request()): Promise<NewCustomerBookingDraftSummaryDto> {
-  return (await createDraft(body).expect(201)).body as NewCustomerBookingDraftSummaryDto;
+async function created(
+  body: object = request(),
+  token = tokens.sales,
+): Promise<NewCustomerBookingDraftSummaryDto> {
+  return (await createDraft(body, token).expect(201)).body as NewCustomerBookingDraftSummaryDto;
 }
 
 const read = async (id: string, cookie = cookies.salesDxb) =>
@@ -105,6 +116,9 @@ beforeAll(async () => {
   }
   const assistantUsers = {
     salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
+    salesAgent2: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
+    // Loses DXB in a test.
+    movedAgent: await createUser(t.prisma, ['SALES'], ['DXB', 'JED'], AGENT_PREFIX),
     // Operations may create bookings but not customers; Finance neither.
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
     financeAgent: await createUser(t.prisma, ['FINANCE'], ['DXB'], AGENT_PREFIX),
@@ -113,7 +127,10 @@ beforeAll(async () => {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
   }
   client = await registerClient(t, cookies.admin, 'New customer booking draft platform');
+  movedAgentId = assistantUsers.movedAgent.id;
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
+  tokens.sales2 = await tokenFor(t, agentCookies.salesAgent2, client);
+  tokens.moved = await tokenFor(t, agentCookies.movedAgent, client);
   tokens.ops = await tokenFor(t, agentCookies.opsAgent, client);
   tokens.finance = await tokenFor(t, agentCookies.financeAgent, client);
 });
@@ -438,5 +455,198 @@ describe('bookings for a new customer: a person reviews', () => {
         },
       }),
     ).rejects.toThrow(/new_customer_booking_drafts_decision_check/);
+  });
+});
+
+describe("bookings for a new customer: replacing a pair at the person's request", () => {
+  const readCustomer = async (id: string) =>
+    (await r.get(`/customer-drafts/${id}`, cookies.salesDxb).expect(200)).body as CustomerDraftDto;
+
+  const counts = () =>
+    Promise.all([t.prisma.newCustomerBookingDraft.count(), t.prisma.customerDraft.count()]);
+
+  async function expectStillOpen(old: NewCustomerBookingDraftSummaryDto): Promise<void> {
+    const rows = await Promise.all([
+      t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id: old.id } }),
+      t.prisma.customerDraft.findUniqueOrThrow({ where: { id: old.customerDraftId } }),
+    ]);
+    for (const row of rows) expect(row).toMatchObject({ state: 'DRAFT', version: 1 });
+  }
+
+  it('closes both old drafts and links both new ones; the old pair can no longer be approved', async () => {
+    const old = await created();
+    const body = {
+      ...request({}, { services: ['MAIN_FREIGHT', 'CUSTOMS'] }),
+      replacesDraftId: old.id,
+    };
+    const fresh = await created(body);
+    expect(fresh.id).not.toBe(old.id);
+    expect(fresh.customerDraftId).not.toBe(old.customerDraftId);
+
+    const closed = await read(old.id);
+    expect(closed).toMatchObject({
+      status: 'REJECTED',
+      version: 2,
+      replacedByDraftId: fresh.id,
+      decidedFromAssistant: true,
+      rejectReason: 'Replaced by a newer draft',
+      actions: { canDecide: false },
+    });
+    expect(closed.customer.status).toBe('REJECTED');
+    const closedCustomer = await readCustomer(old.customerDraftId);
+    expect(closedCustomer).toMatchObject({
+      status: 'REJECTED',
+      replacedByDraftId: fresh.customerDraftId,
+      decidedFromAssistant: true,
+      rejectReason: 'Replaced by a newer draft',
+    });
+
+    const next = await read(fresh.id);
+    expect(next).toMatchObject({ status: 'DRAFT', replacesDraftId: old.id });
+    expect(next.request.services).toEqual(['MAIN_FREIGHT', 'CUSTOMS']);
+    expect(await readCustomer(fresh.customerDraftId)).toMatchObject({
+      status: 'DRAFT',
+      replacesDraftId: old.customerDraftId,
+      bookingDraftId: fresh.id,
+    });
+
+    await approve(old.id, cookies.salesDxb, { version: 2 }).expect(409);
+    await approveCustomer(old.customerDraftId, { version: 2 }).expect(409);
+    expect(await t.prisma.customer.count({ where: { phone: body.customer.phone } })).toBe(0);
+  });
+
+  it('a replay of the same replacement returns the same pair; another request under the key is refused', async () => {
+    const old = await created();
+    const body = { ...request(), replacesDraftId: old.id };
+    const first = await created(body);
+    const again = await created(body);
+    expect(again).toEqual(first);
+    expect(await draftsUnderKey(body.idempotencyKey)).toEqual([1, 1]);
+    // The same request without the replacement, or replacing another draft, is another request.
+    const { replacesDraftId, ...plain } = body;
+    expect(replacesDraftId).toBe(old.id);
+    await createDraft(plain).expect(409);
+    const other = await created();
+    await createDraft({ ...body, replacesDraftId: other.id }).expect(409);
+    await expectStillOpen(other);
+    expect(
+      await t.prisma.newCustomerBookingDraft.count({ where: { replacesDraftId: old.id } }),
+    ).toBe(1);
+  });
+
+  it("refuses another user's draft, an unknown id and a bad id, and writes nothing", async () => {
+    const others = await created(request(), tokens.sales2);
+    const before = await counts();
+    await createDraft({ ...request(), replacesDraftId: others.id }).expect(404);
+    // A customer draft id is not a booking draft of this kind.
+    const mine = await created();
+    await createDraft({ ...request(), replacesDraftId: mine.customerDraftId }).expect(404);
+    await createDraft({
+      ...request(),
+      replacesDraftId: '00000000-0000-4000-8000-000000000000',
+    }).expect(404);
+    await createDraft({ ...request(), replacesDraftId: 'not-a-uuid' }).expect(400);
+    expect(await counts()).toEqual([before[0] + 1, before[1] + 1]);
+    await expectStillOpen(others);
+    await expectStillOpen(mine);
+  });
+
+  it('refuses a draft in a branch the user no longer holds, and leaves the pair open', async () => {
+    const old = (await createDraft(request(), tokens.moved).expect(201))
+      .body as NewCustomerBookingDraftSummaryDto;
+    await t.prisma.userBranch.deleteMany({ where: { userId: movedAgentId, branchId: dxb } });
+    const before = await counts();
+    await createDraft(
+      { ...request({ branchId: jed }), replacesDraftId: old.id },
+      tokens.moved,
+    ).expect(404);
+    expect(await counts()).toEqual(before);
+    await expectStillOpen(old);
+  });
+
+  it('refuses a booking draft already decided, and writes nothing', async () => {
+    const old = await created();
+    await r
+      .post(`${API}/${old.id}/reject`, cookies.salesDxb, { version: 1, reason: 'No' })
+      .expect(200);
+    const before = await counts();
+    const res = await createDraft({ ...request(), replacesDraftId: old.id }).expect(409);
+    expect((res.body as { message: string }).message).toMatch(/already decided/);
+    expect(await counts()).toEqual(before);
+    expect((await readCustomer(old.customerDraftId)).status).toBe('DRAFT');
+  });
+
+  it('refuses a pair whose customer is already approved, and writes nothing', async () => {
+    const old = await created();
+    await approveCustomer(old.customerDraftId).expect(200);
+    const before = await counts();
+    const res = await createDraft({ ...request(), replacesDraftId: old.id }).expect(409);
+    expect((res.body as { message: string }).message).toMatch(
+      /already approved: reject this booking for a new customer in NOLON/,
+    );
+    expect(await counts()).toEqual(before);
+    expect(await read(old.id)).toMatchObject({ status: 'DRAFT', version: 1 });
+  });
+
+  it('refuses a pair whose customer draft was rejected, and writes nothing', async () => {
+    const old = await created();
+    await r
+      .post(`/customer-drafts/${old.customerDraftId}/reject`, cookies.salesDxb, {
+        version: 1,
+        reason: 'Wrong phone',
+      })
+      .expect(200);
+    const before = await counts();
+    await createDraft({ ...request(), replacesDraftId: old.id }).expect(409);
+    expect(await counts()).toEqual(before);
+    expect(await read(old.id)).toMatchObject({ status: 'DRAFT', version: 1 });
+  });
+
+  it('refuses replacing the customer draft of an open pair alone; an unlinked one still is', async () => {
+    const pair = await created();
+    const customerBody = (replacesDraftId: string) => ({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      kind: 'INDIVIDUAL',
+      name: 'Amna Osman',
+      phone: uniquePhone(),
+      replacesDraftId,
+    });
+    const before = await counts();
+    const res = await r
+      .agentPost('/customer-drafts', tokens.sales, customerBody(pair.customerDraftId))
+      .expect(409);
+    expect((res.body as { message: string }).message).toMatch(
+      /replace the booking for a new customer instead/,
+    );
+    expect(await counts()).toEqual(before);
+    await expectStillOpen(pair);
+
+    const single = (
+      await r
+        .agentPost('/customer-drafts', tokens.sales, {
+          idempotencyKey: draftKey(),
+          branchId: dxb,
+          kind: 'INDIVIDUAL',
+          name: 'Tarig',
+          phone: uniquePhone(),
+        })
+        .expect(201)
+    ).body as EntryDraftSummaryDto;
+    const replacement = (
+      await r.agentPost('/customer-drafts', tokens.sales, customerBody(single.id)).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(await readCustomer(single.id)).toMatchObject({
+      status: 'REJECTED',
+      replacedByDraftId: replacement.id,
+    });
+
+    // Once the pair's booking draft is decided, its customer draft waits for nothing.
+    await r
+      .post(`${API}/${pair.id}/reject`, cookies.salesDxb, { version: 1, reason: 'No' })
+      .expect(200);
+    await r
+      .agentPost('/customer-drafts', tokens.sales, customerBody(pair.customerDraftId))
+      .expect(201);
   });
 });

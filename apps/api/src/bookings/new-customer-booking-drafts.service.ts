@@ -31,6 +31,7 @@ import {
 } from '../customers/customer-drafts.service.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
+  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
@@ -42,9 +43,13 @@ import {
 } from '../drafts/draft-rules.js';
 import {
   DraftsService,
+  type LockedReplacement,
   decideInTx,
   keyReused,
+  lockReplacedInTx,
+  replaceInTx,
   storedDraftUnderKey,
+  withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -55,6 +60,38 @@ const LABEL = 'new customer booking draft';
 const ASSISTANT_ONLY = 'Bookings for a new customer are proposed by the assistant';
 const HUMAN_ONLY = 'Only a person can decide on a booking for a new customer';
 const TABLE = 'new_customer_booking_drafts';
+const CUSTOMER_LABEL = 'customer draft';
+
+/** Why a pair whose customer is approved is not replaced by a new pair. */
+export const CUSTOMER_APPROVED_REFUSAL =
+  'The new customer of this booking is already approved: reject this booking for a new customer in NOLON and propose a normal booking for that customer';
+/** Why a pair whose customer draft was rejected or expired is not replaced. */
+export const CUSTOMER_CLOSED_REFUSAL =
+  'The new customer of this booking is already decided or expired: reject this booking for a new customer in NOLON and propose a new one';
+
+interface DraftOpenness {
+  state: DraftState;
+  expiresAt: Date;
+  version: number;
+}
+
+/**
+ * A booking for a new customer is replaced together with its customer draft, so both must still
+ * be open: the booking draft (as for any replaced draft), and the customer draft, since a
+ * customer already approved exists in NOLON and a new pair would propose a second one. A conflict
+ * otherwise.
+ */
+export function requireReplaceablePair(
+  booking: DraftOpenness,
+  customer: DraftOpenness,
+  now: Date = new Date(),
+): void {
+  requireOpen(booking, booking.version, LABEL, now);
+  if (customer.state === 'APPROVED') throw new ConflictException(CUSTOMER_APPROVED_REFUSAL);
+  if (draftStatus(customer.state, customer.expiresAt, now) !== 'DRAFT') {
+    throw new ConflictException(CUSTOMER_CLOSED_REFUSAL);
+  }
+}
 
 const details = {
   branch: { select: { code: true } },
@@ -193,9 +230,15 @@ export class NewCustomerBookingDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /**
+   * `replacesDraftId` names an earlier booking draft of this kind the person asked the assistant
+   * to change: in the same transaction as the new pair, that draft and its customer draft are
+   * closed as replaced, and the new booking draft and customer draft name them.
+   */
   async create(
     user: AuthUser,
     body: NewCustomerBookingDraftCreateRequest,
+    replacesDraftId: string | null = null,
   ): Promise<NewCustomerBookingDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     // The route asks for bookings:create; the customer part is a customer draft, which needs
@@ -204,7 +247,10 @@ export class NewCustomerBookingDraftsService {
       throw new ForbiddenException('Proposing a new customer needs permission to add customers');
     }
     const { idempotencyKey, branchId, customer, booking, evidence = [] } = body;
-    const hash = newCustomerBookingHash(branchId, customer, booking, evidence);
+    const hash = withReplaced(
+      newCustomerBookingHash(branchId, customer, booking, evidence),
+      replacesDraftId,
+    );
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
@@ -216,6 +262,8 @@ export class NewCustomerBookingDraftsService {
     const words = splitEvidence(evidence);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedPairInTx(tx, replacesDraftId, agentClientId, user);
         const existing = await tx.newCustomerBookingDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -224,17 +272,24 @@ export class NewCustomerBookingDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
-        // The customer draft under the same key in its own table (a phone taken is a 409 there).
+        if (replaced) {
+          requireReplaceablePair(replaced.booking, replaced.customer);
+          await replaceInTx(tx, replaced.booking);
+        }
+        // The customer draft under the same key in its own table (a phone taken is a 409 there);
+        // it closes the replaced pair's customer draft and names it.
         const customerDraftId = await this.customerDrafts.createInTx(tx, user, {
           agentClientId,
           idempotencyKey,
           branchId,
           input: customer,
           evidence: words.customer,
+          replaced: replaced?.customer ?? null,
         });
         const draft = await tx.newCustomerBookingDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId,
             customerDraftId,
             expiresAt: draftExpiry(),
@@ -418,6 +473,42 @@ export class NewCustomerBookingDraftsService {
     if (!draft) throw new NotFoundException('New customer booking draft not found');
     return draft;
   }
+}
+
+/**
+ * Locks the pair a new one replaces: the booking draft first (the caller's, through the same
+ * client, in a branch they hold, else not found), then its customer draft, under the same rules.
+ * No other path locks a customer draft and then its booking draft (an approval of either locks
+ * only its own row), so the two locks cannot wait on each other. The link never changes, so it
+ * is read without a lock of its own.
+ */
+async function lockReplacedPairInTx(
+  tx: Prisma.TransactionClient,
+  id: string | null,
+  agentClientId: string,
+  user: AuthUser,
+): Promise<{ booking: LockedReplacement; customer: LockedReplacement } | null> {
+  const booking = await lockReplacedInTx(tx, id, {
+    table: TABLE,
+    agentClientId,
+    user,
+    label: LABEL,
+  });
+  if (booking === null) return null;
+  const { customerDraftId } = await tx.newCustomerBookingDraft.findUniqueOrThrow({
+    where: { id: booking.id },
+    select: { customerDraftId: true },
+  });
+  const customer = await lockReplacedInTx(tx, customerDraftId, {
+    table: 'customer_drafts',
+    agentClientId,
+    user,
+    label: CUSTOMER_LABEL,
+  });
+  if (customer === null) {
+    throw new Error(`New customer booking draft ${booking.id} has no customer draft`);
+  }
+  return { booking, customer };
 }
 
 function linkedCustomer(

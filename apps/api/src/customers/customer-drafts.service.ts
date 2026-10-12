@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   DraftEvidence,
   CreateCustomerRequest,
@@ -16,6 +16,7 @@ import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
+  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
@@ -90,6 +91,22 @@ export function customerRequestHash(
   });
 }
 
+/** Why a customer draft proposed with a booking cannot be replaced on its own. */
+export const PAIRED_REFUSAL =
+  'This customer draft goes with an open booking for a new customer: replace the booking for a new customer instead';
+
+/**
+ * Whether replacing a customer draft on its own would leave the booking for a new customer it
+ * was proposed with waiting for a customer that can no longer be approved: true while that
+ * booking draft is open. A decided or expired booking draft waits for nothing.
+ */
+export function pairedWithOpenBooking(
+  booking: { state: DraftState; expiresAt: Date } | null,
+  now: Date,
+): boolean {
+  return booking !== null && draftStatus(booking.state, booking.expiresAt, now) === 'DRAFT';
+}
+
 function createRequestOf(branchId: string, input: CustomerDraftRequest): CreateCustomerRequest {
   return { branchId, ...input };
 }
@@ -142,6 +159,7 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replaced) await requireUnpaired(tx, replaced.id);
         return this.insertNewInTx(tx, {
           scope,
           hash,
@@ -168,7 +186,9 @@ export class CustomerDraftsService {
    * Creates a customer draft in the caller's transaction (a booking for a new customer, proposed
    * in one request with it); its id. The caller ran prepareNew and answered a replay of its own
    * request first, so the key is new here: one a customer draft already holds is refused as
-   * reused. A phone already taken in the branch is refused (409), as on create.
+   * reused. A phone already taken in the branch is refused (409), as on create. `replaced` is the
+   * customer draft of the pair the caller replaces, locked by the caller (lockReplacedInTx): it is
+   * closed as replaced here, and the new draft names it.
    */
   async createInTx(
     tx: Prisma.TransactionClient,
@@ -179,9 +199,12 @@ export class CustomerDraftsService {
       branchId: string;
       input: CustomerDraftRequest;
       evidence: readonly DraftEvidence[];
+      replaced?: LockedReplacement | null;
     },
   ): Promise<string> {
     const { agentClientId, idempotencyKey, branchId, input, evidence } = spec;
+    const replaced = spec.replaced ?? null;
+    const replacesDraftId = replaced?.id ?? null;
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const existing = await tx.customerDraft.findUnique({
       where: { agentClientId_createdById_idempotencyKey: scope },
@@ -190,12 +213,12 @@ export class CustomerDraftsService {
     if (existing) throw keyReused();
     return this.insertNewInTx(tx, {
       scope,
-      hash: customerRequestHash(branchId, input, evidence),
+      hash: withReplaced(customerRequestHash(branchId, input, evidence), replacesDraftId),
       branchId,
       input,
       evidence,
-      replacesDraftId: null,
-      replaced: null,
+      replacesDraftId,
+      replaced,
     });
   }
 
@@ -404,6 +427,23 @@ export class CustomerDraftsService {
     });
     if (!draft) throw new NotFoundException('Customer draft not found');
     return draft;
+  }
+}
+
+/**
+ * A customer draft proposed with an open booking for a new customer is replaced with its booking
+ * (POST /new-customer-booking-drafts), never alone: the booking draft would be left waiting for a
+ * customer that can no longer be approved. The link is read from this side (the booking draft
+ * names its customer draft); the caller holds the customer draft's lock, and a booking draft
+ * only ever goes from open to decided, so a refusal is never stale in the unsafe direction.
+ */
+async function requireUnpaired(tx: Prisma.TransactionClient, id: string): Promise<void> {
+  const row = await tx.customerDraft.findUnique({
+    where: { id },
+    select: { newCustomerBookingDraft: { select: { state: true, expiresAt: true } } },
+  });
+  if (pairedWithOpenBooking(row?.newCustomerBookingDraft ?? null, new Date())) {
+    throw new ConflictException(PAIRED_REFUSAL);
   }
 }
 
