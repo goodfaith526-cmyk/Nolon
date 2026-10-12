@@ -304,6 +304,25 @@ export async function replaceInTx(
     WHERE "id" = ${locked.id}::uuid`;
 }
 
+/**
+ * For kinds whose approval locks the draft's shipment before the draft (goods release, shipment
+ * status): the shipments a replacement locks before it locks the old draft, so a replacement and
+ * an approval take their locks in the same order and cannot wait on each other. The old draft's
+ * shipment and the new one's, deduplicated, in id order. A draft's shipment never changes, so it
+ * is read without a lock; a missing old draft is answered by lockReplacedInTx.
+ */
+export async function replacementShipmentIds(
+  tx: Prisma.TransactionClient,
+  table: 'goods_release_drafts' | 'shipment_status_drafts',
+  replacesDraftId: string,
+  shipmentId: string,
+): Promise<string[]> {
+  requireDraftTable(table);
+  const rows = await tx.$queryRaw<{ shipment_id: string }[]>`
+    SELECT "shipment_id" FROM ${Prisma.raw(`"${table}"`)} WHERE "id" = ${replacesDraftId}::uuid`;
+  return [...new Set([shipmentId, ...rows.map((r) => r.shipment_id)])].sort();
+}
+
 /** The draft that replaced this one, if any. */
 export async function replacedByOf(
   client: Prisma.TransactionClient,
@@ -364,6 +383,7 @@ export const DRAFT_TABLES = [
   'invoice_drafts',
   'receipt_drafts',
   'customer_drafts',
+  'shipment_status_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 
