@@ -304,6 +304,25 @@ export async function replaceInTx(
     WHERE "id" = ${locked.id}::uuid`;
 }
 
+/**
+ * For kinds whose approval locks the draft's shipment before the draft (goods release, shipment
+ * status): the shipments a replacement locks before it locks the old draft, so a replacement and
+ * an approval take their locks in the same order and cannot wait on each other. The old draft's
+ * shipment and the new one's, deduplicated, in id order. A draft's shipment never changes, so it
+ * is read without a lock; a missing old draft is answered by lockReplacedInTx.
+ */
+export async function replacementShipmentIds(
+  tx: Prisma.TransactionClient,
+  table: 'goods_release_drafts' | 'shipment_status_drafts',
+  replacesDraftId: string,
+  shipmentId: string,
+): Promise<string[]> {
+  requireDraftTable(table);
+  const rows = await tx.$queryRaw<{ shipment_id: string }[]>`
+    SELECT "shipment_id" FROM ${Prisma.raw(`"${table}"`)} WHERE "id" = ${replacesDraftId}::uuid`;
+  return [...new Set([shipmentId, ...rows.map((r) => r.shipment_id)])].sort();
+}
+
 /** The draft that replaced this one, if any. */
 export async function replacedByOf(
   client: Prisma.TransactionClient,
@@ -349,6 +368,32 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
+/**
+ * The draft stored under an idempotency key, read before a create checks anything on live data, so
+ * a replay is answered with the draft it made (whatever happened since: approved, or the records
+ * moved on), not refused by checks that only a new draft must pass. Null when the key is new; a
+ * key stored with another request is refused (keyReused). The caller reads the draft back through
+ * its scope, so access is still checked as of now. The lookup inside the create's transaction
+ * stays: it settles concurrent creates under one key.
+ */
+export async function storedDraftUnderKey(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: { agentClientId: string; createdById: string; idempotencyKey: string },
+  hash: string,
+): Promise<string | null> {
+  requireDraftTable(table);
+  const rows = await client.$queryRaw<{ id: string; payload_hash: string }[]>`
+    SELECT "id", "payload_hash" FROM ${Prisma.raw(`"${table}"`)}
+    WHERE "agent_client_id" = ${scope.agentClientId}::uuid
+      AND "created_by_id" = ${scope.createdById}::uuid
+      AND "idempotency_key" = ${scope.idempotencyKey}`;
+  const row = rows[0];
+  if (!row) return null;
+  if (row.payload_hash !== hash) throw keyReused();
+  return row.id;
+}
+
 /** A key reused for another request: reveals nothing about the stored draft. */
 export function keyReused(): ConflictException {
   return new ConflictException('This idempotency key was used for another request');
@@ -364,6 +409,7 @@ export const DRAFT_TABLES = [
   'invoice_drafts',
   'receipt_drafts',
   'customer_drafts',
+  'shipment_status_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

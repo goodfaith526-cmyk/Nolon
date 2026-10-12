@@ -71,6 +71,7 @@ model Branch {
   invoiceDrafts      InvoiceDraft[]
   receiptDrafts      ReceiptDraft[]
   customerDrafts     CustomerDraft[]
+  statusDrafts       ShipmentStatusDraft[]
   movementPhotos     WarehouseMovementPhoto[]
   customsClearances  CustomsClearance[]
   customsFees        CustomsFee[]
@@ -201,6 +202,8 @@ model User {
   receiptDraftsDecided      ReceiptDraft[]           @relation("ReceiptDraftDecidedBy")
   customerDraftsCreated     CustomerDraft[]          @relation("CustomerDraftCreatedBy")
   customerDraftsDecided     CustomerDraft[]          @relation("CustomerDraftDecidedBy")
+  statusDraftsCreated       ShipmentStatusDraft[]    @relation("ShipmentStatusDraftCreatedBy")
+  statusDraftsDecided       ShipmentStatusDraft[]    @relation("ShipmentStatusDraftDecidedBy")
   assistantApprovalGrants   AssistantApprovalGrant[] @relation("AssistantApprovalGrantUser")
   assistantApprovalsGranted AssistantApprovalGrant[] @relation("AssistantApprovalGrantedBy")
   customsUpdated            CustomsClearance[]       @relation("CustomsUpdatedBy")
@@ -328,20 +331,21 @@ model Location {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  ratesFrom          RateCard[]      @relation("RateOrigin")
-  ratesTo            RateCard[]      @relation("RateDestination")
-  quotationsFrom     Quotation[]     @relation("QuotationOrigin")
-  quotationsTo       Quotation[]     @relation("QuotationDestination")
-  bookingsFrom       Booking[]       @relation("BookingOrigin")
-  bookingsTo         Booking[]       @relation("BookingDestination")
-  shipmentsFrom      Shipment[]      @relation("ShipmentOrigin")
-  shipmentsTo        Shipment[]      @relation("ShipmentDestination")
-  shipmentsAt        Shipment[]      @relation("ShipmentCurrentLocation")
+  ratesFrom          RateCard[]            @relation("RateOrigin")
+  ratesTo            RateCard[]            @relation("RateDestination")
+  quotationsFrom     Quotation[]           @relation("QuotationOrigin")
+  quotationsTo       Quotation[]           @relation("QuotationDestination")
+  bookingsFrom       Booking[]             @relation("BookingOrigin")
+  bookingsTo         Booking[]             @relation("BookingDestination")
+  shipmentsFrom      Shipment[]            @relation("ShipmentOrigin")
+  shipmentsTo        Shipment[]            @relation("ShipmentDestination")
+  shipmentsAt        Shipment[]            @relation("ShipmentCurrentLocation")
   events             ShipmentEvent[]
-  tripsFrom          Trip[]          @relation("TripOrigin")
-  tripsTo            Trip[]          @relation("TripDestination")
-  consolidationsFrom Consolidation[] @relation("ConsolidationOrigin")
-  consolidationsTo   Consolidation[] @relation("ConsolidationDestination")
+  statusDrafts       ShipmentStatusDraft[]
+  tripsFrom          Trip[]                @relation("TripOrigin")
+  tripsTo            Trip[]                @relation("TripDestination")
+  consolidationsFrom Consolidation[]       @relation("ConsolidationOrigin")
+  consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
 
   @@map("locations")
 }
@@ -876,6 +880,7 @@ model Shipment {
   releaseDrafts  GoodsReleaseDraft[]
 
   invoiceDrafts InvoiceDraft[]
+  statusDrafts  ShipmentStatusDraft[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -2566,6 +2571,7 @@ model AgentClient {
   invoiceDrafts  InvoiceDraft[]
   receiptDrafts  ReceiptDraft[]
   customerDrafts CustomerDraft[]
+  statusDrafts   ShipmentStatusDraft[]
 
   @@map("agent_clients")
 }
@@ -2953,6 +2959,8 @@ model CustomerDraft {
   city            String?          @db.VarChar(100)
   address         String?          @db.VarChar(500)
   notes           String?          @db.VarChar(2000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
   /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
@@ -3122,4 +3130,49 @@ enum DraftDecidedVia {
   ASSISTANT
 
   @@map("draft_decided_via")
+}
+
+/// A shipment status change the staff assistant proposes (entry drafts). A person approves it on
+/// the review screen, which applies it through the shipment state machine, dated at the approval;
+/// or rejects it.
+model ShipmentStatusDraft {
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  shipmentId      String           @map("shipment_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  status          ShipmentStatus
+  locationId      String?          @map("location_id") @db.Uuid
+  note            String?          @db.VarChar(1000)
+  /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
+  evidence        Json             @default("[]")
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
+  /// SESSION: decided on the review screen (always, for an approval); ASSISTANT: closed from the
+  /// assistant's chat (replaced by a newer draft).
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment    Shipment    @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  location    Location?   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy   User        @relation("ShipmentStatusDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy   User?       @relation("ShipmentStatusDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([shipmentId, state])
+  @@index([branchId, state])
+  @@index([replacesDraftId])
+  @@map("shipment_status_drafts")
 }

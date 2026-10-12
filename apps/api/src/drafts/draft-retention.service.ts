@@ -53,6 +53,8 @@ export const PURGED_DRAFT_MODELS = {
   ReceiptDraft: (tx: Tx, cutoff: Date) => tx.receiptDraft.deleteMany({ where: removable(cutoff) }),
   CustomerDraft: (tx: Tx, cutoff: Date) =>
     tx.customerDraft.deleteMany({ where: removable(cutoff) }),
+  ShipmentStatusDraft: (tx: Tx, cutoff: Date) =>
+    tx.shipmentStatusDraft.deleteMany({ where: removable(cutoff) }),
 } satisfies Partial<Record<Prisma.ModelName, (tx: Tx, cutoff: Date) => Promise<{ count: number }>>>;
 
 export type PurgedDraftModel = keyof typeof PURGED_DRAFT_MODELS;

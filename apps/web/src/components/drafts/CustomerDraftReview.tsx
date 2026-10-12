@@ -2,9 +2,11 @@
 
 import type { CustomerDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
+import { useState } from 'react';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
+import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
 
 /** A new customer the assistant proposed: their contact details, and the decision. */
 export function CustomerDraftReview({ id }: { id: string }) {
@@ -16,6 +18,7 @@ export function CustomerDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<CustomerDraftDto>(`/customer-drafts/${id}`);
+  const [ticked, setTicked] = useState<string[]>([]);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const customer = draft.request;
@@ -31,6 +34,7 @@ export function CustomerDraftReview({ id }: { id: string }) {
           ? { label: draft.customerNumber ?? '', href: `/customers/${draft.customerId}` }
           : null
       }
+      approveBody={confirmedBody(draft.evidence, ticked)}
       onChanged={setRecord}
     >
       <dl className="details">
@@ -55,6 +59,18 @@ export function CustomerDraftReview({ id }: { id: string }) {
         <dt>{tcu('notes')}</dt>
         <dd>{customer.notes ?? '—'}</dd>
       </dl>
+      <EvidenceChecklist
+        evidence={draft.evidence}
+        values={{
+          branchId: { label: tcu('branch'), value: draft.branchCode },
+          name: { label: tcu('name'), value: customer.name },
+          phone: { label: tcu('phone'), value: customer.phone },
+          whatsapp: { label: tcu('whatsapp'), value: customer.whatsapp ?? '—' },
+        }}
+        ticked={ticked}
+        onChange={setTicked}
+        editable={draft.actions.canDecide}
+      />
     </DraftFrame>
   );
 }

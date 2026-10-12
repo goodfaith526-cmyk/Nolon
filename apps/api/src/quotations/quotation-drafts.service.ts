@@ -34,6 +34,7 @@ import {
   DraftsService,
   decidedVia,
   keyReused,
+  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
   replaceInTx,
@@ -159,9 +160,13 @@ export class QuotationDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, ...input } = body;
-    const prepared = await this.quotations.prepareCreate(user, input);
     const hash = withReplaced(quotationRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'quotation_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
+    const prepared = await this.quotations.prepareCreate(user, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
