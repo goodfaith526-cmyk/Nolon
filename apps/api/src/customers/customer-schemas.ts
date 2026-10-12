@@ -41,3 +41,16 @@ export const customerFields = {
 
 export const createCustomerBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
 export const updateCustomerBody = z.object(customerFields).partial().strict();
+
+/** A party of a customer (shipper, consignee, notify party): its endpoint and party drafts. */
+export const partyBody = z
+  .object({
+    name: requiredText(200),
+    companyName: optionalText(200),
+    phone: phone.nullish(),
+    email,
+    countryCode: countryCode.nullish(),
+    city: optionalText(100),
+    address: optionalText(500),
+  })
+  .strict();

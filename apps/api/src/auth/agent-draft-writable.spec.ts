@@ -28,6 +28,10 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('customers:create'\)\n\s*create\(/,
   },
   {
+    file: join('customers', 'party-drafts.controller.ts'),
+    handler: /^\s*@Post\(\)\n\s*@RequirePermission\('customers:update'\)\n\s*create\(/,
+  },
+  {
     file: join('quotations', 'quotation-drafts.controller.ts'),
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
   },
