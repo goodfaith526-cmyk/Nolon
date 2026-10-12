@@ -191,7 +191,7 @@ describe('customer drafts: a person reviews', () => {
         .expect(200)
     ).body as CustomerDraftDto;
     expect(approved).toMatchObject({ status: 'APPROVED', version: 2, decidedFromAssistant: false });
-    expect(approved.customerNumber).toMatch(/^NOL-CUS-/);
+    expect(approved.customerNumber).toMatch(/^CS\d{5,}$/);
     const customer = (
       await r.get(`/customers/${approved.customerId}`, cookies.salesDxb).expect(200)
     ).body as CustomerDto;

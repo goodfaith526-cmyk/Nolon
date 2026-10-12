@@ -17,10 +17,10 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
+import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -163,9 +163,7 @@ export class BookingsService {
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
   async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
-    const branch = await tx.branch.findUniqueOrThrow({ where: { id: prepared.branchId } });
-    const year = todayIn(branch.timezone).slice(0, 4);
-    const number = formatDocumentNumber('BK', await nextSequenceValue(tx, 'BOOKING', year), year);
+    const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
     try {
       const created = await tx.booking.create({
         data: {
