@@ -1,6 +1,7 @@
 import { Controller, Get, Query, Res, type StreamableFile } from '@nestjs/common';
 import {
   AUDIT_ENTITIES,
+  CONSOLIDATION_STATUSES,
   CUSTOMS_STATUSES,
   LOCALES,
   SHIPMENT_STATUSES,
@@ -8,6 +9,7 @@ import {
   TRIP_KINDS,
   WAREHOUSE_MOVEMENT_KINDS,
   type AuditLogDto,
+  type ConsolidationsReportDto,
   type CustomerActivityDto,
   type CustomsFilesDto,
   type LateShipmentsDto,
@@ -42,6 +44,9 @@ const shipmentsQuery = ordered(
     status: z.enum(SHIPMENT_STATUSES).optional(),
   }),
 );
+const consolidationsQuery = ordered(
+  period.extend({ status: z.enum(CONSOLIDATION_STATUSES).optional() }),
+);
 const onHandQuery = z.strictObject({
   branchId: z.uuid().optional(),
   warehouseId: z.uuid().optional(),
@@ -70,7 +75,7 @@ const exportQuery = z.object({ locale: z.enum(LOCALES).optional() });
  * Operational reports (annex D section 3), each as JSON and as an Excel download (`/export`,
  * headers in `locale`, else the user's language). Each needs operational_reports:view and the view
  * permission of the module that owns its records (so a warehouse user does not read customs files,
- * nor a customs user trips); the audit log needs audit_log:view. Customer activity carries
+ * nor a customs user trips, nor a sales user containers); the audit log needs audit_log:view. Customer activity carries
  * revenue only for financial_reports:view. Branches come from the user (branch-scope.ts).
  */
 @Controller('reports')
@@ -160,6 +165,29 @@ export class OperationalReportsController {
     return this.download(user, query, res, {
       report: 'customer-activity',
       query: parse(customerPeriod, withoutLocale(query)),
+    });
+  }
+
+  @AgentReadable()
+  @Get('consolidations')
+  @RequirePermission('operational_reports:view', 'consolidation:view')
+  consolidations(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<ConsolidationsReportDto> {
+    return this.reports.consolidations(user, parse(consolidationsQuery, query));
+  }
+
+  @Get('consolidations/export')
+  @RequirePermission('operational_reports:view', 'consolidation:view')
+  exportConsolidations(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    return this.download(user, query, res, {
+      report: 'consolidations',
+      query: parse(consolidationsQuery, withoutLocale(query)),
     });
   }
 

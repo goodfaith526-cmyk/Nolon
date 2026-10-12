@@ -677,8 +677,9 @@ export class ShipmentsService {
   }
 
   /**
-   * For inland transport: the shipments among `ids` the user may see, with what a trip shows of
-   * them (number, customer, status, destination, packages, weight and volume of the cargo lines).
+   * For inland transport and containers: the shipments among `ids` the user may see, with what a
+   * trip shows of them (number, customer, status, destination, packages, weight and volume of the
+   * cargo lines).
    */
   async tripSummaries(
     user: AuthUser,
@@ -687,6 +688,7 @@ export class ShipmentsService {
     {
       id: string;
       number: string;
+      customerId: string;
       customerName: string;
       status: ShipmentStatus;
       destinationLocationId: string;
@@ -703,6 +705,7 @@ export class ShipmentsService {
       select: {
         id: true,
         number: true,
+        customerId: true,
         status: true,
         destinationLocationId: true,
         customer: { select: { name: true } },

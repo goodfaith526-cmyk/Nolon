@@ -4,6 +4,7 @@ import type {
   BookingDto,
   ConsolidationBookingDto,
   ConsolidationDto,
+  ConsolidationsReportDto,
   CustomerDto,
   JournalEntryDto,
   ShipmentConsolidationDto,
@@ -617,5 +618,93 @@ describe('consolidated LCL containers', () => {
     expect((await container(created.id, cookies.opsJed)).actions.canAddBooking).toBe(false);
     await post(path, cookies.opsJed, body).expect(409);
     expect(await bookingsOf()).toBe(before + 1);
+  });
+  it('reports containers in the period with their shipments and customers (report 5)', async () => {
+    const [a, b, c] = [
+      await lclShipment(customers[0], '2'),
+      await lclShipment(customers[1], '3'),
+      await lclShipment(customers[0], '5'),
+    ];
+    const sailing = (await newContainer([a, b], { etd: d('09-10'), eta: d('09-20') }).expect(201))
+      .body as ConsolidationDto;
+    // No sailing date: it belongs to the day it was opened.
+    const unscheduled = (await newContainer([c], { etd: null, eta: null }).expect(201))
+      .body as ConsolidationDto;
+    // Opened in September, sailing in October: an October container.
+    const october = (await newContainer([], { etd: d('10-05'), eta: null }).expect(201))
+      .body as ConsolidationDto;
+    const cancelled = (await newContainer([], { etd: d('09-11'), eta: null }).expect(201))
+      .body as ConsolidationDto;
+    await post(`/consolidations/${cancelled.id}/cancel`, cookies.opsJed, {
+      reason: 'Booked by mistake',
+    }).expect(200);
+    for (const id of [unscheduled.id, october.id]) {
+      await t.prisma.consolidation.update({
+        where: { id },
+        data: { createdAt: new Date(at(id === october.id ? '09-12' : '09-15')) },
+      });
+    }
+
+    const september = `from=${d('09-01')}&to=${d('09-30')}&branchId=${jed}`;
+    const r = (await get(`/reports/consolidations?${september}`, cookies.opsJed).expect(200))
+      .body as ConsolidationsReportDto;
+    expect(r.containers.map((x) => x.number)).toEqual([sailing.number, unscheduled.number]);
+    expect(r.byStatus).toEqual([{ status: 'OPEN', count: 2 }]);
+    expect(r.totals).toEqual({
+      containers: 2,
+      shipments: 3,
+      customers: 2,
+      packages: 6,
+      weightKg: '1500',
+      volumeCbm: '10',
+    });
+    const [first, second] = r.containers;
+    expect(first).toMatchObject({
+      branchCode: 'JED',
+      status: 'OPEN',
+      containerTypeCode: '40HC',
+      day: d('09-10'),
+      etd: d('09-10'),
+      eta: d('09-20'),
+      vesselName: 'MSC Aurora',
+      shipments: 2,
+      customers: 2,
+      volumeCbm: '5',
+    });
+    expect(first?.origin.code).toBe('SAJED');
+    expect(first?.contents.map((x) => [x.shipmentId, x.customerId, x.volumeCbm])).toEqual([
+      [a, customers[0].id, '2'],
+      [b, customers[1].id, '3'],
+    ]);
+    expect(second).toMatchObject({ day: d('09-15'), etd: null, shipments: 1, customers: 1 });
+
+    // Cancelled containers only when asked for.
+    const gone = (
+      await get(`/reports/consolidations?${september}&status=CANCELLED`, cookies.opsJed).expect(200)
+    ).body as ConsolidationsReportDto;
+    expect(gone.containers.map((x) => x.number)).toEqual([cancelled.number]);
+
+    // The Excel export.
+    const file = await get(`/reports/consolidations/export?${september}&locale=en`, cookies.opsJed)
+      .buffer(true)
+      .expect(200);
+    expect(file.headers['content-type']).toContain('spreadsheetml');
+
+    // Another branch's user does not see Jeddah's containers, nor may ask for them.
+    await get(`/reports/consolidations?${september}`, cookies.opsPts).expect(403);
+    const pts = (
+      await get(
+        `/reports/consolidations?from=${d('09-01')}&to=${d('09-30')}`,
+        cookies.opsPts,
+      ).expect(200)
+    ).body as ConsolidationsReportDto;
+    expect(pts.containers).toEqual([]);
+    // Sales has operational reports but not consolidation.
+    await get(`/reports/consolidations?${september}`, cookies.salesJed).expect(403);
+    // Strict filters.
+    await get(`/reports/consolidations?${september}&status=SAILING`, cookies.opsJed).expect(400);
+    await get(`/reports/consolidations?from=${d('09-30')}&to=${d('09-01')}`, cookies.opsJed).expect(
+      400,
+    );
   });
 });

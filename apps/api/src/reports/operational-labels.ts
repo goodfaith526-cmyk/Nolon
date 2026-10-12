@@ -19,6 +19,10 @@ const LABELS = {
     ar: 'عروض الأسعار والحجوزات ونسبة التحويل',
   },
   customerActivity: { en: 'Customer activity', ar: 'نشاط العملاء' },
+  consolidations: {
+    en: 'Consolidated containers and their contents',
+    ar: 'الحاويات المجمّعة ومحتواها',
+  },
   warehouseOnHand: { en: 'Warehouse goods on hand', ar: 'البضاعة الموجودة في المستودعات' },
   warehouseMovements: {
     en: 'Warehouse receipts and releases',
@@ -39,6 +43,10 @@ const LABELS = {
   truncated: {
     en: 'Only the first rows are listed; narrow the filters to see all.',
     ar: 'تُعرض الصفوف الأولى فقط؛ ضيّق الفلاتر لرؤية الكل.',
+  },
+  containerDayNote: {
+    en: 'A container is in the period by its ETD, else by the day it was opened.',
+    ar: 'تدخل الحاوية الفترة بموعد مغادرتها المتوقع، وإلا بتاريخ فتحها.',
   },
   costNote: {
     en: 'Cost in USD: posted trip expenses and accruals, less cancellations.',
@@ -65,6 +73,8 @@ const LABELS = {
   byDriver: { en: 'By driver', ar: 'حسب السائق' },
   byCarrier: { en: 'By carrier', ar: 'حسب الناقل' },
   files: { en: 'Files', ar: 'الملفات' },
+  containers: { en: 'Containers', ar: 'الحاويات' },
+  contents: { en: 'Contents', ar: 'المحتوى' },
   movements: { en: 'Movements', ar: 'الحركات' },
   trips: { en: 'Trips', ar: 'الرحلات' },
   entries: { en: 'Entries', ar: 'السجلات' },
@@ -105,6 +115,12 @@ const LABELS = {
   bookingsFromQuotation: { en: 'From a quotation', ar: 'من عرض سعر' },
   confirmationRate: { en: 'Confirmation rate %', ar: 'نسبة التأكيد %' },
   shipmentCount: { en: 'Shipments', ar: 'عدد الشحنات' },
+  customerCount: { en: 'Customers', ar: 'عدد العملاء' },
+  containerNumber: { en: 'Container no.', ar: 'رقم الحاوية' },
+  containerType: { en: 'Type', ar: 'النوع' },
+  route: { en: 'Route', ar: 'المسار' },
+  vessel: { en: 'Vessel', ar: 'السفينة' },
+  voyage: { en: 'Voyage', ar: 'الرحلة البحرية' },
   volumeCbm: { en: 'Volume (CBM)', ar: 'الحجم (م³)' },
   weightKg: { en: 'Weight (kg)', ar: 'الوزن (كغ)' },
   invoices: { en: 'Invoices', ar: 'الفواتير' },
@@ -180,6 +196,16 @@ const CUSTOMS_STATUS = {
   INSPECTION: { en: 'Under inspection', ar: 'قيد المعاينة' },
   HELD: { en: 'Held by customs', ar: 'محجوز لدى الجمارك' },
   CLEARED: { en: 'Cleared', ar: 'تم التخليص' },
+} as const;
+
+const CONSOLIDATION_STATUS = {
+  OPEN: { en: 'Open', ar: 'مفتوحة' },
+  CLOSED: { en: 'Closed', ar: 'مغلقة' },
+  LOADED: { en: 'Loaded', ar: 'محملة' },
+  DEPARTED: { en: 'Departed', ar: 'أبحرت' },
+  ARRIVED: { en: 'Arrived', ar: 'وصلت' },
+  DECONSOLIDATED: { en: 'Unpacked', ar: 'فُرّغت' },
+  CANCELLED: { en: 'Cancelled', ar: 'ملغاة' },
 } as const;
 
 const TRIP_STATUS = {
@@ -309,6 +335,7 @@ const ENUMS = {
   shipmentStatus: SHIPMENT_STATUS,
   mode: MODE,
   customsStatus: CUSTOMS_STATUS,
+  consolidationStatus: CONSOLIDATION_STATUS,
   tripStatus: TRIP_STATUS,
   documentStatus: DOCUMENT_STATUS,
   tripKind: TRIP_KIND,

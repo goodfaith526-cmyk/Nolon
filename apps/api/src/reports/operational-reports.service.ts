@@ -9,6 +9,8 @@ import {
   type AuditLogDto,
   type AuditLogEntryDto,
   type BookingStatus,
+  type ConsolidationStatus,
+  type ConsolidationsReportDto,
   type CustomerActivityDto,
   type CustomsFilesDto,
   type CustomsStatus,
@@ -36,6 +38,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
 import { BookingReportsService } from '../bookings/booking-reports.service.js';
+import { ConsolidationReportsService } from '../consolidations/consolidation-reports.service.js';
 import { todayIn } from '../common/dates.js';
 import { type Decimal, ZERO } from '../common/money.js';
 import type { AuditQuery, ShipmentAuditEntry } from '../common/report-sql.js';
@@ -53,6 +56,7 @@ import { type WorkbookSpec, buildWorkbook } from './excel.js';
 import { averageDays, conversionRate } from './operational-math.js';
 import {
   auditLogSheets,
+  consolidationsSheets,
   customerActivitySheets,
   customsFilesSheets,
   lateShipmentsSheets,
@@ -77,6 +81,7 @@ export type ShipmentsQuery = OpsPeriod & {
   status?: ShipmentStatus;
 };
 export type CustomerPeriod = OpsPeriod & { customerId?: string };
+export type ConsolidationsQuery = OpsPeriod & { status?: ConsolidationStatus };
 export type OnHandQuery = { branchId?: string; warehouseId?: string };
 export type MovementsQuery = OpsPeriod & { warehouseId?: string; kind?: WarehouseMovementKind };
 export type CustomsQuery = OpsPeriod & { status?: CustomsStatus };
@@ -93,6 +98,7 @@ export type OperationalReportRequest =
   | { report: 'late-shipments'; query: CustomerPeriod }
   | { report: 'sales-conversion'; query: CustomerPeriod }
   | { report: 'customer-activity'; query: CustomerPeriod }
+  | { report: 'consolidations'; query: ConsolidationsQuery }
   | { report: 'warehouse-on-hand'; query: OnHandQuery }
   | { report: 'warehouse-movements'; query: MovementsQuery }
   | { report: 'customs-files'; query: CustomsQuery }
@@ -118,8 +124,6 @@ function routeKey(origin: ReportLocationDto, destination: ReportLocationDto): st
  * checked, or all of theirs); shipment numbers and customers of warehouse and customs rows come
  * through the shipments module, which shows only shipments the user may see. Totals are added in
  * SQL by the owning module; this service puts them together.
- *
- * Report 5 (consolidated containers and their contents) is not here: consolidation is not built.
  */
 @Injectable()
 export class OperationalReportsService {
@@ -129,6 +133,7 @@ export class OperationalReportsService {
     private readonly shipments: ShipmentsService,
     private readonly quotationReports: QuotationReportsService,
     private readonly bookingReports: BookingReportsService,
+    private readonly consolidationReports: ConsolidationReportsService,
     private readonly billing: BillingReportsService,
     private readonly warehouse: WarehouseReportsService,
     private readonly customs: CustomsReportsService,
@@ -335,6 +340,12 @@ export class OperationalReportsService {
         revenueUsd: revenueShown ? sum(list.map((r) => r.revenueUsd)).toFixed() : null,
       },
     };
+  }
+
+  /** Report 5: consolidated containers and the shipments and customers in each. */
+  async consolidations(user: AuthUser, q: ConsolidationsQuery): Promise<ConsolidationsReportDto> {
+    const r = await this.consolidationReports.containers(user, q, LIMIT);
+    return { from: q.from, to: q.to, branchId: q.branchId ?? null, status: q.status ?? null, ...r };
   }
 
   /** Report 6. */
@@ -581,6 +592,8 @@ export class OperationalReportsService {
         return salesConversionSheets(ctx, await this.salesConversion(user, request.query));
       case 'customer-activity':
         return customerActivitySheets(ctx, await this.customerActivity(user, request.query));
+      case 'consolidations':
+        return consolidationsSheets(ctx, await this.consolidations(user, request.query));
       case 'warehouse-on-hand':
         return warehouseOnHandSheets(ctx, await this.warehouseOnHand(user, request.query));
       case 'warehouse-movements':

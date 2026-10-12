@@ -1,5 +1,6 @@
 import type {
   AuditLogDto,
+  ConsolidationsReportDto,
   CustomerActivityDto,
   CustomsFilesDto,
   LateShipmentsDto,
@@ -285,6 +286,118 @@ export function customerActivitySheets(ctx: ExportContext, r: CustomerActivityDt
         rows,
       },
     ],
+  );
+}
+
+export function consolidationsSheets(ctx: ExportContext, r: ConsolidationsReportDto): WorkbookSpec {
+  const t = opsTranslator(ctx.locale);
+  const route = (x: ConsolidationsReportDto['containers'][number]) =>
+    `${place(ctx.locale, x.origin)} → ${place(ctx.locale, x.destination)}`;
+  const containers: RowSpec[] = r.containers.map((x) => ({
+    cells: [
+      x.number,
+      x.containerNumber,
+      x.containerTypeCode,
+      x.branchCode,
+      route(x),
+      t.value('consolidationStatus', x.status),
+      x.vesselName,
+      x.voyageNumber,
+      x.etd,
+      x.eta,
+      x.shipments,
+      x.customers,
+      x.packages,
+      x.weightKg,
+      x.volumeCbm,
+    ],
+  }));
+  containers.push({
+    cells: [
+      t('total'),
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      r.totals.shipments,
+      r.totals.customers,
+      r.totals.packages,
+      r.totals.weightKg,
+      r.totals.volumeCbm,
+    ],
+    bold: true,
+  });
+  const contents: RowSpec[] = r.containers.flatMap((x) =>
+    x.contents.map((s) => ({
+      cells: [
+        x.number,
+        x.containerNumber,
+        s.shipmentNumber,
+        s.customerName,
+        t.value('shipmentStatus', s.status),
+        s.packages,
+        s.weightKg,
+        s.volumeCbm,
+      ],
+    })),
+  );
+  return book(
+    ctx,
+    'consolidations',
+    [period(t, r.from, r.to), t('containerDayNote')],
+    [
+      {
+        name: t('summary'),
+        columns: [col(t('status'), 'text', 30), col(t('count'), 'integer', 12)],
+        rows: [
+          ...r.byStatus.map((s): RowSpec => ({
+            cells: [t.value('consolidationStatus', s.status), s.count],
+          })),
+          { cells: [t('total'), r.byStatus.reduce((n, s) => n + s.count, 0)], bold: true },
+        ],
+      },
+      {
+        name: t('containers'),
+        columns: [
+          col(t('number'), 'text', 22),
+          col(t('containerNumber'), 'text', 16),
+          col(t('containerType'), 'text', 10),
+          col(t('branch'), 'text', 8),
+          col(t('route'), 'text', 36),
+          col(t('status'), 'text', 14),
+          col(t('vessel'), 'text', 20),
+          col(t('voyage'), 'text', 12),
+          col(t('etd'), 'date'),
+          col(t('eta'), 'date'),
+          col(t('shipmentCount'), 'integer', 12),
+          col(t('customerCount'), 'integer', 12),
+          col(t('packages'), 'integer', 12),
+          col(t('weightKg'), 'amount'),
+          col(t('volumeCbm'), 'amount'),
+        ],
+        rows: containers,
+      },
+      {
+        name: t('contents'),
+        columns: [
+          col(t('number'), 'text', 22),
+          col(t('containerNumber'), 'text', 16),
+          col(t('shipment'), 'text', 22),
+          col(t('customer'), 'text'),
+          col(t('status'), 'text', 24),
+          col(t('packages'), 'integer', 12),
+          col(t('weightKg'), 'amount'),
+          col(t('volumeCbm'), 'amount'),
+        ],
+        rows: contents,
+      },
+    ],
+    r.truncated,
   );
 }
 

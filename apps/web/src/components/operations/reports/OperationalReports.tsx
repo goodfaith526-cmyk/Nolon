@@ -2,6 +2,7 @@
 
 import {
   AUDIT_ENTITIES,
+  CONSOLIDATION_STATUSES,
   CUSTOMS_STATUSES,
   SHIPMENT_STATUSES,
   SHIPPING_MODES,
@@ -10,6 +11,7 @@ import {
   type AuditLogDto,
   type AuditLogEntryDto,
   type CarrierDto,
+  type ConsolidationsReportDto,
   type CustomerActivityDto,
   type CustomsFilesDto,
   type DriverDto,
@@ -50,6 +52,7 @@ type OpsTitle =
   | 'late'
   | 'conversion'
   | 'activity'
+  | 'containers'
   | 'onHand'
   | 'movements'
   | 'customs'
@@ -65,6 +68,7 @@ const REPORT_PERMISSIONS: Record<OpsTitle, readonly Permission[]> = {
   late: ['operational_reports:view', 'shipments:view'],
   conversion: ['operational_reports:view', 'quotations:view', 'bookings:view'],
   activity: ['operational_reports:view', 'shipments:view', 'customers:view'],
+  containers: ['operational_reports:view', 'consolidation:view'],
   onHand: ['operational_reports:view', 'warehouse:view'],
   movements: ['operational_reports:view', 'warehouse:view'],
   customs: ['operational_reports:view', 'customs:view'],
@@ -499,6 +503,135 @@ function useWarehouseFilter(): ExtraFilter {
     all: t('allWarehouses'),
     options: (warehouses ?? []).map((w) => ({ value: w.id, label: `${w.code} · ${name(w)}` })),
   };
+}
+
+/** Report 5. */
+export function ConsolidationsReport() {
+  const t = useTranslations('OpsReports');
+  const tr = useTranslations('Reports');
+  const te = useTranslations('Enums');
+  const status: ExtraFilter = {
+    name: 'status',
+    label: tr('status'),
+    all: t('allOpenStatuses'),
+    options: CONSOLIDATION_STATUSES.map((s) => ({ value: s, label: te(`consolidation_${s}`) })),
+  };
+  return (
+    <OpsReport<ConsolidationsReportDto>
+      id="consolidations"
+      title="containers"
+      filters={{ dates: 'period', extras: [status] }}
+    >
+      {(r) => (
+        <div className="stack">
+          <Figures
+            items={[
+              { label: t('containerCount'), value: r.totals.containers },
+              ...r.byStatus.map((s) => ({
+                label: te(`consolidation_${s.status}`),
+                value: s.count,
+              })),
+              { label: tr('shipmentCount'), value: r.totals.shipments },
+              { label: t('customerCount'), value: r.totals.customers },
+              { label: t('volumeCbm'), value: r.totals.volumeCbm },
+              { label: t('weightKg'), value: r.totals.weightKg },
+            ]}
+          />
+          <Truncated shown={r.truncated} />
+          <ReportTable title={t('containerList')}>
+            <thead>
+              <tr>
+                <th>{t('container')}</th>
+                <th>{t('containerNumber')}</th>
+                <th>{tr('branch')}</th>
+                <th>{tr('route')}</th>
+                <th>{tr('status')}</th>
+                <th>{t('vessel')}</th>
+                <th>{t('etd')}</th>
+                <th>{t('eta')}</th>
+                <th>{tr('shipmentCount')}</th>
+                <th>{t('customerCount')}</th>
+                <th>{t('packages')}</th>
+                <th>{t('weightKg')}</th>
+                <th>{t('volumeCbm')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.containers.length === 0 && <EmptyRow columns={13} text={t('none')} />}
+              {r.containers.map((c) => (
+                <tr key={c.consolidationId}>
+                  <td dir="ltr">
+                    <Link href={`/consolidations/${c.consolidationId}`}>{c.number}</Link>
+                  </td>
+                  <td dir="ltr">
+                    {dash(c.containerNumber)} · {c.containerTypeCode}
+                  </td>
+                  <td dir="ltr">{c.branchCode}</td>
+                  <td dir="ltr">
+                    {c.origin.code} → {c.destination.code}
+                  </td>
+                  <td>
+                    <StatusBadge kind="consolidation" status={c.status} />
+                  </td>
+                  <td>{[c.vesselName, c.voyageNumber].filter(Boolean).join(' / ') || '—'}</td>
+                  <td dir="ltr">{dash(c.etd)}</td>
+                  <td dir="ltr">{dash(c.eta)}</td>
+                  <td dir="ltr">{c.shipments}</td>
+                  <td dir="ltr">{c.customers}</td>
+                  <td dir="ltr">{c.packages}</td>
+                  <AmountCell value={c.weightKg} />
+                  <AmountCell value={c.volumeCbm} />
+                </tr>
+              ))}
+              {r.containers.length > 0 && (
+                <tr className="subtotal">
+                  <td>{tr('total')}</td>
+                  <td colSpan={7} />
+                  <td dir="ltr">{r.totals.shipments}</td>
+                  <td dir="ltr">{r.totals.customers}</td>
+                  <td dir="ltr">{r.totals.packages}</td>
+                  <AmountCell value={r.totals.weightKg} strong />
+                  <AmountCell value={r.totals.volumeCbm} strong />
+                </tr>
+              )}
+            </tbody>
+          </ReportTable>
+          <ReportTable title={t('containerContents')}>
+            <thead>
+              <tr>
+                <th>{t('container')}</th>
+                <th>{tr('shipment')}</th>
+                <th>{tr('customer')}</th>
+                <th>{tr('status')}</th>
+                <th>{t('packages')}</th>
+                <th>{t('weightKg')}</th>
+                <th>{t('volumeCbm')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.totals.shipments === 0 && <EmptyRow columns={7} text={t('none')} />}
+              {r.containers.flatMap((c) =>
+                c.contents.map((x) => (
+                  <tr key={`${c.consolidationId}-${x.shipmentId}`}>
+                    <td dir="ltr">{c.number}</td>
+                    <ShipmentLink id={x.shipmentId} number={x.shipmentNumber} />
+                    <td>{x.customerName}</td>
+                    <td>
+                      <StatusBadge kind="shipment" status={x.status} />
+                    </td>
+                    <td dir="ltr">{x.packages}</td>
+                    <AmountCell value={x.weightKg} />
+                    <AmountCell value={x.volumeCbm} />
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </ReportTable>
+          <p className="muted">{t('containersNote')}</p>
+        </div>
+      )}
+    </OpsReport>
+  );
 }
 
 /** Report 6. */
@@ -943,6 +1076,7 @@ const REPORTS: readonly { href: string; title: OpsTitle }[] = [
   { href: '/late-shipments', title: 'late' },
   { href: '/sales-conversion', title: 'conversion' },
   { href: '/customer-activity', title: 'activity' },
+  { href: '/consolidations', title: 'containers' },
   { href: '/warehouse-on-hand', title: 'onHand' },
   { href: '/warehouse-movements', title: 'movements' },
   { href: '/customs-files', title: 'customs' },
@@ -973,7 +1107,6 @@ export function OperationalReportsIndex() {
           </Link>
         ))}
       </div>
-      <p className="muted">{t('notBuilt')}</p>
     </section>
   );
 }

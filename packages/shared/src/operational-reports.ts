@@ -1,4 +1,5 @@
 import type { BookingStatus, QuotationStatus, ShippingMode } from './commercial.js';
+import type { ConsolidationBasis, ConsolidationStatus } from './consolidation.js';
 import type { DecimalString } from './currencies.js';
 import type { CustomsStatus } from './customs.js';
 import type { ReportBranchDto, ReportLocationDto } from './reports.js';
@@ -12,15 +13,13 @@ import type { GoodsCondition, WarehouseMovementKind } from './warehouse.js';
  * Dates are YYYY-MM-DD in the branch's time zone; counts are integers; weights, volumes and
  * amounts are decimal strings, amounts in USD. Each report is also exported to Excel by the same
  * path with `/export`.
- *
- * Not built: report 5 (consolidated containers and their contents), as consolidation does not
- * exist yet.
  */
 export const OPERATIONAL_REPORTS = [
   'shipments',
   'late-shipments',
   'sales-conversion',
   'customer-activity',
+  'consolidations',
   'warehouse-on-hand',
   'warehouse-movements',
   'customs-files',
@@ -162,6 +161,70 @@ export interface CustomerActivityDto {
   revenueShown: boolean;
   customers: CustomerActivityRowDto[];
   totals: Omit<CustomerActivityRowDto, 'customerId' | 'customerName'>;
+}
+
+// ---- 5. Consolidated containers and their contents ---------------------------------------------
+
+/** A shipment in a container: its cargo as booked (packages, weight and volume of its lines). */
+export interface ContainerContentRowDto extends ReportCustomerRefDto {
+  shipmentId: string;
+  shipmentNumber: string;
+  status: ShipmentStatus;
+  packages: number;
+  /** Sum of the lines that give one; null when none does. */
+  weightKg: DecimalString | null;
+  volumeCbm: DecimalString | null;
+}
+
+export interface ContainerReportRowDto {
+  consolidationId: string;
+  /** NOL-CON-2026-000001 */
+  number: string;
+  branchCode: string;
+  status: ConsolidationStatus;
+  containerTypeCode: string;
+  containerNumber: string | null;
+  origin: ReportLocationDto;
+  destination: ReportLocationDto;
+  carrierName: string | null;
+  vesselName: string | null;
+  voyageNumber: string | null;
+  /** The container's day in the period: its ETD, else the day it was opened (in its branch). */
+  day: string;
+  etd: string | null;
+  eta: string | null;
+  basis: ConsolidationBasis;
+  /** Its shipments the user may see, and their distinct customers. */
+  shipments: number;
+  customers: number;
+  packages: number;
+  /** Its shipments' weight and volume added up (lines without one count as nothing). */
+  weightKg: DecimalString;
+  volumeCbm: DecimalString;
+  contents: ContainerContentRowDto[];
+}
+
+/**
+ * Consolidated (LCL) containers whose ETD (else opening day) falls in the period, with the
+ * shipments and customers in each. Cancelled containers are listed only when asked for by status.
+ * Needs consolidation:view as well; no costs are shown (they are on the container page, for those who see them).
+ */
+export interface ConsolidationsReportDto {
+  from: string;
+  to: string;
+  branchId: string | null;
+  status: ConsolidationStatus | null;
+  byStatus: { status: ConsolidationStatus; count: number }[];
+  totals: {
+    containers: number;
+    shipments: number;
+    customers: number;
+    packages: number;
+    weightKg: DecimalString;
+    volumeCbm: DecimalString;
+  };
+  containers: ContainerReportRowDto[];
+  truncated: boolean;
 }
 
 // ---- 6. Warehouse: goods on hand now and days held ---------------------------------------------
