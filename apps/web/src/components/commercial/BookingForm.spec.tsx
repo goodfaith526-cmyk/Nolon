@@ -3,13 +3,17 @@ import type { BookingDto, CustomerDto, CustomerPartyAddedDto } from '@nolon/shar
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/lib/api';
 
 const api = vi.fn();
 let permissions: string[] = ['customers:update'];
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
 vi.mock('@/i18n/navigation', () => ({ Link: () => null, useRouter: () => ({ push: () => {} }) }));
-vi.mock('@/lib/api', () => ({ api: (...args: unknown[]) => api(...args) as unknown }));
+vi.mock('@/lib/api', async (actual) => ({
+  ...(await actual<typeof import('@/lib/api')>()),
+  api: (...args: unknown[]) => api(...args) as unknown,
+}));
 vi.mock('@/lib/master-data', () => ({
   useMasterData: () => ({
     currencies: [],
@@ -25,7 +29,11 @@ vi.mock('../StaffShell', () => ({
   useMe: () => ({ permissions, branches: [{ id: 'b1', nameEn: 'Dubai', nameAr: 'دبي' }] }),
   can: (me: { permissions: string[] }, p: string) => me.permissions.includes(p),
 }));
-vi.mock('./Notice', () => ({ Notice: () => null, useFailureText: () => () => 'failed' }));
+vi.mock('./Notice', async (actual) => ({
+  ...(await actual<typeof import('./Notice')>()),
+  Notice: () => null,
+  useFailureText: () => () => 'failed',
+}));
 
 const { BookingForm } = await import('./BookingForm');
 
@@ -217,5 +225,61 @@ describe('BookingForm parties', () => {
     await render();
     expect(addButton('shipperId')).toBeUndefined();
     expect(addButton('consigneeId')).toBeUndefined();
+  });
+});
+
+describe('BookingForm refused save', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  it('marks the fields the API names and moves to the first one; the next save clears them', async () => {
+    api.mockReset();
+    api.mockImplementation((path: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') {
+        return Promise.reject(new ApiError(400, '', ['items.0.weightKg', 'services']));
+      }
+      return Promise.resolve(customer([]));
+    });
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm booking={booking} />);
+    });
+    await flush();
+    click(buttonByText('addItem'));
+    const weight = () =>
+      [...document.querySelectorAll('label.field')]
+        .find((l) => l.textContent?.startsWith('weightKg'))
+        ?.querySelector('input') as HTMLInputElement;
+    // An Arabic keyboard's digits are read as 0-9.
+    typeInto(weight(), '١٢٫٥');
+    expect(weight().value).toBe('12.5');
+
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+
+    // The services above the lines are marked as a group; the first marked control has the focus.
+    expect(weight().getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(weight());
+    expect(document.querySelector('[data-invalid="true"]')?.classList.contains('checks')).toBe(
+      true,
+    );
+    expect(document.querySelectorAll('[aria-invalid="true"]')).toHaveLength(1);
+
+    api.mockImplementation(() => new Promise(() => {}));
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+    expect(document.querySelectorAll('[aria-invalid="true"], [data-invalid="true"]')).toHaveLength(
+      0,
+    );
   });
 });

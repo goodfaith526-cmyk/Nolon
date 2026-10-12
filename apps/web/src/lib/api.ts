@@ -7,6 +7,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The invalid fields a 400 names, as request paths (`items.0.weightKg`); empty otherwise. */
+    readonly fields: readonly string[] = [],
   ) {
     super(message);
   }
@@ -24,13 +26,19 @@ export async function api<T = void>(
   });
   if (!res.ok) {
     let message = res.statusText;
+    let fields: string[] = [];
     try {
       const data = (await res.json()) as { message?: unknown };
       if (typeof data.message === 'string') message = data.message;
+      // A request that fails validation is answered with the list of its invalid fields.
+      if (Array.isArray(data.message)) {
+        fields = data.message.filter((f): f is string => typeof f === 'string');
+        message = fields.join(', ');
+      }
     } catch {
       // Body was not JSON; keep the status text.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, fields);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

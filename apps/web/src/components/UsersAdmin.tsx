@@ -71,8 +71,10 @@ export function UsersAdmin() {
     if (!(e instanceof ApiError)) return t('failed');
     if (e.status === 409 && /email/i.test(e.message)) return t('emailTaken');
     if (e.status === 409) return t('lastAdmin');
-    if (e.status === 400 && /own account/i.test(e.message)) return t('cannotDeactivateSelf');
-    if (e.status === 400 && /branch/i.test(e.message)) return t('branchRequired');
+    if (e.status === 400 && e.fields.length === 0 && /own account/i.test(e.message))
+      return t('cannotDeactivateSelf');
+    if (e.status === 400 && e.fields.length === 0 && /branch/i.test(e.message))
+      return t('branchRequired');
     if (e.status === 400) return t('invalidInput');
     if (e.status === 403) return t('noAccess');
     return t('failed');

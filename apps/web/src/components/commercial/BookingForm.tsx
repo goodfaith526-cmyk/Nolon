@@ -19,12 +19,21 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { asciiDigits } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { can, useMe } from '../StaffShell';
 import { CustomerPicker } from './CustomerPicker';
 import { FormDialog } from './FormDialog';
-import { Notice, type NoticeState, useFailureText } from './Notice';
+import {
+  invalidFields,
+  invalidGroupProps,
+  invalidProps,
+  Notice,
+  type NoticeState,
+  revealFailure,
+  useFailureText,
+} from './Notice';
 import { PartyForm } from './PartyForm';
 
 interface ItemState {
@@ -121,6 +130,14 @@ export function BookingForm({
     consolidation?.originLocationId ?? (originChoice || (activeLocations[0]?.id ?? ''));
   const destination = destinationChoice || (activeLocations[1]?.id ?? '');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // The fields the last refused save named, marked on the form until the next save.
+  const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
+  const formRef = useRef<HTMLFormElement>(null);
+  const mark = (path: string) => invalidProps(invalid, path);
+  const markGroup = (path: string) => invalidGroupProps(invalid, path);
+  useEffect(() => {
+    if (notice && !notice.ok) revealFailure(formRef.current);
+  }, [notice, invalid]);
 
   const customerId = booking?.customerId ?? customer?.id;
   // The customer the form is on now: a party saved for an earlier one is not applied.
@@ -190,6 +207,7 @@ export function BookingForm({
     };
     setBusy(true);
     setNotice(null);
+    setInvalid(new Set());
     try {
       if (consolidation) {
         await api<ConsolidationBookingDto>(`/consolidations/${consolidation.id}/bookings`, {
@@ -208,6 +226,7 @@ export function BookingForm({
       router.push(`/bookings/${saved.id}`);
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
+      setInvalid(invalidFields(err));
       setBusy(false);
     }
   }
@@ -222,6 +241,7 @@ export function BookingForm({
       <span className="row">
         <select
           name={field}
+          {...mark(field)}
           value={partyIds[field]}
           onChange={(e) => setPartyIds((all) => ({ ...all, [field]: e.target.value }))}
         >
@@ -242,7 +262,7 @@ export function BookingForm({
   );
 
   return (
-    <form className="stack form-page" onSubmit={(e) => void submit(e)}>
+    <form ref={formRef} className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>
         {booking
           ? t('editTitle', { number: booking.number })
@@ -258,7 +278,7 @@ export function BookingForm({
             <h2>{t('customer')}</h2>
             <p>{t('sectionCustomerHint')}</p>
           </header>
-          <div className="form-section-body">
+          <div className="form-section-body" {...markGroup('customerId')}>
             <CustomerPicker
               value={customer}
               onChange={(c) => {
@@ -280,6 +300,7 @@ export function BookingForm({
           <label className="field">
             {t('origin')}
             <select
+              {...mark('originLocationId')}
               value={origin}
               disabled={consolidation !== undefined}
               onChange={(e) => setOrigin(e.target.value)}
@@ -293,7 +314,11 @@ export function BookingForm({
           </label>
           <label className="field">
             {t('destination')}
-            <select value={destination} onChange={(e) => setDestination(e.target.value)}>
+            <select
+              {...mark('destinationLocationId')}
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+            >
               {locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {name(l)} ({l.code})
@@ -304,6 +329,7 @@ export function BookingForm({
           <label className="field">
             {t('mode')}
             <select
+              {...mark('mode')}
               value={mode}
               disabled={consolidation !== undefined}
               onChange={(e) => setMode(e.target.value as ShippingMode)}
@@ -319,6 +345,7 @@ export function BookingForm({
             <label className="field">
               {t('loadType')}
               <select
+                {...mark('loadType')}
                 value={loadType}
                 disabled={consolidation !== undefined}
                 onChange={(e) => setLoadType(e.target.value as LoadType)}
@@ -333,7 +360,11 @@ export function BookingForm({
           )}
           <label className="field">
             {t('cargoType')}
-            <select value={cargoType} onChange={(e) => setCargoType(e.target.value as CargoType)}>
+            <select
+              {...mark('cargoType')}
+              value={cargoType}
+              onChange={(e) => setCargoType(e.target.value as CargoType)}
+            >
               {CARGO_TYPES.map((c) => (
                 <option key={c} value={c}>
                   {te(`cargo_${c}`)}
@@ -346,6 +377,7 @@ export function BookingForm({
             <input
               name="requestedDeparture"
               type="date"
+              {...mark('requestedDeparture')}
               defaultValue={booking?.requestedDeparture ?? consolidation?.etd ?? ''}
             />
           </label>
@@ -367,7 +399,7 @@ export function BookingForm({
           <h2>{t('services')}</h2>
           <p>{t('servicesHint')}</p>
         </header>
-        <div className="form-section-body checks">
+        <div className="form-section-body checks" {...markGroup('services')}>
           {BOOKING_SERVICES.map((s) => (
             <label key={s}>
               <input
@@ -386,7 +418,7 @@ export function BookingForm({
           <h2>{t('items')}</h2>
           <p>{t('cbmHint')}</p>
         </header>
-        <fieldset className="form-section-body stack bare">
+        <fieldset className="form-section-body stack bare" {...markGroup('items')}>
           <legend className="visually-hidden">{t('items')}</legend>
           {items.map((i, index) => (
             <div key={i.key} className="line">
@@ -394,6 +426,7 @@ export function BookingForm({
               <label className="field">
                 {t('cargoType')}
                 <select
+                  {...mark(`items.${index}.cargoType`)}
                   value={i.cargoType}
                   onChange={(e) => {
                     const next = e.target.value as CargoType;
@@ -414,6 +447,7 @@ export function BookingForm({
                 <label className="field">
                   {t('containerType')}
                   <select
+                    {...mark(`items.${index}.containerTypeCode`)}
                     value={i.containerTypeCode}
                     onChange={(e) => updateItem(i.key, { containerTypeCode: e.target.value })}
                   >
@@ -433,6 +467,7 @@ export function BookingForm({
                   type="number"
                   min={1}
                   required
+                  {...mark(`items.${index}.quantity`)}
                   value={i.quantity}
                   onChange={(e) => updateItem(i.key, { quantity: e.target.value })}
                 />
@@ -443,15 +478,17 @@ export function BookingForm({
                   <input
                     inputMode="decimal"
                     dir="ltr"
+                    {...mark(`items.${index}.${k}`)}
                     value={i[k]}
                     disabled={k === 'volumeCbm' && i.lengthCm !== ''}
-                    onChange={(e) => updateItem(i.key, { [k]: e.target.value })}
+                    onChange={(e) => updateItem(i.key, { [k]: asciiDigits(e.target.value) })}
                   />
                 </label>
               ))}
               <label className="field">
                 {t('itemDescription')}
                 <input
+                  {...mark(`items.${index}.description`)}
                   value={i.description}
                   onChange={(e) => updateItem(i.key, { description: e.target.value })}
                 />
@@ -491,6 +528,7 @@ export function BookingForm({
             <textarea
               name="cargoDescription"
               rows={2}
+              {...mark('cargoDescription')}
               defaultValue={booking?.cargoDescription ?? ''}
             />
           </label>
@@ -499,6 +537,7 @@ export function BookingForm({
             <textarea
               name="specialInstructions"
               rows={2}
+              {...mark('specialInstructions')}
               defaultValue={booking?.specialInstructions ?? ''}
             />
           </label>

@@ -889,6 +889,18 @@ textarea:focus {
   box-shadow: 0 0 0 3px var(--brand-blue-ring);
 }
 
+/* A field the last refused save named (Notice.tsx: invalidProps / invalidGroupProps). */
+:is(input, select, textarea)[aria-invalid='true'] {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent);
+}
+
+[data-invalid='true'] {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--bad);
+  outline-offset: 4px;
+}
+
 input:disabled,
 select:disabled,
 textarea:disabled,
