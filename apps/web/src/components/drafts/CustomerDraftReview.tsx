@@ -3,6 +3,7 @@
 import type { CustomerDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
+import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
@@ -37,6 +38,14 @@ export function CustomerDraftReview({ id }: { id: string }) {
       approveBody={confirmedBody(draft.evidence, ticked)}
       onChanged={setRecord}
     >
+      {draft.bookingDraftId && (
+        <p>
+          {t('bookingWithCustomer')}{' '}
+          <Link href={`/drafts/new-customer-bookings/${draft.bookingDraftId}`}>
+            {t('openBookingDraft')}
+          </Link>
+        </p>
+      )}
       <dl className="details">
         <dt>{tcu('branch')}</dt>
         <dd dir="ltr">{draft.branchCode}</dd>

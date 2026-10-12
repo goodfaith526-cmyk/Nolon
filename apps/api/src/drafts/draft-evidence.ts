@@ -11,19 +11,38 @@ import type { Prisma } from '../generated/prisma/client.js';
 // unchanged once decided like the rest of the row.
 
 const field = z.string().regex(/^[A-Za-z]{1,40}$/, 'Invalid field');
+/** A field, or a field of one line (`items[0].quantity`). */
+const fieldPath = z
+  .string()
+  .regex(/^(?:[A-Za-z]{1,40}\[\d{1,3}\]\.)?[A-Za-z]{1,40}$/, 'Invalid field');
 
-/** The words a kind's draft may carry: one per field, for the fields `allowed` names. */
-export function draftEvidence(allowed: readonly string[]) {
+function evidenceList(fieldSchema: z.ZodString, allowed: (field: string) => boolean, max: number) {
   return z
-    .array(z.object({ field, quote: z.string().trim().min(1).max(200) }).strict())
-    .max(allowed.length)
-    .refine((list) => list.every((e) => allowed.includes(e.field)), 'Words for an unknown field')
+    .array(z.object({ field: fieldSchema, quote: z.string().trim().min(1).max(200) }).strict())
+    .max(max)
+    .refine((list) => list.every((e) => allowed(e.field)), 'Words for an unknown field')
     .refine((list) => new Set(list.map((e) => e.field)).size === list.length, 'Repeated field')
     .default([]);
 }
 
+/** The words a kind's draft may carry: one per field, for the fields `allowed` names. */
+export function draftEvidence(allowed: readonly string[]) {
+  return evidenceList(field, (f) => allowed.includes(f), allowed.length);
+}
+
+/**
+ * As draftEvidence, for a kind whose words may also name a line's value (`items[0].quantity`):
+ * `allowed` decides each path, at most `max` of them.
+ */
+export function draftEvidencePaths(allowed: (field: string) => boolean, max: number) {
+  return evidenceList(fieldPath, allowed, max);
+}
+
 /** The fields an approval ticked. */
 export const confirmedFields = z.array(field).max(30).default([]);
+
+/** The fields an approval ticked, for a kind whose words may name a line's value. */
+export const confirmedPaths = z.array(fieldPath).max(200).default([]);
 
 /** The stored words of a draft (a JSON array written by the create). */
 export function evidenceOf(stored: Prisma.JsonValue): DraftEvidence[] {

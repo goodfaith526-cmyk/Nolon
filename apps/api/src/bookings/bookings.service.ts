@@ -13,6 +13,7 @@ import type {
   BookingStatus,
   BookingSummaryDto,
   CreateBookingRequest,
+  NewCustomerBookingRequest,
   Page,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -128,6 +129,15 @@ export class BookingsService {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     const prepared = await this.prepare(customer.id, input);
     return { branchId: customer.branchId, customerId: customer.id, quotationId: null, ...prepared };
+  }
+
+  /**
+   * The checks of prepareCreate that need no customer (route, sea-only load type, services, cargo
+   * lines and their container types), for a booking proposed with a customer not in NOLON yet.
+   * prepareCreate runs them all again once the customer exists. Nothing is written.
+   */
+  async prepareWithoutCustomer(input: NewCustomerBookingRequest): Promise<void> {
+    await this.prepare(null, input);
   }
 
   /** As prepareCreate, for a booking made from an approved quotation of the user's branches. */
@@ -271,18 +281,20 @@ export class BookingsService {
     return booking;
   }
 
-  private async prepare(customerId: string, input: BookingInput) {
+  /** `customerId` null: a booking for a customer not in NOLON yet, which names no parties. */
+  private async prepare(customerId: string | null, input: BookingInput) {
     await this.masterData.requireRoute(input.originLocationId, input.destinationLocationId);
     if (input.mode !== 'SEA' && input.loadType) {
       throw new BadRequestException('FCL/LCL applies to sea shipments only');
     }
     const services: BookingService[] = [...new Set(input.services)];
     if (services.length === 0) throw new BadRequestException('Choose at least one service');
-    await this.customers.requireOwnParties(customerId, [
-      input.shipperId,
-      input.consigneeId,
-      input.notifyPartyId,
-    ]);
+    const parties = [input.shipperId, input.consigneeId, input.notifyPartyId];
+    if (customerId !== null) {
+      await this.customers.requireOwnParties(customerId, parties);
+    } else if (parties.some((p) => p !== null && p !== undefined)) {
+      throw new BadRequestException('A booking for a new customer names no parties yet');
+    }
     const items = [];
     for (const [index, item] of input.items.entries()) {
       items.push({ lineNo: index + 1, ...(await this.prepareItem(item)) });
