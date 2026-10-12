@@ -14,6 +14,7 @@ export const DRAFT_KINDS = [
   { key: 'receipts', api: '/receipt-drafts', view: 'receipts:view' },
   { key: 'customers', api: '/customer-drafts', view: 'customers:view' },
   { key: 'parties', api: '/party-drafts', view: 'customers:view' },
+  { key: 'rate-cards', api: '/rate-card-drafts', view: 'rates:view' },
 ] as const satisfies readonly { key: string; api: string; view: Permission }[];
 
 export type DraftKind = (typeof DRAFT_KINDS)[number]['key'];
