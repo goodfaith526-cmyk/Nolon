@@ -2,11 +2,14 @@ import type {
   AgentClientCreatedDto,
   BookingDto,
   CustomerDto,
+  DriverDto,
   EntryDraftSummaryDto,
   ShipmentDto,
   ShipmentStatusDraftDto,
   ShipmentStatusDraftListItemDto,
+  VehicleDto,
 } from '@nolon/shared';
+import { randomInt } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   type TestApp,
@@ -37,7 +40,16 @@ let portSudan: string;
 let khartoum: string;
 let customer: CustomerDto;
 
-const cookies = { admin: '', opsDxb: '', opsJed: '', salesDxb: '', whDxb: '' };
+const cookies = {
+  admin: '',
+  opsDxb: '',
+  opsJed: '',
+  salesDxb: '',
+  whDxb: '',
+  driverDxb: '',
+  driverOpsDxb: '',
+};
+let driverUserId: string;
 const agentCookies = { opsAgent: '', salesAgent: '', opsJedAgent: '' };
 const tokens = { ops: '', sales: '', opsJed: '' };
 
@@ -100,7 +112,10 @@ beforeAll(async () => {
     opsJed: await createUser(t.prisma, ['OPERATIONS'], ['JED']),
     salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
     whDxb: await createUser(t.prisma, ['WAREHOUSE'], ['DXB']),
+    driverDxb: await createUser(t.prisma, ['DRIVER'], ['DXB']),
+    driverOpsDxb: await createUser(t.prisma, ['DRIVER', 'OPERATIONS'], ['DXB']),
   };
+  driverUserId = people.driverDxb.id;
   for (const key of Object.keys(people) as (keyof typeof people)[]) {
     cookies[key] = await signIn(t, people[key].email);
   }
@@ -154,6 +169,14 @@ describe('shipment status drafts: the assistant proposes', () => {
     ).body as EntryDraftSummaryDto;
     expect(found.id).toBe(a.id);
     await createDraft({ ...body, note: 'Another note' }).expect(409);
+    // Once approved, the same request under the same key still finds its draft, though the move
+    // no longer follows the shipment's status.
+    await r
+      .post(`/shipment-status-drafts/${a.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(200);
+    const replay = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: a.id, status: 'APPROVED' });
+    await createDraft({ ...body, note: 'Another note' }).expect(409);
     expect(await t.prisma.shipmentStatusDraft.count({ where: { shipmentId: shipment.id } })).toBe(
       1,
     );
@@ -199,6 +222,73 @@ describe('shipment status drafts: the assistant proposes', () => {
       .expect(403);
     await r.post('/shipment-status-drafts', cookies.opsDxb, statusRequest(shipment.id)).expect(403);
     expect(await shipmentStatus(shipment.id)).toBe('CREATED');
+  });
+});
+
+/** A road shipment on a planned trip driven by the Driver user (now TRIP_SCHEDULED). */
+async function driversShipment(): Promise<ShipmentDto> {
+  const suffix = String(randomInt(100_000, 999_999));
+  const vehicle = (
+    await r
+      .post('/transport/vehicles', cookies.opsDxb, {
+        branchId: dxb,
+        plateNumber: `ZZ SD ${suffix}`,
+        vehicleType: 'Flatbed trailer',
+      })
+      .expect(201)
+  ).body as VehicleDto;
+  const driver = (
+    await r
+      .post('/transport/drivers', cookies.opsDxb, {
+        branchId: dxb,
+        name: `ZZ Driver ${suffix}`,
+        userId: driverUserId,
+      })
+      .expect(201)
+  ).body as DriverDto;
+  const shipment = await roadShipment();
+  await r
+    .post('/trips', cookies.opsDxb, {
+      branchId: dxb,
+      kind: 'OWN',
+      originLocationId: portSudan,
+      destinationLocationId: khartoum,
+      vehicleId: vehicle.id,
+      driverId: driver.id,
+      shipmentIds: [shipment.id],
+    })
+    .expect(201);
+  return shipment;
+}
+
+describe('shipment status drafts: a Driver', () => {
+  it('reaches the drafts of their own trips only; another role lifts the limit', async () => {
+    const own = await driversShipment();
+    const ownDraft = await statusDraft(statusRequest(own.id, { status: 'ROAD_DEPARTED' }));
+    const other = await roadShipment();
+    const otherDraft = await statusDraft(statusRequest(other.id));
+    const list = (await r.get('/shipment-status-drafts', cookies.driverDxb).expect(200))
+      .body as ShipmentStatusDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(ownDraft.id);
+    expect(list.map((d) => d.id)).not.toContain(otherDraft.id);
+    await r.get(`/shipment-status-drafts/${otherDraft.id}`, cookies.driverDxb).expect(404);
+    await r
+      .post(`/shipment-status-drafts/${otherDraft.id}/reject`, cookies.driverDxb, {
+        version: 1,
+        reason: 'No',
+      })
+      .expect(404);
+    await r
+      .post(`/shipment-status-drafts/${otherDraft.id}/approve`, cookies.driverDxb, { version: 1 })
+      .expect(404);
+    const seen = (
+      await r.get(`/shipment-status-drafts/${ownDraft.id}`, cookies.driverDxb).expect(200)
+    ).body as ShipmentStatusDraftDto;
+    expect(seen.shipmentNumber).toBe(own.number);
+    const all = (await r.get('/shipment-status-drafts', cookies.driverOpsDxb).expect(200))
+      .body as ShipmentStatusDraftListItemDto[];
+    expect(all.map((d) => d.id)).toEqual(expect.arrayContaining([ownDraft.id, otherDraft.id]));
+    expect(await shipmentStatus(other.id)).toBe('CREATED');
   });
 });
 
@@ -290,11 +380,15 @@ describe('shipment status drafts: a person reviews', () => {
 
   it('refuses a move the shipment has outgrown, checked again on approval, and leaves the draft open', async () => {
     const shipment = await roadShipment();
-    const draft = await statusDraft(statusRequest(shipment.id));
+    const staleBody = statusRequest(shipment.id);
+    const draft = await statusDraft(staleBody);
     // Staff scheduled the trip directly; the same move no longer follows.
     await r
       .post(`/shipments/${shipment.id}/status`, cookies.opsDxb, { status: 'TRIP_SCHEDULED' })
       .expect(200);
+    // The assistant's retry under the same key still finds the open draft.
+    const replay = (await createDraft(staleBody).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay.id).toBe(draft.id);
     const stale = (await r.get(`/shipment-status-drafts/${draft.id}`, cookies.opsDxb).expect(200))
       .body as ShipmentStatusDraftDto;
     expect(stale.check).toMatchObject({ ok: false });
@@ -431,5 +525,51 @@ describe('shipment status drafts: replacing a draft', () => {
     expect(await t.prisma.shipmentStatusDraft.count({ where: { replacesDraftId: draft.id } })).toBe(
       0,
     );
+  });
+});
+
+describe("shipment status drafts: the staff member's words", () => {
+  it('shows the words next to the values and approves only once each is ticked', async () => {
+    const shipment = await roadShipment();
+    const evidence = [
+      { field: 'shipmentId', quote: shipment.number },
+      { field: 'locationId', quote: 'بورتسودان' },
+      // Words that do not give the value: code cannot tell, the person can.
+      { field: 'status', quote: 'وصلت الميناء' },
+    ];
+    const draft = await statusDraft(statusRequest(shipment.id, { evidence }));
+    expect(draft.evidence).toEqual(evidence);
+    const approve = (confirmed?: string[]) =>
+      r.post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, {
+        version: 1,
+        ...(confirmed ? { confirmed } : {}),
+      });
+    await approve().expect(400);
+    await approve(['shipmentId', 'locationId']).expect(400);
+    expect(await shipmentStatus(shipment.id)).toBe('CREATED');
+    // The person reads "arrived at the port" against TRIP_SCHEDULED and rejects it instead.
+    await r
+      .post(`/shipment-status-drafts/${draft.id}/reject`, cookies.opsDxb, {
+        version: 1,
+        reason: 'The words say arrived at the port',
+      })
+      .expect(200);
+    const ticked = await statusDraft(
+      statusRequest(shipment.id, { evidence: evidence.slice(0, 2) }),
+    );
+    await r
+      .post(`/shipment-status-drafts/${ticked.id}/approve`, cookies.opsDxb, {
+        version: 1,
+        confirmed: ['locationId', 'shipmentId'],
+      })
+      .expect(200);
+    expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
+  });
+
+  it('refuses words for a field it does not bind', async () => {
+    const shipment = await roadShipment();
+    await createDraft(
+      statusRequest(shipment.id, { evidence: [{ field: 'note', quote: 'x' }] }),
+    ).expect(400);
   });
 });

@@ -35,6 +35,7 @@ import {
   DraftsService,
   decidedVia,
   keyReused,
+  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
   replaceInTx,
@@ -197,10 +198,14 @@ export class BookingDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, ...input } = body;
-    // What NOLON would check on a real create, for this user now; nothing is written.
-    const prepared = await this.prepare(user, input);
     const hash = withReplaced(bookingRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    // A stored request under this key is answered first, before any check on live data: a replay
+    // after the approval, or after the records moved on, finds its draft instead of a refusal.
+    const stored = await storedDraftUnderKey(this.prisma, 'booking_drafts', scope, hash);
+    if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
+    // What NOLON would check on a real create, for this user now; nothing is written.
+    const prepared = await this.prepare(user, input);
     const fromQuotation = isFromQuotation(input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {

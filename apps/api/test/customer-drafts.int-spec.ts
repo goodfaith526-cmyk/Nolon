@@ -406,3 +406,43 @@ describe("replacing a draft at the person's request", () => {
     expect(await t.prisma.customerDraft.count({ where: { replacesDraftId: other.id } })).toBe(1);
   });
 });
+
+describe("customer drafts: the staff member's words", () => {
+  it('keeps the words with the draft and approves only once each value is ticked', async () => {
+    const evidence = [
+      { field: 'name', quote: 'اسمه طارق اسماعيل' },
+      { field: 'phone', quote: 'رقمه 0912' },
+      { field: 'branchId', quote: 'فرع دبي' },
+    ];
+    const body = { ...customerRequest(), evidence };
+    const draft = await customerDraft(body);
+    expect(draft.evidence).toEqual(evidence);
+    // Other words under the same key are another request.
+    await createDraft({ ...body, evidence: evidence.slice(0, 2) }).expect(409);
+    const approve = (confirmed?: string[]) =>
+      r.post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, {
+        version: 1,
+        ...(confirmed ? { confirmed } : {}),
+      });
+    await approve().expect(400);
+    await approve(['name', 'phone']).expect(400);
+    await approve(['name', 'phone', 'branchId', 'whatsapp']).expect(400);
+    expect(await t.prisma.customer.count({ where: { phone: body.phone } })).toBe(0);
+    await approve(['branchId', 'phone', 'name']).expect(200);
+    expect(await t.prisma.customer.count({ where: { phone: body.phone } })).toBe(1);
+  });
+
+  it('refuses words for a field it does not bind, or the same field twice', async () => {
+    const before = await t.prisma.customerDraft.count();
+    await createDraft(customerRequest({ evidence: [{ field: 'notes', quote: 'x' }] })).expect(400);
+    await createDraft(
+      customerRequest({
+        evidence: [
+          { field: 'name', quote: 'a' },
+          { field: 'name', quote: 'b' },
+        ],
+      }),
+    ).expect(400);
+    expect(await t.prisma.customerDraft.count()).toBe(before);
+  });
+});

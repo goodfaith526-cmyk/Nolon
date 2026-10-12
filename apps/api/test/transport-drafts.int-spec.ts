@@ -406,7 +406,8 @@ describe('trip drafts: a person reviews', () => {
 
   it('approves into an ordinary PLANNED trip that schedules the shipment, once', async () => {
     const shipment = await roadShipment();
-    const draft = await tripDraft(tripRequest([shipment.id]));
+    const body = tripRequest([shipment.id]);
+    const draft = await tripDraft(body);
     await r.post(`/trip-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 2 }).expect(409);
     const approved = (
       await r.post(`/trip-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 }).expect(200)
@@ -420,6 +421,10 @@ describe('trip drafts: a person reviews', () => {
     expect(s.status).toBe('TRIP_SCHEDULED');
     await r.post(`/trip-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 }).expect(200);
     expect(await t.prisma.tripShipment.count({ where: { shipmentId: shipment.id } })).toBe(1);
+    // The assistant's retry under the same key finds the approved draft, though the shipment is
+    // on a trip now.
+    const replay = (await createTripDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: draft.id, status: 'APPROVED' });
   });
 
   it('refuses approval to another branch or a user who cannot plan trips', async () => {
@@ -562,7 +567,8 @@ describe('goods release drafts', () => {
 
   it('a person reviews and approves it into an ordinary release note, once', async () => {
     const shipment = await heldShipment();
-    const draft = await releaseDraft(releaseRequest(shipment.id));
+    const body = releaseRequest(shipment.id);
+    const draft = await releaseDraft(body);
     expect(draft).toMatchObject({
       subject: shipment.number,
       shipmentNumber: shipment.number,
@@ -597,6 +603,10 @@ describe('goods release drafts', () => {
     expect(movement).toMatchObject({ kind: 'RELEASE', packages: 3, partyName: 'Driver Ahmed' });
     expect(movement.number).toBe(approved.movementNumber);
     await r.post(`/release-drafts/${draft.id}/approve`, cookies.whDxb, { version: 1 }).expect(200);
+    // The assistant's retry under the same key finds the approved draft, though the warehouse no
+    // longer holds these packages.
+    const replay = (await createReleaseDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id: draft.id, status: 'APPROVED' });
     expect(
       await t.prisma.warehouseMovement.count({
         where: { shipmentId: shipment.id, kind: 'RELEASE' },

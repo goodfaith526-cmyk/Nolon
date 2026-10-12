@@ -1,4 +1,9 @@
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftEvidence,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  EvidenceReviewFields,
+} from './drafts.js';
 import type { ShipmentStatus } from './shipments.js';
 
 /**
@@ -19,9 +24,10 @@ export interface ShipmentStatusDraftRequest {
 export interface ShipmentStatusDraftCreateRequest extends ShipmentStatusDraftRequest {
   idempotencyKey: string;
   shipmentId: string;
+  evidence?: DraftEvidence[];
 }
 
-export interface ShipmentStatusDraftDto extends EntryDraftReviewFields {
+export interface ShipmentStatusDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
   shipmentId: string;
   shipmentNumber: string;
   /** The shipment's status now, to read the proposed move against. */
@@ -31,7 +37,10 @@ export interface ShipmentStatusDraftDto extends EntryDraftReviewFields {
   check: EntryDraftCheck | null;
 }
 
-export type ShipmentStatusDraftListItemDto = Omit<ShipmentStatusDraftDto, 'request' | 'check'> & {
+export type ShipmentStatusDraftListItemDto = Omit<
+  ShipmentStatusDraftDto,
+  'request' | 'check' | 'evidence'
+> & {
   lineCount: number;
   /** The proposed status (status is the draft's). */
   targetStatus: ShipmentStatus;
