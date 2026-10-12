@@ -709,3 +709,18 @@ describe('drafts: the retention purge (data governance v2.1, section 4)', () => 
     expect(await purge(new Date())).toMatchObject({ skipped: false });
   });
 });
+
+describe("replacing a quotation draft at the person's request", () => {
+  it('closes the old quotation draft and records the new one as its replacement', async () => {
+    const old = await quotationDraft();
+    const created = (
+      await createQuotationDraft({ ...quotationRequest(), replacesDraftId: old.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const closed = (await r.get(`/quotation-drafts/${old.id}`, cookies.salesDxb).expect(200))
+      .body as QuotationDraftDto;
+    expect(closed).toMatchObject({ status: 'REJECTED', replacedByDraftId: created.id });
+    // A booking draft id is not a quotation draft: nothing to replace.
+    const booking = await bookingDraft();
+    await createQuotationDraft({ ...quotationRequest(), replacesDraftId: booking.id }).expect(404);
+  });
+});

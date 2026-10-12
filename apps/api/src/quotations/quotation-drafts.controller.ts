@@ -26,6 +26,7 @@ import {
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
+import { splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { QuotationDraftsService } from './quotation-drafts.service.js';
 import { quotationCreateBody } from './quotations.controller.js';
@@ -55,7 +56,9 @@ export class QuotationDraftsController {
   @Post()
   @RequirePermission('quotations:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<EntryDraftSummaryDto> {
-    return this.drafts.create(user, parse(createBody, body));
+    // replacesDraftId: the draft this one replaces, when the person asked for changes.
+    const { replacesDraftId, rest } = splitReplaced(body);
+    return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
   }
 
   @AgentReadable()

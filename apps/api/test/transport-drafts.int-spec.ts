@@ -642,4 +642,52 @@ describe('goods release drafts', () => {
       t.prisma.goodsReleaseDraft.update({ where: { id: draft.id }, data: { packages: 1 } }),
     ).rejects.toThrow(/decided/);
   });
+
+  /** Waits until `count` lock requests are queued (none granted), for at most about 5 seconds. */
+  async function waiters(count: number): Promise<void> {
+    for (let i = 0; i < 200; i += 1) {
+      const rows = await t.prisma.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+      if ((rows[0]?.n ?? 0) >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  it('replacing a draft while it is approved: one wins, the other gets 409, no deadlock', async () => {
+    const shipment = await heldShipment();
+    const draft = await releaseDraft(releaseRequest(shipment.id));
+    // Hold the shipment so the approval queues first and the replacement after it.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let locked = () => {};
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipment.id}::uuid FOR UPDATE`;
+        locked();
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    const approving = r
+      .post(`/release-drafts/${draft.id}/approve`, cookies.whDxb, { version: 1 })
+      .then((x) => x);
+    await waiters(1);
+    const replacing = createReleaseDraft({
+      ...releaseRequest(shipment.id, { packages: 2 }),
+      replacesDraftId: draft.id,
+    }).then((x) => x);
+    await waiters(2);
+    release();
+    await holder;
+    const [approved, replaced] = await Promise.all([approving, replacing]);
+    expect([approved.status, replaced.status]).toEqual([200, 409]);
+    const after = (await r.get(`/release-drafts/${draft.id}`, cookies.whDxb).expect(200))
+      .body as GoodsReleaseDraftDto;
+    expect(after.status).toBe('APPROVED');
+    expect(await t.prisma.goodsReleaseDraft.count({ where: { replacesDraftId: draft.id } })).toBe(
+      0,
+    );
+  });
 });

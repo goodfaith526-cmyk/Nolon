@@ -2686,6 +2686,9 @@ model QuotationDraft {
   terms                 String?          @db.VarChar(4000)
   decidedById           String?          @map("decided_by_id") @db.Uuid
   decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId       String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
   decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
@@ -2703,6 +2706,7 @@ model QuotationDraft {
 
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
+  @@index([replacesDraftId])
   @@map("quotation_drafts")
 }
 
@@ -2760,6 +2764,9 @@ model BookingDraft {
   specialInstructions   String?          @map("special_instructions") @db.VarChar(2000)
   decidedById           String?          @map("decided_by_id") @db.Uuid
   decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId       String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
   decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
@@ -2779,6 +2786,7 @@ model BookingDraft {
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
   @@index([sourceQuotationId])
+  @@index([replacesDraftId])
   @@map("booking_drafts")
 }
 
@@ -2834,6 +2842,9 @@ model TripDraft {
   notes                 String?          @db.VarChar(2000)
   decidedById           String?          @map("decided_by_id") @db.Uuid
   decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId       String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
   decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
@@ -2850,6 +2861,7 @@ model TripDraft {
 
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
+  @@index([replacesDraftId])
   @@map("trip_drafts")
 }
 
@@ -2876,29 +2888,32 @@ model TripDraftShipment {
  * dated at the approval, with that person's permissions. branch_id is the shipment's.
  */
 model GoodsReleaseDraft {
-  id             String           @id @default(uuid()) @db.Uuid
-  branchId       String           @map("branch_id") @db.Uuid
-  shipmentId     String           @map("shipment_id") @db.Uuid
-  state          EntryDraftState  @default(DRAFT)
-  version        Int              @default(1)
-  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String           @map("agent_client_id") @db.Uuid
-  createdById    String           @map("created_by_id") @db.Uuid
-  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String           @map("payload_hash") @db.Char(64)
-  warehouseId    String           @map("warehouse_id") @db.Uuid
-  packages       Int
-  weightKg       Decimal?         @map("weight_kg") @db.Decimal(12, 3)
-  partyName      String?          @map("party_name") @db.VarChar(200)
-  note           String?          @db.VarChar(1000)
-  decidedById    String?          @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  shipmentId      String           @map("shipment_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  warehouseId     String           @map("warehouse_id") @db.Uuid
+  packages        Int
+  weightKg        Decimal?         @map("weight_kg") @db.Decimal(12, 3)
+  partyName       String?          @map("party_name") @db.VarChar(200)
+  note            String?          @db.VarChar(1000)
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
-  decidedVia     DraftDecidedVia? @map("decided_via")
-  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
-  movementId     String?          @unique @map("movement_id") @db.Uuid
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  movementId      String?          @unique @map("movement_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
@@ -2911,6 +2926,7 @@ model GoodsReleaseDraft {
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
   @@index([shipmentId])
+  @@index([replacesDraftId])
   @@map("goods_release_drafts")
 }
 
@@ -2919,33 +2935,36 @@ model GoodsReleaseDraft {
 /// the person's permissions and branches and the branch's duplicate phone check. Decided on the
 /// review screen only.
 model CustomerDraft {
-  id             String           @id @default(uuid()) @db.Uuid
-  branchId       String           @map("branch_id") @db.Uuid
-  state          EntryDraftState  @default(DRAFT)
-  version        Int              @default(1)
-  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String           @map("agent_client_id") @db.Uuid
-  createdById    String           @map("created_by_id") @db.Uuid
-  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String           @map("payload_hash") @db.Char(64)
-  kind           CustomerKind
-  name           String           @db.VarChar(200)
-  companyName    String?          @map("company_name") @db.VarChar(200)
-  phone          String           @db.VarChar(20)
-  whatsapp       String?          @db.VarChar(20)
-  email          String?          @db.VarChar(254)
-  city           String?          @db.VarChar(100)
-  address        String?          @db.VarChar(500)
-  notes          String?          @db.VarChar(2000)
-  decidedById    String?          @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  kind            CustomerKind
+  name            String           @db.VarChar(200)
+  companyName     String?          @map("company_name") @db.VarChar(200)
+  phone           String           @db.VarChar(20)
+  whatsapp        String?          @db.VarChar(20)
+  email           String?          @db.VarChar(254)
+  city            String?          @db.VarChar(100)
+  address         String?          @db.VarChar(500)
+  notes           String?          @db.VarChar(2000)
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen (always, for an approval); ASSISTANT: closed from the
   /// assistant's chat.
-  decidedVia     DraftDecidedVia? @map("decided_via")
-  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
-  customerId     String?          @unique @map("customer_id") @db.Uuid
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  customerId      String?          @unique @map("customer_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
@@ -2955,6 +2974,7 @@ model CustomerDraft {
 
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
+  @@index([replacesDraftId])
   @@map("customer_drafts")
 }
 
@@ -2962,29 +2982,32 @@ model CustomerDraft {
 /// approval creates an ordinary DRAFT invoice (no entry is posted); invoice approval stays a
 /// separate human step.
 model InvoiceDraft {
-  id             String           @id @default(uuid()) @db.Uuid
-  branchId       String           @map("branch_id") @db.Uuid
-  shipmentId     String           @map("shipment_id") @db.Uuid
-  customerId     String           @map("customer_id") @db.Uuid
-  state          EntryDraftState  @default(DRAFT)
-  version        Int              @default(1)
-  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String           @map("agent_client_id") @db.Uuid
-  createdById    String           @map("created_by_id") @db.Uuid
-  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String           @map("payload_hash") @db.Char(64)
-  currency       String           @db.Char(3)
-  invoiceDate    DateTime         @map("invoice_date") @db.Date
-  dueDate        DateTime         @map("due_date") @db.Date
-  notes          String?          @db.VarChar(2000)
-  decidedById    String?          @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  shipmentId      String           @map("shipment_id") @db.Uuid
+  customerId      String           @map("customer_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  currency        String           @db.Char(3)
+  invoiceDate     DateTime         @map("invoice_date") @db.Date
+  dueDate         DateTime         @map("due_date") @db.Date
+  notes           String?          @db.VarChar(2000)
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
-  decidedVia     DraftDecidedVia? @map("decided_via")
-  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
-  invoiceId      String?          @unique @map("invoice_id") @db.Uuid
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  invoiceId       String?          @unique @map("invoice_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
@@ -2998,6 +3021,7 @@ model InvoiceDraft {
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
   @@index([shipmentId])
+  @@index([replacesDraftId])
   @@map("invoice_drafts")
 }
 
@@ -3018,30 +3042,33 @@ model InvoiceDraftLine {
 /// A customer receipt proposed by the staff AI assistant (entry drafts). An approval records an
 /// ordinary receipt and posts its entry through ReceiptsService, with the approver's permissions.
 model ReceiptDraft {
-  id             String           @id @default(uuid()) @db.Uuid
-  branchId       String           @map("branch_id") @db.Uuid
-  customerId     String           @map("customer_id") @db.Uuid
-  state          EntryDraftState  @default(DRAFT)
-  version        Int              @default(1)
-  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(3)
-  agentClientId  String           @map("agent_client_id") @db.Uuid
-  createdById    String           @map("created_by_id") @db.Uuid
-  idempotencyKey String           @map("idempotency_key") @db.VarChar(100)
-  payloadHash    String           @map("payload_hash") @db.Char(64)
-  receiptDate    DateTime         @map("receipt_date") @db.Date
-  currency       String           @db.Char(3)
-  amount         Decimal          @db.Decimal(18, 4)
-  cashAccountId  String           @map("cash_account_id") @db.Uuid
-  reference      String?          @db.VarChar(100)
-  notes          String?          @db.VarChar(2000)
-  decidedById    String?          @map("decided_by_id") @db.Uuid
-  decidedAt      DateTime?        @map("decided_at") @db.Timestamptz(3)
+  id              String           @id @default(uuid()) @db.Uuid
+  branchId        String           @map("branch_id") @db.Uuid
+  customerId      String           @map("customer_id") @db.Uuid
+  state           EntryDraftState  @default(DRAFT)
+  version         Int              @default(1)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId   String           @map("agent_client_id") @db.Uuid
+  createdById     String           @map("created_by_id") @db.Uuid
+  idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash     String           @map("payload_hash") @db.Char(64)
+  receiptDate     DateTime         @map("receipt_date") @db.Date
+  currency        String           @db.Char(3)
+  amount          Decimal          @db.Decimal(18, 4)
+  cashAccountId   String           @map("cash_account_id") @db.Uuid
+  reference       String?          @db.VarChar(100)
+  notes           String?          @db.VarChar(2000)
+  decidedById     String?          @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key: the retention purge may remove the replaced draft while this one is kept.
+  replacesDraftId String?          @map("replaces_draft_id") @db.Uuid
   /// SESSION: decided on the review screen; ASSISTANT: in the assistant chat.
-  decidedVia     DraftDecidedVia? @map("decided_via")
-  rejectReason   String?          @map("reject_reason") @db.VarChar(500)
-  receiptId      String?          @unique @map("receipt_id") @db.Uuid
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  decidedVia      DraftDecidedVia? @map("decided_via")
+  rejectReason    String?          @map("reject_reason") @db.VarChar(500)
+  receiptId       String?          @unique @map("receipt_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer    Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -3055,6 +3082,7 @@ model ReceiptDraft {
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
   @@index([customerId])
+  @@index([replacesDraftId])
   @@map("receipt_drafts")
 }
 

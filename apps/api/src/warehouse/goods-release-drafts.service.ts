@@ -30,6 +30,10 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  lockReplacedInTx,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -93,16 +97,27 @@ export class GoodsReleaseDraftsService {
   async create(
     user: AuthUser,
     body: GoodsReleaseDraftCreateRequest,
+    replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, shipmentId, ...input } = body;
     // The checks of a real release that need no lock; nothing is written.
     const prepared = await this.movements.prepareRelease(user, shipmentId, input);
     await this.requireWarehouse(user, input.warehouseId);
-    const hash = releaseRequestHash(shipmentId, input);
+    const hash = withReplaced(releaseRequestHash(shipmentId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        if (replacesDraftId !== null) {
+          await this.lockReplacementShipments(tx, replacesDraftId, shipmentId);
+        }
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'goods_release_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.goodsReleaseDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -111,9 +126,11 @@ export class GoodsReleaseDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.goodsReleaseDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             shipmentId,
             expiresAt: draftExpiry(),
@@ -130,6 +147,27 @@ export class GoodsReleaseDraftsService {
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * An approval locks its shipment and then the draft; a replacement closes the old draft and
+   * inserts a new one under a shipment, so it takes the same order: the shipments first (the old
+   * draft's and the new one's, in id order), then the old draft. Otherwise each could wait on the
+   * other. A draft's shipment never changes, so it is read before the lock.
+   */
+  private async lockReplacementShipments(
+    tx: Prisma.TransactionClient,
+    replacesDraftId: string,
+    shipmentId: string,
+  ): Promise<void> {
+    const old = await tx.goodsReleaseDraft.findUnique({
+      where: { id: replacesDraftId },
+      select: { shipmentId: true },
+    });
+    const ids = [...new Set([shipmentId, ...(old ? [old.shipmentId] : [])])].sort();
+    for (const id of ids) {
+      await this.shipments.lockForChildWrite(tx, id, { exclusive: true });
+    }
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -159,6 +197,10 @@ export class GoodsReleaseDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {
+    return withReplacedBy(this.prisma, 'goods_release_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -324,6 +366,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('warehouse:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     subject: d.shipment.number,
     status,

@@ -7,6 +7,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { Money, ReasonForm } from '../finance/common';
+import { DRAFT_KINDS } from './draft-kinds';
 
 export function DraftStatusBadge({ status }: { status: DraftStatus }) {
   const t = useTranslations('Drafts');
@@ -42,6 +43,7 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
   children: ReactNode;
 }) {
   const t = useTranslations('Drafts');
+  const page = DRAFT_KINDS.find((k) => k.api === apiPath)?.key;
   const tc = useTranslations('Common');
   const locale = useLocale();
   const failure = useFailureText();
@@ -88,11 +90,23 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
           <Link href={result.href}>{result.label}</Link>
         </p>
       )}
-      {draft.status === 'REJECTED' && (
-        <p>
-          {t('rejectedBy', { name: draft.decidedByName ?? '', reason: draft.rejectReason ?? '' })}
+      {draft.replacesDraftId && page && (
+        <p className="muted">
+          {t('replacesEarlier')}{' '}
+          <Link href={`/drafts/${page}/${draft.replacesDraftId}`}>{t('earlierDraft')}</Link>
         </p>
       )}
+      {draft.status === 'REJECTED' &&
+        (draft.replacedByDraftId && page ? (
+          <p>
+            {t('replacedBy')}{' '}
+            <Link href={`/drafts/${page}/${draft.replacedByDraftId}`}>{t('newerDraft')}</Link>
+          </p>
+        ) : (
+          <p>
+            {t('rejectedBy', { name: draft.decidedByName ?? '', reason: draft.rejectReason ?? '' })}
+          </p>
+        ))}
       {draft.decidedFromAssistant && <p className="muted">{t('decidedInAssistant')}</p>}
       {draft.check &&
         (draft.check.ok ? (

@@ -22,7 +22,15 @@ import {
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, decideInTx, keyReused } from '../drafts/drafts.service.js';
+import {
+  DraftsService,
+  decideInTx,
+  keyReused,
+  lockReplacedInTx,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CustomersService } from './customers.service.js';
@@ -91,15 +99,26 @@ export class CustomerDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: CustomerDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: CustomerDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, branchId, ...input } = body;
     // The checks of a real create that need no lock; nothing is written.
     await this.customers.prepareCreate(user, createRequestOf(branchId, input));
-    const hash = customerRequestHash(branchId, input);
+    const hash = withReplaced(customerRequestHash(branchId, input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'customer_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.customerDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -114,9 +133,11 @@ export class CustomerDraftsService {
         throwFirstConflict(
           await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
         );
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.customerDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
@@ -160,6 +181,10 @@ export class CustomerDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<CustomerDraftDto> {
+    return withReplacedBy(this.prisma, 'customer_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<CustomerDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -272,6 +297,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('customers:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     subject: d.name,
     status,
@@ -280,7 +306,7 @@ function baseFields(
     createdAt: d.createdAt.toISOString(),
     createdByName: d.createdBy.fullName,
     decidedByName: d.decidedBy?.fullName ?? null,
-    decidedFromAssistant: false,
+    decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },

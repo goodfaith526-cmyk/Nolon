@@ -35,6 +35,10 @@ import {
   decidedVia,
   keyReused,
   lockDraftRow,
+  lockReplacedInTx,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -148,14 +152,25 @@ export class QuotationDraftsService {
    * this user now (customer in their branches, route, rates, currency...). Then: no draft under
    * the key creates one; the same request returns it; anything else is a 409.
    */
-  async create(user: AuthUser, body: QuotationDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: QuotationDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, ...input } = body;
     const prepared = await this.quotations.prepareCreate(user, input);
-    const hash = quotationRequestHash(input);
+    const hash = withReplaced(quotationRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'quotation_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.quotationDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -164,9 +179,11 @@ export class QuotationDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.quotationDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             customerId: prepared.customerId,
             expiresAt: draftExpiry(),
@@ -216,6 +233,10 @@ export class QuotationDraftsService {
 
   /** The draft, with whether NOLON would accept it now (checked, nothing written). */
   async get(user: AuthUser, id: string): Promise<QuotationDraftDto> {
+    return withReplacedBy(this.prisma, 'quotation_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<QuotationDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const { check, pricing } =
@@ -432,6 +453,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
     customerName: d.customer.name,

@@ -36,6 +36,10 @@ import {
   decidedVia,
   keyReused,
   lockDraftRow,
+  lockReplacedInTx,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -186,16 +190,27 @@ export class BookingDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: BookingDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: BookingDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, ...input } = body;
     // What NOLON would check on a real create, for this user now; nothing is written.
     const prepared = await this.prepare(user, input);
-    const hash = bookingRequestHash(input);
+    const hash = withReplaced(bookingRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const fromQuotation = isFromQuotation(input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'booking_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.bookingDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -204,9 +219,11 @@ export class BookingDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.bookingDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             customerId: prepared.customerId,
             sourceQuotationId: prepared.quotationId,
@@ -267,6 +284,10 @@ export class BookingDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<BookingDraftDto> {
+    return withReplacedBy(this.prisma, 'booking_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<BookingDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -471,6 +492,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('bookings:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
     customerName: d.customer.name,

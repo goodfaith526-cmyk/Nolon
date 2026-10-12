@@ -26,6 +26,7 @@ import {
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
+import { splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { GoodsReleaseDraftsService } from './goods-release-drafts.service.js';
 import { releaseBody } from './warehouse.controller.js';
@@ -57,7 +58,9 @@ export class GoodsReleaseDraftsController {
   @Post()
   @RequirePermission('warehouse:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<EntryDraftSummaryDto> {
-    return this.drafts.create(user, parse(createBody, body));
+    // replacesDraftId: the draft this one replaces, when the person asked for changes.
+    const { replacesDraftId, rest } = splitReplaced(body);
+    return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
   }
 
   @AgentReadable()

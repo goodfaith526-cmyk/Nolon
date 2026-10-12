@@ -32,6 +32,10 @@ import {
   decidedVia,
   decideInTx,
   keyReused,
+  lockReplacedInTx,
+  replaceInTx,
+  withReplaced,
+  withReplacedBy,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -102,16 +106,27 @@ export class ReceiptDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
-  async create(user: AuthUser, body: ReceiptDraftCreateRequest): Promise<EntryDraftSummaryDto> {
+  async create(
+    user: AuthUser,
+    body: ReceiptDraftCreateRequest,
+    replacesDraftId: string | null = null,
+  ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const { idempotencyKey, ...input } = body;
     // The checks of a real receipt that need no lock; nothing is written.
     const prepared = await this.receipts.prepareCreate(user, input);
     await this.preCheck(input, prepared.branchId, user);
-    const hash = receiptRequestHash(input);
+    const hash = withReplaced(receiptRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
+        // Locked before the key lookup: an identical retry waits here, then finds the winner.
+        const replaced = await lockReplacedInTx(tx, replacesDraftId, {
+          table: 'receipt_drafts',
+          agentClientId,
+          user,
+          label: LABEL,
+        });
         const existing = await tx.receiptDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -120,9 +135,11 @@ export class ReceiptDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.receiptDraft.create({
           data: {
             ...scope,
+            replacesDraftId,
             branchId: prepared.branchId,
             customerId: prepared.customerId,
             expiresAt: draftExpiry(),
@@ -177,6 +194,10 @@ export class ReceiptDraftsService {
   }
 
   async get(user: AuthUser, id: string): Promise<ReceiptDraftDto> {
+    return withReplacedBy(this.prisma, 'receipt_drafts', await this.read(user, id));
+  }
+
+  private async read(user: AuthUser, id: string): Promise<ReceiptDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     const check =
@@ -362,6 +383,7 @@ function baseFields(
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('receipts:create');
   return {
     id: d.id,
+    replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
     customerName: d.customer.name,
