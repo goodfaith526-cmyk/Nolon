@@ -895,6 +895,13 @@ textarea:focus {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent);
 }
 
+/* Why the last save was refused, under the first field it named (Notice.tsx: FieldNote). */
+.field-error {
+  color: var(--bad);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
 [data-invalid='true'] {
   border-radius: var(--radius-sm);
   outline: 2px solid var(--bad);

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { E164_PATTERN } from '@nolon/shared';
+import { E164_PATTERN, type FormRefusal } from '@nolon/shared';
 import { z } from 'zod';
 import { isDateString } from './dates.js';
 
@@ -14,10 +14,21 @@ export function parse<T>(schema: z.ZodType<T>, input: unknown): T {
 
 /**
  * 400 for a broken business rule on named request fields (paths such as `items.0.lengthCm`): the
- * message says why, `fields` lets the form mark them, as `parse` does for malformed input.
+ * message says why, `code` lets the form say it in the page language and `fields` lets it mark
+ * them, as `parse` does for malformed input. `code` is null when the reason has none.
  */
-export function fieldRefusal(message: string, fields: readonly string[]): BadRequestException {
-  return new BadRequestException({ message, fields, error: 'Bad Request', statusCode: 400 });
+export function fieldRefusal(
+  code: FormRefusal | null,
+  message: string,
+  fields: readonly string[],
+): BadRequestException {
+  return new BadRequestException({
+    message,
+    code: code ?? undefined,
+    fields,
+    error: 'Bad Request',
+    statusCode: 400,
+  });
 }
 
 /** Non-negative amount with at most 14 integer and 4 decimal digits (fits Decimal(18,4)). */

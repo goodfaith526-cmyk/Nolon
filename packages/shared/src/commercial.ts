@@ -455,3 +455,25 @@ export interface BookingFromQuotationRequest {
 export interface ReasonRequest {
   reason: string;
 }
+
+/**
+ * Why a booking or quotation save was refused, sent with the fields it is about (400 `{ message,
+ * code, fields }`) so the form can say it in the page language next to the field.
+ */
+export const FORM_REFUSALS = [
+  'SAME_ROUTE',
+  'LOAD_TYPE_SEA_ONLY',
+  'SERVICE_REQUIRED',
+  'CONTAINER_TYPE_REQUIRED',
+  'CONTAINER_TYPE_NOT_APPLICABLE',
+  'UNKNOWN_CONTAINER_TYPE',
+  'DIMENSIONS_TOGETHER',
+  'VOLUME_TOO_LARGE',
+  'VALID_UNTIL_PAST',
+  'CURRENCY_NOT_ACTIVE',
+  'RATE_NOT_USABLE',
+  'MANUAL_LINE_INCOMPLETE',
+  'UNKNOWN_CHARGE_TYPE',
+  'DISCOUNT_EXCEEDS_LINE',
+] as const;
+export type FormRefusal = (typeof FORM_REFUSALS)[number];

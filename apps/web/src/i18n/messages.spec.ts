@@ -1,3 +1,4 @@
+import { FORM_REFUSALS } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import ar from '../../messages/ar.json' with { type: 'json' };
 import en from '../../messages/en.json' with { type: 'json' };
@@ -24,5 +25,9 @@ describe('translations', () => {
       });
       expect(empty).toEqual([]);
     }
+  });
+
+  it('says every reason the API refuses a booking or quotation for', () => {
+    expect(Object.keys(en.Refusals).sort()).toEqual([...FORM_REFUSALS].sort());
   });
 });

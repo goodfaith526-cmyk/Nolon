@@ -167,6 +167,7 @@
   "Common": {
     "invalidInput": "Check the fields and try again.",
     "invalidFields": "Not saved. Check: {fields}.",
+    "invalidBecause": "Not saved: {reason} Check: {fields}.",
     "invalidDetail": "Not saved: {detail}",
     "lineNo": "line {n}",
     "noAccess": "You do not have access to this.",
@@ -2214,5 +2215,21 @@
     "note": "Note",
     "etd": "ETD",
     "eta": "ETA"
+  },
+  "Refusals": {
+    "SAME_ROUTE": "From and To must be different places.",
+    "LOAD_TYPE_SEA_ONLY": "FCL/LCL applies to sea shipments only.",
+    "SERVICE_REQUIRED": "Choose at least one service.",
+    "CONTAINER_TYPE_REQUIRED": "A container line needs a container type.",
+    "CONTAINER_TYPE_NOT_APPLICABLE": "A container type applies to container lines only.",
+    "UNKNOWN_CONTAINER_TYPE": "This container type is unknown or no longer in use.",
+    "DIMENSIONS_TOGETHER": "Enter length, width and height together, or none of them and the CBM instead.",
+    "VOLUME_TOO_LARGE": "The volume is too large: check the dimensions and the quantity.",
+    "VALID_UNTIL_PAST": "The valid-until date is in the past.",
+    "CURRENCY_NOT_ACTIVE": "This currency is unknown or no longer in use.",
+    "RATE_NOT_USABLE": "This rate does not apply to this quotation (route, mode, load, cargo, currency or date).",
+    "MANUAL_LINE_INCOMPLETE": "A line without a rate needs a charge, a unit and a price.",
+    "UNKNOWN_CHARGE_TYPE": "This charge is unknown or no longer in use.",
+    "DISCOUNT_EXCEEDS_LINE": "The discount is larger than the line amount."
   }
 }

@@ -31,6 +31,10 @@ import {
   type NoticeState,
   revealFailure,
   useFailureText,
+  FieldNote,
+  fieldNote,
+  type FieldNoteState,
+  useRefusalReason,
 } from './Notice';
 import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
@@ -98,6 +102,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
   // The fields the last refused save named, marked on the form until the next save.
   const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
+  // Why it was refused, said under the first field the API named.
+  const [note, setNote] = useState<FieldNoteState | null>(null);
+  const refusalReason = useRefusalReason();
   const formRef = useRef<HTMLFormElement>(null);
   const mark = (path: string) => invalidProps(invalid, path);
   const markGroup = (path: string) => invalidGroupProps(invalid, path);
@@ -167,6 +174,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     setBusy(true);
     setNotice(null);
     setInvalid(new Set());
+    setNote(null);
     setRefused(null);
     const sent = quotation ? body : { ...body, customerId: customer?.id ?? '' };
     try {
@@ -177,6 +185,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
       setInvalid(invalidFields(err));
+      setNote(fieldNote(err, refusalReason(err)));
       setRefused(
         refusedForm(err, {
           form: 'quotation',
@@ -234,6 +243,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             >
               {locationOptions}
             </select>
+            <FieldNote note={note} path="originLocationId" />
           </label>
           <label className="field">
             {t('destination')}
@@ -245,6 +255,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             >
               {locationOptions}
             </select>
+            <FieldNote note={note} path="destinationLocationId" />
           </label>
           <label className="field">
             {t('mode')}
@@ -259,6 +270,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="mode" />
           </label>
           {mode === 'SEA' && (
             <label className="field">
@@ -274,6 +286,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   </option>
                 ))}
               </select>
+              <FieldNote note={note} path="loadType" />
             </label>
           )}
           <label className="field">
@@ -289,6 +302,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                 </option>
               ))}
             </select>
+            <FieldNote note={note} path="cargoType" />
           </label>
           <label className="field span-all">
             {t('cargoDescription')}
@@ -298,6 +312,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               {...mark('cargoDescription')}
               defaultValue={quotation?.cargoDescription ?? ''}
             />
+            <FieldNote note={note} path="cargoDescription" />
           </label>
         </div>
       </section>
@@ -323,6 +338,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   </option>
                 ))}
             </select>
+            <FieldNote note={note} path="currency" />
           </label>
           <label className="field">
             {t('validUntil')}
@@ -333,6 +349,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               {...mark('validUntil')}
               defaultValue={quotation?.validUntil}
             />
+            <FieldNote note={note} path="validUntil" />
           </label>
         </div>
       </section>
@@ -374,6 +391,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                       </option>
                     ))}
                   </select>
+                  <FieldNote note={note} path={`lines.${index}.rateCardId`} />
                 </label>
                 {l.rateCardId ? (
                   <span className="cell from-rate" role="cell">
@@ -396,6 +414,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                             </option>
                           ))}
                       </select>
+                      <FieldNote note={note} path={`lines.${index}.chargeTypeCode`} />
                     </label>
                     <label className="cell" role="cell" data-label={t('unit')}>
                       <select
@@ -410,6 +429,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                           </option>
                         ))}
                       </select>
+                      <FieldNote note={note} path={`lines.${index}.unit`} />
                     </label>
                     <label className="cell" role="cell" data-label={t('unitPrice')}>
                       <input
@@ -424,6 +444,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                           updateLine(l.key, { unitPrice: asciiDigits(e.target.value) })
                         }
                       />
+                      <FieldNote note={note} path={`lines.${index}.unitPrice`} />
                     </label>
                   </>
                 )}
@@ -438,6 +459,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     value={l.quantity}
                     onChange={(e) => updateLine(l.key, { quantity: asciiDigits(e.target.value) })}
                   />
+                  <FieldNote note={note} path={`lines.${index}.quantity`} />
                 </label>
                 <label className="cell" role="cell" data-label={t('discount')}>
                   <input
@@ -450,6 +472,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     value={l.discount}
                     onChange={(e) => updateLine(l.key, { discount: asciiDigits(e.target.value) })}
                   />
+                  <FieldNote note={note} path={`lines.${index}.discount`} />
                 </label>
                 <span className="cell line-remove" role="cell">
                   {lines.length > 1 && (
@@ -494,6 +517,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               {...mark('terms')}
               defaultValue={quotation?.terms ?? ''}
             />
+            <FieldNote note={note} path="terms" />
           </label>
         </div>
       </section>

@@ -240,7 +240,9 @@ describe('BookingForm refused save', () => {
     api.mockReset();
     api.mockImplementation((path: string, init?: { method?: string }) => {
       if (init?.method === 'PATCH') {
-        return Promise.reject(new ApiError(400, '', ['items.0.weightKg', 'services']));
+        return Promise.reject(
+          new ApiError(400, 'x', ['items.0.weightKg', 'services'], 'Weight is wrong', null),
+        );
       }
       return Promise.resolve(customer([]));
     });
@@ -286,6 +288,10 @@ describe('BookingForm refused save', () => {
       true,
     );
     expect(document.querySelectorAll('[aria-invalid="true"]')).toHaveLength(1);
+    // The reason is said once, under the first field named.
+    const notes = [...document.querySelectorAll('.field-error')];
+    expect(notes.map((n) => n.textContent)).toEqual(['Weight is wrong']);
+    expect(notes[0]?.closest('label')?.contains(weight())).toBe(true);
 
     api.mockImplementation(() => new Promise(() => {}));
     act(() => {
@@ -295,5 +301,6 @@ describe('BookingForm refused save', () => {
     expect(document.querySelectorAll('[aria-invalid="true"], [data-invalid="true"]')).toHaveLength(
       0,
     );
+    expect(document.querySelectorAll('.field-error')).toHaveLength(0);
   });
 });

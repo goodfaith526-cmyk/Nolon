@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import type { ImportRowError } from '@nolon/shared';
+import type { FormRefusal, ImportRowError } from '@nolon/shared';
 import { fieldRefusal } from './validation.js';
 
 /**
@@ -55,11 +55,15 @@ export function memoAsync<R>(lookup: (key: string) => Promise<R>): (key: string)
  * Runs a master-data or rule `require...` check; a 400 it refuses with is rethrown naming
  * `fields`, so the form marks them. Any other failure propagates.
  */
-export async function onFields<T>(fields: readonly string[], check: () => Promise<T>): Promise<T> {
+export async function onFields<T>(
+  fields: readonly string[],
+  check: () => Promise<T>,
+  code: FormRefusal | null = null,
+): Promise<T> {
   try {
     return await check();
   } catch (error) {
-    if (error instanceof BadRequestException) throw fieldRefusal(error.message, fields);
+    if (error instanceof BadRequestException) throw fieldRefusal(code, error.message, fields);
     throw error;
   }
 }
