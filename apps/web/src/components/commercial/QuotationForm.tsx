@@ -6,6 +6,7 @@ import {
   RATE_UNITS,
   SHIPPING_MODES,
   type CargoType,
+  type CreateFormReviewRequest,
   type CustomerSummaryDto,
   type LoadType,
   type Page,
@@ -31,6 +32,7 @@ import {
   revealFailure,
   useFailureText,
 } from './Notice';
+import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
 interface LineState {
   key: number;
@@ -92,6 +94,8 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const origin = originChoice || (activeLocations[0]?.id ?? '');
   const destination = destinationChoice || (activeLocations[1]?.id ?? '');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // What the last refused save sent, for "Review with the assistant".
+  const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
   // The fields the last refused save named, marked on the form until the next save.
   const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
   const formRef = useRef<HTMLFormElement>(null);
@@ -163,17 +167,24 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     setBusy(true);
     setNotice(null);
     setInvalid(new Set());
+    setRefused(null);
+    const sent = quotation ? body : { ...body, customerId: customer?.id ?? '' };
     try {
       const saved = quotation
-        ? await api<QuotationDto>(`/quotations/${quotation.id}`, { method: 'PATCH', body })
-        : await api<QuotationDto>('/quotations', {
-            method: 'POST',
-            body: { ...body, customerId: customer?.id ?? '' },
-          });
+        ? await api<QuotationDto>(`/quotations/${quotation.id}`, { method: 'PATCH', body: sent })
+        : await api<QuotationDto>('/quotations', { method: 'POST', body: sent });
       router.push(`/quotations/${saved.id}`);
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
       setInvalid(invalidFields(err));
+      setRefused(
+        refusedForm(err, {
+          form: 'quotation',
+          mode: quotation ? 'edit' : 'create',
+          values: sent,
+          customerName: customer?.name ?? null,
+        }),
+      );
       setBusy(false);
     }
   }
@@ -193,6 +204,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     <form ref={formRef} className="stack form-page" onSubmit={(e) => void submit(e)}>
       <h1>{quotation ? t('editTitle', { number: quotation.number }) : t('add')}</h1>
       <Notice notice={notice} />
+      <ReviewWithAssistant refused={refused} />
 
       {!quotation && (
         <section className="form-section">

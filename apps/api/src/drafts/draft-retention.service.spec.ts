@@ -50,6 +50,7 @@ describe('draft retention purge: bookings for a new customer', () => {
 describe('draft retention purge: proposals', () => {
   it('removes a due proposal only when its draft is gone, never one of a kept draft', async () => {
     const deleted: unknown[] = [];
+    const reviews: unknown[] = [];
     const tx = {
       $queryRaw: (strings: TemplateStringsArray) =>
         Promise.resolve(
@@ -81,13 +82,26 @@ describe('draft retention purge: proposals', () => {
           'newCustomerBookingDraft',
         ].map((m) => [m, { deleteMany: () => Promise.resolve({ count: 0 }) }]),
       ),
+      assistantFormReview: {
+        deleteMany: (args: unknown) => {
+          reviews.push(args);
+          return Promise.resolve({ count: 2 });
+        },
+      },
     };
     const prisma = { $transaction: (work: (t: typeof tx) => unknown) => work(tx) };
     const service = new DraftRetentionService(
       prisma as unknown as PrismaService,
       { DRAFT_PURGE_EVERY_HOURS: 0 } as AppEnv,
     );
-    expect(await service.purge(new Date())).toMatchObject({ skipped: false, grnProposals: 1 });
+    const now = new Date();
+    expect(await service.purge(now)).toMatchObject({
+      skipped: false,
+      grnProposals: 1,
+      formReviews: 2,
+    });
+    // A form kept for the assistant goes as soon as it has expired.
+    expect(reviews).toEqual([{ where: { expiresAt: { lte: now } } }]);
     expect(deleted).toEqual([
       { where: { retainUntil: { lte: expect.any(Date) as Date }, draftId: { in: ['gone'] } } },
     ]);
