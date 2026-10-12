@@ -150,6 +150,16 @@ describe('CustomerPicker', () => {
     expect(buttonByText('addNewCustomer')).toBeUndefined();
   });
 
+  it('offers a new customer before any search, with the typed name', async () => {
+    render(true);
+    setInput(document.querySelector('input[type="search"]') as HTMLInputElement, 'طارق');
+    click(buttonByText('addNewCustomer'));
+    const dialog = document.querySelector('dialog.form-dialog');
+    expect((dialog?.querySelector('input[name="name"]') as HTMLInputElement).value).toBe('طارق');
+    expect(api).not.toHaveBeenCalled();
+    await flush();
+  });
+
   it('closes the dialog on cancel without picking anything', async () => {
     render(true);
     await searchNothing('x');
