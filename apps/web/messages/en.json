@@ -510,7 +510,9 @@
     "cancelReason": "Cancellation reason",
     "noItems": "No cargo lines yet. Add at least one before confirming.",
     "dimensions": "L × W × H (cm)",
-    "openShipment": "Open shipment"
+    "openShipment": "Open shipment",
+    "addToContainer": "New LCL booking in container {number}",
+    "addToContainerHint": "The booking leaves from the container's port of loading, sea LCL. Saving confirms it, creates its shipment and puts it in the container."
   },
   "Shipments": {
     "title": "Shipments",
@@ -1166,7 +1168,8 @@
     "allocationPending": "Shared when the container closes",
     "clearingBalance": "Left on the consolidation clearing account",
     "shipmentPanel": "Consolidated container",
-    "notConsolidated": "This shipment is not in a consolidated container."
+    "notConsolidated": "This shipment is not in a consolidated container.",
+    "newBooking": "New LCL booking in this container"
   },
   "Alerts": {
     "title": "Alerts",

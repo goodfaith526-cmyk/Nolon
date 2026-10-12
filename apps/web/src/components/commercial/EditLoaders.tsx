@@ -1,6 +1,6 @@
 'use client';
 
-import type { BookingDto, QuotationDto } from '@nolon/shared';
+import type { BookingDto, ConsolidationDto, QuotationDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
@@ -32,4 +32,12 @@ export function BookingEdit({ id }: { id: string }) {
   const { record, notice } = useRecord<BookingDto>(`/bookings/${id}`);
   if (notice) return <Notice notice={notice} />;
   return record ? <BookingForm booking={record} /> : <p className="muted">{tc('loading')}</p>;
+}
+
+/** A new LCL booking made from a container's page (it joins that container). */
+export function ConsolidationBooking({ id }: { id: string }) {
+  const tc = useTranslations('Common');
+  const { record, notice } = useRecord<ConsolidationDto>(`/consolidations/${id}`);
+  if (notice) return <Notice notice={notice} />;
+  return record ? <BookingForm consolidation={record} /> : <p className="muted">{tc('loading')}</p>;
 }

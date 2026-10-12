@@ -370,6 +370,13 @@ export function ConsolidationDetail({ id }: { id: string }) {
             </table>
           </div>
         )}
+        {a.canAddBooking && (
+          <div className="panel-body">
+            <Link href={`/consolidations/${id}/booking`} className="button">
+              {t('newBooking')}
+            </Link>
+          </div>
+        )}
         {a.canEditShipments && (
           <div className="panel-body">
             <LclShipmentPicker

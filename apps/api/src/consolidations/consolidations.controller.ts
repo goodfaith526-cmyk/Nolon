@@ -17,6 +17,7 @@ import {
   CONSOLIDATION_STATUSES,
   CONTAINER_NUMBER_PATTERN,
   type BillableConsolidationDto,
+  type ConsolidationBookingDto,
   type ConsolidationDto,
   type ConsolidationSummaryDto,
   type Page,
@@ -25,6 +26,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { bookingCreateBody } from '../bookings/bookings.controller.js';
 import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ConsolidationsService, MAX_CONTAINER_SHIPMENTS } from './consolidations.service.js';
@@ -81,6 +83,11 @@ const moveBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+const bookingBody = bookingCreateBody.omit({
+  mode: true,
+  loadType: true,
+  originLocationId: true,
+});
 const addShipmentBody = z.object({ shipmentId: z.uuid() }).strict();
 const billableQuery = z.object({ branchId: z.uuid().optional() }).strict();
 
@@ -143,6 +150,17 @@ export class ConsolidationsController {
     @Body() body: unknown,
   ): Promise<ConsolidationDto> {
     return this.consolidations.addShipment(user, id, parse(addShipmentBody, body).shipmentId);
+  }
+
+  /** An LCL booking made from the container's page, confirmed and put in the container. */
+  @Post(':id/bookings')
+  @RequirePermission('consolidation:update', 'bookings:create', 'bookings:approve')
+  createBooking(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ConsolidationBookingDto> {
+    return this.consolidations.createBooking(user, id, parse(bookingBody, body));
   }
 
   @Delete(':id/shipments/:shipmentId')

@@ -210,22 +210,28 @@ export class BookingsService {
    */
   async confirm(user: AuthUser, id: string): Promise<BookingDto> {
     await this.findScoped(user, id);
-    await this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{ status: string }[]>`
-        SELECT "status"::text AS "status" FROM "bookings" WHERE "id" = ${id}::uuid FOR UPDATE`;
-      if (rows[0]?.status !== 'DRAFT') {
-        throw new ConflictException('Only a draft booking can be confirmed');
-      }
-      if ((await tx.bookingItem.count({ where: { bookingId: id } })) === 0) {
-        throw new BadRequestException('Add at least one cargo line before confirming');
-      }
-      await tx.booking.update({
-        where: { id },
-        data: { status: 'CONFIRMED', confirmedAt: new Date() },
-      });
-      await this.shipments.createForBooking(tx, user, id);
-    });
+    await this.prisma.$transaction((tx) => this.confirmInTx(tx, user, id));
     return this.get(user, id);
+  }
+
+  /**
+   * Confirms a draft booking of the user's branches (the caller checked that) inside the caller's
+   * transaction; the id of the shipment it creates.
+   */
+  async confirmInTx(tx: Tx, user: AuthUser, id: string): Promise<{ id: string }> {
+    const rows = await tx.$queryRaw<{ status: string }[]>`
+      SELECT "status"::text AS "status" FROM "bookings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+    if (rows[0]?.status !== 'DRAFT') {
+      throw new ConflictException('Only a draft booking can be confirmed');
+    }
+    if ((await tx.bookingItem.count({ where: { bookingId: id } })) === 0) {
+      throw new BadRequestException('Add at least one cargo line before confirming');
+    }
+    await tx.booking.update({
+      where: { id },
+      data: { status: 'CONFIRMED', confirmedAt: new Date() },
+    });
+    return this.shipments.createForBooking(tx, user, id);
   }
 
   /**
