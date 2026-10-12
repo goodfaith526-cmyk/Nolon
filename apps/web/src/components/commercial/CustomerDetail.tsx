@@ -10,7 +10,6 @@ import { Money } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
-import { PartyForm } from './PartyForm';
 import { PrintLink } from '../print/PrintLink';
 
 type Mode = 'view' | 'edit' | 'contact' | 'party';
@@ -68,6 +67,23 @@ export function CustomerDetail({ id }: { id: string }) {
         isPrimary: form.has('isPrimary'),
       },
       t('contactAdded'),
+    );
+  }
+
+  function addParty(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    void post(
+      `/customers/${customer?.id ?? ''}/parties`,
+      {
+        name: field(form, 'name'),
+        companyName: field(form, 'companyName') || null,
+        phone: field(form, 'phone').replace(/\s/g, '') || null,
+        email: field(form, 'email') || null,
+        city: field(form, 'city') || null,
+        address: field(form, 'address') || null,
+      },
+      t('partyAdded'),
     );
   }
 
@@ -259,15 +275,42 @@ export function CustomerDetail({ id }: { id: string }) {
       </div>
       <p className="muted">{t('partiesHint')}</p>
       {mode === 'party' && (
-        <PartyForm
-          customerId={customer.id}
-          onCancel={() => setMode('view')}
-          onSaved={(c) => {
-            setCustomer(c);
-            setMode('view');
-            setNotice({ ok: true, text: t('partyAdded') });
-          }}
-        />
+        <form className="card stack" onSubmit={addParty}>
+          <div className="grid">
+            <label className="field">
+              {t('name')}
+              <input name="name" required maxLength={200} />
+            </label>
+            <label className="field">
+              {t('companyName')}
+              <input name="companyName" maxLength={200} />
+            </label>
+            <label className="field">
+              {t('phone')}
+              <input name="phone" dir="ltr" placeholder="+249912345678" />
+            </label>
+            <label className="field">
+              {t('email')}
+              <input name="email" type="email" dir="ltr" />
+            </label>
+            <label className="field">
+              {t('city')}
+              <input name="city" maxLength={100} />
+            </label>
+            <label className="field">
+              {t('address')}
+              <input name="address" maxLength={500} />
+            </label>
+          </div>
+          <div className="actions">
+            <button type="submit" className="primary">
+              {tc('save')}
+            </button>
+            <button type="button" onClick={() => setMode('view')}>
+              {tc('cancel')}
+            </button>
+          </div>
+        </form>
       )}
       {customer.parties.length > 0 && (
         <ul>

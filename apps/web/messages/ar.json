@@ -479,7 +479,6 @@
     "shipperId": "المرسل",
     "consigneeId": "المستلم",
     "notifyPartyId": "الجهة المُخطَرة",
-    "addNewParty": "إضافة جديد",
     "services": "الخدمات",
     "cargoDescription": "وصف البضاعة",
     "items": "أصناف البضاعة",
