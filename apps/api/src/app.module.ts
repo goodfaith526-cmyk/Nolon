@@ -10,6 +10,7 @@ import { CurrenciesModule } from './currencies/currencies.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { CustomsModule } from './customs/customs.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
+import { AssistantFormReviewsModule } from './assistant-form-reviews/assistant-form-reviews.module.js';
 import { CustomerServiceModule } from './customer-service/customer-service.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
@@ -55,6 +56,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     ReportsModule,
     AlertsModule,
     CustomerServiceModule,
+    AssistantFormReviewsModule,
   ],
 })
 export class AppModule {}

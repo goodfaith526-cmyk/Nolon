@@ -75,6 +75,8 @@ export type DraftPurgeResult =
       /** Drafts removed per model (their lines go with them). */
       drafts: Record<PurgedDraftModel, number>;
       grnProposals: number;
+      /** Forms kept for the assistant (assistant_form_reviews) that have expired. */
+      formReviews: number;
     };
 
 /** The time before which a rejected or expired draft is removed, for a purge at `now`. */
@@ -143,7 +145,12 @@ export class DraftRetentionService implements OnApplicationBootstrap, OnApplicat
           draftId: { in: due.map((p) => p.draftId).filter((id) => !keep.has(id)) },
         },
       });
-      return { skipped: false, drafts, grnProposals };
+      // A form kept for the assistant is its author's input, read only until it expires: gone
+      // at the first purge after that.
+      const { count: formReviews } = await tx.assistantFormReview.deleteMany({
+        where: { expiresAt: { lte: now } },
+      });
+      return { skipped: false, drafts, grnProposals, formReviews };
     });
   }
 }

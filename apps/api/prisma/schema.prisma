@@ -169,6 +169,8 @@ model User {
   roles    UserRole[]
   branches UserBranch[]
   sessions Session[]
+  /// Forms this user could not save and opened with the staff assistant.
+  assistantFormReviews AssistantFormReview[]
 
   customersCreated  Customer[]        @relation("CustomerCreatedBy")
   ratesCreated      RateCard[]        @relation("RateCreatedBy")
@@ -3356,4 +3358,32 @@ model NewCustomerBookingDraft {
   @@index([branchId, state])
   @@index([replacesDraftId])
   @@map("new_customer_booking_drafts")
+}
+
+/// What a form sent when NOLON refused to save it, kept for the staff assistant ("Review with the
+/// assistant"): the person's own input, readable only by that person (also through the assistant
+/// with their delegated token) and only until it expires. Never an entry and never draft evidence.
+model AssistantFormReview {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  /// Which form (FORM_REVIEW_FORMS in @nolon/shared): booking or quotation.
+  form          String   @db.VarChar(40)
+  /// create, edit (an existing record) or container (a booking added to a consolidation).
+  mode          String   @db.VarChar(20)
+  /// The request body the form sent, as sent (at most 16 KB).
+  values        Json
+  /// The request paths NOLON named as invalid (`items.0.weightKg`).
+  invalidFields String[] @map("invalid_fields") @db.VarChar(100)
+  /// NOLON's own message for the refusal.
+  reason        String   @db.VarChar(500)
+  /// The customer the form was for, as the form showed it (display only).
+  customerName  String?  @map("customer_name") @db.VarChar(200)
+  expiresAt     DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("assistant_form_reviews")
 }

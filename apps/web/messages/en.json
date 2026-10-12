@@ -196,7 +196,11 @@
     "customerSearch": "Customer name, number or phone",
     "customerNotFound": "No customer matches this search.",
     "addNewCustomer": "Add a new customer",
-    "remove": "Remove"
+    "remove": "Remove",
+    "reviewWithAssistant": "Review with the assistant",
+    "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
+    "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
+    "openAssistant": "Open the assistant"
   },
   "Customers": {
     "title": "Customers",

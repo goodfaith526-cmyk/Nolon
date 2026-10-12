@@ -10,6 +10,7 @@ import {
   type CargoType,
   type ConsolidationBookingDto,
   type ConsolidationDto,
+  type CreateFormReviewRequest,
   type CustomerDto,
   type CustomerSummaryDto,
   type LoadType,
@@ -35,6 +36,7 @@ import {
   useFailureText,
 } from './Notice';
 import { PartyForm } from './PartyForm';
+import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
 interface ItemState {
   key: number;
@@ -130,6 +132,8 @@ export function BookingForm({
     consolidation?.originLocationId ?? (originChoice || (activeLocations[0]?.id ?? ''));
   const destination = destinationChoice || (activeLocations[1]?.id ?? '');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // What the last refused save sent, for "Review with the assistant".
+  const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
   // The fields the last refused save named, marked on the form until the next save.
   const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
   const formRef = useRef<HTMLFormElement>(null);
@@ -208,25 +212,36 @@ export function BookingForm({
     setBusy(true);
     setNotice(null);
     setInvalid(new Set());
+    setRefused(null);
+    const sent = consolidation
+      ? { ...fields, customerId: customer?.id ?? '' }
+      : booking
+        ? body
+        : { ...body, customerId: customer?.id ?? '' };
     try {
       if (consolidation) {
         await api<ConsolidationBookingDto>(`/consolidations/${consolidation.id}/bookings`, {
           method: 'POST',
-          body: { ...fields, customerId: customer?.id ?? '' },
+          body: sent,
         });
         router.push(`/consolidations/${consolidation.id}`);
         return;
       }
       const saved = booking
-        ? await api<BookingDto>(`/bookings/${booking.id}`, { method: 'PATCH', body })
-        : await api<BookingDto>('/bookings', {
-            method: 'POST',
-            body: { ...body, customerId: customer?.id ?? '' },
-          });
+        ? await api<BookingDto>(`/bookings/${booking.id}`, { method: 'PATCH', body: sent })
+        : await api<BookingDto>('/bookings', { method: 'POST', body: sent });
       router.push(`/bookings/${saved.id}`);
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
       setInvalid(invalidFields(err));
+      setRefused(
+        refusedForm(err, {
+          form: 'booking',
+          mode: consolidation ? 'container' : booking ? 'edit' : 'create',
+          values: sent,
+          customerName: customer?.name ?? null,
+        }),
+      );
       setBusy(false);
     }
   }
@@ -272,6 +287,7 @@ export function BookingForm({
       </h1>
       {consolidation && <p className="muted">{t('addToContainerHint')}</p>}
       <Notice notice={notice} />
+      <ReviewWithAssistant refused={refused} />
       {!booking && (
         <section className="form-section">
           <header>

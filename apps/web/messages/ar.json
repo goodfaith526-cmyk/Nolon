@@ -196,7 +196,11 @@
     "customerSearch": "اسم العميل أو رقمه أو هاتفه",
     "customerNotFound": "لا يوجد عميل بهذا البحث.",
     "addNewCustomer": "إضافة عميل جديد",
-    "remove": "حذف"
+    "remove": "حذف",
+    "reviewWithAssistant": "راجع مع المساعد",
+    "reviewWithAssistantHint": "المساعد يشرح لك سبب الرفض، ويقدر يجهّز الإدخال كمسودة لو حبيت.",
+    "reviewWithAssistantFailed": "تعذّر فتح المساعد. حاول مرة أخرى.",
+    "openAssistant": "افتح المساعد"
   },
   "Customers": {
     "title": "العملاء",
