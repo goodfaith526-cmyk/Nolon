@@ -48,5 +48,13 @@ describe('asciiDigits', () => {
     expect(asciiDigits('١٢٣٫٥')).toBe('123.5');
     expect(asciiDigits('۱۲٬۳۰۰')).toBe('12300');
     expect(asciiDigits('12.5 kg')).toBe('12.5 kg');
+    expect(asciiDigits('١٬٢٣٤٬٥٦٧٫٥')).toBe('1234567.5');
+  });
+
+  it('keeps a thousands separator that groups no thousands, so the API refuses the field', () => {
+    expect(asciiDigits('١٢٬٥')).toBe('12\u066c5');
+    expect(asciiDigits('٢٬٥٠')).toBe('2\u066c50');
+    expect(asciiDigits('1٬5')).toBe('1\u066c5');
+    expect(asciiDigits('١٢٣٤٬٥٦٧')).toBe('1234\u066c567');
   });
 });
