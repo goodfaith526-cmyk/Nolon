@@ -72,19 +72,16 @@ export function RateCardDraftReview({ id }: { id: string }) {
       <EvidenceChecklist
         evidence={draft.evidence}
         values={{
+          branchId: { label: tr('branch'), value: draft.branchCode },
           originLocationId: { label: tr('origin'), value: draft.originCode },
           destinationLocationId: { label: tr('destination'), value: draft.destinationCode },
-          mode: { label: tr('mode'), value: te(`mode_${rate.mode}`) },
-          containerTypeCode: { label: tr('containerType'), value: rate.containerTypeCode ?? '—' },
-          unit: { label: tr('unit'), value: te(`unit_${rate.unit}`) },
-          price: { label: tr('price'), value: price },
+          price: { label: tr('price'), value: `${price} / ${te(`unit_${rate.unit}`)}` },
           minimumCharge: {
             label: tr('minimum'),
             value: rate.minimumCharge ? `${rate.minimumCharge} ${rate.currency}` : '—',
           },
           currency: { label: tr('currency'), value: rate.currency },
-          validFrom: { label: tr('validFrom'), value: rate.validFrom },
-          validTo: { label: t('rateValidTo'), value: rate.validTo ?? '—' },
+          transitDays: { label: tr('transitDays'), value: String(rate.transitDays ?? '—') },
         }}
         ticked={ticked}
         onChange={setTicked}

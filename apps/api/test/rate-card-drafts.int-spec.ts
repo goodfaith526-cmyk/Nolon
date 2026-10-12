@@ -303,7 +303,7 @@ describe("rate card drafts: the staff member's words", () => {
     const evidence = [
       { field: 'price', quote: 'السعر 1250 ونص دولار' },
       { field: 'destinationLocationId', quote: 'لبورتسودان' },
-      { field: 'containerTypeCode', quote: 'الكونتينر الـ 40 هاي كيوب' },
+      { field: 'currency', quote: 'بالدولار' },
     ];
     const body = rateRequest({ evidence });
     const draft = await rateDraft(body);
@@ -318,7 +318,7 @@ describe("rate card drafts: the staff member's words", () => {
     expect(await ratesOn(body.validFrom)).toBe(0);
     await approve(draft.id, cookies.salesDxb, {
       version: 1,
-      confirmed: ['containerTypeCode', 'destinationLocationId', 'price'],
+      confirmed: ['currency', 'destinationLocationId', 'price'],
     }).expect(200);
     expect(await ratesOn(body.validFrom)).toBe(1);
   });

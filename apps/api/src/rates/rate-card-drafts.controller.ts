@@ -36,17 +36,15 @@ const createBody = z
     idempotencyKey,
     branchId: z.uuid(),
     ...rateFields,
+    // The values the assistant binds to the staff member's words (its BOUND_FIELDS).
     evidence: draftEvidence([
+      'branchId',
       'originLocationId',
       'destinationLocationId',
-      'mode',
-      'containerTypeCode',
-      'unit',
       'price',
       'minimumCharge',
       'currency',
-      'validFrom',
-      'validTo',
+      'transitDays',
     ]),
   })
   .strict();
