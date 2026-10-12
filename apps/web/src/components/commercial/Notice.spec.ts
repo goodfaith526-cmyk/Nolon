@@ -63,7 +63,7 @@ describe('api() refusals', () => {
   it('keeps the fields a broken rule names, with its reason', async () => {
     const { api } = await import('@/lib/api');
     const original = globalThis.fetch;
-    globalThis.fetch = (() =>
+    globalThis.fetch = () =>
       Promise.resolve(
         new Response(
           JSON.stringify({
@@ -73,7 +73,7 @@ describe('api() refusals', () => {
           }),
           { status: 400 },
         ),
-      ));
+      );
     try {
       const error = await api('/bookings', { method: 'POST', body: {} }).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(ApiError);
