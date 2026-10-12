@@ -14,7 +14,7 @@ import {
   type ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
@@ -104,6 +104,11 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const customerId = booking?.customerId ?? customer?.id;
+  // The customer the form is on now: a party saved for an earlier one is not applied.
+  const currentCustomer = useRef(customerId);
+  useEffect(() => {
+    currentCustomer.current = customerId;
+  }, [customerId]);
 
   useEffect(() => {
     if (!customerId) return;
@@ -220,6 +225,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
               value={customer}
               onChange={(c) => {
                 setCustomer(c);
+                setAddingParty(null);
                 setPartyIds({ shipperId: '', consigneeId: '', notifyPartyId: '' });
               }}
               allowCreate
@@ -468,6 +474,7 @@ export function BookingForm({ booking }: { booking?: BookingDto }) {
             title={t(addingParty)}
             onCancel={() => setAddingParty(null)}
             onSaved={(c) => {
+              if (c.id !== currentCustomer.current) return;
               const known = new Set(parties.map((p) => p.id));
               const added = c.parties.find((p) => !known.has(p.id));
               setDetails(c);

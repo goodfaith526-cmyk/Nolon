@@ -73,6 +73,20 @@ function click(el: Element | null | undefined) {
   });
 }
 
+function typeInto(el: HTMLInputElement, value: string) {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- applied with the element as `this` below
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  act(() => {
+    setValue?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+const buttonByText = (text: string) =>
+  [...document.querySelectorAll('button')].find((b) => b.textContent === text);
+const buttonStartingWith = (text: string) =>
+  [...document.querySelectorAll('ul.picker button')].find((b) => b.textContent?.startsWith(text));
+
 const select = (name: string) =>
   document.querySelector(`select[name="${name}"]`) as HTMLSelectElement;
 const addButton = (name: string) =>
@@ -111,12 +125,7 @@ describe('BookingForm parties', () => {
     const dialog = document.querySelector('dialog.form-dialog');
     expect(dialog?.closest('form:not(dialog form)')).toBeNull();
     const name = dialog?.querySelector('input[name="name"]') as HTMLInputElement;
-    act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method -- applied with the element as `this` below
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setValue?.call(name, 'Omdurman Trading');
-      name.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    typeInto(name, 'Omdurman Trading');
 
     api.mockResolvedValueOnce(
       customer([party('p0', 'Old shipper'), party('p1', 'Omdurman Trading')]),
@@ -135,6 +144,62 @@ describe('BookingForm parties', () => {
     expect(select('consigneeId').value).toBe('p1');
     expect(select('shipperId').value).toBe('');
     expect([...select('shipperId').options].map((o) => o.value)).toEqual(['', 'p0', 'p1']);
+  });
+
+  it('drops a party saved for a customer the booking no longer has', async () => {
+    const summary = (id: string, name: string) => ({
+      id,
+      name,
+      number: id,
+      phone: '+249912345678',
+      isActive: true,
+    });
+    let finishSave: (c: CustomerDto) => void = () => {};
+    api.mockImplementation((path: string) => {
+      if (path.startsWith('/customers?')) {
+        const id = path.includes('Second') ? 'c2' : 'c1';
+        return Promise.resolve({ items: [summary(id, id)], total: 1, page: 1, pageSize: 20 });
+      }
+      if (path === '/customers/c1/parties') {
+        return new Promise<CustomerDto>((resolve) => {
+          finishSave = resolve;
+        });
+      }
+      const id = path.split('/')[2] ?? '';
+      return Promise.resolve({ ...customer([]), id, parties: [party(`${id}-p`, `${id} party`)] });
+    });
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm />);
+    });
+    await flush();
+
+    const pick = async (q: string, id: string) => {
+      typeInto(document.querySelector('input[type="search"]') as HTMLInputElement, q);
+      click(buttonByText('search'));
+      await flush();
+      click(buttonStartingWith(id));
+      await flush();
+    };
+    await pick('First', 'c1');
+    click(addButton('consigneeId'));
+    const dialog = document.querySelector('dialog.form-dialog');
+    typeInto(dialog?.querySelector('input[name="name"]') as HTMLInputElement, 'Late party');
+    act(() => {
+      (dialog?.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+
+    click(buttonByText('change'));
+    expect(document.querySelector('dialog.form-dialog')).toBeNull();
+    await pick('Second', 'c2');
+    finishSave({ ...customer([party('c1-p', 'c1 party'), party('late', 'Late party')]) });
+    await flush();
+
+    expect(select('consigneeId').value).toBe('');
+    expect([...select('consigneeId').options].map((o) => o.value)).toEqual(['', 'c2-p']);
   });
 
   it('offers no new party without permission to update customers', async () => {

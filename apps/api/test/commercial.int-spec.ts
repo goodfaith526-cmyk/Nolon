@@ -224,6 +224,23 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post('/customers', cookies.financeDxb, customerBody(dxb)).expect(403);
     });
 
+    it('adds a party only with customers:update, in the user’s own branches', async () => {
+      const own = await createCustomer(cookies.salesDxb, dxb);
+      const jedCustomer = await createCustomer(cookies.salesJed, jed);
+      const party = { name: 'Omdurman Trading' };
+      await post(`/customers/${own.id}/parties`, cookies.opsDxb, party).expect(403);
+      await post(`/customers/${own.id}/parties`, cookies.financeDxb, party).expect(403);
+      await post(`/customers/${own.id}/parties`, cookies.driver, party).expect(403);
+      await post(`/customers/${jedCustomer.id}/parties`, cookies.salesDxb, party).expect(404);
+      const untouched = (await get(`/customers/${own.id}`, cookies.salesDxb).expect(200))
+        .body as CustomerDto;
+      expect(untouched.parties).toEqual([]);
+      const added = (
+        await post(`/customers/${own.id}/parties`, cookies.salesDxb, party).expect(201)
+      ).body as CustomerDto;
+      expect(added.parties.map((p) => p.name)).toEqual(['Omdurman Trading']);
+    });
+
     it('validates phone format, currency and the credit limit pair', async () => {
       await post('/customers', cookies.salesDxb, customerBody(dxb, { phone: '0501234567' })).expect(
         400,
