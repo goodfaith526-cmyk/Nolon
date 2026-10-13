@@ -4,9 +4,11 @@ import type {
   BookingDto,
   ConsolidationBookingDto,
   ConsolidationDto,
+  ConsolidationSummaryDto,
   ConsolidationsReportDto,
   CustomerDto,
   JournalEntryDto,
+  Page,
   ShipmentConsolidationDto,
   ShipmentDto,
   SupplierBillDto,
@@ -52,6 +54,7 @@ describe('consolidated LCL containers', () => {
     financeJed: '',
     warehouseJed: '',
     opsPts: '',
+    salesPts: '',
   };
 
   const get = (path: string, cookie: string) =>
@@ -162,6 +165,7 @@ describe('consolidated LCL containers', () => {
       financeJed: await createUser(t.prisma, ['FINANCE'], ['JED'], LEDGER_PREFIX),
       warehouseJed: await createUser(t.prisma, ['WAREHOUSE'], ['JED'], LEDGER_PREFIX),
       opsPts: await createUser(t.prisma, ['OPERATIONS'], ['PTS'], LEDGER_PREFIX),
+      salesPts: await createUser(t.prisma, ['SALES'], ['PTS'], LEDGER_PREFIX),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
@@ -399,9 +403,12 @@ describe('consolidated LCL containers', () => {
       containerTypeCode: '40HC',
       shipmentIds: [lcl],
     }).expect(403);
-    // Another branch's user may not open a JED container, nor use a JED shipment in one.
+    // Another branch's user sees an open JED container (to book into) without JED's shipments,
+    // and may not use a JED shipment in a container of theirs.
     const created = (await newContainer([lcl]).expect(201)).body as ConsolidationDto;
-    await get(`/consolidations/${created.id}`, cookies.opsPts).expect(404);
+    const guest = await container(created.id, cookies.opsPts);
+    expect(guest.ownBranch).toBe(false);
+    expect(guest.shipments).toEqual([]);
     await post('/consolidations', cookies.opsPts, {
       branchId: pts,
       originLocationId: portSudan,
@@ -572,7 +579,7 @@ describe('consolidated LCL containers', () => {
     const bookingsOf = () => t.prisma.booking.count({ where: { customerId: customers[0].id } });
     const before = await bookingsOf();
 
-    // Sales may not change containers, Warehouse only views them, PTS does not see JED's.
+    // Sales may not change containers, Warehouse only views them, PTS books only its customers.
     await post(path, cookies.salesJed, body).expect(403);
     await post(path, cookies.warehouseJed, body).expect(403);
     await post(path, cookies.opsPts, body).expect(404);
@@ -619,6 +626,197 @@ describe('consolidated LCL containers', () => {
     await post(path, cookies.opsJed, body).expect(409);
     expect(await bookingsOf()).toBe(before + 1);
   });
+  it('opens a container to every branch for booking; only its branch takes out or moves', async () => {
+    const created = (await newContainer([]).expect(201)).body as ConsolidationDto;
+    const spare = (await newContainer([]).expect(201)).body as ConsolidationDto;
+    const ptsCustomer = (
+      await post('/customers', cookies.salesPts, {
+        branchId: pts,
+        kind: 'COMPANY',
+        name: `LCL Port Sudan ${randomUUID().slice(0, 6)}`,
+        phone: uniquePhone(),
+        preferredCurrency: 'USD',
+      }).expect(201)
+    ).body as CustomerDto;
+    const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+    const shared = async (shipmentId: string) =>
+      (await t.prisma.shipmentBranch.findMany({ where: { shipmentId } })).map((b) => b.branchId);
+
+    // PTS lists JED's open containers to book into; Finance (no booking) may not ask for them.
+    const bookable = (
+      await get('/consolidations?bookable=true&pageSize=100', cookies.opsPts).expect(200)
+    ).body as Page<ConsolidationSummaryDto>;
+    expect(bookable.items.map((c) => c.id)).toEqual(expect.arrayContaining([created.id, spare.id]));
+    expect(bookable.items.every((c) => c.status === 'OPEN')).toBe(true);
+    await get('/consolidations?bookable=true', cookies.financeJed).expect(403);
+
+    // PTS books its own customer into JED's container: the booking and shipment stay PTS's, the
+    // shipment is shared with JED, which loads it.
+    const body = {
+      customerId: ptsCustomer.id,
+      destinationLocationId: portSudan,
+      cargoType: 'GENERAL',
+      services: ['CUSTOMS'],
+      items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: '100', volumeCbm: '1' }],
+    };
+    // Not a JED customer, though: PTS does not see them.
+    await post(`/consolidations/${created.id}/bookings`, cookies.opsPts, {
+      ...body,
+      customerId: customers[0].id,
+    }).expect(404);
+    const made = (
+      await post(`/consolidations/${created.id}/bookings`, cookies.opsPts, body).expect(201)
+    ).body as ConsolidationBookingDto;
+    const booking = await t.prisma.booking.findUniqueOrThrow({ where: { id: made.bookingId } });
+    const shipment = await t.prisma.shipment.findUniqueOrThrow({ where: { id: made.shipmentId } });
+    expect([booking.branchId, shipment.branchId]).toEqual([pts, pts]);
+    expect(await shared(made.shipmentId)).toEqual([jed]);
+    const jedShipment = await lclShipment(customers[0], '2');
+    await post(`/consolidations/${created.id}/shipments`, cookies.opsJed, {
+      shipmentId: jedShipment,
+    }).expect(201);
+    const full = await container(created.id, cookies.opsJed);
+    expect(full.ownBranch).toBe(true);
+    expect(full.shipments.map((s) => s.shipmentId).sort()).toEqual(
+      [made.shipmentId, jedShipment].sort(),
+    );
+
+    // PTS sees its own shipment only, no costs, and may only add to the container.
+    const guest = await container(created.id, cookies.opsPts);
+    expect(guest.ownBranch).toBe(false);
+    expect(guest.shipments.map((s) => s.shipmentId)).toEqual([made.shipmentId]);
+    expect(guest.showsCost).toBe(false);
+    expect(guest.clearingBalanceUsd).toBeNull();
+    expect(guest.actions).toEqual({
+      canEdit: false,
+      canAddShipments: true,
+      canEditShipments: false,
+      canAddBooking: true,
+      moves: [],
+      canCancel: false,
+    });
+
+    // Only JED takes out, moves, edits, moves status or cancels: 403 with its reason code.
+    const shipmentPath = `/consolidations/${created.id}/shipments/${made.shipmentId}`;
+    expect(code(await del(shipmentPath, cookies.opsPts).expect(403))).toBe('CONTAINER_BRANCH_ONLY');
+    expect(
+      code(
+        await post(`${shipmentPath}/move`, cookies.opsPts, { consolidationId: spare.id }).expect(
+          403,
+        ),
+      ),
+    ).toBe('CONTAINER_BRANCH_ONLY');
+    await patch(`/consolidations/${created.id}`, cookies.opsPts, { notes: 'x' }).expect(403);
+    await post(`/consolidations/${created.id}/status`, cookies.opsPts, {
+      status: 'CLOSED',
+    }).expect(403);
+    await post(`/consolidations/${created.id}/cancel`, cookies.opsPts, { reason: 'x' }).expect(403);
+    // PTS may not put JED's shipment anywhere: it does not see it.
+    await post(`/consolidations/${spare.id}/shipments`, cookies.opsPts, {
+      shipmentId: jedShipment,
+    }).expect(404);
+
+    // PTS puts one of its own booked shipments in the container: shared with JED too.
+    const ptsBooking = (
+      await post('/bookings', cookies.salesPts, {
+        ...body,
+        originLocationId: jeddahPort,
+        mode: 'SEA',
+        loadType: 'LCL',
+        services: ['MAIN_FREIGHT'],
+      }).expect(201)
+    ).body as BookingDto;
+    const ptsShipment = (
+      (await post(`/bookings/${ptsBooking.id}/confirm`, cookies.salesPts).expect(200))
+        .body as BookingDto
+    ).shipmentId;
+    if (!ptsShipment) throw new Error('No shipment');
+    await post(`/consolidations/${created.id}/shipments`, cookies.opsPts, {
+      shipmentId: ptsShipment,
+    }).expect(201);
+    expect(await shared(ptsShipment)).toEqual([jed]);
+    // One container at a time, said with the shipment and the container.
+    const twice = await post(`/consolidations/${spare.id}/shipments`, cookies.opsPts, {
+      shipmentId: ptsShipment,
+    }).expect(409);
+    expect(twice.body).toMatchObject({
+      code: 'SHIPMENT_IN_OTHER_CONTAINER',
+      params: { container: created.number },
+    });
+
+    // JED moves PTS's shipment to its other open container, and takes the other one out.
+    expect(
+      code(
+        await post(`${shipmentPath}/move`, cookies.opsJed, { consolidationId: created.id }).expect(
+          400,
+        ),
+      ),
+    ).toBe('SAME_CONTAINER');
+    await post(`${shipmentPath}/move`, cookies.opsJed, { consolidationId: spare.id }).expect(200);
+    expect((await container(spare.id, cookies.opsJed)).shipments.map((s) => s.shipmentId)).toEqual([
+      made.shipmentId,
+    ]);
+    await del(`/consolidations/${created.id}/shipments/${ptsShipment}`, cookies.opsJed).expect(200);
+    expect(
+      (await container(created.id, cookies.opsJed)).shipments.map((s) => s.shipmentId),
+    ).toEqual([jedShipment]);
+
+    // Closed: nothing is booked into it, added, taken out or moved, and PTS (no shipment of its
+    // own left in it) no longer sees it.
+    await t.prisma.shipmentEvent.updateMany({
+      where: { shipmentId: jedShipment },
+      data: { occurredAt: new Date(at('01-02')) },
+    });
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      containerNumber: 'MSCU1234565',
+    }).expect(200);
+    await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+      status: 'CLOSED',
+      occurredAt: at('05-01'),
+    }).expect(200);
+    await get(`/consolidations/${created.id}`, cookies.opsPts).expect(404);
+    await post(`/consolidations/${created.id}/bookings`, cookies.opsPts, body).expect(404);
+    const closedMove = await post(
+      `/consolidations/${created.id}/shipments/${jedShipment}/move`,
+      cookies.opsJed,
+      { consolidationId: spare.id },
+    ).expect(409);
+    expect(closedMove.body).toMatchObject({
+      code: 'CONTAINER_NOT_OPEN',
+      params: { container: created.number },
+    });
+    expect(
+      code(
+        await post(
+          `/consolidations/${spare.id}/shipments/${made.shipmentId}/move`,
+          cookies.opsJed,
+          {
+            consolidationId: created.id,
+          },
+        ).expect(409),
+      ),
+    ).toBe('CONTAINER_NOT_OPEN');
+    expect(
+      code(
+        await del(`/consolidations/${created.id}/shipments/${jedShipment}`, cookies.opsJed).expect(
+          409,
+        ),
+      ),
+    ).toBe('CONTAINER_NOT_OPEN');
+    const bookableNow = (
+      await get('/consolidations?bookable=true&pageSize=100', cookies.opsPts).expect(200)
+    ).body as Page<ConsolidationSummaryDto>;
+    expect(bookableNow.items.map((c) => c.id)).not.toContain(created.id);
+    // PTS still opens the container holding its shipment, from the shipment's page too.
+    expect((await container(spare.id, cookies.opsPts)).shipments.map((s) => s.shipmentId)).toEqual([
+      made.shipmentId,
+    ]);
+    const ofShipment = (
+      await get(`/shipments/${made.shipmentId}/consolidations`, cookies.opsPts).expect(200)
+    ).body as ShipmentConsolidationDto[];
+    expect(ofShipment).toEqual([expect.objectContaining({ id: spare.id, canOpen: true })]);
+  });
+
   it('reports containers in the period with their shipments and customers (report 5)', async () => {
     const [a, b, c] = [
       await lclShipment(customers[0], '2'),

@@ -54,6 +54,11 @@ export function useFailureText(): (e: unknown) => string {
   const locale = useLocale();
   return useCallback(
     (e: unknown) => {
+      // A rule refused the whole request (no field to name): its reason, in the page language.
+      if (e instanceof ApiError && e.fields.length === 0 && e.code) {
+        const why = reason(e);
+        if (why) return t('invalidDetail', { detail: why });
+      }
       switch (failureStatus(e)) {
         case 400:
           return invalidInputText(e, {
@@ -81,15 +86,16 @@ export function useFailureText(): (e: unknown) => string {
 }
 
 /**
- * Why the API refused a save on named fields, in the page language when it sent a known code
- * (`Refusals`), else in its own words; null when it named no rule.
+ * Why the API refused a request (on named fields, or as a whole with a code), in the page
+ * language when it sent a known code (`Refusals`), else in its own words; null when it named no
+ * rule.
  */
 export function useRefusalReason(): (e: unknown) => string | null {
   const tr = useTranslations('Refusals');
   return useCallback(
     (e: unknown) => {
-      if (!(e instanceof ApiError) || e.fields.length === 0) return null;
-      if (e.code && tr.has(e.code)) return tr(e.code);
+      if (!(e instanceof ApiError) || (e.fields.length === 0 && !e.code)) return null;
+      if (e.code && tr.has(e.code)) return tr(e.code, { ...e.params });
       return e.reason;
     },
     [tr],

@@ -111,8 +111,16 @@ export interface ConsolidationDto extends ConsolidationSummaryDto {
   costs: ConsolidationCostDto[];
   /** USD left on the clearing account for this container (0 once every cost is shared). */
   clearingBalanceUsd: DecimalString | null;
+  /**
+   * Whether the container is of one of the user's branches. Another branch sees it while it is
+   * open (to book into) or once it holds their shipment: their own shipments only, no costs.
+   */
+  ownBranch: boolean;
   actions: {
     canEdit: boolean;
+    /** Put an LCL shipment in (another branch: one of its own shipments). */
+    canAddShipments: boolean;
+    /** Take a shipment out or move it to another open container (the container's branch only). */
     canEditShipments: boolean;
     /** Whether an LCL booking can be made from the container (POST /consolidations/:id/bookings). */
     canAddBooking: boolean;

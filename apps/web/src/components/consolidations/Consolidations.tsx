@@ -16,7 +16,10 @@ import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 
-/** Consolidated (LCL) containers of the user's branches. */
+/**
+ * Consolidated (LCL) containers of the user's branches; or, for those who book into containers,
+ * the open containers of every branch.
+ */
 export function Consolidations() {
   const t = useTranslations('Consolidations');
   const tc = useTranslations('Common');
@@ -27,20 +30,23 @@ export function Consolidations() {
   const branchCode = useBranchCode(me);
   const failure = useFailureText();
   const [status, setStatus] = useState<ConsolidationStatus | ''>('');
+  const [bookable, setBookable] = useState(false);
+  const canBook =
+    can(me, 'consolidation:update') && can(me, 'bookings:create') && can(me, 'bookings:approve');
   const [q, setQ] = useState('');
   const [page, setPage] = useState<Page<ConsolidationSummaryDto> | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const load = useCallback(
     (query: string) => {
-      const filter = status ? `&status=${status}` : '';
+      const filter = bookable ? '&bookable=true' : status ? `&status=${status}` : '';
       api<Page<ConsolidationSummaryDto>>(
         `/consolidations?pageSize=50${filter}&q=${encodeURIComponent(query)}`,
       )
         .then(setPage)
         .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
     },
-    [status, failure],
+    [status, bookable, failure],
   );
 
   useEffect(() => load(''), [load]);
@@ -76,6 +82,7 @@ export function Consolidations() {
         />
         <select
           value={status}
+          disabled={bookable}
           onChange={(e) => setStatus(e.target.value as ConsolidationStatus | '')}
         >
           <option value="">{tc('all')}</option>
@@ -85,6 +92,18 @@ export function Consolidations() {
             </option>
           ))}
         </select>
+        {canBook && (
+          <span className="checks">
+            <label>
+              <input
+                type="checkbox"
+                checked={bookable}
+                onChange={(e) => setBookable(e.target.checked)}
+              />{' '}
+              {t('bookableToggle')}
+            </label>
+          </span>
+        )}
         <button type="submit">{tc('search')}</button>
       </form>
       {page === null ? (

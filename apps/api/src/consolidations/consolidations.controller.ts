@@ -27,7 +27,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { bookingCreateBody } from '../bookings/bookings.controller.js';
-import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
+import { branchPeriodFields, flag, periodInOrder, routeFields } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ConsolidationsService, MAX_CONTAINER_SHIPMENTS } from './consolidations.service.js';
 
@@ -74,6 +74,7 @@ const listQuery = pageQuery
     status: z.enum(CONSOLIDATION_STATUSES).optional(),
     ...routeFields,
     ...branchPeriodFields,
+    bookable: flag,
   })
   .superRefine(periodInOrder);
 const moveBody = z
@@ -89,6 +90,7 @@ const bookingBody = bookingCreateBody.omit({
   originLocationId: true,
 });
 const addShipmentBody = z.object({ shipmentId: z.uuid() }).strict();
+const moveShipmentBody = z.object({ consolidationId: z.uuid() }).strict();
 const billableQuery = z.object({ branchId: z.uuid().optional() }).strict();
 
 /** Consolidated (LCL) containers: their shipments and status (annex B, consolidation). */
@@ -171,6 +173,24 @@ export class ConsolidationsController {
     @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
   ): Promise<ConsolidationDto> {
     return this.consolidations.removeShipment(user, id, shipmentId);
+  }
+
+  /** Moves a shipment to another open container of the user's branches (the container's branch). */
+  @Post(':id/shipments/:shipmentId/move')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('consolidation:update')
+  moveShipment(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Body() body: unknown,
+  ): Promise<ConsolidationDto> {
+    return this.consolidations.moveShipment(
+      user,
+      id,
+      shipmentId,
+      parse(moveShipmentBody, body).consolidationId,
+    );
   }
 
   @Post(':id/status')

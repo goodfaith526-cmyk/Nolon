@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException, type HttpStatus } from '@nestjs/common';
 import { E164_PATTERN, type FormRefusal } from '@nolon/shared';
 import { z } from 'zod';
 import { isDateString } from './dates.js';
@@ -29,6 +29,24 @@ export function fieldRefusal(
     error: 'Bad Request',
     statusCode: 400,
   });
+}
+
+/**
+ * A refusal that names no field (403, 404, 409, or a 400 on the whole request), with a `code` so
+ * the page can say why in its language (with `params` such as the shipment's number); `message`
+ * stays the English reason for other clients.
+ */
+export function codedRefusal(
+  status: HttpStatus.BAD_REQUEST | HttpStatus.FORBIDDEN | HttpStatus.CONFLICT,
+  code: FormRefusal,
+  message: string,
+  params: Readonly<Record<string, string>> = {},
+): HttpException {
+  const error = { 400: 'Bad Request', 403: 'Forbidden', 409: 'Conflict' }[status];
+  return new HttpException(
+    { message, code, params, fields: [], error, statusCode: status },
+    status,
+  );
 }
 
 /** Non-negative amount with at most 14 integer and 4 decimal digits (fits Decimal(18,4)). */
