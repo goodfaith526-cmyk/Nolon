@@ -8,6 +8,7 @@ import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
   CreateQuotationRequest,
+  DraftPriceSource,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -244,11 +245,17 @@ export class QuotationDraftsService {
   private async read(user: AuthUser, id: string): Promise<QuotationDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
-    const { check, pricing } =
+    const { check, pricing, priceSources } =
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.priced(user, draft)
-        : { check: null, pricing: null };
-    return toDto(draft, user, now, check, pricing);
+        : { check: null, pricing: null, priceSources: null };
+    return {
+      ...baseFields(draft, user, now),
+      request: requestOf(draft),
+      check,
+      pricing,
+      priceSources,
+    };
   }
 
   /**
@@ -374,7 +381,11 @@ export class QuotationDraftsService {
   private async priced(
     user: AuthUser,
     draft: DraftRow,
-  ): Promise<{ check: EntryDraftCheck; pricing: QuotationDraftPricing | null }> {
+  ): Promise<{
+    check: EntryDraftCheck;
+    pricing: QuotationDraftPricing | null;
+    priceSources: DraftPriceSource[] | null;
+  }> {
     try {
       const prepared = await this.quotations.prepareCreate(user, requestOf(draft));
       return {
@@ -384,6 +395,12 @@ export class QuotationDraftsService {
           currency: draft.currency,
         },
         pricing: pricingOf(prepared),
+        // A line priced from a rate card (named, or the system price) shows which one.
+        priceSources: prepared.lines.map((l) =>
+          l.rateCardId === null
+            ? { source: 'TYPED', rateCardId: null }
+            : { source: 'RATE_CARD', rateCardId: l.rateCardId },
+        ),
       };
     } catch (error) {
       if (
@@ -391,7 +408,11 @@ export class QuotationDraftsService {
         error instanceof NotFoundException ||
         error instanceof ConflictException
       ) {
-        return { check: { ok: false, message: error.message }, pricing: null };
+        return {
+          check: { ok: false, message: error.message },
+          pricing: null,
+          priceSources: null,
+        };
       }
       throw error;
     }
@@ -416,16 +437,6 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
   };
-}
-
-function toDto(
-  d: DraftRow,
-  user: AuthUser,
-  now: Date,
-  check: EntryDraftCheck | null,
-  pricing: QuotationDraftPricing | null,
-): QuotationDraftDto {
-  return { ...baseFields(d, user, now), request: requestOf(d), check, pricing };
 }
 
 /** The prices an approval would record, and their fingerprint (what the approval sends back). */
@@ -453,7 +464,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> {
+): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing' | 'priceSources'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
   return {

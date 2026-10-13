@@ -325,8 +325,10 @@ export interface QuotationDto extends QuotationSummaryDto {
 }
 
 /**
- * A line either references an approved rate card (unit, price and minimum come from the rate)
- * or is a manual line (unit and unitPrice required).
+ * A line either references an approved rate card (unit, price and minimum come from the rate),
+ * is a manual line (charge type, unit and unitPrice), or gives no rate card and no price: NOLON
+ * then prices it from the only approved rate card that matches the quotation and the line's
+ * charge type and unit when given (RATE_NO_MATCH, RATE_SEVERAL otherwise).
  */
 export interface QuotationLineInput {
   rateCardId?: string | null;
@@ -472,6 +474,9 @@ export const FORM_REFUSALS = [
   'VALID_UNTIL_PAST',
   'CURRENCY_NOT_ACTIVE',
   'RATE_NOT_USABLE',
+  // The system price (no rate card and no price given): none or several rate cards match.
+  'RATE_NO_MATCH',
+  'RATE_SEVERAL',
   'MANUAL_LINE_INCOMPLETE',
   'UNKNOWN_CHARGE_TYPE',
   'DISCOUNT_EXCEEDS_LINE',
@@ -488,5 +493,9 @@ export const FORM_REFUSALS = [
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',
   'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
+  // An invoice draft line priced by NOLON (no unit price given), from the shipment's quotation.
+  'QUOTED_PRICE_OTHER_CURRENCY',
+  'QUOTED_PRICE_SEVERAL',
+  'PRICE_AS_ONE_UNIT',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

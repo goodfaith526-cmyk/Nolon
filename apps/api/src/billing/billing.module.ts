@@ -5,6 +5,7 @@ import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
+import { RatesModule } from '../rates/rates.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import {
   CreditNotesController,
@@ -30,6 +31,7 @@ import { ReceiptsService } from './receipts.service.js';
     DraftsModule,
     MasterDataModule,
     QuotationsModule,
+    RatesModule,
     ShipmentsModule,
   ],
   controllers: [

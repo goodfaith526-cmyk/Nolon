@@ -6,6 +6,7 @@ import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
+import { DraftPriceSourceNote } from './DraftPriceSourceNote';
 
 /** An invoice the assistant proposed for a shipment: its lines as proposed, and the decision. */
 export function InvoiceDraftReview({ id }: { id: string }) {
@@ -16,13 +17,18 @@ export function InvoiceDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const inv = draft.request;
+  const systemPriced = draft.priceSources.some((p) => p.source !== 'TYPED');
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/invoice-drafts"
       title={t('invoiceTitle', { shipment: draft.shipmentNumber, customer: draft.customerName })}
-      approveHint={t('invoiceApproveHint')}
+      approveHint={
+        systemPriced
+          ? `${t('invoiceApproveHint')} ${t('systemPriceHint')}`
+          : t('invoiceApproveHint')
+      }
       result={
         draft.invoiceId
           ? {
@@ -67,6 +73,7 @@ export function InvoiceDraftReview({ id }: { id: string }) {
                 <td dir="ltr">{line.quantity}</td>
                 <td>
                   <Money value={line.unitPrice} currency={inv.currency} />
+                  <DraftPriceSourceNote source={draft.priceSources[i]} />
                 </td>
               </tr>
             ))}

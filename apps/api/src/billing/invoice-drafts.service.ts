@@ -5,6 +5,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  DraftPriceSource,
   InvoiceDraftCreateRequest,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
@@ -73,8 +74,13 @@ export function invoiceRequestOf(d: DraftRow): InvoiceDraftRequest {
   };
 }
 
-/** sha256 of the normalised request: ids lower case, decimals canonical, null for absent. */
-export function invoiceRequestHash(input: InvoiceDraftRequest): string {
+/**
+ * sha256 of the normalised request: ids lower case, decimals canonical, null for absent (a line
+ * without a unit price asks for the system price).
+ */
+export function invoiceRequestHash(
+  input: Omit<InvoiceDraftCreateRequest, 'idempotencyKey'>,
+): string {
   return requestHash({
     shipmentId: input.shipmentId.toLowerCase(),
     currency: input.currency,
@@ -85,7 +91,7 @@ export function invoiceRequestHash(input: InvoiceDraftRequest): string {
       chargeTypeCode: l.chargeTypeCode,
       description: l.description ?? null,
       quantity: decimalKey(dec(l.quantity)),
-      unitPrice: decimalKey(dec(l.unitPrice)),
+      unitPrice: l.unitPrice === undefined ? null : decimalKey(dec(l.unitPrice)),
     })),
   });
 }
@@ -162,6 +168,8 @@ export class InvoiceDraftsService {
             description: l.description,
             quantity: l.quantity,
             unitPrice: l.unitPrice,
+            priceSource: l.priceSource,
+            rateCardId: l.rateCardId,
           })),
         });
         return draft.id;
@@ -202,7 +210,15 @@ export class InvoiceDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    return { ...baseFields(draft, user, now), request: invoiceRequestOf(draft), check };
+    return {
+      ...baseFields(draft, user, now),
+      request: invoiceRequestOf(draft),
+      priceSources: draft.lines.map((l): DraftPriceSource => ({
+        source: l.priceSource,
+        rateCardId: l.rateCardId,
+      })),
+      check,
+    };
   }
 
   /**
@@ -343,7 +359,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<InvoiceDraftDto, 'request' | 'check'> {
+): Omit<InvoiceDraftDto, 'request' | 'check' | 'priceSources'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open =
     status === 'DRAFT' && !user.agent && user.permissions.has('customer_invoices:create');

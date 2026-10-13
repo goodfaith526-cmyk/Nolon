@@ -7,6 +7,8 @@ import {
 import type {
   CustomerInvoiceDto,
   CustomerInvoiceInput,
+  InvoiceDraftLineInput,
+  PriceSource,
   CustomerInvoiceSummaryDto,
   InvoiceStatus,
   OpeningCustomerItemRequest,
@@ -29,7 +31,7 @@ import {
   sameRequestedRate,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -37,6 +39,7 @@ import { type CustomerInvoice, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
+import { RatesService } from '../rates/rates.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
 
@@ -75,9 +78,20 @@ export interface PreparedInvoice {
     quantity: Decimal;
     unitPrice: Decimal;
     lineTotal: Decimal;
+    /** Where unitPrice came from: given, or the system price (quotation, rate card). */
+    priceSource: PriceSource;
+    rateCardId: string | null;
   }[];
   total: Decimal;
 }
+
+/** An invoice draft's values: a line without a unit price takes the system price. */
+export type InvoiceDraftValues = Omit<CustomerInvoiceInput, 'fxRate' | 'lines'> & {
+  lines: InvoiceDraftLineInput[];
+};
+
+type BillingSource = Awaited<ReturnType<ShipmentsService['billingSource']>>;
+type QuotedPrices = Awaited<ReturnType<QuotationsService['invoiceSource']>>;
 
 const details = {
   lines: { orderBy: { lineNo: 'asc' } },
@@ -114,6 +128,7 @@ export class InvoicesService {
     private readonly customers: CustomersService,
     private readonly currencies: CurrenciesService,
     private readonly masterData: MasterDataService,
+    private readonly rates: RatesService,
   ) {}
 
   async list(user: AuthUser, filters: InvoiceFilters): Promise<Page<CustomerInvoiceSummaryDto>> {
@@ -378,12 +393,13 @@ export class InvoicesService {
   /**
    * The checks of a draft invoice for a shipment with the given values (an assistant's invoice
    * draft), as update() checks them, without writing; insertInTx then records it. The fx rate is
-   * the rate table's for the invoice date.
+   * the rate table's for the invoice date. A line without a unit price takes the system price
+   * (systemPrice), so the result says where each price came from.
    */
   async prepareForShipment(
     user: AuthUser,
     shipmentId: string,
-    input: Omit<CustomerInvoiceInput, 'fxRate'>,
+    input: InvoiceDraftValues,
   ): Promise<PreparedInvoice> {
     const shipment = await this.shipments.billingSource(user, shipmentId);
     if (shipment.status === 'CANCELLED') {
@@ -396,12 +412,31 @@ export class InvoicesService {
     const currency = await this.currencies.requireActive(input.currency);
     for (const line of input.lines) await this.masterData.requireChargeType(line.chargeTypeCode);
     const fxRate = await this.fxRates.resolve(currency.code, input.invoiceDate);
-    const lines = input.lines.map((l) => ({
-      chargeTypeCode: l.chargeTypeCode,
-      description: l.description ?? null,
-      quantity: dec(l.quantity),
-      unitPrice: dec(l.unitPrice),
-    }));
+    const quoted =
+      shipment.quotationId !== null && input.lines.some((l) => l.unitPrice === undefined)
+        ? await this.quotations.invoiceSource(shipment.quotationId)
+        : null;
+    const lines = [];
+    for (const [index, l] of input.lines.entries()) {
+      const quantity = dec(l.quantity);
+      const price =
+        l.unitPrice === undefined
+          ? await this.systemPrice(shipment, quoted, {
+              path: `lines.${index}`,
+              chargeTypeCode: l.chargeTypeCode,
+              quantity,
+              currency: currency.code,
+              decimalPlaces: currency.decimalPlaces,
+              invoiceDate: input.invoiceDate,
+            })
+          : { unitPrice: dec(l.unitPrice), priceSource: 'TYPED' as const, rateCardId: null };
+      lines.push({
+        chargeTypeCode: l.chargeTypeCode,
+        description: l.description ?? null,
+        quantity,
+        ...price,
+      });
+    }
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     return {
       branchId: shipment.branchId,
@@ -414,6 +449,88 @@ export class InvoicesService {
       notes: input.notes ?? null,
       lines: lines.map((l, i) => ({ ...l, lineTotal: lineTotals[i] ?? dec(0) })),
       total,
+    };
+  }
+
+  /**
+   * The system price of an invoice line: the agreed price first, from the shipment's quotation
+   * line for this charge (in the quotation's currency only); a charge the quotation does not
+   * price takes the approved rate card that matches the shipment, the charge and the invoice
+   * date. Where a minimum or a discount makes the amount differ from quantity × price, the agreed
+   * amount is invoiced as one unit, as createForShipment does. Refused, under the line's field,
+   * whenever the price is not one clear value: the staff member then enters it.
+   */
+  private async systemPrice(
+    shipment: BillingSource,
+    quoted: QuotedPrices,
+    line: {
+      path: string;
+      chargeTypeCode: string;
+      quantity: Decimal;
+      currency: string;
+      decimalPlaces: number;
+      invoiceDate: string;
+    },
+  ): Promise<{ unitPrice: Decimal; priceSource: PriceSource; rateCardId: string | null }> {
+    const { path, chargeTypeCode, quantity, currency, decimalPlaces } = line;
+    const asOneUnit = (amount: Decimal, why: string): Decimal => {
+      if (quantity.eq(1)) return amount;
+      throw fieldRefusal(
+        'PRICE_AS_ONE_UNIT',
+        `The ${chargeTypeCode} amount is ${amount.toFixed(decimalPlaces)} ${currency} ` +
+          `(${why}): invoice it as quantity 1, or enter the price`,
+        [`${path}.quantity`],
+      );
+    };
+    const quotedLines = quoted?.lines.filter((q) => q.chargeTypeCode === chargeTypeCode) ?? [];
+    const [agreed, ...more] = quotedLines;
+    if (quoted !== null && agreed !== undefined) {
+      if (quoted.currency !== currency) {
+        throw fieldRefusal(
+          'QUOTED_PRICE_OTHER_CURRENCY',
+          `The shipment's quotation prices ${chargeTypeCode} in ${quoted.currency}: invoice in ` +
+            `${quoted.currency}, or enter the price`,
+          ['currency', `${path}.unitPrice`],
+        );
+      }
+      if (more.length > 0) {
+        throw fieldRefusal(
+          'QUOTED_PRICE_SEVERAL',
+          `The shipment's quotation has ${quotedLines.length} ${chargeTypeCode} lines: enter ` +
+            'the price',
+          [`${path}.unitPrice`],
+        );
+      }
+      const exact = roundMoney(agreed.quantity.times(agreed.unitPrice), decimalPlaces);
+      return {
+        unitPrice: exact.eq(agreed.lineTotal)
+          ? agreed.unitPrice
+          : asOneUnit(agreed.lineTotal, "the quotation's minimum or discount"),
+        priceSource: 'QUOTATION',
+        rateCardId: null,
+      };
+    }
+    const rate = await this.rates.systemRate(
+      {
+        branchId: shipment.branchId,
+        onDate: line.invoiceDate,
+        currency,
+        originLocationId: shipment.originLocationId,
+        destinationLocationId: shipment.destinationLocationId,
+        mode: shipment.mode,
+        loadType: shipment.loadType,
+        cargoType: shipment.cargoType,
+        chargeTypeCode,
+      },
+      { noMatch: [`${path}.unitPrice`], several: [`${path}.unitPrice`] },
+    );
+    const amount = roundMoney(quantity.times(rate.price), decimalPlaces);
+    return {
+      unitPrice: amount.lt(rate.minimumCharge)
+        ? asOneUnit(rate.minimumCharge, "the rate card's minimum charge")
+        : rate.price,
+      priceSource: 'RATE_CARD',
+      rateCardId: rate.id,
     };
   }
 

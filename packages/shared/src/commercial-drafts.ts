@@ -31,6 +31,20 @@ export interface CustomerDraftFields {
   customerName: string;
 }
 
+/** Where a draft line's unit price comes from. */
+export const PRICE_SOURCES = ['TYPED', 'QUOTATION', 'RATE_CARD'] as const;
+export type PriceSource = (typeof PRICE_SOURCES)[number];
+
+/**
+ * TYPED: the staff member gave it; QUOTATION: the shipment's quotation (its agreed price);
+ * RATE_CARD: an approved rate card (`rateCardId`), the one the line named or the only one that
+ * matches it.
+ */
+export interface DraftPriceSource {
+  source: PriceSource;
+  rateCardId: string | null;
+}
+
 /**
  * What approving would record now: every line priced as NOLON prices it (a rate card line at
  * the rate's current price). The person reviews these prices; the approval sends `key` back and
@@ -64,12 +78,17 @@ export interface QuotationDraftDto extends EntryDraftReviewFields, CustomerDraft
   check: EntryDraftCheck | null;
   /** While open and accepted by NOLON: the prices an approval would record. */
   pricing: QuotationDraftPricing | null;
+  /** With `pricing`: where each line's price comes from, in the lines' order. */
+  priceSources: DraftPriceSource[] | null;
   /** The quotation an approval created. */
   quotationId: string | null;
   quotationNumber: string | null;
 }
 
-export type QuotationDraftListItemDto = Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> & {
+export type QuotationDraftListItemDto = Omit<
+  QuotationDraftDto,
+  'request' | 'check' | 'pricing' | 'priceSources'
+> & {
   lineCount: number;
 };
 

@@ -166,9 +166,9 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  roles    UserRole[]
-  branches UserBranch[]
-  sessions Session[]
+  roles                UserRole[]
+  branches             UserBranch[]
+  sessions             Session[]
   /// Forms this user could not save and opened with the staff assistant.
   assistantFormReviews AssistantFormReview[]
 
@@ -583,15 +583,16 @@ model RateCard {
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch         Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin         Location        @relation("RateOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination    Location        @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  containerType  ContainerType?  @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
-  chargeType     ChargeType      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
-  currencyRef    Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
-  approvedBy     User?           @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  createdBy      User            @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  quotationLines QuotationLine[]
+  branch            Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin            Location           @relation("RateOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination       Location           @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  containerType     ContainerType?     @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  chargeType        ChargeType         @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  currencyRef       Currency           @relation(fields: [currency], references: [code], onDelete: Restrict)
+  approvedBy        User?              @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy         User               @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  quotationLines    QuotationLine[]
+  invoiceDraftLines InvoiceDraftLine[]
 
   draft RateCardDraft?
 
@@ -3065,17 +3066,31 @@ model InvoiceDraft {
 }
 
 model InvoiceDraftLine {
-  draftId        String  @map("draft_id") @db.Uuid
-  lineNo         Int     @map("line_no")
-  chargeTypeCode String  @map("charge_type_code") @db.VarChar(20)
-  description    String? @db.VarChar(500)
-  quantity       Decimal @db.Decimal(18, 4)
-  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+  draftId        String           @map("draft_id") @db.Uuid
+  lineNo         Int              @map("line_no")
+  chargeTypeCode String           @map("charge_type_code") @db.VarChar(20)
+  description    String?          @db.VarChar(500)
+  quantity       Decimal          @db.Decimal(18, 4)
+  unitPrice      Decimal          @map("unit_price") @db.Decimal(18, 4)
+  /// Where unitPrice came from: typed by the staff member, or the system price NOLON found when
+  /// the draft was created (the shipment's quotation, or the approved rate card `rateCardId`).
+  priceSource    DraftPriceSource @default(TYPED) @map("price_source")
+  rateCardId     String?          @map("rate_card_id") @db.Uuid
 
-  draft InvoiceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  draft    InvoiceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  rateCard RateCard?    @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
 
   @@id([draftId, lineNo])
+  @@index([rateCardId])
   @@map("invoice_draft_lines")
+}
+
+enum DraftPriceSource {
+  TYPED
+  QUOTATION
+  RATE_CARD
+
+  @@map("draft_price_source")
 }
 
 /// A customer receipt proposed by the staff AI assistant (entry drafts). An approval records an
