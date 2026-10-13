@@ -58,8 +58,7 @@ async function openContainer(): Promise<ConsolidationDto> {
         destinationLocationId: portSudan,
         containerTypeCode: '20GP',
         vesselName: 'Maersk Emaa',
-        etd: '2099-10-31',
-        eta: '2099-11-13',
+        // No ETD: the list filter tests count containers by their ETD.
         shipmentIds: [],
       })
       .expect(201)
@@ -148,7 +147,7 @@ describe('booking drafts into an open container', () => {
       number: container.number,
       status: 'OPEN',
       containerTypeCode: '20GP',
-      etd: '2099-10-31',
+      etd: null,
     });
     expect(draft.check).toEqual({ ok: true, total: null, currency: null });
 
