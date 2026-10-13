@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   AgentClientCreatedDto,
+  AssistantDraftDto,
   BookingDto,
   CustomerDto,
   CustomerInvoiceDto,
@@ -409,6 +410,10 @@ describe('invoice drafts: the system price', () => {
       { source: 'TYPED', rateCardId: null },
     ]);
     expect(draft.check).toMatchObject({ ok: true, total: '915.38', currency: 'USD' });
+    // The assistant's chat card names the rate card it was priced from (its price in the name).
+    const card = (await r.agentGet(`/invoice-drafts/${draft.id}/assistant`, tokens.finance))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+    expect(card.names[rates.delivery]).toBeDefined();
     // The same request under the same key is the same draft (no price is part of the request).
     const again = (await createInvoiceDraft(body).expect(201)).body as EntryDraftSummaryDto;
     expect(again.id).toBe(draft.id);
