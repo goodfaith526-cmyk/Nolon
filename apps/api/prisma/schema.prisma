@@ -2018,6 +2018,7 @@ model Consolidation {
   shipments     ConsolidationShipment[]
   billLines     SupplierBillLine[]
   journalLines  JournalLine[]
+  bookingDrafts BookingDraft[]
 
   @@index([branchId, status])
   @@map("consolidations")
@@ -2801,11 +2802,14 @@ model BookingDraft {
   decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
   bookingId             String?          @unique @map("booking_id") @db.Uuid
+  /// The open LCL container the booking goes in on approval (confirmed, its shipment added).
+  consolidationId       String?          @map("consolidation_id") @db.Uuid
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch          Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  consolidation   Consolidation?     @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
   sourceQuotation Quotation?         @relation("BookingDraftSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: Restrict)
   agentClient     AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy       User               @relation("BookingDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2815,6 +2819,7 @@ model BookingDraft {
 
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
+  @@index([consolidationId])
   @@index([sourceQuotationId])
   @@index([replacesDraftId])
   @@map("booking_drafts")

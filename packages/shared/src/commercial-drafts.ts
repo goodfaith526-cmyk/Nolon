@@ -2,7 +2,9 @@ import type {
   BookingFromQuotationRequest,
   CreateBookingRequest,
   CreateQuotationRequest,
+  DateString,
 } from './commercial.js';
+import type { ConsolidationStatus } from './consolidation.js';
 import type { DecimalString } from './currencies.js';
 import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
@@ -81,22 +83,44 @@ export type QuotationDraftListItemDto = Omit<QuotationDraftDto, 'request' | 'che
  */
 export type BookingDraftCreateRequest =
   | (BookingFromQuotationRequest & { idempotencyKey: string; quotationId: string })
-  | (CreateBookingRequest & { idempotencyKey: string });
+  | (CreateBookingRequest & ContainerChoice & { idempotencyKey: string });
 
-/** A booking draft's proposed request, as stored. */
+/**
+ * An open LCL container a direct booking draft goes in (consolidation.ts). Approving such a draft
+ * records the booking, confirms it (its shipment is created) and puts the shipment in the
+ * container, in one transaction, as booking from the container's page does; NOLON checks again
+ * then that the container is still open with room. Absent when the booking goes in no container.
+ */
+export interface ContainerChoice {
+  consolidationId?: string | null;
+}
+
+/** The container a booking draft names, as its review screen shows it. */
+export interface DraftContainer {
+  id: string;
+  number: string;
+  status: ConsolidationStatus;
+  containerTypeCode: string;
+  containerNumber: string | null;
+  etd: DateString | null;
+}
+
+/** A booking draft's proposed request, as stored (`consolidationId` only when it names one). */
 export type BookingDraftRequest =
   | (BookingFromQuotationRequest & { quotationId: string; quotationNumber: string })
-  | (CreateBookingRequest & { quotationId?: undefined });
+  | (CreateBookingRequest & ContainerChoice & { quotationId?: undefined });
 
 export interface BookingDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   request: BookingDraftRequest;
   check: EntryDraftCheck | null;
+  /** The container the booking goes in on approval (null when none, or when it no longer exists). */
+  container: DraftContainer | null;
   /** The booking an approval created. */
   bookingId: string | null;
   bookingNumber: string | null;
 }
 
-export type BookingDraftListItemDto = Omit<BookingDraftDto, 'request' | 'check'> & {
+export type BookingDraftListItemDto = Omit<BookingDraftDto, 'request' | 'check' | 'container'> & {
   lineCount: number;
   sourceQuotationNumber: string | null;
 };

@@ -484,5 +484,9 @@ export const FORM_REFUSALS = [
   'SHIPMENT_NOT_LCL_SEA',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
+  // A booking that names an open container (booking drafts): it must fit the container.
+  'CONTAINER_BOOKING_NOT_LCL_SEA',
+  'CONTAINER_BOOKING_OTHER_PORT',
+  'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

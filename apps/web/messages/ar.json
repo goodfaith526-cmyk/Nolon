@@ -2172,7 +2172,12 @@
     "customerNotApproved": "مسودة العميل اترفضت أو انتهت صلاحيتها، فالحجز ده ما ممكن يتعمد. ارفضه، أو اطلب من المساعد مسودة جديدة.",
     "lineValue": "السطر {line}: {field}",
     "bookingWithCustomer": "في حجز اتقدّم مع العميل ده:",
-    "openBookingDraft": "افتح مسودة الحجز"
+    "openBookingDraft": "افتح مسودة الحجز",
+    "container": "الحاوية",
+    "containerHidden": "حاوية لا يمكنك رؤيتها",
+    "containerHint": "عند الاعتماد يُؤكَّد الحجز وتدخل شحنته هذه الحاوية، إن كانت ما تزال مفتوحة وفيها متسع.",
+    "containerBookingApproveHint": "الاعتماد ينشئ الحجز ويؤكده (تُنشأ شحنته) ويضع الشحنة في الحاوية. إن لم تعد الحاوية مفتوحة أو امتلأت فلا يُنشأ شيء.",
+    "newCustomerContainerBookingApproveHint": "الاعتماد ينشئ الحجز للعميل المعتمد من مسودة العميل، ويؤكده ويضع شحنته في الحاوية. إن لم تعد الحاوية مفتوحة أو امتلأت فلا يُنشأ شيء. أضف الشاحن والمستلم وجهة الإخطار على الحجز."
   },
   "Fields": {
     "customerId": "العميل",
@@ -2244,6 +2249,9 @@
     "SHIPMENT_OTHER_BRANCH": "الشحنة {shipment} تتبع فرعًا لا تعمل فيه، فلا يمكنك وضعها في هذه الحاوية.",
     "SHIPMENT_NOT_LCL_SEA": "الشحنة {shipment} ليست شحنة بحرية LCL تنقلها نولون.",
     "SHIPMENT_PAST_LOADING": "الشحنة {shipment} تجاوزت مرحلة التجميع أو موقوفة أو ملغاة.",
-    "SHIPMENT_IN_OTHER_CONTAINER": "الشحنة {shipment} موجودة في الحاوية {container}: أخرجها منها أو انقلها أولًا."
+    "SHIPMENT_IN_OTHER_CONTAINER": "الشحنة {shipment} موجودة في الحاوية {container}: أخرجها منها أو انقلها أولًا.",
+    "CONTAINER_BOOKING_NOT_LCL_SEA": "الحاوية {container} تقبل حجوزات الشحن البحري المجمّع LCL فقط: اجعل الحجز بحريًا مجمّعًا.",
+    "CONTAINER_BOOKING_OTHER_PORT": "الحاوية {container} تُحمَّل في ميناء آخر: يجب أن يغادر الحجز من ذلك الميناء.",
+    "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "الحجز في الحاوية {container} يشمل الشحن الرئيسي: أضفه إلى الخدمات."
   }
 }

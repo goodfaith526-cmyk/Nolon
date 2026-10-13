@@ -1,5 +1,6 @@
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
+import { canBookInto } from '../consolidations/consolidation-rules.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 
@@ -50,6 +51,7 @@ export async function referenceNames(
     carriers,
     invoices,
     accounts,
+    containers,
   ] = await Promise.all([
     prisma.branch.findMany({
       where: { id: { in: ids.filter((b) => user.allowedBranchIds.includes(b)) } },
@@ -85,6 +87,14 @@ export async function referenceNames(
       where: { id, OR: [{ branchId: null }, branchScope(user)] },
       select: { id: true, code: true, nameEn: true, nameAr: true },
     }),
+    // A container of the user's branches, or an open one of any branch they may book into.
+    prisma.consolidation.findMany({
+      where: {
+        id,
+        OR: [branchScope(user), ...(canBookInto(user) ? [{ status: 'OPEN' as const }] : [])],
+      },
+      select: { id: true, number: true, containerTypeCode: true, containerNumber: true },
+    }),
   ]);
   const names: Record<string, string> = {};
   for (const b of branches) names[b.id] = `${b.code} ${both(b.nameEn, b.nameAr)}`;
@@ -102,5 +112,8 @@ export async function referenceNames(
   for (const c of carriers) names[c.id] = c.name;
   for (const i of invoices) if (i.number !== null) names[i.id] = i.number;
   for (const a of accounts) names[a.id] = `${a.code} ${both(a.nameEn, a.nameAr)}`;
+  for (const c of containers) {
+    names[c.id] = [c.number, c.containerTypeCode, c.containerNumber].filter(Boolean).join(' ');
+  }
   return names;
 }

@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import {
   DRAFT_PROPOSAL_RETENTION_DAYS,
   DRAFT_TTL_DAYS,
@@ -151,6 +146,19 @@ export function stateFilter(
   return { state: status };
 }
 
+/** The refusals a check reports as its message (a coded refusal is a plain HttpException). */
+const REFUSALS: readonly number[] = [
+  HttpStatus.BAD_REQUEST,
+  HttpStatus.FORBIDDEN,
+  HttpStatus.NOT_FOUND,
+  HttpStatus.CONFLICT,
+];
+
+/** Whether an error is NOLON refusing a request (400, 403, 404, 409), not a failure. */
+export function isRefusal(error: unknown): error is HttpException {
+  return error instanceof HttpException && REFUSALS.includes(error.getStatus());
+}
+
 /**
  * Whether NOLON would accept a draft now: runs `prepare` (the same checks as an approval, without
  * writing) and turns a refusal into its message.
@@ -161,14 +169,7 @@ export async function checkDraft(
   try {
     return { ok: true, ...(await prepare()) };
   } catch (error) {
-    if (
-      error instanceof BadRequestException ||
-      error instanceof NotFoundException ||
-      error instanceof ConflictException ||
-      error instanceof ForbiddenException
-    ) {
-      return { ok: false, message: error.message };
-    }
+    if (isRefusal(error)) return { ok: false, message: error.message };
     throw error;
   }
 }

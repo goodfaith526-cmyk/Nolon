@@ -32,10 +32,13 @@ import { BookingDraftsService } from './booking-drafts.service.js';
 import { bookingCreateBody, bookingFromQuotationBody } from './bookings.controller.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-/** From an approved quotation (quotationId), or directly for a customer (customerId). */
+/**
+ * From an approved quotation (quotationId), or directly for a customer (customerId); a direct one
+ * may name an open container to go in (consolidationId).
+ */
 const createBody = z.union([
   bookingFromQuotationBody.extend({ idempotencyKey, quotationId: z.uuid() }).strict(),
-  bookingCreateBody.extend({ idempotencyKey }).strict(),
+  bookingCreateBody.extend({ idempotencyKey, consolidationId: z.uuid().nullish() }).strict(),
 ]);
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
