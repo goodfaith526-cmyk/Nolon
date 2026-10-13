@@ -5,7 +5,9 @@ import {
   type ConsolidationBasis,
   type ConsolidationDto,
   type ConsolidationMove,
+  type ConsolidationSummaryDto,
   type ConsolidationUpdateRequest,
+  type Page,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, Fragment, useState } from 'react';
@@ -40,6 +42,8 @@ export function ConsolidationDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [moving, setMoving] = useState<string | null>(null);
+  const [targets, setTargets] = useState<ConsolidationSummaryDto[] | null>(null);
 
   if (!c) {
     return loadNotice ? <Notice notice={loadNotice} /> : <p className="muted">{tc('loading')}</p>;
@@ -118,6 +122,31 @@ export function ConsolidationDetail({ id }: { id: string }) {
     if (ok) setCancelling(false);
   }
 
+  function startMove(shipmentId: string) {
+    setMoving(shipmentId);
+    if (targets !== null) return;
+    api<Page<ConsolidationSummaryDto>>('/consolidations?status=OPEN&pageSize=100')
+      .then((page) => setTargets(page.items.filter((other) => other.id !== id)))
+      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+  }
+
+  async function onMoveShipment(event: FormEvent<HTMLFormElement>, shipmentNumber: string) {
+    event.preventDefault();
+    const targetId = field(new FormData(event.currentTarget), 'consolidationId');
+    const target = targets?.find((other) => other.id === targetId);
+    if (!moving || !target) return;
+    const shipmentId = moving;
+    const ok = await run(
+      () =>
+        api<ConsolidationDto>(`/consolidations/${id}/shipments/${shipmentId}/move`, {
+          method: 'POST',
+          body: { consolidationId: targetId },
+        }),
+      t('shipmentMovedNotice', { shipment: shipmentNumber, container: target.number }),
+    );
+    if (ok) setMoving(null);
+  }
+
   const journalLink = (entryId: string, number: string) =>
     can(me, 'manual_journals:view') ? (
       <Link href={`/accounting/journals/${entryId}`} dir="ltr">
@@ -158,6 +187,9 @@ export function ConsolidationDetail({ id }: { id: string }) {
           </Link>
         </div>
       </div>
+      {!c.ownBranch && (
+        <p className="muted">{t('guestHint', { branch: branchCode(c.branchId) })}</p>
+      )}
       <Notice notice={notice} />
 
       {(a.moves.length > 0 || a.canCancel) && (
@@ -345,6 +377,48 @@ export function ConsolidationDetail({ id }: { id: string }) {
                     </td>
                     {a.canEditShipments && (
                       <td>
+                        {moving === s.shipmentId ? (
+                          <form
+                            className="line"
+                            onSubmit={(e) => void onMoveShipment(e, s.shipmentNumber)}
+                          >
+                            {targets === null ? (
+                              <span className="muted">{tc('loading')}</span>
+                            ) : targets.length === 0 ? (
+                              <span className="muted">{t('moveNone')}</span>
+                            ) : (
+                              <>
+                                <select name="consolidationId" aria-label={t('moveTo')} required>
+                                  {targets.map((other) => (
+                                    <option key={other.id} value={other.id}>
+                                      {other.number}
+                                      {other.containerNumber ? ` · ${other.containerNumber}` : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button type="submit" className="button small" disabled={busy}>
+                                  {t('moveTo')}
+                                </button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              className="button small"
+                              onClick={() => setMoving(null)}
+                            >
+                              {tc('back')}
+                            </button>
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            className="button small"
+                            disabled={busy}
+                            onClick={() => startMove(s.shipmentId)}
+                          >
+                            {t('move')}
+                          </button>
+                        )}{' '}
                         <button
                           type="button"
                           className="button small"
@@ -377,7 +451,7 @@ export function ConsolidationDetail({ id }: { id: string }) {
             </Link>
           </div>
         )}
-        {a.canEditShipments && (
+        {a.canAddShipments && (
           <div className="panel-body">
             <LclShipmentPicker
               exclude={c.shipments.map((s) => s.shipmentId)}

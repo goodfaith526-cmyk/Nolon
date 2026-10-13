@@ -1179,7 +1179,13 @@
     "clearingBalance": "Left on the consolidation clearing account",
     "shipmentPanel": "Consolidated container",
     "notConsolidated": "This shipment is not in a consolidated container.",
-    "newBooking": "New LCL booking in this container"
+    "newBooking": "New LCL booking in this container",
+    "bookableToggle": "Open containers of all branches",
+    "guestHint": "This is a {branch} container. You see your own shipments only; only its branch takes shipments out or moves them.",
+    "move": "Move",
+    "moveTo": "Move to container",
+    "moveNone": "No other open container in your branches.",
+    "shipmentMovedNotice": "Shipment {shipment} moved to container {container}."
   },
   "Alerts": {
     "title": "Alerts",
@@ -2230,6 +2236,14 @@
     "RATE_NOT_USABLE": "This rate does not apply to this quotation (route, mode, load, cargo, currency or date).",
     "MANUAL_LINE_INCOMPLETE": "A line without a rate needs a charge, a unit and a price.",
     "UNKNOWN_CHARGE_TYPE": "This charge is unknown or no longer in use.",
-    "DISCOUNT_EXCEEDS_LINE": "The discount is larger than the line amount."
+    "DISCOUNT_EXCEEDS_LINE": "The discount is larger than the line amount.",
+    "CONTAINER_BRANCH_ONLY": "Container {container} belongs to another branch: only that branch changes it, takes a shipment out or moves one.",
+    "CONTAINER_NOT_OPEN": "Container {container} is no longer open: shipments are no longer added, taken out or moved.",
+    "CONTAINER_FULL": "Container {container} is full: it takes no more shipments.",
+    "SAME_CONTAINER": "The shipment is already in this container: pick another one.",
+    "SHIPMENT_OTHER_BRANCH": "Shipment {shipment} belongs to a branch you do not work in, so you cannot put it in this container.",
+    "SHIPMENT_NOT_LCL_SEA": "Shipment {shipment} is not an LCL sea shipment NOLON carries.",
+    "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
+    "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first."
   }
 }

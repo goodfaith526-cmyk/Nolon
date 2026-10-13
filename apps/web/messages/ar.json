@@ -1179,7 +1179,13 @@
     "clearingBalance": "المتبقي في حساب وسيط التجميع",
     "shipmentPanel": "الحاوية المجمعة",
     "notConsolidated": "هذه الشحنة ليست في حاوية مجمعة.",
-    "newBooking": "حجز LCL جديد في هذه الحاوية"
+    "newBooking": "حجز LCL جديد في هذه الحاوية",
+    "bookableToggle": "الحاويات المفتوحة في كل الفروع",
+    "guestHint": "هذه حاوية فرع {branch}. تظهر لك شحناتك فقط، وفرع الحاوية وحده يُخرج الشحنات أو ينقلها.",
+    "move": "نقل",
+    "moveTo": "انقل إلى حاوية",
+    "moveNone": "لا توجد حاوية مفتوحة أخرى في فروعك.",
+    "shipmentMovedNotice": "نُقلت الشحنة {shipment} إلى الحاوية {container}."
   },
   "Alerts": {
     "title": "التنبيهات",
@@ -2230,6 +2236,14 @@
     "RATE_NOT_USABLE": "هذا السعر لا ينطبق على عرض السعر هذا (المسار أو نمط الشحن أو التحميل أو البضاعة أو العملة أو التاريخ).",
     "MANUAL_LINE_INCOMPLETE": "البند بدون سعر محفوظ يحتاج البند والوحدة والسعر.",
     "UNKNOWN_CHARGE_TYPE": "هذا البند غير معروف أو موقوف.",
-    "DISCOUNT_EXCEEDS_LINE": "الخصم أكبر من مبلغ البند."
+    "DISCOUNT_EXCEEDS_LINE": "الخصم أكبر من مبلغ البند.",
+    "CONTAINER_BRANCH_ONLY": "الحاوية {container} تتبع فرعًا آخر: فرعها فقط يعدّلها أو يُخرج منها شحنة أو ينقلها.",
+    "CONTAINER_NOT_OPEN": "الحاوية {container} لم تعد مفتوحة: لا تُضاف إليها شحنات ولا تُخرج أو تُنقل منها.",
+    "CONTAINER_FULL": "الحاوية {container} ممتلئة: لا تتسع لشحنة أخرى.",
+    "SAME_CONTAINER": "الشحنة في هذه الحاوية أصلًا: اختر حاوية أخرى.",
+    "SHIPMENT_OTHER_BRANCH": "الشحنة {shipment} تتبع فرعًا لا تعمل فيه، فلا يمكنك وضعها في هذه الحاوية.",
+    "SHIPMENT_NOT_LCL_SEA": "الشحنة {shipment} ليست شحنة بحرية LCL تنقلها نولون.",
+    "SHIPMENT_PAST_LOADING": "الشحنة {shipment} تجاوزت مرحلة التجميع أو موقوفة أو ملغاة.",
+    "SHIPMENT_IN_OTHER_CONTAINER": "الشحنة {shipment} موجودة في الحاوية {container}: أخرجها منها أو انقلها أولًا."
   }
 }

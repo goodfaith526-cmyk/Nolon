@@ -101,4 +101,34 @@ describe('api() refusals', () => {
       globalThis.fetch = original;
     }
   });
+
+  it('keeps the code and the values of a refusal that names no field', async () => {
+    const { api } = await import('@/lib/api');
+    const original = globalThis.fetch;
+    globalThis.fetch = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            message: 'Only the branch of container NOL-CON-2026-000004 changes it',
+            code: 'CONTAINER_BRANCH_ONLY',
+            params: { container: 'NOL-CON-2026-000004', other: 3 },
+            fields: [],
+            statusCode: 403,
+          }),
+          { status: 403 },
+        ),
+      );
+    try {
+      const error = await api('/consolidations/x/shipments/y', { method: 'DELETE' }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).fields).toEqual([]);
+      expect((error as ApiError).code).toBe('CONTAINER_BRANCH_ONLY');
+      // Only text values are kept.
+      expect((error as ApiError).params).toEqual({ container: 'NOL-CON-2026-000004' });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

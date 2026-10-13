@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -33,11 +35,11 @@ import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange, type RouteFilters, routeWhere } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, type PageQuery } from '../common/validation.js';
 import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { shipmentBranches } from '../shipments/shipment-scope.js';
+import { shipmentBranches, shipmentScope } from '../shipments/shipment-scope.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive, stageApplies } from '../shipments/state-machine.js';
@@ -71,6 +73,8 @@ export interface ConsolidationFilters extends PageQuery, RouteFilters {
   /** ETD from / to, both included. */
   from?: string;
   to?: string;
+  /** Open containers of every branch, to book into (canBookInto); the branch filter is ignored. */
+  bookable?: boolean;
 }
 
 /** At most this many shipments in one container. */
@@ -137,10 +141,13 @@ export class ConsolidationsService {
     user: AuthUser,
     filters: ConsolidationFilters,
   ): Promise<Page<ConsolidationSummaryDto>> {
+    if (filters.bookable && !canBookInto(user)) {
+      throw new ForbiddenException('Missing permission to book into a container');
+    }
     const where: Prisma.ConsolidationWhereInput = {
-      ...listBranchScope(user, filters.branchId),
+      ...(filters.bookable ? { status: 'OPEN' } : listBranchScope(user, filters.branchId)),
       etd: dateRange(filters.from, filters.to),
-      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.status && !filters.bookable ? { status: filters.status } : {}),
       ...routeWhere(filters),
       ...(filters.q
         ? {
@@ -165,12 +172,13 @@ export class ConsolidationsService {
   }
 
   async get(user: AuthUser, id: string): Promise<ConsolidationDto> {
-    return this.toDto(user, await this.findScoped(user, id));
+    const { container, own } = await this.findViewable(user, id);
+    return this.toDto(user, container, own);
   }
 
   /**
-   * The containers of a shipment the user can see (404 unless they can see the shipment). A
-   * container of a branch the user does not work in is listed but cannot be opened.
+   * The containers of a shipment the user can see (404 unless they can see the shipment). Each
+   * can be opened: a container of another branch shows the user's own shipments only.
    */
   async forShipment(user: AuthUser, shipmentId: string): Promise<ShipmentConsolidationDto[]> {
     await this.shipments.requireAccessible(user, shipmentId);
@@ -183,7 +191,7 @@ export class ConsolidationsService {
       number: c.number,
       status: c.status,
       containerNumber: c.containerNumber,
-      canOpen: canAccessBranch(user, c.branchId),
+      canOpen: true,
     }));
   }
 
@@ -245,7 +253,7 @@ export class ConsolidationsService {
           createdById: user.id,
         },
       });
-      await this.addShipments(tx, container, shipmentIds, numbers);
+      await this.addShipments(tx, user, container, shipmentIds, numbers);
       return container.id;
     });
     return this.get(user, id);
@@ -260,7 +268,7 @@ export class ConsolidationsService {
     id: string,
     input: ConsolidationUpdateRequest,
   ): Promise<ConsolidationDto> {
-    await this.findScoped(user, id);
+    await this.findOwn(user, id);
     if (input.containerTypeCode)
       await this.masterData.requireContainerType(input.containerTypeCode);
     await this.prisma.$transaction(async (tx) => {
@@ -306,22 +314,18 @@ export class ConsolidationsService {
     return this.get(user, id);
   }
 
-  /** Puts another shipment in an open container. */
+  /**
+   * Puts another shipment in an open container: the container's branch, or another branch adding
+   * a shipment of its own (see addShipments).
+   */
   async addShipment(user: AuthUser, id: string, shipmentId: string): Promise<ConsolidationDto> {
-    await this.findScoped(user, id);
+    await this.findViewable(user, id);
     const numbers = await this.requireVisibleShipments(user, [shipmentId]);
     await this.prisma.$transaction(async (tx) => {
       const container = await lockContainer(tx, id);
-      if (!isOpen(container.status)) {
-        throw new ConflictException('Shipments are added only while the container is open');
-      }
-      const count = await tx.consolidationShipment.count({ where: { consolidationId: id } });
-      if (count >= MAX_CONTAINER_SHIPMENTS) {
-        throw new ConflictException(
-          `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
-        );
-      }
-      await this.addShipments(tx, container, [shipmentId], numbers);
+      requireOpen(container);
+      await requireRoom(tx, container);
+      await this.addShipments(tx, user, container, [shipmentId], numbers);
     });
     return this.get(user, id);
   }
@@ -331,16 +335,18 @@ export class ConsolidationsService {
    * loading and carries NOLON's main freight. In one transaction the booking is recorded, confirmed
    * (creating its shipment) and its shipment put in the container, so a container that closed or
    * filled up meanwhile leaves no booking behind.
+   *
+   * Any branch may book its customers into an open container (canBookInto): the booking and its
+   * shipment are the customer's branch's, and the shipment is shared with the container's branch,
+   * which loads it and alone takes it out or moves it (findOwn).
    */
   async createBooking(
     user: AuthUser,
     id: string,
     input: ConsolidationBookingRequest,
   ): Promise<ConsolidationBookingDto> {
-    const existing = await this.findScoped(user, id);
-    if (!isOpen(existing.status)) {
-      throw new ConflictException('Bookings are added only while the container is open');
-    }
+    const { container: existing } = await this.findViewable(user, id);
+    requireOpen(existing);
     const services: BookingService[] = input.services.includes('MAIN_FREIGHT')
       ? input.services
       : ['MAIN_FREIGHT', ...input.services];
@@ -353,15 +359,8 @@ export class ConsolidationsService {
     });
     return this.prisma.$transaction(async (tx) => {
       const container = await lockContainer(tx, id);
-      if (!isOpen(container.status)) {
-        throw new ConflictException('Bookings are added only while the container is open');
-      }
-      const count = await tx.consolidationShipment.count({ where: { consolidationId: id } });
-      if (count >= MAX_CONTAINER_SHIPMENTS) {
-        throw new ConflictException(
-          `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
-        );
-      }
+      requireOpen(container);
+      await requireRoom(tx, container);
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
       const shipment = await this.bookings.confirmInTx(tx, user, bookingId);
       const booking = await tx.booking.findUniqueOrThrow({
@@ -374,6 +373,7 @@ export class ConsolidationsService {
       });
       await this.addShipments(
         tx,
+        user,
         container,
         [shipment.id],
         new Map([[shipment.id, shipmentRow.number]]),
@@ -387,18 +387,54 @@ export class ConsolidationsService {
     });
   }
 
-  /** Takes a shipment out of an open container; it can go in another one. */
+  /**
+   * Takes a shipment out of an open container (the container's branch only); it can go in another
+   * one. A shipment shared with the container's branch for it stays shared.
+   */
   async removeShipment(user: AuthUser, id: string, shipmentId: string): Promise<ConsolidationDto> {
-    await this.findScoped(user, id);
+    await this.findOwn(user, id);
     await this.prisma.$transaction(async (tx) => {
       const container = await lockContainer(tx, id);
-      if (!isOpen(container.status)) {
-        throw new ConflictException('Shipments are removed only while the container is open');
+      requireOpen(container);
+      await takeOut(tx, id, shipmentId);
+    });
+    return this.get(user, id);
+  }
+
+  /**
+   * Moves a shipment from one open container to another, both of the user's branches (the branch
+   * that loads it decides), in one transaction: locks the two containers in id order, then the
+   * shipment. Returns the container it left.
+   */
+  async moveShipment(
+    user: AuthUser,
+    id: string,
+    shipmentId: string,
+    targetId: string,
+  ): Promise<ConsolidationDto> {
+    if (targetId === id) {
+      throw codedRefusal(
+        HttpStatus.BAD_REQUEST,
+        'SAME_CONTAINER',
+        'The shipment is already in this container',
+      );
+    }
+    await this.findOwn(user, id);
+    await this.findOwn(user, targetId);
+    const numbers = await this.requireVisibleShipments(user, [shipmentId]);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = new Map<string, Consolidation>();
+      for (const containerId of [id, targetId].sort()) {
+        locked.set(containerId, await lockContainer(tx, containerId));
       }
-      const { count } = await tx.consolidationShipment.deleteMany({
-        where: { consolidationId: id, shipmentId },
-      });
-      if (count === 0) throw new NotFoundException('The shipment is not in this container');
+      const source = locked.get(id);
+      const target = locked.get(targetId);
+      if (!source || !target) throw new Error('Both containers are locked');
+      requireOpen(source);
+      requireOpen(target);
+      await requireRoom(tx, target);
+      await takeOut(tx, id, shipmentId);
+      await this.addShipments(tx, user, target, [shipmentId], numbers, { moving: true });
     });
     return this.get(user, id);
   }
@@ -409,7 +445,7 @@ export class ConsolidationsService {
     id: string,
     input: ConsolidationMoveRequest,
   ): Promise<ConsolidationDto> {
-    const existing = await this.findScoped(user, id);
+    const existing = await this.findOwn(user, id);
     const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
     if (occurredAt.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
       throw new BadRequestException('The time of a container change cannot be in the future');
@@ -478,7 +514,7 @@ export class ConsolidationsService {
 
   /** Cancels an open container nothing has been billed to. Its shipments are left as they are. */
   async cancel(user: AuthUser, id: string, reason: string): Promise<ConsolidationDto> {
-    await this.findScoped(user, id);
+    await this.findOwn(user, id);
     await this.prisma.$transaction(async (tx) => {
       const container = await lockContainer(tx, id);
       if (!isOpen(container.status)) {
@@ -555,13 +591,40 @@ export class ConsolidationsService {
 
   // -------------------------------------------------------------------------------------------
 
-  /** 404 unless the container is in one of the user's branches. */
-  private async findScoped(user: AuthUser, id: string): Promise<ContainerWithDetails> {
-    const container = await this.prisma.consolidation.findFirst({
-      where: { id, ...branchScope(user) },
+  /**
+   * The container as the user may see it: whole (`own`) when it is of one of their branches; else,
+   * with their own shipments only, while it is open and they may book into it, or once it holds a
+   * shipment they can see. 404 otherwise.
+   */
+  private async findViewable(
+    user: AuthUser,
+    id: string,
+  ): Promise<{ container: ContainerWithDetails; own: boolean }> {
+    const container = await this.prisma.consolidation.findUnique({
+      where: { id },
       include: detailInclude,
     });
     if (!container) throw new NotFoundException('Container not found');
+    if (canAccessBranch(user, container.branchId)) return { container, own: true };
+    if (isOpen(container.status) && canBookInto(user)) return { container, own: false };
+    const theirs = await this.prisma.consolidationShipment.count({
+      where: { consolidationId: id, shipment: shipmentScope(user) },
+    });
+    if (theirs > 0) return { container, own: false };
+    throw new NotFoundException('Container not found');
+  }
+
+  /** For what only the container's branch does (edit, move, cancel, take out): 403 for others. */
+  private async findOwn(user: AuthUser, id: string): Promise<ContainerWithDetails> {
+    const { container, own } = await this.findViewable(user, id);
+    if (!own) {
+      throw codedRefusal(
+        HttpStatus.FORBIDDEN,
+        'CONTAINER_BRANCH_ONLY',
+        `Only the branch of container ${container.number} changes it or takes shipments out`,
+        { container: container.number },
+      );
+    }
     return container;
   }
 
@@ -613,29 +676,52 @@ export class ConsolidationsService {
 
   /**
    * Links shipments to the open container, each under its lock in id order: an active LCL sea
-   * shipment NOLON carries, of the container's branch (owned or shared with it), not yet on the
-   * sea leg, and in no other container. The container's voyage is copied to them.
+   * shipment NOLON carries, not yet on the sea leg, and in no other container. The container's
+   * voyage is copied to them.
+   *
+   * Branches: a user of another branch than the container's adds only shipments of their own
+   * branches. A shipment the container's branch does not see yet is shared with it, as it loads
+   * the shipment, when the user works in the shipment's own branch or moves it from another
+   * container of theirs (`moving`); the shipment stays its branch's.
    */
   private async addShipments(
     tx: Tx,
+    user: AuthUser,
     container: Consolidation,
     shipmentIds: readonly string[],
     numbers: ReadonlyMap<string, string>,
+    options: { moving?: boolean } = {},
   ): Promise<void> {
     for (const shipmentId of [...shipmentIds].sort()) {
       const label = numbers.get(shipmentId) ?? shipmentId;
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
       if (!isActive(status) || !BEFORE_CONSOLIDATION.includes(status)) {
-        throw new ConflictException(`Shipment ${label} is ${status} and cannot be consolidated`);
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'SHIPMENT_PAST_LOADING',
+          `Shipment ${label} is ${status} and cannot be consolidated`,
+          { shipment: label },
+        );
       }
       const shape = await this.shipments.shapeInTx(tx, shipmentId);
       if (!stageApplies('CONSOLIDATED', shape)) {
-        throw new BadRequestException(`Shipment ${label} is not an LCL sea shipment NOLON carries`);
+        throw codedRefusal(
+          HttpStatus.BAD_REQUEST,
+          'SHIPMENT_NOT_LCL_SEA',
+          `Shipment ${label} is not an LCL sea shipment NOLON carries`,
+          { shipment: label },
+        );
       }
       const shipment = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
-      if (!shipmentBranches(shipment).includes(container.branchId)) {
-        throw new BadRequestException(
+      const ownsShipment = canAccessBranch(user, shipment.branchId);
+      const ownsContainer = canAccessBranch(user, container.branchId);
+      const shared = shipmentBranches(shipment).includes(container.branchId);
+      if ((!ownsContainer && !ownsShipment) || (!shared && !ownsShipment && !options.moving)) {
+        throw codedRefusal(
+          HttpStatus.BAD_REQUEST,
+          'SHIPMENT_OTHER_BRANCH',
           `Shipment ${label} belongs to another branch than the container`,
+          { shipment: label },
         );
       }
       const other = await tx.consolidationShipment.findFirst({
@@ -643,10 +729,14 @@ export class ConsolidationsService {
         select: { consolidation: { select: { number: true } } },
       });
       if (other) {
-        throw new ConflictException(
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'SHIPMENT_IN_OTHER_CONTAINER',
           `Shipment ${label} is already in container ${other.consolidation.number}`,
+          { shipment: label, container: other.consolidation.number },
         );
       }
+      if (!shared) await this.shipments.shareWithBranchInTx(tx, shipmentId, container.branchId);
       await tx.consolidationShipment.create({
         data: { consolidationId: container.id, shipmentId, branchId: container.branchId },
       });
@@ -731,9 +821,14 @@ export class ConsolidationsService {
     }
   }
 
-  private async toDto(user: AuthUser, c: ContainerWithDetails): Promise<ConsolidationDto> {
+  private async toDto(
+    user: AuthUser,
+    c: ContainerWithDetails,
+    own: boolean,
+  ): Promise<ConsolidationDto> {
     const has = (permission: Permission) => user.permissions.has(permission);
-    const showsCost = seesConsolidationCosts(has);
+    // Another branch sees its own shipments (tripSummaries is scoped) and no costs.
+    const showsCost = own && seesConsolidationCosts(has);
     const shipmentIds = c.shipments.map((l) => l.shipmentId);
     const [summaries, view] = await Promise.all([
       this.shipments.tripSummaries(user, shipmentIds),
@@ -783,19 +878,57 @@ export class ConsolidationsService {
       showsCost,
       costs: view?.costs ?? [],
       clearingBalanceUsd: view ? toDecimalString(view.clearingBalanceUsd) : null,
+      ownBranch: own,
       actions: {
-        canEdit: has('consolidation:update') && isEditable(c.status),
-        canEditShipments: has('consolidation:update') && isOpen(c.status),
-        canAddBooking:
-          has('consolidation:update') &&
-          has('bookings:create') &&
-          has('bookings:approve') &&
-          isOpen(c.status),
-        moves: has('consolidation:update') ? [...consolidationMoves(c.status)] : [],
-        canCancel: has('consolidation:cancel') && isOpen(c.status),
+        canEdit: own && has('consolidation:update') && isEditable(c.status),
+        canAddShipments: has('consolidation:update') && isOpen(c.status),
+        canEditShipments: own && has('consolidation:update') && isOpen(c.status),
+        canAddBooking: canBookInto(user) && isOpen(c.status),
+        moves: own && has('consolidation:update') ? [...consolidationMoves(c.status)] : [],
+        canCancel: own && has('consolidation:cancel') && isOpen(c.status),
       },
     };
   }
+}
+
+/** Who may book into an open container, of any branch (POST /consolidations/:id/bookings). */
+function canBookInto(user: AuthUser): boolean {
+  return (['consolidation:update', 'bookings:create', 'bookings:approve'] as const).every((p) =>
+    user.permissions.has(p),
+  );
+}
+
+/** 409 unless the container (locked or as read) is still open. */
+function requireOpen(c: Consolidation): void {
+  if (!isOpen(c.status)) {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'CONTAINER_NOT_OPEN',
+      `Container ${c.number} is no longer open: its shipments are fixed`,
+      { container: c.number },
+    );
+  }
+}
+
+/** 409 when the locked container already holds MAX_CONTAINER_SHIPMENTS. */
+async function requireRoom(tx: Tx, c: Consolidation): Promise<void> {
+  const count = await tx.consolidationShipment.count({ where: { consolidationId: c.id } });
+  if (count >= MAX_CONTAINER_SHIPMENTS) {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'CONTAINER_FULL',
+      `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
+      { container: c.number },
+    );
+  }
+}
+
+/** Unlinks the shipment from the locked container; 404 when it is not in it. */
+async function takeOut(tx: Tx, id: string, shipmentId: string): Promise<void> {
+  const { count } = await tx.consolidationShipment.deleteMany({
+    where: { consolidationId: id, shipmentId },
+  });
+  if (count === 0) throw new NotFoundException('The shipment is not in this container');
 }
 
 /** Row lock on the container, then the row as it is under the lock. */

@@ -1002,6 +1002,16 @@ export class ShipmentsService {
     };
   }
 
+  /**
+   * Shares the shipment with one more active branch, under its row lock (held by the caller); a
+   * branch already sharing it is left as it is.
+   */
+  async shareWithBranchInTx(tx: Tx, id: string, branchId: string): Promise<void> {
+    const current = await this.sharedBranchIdsInTx(tx, id);
+    if (current.includes(branchId)) return;
+    await this.replaceSharedBranchesInTx(tx, id, [...current, branchId]);
+  }
+
   private async sharedBranchIdsInTx(tx: Tx, id: string): Promise<string[]> {
     const rows = await tx.shipmentBranch.findMany({
       where: { shipmentId: id },

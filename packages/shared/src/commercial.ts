@@ -475,5 +475,14 @@ export const FORM_REFUSALS = [
   'MANUAL_LINE_INCOMPLETE',
   'UNKNOWN_CHARGE_TYPE',
   'DISCOUNT_EXCEEDS_LINE',
+  // Containers (consolidations): params `shipment` and `container` are numbers.
+  'CONTAINER_BRANCH_ONLY',
+  'CONTAINER_NOT_OPEN',
+  'CONTAINER_FULL',
+  'SAME_CONTAINER',
+  'SHIPMENT_OTHER_BRANCH',
+  'SHIPMENT_NOT_LCL_SEA',
+  'SHIPMENT_PAST_LOADING',
+  'SHIPMENT_IN_OTHER_CONTAINER',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

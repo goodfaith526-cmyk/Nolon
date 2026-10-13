@@ -9,9 +9,13 @@ export class ApiError extends Error {
     message: string,
     /** The invalid fields a 400 names, as request paths (`items.0.weightKg`); empty otherwise. */
     readonly fields: readonly string[] = [],
-    /** For a broken rule on those fields: its reason (the API's text) and its code, if any. */
+    /**
+     * For a broken rule (on those fields, or on the whole request): its reason (the API's text),
+     * its code and the values its message names (`shipment`, `container`), if any.
+     */
     readonly reason: string | null = null,
     readonly code: string | null = null,
+    readonly params: Readonly<Record<string, string>> = {},
   ) {
     super(message);
   }
@@ -32,8 +36,14 @@ export async function api<T = void>(
     let fields: string[] = [];
     let reason: string | null = null;
     let code: string | null = null;
+    const params: Record<string, string> = {};
     try {
-      const data = (await res.json()) as { message?: unknown; fields?: unknown; code?: unknown };
+      const data = (await res.json()) as {
+        message?: unknown;
+        fields?: unknown;
+        code?: unknown;
+        params?: unknown;
+      };
       if (typeof data.message === 'string') message = data.message;
       // A request that fails validation is answered with the list of its invalid fields; a
       // broken rule with its reason in `message` and the fields it is about in `fields`.
@@ -44,11 +54,16 @@ export async function api<T = void>(
         fields = data.fields.filter((f): f is string => typeof f === 'string');
         reason = message;
         if (typeof data.code === 'string') code = data.code;
+        if (typeof data.params === 'object' && data.params !== null) {
+          for (const [key, value] of Object.entries(data.params)) {
+            if (typeof value === 'string') params[key] = value;
+          }
+        }
       }
     } catch {
       // Body was not JSON; keep the status text.
     }
-    throw new ApiError(res.status, message, fields, reason, code);
+    throw new ApiError(res.status, message, fields, reason, code, params);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
