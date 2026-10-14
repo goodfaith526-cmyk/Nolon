@@ -34,6 +34,7 @@ import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import {
   dateRange,
   localDayFilter,
+  matchedLocations,
   type RouteFilters,
   routeWhere,
 } from '../common/list-filters.js';
@@ -128,6 +129,7 @@ export class ShipmentsService {
   ) {}
 
   async list(user: AuthUser, filters: ShipmentFilters): Promise<Page<ShipmentSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const { branchId, from, to } = filters;
     if (branchId) assertBranchAccess(user, branchId);
     const created = await localDayFilter(this.prisma, 'createdAt', from, to);
@@ -147,7 +149,7 @@ export class ShipmentsService {
         : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.mode ? { mode: filters.mode } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       eta: dateRange(filters.etaFrom, filters.etaTo),
       ...(filters.q
         ? {
@@ -170,7 +172,13 @@ export class ShipmentsService {
       }),
       this.prisma.shipment.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<ShipmentDto> {

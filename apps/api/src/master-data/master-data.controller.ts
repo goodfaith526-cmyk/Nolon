@@ -27,6 +27,7 @@ const locationBody = z
     nameAr: requiredText(200),
     countryCode,
     isActive: z.boolean().optional(),
+    cityId: z.uuid().nullish(),
   })
   .strict();
 

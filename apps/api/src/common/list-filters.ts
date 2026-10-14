@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { toDbDate, todayIn } from './dates.js';
 import { dateString } from './validation.js';
+import type { RouteMatch } from '@nolon/shared';
 
 /**
  * Filters shared by the list endpoints (and the staff assistant that reads them): periods, flags
@@ -24,12 +25,22 @@ export interface RouteFilters {
   destinationLocationId?: string;
 }
 
-/** Prisma `where` fragment for `routeFields`: only the ends that were given. */
-export function routeWhere(f: RouteFilters): RouteFilters {
+/** Prisma `where` fragment for a matched route (MasterDataService.matchRoute): only the ends given. */
+export function routeWhere(match: RouteMatch): {
+  originLocationId?: { in: string[] };
+  destinationLocationId?: { in: string[] };
+} {
   return {
-    ...(f.originLocationId ? { originLocationId: f.originLocationId } : {}),
-    ...(f.destinationLocationId ? { destinationLocationId: f.destinationLocationId } : {}),
+    ...(match.originLocationIds ? { originLocationId: { in: match.originLocationIds } } : {}),
+    ...(match.destinationLocationIds
+      ? { destinationLocationId: { in: match.destinationLocationIds } }
+      : {}),
   };
+}
+
+/** The `matchedLocations` of a list page, when it was filtered by origin or destination. */
+export function matchedLocations(match: RouteMatch): { matchedLocations?: RouteMatch } {
+  return match.originLocationIds || match.destinationLocationIds ? { matchedLocations: match } : {};
 }
 
 /** `branchId` (one of the user's; checked by the service) and `from` / `to` of a list. */

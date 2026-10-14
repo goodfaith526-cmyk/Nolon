@@ -1,0 +1,217 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  ConsolidationSummaryDto,
+  CustomerDto,
+  LocationDto,
+  MasterDataDto,
+  Page,
+  QuotationDto,
+  RateCardDto,
+} from '@nolon/shared';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  APP_ORIGIN,
+  LEDGER_PREFIX,
+  type TestApp,
+  branchId,
+  createTestApp,
+  createUser,
+  signIn,
+} from './auth-test-app.js';
+import { AGENT_PREFIX, registerClient, requests, tokenFor } from './agent-drafts-helpers.js';
+import { uniquePhone } from './test-data.js';
+
+// A city and the places that serve it (owner, 2026-10-14: a lookup by Dubai includes Jebel Ali).
+// The relation is data: a place names its city. Lists filtered by a city also find its places
+// and say which locations they matched; a filter on a port stays exact, and writes keep the
+// location they were given. The people here keep the ledger prefix: the containers they make
+// are not removed by the usual cleanup.
+
+let t: TestApp;
+let r: ReturnType<typeof requests>;
+let dxb: string;
+let city: LocationDto;
+let port: LocationDto;
+let otherPort: LocationDto;
+let portSudan: string;
+let rateFromPort: string;
+let customer: CustomerDto;
+let token = '';
+const cookies = { admin: '', sales: '', ops: '' };
+
+const tag = `CP${randomUUID().slice(0, 5).toUpperCase()}`;
+
+const patch = (path: string, cookie: string, body: object) =>
+  t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+
+const createLocation = async (body: object) =>
+  (await r.post('/master-data/locations', cookies.admin, body).expect(201)).body as LocationDto;
+
+const location = (suffix: string, kind: 'CITY' | 'PORT', extra: object = {}) => ({
+  code: `${tag}${suffix}`,
+  kind,
+  nameEn: `City ports ${tag}${suffix}`,
+  nameAr: 'اختبار المدينة والموانئ',
+  countryCode: 'AE',
+  ...extra,
+});
+
+beforeAll(async () => {
+  t = await createTestApp();
+  r = requests(t);
+  dxb = await branchId(t.prisma, 'DXB');
+  portSudan = (await t.prisma.location.findUniqueOrThrow({ where: { code: 'SDPZU' } })).id;
+  const people = {
+    admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX),
+    sales: await createUser(t.prisma, ['SALES'], ['DXB'], LEDGER_PREFIX),
+    ops: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], LEDGER_PREFIX),
+  };
+  for (const key of Object.keys(people) as (keyof typeof people)[]) {
+    cookies[key] = await signIn(t, people[key].email);
+  }
+  const client = await registerClient(t, cookies.admin, `City ports ${tag}`);
+  const agent = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
+  token = await tokenFor(t, await signIn(t, agent.email), client);
+
+  city = await createLocation(location('C', 'CITY'));
+  port = await createLocation(location('P', 'PORT', { cityId: city.id }));
+  otherPort = await createLocation(location('Q', 'PORT'));
+  rateFromPort = (
+    await t.prisma.rateCard.create({
+      data: {
+        branchId: dxb,
+        originLocationId: port.id,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'GENERAL',
+        containerTypeCode: '20GP',
+        chargeTypeCode: 'FREIGHT',
+        unit: 'PER_CONTAINER',
+        price: '900',
+        minimumCharge: '0',
+        currency: 'USD',
+        validFrom: new Date('2026-01-01T00:00:00Z'),
+        validTo: null,
+        status: 'APPROVED',
+        createdById: people.sales.id,
+        approvedById: people.sales.id,
+        approvedAt: new Date(),
+      },
+    })
+  ).id;
+  customer = (
+    await r
+      .post('/customers', cookies.sales, {
+        branchId: dxb,
+        kind: 'COMPANY',
+        name: `City Ports ${tag}`,
+        phone: uniquePhone(),
+      })
+      .expect(201)
+  ).body as CustomerDto;
+});
+
+afterAll(async () => {
+  await t.close();
+});
+
+describe('a place and its city', () => {
+  it('is master data: a place names its city, and master data says so', async () => {
+    expect(port.cityId).toBe(city.id);
+    const all = (await r.get('/master-data', cookies.sales).expect(200)).body as MasterDataDto;
+    expect(all.locations.find((l) => l.id === port.id)?.cityId).toBe(city.id);
+    expect(all.locations.find((l) => l.id === city.id)?.cityId).toBeNull();
+  });
+
+  it('refuses a city that is not a CITY, a city inside a city, and a city of itself', async () => {
+    await r
+      .post('/master-data/locations', cookies.admin, location('X', 'PORT', { cityId: port.id }))
+      .expect(400);
+    await r
+      .post('/master-data/locations', cookies.admin, location('Y', 'CITY', { cityId: city.id }))
+      .expect(400);
+    await patch(`/master-data/locations/${otherPort.id}`, cookies.admin, {
+      cityId: otherPort.id,
+    }).expect(400);
+    // A city its places name stays a city.
+    await patch(`/master-data/locations/${city.id}`, cookies.admin, { kind: 'PORT' }).expect(400);
+    await r
+      .post('/master-data/locations', cookies.sales, location('Z', 'PORT', { cityId: city.id }))
+      .expect(403);
+  });
+});
+
+describe('lists filtered by a city', () => {
+  it('find rates from its ports and say which locations they matched', async () => {
+    const byCity = (
+      await r.get(`/rates?originLocationId=${city.id}&pageSize=100`, cookies.sales).expect(200)
+    ).body as Page<RateCardDto>;
+    expect(byCity.items.map((i) => i.id)).toContain(rateFromPort);
+    expect(byCity.matchedLocations).toEqual({
+      originLocationIds: [city.id, port.id],
+      destinationLocationIds: null,
+    });
+    // Through the assistant, the same.
+    const viaAgent = (
+      await r.agentGet(`/rates?originLocationId=${city.id}&pageSize=100`, token).expect(200)
+    ).body as Page<RateCardDto>;
+    expect(viaAgent.items.map((i) => i.id)).toContain(rateFromPort);
+  });
+
+  it('stay exact on a port, and say nothing without a route filter', async () => {
+    const byOther = (
+      await r.get(`/rates?originLocationId=${otherPort.id}`, cookies.sales).expect(200)
+    ).body as Page<RateCardDto>;
+    expect(byOther.items.map((i) => i.id)).not.toContain(rateFromPort);
+    expect(byOther.matchedLocations).toEqual({
+      originLocationIds: [otherPort.id],
+      destinationLocationIds: null,
+    });
+    const unfiltered = (await r.get('/rates?pageSize=1', cookies.sales).expect(200))
+      .body as Page<RateCardDto>;
+    expect(unfiltered).not.toHaveProperty('matchedLocations');
+  });
+
+  it('find quotations and containers from its ports; the record keeps the port', async () => {
+    const quotation = (
+      await r
+        .post('/quotations', cookies.sales, {
+          customerId: customer.id,
+          originLocationId: port.id,
+          destinationLocationId: portSudan,
+          mode: 'SEA',
+          loadType: 'FCL',
+          cargoType: 'GENERAL',
+          currency: 'USD',
+          validUntil: new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10),
+          lines: [
+            { chargeTypeCode: 'FREIGHT', unit: 'PER_SHIPMENT', unitPrice: '10', quantity: '1' },
+          ],
+        })
+        .expect(201)
+    ).body as QuotationDto;
+    expect(quotation.originLocationId).toBe(port.id);
+    const quotations = (
+      await r.get(`/quotations?originLocationId=${city.id}`, cookies.sales).expect(200)
+    ).body as Page<QuotationDto>;
+    expect(quotations.items.map((q) => q.id)).toContain(quotation.id);
+    expect(quotations.matchedLocations?.originLocationIds).toEqual([city.id, port.id]);
+
+    const container = (
+      await r
+        .post('/consolidations', cookies.ops, {
+          branchId: dxb,
+          originLocationId: port.id,
+          destinationLocationId: portSudan,
+          containerTypeCode: '20GP',
+          shipmentIds: [],
+        })
+        .expect(201)
+    ).body as ConsolidationSummaryDto;
+    const containers = (
+      await r.get(`/consolidations?originLocationId=${city.id}`, cookies.ops).expect(200)
+    ).body as Page<ConsolidationSummaryDto>;
+    expect(containers.items.map((c) => c.id)).toContain(container.id);
+  });
+});

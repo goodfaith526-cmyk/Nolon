@@ -10,7 +10,9 @@ import type {
   CurrencyDto,
   LocationDto,
   LocationInput,
+  LocationKind,
   MasterDataDto,
+  RouteMatch,
 } from '@nolon/shared';
 import type {
   ChargeType,
@@ -20,6 +22,7 @@ import type {
 } from '../generated/prisma/client.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { RouteFilters } from '../common/list-filters.js';
 
 /**
  * Ports and cities, container types, charge types and document types (plus the currency master, read through
@@ -55,6 +58,7 @@ export class MasterDataService {
   }
 
   async createLocation(input: LocationInput): Promise<LocationDto> {
+    await this.requireCityOf(null, input.kind, input.cityId);
     try {
       return toLocationDto(await this.prisma.location.create({ data: input }));
     } catch (error) {
@@ -66,6 +70,14 @@ export class MasterDataService {
   async updateLocation(id: string, input: Partial<LocationInput>): Promise<LocationDto> {
     const existing = await this.prisma.location.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Location not found');
+    const kind = input.kind ?? existing.kind;
+    const cityId = input.cityId === undefined ? existing.cityId : input.cityId;
+    await this.requireCityOf(id, kind, cityId);
+    // A city that places name as theirs stays a city.
+    if (kind !== 'CITY' && existing.kind === 'CITY') {
+      const places = await this.prisma.location.count({ where: { cityId: id } });
+      if (places > 0) throw new BadRequestException('Places name this location as their city');
+    }
     try {
       return toLocationDto(await this.prisma.location.update({ where: { id }, data: input }));
     } catch (error) {
@@ -97,6 +109,43 @@ export class MasterDataService {
     return toCodeNameDto(
       await this.prisma.documentType.upsert({ where: { code }, create: input, update: fields }),
     );
+  }
+
+  /**
+   * The locations a route filter matches: a location matches itself and the places whose city it
+   * is (a city finds its ports). Reads only: a write keeps the location it was given.
+   */
+  async matchRoute(filters: RouteFilters): Promise<RouteMatch> {
+    const ends = [filters.originLocationId, filters.destinationLocationId].filter(
+      (id): id is string => id !== undefined,
+    );
+    const places =
+      ends.length === 0
+        ? []
+        : await this.prisma.location.findMany({
+            where: { cityId: { in: ends } },
+            select: { id: true, cityId: true },
+            orderBy: { code: 'asc' },
+          });
+    const of = (id: string | undefined): string[] | null =>
+      id === undefined ? null : [id, ...places.filter((p) => p.cityId === id).map((p) => p.id)];
+    return {
+      originLocationIds: of(filters.originLocationId),
+      destinationLocationIds: of(filters.destinationLocationId),
+    };
+  }
+
+  /** A place's city: a CITY location other than itself; a city has none (one level only). */
+  private async requireCityOf(
+    id: string | null,
+    kind: LocationKind,
+    cityId: string | null | undefined,
+  ): Promise<void> {
+    if (!cityId) return;
+    if (kind === 'CITY') throw new BadRequestException('A city does not belong to another city');
+    if (cityId === id) throw new BadRequestException('A location cannot be its own city');
+    const city = await this.prisma.location.findUnique({ where: { id: cityId } });
+    if (city?.kind !== 'CITY') throw new BadRequestException('cityId must be a city');
   }
 
   /** 400 unless the location exists and is active. */
@@ -144,6 +193,7 @@ function toLocationDto(l: Location): LocationDto {
     nameAr: l.nameAr,
     countryCode: l.countryCode,
     isActive: l.isActive,
+    cityId: l.cityId,
   };
 }
 

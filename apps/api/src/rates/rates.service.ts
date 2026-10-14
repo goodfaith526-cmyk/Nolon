@@ -34,6 +34,7 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { matchedLocations, routeWhere } from '../common/list-filters.js';
 
 /** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
 const WRITE_CHUNK = 1000;
@@ -142,13 +143,11 @@ export class RatesService {
   ) {}
 
   async list(user: AuthUser, filters: RateFilters): Promise<Page<RateCardDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const where: Prisma.RateCardWhereInput = {
       ...listBranchScope(user, filters.branchId),
       ...(filters.status ? { status: filters.status } : {}),
-      ...(filters.originLocationId ? { originLocationId: filters.originLocationId } : {}),
-      ...(filters.destinationLocationId
-        ? { destinationLocationId: filters.destinationLocationId }
-        : {}),
+      ...routeWhere(route),
       ...(filters.mode ? { mode: filters.mode } : {}),
       AND: [
         ...(filters.validOn
@@ -169,7 +168,13 @@ export class RatesService {
       }),
       this.prisma.rateCard.count({ where }),
     ]);
-    return { items: items.map(toDto), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toDto),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<RateCardDto> {

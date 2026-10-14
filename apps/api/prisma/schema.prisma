@@ -339,9 +339,13 @@ model Location {
   /// ISO 3166-1 alpha-2.
   countryCode String       @map("country_code") @db.Char(2)
   isActive    Boolean      @default(true) @map("is_active")
+  /// The city a port (or other place) serves, a CITY location: a lookup by the city also finds it.
+  cityId      String?      @map("city_id") @db.Uuid
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  city               Location?             @relation("LocationCity", fields: [cityId], references: [id], onDelete: Restrict)
+  places             Location[]            @relation("LocationCity")
   ratesFrom          RateCard[]            @relation("RateOrigin")
   ratesTo            RateCard[]            @relation("RateDestination")
   rateDraftsFrom     RateCardDraft[]       @relation("RateDraftOrigin")
@@ -360,6 +364,7 @@ model Location {
   consolidationsFrom Consolidation[]       @relation("ConsolidationOrigin")
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
 
+  @@index([cityId])
   @@map("locations")
 }
 
