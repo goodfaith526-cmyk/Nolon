@@ -298,7 +298,10 @@ export interface DraftKindCapabilityDto {
   path: string;
   /** `POST <path>/check` exists: the create's checks, with nothing written. */
   preCheck: boolean;
-  /** The review screen's path on the web, without the locale (`:id`: the draft's id). */
+  /**
+   * The review screen's path on the web, without the locale (`:id`: the draft's id). A GRN draft is
+   * reviewed with its document on the shipment's page (`:shipmentId`).
+   */
   review: string;
   /** This user holds the create's permissions now (NOLON checks them again on create). */
   canCreate: boolean;

@@ -51,6 +51,9 @@ describe('draft capabilities', () => {
     expect(can).toEqual(['quotation']);
     expect(kinds.find((k) => k.kind === 'quotation')?.approval).toBe('both');
     expect(kinds.find((k) => k.kind === 'new_customer_quotation')?.approval).toBe('screen');
-    expect(kinds.find((k) => k.kind === 'grn')?.preCheck).toBe(false);
+    expect(kinds.find((k) => k.kind === 'grn')).toMatchObject({
+      preCheck: false,
+      review: '/shipments/:shipmentId',
+    });
   });
 });
