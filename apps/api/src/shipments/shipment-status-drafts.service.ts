@@ -5,7 +5,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
   ShipmentStatusDraftCreateRequest,
   ShipmentStatusDraftDto,
   ShipmentStatusDraftListItemDto,
@@ -31,6 +30,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
@@ -205,7 +205,7 @@ export class ShipmentStatusDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('shipments:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
@@ -213,8 +213,13 @@ export class ShipmentStatusDraftsService {
         'shipment_status',
         d,
         d.status === 'APPROVED'
-          ? { id: d.shipmentId, number: d.shipmentNumber }
-          : { id: null, number: null },
+          ? {
+              type: 'shipment',
+              id: d.shipmentId,
+              number: d.shipmentNumber,
+              path: `/shipments/${d.shipmentId}`,
+            }
+          : null,
       ),
     );
   }

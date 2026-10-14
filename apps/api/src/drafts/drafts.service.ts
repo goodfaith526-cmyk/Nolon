@@ -11,6 +11,7 @@ import type {
   EntryDraftReviewFields,
   MyDraftItemDto,
   MyDraftKind,
+  MyDraftResult,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -399,6 +400,8 @@ export interface MyDraftsQuery {
   status?: DraftStatus;
   /** Only drafts created at or after this time. */
   since?: Date;
+  /** Only drafts created before this time: the next page, from the last item's createdAt. */
+  before?: Date;
   limit: number;
 }
 
@@ -409,31 +412,55 @@ export interface MyDraftsQuery {
 export function mineWhere(
   user: AuthUser,
   query: MyDraftsQuery,
-): { createdById: string; agentClientId?: string; createdAt?: { gte: Date } } {
+): { createdById: string; agentClientId?: string; createdAt?: { gte?: Date; lt?: Date } } {
+  const createdAt = {
+    ...(query.since ? { gte: query.since } : {}),
+    ...(query.before ? { lt: query.before } : {}),
+  };
   return {
     createdById: user.id,
     ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
-    ...(query.since ? { createdAt: { gte: query.since } } : {}),
+    ...(query.since || query.before ? { createdAt } : {}),
   };
 }
+
+/** Each kind's review page segment (/drafts/<page>/<id> on the web). */
+const REVIEW_PAGES: Record<MyDraftKind, string> = {
+  booking: 'bookings',
+  new_customer_booking: 'new-customer-bookings',
+  quotation: 'quotations',
+  invoice: 'invoices',
+  receipt: 'receipts',
+  trip: 'trips',
+  goods_release: 'releases',
+  shipment_status: 'shipment-statuses',
+  party: 'parties',
+  customer: 'customers',
+  rate_card: 'rate-cards',
+};
+
+/** A "my drafts" item before the branch code is added. */
+export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;
 
 /** A kind's list item as "my drafts" shows it, with the record its approval made. */
 export function myDraftItem(
   kind: MyDraftKind,
   d: EntryDraftReviewFields,
-  result: { id: string | null; number: string | null },
-): MyDraftItemDto {
+  result: MyDraftResult | null,
+): MyDraftRow {
   return {
     kind,
     id: d.id,
     status: d.status,
     subject: d.subject,
+    branchId: d.branchId,
     createdAt: d.createdAt,
     expiresAt: d.expiresAt,
     decidedAt: d.decidedAt,
     decidedByName: d.decidedByName,
     rejectReason: d.rejectReason,
-    result: result.id === null ? null : { id: result.id, number: result.number },
+    reviewPath: `/drafts/${REVIEW_PAGES[kind]}/${d.id}`,
+    result,
   };
 }
 

@@ -11,7 +11,6 @@ import type {
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
   InvoiceDraftRequest,
-  MyDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -38,6 +37,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -130,6 +130,18 @@ export class InvoiceDraftsService {
           source: l.priceSource,
           rateCardId: l.rateCardId,
         })),
+        computed: prepared.lines.flatMap((l, i) =>
+          l.priceSource === 'TYPED'
+            ? []
+            : [
+                {
+                  field: `lines.${i}.unitPrice`,
+                  value: toDecimalString(l.unitPrice),
+                  source: l.priceSource,
+                  rateCardId: l.rateCardId,
+                },
+              ],
+        ),
       };
     });
   }
@@ -231,11 +243,22 @@ export class InvoiceDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('customer_invoices:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
-      myDraftItem('invoice', d, { id: d.invoiceId, number: d.invoiceNumber }),
+      myDraftItem(
+        'invoice',
+        d,
+        d.invoiceId === null
+          ? null
+          : {
+              type: 'invoice',
+              id: d.invoiceId,
+              number: d.invoiceNumber,
+              path: `/invoices/${d.invoiceId}`,
+            },
+      ),
     );
   }
 

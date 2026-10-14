@@ -5,7 +5,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
   PartyDraftCreateRequest,
   PartyDraftDto,
   PartyDraftListItemDto,
@@ -32,6 +31,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
@@ -204,10 +204,18 @@ export class PartyDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('customers:view')) return [];
     const drafts = await this.list(user, query.status, query);
-    return drafts.map((d) => myDraftItem('party', d, { id: d.partyId, number: null }));
+    return drafts.map((d) =>
+      myDraftItem(
+        'party',
+        d,
+        d.partyId === null
+          ? null
+          : { type: 'party', id: d.partyId, number: null, path: `/customers/${d.customerId}` },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<PartyDraftDto> {

@@ -136,11 +136,14 @@ describe('my drafts', () => {
       id: first.id,
       status: 'DRAFT',
       subject: dxbCustomer.name,
+      branchId: dxbCustomer.branchId,
+      branchCode: 'DXB',
       createdAt: first.createdAt,
       expiresAt: first.expiresAt,
       decidedAt: null,
       decidedByName: null,
       rejectReason: null,
+      reviewPath: `/drafts/quotations/${first.id}`,
       result: null,
     });
     // On the screen, the same user sees them too.
@@ -173,7 +176,12 @@ describe('my drafts', () => {
     });
     expect(items.find((i) => i.id === approved.id)).toMatchObject({
       status: 'APPROVED',
-      result: { id: quotation.quotation?.id, number: quotation.quotation?.number },
+      result: {
+        type: 'quotation',
+        id: quotation.quotation?.id,
+        number: quotation.quotation?.number,
+        path: `/quotations/${quotation.quotation?.id}`,
+      },
     });
     expect(items.find((i) => i.id === rejected.id)).toMatchObject({
       status: 'REJECTED',
@@ -223,6 +231,12 @@ describe('my drafts', () => {
     expect(ids(await mine(tokens.agent, '?limit=1'))).toEqual([latest.id]);
     const since = encodeURIComponent(latest.createdAt);
     expect(ids(await mine(tokens.agent, `?since=${since}`))).toEqual([latest.id]);
+    // The next page starts before the last item shown.
+    const before = encodeURIComponent(latest.createdAt);
+    expect(ids(await mine(tokens.agent, `?limit=1&before=${before}`))).not.toContain(latest.id);
+    expect(await mine(tokens.agent, '?kind=booking')).toEqual([]);
+    expect(ids(await mine(tokens.agent, '?kind=quotation'))).toContain(latest.id);
+    await r.agentGet('/assistant-drafts/mine?kind=journal', tokens.agent).expect(400);
     await r.agentGet('/assistant-drafts/mine?limit=51', tokens.agent).expect(400);
     await r.agentGet('/assistant-drafts/mine?userId=x', tokens.agent).expect(400);
   });

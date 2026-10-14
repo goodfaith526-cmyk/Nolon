@@ -13,7 +13,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
   QuotationDraftCreateRequest,
   QuotationDraftDto,
   QuotationDraftListItemDto,
@@ -42,6 +41,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -170,6 +170,19 @@ export class QuotationDraftsService {
         total: toDecimalString(prepared.header.total),
         currency: input.currency,
         priceSources: sourcesOf(prepared),
+        // A line given no price takes the rate card's: what the draft would record.
+        computed: prepared.lines.flatMap((l, i) =>
+          l.rateCardId === null || input.lines[i]?.unitPrice !== undefined
+            ? []
+            : [
+                {
+                  field: `lines.${i}.unitPrice`,
+                  value: toDecimalString(l.unitPrice),
+                  source: 'RATE_CARD' as const,
+                  rateCardId: l.rateCardId,
+                },
+              ],
+        ),
       };
     });
   }
@@ -266,11 +279,22 @@ export class QuotationDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('quotations:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
-      myDraftItem('quotation', d, { id: d.quotationId, number: d.quotationNumber }),
+      myDraftItem(
+        'quotation',
+        d,
+        d.quotationId === null
+          ? null
+          : {
+              type: 'quotation',
+              id: d.quotationId,
+              number: d.quotationNumber,
+              path: `/quotations/${d.quotationId}`,
+            },
+      ),
     );
   }
 

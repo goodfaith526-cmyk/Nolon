@@ -6,7 +6,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
   ReceiptDraftCreateRequest,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
@@ -38,6 +37,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -224,11 +224,22 @@ export class ReceiptDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('receipts:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
-      myDraftItem('receipt', d, { id: d.receiptId, number: d.receiptNumber }),
+      myDraftItem(
+        'receipt',
+        d,
+        d.receiptId === null
+          ? null
+          : {
+              type: 'receipt',
+              id: d.receiptId,
+              number: d.receiptNumber,
+              path: `/receipts/${d.receiptId}`,
+            },
+      ),
     );
   }
 

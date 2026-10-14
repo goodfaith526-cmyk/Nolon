@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { type DraftPreCheckDto, type MyDraftItemDto, seesTransportCosts } from '@nolon/shared';
+import { type DraftPreCheckDto, seesTransportCosts } from '@nolon/shared';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -35,6 +35,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -246,10 +247,18 @@ export class TripDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('transport_trips:view')) return [];
     const drafts = await this.list(user, query.status, query);
-    return drafts.map((d) => myDraftItem('trip', d, { id: d.tripId, number: d.tripNumber }));
+    return drafts.map((d) =>
+      myDraftItem(
+        'trip',
+        d,
+        d.tripId === null
+          ? null
+          : { type: 'trip', id: d.tripId, number: d.tripNumber, path: `/trips/${d.tripId}` },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<TripDraftDto> {

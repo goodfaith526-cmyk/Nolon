@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  DraftPreCheckDto,
   AgentClientCreatedDto,
   AssistantDraftDto,
   BookingDto,
@@ -286,10 +287,30 @@ afterAll(async () => {
 
 describe('quotation drafts: the system price', () => {
   it('prices a line without rate card or price from the one rate card that matches', async () => {
-    const draft = await quotationDraft([
+    const lines = [
       { chargeTypeCode: 'FREIGHT', quantity: '3' },
       { chargeTypeCode: 'CUSTOMS', unit: 'PER_SHIPMENT', quantity: '1', unitPrice: '75' },
-    ]);
+    ];
+    // The pre-check finds the price NOLON fills in, before any draft is made.
+    const checked = (
+      await r
+        .agentPost('/quotation-drafts/check', tokens.sales, quotationRequest(lines))
+        .expect(200)
+    ).body as DraftPreCheckDto;
+    expect(checked).toMatchObject({
+      ok: true,
+      total: '825.38',
+      currency: 'USD',
+      computed: [
+        {
+          field: 'lines.0.unitPrice',
+          value: '250.125',
+          source: 'RATE_CARD',
+          rateCardId: rates.freight,
+        },
+      ],
+    });
+    const draft = await quotationDraft(lines);
     // The request stays as proposed (no price); the pricing is the rate card's, newest start.
     expect(draft.request.lines[0]).not.toHaveProperty('unitPrice');
     expect(draft.check).toMatchObject({ ok: true, currency: 'USD' });
@@ -400,6 +421,14 @@ describe('invoice drafts: the system price', () => {
       { chargeTypeCode: 'DELIVERY', quantity: '1' },
       // Typed by the staff member.
       { chargeTypeCode: 'STORAGE', quantity: '2', unitPrice: '12.5' },
+    ]);
+    const checked = (await r.agentPost('/invoice-drafts/check', tokens.finance, body).expect(200))
+      .body as DraftPreCheckDto;
+    expect(checked).toMatchObject({ ok: true, total: '915.38', currency: 'USD' });
+    expect(checked.ok && checked.computed).toEqual([
+      { field: 'lines.0.unitPrice', value: '250.125', source: 'QUOTATION', rateCardId: null },
+      { field: 'lines.1.unitPrice', value: '90', source: 'QUOTATION', rateCardId: null },
+      { field: 'lines.2.unitPrice', value: '50', source: 'RATE_CARD', rateCardId: rates.delivery },
     ]);
     const draft = await invoiceDraft(body);
     expect(draft.request.lines.map((l) => l.unitPrice)).toEqual(['250.125', '90', '50', '12.5']);

@@ -179,6 +179,17 @@ export interface DraftCheckRefusal {
 }
 
 /**
+ * A value NOLON fills in when the draft is made (a line's system price), as a pre-check finds it
+ * now: `field` is its path in the request (`lines.0.unitPrice`), `value` a decimal string.
+ */
+export interface DraftComputedValue {
+  field: string;
+  value: DecimalString;
+  source: Exclude<DraftPriceSource['source'], 'TYPED'>;
+  rateCardId: string | null;
+}
+
+/**
  * POST /<kind>-drafts/check: what a create with these values would get from NOLON now, for this
  * user, without creating anything. `valuesHash` fingerprints the values checked (null when the
  * body is malformed), so the assistant can tie the result to the values it holds; a create runs
@@ -192,6 +203,8 @@ export type DraftPreCheckDto =
       currency: string | null;
       /** The price of each line, for quotation and invoice drafts; null for other kinds. */
       priceSources: DraftPriceSource[] | null;
+      /** The values NOLON would fill in (each system-priced line's unit price). */
+      computed: DraftComputedValue[];
     }
   | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
 
@@ -214,13 +227,24 @@ export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
 /** Most drafts one "my drafts" read returns. */
 export const MY_DRAFTS_MAX = 50;
 
-/**
- * What an approval made: the record of the draft's kind (a booking for a booking draft, the
- * shipment whose status changed for a status draft...). `number` is null for records without one.
- */
+/** The kind of record an approval made, and the page that shows it (without the locale). */
 export interface MyDraftResult {
+  type:
+    | 'booking'
+    | 'quotation'
+    | 'invoice'
+    | 'receipt'
+    | 'trip'
+    | 'warehouse_movement'
+    | 'shipment'
+    | 'party'
+    | 'customer'
+    | 'rate_card';
   id: string;
+  /** Null for records without a number (a party, a rate card). */
   number: string | null;
+  /** Such as `/bookings/<id>`; a release and a party show on their shipment's or customer's page. */
+  path: string;
 }
 
 /**
@@ -231,12 +255,17 @@ export interface MyDraftItemDto {
   kind: MyDraftKind;
   id: string;
   status: DraftStatus;
+  /** What the draft is about (the customer, the shipment...), as its review list names it. */
   subject: string;
+  branchId: string;
+  branchCode: string;
   createdAt: string;
   expiresAt: string;
   decidedAt: string | null;
   decidedByName: string | null;
   rejectReason: string | null;
+  /** The draft's review page, without the locale: `/drafts/<page>/<id>`. */
+  reviewPath: string;
   /** Set once approved. */
   result: MyDraftResult | null;
 }

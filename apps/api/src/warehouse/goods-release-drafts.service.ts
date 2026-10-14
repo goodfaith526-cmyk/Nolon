@@ -10,7 +10,6 @@ import type {
   GoodsReleaseDraftDto,
   GoodsReleaseDraftListItemDto,
   GoodsReleaseDraftRequest,
-  MyDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -36,6 +35,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
@@ -214,11 +214,22 @@ export class GoodsReleaseDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('warehouse:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
-      myDraftItem('goods_release', d, { id: d.movementId, number: d.movementNumber }),
+      myDraftItem(
+        'goods_release',
+        d,
+        d.movementId === null
+          ? null
+          : {
+              type: 'warehouse_movement',
+              id: d.movementId,
+              number: d.movementNumber,
+              path: `/shipments/${d.shipmentId}`,
+            },
+      ),
     );
   }
 

@@ -14,7 +14,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -39,6 +38,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -320,11 +320,22 @@ export class BookingDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('bookings:view')) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
-      myDraftItem('booking', d, { id: d.bookingId, number: d.bookingNumber }),
+      myDraftItem(
+        'booking',
+        d,
+        d.bookingId === null
+          ? null
+          : {
+              type: 'booking',
+              id: d.bookingId,
+              number: d.bookingNumber,
+              path: `/bookings/${d.bookingId}`,
+            },
+      ),
     );
   }
 

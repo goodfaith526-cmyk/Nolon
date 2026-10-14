@@ -109,6 +109,7 @@ describe('pre-checks', () => {
       total: null,
       currency: null,
       priceSources: null,
+      computed: [],
     });
     const priced = await preCheck(HASH, () =>
       Promise.resolve({ total: '10', currency: 'USD', priceSources: [] }),

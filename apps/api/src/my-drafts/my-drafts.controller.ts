@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { DRAFT_STATUSES, MY_DRAFTS_MAX, type MyDraftItemDto } from '@nolon/shared';
+import { DRAFT_STATUSES, MY_DRAFTS_MAX, MY_DRAFT_KINDS, type MyDraftItemDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser } from '../auth/decorators.js';
@@ -8,8 +8,10 @@ import { MyDraftsService } from './my-drafts.service.js';
 
 const mineQuery = z
   .object({
+    kind: z.enum(MY_DRAFT_KINDS).optional(),
     status: z.enum(DRAFT_STATUSES).optional(),
     since: z.iso.datetime({ offset: true }).optional(),
+    before: z.iso.datetime({ offset: true }).optional(),
     limit: z.coerce.number().int().min(1).max(MY_DRAFTS_MAX).default(20),
   })
   .strict();
@@ -25,7 +27,15 @@ export class MyDraftsController {
   @AgentReadable()
   @Get('mine')
   mine(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<MyDraftItemDto[]> {
-    const { since, ...rest } = parse(mineQuery, query);
-    return this.drafts.list(user, { ...rest, ...(since ? { since: new Date(since) } : {}) });
+    const { kind, since, before, ...rest } = parse(mineQuery, query);
+    return this.drafts.list(
+      user,
+      {
+        ...rest,
+        ...(since ? { since: new Date(since) } : {}),
+        ...(before ? { before: new Date(before) } : {}),
+      },
+      kind,
+    );
   }
 }

@@ -6,7 +6,6 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  MyDraftItemDto,
   RateCardDraftCreateRequest,
   RateCardDraftDto,
   RateCardDraftListItemDto,
@@ -36,6 +35,7 @@ import {
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
+  type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
@@ -248,10 +248,18 @@ export class RateCardDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
     if (!user.permissions.has('rates:view')) return [];
     const drafts = await this.list(user, query.status, query);
-    return drafts.map((d) => myDraftItem('rate_card', d, { id: d.rateCardId, number: null }));
+    return drafts.map((d) =>
+      myDraftItem(
+        'rate_card',
+        d,
+        d.rateCardId === null
+          ? null
+          : { type: 'rate_card', id: d.rateCardId, number: null, path: '/rates' },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<RateCardDraftDto> {

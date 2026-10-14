@@ -6,6 +6,7 @@ import {
   type DraftFieldMatch,
   type DraftFieldMeta,
   type DraftCheckRefusal,
+  type DraftComputedValue,
   type DraftPreCheckDto,
   type DraftPriceSource,
   type DraftStatus,
@@ -185,6 +186,7 @@ export interface PreCheckResult {
   total: string | null;
   currency: string | null;
   priceSources?: DraftPriceSource[] | null;
+  computed?: DraftComputedValue[];
 }
 
 const NO_TOTAL: PreCheckResult = { total: null, currency: null };
@@ -206,6 +208,7 @@ export async function preCheck(
       total: result.total,
       currency: result.currency,
       priceSources: result.priceSources ?? null,
+      computed: result.computed ?? [],
     };
   } catch (error) {
     if (isRefusal(error)) return { ok: false, valuesHash, refusals: refusalsOf(error) };
