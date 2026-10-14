@@ -58,26 +58,27 @@ model Branch {
   invoices        CustomerInvoice[]
   receipts        Receipt[]
 
-  warehouses               Warehouse[]
-  storageLocations         StorageLocation[]
-  warehouseMovements       WarehouseMovement[]
-  grnDrafts                GrnDraft[]
-  grnDraftLines            GrnDraftLine[]
-  grnDraftProposals        GrnDraftProposal[]
-  quotationDrafts          QuotationDraft[]
-  bookingDrafts            BookingDraft[]
-  tripDrafts               TripDraft[]
-  releaseDrafts            GoodsReleaseDraft[]
-  invoiceDrafts            InvoiceDraft[]
-  receiptDrafts            ReceiptDraft[]
-  customerDrafts           CustomerDraft[]
-  statusDrafts             ShipmentStatusDraft[]
-  partyDrafts              PartyDraft[]
-  rateCardDrafts           RateCardDraft[]
-  newCustomerBookingDrafts NewCustomerBookingDraft[]
-  movementPhotos           WarehouseMovementPhoto[]
-  customsClearances        CustomsClearance[]
-  customsFees              CustomsFee[]
+  warehouses                 Warehouse[]
+  storageLocations           StorageLocation[]
+  warehouseMovements         WarehouseMovement[]
+  grnDrafts                  GrnDraft[]
+  grnDraftLines              GrnDraftLine[]
+  grnDraftProposals          GrnDraftProposal[]
+  quotationDrafts            QuotationDraft[]
+  bookingDrafts              BookingDraft[]
+  tripDrafts                 TripDraft[]
+  releaseDrafts              GoodsReleaseDraft[]
+  invoiceDrafts              InvoiceDraft[]
+  receiptDrafts              ReceiptDraft[]
+  customerDrafts             CustomerDraft[]
+  statusDrafts               ShipmentStatusDraft[]
+  partyDrafts                PartyDraft[]
+  rateCardDrafts             RateCardDraft[]
+  newCustomerBookingDrafts   NewCustomerBookingDraft[]
+  newCustomerQuotationDrafts NewCustomerQuotationDraft[]
+  movementPhotos             WarehouseMovementPhoto[]
+  customsClearances          CustomsClearance[]
+  customsFees                CustomsFee[]
 
   vehicles           Vehicle[]
   drivers            Driver[]
@@ -190,35 +191,37 @@ model User {
   receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
   receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
 
-  warehouseMovements              WarehouseMovement[]       @relation("WarehouseMovementCreatedBy")
-  grnDraftsCreated                GrnDraft[]                @relation("GrnDraftCreatedBy")
-  grnDraftsDecided                GrnDraft[]                @relation("GrnDraftDecidedBy")
-  quotationDraftsCreated          QuotationDraft[]          @relation("QuotationDraftCreatedBy")
-  quotationDraftsDecided          QuotationDraft[]          @relation("QuotationDraftDecidedBy")
-  bookingDraftsCreated            BookingDraft[]            @relation("BookingDraftCreatedBy")
-  bookingDraftsDecided            BookingDraft[]            @relation("BookingDraftDecidedBy")
-  tripDraftsCreated               TripDraft[]               @relation("TripDraftCreatedBy")
-  tripDraftsDecided               TripDraft[]               @relation("TripDraftDecidedBy")
-  releaseDraftsCreated            GoodsReleaseDraft[]       @relation("GoodsReleaseDraftCreatedBy")
-  releaseDraftsDecided            GoodsReleaseDraft[]       @relation("GoodsReleaseDraftDecidedBy")
-  invoiceDraftsCreated            InvoiceDraft[]            @relation("InvoiceDraftCreatedBy")
-  invoiceDraftsDecided            InvoiceDraft[]            @relation("InvoiceDraftDecidedBy")
-  receiptDraftsCreated            ReceiptDraft[]            @relation("ReceiptDraftCreatedBy")
-  receiptDraftsDecided            ReceiptDraft[]            @relation("ReceiptDraftDecidedBy")
-  customerDraftsCreated           CustomerDraft[]           @relation("CustomerDraftCreatedBy")
-  customerDraftsDecided           CustomerDraft[]           @relation("CustomerDraftDecidedBy")
-  statusDraftsCreated             ShipmentStatusDraft[]     @relation("ShipmentStatusDraftCreatedBy")
-  statusDraftsDecided             ShipmentStatusDraft[]     @relation("ShipmentStatusDraftDecidedBy")
-  partyDraftsCreated              PartyDraft[]              @relation("PartyDraftCreatedBy")
-  partyDraftsDecided              PartyDraft[]              @relation("PartyDraftDecidedBy")
-  rateCardDraftsCreated           RateCardDraft[]           @relation("RateCardDraftCreatedBy")
-  rateCardDraftsDecided           RateCardDraft[]           @relation("RateCardDraftDecidedBy")
-  newCustomerBookingDraftsCreated NewCustomerBookingDraft[] @relation("NewCustomerBookingDraftCreatedBy")
-  newCustomerBookingDraftsDecided NewCustomerBookingDraft[] @relation("NewCustomerBookingDraftDecidedBy")
-  assistantApprovalGrants         AssistantApprovalGrant[]  @relation("AssistantApprovalGrantUser")
-  assistantApprovalsGranted       AssistantApprovalGrant[]  @relation("AssistantApprovalGrantedBy")
-  customsUpdated                  CustomsClearance[]        @relation("CustomsUpdatedBy")
-  customsFeesCreated              CustomsFee[]              @relation("CustomsFeeCreatedBy")
+  warehouseMovements                WarehouseMovement[]         @relation("WarehouseMovementCreatedBy")
+  grnDraftsCreated                  GrnDraft[]                  @relation("GrnDraftCreatedBy")
+  grnDraftsDecided                  GrnDraft[]                  @relation("GrnDraftDecidedBy")
+  quotationDraftsCreated            QuotationDraft[]            @relation("QuotationDraftCreatedBy")
+  quotationDraftsDecided            QuotationDraft[]            @relation("QuotationDraftDecidedBy")
+  bookingDraftsCreated              BookingDraft[]              @relation("BookingDraftCreatedBy")
+  bookingDraftsDecided              BookingDraft[]              @relation("BookingDraftDecidedBy")
+  tripDraftsCreated                 TripDraft[]                 @relation("TripDraftCreatedBy")
+  tripDraftsDecided                 TripDraft[]                 @relation("TripDraftDecidedBy")
+  releaseDraftsCreated              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftCreatedBy")
+  releaseDraftsDecided              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftDecidedBy")
+  invoiceDraftsCreated              InvoiceDraft[]              @relation("InvoiceDraftCreatedBy")
+  invoiceDraftsDecided              InvoiceDraft[]              @relation("InvoiceDraftDecidedBy")
+  receiptDraftsCreated              ReceiptDraft[]              @relation("ReceiptDraftCreatedBy")
+  receiptDraftsDecided              ReceiptDraft[]              @relation("ReceiptDraftDecidedBy")
+  customerDraftsCreated             CustomerDraft[]             @relation("CustomerDraftCreatedBy")
+  customerDraftsDecided             CustomerDraft[]             @relation("CustomerDraftDecidedBy")
+  statusDraftsCreated               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftCreatedBy")
+  statusDraftsDecided               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftDecidedBy")
+  partyDraftsCreated                PartyDraft[]                @relation("PartyDraftCreatedBy")
+  partyDraftsDecided                PartyDraft[]                @relation("PartyDraftDecidedBy")
+  rateCardDraftsCreated             RateCardDraft[]             @relation("RateCardDraftCreatedBy")
+  rateCardDraftsDecided             RateCardDraft[]             @relation("RateCardDraftDecidedBy")
+  newCustomerBookingDraftsCreated   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftCreatedBy")
+  newCustomerBookingDraftsDecided   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftDecidedBy")
+  newCustomerQuotationDraftsCreated NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftCreatedBy")
+  newCustomerQuotationDraftsDecided NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftDecidedBy")
+  assistantApprovalGrants           AssistantApprovalGrant[]    @relation("AssistantApprovalGrantUser")
+  assistantApprovalsGranted         AssistantApprovalGrant[]    @relation("AssistantApprovalGrantedBy")
+  customsUpdated                    CustomsClearance[]          @relation("CustomsUpdatedBy")
+  customsFeesCreated                CustomsFee[]                @relation("CustomsFeeCreatedBy")
 
   driverProfile         Driver?
   tripsCreated          Trip[]             @relation("TripCreatedBy")
@@ -484,10 +487,11 @@ model Customer {
   quotationDrafts QuotationDraft[]
   bookingDrafts   BookingDraft[]
 
-  invoiceDrafts InvoiceDraft[]
-  receiptDrafts ReceiptDraft[]
-  draft         CustomerDraft?
-  partyDrafts   PartyDraft[]
+  invoiceDrafts             InvoiceDraft[]
+  receiptDrafts             ReceiptDraft[]
+  draft                     CustomerDraft?
+  partyDrafts               PartyDraft[]
+  newCustomerQuotationDraft NewCustomerQuotationDraft?
 
   @@index([branchId])
   @@index([phone])
@@ -639,16 +643,17 @@ model Quotation {
   createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer      Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  origin        Location        @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination   Location        @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  currencyRef   Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
-  createdBy     User            @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  lines         QuotationLine[]
-  booking       Booking?
-  draft         QuotationDraft? @relation("QuotationDraftResult")
-  bookingDrafts BookingDraft[]  @relation("BookingDraftSourceQuotation")
+  branch           Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer         Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  origin           Location                   @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination      Location                   @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currencyRef      Currency                   @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy        User                       @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  lines            QuotationLine[]
+  booking          Booking?
+  draft            QuotationDraft?            @relation("QuotationDraftResult")
+  newCustomerDraft NewCustomerQuotationDraft?
+  bookingDrafts    BookingDraft[]             @relation("BookingDraftSourceQuotation")
 
   @@index([branchId, status])
   @@index([customerId])
@@ -2591,13 +2596,14 @@ model AgentClient {
   tripDrafts    TripDraft[]
   releaseDrafts GoodsReleaseDraft[]
 
-  invoiceDrafts            InvoiceDraft[]
-  receiptDrafts            ReceiptDraft[]
-  customerDrafts           CustomerDraft[]
-  statusDrafts             ShipmentStatusDraft[]
-  partyDrafts              PartyDraft[]
-  rateCardDrafts           RateCardDraft[]
-  newCustomerBookingDrafts NewCustomerBookingDraft[]
+  invoiceDrafts              InvoiceDraft[]
+  receiptDrafts              ReceiptDraft[]
+  customerDrafts             CustomerDraft[]
+  statusDrafts               ShipmentStatusDraft[]
+  partyDrafts                PartyDraft[]
+  rateCardDrafts             RateCardDraft[]
+  newCustomerBookingDrafts   NewCustomerBookingDraft[]
+  newCustomerQuotationDrafts NewCustomerQuotationDraft[]
 
   @@map("agent_clients")
 }
@@ -3378,6 +3384,82 @@ model NewCustomerBookingDraft {
   @@index([branchId, state])
   @@index([replacesDraftId])
   @@map("new_customer_booking_drafts")
+}
+
+/// A quotation proposed by the staff AI assistant for a customer not in NOLON yet (entry drafts),
+/// from one form with the new customer's details and the quotation's. Unlike a booking for a new
+/// customer there is no separate customer draft: a person approves this draft on the review
+/// screen, which creates the customer (CustomersService) and an ordinary DRAFT quotation for it
+/// (QuotationsService, priced by NOLON) in one transaction, with their permissions.
+model NewCustomerQuotationDraft {
+  id                    String           @id @default(uuid()) @db.Uuid
+  branchId              String           @map("branch_id") @db.Uuid
+  state                 EntryDraftState  @default(DRAFT)
+  version               Int              @default(1)
+  expiresAt             DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId         String           @map("agent_client_id") @db.Uuid
+  createdById           String           @map("created_by_id") @db.Uuid
+  idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash           String           @map("payload_hash") @db.Char(64)
+  /// The staff member's words for the customer's and the quotation's values
+  /// (drafts/draft-evidence.ts), confirmed on approval.
+  evidence              Json             @default("[]")
+  /// The new customer (CustomerDraftRequest): contact details only, no amounts.
+  customer              Json
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?        @map("load_type")
+  cargoType             CargoType        @map("cargo_type")
+  cargoDescription      String?          @map("cargo_description") @db.VarChar(2000)
+  currency              String           @db.Char(3)
+  validUntil            DateTime         @map("valid_until") @db.Date
+  terms                 String?          @db.VarChar(4000)
+  /// The customer and the DRAFT quotation the approval created.
+  customerId            String?          @unique @map("customer_id") @db.Uuid
+  quotationId           String?          @unique @map("quotation_id") @db.Uuid
+  decidedById           String?          @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key, as for the other kinds.
+  replacesDraftId       String?          @map("replaces_draft_id") @db.Uuid
+  /// SESSION: decided on the review screen; ASSISTANT: closed as replaced through the assistant.
+  decidedVia            DraftDecidedVia? @map("decided_via")
+  rejectReason          String?          @map("reject_reason") @db.VarChar(500)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch          Branch                          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdCustomer Customer?                       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quotation       Quotation?                      @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  agentClient     AgentClient                     @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy       User                            @relation("NewCustomerQuotationDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy       User?                           @relation("NewCustomerQuotationDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  lines           NewCustomerQuotationDraftLine[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@index([replacesDraftId])
+  @@map("new_customer_quotation_drafts")
+}
+
+/// One proposed line of a quotation for a new customer: a rate card, a charge type with unit and
+/// price, or neither (the system price).
+model NewCustomerQuotationDraftLine {
+  draftId        String    @map("draft_id") @db.Uuid
+  lineNo         Int       @map("line_no")
+  rateCardId     String?   @map("rate_card_id") @db.Uuid
+  chargeTypeCode String?   @map("charge_type_code") @db.VarChar(20)
+  description    String?   @db.VarChar(500)
+  unit           RateUnit?
+  quantity       Decimal   @db.Decimal(18, 4)
+  unitPrice      Decimal?  @map("unit_price") @db.Decimal(18, 4)
+  discount       Decimal?  @db.Decimal(18, 4)
+
+  draft NewCustomerQuotationDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@id([draftId, lineNo])
+  @@map("new_customer_quotation_draft_lines")
 }
 
 /// What a form sent when NOLON refused to save it, kept for the staff assistant ("Review with the

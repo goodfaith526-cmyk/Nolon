@@ -213,6 +213,7 @@ export const MY_DRAFT_KINDS = [
   'booking',
   'new_customer_booking',
   'quotation',
+  'new_customer_quotation',
   'invoice',
   'receipt',
   'trip',

@@ -17,6 +17,7 @@ import type {
   QuotationDraftDto,
   QuotationDraftListItemDto,
   QuotationDraftPricing,
+  QuotationInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -69,8 +70,8 @@ const details = {
 
 type DraftRow = Prisma.QuotationDraftGetPayload<{ include: typeof details }>;
 
-/** A create request as stored: decimals as Decimal, absent values as null. */
-function storedLines(input: CreateQuotationRequest) {
+/** A create request's lines as stored: decimals as Decimal, absent values as null. */
+export function storedLines(input: QuotationInput) {
   return input.lines.map((line, i) => ({
     lineNo: i + 1,
     rateCardId: line.rateCardId ?? null,
@@ -87,8 +88,12 @@ function storedLines(input: CreateQuotationRequest) {
  * The request a stored draft proposes, in the shape QuotationsService takes. Values are given back
  * exactly as stored: a draft created from request R reads back as R in canonical form.
  */
-export function requestOf(row: {
-  customerId: string;
+export function requestOf(row: StoredQuotation & { customerId: string }): CreateQuotationRequest {
+  return { customerId: row.customerId, ...quotationInputOf(row) };
+}
+
+/** A stored quotation (a quotation draft's, or a new customer's), without its customer. */
+export interface StoredQuotation {
   originLocationId: string;
   destinationLocationId: string;
   mode: CreateQuotationRequest['mode'];
@@ -99,9 +104,11 @@ export function requestOf(row: {
   validUntil: Date;
   terms: string | null;
   lines: ReturnType<typeof storedLines>;
-}): CreateQuotationRequest {
+}
+
+/** The quotation a stored draft proposes, without its customer, exactly as stored. */
+export function quotationInputOf(row: StoredQuotation): QuotationInput {
   return {
-    customerId: row.customerId,
     originLocationId: row.originLocationId,
     destinationLocationId: row.destinationLocationId,
     mode: row.mode,
@@ -125,9 +132,13 @@ export function requestOf(row: {
 
 /** sha256 of the normalised request: decimals canonical, missing and null alike, keys sorted. */
 export function quotationRequestHash(input: CreateQuotationRequest): string {
-  return requestHash({
+  return requestHash({ ...normalisedQuotation(input), customerId: input.customerId.toLowerCase() });
+}
+
+/** A quotation as hashed: ids lower case, decimals canonical, missing and null alike. */
+export function normalisedQuotation(input: QuotationInput): object {
+  return {
     ...input,
-    customerId: input.customerId.toLowerCase(),
     originLocationId: input.originLocationId.toLowerCase(),
     destinationLocationId: input.destinationLocationId.toLowerCase(),
     loadType: input.loadType ?? null,
@@ -140,7 +151,7 @@ export function quotationRequestHash(input: CreateQuotationRequest): string {
       unitPrice: decimalKey(l.unitPrice),
       discount: decimalKey(l.discount),
     })),
-  });
+  };
 }
 
 /**
@@ -500,7 +511,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
 
 /** The prices an approval would record, and their fingerprint (what the approval sends back). */
 export function pricingOf(
-  prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
+  prepared: Omit<Awaited<ReturnType<QuotationsService['prepareCreate']>>, 'customerId'>,
 ): QuotationDraftPricing {
   return {
     key: resolvedKey(prepared),
@@ -549,7 +560,7 @@ function baseFields(
 }
 
 /** A line priced from a rate card (named, or the system price) shows which one. */
-function sourcesOf(prepared: {
+export function sourcesOf(prepared: {
   lines: readonly { rateCardId: string | null }[];
 }): DraftPriceSource[] {
   return prepared.lines.map((l) =>
