@@ -222,6 +222,7 @@ export const MY_DRAFT_KINDS = [
   'party',
   'customer',
   'rate_card',
+  'grn',
 ] as const;
 export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
 
@@ -265,14 +266,17 @@ export interface MyDraftItemDto {
   decidedAt: string | null;
   decidedByName: string | null;
   rejectReason: string | null;
-  /** The draft's review page, without the locale: `/drafts/<page>/<id>`. */
+  /**
+   * The draft's review page, without the locale: `/drafts/<page>/<id>`; for a GRN draft, its
+   * shipment's page (`/shipments/<id>`).
+   */
   reviewPath: string;
   /** Set once approved. */
   result: MyDraftResult | null;
 }
 
 /** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */
-export const SETTLE_DRAFT_KINDS = [...MY_DRAFT_KINDS, 'grn'] as const;
+export const SETTLE_DRAFT_KINDS = MY_DRAFT_KINDS;
 export type SettleDraftKind = (typeof SETTLE_DRAFT_KINDS)[number];
 
 /** A settle request (POST /assistant-drafts/settle): the key of a create whose answer was lost. */

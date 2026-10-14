@@ -40,7 +40,9 @@ describe('draft capabilities', () => {
 
   it('name the review page "my drafts" links to', () => {
     for (const kind of MY_DRAFT_KINDS) {
-      expect(DRAFT_KIND_ROUTES[kind].review, kind).toBe(`/drafts/${REVIEW_PAGES[kind]}/:id`);
+      const review =
+        kind === 'grn' ? '/shipments/:shipmentId' : `/drafts/${REVIEW_PAGES[kind]}/:id`;
+      expect(DRAFT_KIND_ROUTES[kind].review, kind).toBe(review);
     }
   });
 
@@ -52,8 +54,9 @@ describe('draft capabilities', () => {
     expect(kinds.find((k) => k.kind === 'quotation')?.approval).toBe('both');
     expect(kinds.find((k) => k.kind === 'new_customer_quotation')?.approval).toBe('screen');
     expect(kinds.find((k) => k.kind === 'grn')).toMatchObject({
-      preCheck: false,
+      preCheck: true,
       review: '/shipments/:shipmentId',
+      approval: 'screen',
     });
   });
 });

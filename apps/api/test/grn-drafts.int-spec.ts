@@ -6,8 +6,10 @@ import type {
   AgentTokenResponse,
   BookingDto,
   CustomerDto,
+  DraftPreCheckDto,
   GrnDraftDto,
   GrnDraftSummaryDto,
+  MyDraftItemDto,
   PackingListContentDto,
   ShipmentDocumentDto,
   SheetPreviewDto,
@@ -945,5 +947,99 @@ describe('a person reviews the draft', () => {
         data: { description: 'x' },
       }),
     ).rejects.toThrow(/decided/);
+  });
+});
+
+describe('the pre-check and "my drafts" for the live card', () => {
+  const check = (shipmentId: string, body: object, token = tokens.whDxb) =>
+    agentSend('post', `/shipments/${shipmentId}/grn-drafts/check`, token, body);
+
+  function refused(result: DraftPreCheckDto) {
+    if (result.ok) throw new Error('expected a refusal');
+    return result;
+  }
+
+  it("passes a create's values with the hash the draft stores, and writes nothing", async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    const body = draftBody(doc);
+    const result = (await check(s.id, body).expect(200)).body as DraftPreCheckDto;
+    expect(result).toMatchObject({ ok: true, total: null, currency: null });
+    expect(result.valuesHash).toMatch(/^[0-9a-f]{64}$/);
+    // Any key, or none, gives the same fingerprint; nothing was stored under it.
+    const again = (await check(s.id, { ...body, idempotencyKey: 'other-key-1' }).expect(200))
+      .body as DraftPreCheckDto;
+    expect(again.valuesHash).toBe(result.valuesHash);
+    expect(await t.prisma.grnDraft.count({ where: { shipmentId: s.id } })).toBe(0);
+    const created = (await createDraft(s.id, body).expect(201)).body as GrnDraftSummaryDto;
+    const row = await t.prisma.grnDraft.findUniqueOrThrow({ where: { id: created.id } });
+    expect(row.payloadHash).toBe(result.valuesHash);
+  });
+
+  it('refuses what the create refuses, as data: another document, a cancelled shipment, another branch', async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    const wrongBytes = refused(
+      (await check(s.id, { ...draftBody(doc), documentSha256: 'f'.repeat(64) }).expect(200))
+        .body as DraftPreCheckDto,
+    );
+    expect(wrongBytes.refusals).toHaveLength(1);
+    expect(wrongBytes.valuesHash).toMatch(/^[0-9a-f]{64}$/);
+    refused((await check(s.id, draftBody(doc), tokens.whJed).expect(200)).body as DraftPreCheckDto);
+    const malformed = refused(
+      (await check(s.id, { ...draftBody(doc), lines: [] }).expect(200)).body as DraftPreCheckDto,
+    );
+    expect(malformed).toMatchObject({
+      valuesHash: null,
+      refusals: [{ field: 'lines', code: 'INVALID' }],
+    });
+    await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, {
+      reason: 'Customer cancelled',
+    }).expect(200);
+    refused((await check(s.id, draftBody(doc)).expect(200)).body as DraftPreCheckDto);
+    expect(await t.prisma.grnDraft.count({ where: { shipmentId: s.id } })).toBe(0);
+  });
+
+  it("needs the create's permissions, and the assistant: a person's session gets 403", async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    await check(s.id, draftBody(doc), tokens.opsAgent).expect(403);
+    await post(`/shipments/${s.id}/grn-drafts/check`, cookies.whDxb, draftBody(doc)).expect(403);
+  });
+
+  it('lists the draft for the user and assistant client that made it, reviewed on its shipment', async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    const draft = (await createDraft(s.id, draftBody(doc)).expect(201)).body as GrnDraftSummaryDto;
+    const mine = async (token: string) =>
+      (await agentGet('/assistant-drafts/mine?kind=grn', token).expect(200))
+        .body as MyDraftItemDto[];
+    const item = (await mine(tokens.whDxb)).find((d) => d.id === draft.id);
+    expect(item).toMatchObject({
+      kind: 'grn',
+      status: 'DRAFT',
+      subject: s.number,
+      branchCode: 'DXB',
+      reviewPath: `/shipments/${s.id}`,
+      result: null,
+    });
+    // Another user, another assistant client, another branch: not theirs.
+    for (const token of [tokens.whDxb2, tokens.whDxbOther, tokens.whJed]) {
+      expect((await mine(token)).map((d) => d.id)).not.toContain(draft.id);
+    }
+    // The person's own list on the screen has it too; once approved, it names the GRN.
+    await post(
+      `/shipments/${s.id}/grn-drafts/${draft.id}/approve`,
+      cookies.whDxb,
+      receipt(1),
+    ).expect(201);
+    const onScreen = (await get('/assistant-drafts/mine?kind=grn', cookies.whDxb).expect(200))
+      .body as MyDraftItemDto[];
+    const approved = onScreen.find((d) => d.id === draft.id);
+    expect(approved).toMatchObject({
+      status: 'APPROVED',
+      result: { type: 'warehouse_movement', path: `/shipments/${s.id}` },
+    });
+    expect(approved?.result?.number).toMatch(/^NOL-GRN-\d{4}-\d{6}$/);
   });
 });
