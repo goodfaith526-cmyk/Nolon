@@ -74,7 +74,8 @@
     "consolidations": "Containers (LCL)",
     "alertSettings": "Alert days",
     "apiKeys": "API keys",
-    "assistantDrafts": "Drafts from the assistant"
+    "assistantDrafts": "Drafts from the assistant",
+    "locations": "Ports and cities"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -2262,5 +2263,24 @@
     "QUOTED_PRICE_OTHER_CURRENCY": "The shipment's quotation prices this charge in another currency: invoice in that currency, or enter the price.",
     "QUOTED_PRICE_SEVERAL": "The shipment's quotation has several lines for this charge: enter the price.",
     "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price."
+  },
+  "Locations": {
+    "title": "Ports and cities",
+    "hint": "Ports, cities and border points. Link each port to the city it serves, so a search by the city also finds its ports. Deactivate a place instead of deleting it.",
+    "add": "Add place",
+    "kind": "Type",
+    "code": "Code",
+    "name": "Name",
+    "nameAr": "Name (Arabic)",
+    "nameEn": "Name (English)",
+    "country": "Country code",
+    "city": "City it serves",
+    "noCity": "No city",
+    "none": "No places yet.",
+    "createdNotice": "Place added.",
+    "kind_PORT": "Port",
+    "kind_CITY": "City",
+    "kind_BORDER": "Border point",
+    "kind_OTHER": "Other"
   }
 }
