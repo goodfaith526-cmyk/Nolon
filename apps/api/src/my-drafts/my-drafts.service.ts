@@ -20,6 +20,7 @@ import {
   type MyDraftsQuery,
   settleKeyInTx,
 } from '../drafts/drafts.service.js';
+import { NewCustomerQuotationDraftsService } from '../quotations/new-customer-quotation-drafts.service.js';
 import { QuotationDraftsService } from '../quotations/quotation-drafts.service.js';
 import { RateCardDraftsService } from '../rates/rate-card-drafts.service.js';
 import { ShipmentStatusDraftsService } from '../shipments/shipment-status-drafts.service.js';
@@ -31,6 +32,7 @@ const SETTLE_TABLES: Record<SettleDraftKind, DraftTable> = {
   booking: 'booking_drafts',
   new_customer_booking: 'new_customer_booking_drafts',
   quotation: 'quotation_drafts',
+  new_customer_quotation: 'new_customer_quotation_drafts',
   invoice: 'invoice_drafts',
   receipt: 'receipt_drafts',
   trip: 'trip_drafts',
@@ -55,6 +57,7 @@ export class MyDraftsService {
     private readonly bookings: BookingDraftsService,
     private readonly newCustomerBookings: NewCustomerBookingDraftsService,
     private readonly quotations: QuotationDraftsService,
+    private readonly newCustomerQuotations: NewCustomerQuotationDraftsService,
     private readonly invoices: InvoiceDraftsService,
     private readonly receipts: ReceiptDraftsService,
     private readonly trips: TripDraftsService,
@@ -82,6 +85,7 @@ export class MyDraftsService {
       booking: this.bookings,
       new_customer_booking: this.newCustomerBookings,
       quotation: this.quotations,
+      new_customer_quotation: this.newCustomerQuotations,
       invoice: this.invoices,
       receipt: this.receipts,
       trip: this.trips,

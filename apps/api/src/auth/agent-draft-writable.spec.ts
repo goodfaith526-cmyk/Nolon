@@ -47,6 +47,11 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\('settle\/ack'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*acknowledge\(/,
   },
   {
+    file: join('quotations', 'new-customer-quotation-drafts.controller.ts'),
+    handler:
+      /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create', 'customers:create'\)\n\s*create\(/,
+  },
+  {
     file: join('quotations', 'quotation-drafts.controller.ts'),
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
   },

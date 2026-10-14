@@ -451,6 +451,7 @@ const REVIEW_PAGES: Record<MyDraftKind, string> = {
   booking: 'bookings',
   new_customer_booking: 'new-customer-bookings',
   quotation: 'quotations',
+  new_customer_quotation: 'new-customer-quotations',
   invoice: 'invoices',
   receipt: 'receipts',
   trip: 'trips',
@@ -690,6 +691,7 @@ export const DRAFT_TABLES = [
   'party_drafts',
   'rate_card_drafts',
   'new_customer_booking_drafts',
+  'new_customer_quotation_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

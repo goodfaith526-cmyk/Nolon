@@ -30,4 +30,5 @@ export * from './shipment-status-drafts.js';
 export * from './party-drafts.js';
 export * from './rate-card-drafts.js';
 export * from './new-customer-booking-drafts.js';
+export * from './new-customer-quotation-drafts.js';
 export * from './assistant-form-reviews.js';

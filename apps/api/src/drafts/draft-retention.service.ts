@@ -56,6 +56,8 @@ export const PURGED_DRAFT_MODELS = {
   // booking for it is.
   NewCustomerBookingDraft: (tx: Tx, cutoff: Date) =>
     tx.newCustomerBookingDraft.deleteMany({ where: removable(cutoff) }),
+  NewCustomerQuotationDraft: (tx: Tx, cutoff: Date) =>
+    tx.newCustomerQuotationDraft.deleteMany({ where: removable(cutoff) }),
   CustomerDraft: (tx: Tx, cutoff: Date) =>
     tx.customerDraft.deleteMany({
       where: { ...removable(cutoff), newCustomerBookingDraft: { is: null } },
