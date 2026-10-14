@@ -240,4 +240,24 @@ describe('my drafts', () => {
     await r.agentGet('/assistant-drafts/mine?limit=51', tokens.agent).expect(400);
     await r.agentGet('/assistant-drafts/mine?userId=x', tokens.agent).expect(400);
   });
+
+  it('pages through drafts that share a creation time without skipping any', async () => {
+    // Drafts made in one transaction (a new customer and its booking) share a createdAt.
+    const a = await proposeQuotation(dxbCustomer.id);
+    const b = await proposeQuotation(dxbCustomer.id);
+    const tied = new Date(Date.now() + 86_400_000);
+    await t.prisma.quotationDraft.updateMany({
+      where: { id: { in: [a.id, b.id] } },
+      data: { createdAt: tied },
+    });
+    const at = encodeURIComponent(tied.toISOString());
+    const [first] = await mine(tokens.agent, '?limit=1');
+    expect([a.id, b.id]).toContain(first?.id);
+    const second = await mine(tokens.agent, `?limit=1&before=${at}&beforeId=${first?.id}`);
+    expect(ids(second)).toEqual([first?.id === a.id ? b.id : a.id]);
+    const third = await mine(tokens.agent, `?limit=50&before=${at}&beforeId=${second[0]?.id}`);
+    expect(ids(third)).not.toContain(a.id);
+    expect(ids(third)).not.toContain(b.id);
+    await r.agentGet(`/assistant-drafts/mine?beforeId=${a.id}`, tokens.agent).expect(400);
+  });
 });

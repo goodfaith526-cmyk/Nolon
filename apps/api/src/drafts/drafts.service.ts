@@ -400,10 +400,18 @@ export interface MyDraftsQuery {
   status?: DraftStatus;
   /** Only drafts created at or after this time. */
   since?: Date;
-  /** Only drafts created before this time: the next page, from the last item's createdAt. */
+  /**
+   * The next page: drafts after this one in the list's order (createdAt, then id, both newest
+   * first), from the last item's createdAt and id. Drafts made in one transaction share a
+   * createdAt, so the id breaks the tie; without `beforeId`, only drafts created before `before`.
+   */
   before?: Date;
+  beforeId?: string;
   limit: number;
 }
+
+/** The order of every "my drafts" list and page: newest first, then by id. */
+export const MY_DRAFTS_ORDER = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
 
 /**
  * The drafts made for this user, by the assistant asking when it is one (another assistant
@@ -412,15 +420,28 @@ export interface MyDraftsQuery {
 export function mineWhere(
   user: AuthUser,
   query: MyDraftsQuery,
-): { createdById: string; agentClientId?: string; createdAt?: { gte?: Date; lt?: Date } } {
-  const createdAt = {
-    ...(query.since ? { gte: query.since } : {}),
-    ...(query.before ? { lt: query.before } : {}),
-  };
+): {
+  createdById: string;
+  agentClientId?: string;
+  createdAt?: { gte: Date };
+  AND?: { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }[];
+} {
+  const { before, beforeId } = query;
+  const page = before
+    ? [
+        {
+          OR: [
+            { createdAt: { lt: before } },
+            ...(beforeId ? [{ createdAt: before, id: { lt: beforeId } }] : []),
+          ],
+        },
+      ]
+    : null;
   return {
     createdById: user.id,
     ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
-    ...(query.since || query.before ? { createdAt } : {}),
+    ...(query.since ? { createdAt: { gte: query.since } } : {}),
+    ...(page ? { AND: page } : {}),
   };
 }
 

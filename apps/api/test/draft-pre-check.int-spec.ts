@@ -219,6 +219,23 @@ describe('a pre-check', () => {
     expect(draft.check).toMatchObject({ ok: true, total: result.total });
   });
 
+  it("refuses a new customer's phone already taken in the branch, as the create would", async () => {
+    const booking: Partial<ReturnType<typeof bookingRequest>> = bookingRequest();
+    delete booking.customerId;
+    const body = {
+      idempotencyKey: draftKey(),
+      branchId: customer.branchId,
+      customer: { kind: 'INDIVIDUAL', name: 'Amna Osman', phone: customer.phone },
+      booking,
+    };
+    const result = refused(await check('/new-customer-booking-drafts', tokens.sales, body));
+    expect(result.refusals).toMatchObject([{ field: 'customer.phone' }]);
+    // The create refuses the same values, and the check wrote nothing.
+    await r.agentPost('/new-customer-booking-drafts', tokens.sales, body).expect(409);
+    const free = { ...body, customer: { ...body.customer, phone: uniquePhone() } };
+    expect((await check('/new-customer-booking-drafts', tokens.sales, free)).ok).toBe(true);
+  });
+
   it('is open to the assistant on every draft kind it may create', async () => {
     const paths = [
       '/booking-drafts',

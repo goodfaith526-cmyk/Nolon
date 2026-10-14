@@ -58,6 +58,7 @@ import {
   valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -259,6 +260,8 @@ export class NewCustomerBookingDraftsService {
     const { branchId, customer, booking, evidence = [] } = valuesOf(body);
     return preCheck(newCustomerBookingHash(branchId, customer, booking, evidence), async () => {
       await this.customerDrafts.prepareNew(user, branchId, customer);
+      // As the create would: a phone already taken in the branch refuses the pair.
+      await this.customerDrafts.requirePhoneFree(branchId, customer.phone, 'customer.phone');
       await this.bookings.prepareWithoutCustomer(booking);
       await this.requireContainer(user, booking);
     });
@@ -361,7 +364,7 @@ export class NewCustomerBookingDraftsService {
         ...(mine ? mineWhere(user, mine) : {}),
       },
       include: details,
-      orderBy: { createdAt: 'desc' },
+      orderBy: MY_DRAFTS_ORDER,
       take: mine?.limit ?? 200,
     });
     const customers = await this.customerDrafts.linkedOf(drafts.map((d) => d.customerDraftId));

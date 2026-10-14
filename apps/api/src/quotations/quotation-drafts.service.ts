@@ -48,6 +48,7 @@ import {
   valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -272,7 +273,7 @@ export class QuotationDraftsService {
         ...(mine ? mineWhere(user, mine) : {}),
       },
       include: details,
-      orderBy: { createdAt: 'desc' },
+      orderBy: MY_DRAFTS_ORDER,
       take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: d.lines.length }));

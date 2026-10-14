@@ -43,6 +43,7 @@ import {
   valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -203,6 +204,25 @@ export class CustomerDraftsService {
   }
 
   /**
+   * A pre-check's duplicate rule for a new customer proposed with another draft: the 409 that
+   * createInTx gives for a phone already taken in the branch, at `field` (the phone's path in the
+   * combined request). Reads only.
+   */
+  async requirePhoneFree(branchId: string, phone: string, field: string): Promise<void> {
+    const [issue] = (
+      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone }])
+    ).flat();
+    if (issue) {
+      throw new ConflictException({
+        message: issue.message,
+        fields: [field],
+        error: 'Conflict',
+        statusCode: 409,
+      });
+    }
+  }
+
+  /**
    * Creates a customer draft in the caller's transaction (a booking for a new customer, proposed
    * in one request with it); its id. The caller ran prepareNew and answered a replay of its own
    * request first, so the key is new here: one a customer draft already holds is refused as
@@ -343,7 +363,7 @@ export class CustomerDraftsService {
         ...(mine ? mineWhere(user, mine) : {}),
       },
       include: details,
-      orderBy: { createdAt: 'desc' },
+      orderBy: MY_DRAFTS_ORDER,
       take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: 1, phone: d.phone }));

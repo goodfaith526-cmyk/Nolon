@@ -68,7 +68,9 @@ export class MyDraftsService {
     // Each kind returns at most `limit`; the newest `limit` of them all are the answer.
     const all = (await Promise.all(kinds.map((k) => k.mine(user, query)))).flat();
     const rows = all
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
+      // The order of MY_DRAFTS_ORDER: ISO times and lower-case uuids compare as plain strings, as
+      // PostgreSQL compares the timestamps and the uuids' bytes.
+      .sort((a, b) => byDesc(a.createdAt, b.createdAt) || byDesc(a.id, b.id))
       .slice(0, query.limit);
     const branches = await this.prisma.branch.findMany({
       where: { id: { in: [...new Set(rows.map((r) => r.branchId))] } },
@@ -77,4 +79,9 @@ export class MyDraftsService {
     const codes = new Map(branches.map((b) => [b.id, b.code]));
     return rows.map((r) => ({ ...r, branchCode: codes.get(r.branchId) ?? '' }));
   }
+}
+
+/** Newest (largest) first. */
+function byDesc(a: string, b: string): number {
+  return a < b ? 1 : a > b ? -1 : 0;
 }
