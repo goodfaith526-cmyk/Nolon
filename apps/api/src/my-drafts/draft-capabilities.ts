@@ -87,12 +87,12 @@ export const DRAFT_KIND_ROUTES: Record<
     preCheck: true,
   },
   // Values from a document the assistant read, reviewed with the document on the shipment's page
-  // (no /drafts page): no pre-check.
+  // (no /drafts page).
   grn: {
     path: '/shipments/:shipmentId/grn-drafts',
     review: '/shipments/:shipmentId',
     create: ['warehouse:create', 'documents:view'],
-    preCheck: false,
+    preCheck: true,
   },
 };
 

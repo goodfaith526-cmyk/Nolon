@@ -9,6 +9,7 @@ import {
   type GrnDraftTotals,
   type GrnDraftWarning,
   type GrnFieldMatch,
+  type DraftPreCheckDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
@@ -16,10 +17,21 @@ import { DocumentsService } from '../documents/documents.service.js';
 import {
   draftExpiry,
   metaJson,
+  preCheck,
   proposalRetainedUntil,
   requireOpen,
+  stateFilter,
 } from '../drafts/draft-rules.js';
-import { DraftsService, keyReused, lockDraftRow, lockKeyInTx } from '../drafts/drafts.service.js';
+import {
+  DraftsService,
+  MY_DRAFTS_ORDER,
+  type MyDraftRow,
+  type MyDraftsQuery,
+  keyReused,
+  lockDraftRow,
+  lockKeyInTx,
+  mineWhere,
+} from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
@@ -107,6 +119,70 @@ export class GrnDraftsService {
   ) {}
 
   /**
+   * The pre-check: what `create` checks for these values, for this user now (the shipment visible
+   * and active, the document a packing list of it with those bytes); nothing is written. Like the
+   * create, only the assistant asks it.
+   */
+  async checkValues(
+    user: AuthUser,
+    shipmentId: string,
+    body: GrnDraftCreateInput,
+  ): Promise<DraftPreCheckDto> {
+    await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
+    return preCheck(grnRequest(body).hash, async () => {
+      const shipment = await this.shipments.childContext(user, shipmentId);
+      if (!isActive(shipment.status)) throw shipmentClosed();
+      await this.documents.requirePackingList(
+        this.prisma,
+        shipmentId,
+        body.documentId,
+        body.documentSha256,
+      );
+    });
+  }
+
+  /**
+   * "My drafts": the GRN drafts the assistant made for this user, on shipments the user sees now.
+   * Each is reviewed on its shipment's page.
+   */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('warehouse:view')) return [];
+    const now = new Date();
+    const drafts = await this.prisma.grnDraft.findMany({
+      where: {
+        shipment: shipmentScope(user),
+        ...stateFilter(query.status, now),
+        ...mineWhere(user, query),
+      },
+      include: { ...draftDetails, shipment: { select: { number: true } } },
+      orderBy: MY_DRAFTS_ORDER,
+      take: query.limit,
+    });
+    return drafts.map((d) => ({
+      kind: 'grn',
+      id: d.id,
+      status: draftStatus(d.state, d.expiresAt, now),
+      subject: d.shipment.number,
+      branchId: d.branchId,
+      createdAt: d.createdAt.toISOString(),
+      expiresAt: d.expiresAt.toISOString(),
+      decidedAt: d.decidedAt?.toISOString() ?? null,
+      decidedByName: d.decidedBy?.fullName ?? null,
+      rejectReason: d.rejectReason,
+      reviewPath: `/shipments/${d.shipmentId}`,
+      result:
+        d.movementId === null
+          ? null
+          : {
+              type: 'warehouse_movement',
+              id: d.movementId,
+              number: d.movement?.number ?? null,
+              path: `/shipments/${d.shipmentId}`,
+            },
+    }));
+  }
+
+  /**
    * The assistant proposes a draft. Everything is authorised before the idempotency key is looked
    * up: the token's user sees the shipment, the shipment is active, and the document is a packing
    * list of that shipment with those bytes. Then: no draft under the key creates one; a draft for
@@ -120,32 +196,8 @@ export class GrnDraftsService {
   ): Promise<GrnDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const shipment = await this.shipments.childContext(user, shipmentId);
-    if (!isActive(shipment.status)) {
-      throw new ConflictException('A closed or cancelled shipment takes no GRN draft');
-    }
-    const lines = input.lines.map((line, i) => {
-      const values = storedValues(line);
-      return {
-        lineNo: i + 1,
-        values,
-        sourcePage: line.sourcePage ?? null,
-        sourceRow: line.sourceRow ?? null,
-        meta: metaForAiLine(values, line.match),
-      };
-    });
-    const statedTotals: StoredTotals = {
-      packages: input.statedTotals.packages,
-      grossKg: decimalOrNull(input.statedTotals.grossKg),
-      netKg: decimalOrNull(input.statedTotals.netKg),
-      cbm: decimalOrNull(input.statedTotals.cbm),
-    };
-    const hash = payloadHash({
-      documentId: input.documentId,
-      documentSha256: input.documentSha256,
-      statedTotals,
-      warnings: [...new Set(input.warnings)],
-      lines,
-    });
+    if (!isActive(shipment.status)) throw shipmentClosed();
+    const { lines, statedTotals, hash } = grnRequest(input);
     // Only what the assistant reports about the file is stored; the rest is worked out on read.
     const warnings = reportedWarnings(input.warnings);
     const scope = { agentClientId, createdById: user.id, idempotencyKey: input.idempotencyKey };
@@ -163,9 +215,7 @@ export class GrnDraftsService {
     const attempt = () =>
       this.prisma.$transaction(async (tx) => {
         const status = await this.shipments.lockForChildWrite(tx, shipmentId);
-        if (!isActive(status)) {
-          throw new ConflictException('A closed or cancelled shipment takes no GRN draft');
-        }
+        if (!isActive(status)) throw shipmentClosed();
         await this.documents.requirePackingList(
           tx,
           shipmentId,
@@ -565,4 +615,36 @@ function toDto(
     movementNumber: d.movement?.number ?? null,
     actions: { canEdit: open && !user.agent, canDecide: open && !user.agent },
   };
+}
+
+function shipmentClosed(): ConflictException {
+  return new ConflictException('A closed or cancelled shipment takes no GRN draft');
+}
+
+/** A create request as stored: its lines numbered, its totals as decimals, and its hash. */
+function grnRequest(input: GrnDraftCreateInput) {
+  const lines = input.lines.map((line, i) => {
+    const values = storedValues(line);
+    return {
+      lineNo: i + 1,
+      values,
+      sourcePage: line.sourcePage ?? null,
+      sourceRow: line.sourceRow ?? null,
+      meta: metaForAiLine(values, line.match),
+    };
+  });
+  const statedTotals: StoredTotals = {
+    packages: input.statedTotals.packages,
+    grossKg: decimalOrNull(input.statedTotals.grossKg),
+    netKg: decimalOrNull(input.statedTotals.netKg),
+    cbm: decimalOrNull(input.statedTotals.cbm),
+  };
+  const hash = payloadHash({
+    documentId: input.documentId,
+    documentSha256: input.documentSha256,
+    statedTotals,
+    warnings: [...new Set(input.warnings)],
+    lines,
+  });
+  return { lines, statedTotals, hash };
 }

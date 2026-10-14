@@ -26,6 +26,7 @@ import { RateCardDraftsService } from '../rates/rate-card-drafts.service.js';
 import { ShipmentStatusDraftsService } from '../shipments/shipment-status-drafts.service.js';
 import { TripDraftsService } from '../transport/trip-drafts.service.js';
 import { GoodsReleaseDraftsService } from '../warehouse/goods-release-drafts.service.js';
+import { GrnDraftsService } from '../warehouse/grn-drafts.service.js';
 
 /** The table each kind's drafts and keys live in. */
 const SETTLE_TABLES: Record<SettleDraftKind, DraftTable> = {
@@ -66,6 +67,7 @@ export class MyDraftsService {
     private readonly parties: PartyDraftsService,
     private readonly customers: CustomerDraftsService,
     private readonly rates: RateCardDraftsService,
+    private readonly grns: GrnDraftsService,
   ) {}
 
   async list(
@@ -94,6 +96,7 @@ export class MyDraftsService {
       party: this.parties,
       customer: this.customers,
       rate_card: this.rates,
+      grn: this.grns,
     };
     const kinds = kind ? [services[kind]] : Object.values(services);
     // Each kind returns at most `limit`; the newest `limit` of them all are the answer.

@@ -446,8 +446,11 @@ export function mineWhere(
   };
 }
 
-/** Each kind's review page segment (/drafts/<page>/<id> on the web). */
-export const REVIEW_PAGES: Record<MyDraftKind, string> = {
+/**
+ * Each kind's review page segment (/drafts/<page>/<id> on the web). A GRN draft has none: it is
+ * reviewed with its document on the shipment's page.
+ */
+export const REVIEW_PAGES: Record<Exclude<MyDraftKind, 'grn'>, string> = {
   booking: 'bookings',
   new_customer_booking: 'new-customer-bookings',
   quotation: 'quotations',
@@ -467,7 +470,7 @@ export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;
 
 /** A kind's list item as "my drafts" shows it, with the record its approval made. */
 export function myDraftItem(
-  kind: MyDraftKind,
+  kind: keyof typeof REVIEW_PAGES,
   d: EntryDraftReviewFields,
   result: MyDraftResult | null,
 ): MyDraftRow {
