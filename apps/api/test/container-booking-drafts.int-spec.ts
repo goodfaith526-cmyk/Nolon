@@ -43,8 +43,8 @@ let portSudan: string;
 let khartoum: string;
 let jedCustomer: CustomerDto;
 
-const cookies = { admin: '', opsDxb: '', opsJed: '', salesJed: '', adminJed: '' };
-const tokens = { opsJed: '', salesJed: '', adminJed: '' };
+const cookies = { admin: '', opsDxb: '', opsJed: '', salesJed: '', adminJed: '', whJed: '' };
+const tokens = { opsJed: '', salesJed: '', adminJed: '', whJed: '' };
 
 const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
 
@@ -103,6 +103,7 @@ beforeAll(async () => {
     opsJed: await createUser(t.prisma, ['OPERATIONS'], ['JED'], LEDGER_PREFIX),
     salesJed: await createUser(t.prisma, ['SALES'], ['JED'], LEDGER_PREFIX),
     adminJed: await createUser(t.prisma, ['ADMINISTRATOR'], ['JED'], LEDGER_PREFIX),
+    whJed: await createUser(t.prisma, ['WAREHOUSE'], ['JED'], LEDGER_PREFIX),
   };
   for (const key of Object.keys(people) as (keyof typeof people)[]) {
     cookies[key] = await signIn(t, people[key].email);
@@ -112,6 +113,7 @@ beforeAll(async () => {
     opsJed: await createUser(t.prisma, ['OPERATIONS'], ['JED'], AGENT_PREFIX),
     salesJed: await createUser(t.prisma, ['SALES'], ['JED'], AGENT_PREFIX),
     adminJed: await createUser(t.prisma, ['ADMINISTRATOR'], ['JED'], AGENT_PREFIX),
+    whJed: await createUser(t.prisma, ['WAREHOUSE'], ['JED'], AGENT_PREFIX),
   };
   for (const key of Object.keys(agents) as (keyof typeof agents)[]) {
     tokens[key] = await tokenFor(t, await signIn(t, agents[key].email), client);
@@ -215,8 +217,8 @@ describe('booking drafts into an open container', () => {
     expect(await refused(lclBooking(container.id, { services: ['LAST_MILE'] }), 400)).toBe(
       'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
     );
-    // Sales may book but not into containers (annex A: no consolidation rights).
-    await createDraft(lclBooking(container.id), tokens.salesJed).expect(403);
+    // Warehouse sees bookings but books nothing, into a container or not.
+    await createDraft(lclBooking(container.id), tokens.whJed).expect(403);
     // A container that does not exist, and a bad id.
     await createDraft(lclBooking(randomUUID())).expect(404);
     await createDraft(lclBooking('not-a-uuid')).expect(400);
@@ -252,15 +254,56 @@ describe('booking drafts into an open container', () => {
     expect(await bookingsOfCustomer()).toBe(before);
   });
 
+  it('lets Sales book into an open container, and nothing more about containers', async () => {
+    const container = await openContainer();
+    // The open containers of every branch, without the container pages (annex A: Sales have
+    // no consolidation rights; container_booking was added for this, owner 2026-10-14).
+    const open = (
+      await r.get('/consolidations/bookable?pageSize=100', cookies.salesJed).expect(200)
+    ).body as { items: { id: string; status: string }[] };
+    expect(open.items.map((c) => c.id)).toContain(container.id);
+    expect(open.items.every((c) => c.status === 'OPEN')).toBe(true);
+    const viaAssistant = (
+      await r.agentGet('/consolidations/bookable?pageSize=100', tokens.salesJed).expect(200)
+    ).body as { items: { id: string }[] };
+    expect(viaAssistant.items.map((c) => c.id)).toContain(container.id);
+    await r.get('/consolidations', cookies.salesJed).expect(403);
+    await r.get(`/consolidations/${container.id}`, cookies.salesJed).expect(403);
+    await r.get('/consolidations/bookable', cookies.whJed).expect(403);
+    await r
+      .post(`/consolidations/${container.id}/shipments`, cookies.salesJed, {
+        shipmentId: randomUUID(),
+      })
+      .expect(403);
+    await r
+      .post(`/consolidations/${container.id}/cancel`, cookies.salesJed, { reason: 'No' })
+      .expect(403);
+
+    const summary = (await createDraft(lclBooking(container.id), tokens.salesJed).expect(201))
+      .body as EntryDraftSummaryDto;
+    const approved = (
+      await r
+        .post(`/booking-drafts/${summary.id}/approve`, cookies.salesJed, { version: 1 })
+        .expect(200)
+    ).body as BookingDraftDto;
+    const booking = (await r.get(`/bookings/${approved.bookingId}`, cookies.salesJed).expect(200))
+      .body as BookingDto;
+    expect(booking.status).toBe('CONFIRMED');
+    const link = await t.prisma.consolidationShipment.findFirstOrThrow({
+      where: { shipmentId: booking.shipmentId ?? '' },
+    });
+    expect(link.consolidationId).toBe(container.id);
+  });
+
   it('refuses an approver who may not book into containers, creating nothing', async () => {
     const container = await openContainer();
     const summary = (await createDraft(lclBooking(container.id)).expect(201))
       .body as EntryDraftSummaryDto;
     const before = await bookingsOfCustomer();
-    // Sales of the customer's branch sees the draft but may not book into a container.
-    expect((await readDraft(summary.id, cookies.salesJed)).check).toMatchObject({ ok: false });
+    // Warehouse of the customer's branch sees the draft but may not book into a container.
+    expect((await readDraft(summary.id, cookies.whJed)).check).toMatchObject({ ok: false });
     await r
-      .post(`/booking-drafts/${summary.id}/approve`, cookies.salesJed, { version: 1 })
+      .post(`/booking-drafts/${summary.id}/approve`, cookies.whJed, { version: 1 })
       .expect(403);
     // The container's branch does not see a JED customer's draft at all.
     await r.get(`/booking-drafts/${summary.id}`, cookies.opsDxb).expect(404);
@@ -299,10 +342,10 @@ describe('bookings for a new customer into an open container', () => {
       },
       evidence,
     };
-    // Operations may not add customers and Sales may not book into containers (annex A): only
-    // a role with both rights proposes this one (here the administrator).
+    // Operations may not add customers (annex A); Sales add customers and book into containers.
     await r.agentPost(API, tokens.opsJed, body).expect(403);
-    await r.agentPost(API, tokens.salesJed, { ...body, idempotencyKey: draftKey() }).expect(403);
+    await r.agentPost(API, tokens.whJed, { ...body, idempotencyKey: draftKey() }).expect(403);
+    await r.agentPost(API, tokens.salesJed, { ...body, idempotencyKey: draftKey() }).expect(201);
     await r
       .agentPost(API, tokens.adminJed, {
         ...body,

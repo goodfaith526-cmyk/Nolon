@@ -89,7 +89,7 @@ export function atOrPastOnSeaLeg(status: ShipmentStatus, target: ShipmentStatus)
  * booking draft that names a container).
  */
 export function canBookInto(user: Pick<AuthUser, 'permissions'>): boolean {
-  return (['consolidation:update', 'bookings:create', 'bookings:approve'] as const).every((p) =>
+  return (['container_booking:create', 'bookings:create', 'bookings:approve'] as const).every((p) =>
     user.permissions.has(p),
   );
 }

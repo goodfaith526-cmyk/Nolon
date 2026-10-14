@@ -43,6 +43,8 @@ export function formReviewPermissions(
     if (mode === 'container') return [];
     return [mode === 'edit' ? 'quotations:update' : 'quotations:create'];
   }
-  if (mode === 'container') return ['consolidation:update', 'bookings:create', 'bookings:approve'];
+  if (mode === 'container') {
+    return ['container_booking:create', 'bookings:create', 'bookings:approve'];
+  }
   return [mode === 'edit' ? 'bookings:update' : 'bookings:create'];
 }
