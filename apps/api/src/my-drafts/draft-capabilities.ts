@@ -101,7 +101,13 @@ export function draftCapabilities(user: AuthUser): DraftCapabilitiesDto {
   const decidable: readonly string[] = ASSISTANT_DECIDABLE_KINDS;
   return {
     api: 1,
-    features: { preCheck: true, myDrafts: true, settle: true, settleAck: true },
+    features: {
+      preCheck: true,
+      myDrafts: true,
+      settle: true,
+      settleAck: true,
+      myDraftsByIds: true,
+    },
     kinds: (Object.keys(DRAFT_KIND_ROUTES) as SettleDraftKind[]).map((kind) => {
       const route = DRAFT_KIND_ROUTES[kind];
       return {

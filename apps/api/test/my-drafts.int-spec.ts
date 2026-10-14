@@ -293,6 +293,7 @@ describe('draft capabilities', () => {
       myDrafts: true,
       settle: true,
       settleAck: true,
+      myDraftsByIds: true,
     });
     const quotation = caps.kinds.find((k) => k.kind === 'quotation');
     expect(quotation).toEqual({

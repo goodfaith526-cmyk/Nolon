@@ -325,6 +325,8 @@ export interface DraftCapabilitiesDto {
     myDrafts: boolean;
     settle: boolean;
     settleAck: boolean;
+    /** GET /assistant-drafts/mine takes `ids` (up to MY_DRAFTS_MAX, comma-separated). */
+    myDraftsByIds: boolean;
   };
   kinds: DraftKindCapabilityDto[];
 }
