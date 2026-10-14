@@ -1,18 +1,20 @@
 import { createHash } from 'node:crypto';
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import {
   DRAFT_PROPOSAL_RETENTION_DAYS,
   DRAFT_TTL_DAYS,
   type DraftFieldMatch,
   type DraftFieldMeta,
+  type DraftCheckRefusal,
+  type DraftComputedValue,
+  type DraftPreCheckDto,
+  type DraftPriceSource,
   type DraftStatus,
   type EntryDraftCheck,
+  FORM_REFUSALS,
+  type FormRefusal,
 } from '@nolon/shared';
+import type { z } from 'zod';
 import { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -151,6 +153,19 @@ export function stateFilter(
   return { state: status };
 }
 
+/** The refusals a check reports as its message (a coded refusal is a plain HttpException). */
+const REFUSALS: readonly number[] = [
+  HttpStatus.BAD_REQUEST,
+  HttpStatus.FORBIDDEN,
+  HttpStatus.NOT_FOUND,
+  HttpStatus.CONFLICT,
+];
+
+/** Whether an error is NOLON refusing a request (400, 403, 404, 409), not a failure. */
+export function isRefusal(error: unknown): error is HttpException {
+  return error instanceof HttpException && REFUSALS.includes(error.getStatus());
+}
+
 /**
  * Whether NOLON would accept a draft now: runs `prepare` (the same checks as an approval, without
  * writing) and turns a refusal into its message.
@@ -161,16 +176,96 @@ export async function checkDraft(
   try {
     return { ok: true, ...(await prepare()) };
   } catch (error) {
-    if (
-      error instanceof BadRequestException ||
-      error instanceof NotFoundException ||
-      error instanceof ConflictException ||
-      error instanceof ForbiddenException
-    ) {
-      return { ok: false, message: error.message };
-    }
+    if (isRefusal(error)) return { ok: false, message: error.message };
     throw error;
   }
+}
+
+/** What a pre-check reports when the values pass. */
+export interface PreCheckResult {
+  total: string | null;
+  currency: string | null;
+  priceSources?: DraftPriceSource[] | null;
+  computed?: DraftComputedValue[];
+}
+
+const NO_TOTAL: PreCheckResult = { total: null, currency: null };
+
+/**
+ * A pre-check (POST /<kind>-drafts/check): runs `prepare`, the checks a create with these values
+ * runs, and nothing else (it writes nothing). A refusal comes back as data with the fields it
+ * names, so the assistant can show it under the field; any other failure propagates.
+ */
+export async function preCheck(
+  valuesHash: string,
+  prepare: () => Promise<PreCheckResult | void>,
+): Promise<DraftPreCheckDto> {
+  try {
+    const result = (await prepare()) ?? NO_TOTAL;
+    return {
+      ok: true,
+      valuesHash,
+      total: result.total,
+      currency: result.currency,
+      priceSources: result.priceSources ?? null,
+      computed: result.computed ?? [],
+    };
+  } catch (error) {
+    if (isRefusal(error)) return { ok: false, valuesHash, refusals: refusalsOf(error) };
+    throw error;
+  }
+}
+
+/**
+ * The body of a pre-check, parsed with the create's schema. A malformed body is a refusal per
+ * invalid path (`INVALID`), with no values hash: there are no values to tie it to.
+ */
+export async function preCheckBody<T>(
+  schema: z.ZodType<T>,
+  body: unknown,
+  check: (input: T) => Promise<DraftPreCheckDto>,
+): Promise<DraftPreCheckDto> {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return check(parsed.data);
+  return {
+    ok: false,
+    valuesHash: null,
+    refusals: parsed.error.issues.map((issue) => ({
+      field: issue.path.length > 0 ? issue.path.join('.') : null,
+      code: 'INVALID',
+      message: issue.message,
+      params: {},
+    })),
+  };
+}
+
+/** A refusal's response (`fieldRefusal`, `codedRefusal` or a plain message), one per field. */
+function refusalsOf(error: HttpException): DraftCheckRefusal[] {
+  const response = error.getResponse();
+  const body = typeof response === 'object' && response !== null ? response : {};
+  const raw = body as { message?: unknown; code?: unknown; fields?: unknown; params?: unknown };
+  // `parse` inside a service: the message is the list of invalid paths.
+  if (Array.isArray(raw.message)) {
+    return raw.message.map((path) => ({
+      field: String(path),
+      code: 'INVALID',
+      message: 'Invalid value',
+      params: {},
+    }));
+  }
+  const message = typeof raw.message === 'string' ? raw.message : error.message;
+  const code = FORM_REFUSALS.includes(raw.code as FormRefusal) ? (raw.code as FormRefusal) : null;
+  const params: Record<string, string> = {};
+  if (typeof raw.params === 'object' && raw.params !== null) {
+    for (const [key, value] of Object.entries(raw.params)) {
+      if (typeof value === 'string') params[key] = value;
+    }
+  }
+  const fields = Array.isArray(raw.fields)
+    ? raw.fields.filter((f): f is string => typeof f === 'string')
+    : [];
+  if (fields.length === 0) return [{ field: null, code, message, params }];
+  return fields.map((field) => ({ field, code, message, params }));
 }
 
 /** The fields of a decision, as the draft row stores them. */

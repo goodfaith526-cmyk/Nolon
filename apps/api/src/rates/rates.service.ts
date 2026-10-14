@@ -13,6 +13,7 @@ import type {
   RateCardDto,
   RateCardInput,
   RateStatus,
+  RateUnit,
   ShippingMode,
 } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
@@ -28,11 +29,12 @@ import {
   throwFirstConflict,
   throwFirstIssue,
 } from '../common/rule-issues.js';
-import type { PageQuery } from '../common/validation.js';
+import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { matchedLocations, routeWhere } from '../common/list-filters.js';
 
 /** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
 const WRITE_CHUNK = 1000;
@@ -100,6 +102,21 @@ export interface RatePricingContext {
   cargoType: CargoType;
 }
 
+/** What the system price looks for: the document's context, and the line's charge and unit when given. */
+export interface RateMatchContext extends RatePricingContext {
+  chargeTypeCode?: string | null;
+  unit?: RateUnit | null;
+}
+
+/** The fields a system-price refusal names: no rate card matches; several do. */
+export interface RateMatchFields {
+  noMatch: readonly string[];
+  several: readonly string[];
+}
+
+/** Rate cards a refusal lists, at most. */
+const LISTED_RATES = 5;
+
 export interface RateFilters extends PageQuery {
   status?: RateStatus;
   originLocationId?: string;
@@ -126,13 +143,11 @@ export class RatesService {
   ) {}
 
   async list(user: AuthUser, filters: RateFilters): Promise<Page<RateCardDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const where: Prisma.RateCardWhereInput = {
       ...listBranchScope(user, filters.branchId),
       ...(filters.status ? { status: filters.status } : {}),
-      ...(filters.originLocationId ? { originLocationId: filters.originLocationId } : {}),
-      ...(filters.destinationLocationId
-        ? { destinationLocationId: filters.destinationLocationId }
-        : {}),
+      ...routeWhere(route),
       ...(filters.mode ? { mode: filters.mode } : {}),
       AND: [
         ...(filters.validOn
@@ -153,7 +168,13 @@ export class RatesService {
       }),
       this.prisma.rateCard.count({ where }),
     ]);
-    return { items: items.map(toDto), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toDto),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<RateCardDto> {
@@ -436,6 +457,68 @@ export class RatesService {
       throw new BadRequestException(`Rate does not match the quotation: ${mismatches.join(', ')}`);
     }
     return rate;
+  }
+
+  /**
+   * The system price of a line that names no rate card and gives no price: the only APPROVED rate
+   * of the branch, valid on `onDate`, for this route, mode, load type, cargo type and currency,
+   * and for the charge type and unit when given. Of rates that differ only by start date, the
+   * latest started replaces the older ones. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
+   * the candidates) when the line must say which (a charge type, a unit or the rate card).
+   */
+  async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {
+    const day = toDbDate(context.onDate);
+    const rates = await this.prisma.rateCard.findMany({
+      where: {
+        branchId: context.branchId,
+        status: 'APPROVED',
+        validFrom: { lte: day },
+        OR: [{ validTo: null }, { validTo: { gte: day } }],
+        currency: context.currency,
+        originLocationId: context.originLocationId,
+        destinationLocationId: context.destinationLocationId,
+        mode: context.mode,
+        loadType: context.loadType,
+        cargoType: context.cargoType,
+        ...(context.chargeTypeCode ? { chargeTypeCode: context.chargeTypeCode } : {}),
+        ...(context.unit ? { unit: context.unit } : {}),
+      },
+      orderBy: [{ validFrom: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+    });
+    const offers = new Map<string, RateCard>();
+    for (const rate of rates) {
+      const offer = [rate.containerTypeCode ?? '', rate.chargeTypeCode, rate.unit].join('|');
+      if (!offers.has(offer)) offers.set(offer, rate);
+    }
+    const [only, ...others] = [...offers.values()];
+    if (!only) {
+      throw fieldRefusal(
+        'RATE_NO_MATCH',
+        `No approved rate card of this branch matches (route, mode, load, cargo, currency${
+          context.chargeTypeCode ? `, charge ${context.chargeTypeCode}` : ''
+        }${context.unit ? `, unit ${context.unit}` : ''}, valid on ${context.onDate}): ` +
+          'enter the price',
+        fields.noMatch,
+      );
+    }
+    if (others.length > 0) {
+      const listed = [only, ...others]
+        .slice(0, LISTED_RATES)
+        .map(
+          (r) =>
+            `${r.chargeTypeCode} per ${r.unit}${
+              r.containerTypeCode ? ` ${r.containerTypeCode}` : ''
+            } ${toDecimalString(r.price)} ${r.currency} (rate card ${r.id})`,
+        )
+        .join('; ');
+      throw fieldRefusal(
+        'RATE_SEVERAL',
+        `${others.length + 1} approved rate cards match: choose one (${listed}), or give the ` +
+          'charge type and unit, or enter the price',
+        fields.several,
+      );
+    }
+    return only;
   }
 
   /** Compare-and-set on the status, so two concurrent transitions cannot both win. */

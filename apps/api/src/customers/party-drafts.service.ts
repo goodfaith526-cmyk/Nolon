@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -17,21 +18,29 @@ import {
   checkDraft,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
   decideInTx,
+  DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -96,6 +105,14 @@ export class PartyDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: PartyDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { customerId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(partyRequestHash(customerId, input, evidence), async () => {
+      await this.customers.prepareAddParty(user, customerId);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: PartyDraftCreateRequest,
@@ -125,6 +142,7 @@ export class PartyDraftsService {
           user,
           label: LABEL,
         });
+        await lockKeyInTx(tx, 'party_drafts', scope);
         const existing = await tx.partyDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -169,15 +187,38 @@ export class PartyDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<PartyDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<PartyDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.partyDraft.findMany({
-      where: { customer: branchScope(user), ...stateFilter(status, now) },
+      where: {
+        customer: branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: 1 }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('customers:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'party',
+        d,
+        d.partyId === null
+          ? null
+          : { type: 'party', id: d.partyId, number: null, path: `/customers/${d.customerId}` },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<PartyDraftDto> {

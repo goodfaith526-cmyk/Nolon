@@ -11,31 +11,37 @@ import {
 } from '@nestjs/common';
 import {
   type AssistantDraftDto,
-  DRAFT_IDEMPOTENCY_KEY_PATTERN,
-  DRAFT_STATUSES,
-  type EntryDraftSummaryDto,
   type BookingDraftDto,
   type BookingDraftListItemDto,
+  DRAFT_IDEMPOTENCY_KEY_PATTERN,
+  DRAFT_STATUSES,
+  type DraftPreCheckDto,
+  type EntryDraftSummaryDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftDecidable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { BookingDraftsService } from './booking-drafts.service.js';
 import { bookingCreateBody, bookingFromQuotationBody } from './bookings.controller.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-/** From an approved quotation (quotationId), or directly for a customer (customerId). */
+/**
+ * From an approved quotation (quotationId), or directly for a customer (customerId); a direct one
+ * may name an open container to go in (consolidationId).
+ */
 const createBody = z.union([
   bookingFromQuotationBody.extend({ idempotencyKey, quotationId: z.uuid() }).strict(),
-  bookingCreateBody.extend({ idempotencyKey }).strict(),
+  bookingCreateBody.extend({ idempotencyKey, consolidationId: z.uuid().nullish() }).strict(),
 ]);
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
@@ -61,6 +67,17 @@ export class BookingDraftsController {
     // replacesDraftId: the draft this one replaces, when the person asked for changes.
     const { replacesDraftId, rest } = splitReplaced(body);
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('bookings:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
   }
 
   @AgentReadable()

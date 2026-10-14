@@ -74,7 +74,8 @@
     "consolidations": "Containers (LCL)",
     "alertSettings": "Alert days",
     "apiKeys": "API keys",
-    "assistantDrafts": "Drafts from the assistant"
+    "assistantDrafts": "Drafts from the assistant",
+    "locations": "Ports and cities"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -2102,6 +2103,7 @@
     "kind_parties": "Shippers, consignees and notify parties",
     "kind_rate-cards": "Selling rates",
     "kind_new-customer-bookings": "Bookings for new customers",
+    "kind_new-customer-quotations": "Quotations for new customers",
     "kind_shipment-statuses": "Shipment status updates",
     "replacesEarlier": "This draft replaces an earlier one, at your request to the assistant.",
     "earlierDraft": "Earlier draft",
@@ -2166,13 +2168,24 @@
     "rateLine": "Rate card",
     "newCustomerBookingTitle": "Booking draft for a new customer: {customer}",
     "newCustomerBookingApproveHint": "Approving creates a draft booking for the customer approved from the customer draft. It is not confirmed and has no shipment until you confirm it. Add the shipper, consignee and notify party on the booking.",
+    "newCustomerQuotationTitle": "Quotation draft for a new customer: {customer}",
+    "newCustomerQuotationApproveHint": "Approving adds this customer to the branch and creates a draft quotation for them, priced by NOLON, together: if a customer of the branch has this phone by then, nothing is created. You can still edit the quotation before sending it.",
     "newCustomer": "New customer",
     "openCustomerDraft": "Open the customer draft",
     "approveCustomerFirst": "Approve the customer first: a booking needs a customer in NOLON. Open the customer draft, check it and approve it, then come back to approve this booking.",
     "customerNotApproved": "The customer draft was rejected or has expired, so this booking cannot be approved. Reject it, or ask the assistant for a new one.",
     "lineValue": "Line {line}: {field}",
     "bookingWithCustomer": "A booking was proposed with this customer:",
-    "openBookingDraft": "Open the booking draft"
+    "openBookingDraft": "Open the booking draft",
+    "container": "Container",
+    "containerHidden": "A container you cannot see",
+    "containerHint": "On approval the booking is confirmed and its shipment goes in this container, if it is still open with room.",
+    "containerBookingApproveHint": "Approving creates the booking, confirms it (its shipment is created) and puts the shipment in the container. If the container is no longer open or is full, nothing is created.",
+    "newCustomerContainerBookingApproveHint": "Approving creates the booking for the customer approved from the customer draft, confirms it and puts its shipment in the container. If the container is no longer open or is full, nothing is created. Add the shipper, consignee and notify party on the booking.",
+    "priceTyped": "Typed",
+    "priceQuotation": "System price: the shipment's quotation",
+    "priceRateCard": "System price: rate card",
+    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving."
   },
   "Fields": {
     "customerId": "Customer",
@@ -2244,6 +2257,38 @@
     "SHIPMENT_OTHER_BRANCH": "Shipment {shipment} belongs to a branch you do not work in, so you cannot put it in this container.",
     "SHIPMENT_NOT_LCL_SEA": "Shipment {shipment} is not an LCL sea shipment NOLON carries.",
     "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
-    "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first."
+    "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first.",
+    "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
+    "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
+    "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",
+    "RATE_NO_MATCH": "No approved rate card matches this line (route, mode, load, cargo, currency, charge, date): enter the price.",
+    "RATE_SEVERAL": "Several approved rate cards match this line: choose the rate card, or enter the price.",
+    "QUOTED_PRICE_OTHER_CURRENCY": "The shipment's quotation prices this charge in another currency: invoice in that currency, or enter the price.",
+    "QUOTED_PRICE_SEVERAL": "The shipment's quotation has several lines for this charge: enter the price.",
+    "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price.",
+    "CASH_ACCOUNT_NOT_USABLE": "This cash or bank account cannot take this receipt: choose an active account of the customer's branch in the receipt's currency.",
+    "ALLOCATION_OTHER_CUSTOMER": "This invoice is not one of this customer's invoices.",
+    "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
+    "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
+    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that."
+  },
+  "Locations": {
+    "title": "Ports and cities",
+    "hint": "Ports, cities and border points. Link each port to the city it serves, so a search by the city also finds its ports. Deactivate a place instead of deleting it.",
+    "add": "Add place",
+    "kind": "Type",
+    "code": "Code",
+    "name": "Name",
+    "nameAr": "Name (Arabic)",
+    "nameEn": "Name (English)",
+    "country": "Country code",
+    "city": "City it serves",
+    "noCity": "No city",
+    "none": "No places yet.",
+    "createdNotice": "Place added.",
+    "kind_PORT": "Port",
+    "kind_CITY": "City",
+    "kind_BORDER": "Border point",
+    "kind_OTHER": "Other"
   }
 }

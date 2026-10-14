@@ -19,7 +19,12 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
-import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
+import {
+  localDayFilter,
+  matchedLocations,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -76,13 +81,14 @@ export class BookingsService {
   ) {}
 
   async list(user: AuthUser, filters: BookingFilters): Promise<Page<BookingSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.BookingWhereInput = {
       ...listBranchScope(user, filters.branchId),
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       ...(filters.q
         ? {
             OR: [
@@ -102,7 +108,13 @@ export class BookingsService {
       }),
       this.prisma.booking.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<BookingDto> {

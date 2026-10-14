@@ -26,6 +26,7 @@ import { ShipmentsModule } from './shipments/shipments.module.js';
 import { TransportModule } from './transport/transport.module.js';
 import { UsersModule } from './users/users.module.js';
 import { WarehouseModule } from './warehouse/warehouse.module.js';
+import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
 
 // Business modules (customers, bookings, shipments, finance...) are added here, one per folder.
 @Module({
@@ -49,6 +50,7 @@ import { WarehouseModule } from './warehouse/warehouse.module.js';
     AccountingModule,
     BillingModule,
     WarehouseModule,
+    MyDraftsModule,
     CustomsModule,
     TransportModule,
     PayablesModule,

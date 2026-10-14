@@ -35,6 +35,7 @@ export const PERMISSION_MODULES = [
   'bookings',
   'shipments',
   'consolidation',
+  'container_booking',
   'warehouse',
   'customs',
   'transport_fleet',
@@ -96,6 +97,11 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   bookings: 'FVAFFVVVN',
   shipments: 'FVFVFVVVV',
   consolidation: 'FVFNFVVNN',
+  // Not in annex A (owner, 2026-10-14): adding a booking to an open container of any branch, and
+  // nothing else about containers (`container_booking:create`, with bookings:create and
+  // bookings:approve). Sales got it so they can ship on an open container; editing, moving or
+  // cancelling a container stays consolidation:update, and its costs stay hidden from them.
+  container_booking: 'FNNEENNNN',
   warehouse: 'FVFVVVFVN',
   customs: 'FVFVVVNFN',
   transport_fleet: 'FVFNFVNNN',

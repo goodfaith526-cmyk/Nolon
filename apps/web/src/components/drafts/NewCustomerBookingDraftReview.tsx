@@ -7,6 +7,7 @@ import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
+import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame, DraftStatusBadge } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
 
@@ -45,6 +46,10 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
       label: tb('destination'),
       value: locationName(b.destinationLocationId),
     },
+    consolidationId: {
+      label: t('container'),
+      value: draft.container?.number ?? t('containerHidden'),
+    },
   };
   for (const e of draft.evidence) {
     const match = LINE_FIELD.exec(e.field);
@@ -63,7 +68,11 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
       draft={draft}
       apiPath="/new-customer-booking-drafts"
       title={t('newCustomerBookingTitle', { customer: customer.name })}
-      approveHint={t('newCustomerBookingApproveHint')}
+      approveHint={
+        b.consolidationId
+          ? t('newCustomerContainerBookingApproveHint')
+          : t('newCustomerBookingApproveHint')
+      }
       result={
         draft.bookingId
           ? { label: draft.bookingNumber ?? '', href: `/bookings/${draft.bookingId}` }
@@ -120,6 +129,7 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
         </dd>
         <dt>{tb('cargoDescription')}</dt>
         <dd>{b.cargoDescription ?? '—'}</dd>
+        <DraftContainerDetails id={b.consolidationId} container={draft.container} />
         <dt>{tb('services')}</dt>
         <dd>{new Intl.ListFormat(locale).format(b.services.map((s) => te(`service_${s}`)))}</dd>
         <dt>{tb('requestedDeparture')}</dt>

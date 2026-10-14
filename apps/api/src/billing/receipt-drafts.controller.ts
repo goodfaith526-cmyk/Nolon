@@ -13,23 +13,28 @@ import {
   type AssistantDraftDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  type DraftPreCheckDto,
   type EntryDraftSummaryDto,
   type ReceiptDraftDto,
   type ReceiptDraftListItemDto,
+  type ReceiptCashAccountDto,
+  type ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftDecidable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
-import { parse, requiredText } from '../common/validation.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
+import { currencyCode, parse, requiredText } from '../common/validation.js';
 import { createReceiptBody } from './billing.controller.js';
 import { ReceiptDraftsService } from './receipt-drafts.service.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 // The fx rate is the rate table's for the receipt date, never the assistant's.
@@ -42,6 +47,10 @@ const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
+const cashAccountsQuery = z.object({ customerId: z.uuid() }).strict();
+const openInvoicesQuery = z
+  .object({ customerId: z.uuid(), currency: currencyCode.optional() })
+  .strict();
 
 /**
  * Receipt drafts (entry drafts). The staff assistant creates drafts and recovers the one it created
@@ -60,6 +69,17 @@ export class ReceiptDraftsController {
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
   }
 
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('receipts:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
+  }
+
   @AgentReadable()
   @Get('by-key/:key')
   @RequirePermission('receipts:create')
@@ -68,6 +88,30 @@ export class ReceiptDraftsController {
     @Param('key') key: string,
   ): Promise<EntryDraftSummaryDto> {
     return this.drafts.findByKey(user, parse(idempotencyKey, key));
+  }
+
+  /** The cash and bank accounts a receipt for the customer may use (the assistant's pick list). */
+  @AgentReadable()
+  @Get('cash-accounts')
+  @RequirePermission('receipts:create')
+  async cashAccounts(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<{ items: ReceiptCashAccountDto[] }> {
+    const { customerId } = parse(cashAccountsQuery, query);
+    return { items: await this.drafts.cashAccounts(user, customerId) };
+  }
+
+  /** The customer's open invoices a receipt may settle (the assistant's pick list). */
+  @AgentReadable()
+  @Get('open-invoices')
+  @RequirePermission('receipts:create')
+  async openInvoices(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<{ items: ReceiptOpenInvoiceDto[] }> {
+    const { customerId, currency } = parse(openInvoicesQuery, query);
+    return { items: await this.drafts.openInvoices(user, customerId, currency) };
   }
 
   @Get()

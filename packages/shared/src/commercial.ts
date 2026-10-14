@@ -65,6 +65,17 @@ export interface Page<T> {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * On a list filtered by origin or destination: the locations each filter matched. A city matches
+   * itself and the places that serve it (its ports), so a client can say "including Jebel Ali".
+   */
+  matchedLocations?: RouteMatch;
+}
+
+/** The locations a route filter matched (null: no filter on that end). */
+export interface RouteMatch {
+  originLocationIds: string[] | null;
+  destinationLocationIds: string[] | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -79,6 +90,8 @@ export interface LocationDto {
   nameAr: string;
   countryCode: string;
   isActive: boolean;
+  /** The city this place serves (a port's city); a lookup by the city also finds it. */
+  cityId: string | null;
 }
 
 export interface CodeNameDto {
@@ -109,6 +122,8 @@ export interface LocationInput {
   nameAr: string;
   countryCode: string;
   isActive?: boolean;
+  /** A CITY location this place serves; not for a city itself. */
+  cityId?: string | null;
 }
 
 export interface CodeNameInput {
@@ -325,8 +340,10 @@ export interface QuotationDto extends QuotationSummaryDto {
 }
 
 /**
- * A line either references an approved rate card (unit, price and minimum come from the rate)
- * or is a manual line (unit and unitPrice required).
+ * A line either references an approved rate card (unit, price and minimum come from the rate),
+ * is a manual line (charge type, unit and unitPrice), or gives no rate card and no price: NOLON
+ * then prices it from the only approved rate card that matches the quotation and the line's
+ * charge type and unit when given (RATE_NO_MATCH, RATE_SEVERAL otherwise).
  */
 export interface QuotationLineInput {
   rateCardId?: string | null;
@@ -472,6 +489,9 @@ export const FORM_REFUSALS = [
   'VALID_UNTIL_PAST',
   'CURRENCY_NOT_ACTIVE',
   'RATE_NOT_USABLE',
+  // The system price (no rate card and no price given): none or several rate cards match.
+  'RATE_NO_MATCH',
+  'RATE_SEVERAL',
   'MANUAL_LINE_INCOMPLETE',
   'UNKNOWN_CHARGE_TYPE',
   'DISCOUNT_EXCEEDS_LINE',
@@ -484,5 +504,20 @@ export const FORM_REFUSALS = [
   'SHIPMENT_NOT_LCL_SEA',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
+  // A booking that names an open container (booking drafts): it must fit the container.
+  'CONTAINER_BOOKING_NOT_LCL_SEA',
+  'CONTAINER_BOOKING_OTHER_PORT',
+  'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
+  // An invoice draft line priced by NOLON (no unit price given), from the shipment's quotation.
+  'QUOTED_PRICE_OTHER_CURRENCY',
+  'QUOTED_PRICE_SEVERAL',
+  'PRICE_AS_ONE_UNIT',
+  // A receipt (receipt drafts): the cash or bank account, and each allocation to an invoice.
+  // Params of the allocation codes: `invoice` (its number), and `balance` and `currency`.
+  'CASH_ACCOUNT_NOT_USABLE',
+  'ALLOCATION_OTHER_CUSTOMER',
+  'ALLOCATION_NOT_APPROVED',
+  'ALLOCATION_OTHER_CURRENCY',
+  'ALLOCATION_EXCEEDS_BALANCE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

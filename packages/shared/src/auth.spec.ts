@@ -53,6 +53,8 @@ describe('permission matrix (annex A)', () => {
     ['bookings', 'ك ع م ك ك ع ع ع —'],
     ['shipments', 'ك ع ك ع ك ع ع ع ع'],
     ['consolidation', 'ك ع ك — ك ع ع — —'],
+    // Added after the annex (owner, 2026-10-14): booking into an open container.
+    ['container_booking', 'ك — — إ إ — — — —'],
     ['warehouse', 'ك ع ك ع ع ع ك ع —'],
     ['customs', 'ك ع ك ع ع ع — ك —'],
     ['transport_fleet', 'ك ع ك — ك ع — — —'],
@@ -101,6 +103,11 @@ describe('permission matrix (annex A)', () => {
     expect(can('FINANCE', 'chart_of_accounts:approve')).toBe(true);
     expect(can('SALES', 'rates:approve')).toBe(false);
     expect(can('SALES', 'rates:update')).toBe(true);
+    // Sales book into open containers, and nothing more about containers.
+    expect(can('SALES', 'container_booking:create')).toBe(true);
+    expect(can('SALES', 'consolidation:view')).toBe(false);
+    expect(can('SALES', 'consolidation:update')).toBe(false);
+    expect(can('BRANCH_MANAGER', 'container_booking:create')).toBe(false);
   });
 });
 

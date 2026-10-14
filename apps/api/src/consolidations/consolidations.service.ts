@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type {
   BillableConsolidationDto,
@@ -18,6 +19,7 @@ import type {
   ConsolidationStatus,
   ConsolidationSummaryDto,
   ConsolidationUpdateRequest,
+  DraftContainer,
   Page,
   Permission,
   ShipmentConsolidationDto,
@@ -32,7 +34,12 @@ import {
   listBranchScope,
 } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
-import { dateRange, type RouteFilters, routeWhere } from '../common/list-filters.js';
+import {
+  dateRange,
+  matchedLocations,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
@@ -40,11 +47,17 @@ import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentBranches, shipmentScope } from '../shipments/shipment-scope.js';
-import { BookingsService } from '../bookings/bookings.service.js';
+import { BookingsService, type PreparedBooking } from '../bookings/bookings.service.js';
+import {
+  type ContainerBookingHandler,
+  type ContainerBookingShape,
+  ContainerBookingsRegistry,
+} from '../bookings/container-bookings.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive, stageApplies } from '../shipments/state-machine.js';
 import {
   atOrPastOnSeaLeg,
+  canBookInto,
   basisValueOf,
   consolidationMoves,
   isClosed,
@@ -128,19 +141,26 @@ type ContainerWithDetails = Prisma.ConsolidationGetPayload<{ include: typeof det
  * its lock.
  */
 @Injectable()
-export class ConsolidationsService {
+export class ConsolidationsService implements ContainerBookingHandler, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
     private readonly masterData: MasterDataService,
     private readonly costs: ContainerCostsRegistry,
     private readonly bookings: BookingsService,
+    private readonly containerBookings: ContainerBookingsRegistry,
   ) {}
+
+  onModuleInit(): void {
+    // Booking drafts that name a container are checked and approved by the rules below.
+    this.containerBookings.register(this);
+  }
 
   async list(
     user: AuthUser,
     filters: ConsolidationFilters,
   ): Promise<Page<ConsolidationSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     if (filters.bookable && !canBookInto(user)) {
       throw new ForbiddenException('Missing permission to book into a container');
     }
@@ -148,7 +168,7 @@ export class ConsolidationsService {
       ...(filters.bookable ? { status: 'OPEN' } : listBranchScope(user, filters.branchId)),
       etd: dateRange(filters.from, filters.to),
       ...(filters.status && !filters.bookable ? { status: filters.status } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       ...(filters.q
         ? {
             OR: [
@@ -168,7 +188,13 @@ export class ConsolidationsService {
       }),
       this.prisma.consolidation.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<ConsolidationDto> {
@@ -358,33 +384,110 @@ export class ConsolidationsService {
       originLocationId: existing.originLocationId,
     });
     return this.prisma.$transaction(async (tx) => {
-      const container = await lockContainer(tx, id);
-      requireOpen(container);
-      await requireRoom(tx, container);
-      const bookingId = await this.bookings.insertInTx(tx, user, prepared);
-      const shipment = await this.bookings.confirmInTx(tx, user, bookingId);
+      const bookingId = await this.bookInTx(tx, user, id, prepared);
       const booking = await tx.booking.findUniqueOrThrow({
         where: { id: bookingId },
-        select: { number: true },
+        select: { number: true, shipment: { select: { id: true, number: true } } },
       });
-      const shipmentRow = await tx.shipment.findUniqueOrThrow({
-        where: { id: shipment.id },
-        select: { number: true },
-      });
-      await this.addShipments(
-        tx,
-        user,
-        container,
-        [shipment.id],
-        new Map([[shipment.id, shipmentRow.number]]),
-      );
+      if (!booking.shipment) throw new Error(`Booking ${bookingId} was confirmed with no shipment`);
       return {
         bookingId,
         bookingNumber: booking.number,
-        shipmentId: shipment.id,
-        shipmentNumber: shipmentRow.number,
+        shipmentId: booking.shipment.id,
+        shipmentNumber: booking.shipment.number,
       };
     });
+  }
+
+  /**
+   * A booking draft that names this container (ContainerBookingHandler): the same rules as a
+   * booking from the container's page, except that the draft's values are never changed to fit
+   * (the person approves what they read), so a booking that does not fit is refused, naming why.
+   */
+  async requireBookable(user: AuthUser, id: string, booking: ContainerBookingShape): Promise<void> {
+    if (!canBookInto(user)) {
+      throw new ForbiddenException(
+        'Booking into a container needs permission to change containers and to create and confirm bookings',
+      );
+    }
+    // Whoever may book into containers sees every open one; one that closed since the draft named
+    // it says so, rather than not found.
+    const container = await this.prisma.consolidation.findUnique({
+      where: { id },
+      include: summaryInclude,
+    });
+    if (!container) throw new NotFoundException('Container not found');
+    requireOpen(container);
+    if (container._count.shipments >= MAX_CONTAINER_SHIPMENTS) throw full(container);
+    const params = { container: container.number };
+    if (booking.mode !== 'SEA' || booking.loadType !== 'LCL') {
+      throw codedRefusal(
+        HttpStatus.BAD_REQUEST,
+        'CONTAINER_BOOKING_NOT_LCL_SEA',
+        `Container ${container.number} takes LCL sea bookings only`,
+        params,
+      );
+    }
+    if (booking.originLocationId.toLowerCase() !== container.originLocationId) {
+      throw codedRefusal(
+        HttpStatus.BAD_REQUEST,
+        'CONTAINER_BOOKING_OTHER_PORT',
+        `Container ${container.number} loads at another port than the booking leaves from`,
+        params,
+      );
+    }
+    if (!booking.services.includes('MAIN_FREIGHT')) {
+      throw codedRefusal(
+        HttpStatus.BAD_REQUEST,
+        'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
+        `A booking in container ${container.number} includes the main freight`,
+        params,
+      );
+    }
+  }
+
+  /**
+   * In the caller's transaction (ContainerBookingHandler): under the container's lock, still open
+   * and with room, the prepared booking is recorded, confirmed (its shipment is created) and the
+   * shipment put in the container. A container that closed or filled up meanwhile refuses, and
+   * the caller's transaction leaves nothing behind.
+   */
+  async bookInTx(tx: Tx, user: AuthUser, id: string, prepared: PreparedBooking): Promise<string> {
+    const container = await lockContainer(tx, id);
+    requireOpen(container);
+    await requireRoom(tx, container);
+    const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+    const shipment = await this.bookings.confirmInTx(tx, user, bookingId);
+    const shipmentRow = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipment.id },
+      select: { number: true },
+    });
+    await this.addShipments(
+      tx,
+      user,
+      container,
+      [shipment.id],
+      new Map([[shipment.id, shipmentRow.number]]),
+    );
+    return bookingId;
+  }
+
+  /**
+   * The container a booking draft names, for the draft's review screen: the caller has already
+   * found the draft in the user's branches, and the draft could name only a container open to
+   * booking when it was made. Null when the container no longer exists.
+   */
+  async describe(id: string): Promise<DraftContainer | null> {
+    const container = await this.prisma.consolidation.findUnique({ where: { id } });
+    if (!container) return null;
+    return {
+      id: container.id,
+      number: container.number,
+      status: container.status,
+      containerTypeCode: container.containerTypeCode,
+      containerNumber: container.containerNumber,
+      etd: fromDbDateOrNull(container.etd),
+    };
   }
 
   /**
@@ -891,13 +994,6 @@ export class ConsolidationsService {
   }
 }
 
-/** Who may book into an open container, of any branch (POST /consolidations/:id/bookings). */
-function canBookInto(user: AuthUser): boolean {
-  return (['consolidation:update', 'bookings:create', 'bookings:approve'] as const).every((p) =>
-    user.permissions.has(p),
-  );
-}
-
 /** 409 unless the container (locked or as read) is still open. */
 function requireOpen(c: Consolidation): void {
   if (!isOpen(c.status)) {
@@ -913,14 +1009,16 @@ function requireOpen(c: Consolidation): void {
 /** 409 when the locked container already holds MAX_CONTAINER_SHIPMENTS. */
 async function requireRoom(tx: Tx, c: Consolidation): Promise<void> {
   const count = await tx.consolidationShipment.count({ where: { consolidationId: c.id } });
-  if (count >= MAX_CONTAINER_SHIPMENTS) {
-    throw codedRefusal(
-      HttpStatus.CONFLICT,
-      'CONTAINER_FULL',
-      `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
-      { container: c.number },
-    );
-  }
+  if (count >= MAX_CONTAINER_SHIPMENTS) throw full(c);
+}
+
+function full(c: Pick<Consolidation, 'number'>): Error {
+  return codedRefusal(
+    HttpStatus.CONFLICT,
+    'CONTAINER_FULL',
+    `A container holds at most ${MAX_CONTAINER_SHIPMENTS} shipments`,
+    { container: c.number },
+  );
 }
 
 /** Unlinks the shipment from the locked container; 404 when it is not in it. */

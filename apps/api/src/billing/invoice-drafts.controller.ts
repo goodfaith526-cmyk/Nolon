@@ -13,6 +13,7 @@ import {
   type AssistantDraftDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  type DraftPreCheckDto,
   type EntryDraftSummaryDto,
   type InvoiceDraftDto,
   type InvoiceDraftListItemDto,
@@ -20,6 +21,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftDecidable,
   AgentDraftWritable,
   AgentReadable,
@@ -27,6 +29,7 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import {
+  amount,
   currencyCode,
   dateString,
   optionalText,
@@ -34,8 +37,9 @@ import {
   requiredText,
 } from '../common/validation.js';
 import { invoiceLine } from './billing.controller.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { InvoiceDraftsService } from './invoice-drafts.service.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 const createBody = z
@@ -45,7 +49,11 @@ const createBody = z
     invoiceDate: dateString,
     dueDate: dateString,
     notes: optionalText(2000),
-    lines: z.array(invoiceLine).min(1).max(100),
+    // No unit price: NOLON prices the line (the shipment's quotation, else its rate card).
+    lines: z
+      .array(invoiceLine.extend({ unitPrice: amount.optional() }))
+      .min(1)
+      .max(100),
     idempotencyKey,
   })
   .strict();
@@ -73,6 +81,17 @@ export class InvoiceDraftsController {
     // replacesDraftId: the draft this one replaces, when the person asked for changes.
     const { replacesDraftId, rest } = splitReplaced(body);
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('customer_invoices:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
   }
 
   @AgentReadable()

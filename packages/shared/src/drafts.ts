@@ -1,3 +1,5 @@
+import type { FormRefusal } from './commercial.js';
+import type { DraftPriceSource } from './commercial-drafts.js';
 import type { DecimalString } from './currencies.js';
 
 /**
@@ -162,4 +164,169 @@ export interface AssistantDraftApproveRequest {
 export interface AssistantApprovalGrantsDto {
   userId: string;
   kinds: AssistantDecidableKind[];
+}
+
+/**
+ * One reason a pre-check refused the values: the field it is about (its path in the request, null
+ * when the reason names none), NOLON's code for it (`INVALID` for a malformed value, null when the
+ * reason has none), the English message and its params.
+ */
+export interface DraftCheckRefusal {
+  field: string | null;
+  code: FormRefusal | 'INVALID' | null;
+  message: string;
+  params: Record<string, string>;
+}
+
+/**
+ * A value NOLON fills in when the draft is made (a line's system price), as a pre-check finds it
+ * now: `field` is its path in the request (`lines.0.unitPrice`), `value` a decimal string.
+ */
+export interface DraftComputedValue {
+  field: string;
+  value: DecimalString;
+  source: Exclude<DraftPriceSource['source'], 'TYPED'>;
+  rateCardId: string | null;
+}
+
+/**
+ * POST /<kind>-drafts/check: what a create with these values would get from NOLON now, for this
+ * user, without creating anything. `valuesHash` fingerprints the values checked (null when the
+ * body is malformed), so the assistant can tie the result to the values it holds; a create runs
+ * every check again. A refusal of the route itself (missing permission) stays an HTTP error.
+ */
+export type DraftPreCheckDto =
+  | {
+      ok: true;
+      valuesHash: string;
+      total: DecimalString | null;
+      currency: string | null;
+      /** The price of each line, for quotation and invoice drafts; null for other kinds. */
+      priceSources: DraftPriceSource[] | null;
+      /** The values NOLON would fill in (each system-priced line's unit price). */
+      computed: DraftComputedValue[];
+    }
+  | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
+
+/** Draft kinds in the staff member's "my drafts" list (GET /assistant-drafts/mine). */
+export const MY_DRAFT_KINDS = [
+  'booking',
+  'new_customer_booking',
+  'quotation',
+  'new_customer_quotation',
+  'invoice',
+  'receipt',
+  'trip',
+  'goods_release',
+  'shipment_status',
+  'party',
+  'customer',
+  'rate_card',
+  'grn',
+] as const;
+export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
+
+/** Most drafts one "my drafts" read returns. */
+export const MY_DRAFTS_MAX = 50;
+
+/** The kind of record an approval made, and the page that shows it (without the locale). */
+export interface MyDraftResult {
+  type:
+    | 'booking'
+    | 'quotation'
+    | 'invoice'
+    | 'receipt'
+    | 'trip'
+    | 'warehouse_movement'
+    | 'shipment'
+    | 'party'
+    | 'customer'
+    | 'rate_card';
+  id: string;
+  /** Null for records without a number (a party, a rate card). */
+  number: string | null;
+  /** Such as `/bookings/<id>`; a release and a party show on their shipment's or customer's page. */
+  path: string;
+}
+
+/**
+ * A draft the assistant made for this user, as "my drafts" lists it: only kinds the user may see
+ * now, in branches the user holds now.
+ */
+export interface MyDraftItemDto {
+  kind: MyDraftKind;
+  id: string;
+  status: DraftStatus;
+  /** What the draft is about (the customer, the shipment...), as its review list names it. */
+  subject: string;
+  branchId: string;
+  branchCode: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  rejectReason: string | null;
+  /**
+   * The draft's review page, without the locale: `/drafts/<page>/<id>`; for a GRN draft, its
+   * shipment's page (`/shipments/<id>`).
+   */
+  reviewPath: string;
+  /** Set once approved. */
+  result: MyDraftResult | null;
+}
+
+/** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */
+export const SETTLE_DRAFT_KINDS = MY_DRAFT_KINDS;
+export type SettleDraftKind = (typeof SETTLE_DRAFT_KINDS)[number];
+
+/** A settle request (POST /assistant-drafts/settle): the key of a create whose answer was lost. */
+export interface DraftKeySettleRequest {
+  kind: SettleDraftKind;
+  idempotencyKey: string;
+}
+
+/**
+ * The final answer for a create whose outcome the assistant did not get (a timeout, a lost
+ * connection). CREATED: a draft is committed under the key; read it through its kind's by-key
+ * route, where a 403 or 404 means only that the user may no longer see it (a permission or branch
+ * withdrawn since), never that it was not created. NOT_CREATED: nothing was committed, and from now on nothing will be: a create under this key is
+ * refused (409), even one already in flight. Any other answer (401, 403, 5xx) settles nothing.
+ */
+export type DraftKeySettlementDto =
+  { state: 'CREATED'; draftId: string } | { state: 'NOT_CREATED' };
+
+/** One draft kind as NOLON offers it to the assistant (GET /assistant-drafts/capabilities). */
+export interface DraftKindCapabilityDto {
+  kind: SettleDraftKind;
+  /** The kind's routes, without /api/v1 (`:shipmentId` stands for the shipment's id). */
+  path: string;
+  /** `POST <path>/check` exists: the create's checks, with nothing written. */
+  preCheck: boolean;
+  /**
+   * The review screen's path on the web, without the locale (`:id`: the draft's id). A GRN draft is
+   * reviewed with its document on the shipment's page (`:shipmentId`).
+   */
+  review: string;
+  /** This user holds the create's permissions now (NOLON checks them again on create). */
+  canCreate: boolean;
+  /** Where a person may decide: the review screen only, or also the assistant's chat. */
+  approval: 'screen' | 'both';
+}
+
+/**
+ * What this NOLON offers the assistant, so it can switch off what an older NOLON lacks: a 404 on
+ * this route means none of it. Kinds and features are only added; `api` changes only when an
+ * existing shape changes.
+ */
+export interface DraftCapabilitiesDto {
+  api: 1;
+  features: {
+    preCheck: boolean;
+    myDrafts: boolean;
+    settle: boolean;
+    settleAck: boolean;
+    /** GET /assistant-drafts/mine takes `ids` (up to MY_DRAFTS_MAX, comma-separated). */
+    myDraftsByIds: boolean;
+  };
+  kinds: DraftKindCapabilityDto[];
 }

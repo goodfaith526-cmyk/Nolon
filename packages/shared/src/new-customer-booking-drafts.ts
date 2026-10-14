@@ -1,4 +1,5 @@
 import type { BookingInput, BookingItemInput } from './commercial.js';
+import type { ContainerChoice, DraftContainer } from './commercial-drafts.js';
 import type { CustomerDraftRequest } from './customer-drafts.js';
 import type {
   DraftEvidence,
@@ -23,11 +24,11 @@ export type NewCustomerBookingItem = Pick<
   'cargoType' | 'containerTypeCode' | 'description' | 'quantity' | 'weightKg' | 'volumeCbm'
 >;
 
-/** The booking without its customer and parties. */
-export interface NewCustomerBookingRequest extends Omit<
-  BookingInput,
-  'shipperId' | 'consigneeId' | 'notifyPartyId' | 'items'
-> {
+/** The booking without its customer and parties; it may name an open container to go in. */
+export interface NewCustomerBookingRequest
+  extends
+    Omit<BookingInput, 'shipperId' | 'consigneeId' | 'notifyPartyId' | 'items'>,
+    ContainerChoice {
   items: NewCustomerBookingItem[];
 }
 
@@ -74,6 +75,8 @@ export interface NewCustomerBookingDraftDto extends EntryDraftReviewFields, Evid
   /** NOLON's checks of the booking now (with the customer, once it is approved). */
   check: EntryDraftCheck | null;
   customer: NewCustomerBookingDraftCustomer;
+  /** The container the booking goes in on approval (null when none, or when it no longer exists). */
+  container: DraftContainer | null;
   /** The DRAFT booking the approval created. */
   bookingId: string | null;
   bookingNumber: string | null;
@@ -81,7 +84,7 @@ export interface NewCustomerBookingDraftDto extends EntryDraftReviewFields, Evid
 
 export type NewCustomerBookingDraftListItemDto = Omit<
   NewCustomerBookingDraftDto,
-  'request' | 'check' | 'evidence'
+  'request' | 'check' | 'evidence' | 'container'
 > & {
   lineCount: number;
 };

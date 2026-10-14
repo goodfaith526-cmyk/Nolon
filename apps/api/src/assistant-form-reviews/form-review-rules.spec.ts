@@ -32,7 +32,7 @@ describe('a form kept for the assistant', () => {
     expect(formReviewPermissions('booking', 'create')).toEqual(['bookings:create']);
     expect(formReviewPermissions('booking', 'edit')).toEqual(['bookings:update']);
     expect(formReviewPermissions('booking', 'container')).toEqual([
-      'consolidation:update',
+      'container_booking:create',
       'bookings:create',
       'bookings:approve',
     ]);

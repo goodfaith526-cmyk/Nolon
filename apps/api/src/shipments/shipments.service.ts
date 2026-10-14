@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type {
   BookingService,
+  CargoType,
   LoadType,
   Page,
   Permission,
@@ -33,6 +34,7 @@ import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import {
   dateRange,
   localDayFilter,
+  matchedLocations,
   type RouteFilters,
   routeWhere,
 } from '../common/list-filters.js';
@@ -127,6 +129,7 @@ export class ShipmentsService {
   ) {}
 
   async list(user: AuthUser, filters: ShipmentFilters): Promise<Page<ShipmentSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const { branchId, from, to } = filters;
     if (branchId) assertBranchAccess(user, branchId);
     const created = await localDayFilter(this.prisma, 'createdAt', from, to);
@@ -146,7 +149,7 @@ export class ShipmentsService {
         : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.mode ? { mode: filters.mode } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       eta: dateRange(filters.etaFrom, filters.etaTo),
       ...(filters.q
         ? {
@@ -169,7 +172,13 @@ export class ShipmentsService {
       }),
       this.prisma.shipment.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<ShipmentDto> {
@@ -209,6 +218,11 @@ export class ShipmentsService {
     customerId: string;
     status: ShipmentStatus;
     quotationId: string | null;
+    originLocationId: string;
+    destinationLocationId: string;
+    mode: ShippingMode;
+    loadType: LoadType | null;
+    cargoType: CargoType;
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -219,6 +233,11 @@ export class ShipmentsService {
         branchId: true,
         customerId: true,
         status: true,
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        cargoType: true,
         booking: { select: { quotationId: true } },
       },
     });

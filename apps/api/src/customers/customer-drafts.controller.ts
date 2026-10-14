@@ -14,21 +14,24 @@ import {
   type CustomerDraftListItemDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  type DraftPreCheckDto,
   type EntryDraftSummaryDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
 import { confirmedFields, draftEvidence } from '../drafts/draft-evidence.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { customerFields } from './customer-schemas.js';
 import { CustomerDraftsService } from './customer-drafts.service.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 // The contact details a person gives in a chat; terms, credit and tax details are set later.
@@ -71,6 +74,17 @@ export class CustomerDraftsController {
     // replacesDraftId: the draft this one replaces, when the person asked for changes.
     const { replacesDraftId, rest } = splitReplaced(body);
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('customers:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
   }
 
   @AgentReadable()

@@ -1,21 +1,35 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import {
   GRN_DRAFT_LINE_FIELDS,
   GRN_DRAFT_MAX_LINES,
   GRN_DRAFT_WARNINGS,
   GRN_FIELD_MATCHES,
+  type DraftPreCheckDto,
   type GrnDraftDto,
   type GrnDraftSummaryDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
 import { parse, requiredText } from '../common/validation.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
+import { checkRequest } from '../drafts/drafts.service.js';
 import { GrnDraftsService } from './grn-drafts.service.js';
 import { receiptBody } from './warehouse.controller.js';
 
@@ -155,6 +169,21 @@ export class GrnDraftsController {
     @Body() body: unknown,
   ): Promise<GrnDraftSummaryDto> {
     return this.drafts.create(user, shipmentId, parse(createBody, body));
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('warehouse:create', 'documents:view')
+  check(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Body() body: unknown,
+  ): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, shipmentId, input),
+    );
   }
 
   @AgentReadable()

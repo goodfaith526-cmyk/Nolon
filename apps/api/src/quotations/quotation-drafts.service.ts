@@ -8,6 +8,8 @@ import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
   CreateQuotationRequest,
+  DraftPreCheckDto,
+  DraftPriceSource,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -15,6 +17,7 @@ import type {
   QuotationDraftDto,
   QuotationDraftListItemDto,
   QuotationDraftPricing,
+  QuotationInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -24,22 +27,30 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   requestHash,
   requireOpen,
   resolvedKey,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
+  decidedVia,
   type DecisionVia,
   DraftsService,
-  decidedVia,
   keyReused,
-  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -59,8 +70,8 @@ const details = {
 
 type DraftRow = Prisma.QuotationDraftGetPayload<{ include: typeof details }>;
 
-/** A create request as stored: decimals as Decimal, absent values as null. */
-function storedLines(input: CreateQuotationRequest) {
+/** A create request's lines as stored: decimals as Decimal, absent values as null. */
+export function storedLines(input: QuotationInput) {
   return input.lines.map((line, i) => ({
     lineNo: i + 1,
     rateCardId: line.rateCardId ?? null,
@@ -77,8 +88,12 @@ function storedLines(input: CreateQuotationRequest) {
  * The request a stored draft proposes, in the shape QuotationsService takes. Values are given back
  * exactly as stored: a draft created from request R reads back as R in canonical form.
  */
-export function requestOf(row: {
-  customerId: string;
+export function requestOf(row: StoredQuotation & { customerId: string }): CreateQuotationRequest {
+  return { customerId: row.customerId, ...quotationInputOf(row) };
+}
+
+/** A stored quotation (a quotation draft's, or a new customer's), without its customer. */
+export interface StoredQuotation {
   originLocationId: string;
   destinationLocationId: string;
   mode: CreateQuotationRequest['mode'];
@@ -89,9 +104,11 @@ export function requestOf(row: {
   validUntil: Date;
   terms: string | null;
   lines: ReturnType<typeof storedLines>;
-}): CreateQuotationRequest {
+}
+
+/** The quotation a stored draft proposes, without its customer, exactly as stored. */
+export function quotationInputOf(row: StoredQuotation): QuotationInput {
   return {
-    customerId: row.customerId,
     originLocationId: row.originLocationId,
     destinationLocationId: row.destinationLocationId,
     mode: row.mode,
@@ -115,9 +132,13 @@ export function requestOf(row: {
 
 /** sha256 of the normalised request: decimals canonical, missing and null alike, keys sorted. */
 export function quotationRequestHash(input: CreateQuotationRequest): string {
-  return requestHash({
+  return requestHash({ ...normalisedQuotation(input), customerId: input.customerId.toLowerCase() });
+}
+
+/** A quotation as hashed: ids lower case, decimals canonical, missing and null alike. */
+export function normalisedQuotation(input: QuotationInput): object {
+  return {
     ...input,
-    customerId: input.customerId.toLowerCase(),
     originLocationId: input.originLocationId.toLowerCase(),
     destinationLocationId: input.destinationLocationId.toLowerCase(),
     loadType: input.loadType ?? null,
@@ -130,7 +151,7 @@ export function quotationRequestHash(input: CreateQuotationRequest): string {
       unitPrice: decimalKey(l.unitPrice),
       discount: decimalKey(l.discount),
     })),
-  });
+  };
 }
 
 /**
@@ -153,6 +174,32 @@ export class QuotationDraftsService {
    * this user now (customer in their branches, route, rates, currency...). Then: no draft under
    * the key creates one; the same request returns it; anything else is a 409.
    */
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: QuotationDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(quotationRequestHash(input), async () => {
+      const prepared = await this.quotations.prepareCreate(user, input);
+      return {
+        total: toDecimalString(prepared.header.total),
+        currency: input.currency,
+        priceSources: sourcesOf(prepared),
+        // A line given no price takes the rate card's: what the draft would record.
+        computed: prepared.lines.flatMap((l, i) =>
+          l.rateCardId === null || input.lines[i]?.unitPrice !== undefined
+            ? []
+            : [
+                {
+                  field: `lines.${i}.unitPrice`,
+                  value: toDecimalString(l.unitPrice),
+                  source: 'RATE_CARD' as const,
+                  rateCardId: l.rateCardId,
+                },
+              ],
+        ),
+      };
+    });
+  }
+
   async create(
     user: AuthUser,
     body: QuotationDraftCreateRequest,
@@ -176,6 +223,7 @@ export class QuotationDraftsService {
           user,
           label: LABEL,
         });
+        await lockKeyInTx(tx, 'quotation_drafts', scope);
         const existing = await tx.quotationDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -225,15 +273,43 @@ export class QuotationDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<QuotationDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<QuotationDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.quotationDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: d.lines.length }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('quotations:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'quotation',
+        d,
+        d.quotationId === null
+          ? null
+          : {
+              type: 'quotation',
+              id: d.quotationId,
+              number: d.quotationNumber,
+              path: `/quotations/${d.quotationId}`,
+            },
+      ),
+    );
   }
 
   /** The draft, with whether NOLON would accept it now (checked, nothing written). */
@@ -244,11 +320,17 @@ export class QuotationDraftsService {
   private async read(user: AuthUser, id: string): Promise<QuotationDraftDto> {
     const draft = await this.findScoped(user, id);
     const now = new Date();
-    const { check, pricing } =
+    const { check, pricing, priceSources } =
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.priced(user, draft)
-        : { check: null, pricing: null };
-    return toDto(draft, user, now, check, pricing);
+        : { check: null, pricing: null, priceSources: null };
+    return {
+      ...baseFields(draft, user, now),
+      request: requestOf(draft),
+      check,
+      pricing,
+      priceSources,
+    };
   }
 
   /**
@@ -374,7 +456,11 @@ export class QuotationDraftsService {
   private async priced(
     user: AuthUser,
     draft: DraftRow,
-  ): Promise<{ check: EntryDraftCheck; pricing: QuotationDraftPricing | null }> {
+  ): Promise<{
+    check: EntryDraftCheck;
+    pricing: QuotationDraftPricing | null;
+    priceSources: DraftPriceSource[] | null;
+  }> {
     try {
       const prepared = await this.quotations.prepareCreate(user, requestOf(draft));
       return {
@@ -384,6 +470,7 @@ export class QuotationDraftsService {
           currency: draft.currency,
         },
         pricing: pricingOf(prepared),
+        priceSources: sourcesOf(prepared),
       };
     } catch (error) {
       if (
@@ -391,7 +478,11 @@ export class QuotationDraftsService {
         error instanceof NotFoundException ||
         error instanceof ConflictException
       ) {
-        return { check: { ok: false, message: error.message }, pricing: null };
+        return {
+          check: { ok: false, message: error.message },
+          pricing: null,
+          priceSources: null,
+        };
       }
       throw error;
     }
@@ -418,19 +509,9 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
   };
 }
 
-function toDto(
-  d: DraftRow,
-  user: AuthUser,
-  now: Date,
-  check: EntryDraftCheck | null,
-  pricing: QuotationDraftPricing | null,
-): QuotationDraftDto {
-  return { ...baseFields(d, user, now), request: requestOf(d), check, pricing };
-}
-
 /** The prices an approval would record, and their fingerprint (what the approval sends back). */
 export function pricingOf(
-  prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
+  prepared: Omit<Awaited<ReturnType<QuotationsService['prepareCreate']>>, 'customerId'>,
 ): QuotationDraftPricing {
   return {
     key: resolvedKey(prepared),
@@ -453,7 +534,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing'> {
+): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing' | 'priceSources'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
   return {
@@ -476,4 +557,15 @@ function baseFields(
     quotationId: d.quotationId,
     quotationNumber: d.quotation?.number ?? null,
   };
+}
+
+/** A line priced from a rate card (named, or the system price) shows which one. */
+export function sourcesOf(prepared: {
+  lines: readonly { rateCardId: string | null }[];
+}): DraftPriceSource[] {
+  return prepared.lines.map((l) =>
+    l.rateCardId === null
+      ? { source: 'TYPED', rateCardId: null }
+      : { source: 'RATE_CARD', rateCardId: l.rateCardId },
+  );
 }

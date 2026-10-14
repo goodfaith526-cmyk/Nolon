@@ -58,26 +58,27 @@ model Branch {
   invoices        CustomerInvoice[]
   receipts        Receipt[]
 
-  warehouses               Warehouse[]
-  storageLocations         StorageLocation[]
-  warehouseMovements       WarehouseMovement[]
-  grnDrafts                GrnDraft[]
-  grnDraftLines            GrnDraftLine[]
-  grnDraftProposals        GrnDraftProposal[]
-  quotationDrafts          QuotationDraft[]
-  bookingDrafts            BookingDraft[]
-  tripDrafts               TripDraft[]
-  releaseDrafts            GoodsReleaseDraft[]
-  invoiceDrafts            InvoiceDraft[]
-  receiptDrafts            ReceiptDraft[]
-  customerDrafts           CustomerDraft[]
-  statusDrafts             ShipmentStatusDraft[]
-  partyDrafts              PartyDraft[]
-  rateCardDrafts           RateCardDraft[]
-  newCustomerBookingDrafts NewCustomerBookingDraft[]
-  movementPhotos           WarehouseMovementPhoto[]
-  customsClearances        CustomsClearance[]
-  customsFees              CustomsFee[]
+  warehouses                 Warehouse[]
+  storageLocations           StorageLocation[]
+  warehouseMovements         WarehouseMovement[]
+  grnDrafts                  GrnDraft[]
+  grnDraftLines              GrnDraftLine[]
+  grnDraftProposals          GrnDraftProposal[]
+  quotationDrafts            QuotationDraft[]
+  bookingDrafts              BookingDraft[]
+  tripDrafts                 TripDraft[]
+  releaseDrafts              GoodsReleaseDraft[]
+  invoiceDrafts              InvoiceDraft[]
+  receiptDrafts              ReceiptDraft[]
+  customerDrafts             CustomerDraft[]
+  statusDrafts               ShipmentStatusDraft[]
+  partyDrafts                PartyDraft[]
+  rateCardDrafts             RateCardDraft[]
+  newCustomerBookingDrafts   NewCustomerBookingDraft[]
+  newCustomerQuotationDrafts NewCustomerQuotationDraft[]
+  movementPhotos             WarehouseMovementPhoto[]
+  customsClearances          CustomsClearance[]
+  customsFees                CustomsFee[]
 
   vehicles           Vehicle[]
   drivers            Driver[]
@@ -166,9 +167,9 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  roles    UserRole[]
-  branches UserBranch[]
-  sessions Session[]
+  roles                UserRole[]
+  branches             UserBranch[]
+  sessions             Session[]
   /// Forms this user could not save and opened with the staff assistant.
   assistantFormReviews AssistantFormReview[]
 
@@ -190,35 +191,37 @@ model User {
   receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
   receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
 
-  warehouseMovements              WarehouseMovement[]       @relation("WarehouseMovementCreatedBy")
-  grnDraftsCreated                GrnDraft[]                @relation("GrnDraftCreatedBy")
-  grnDraftsDecided                GrnDraft[]                @relation("GrnDraftDecidedBy")
-  quotationDraftsCreated          QuotationDraft[]          @relation("QuotationDraftCreatedBy")
-  quotationDraftsDecided          QuotationDraft[]          @relation("QuotationDraftDecidedBy")
-  bookingDraftsCreated            BookingDraft[]            @relation("BookingDraftCreatedBy")
-  bookingDraftsDecided            BookingDraft[]            @relation("BookingDraftDecidedBy")
-  tripDraftsCreated               TripDraft[]               @relation("TripDraftCreatedBy")
-  tripDraftsDecided               TripDraft[]               @relation("TripDraftDecidedBy")
-  releaseDraftsCreated            GoodsReleaseDraft[]       @relation("GoodsReleaseDraftCreatedBy")
-  releaseDraftsDecided            GoodsReleaseDraft[]       @relation("GoodsReleaseDraftDecidedBy")
-  invoiceDraftsCreated            InvoiceDraft[]            @relation("InvoiceDraftCreatedBy")
-  invoiceDraftsDecided            InvoiceDraft[]            @relation("InvoiceDraftDecidedBy")
-  receiptDraftsCreated            ReceiptDraft[]            @relation("ReceiptDraftCreatedBy")
-  receiptDraftsDecided            ReceiptDraft[]            @relation("ReceiptDraftDecidedBy")
-  customerDraftsCreated           CustomerDraft[]           @relation("CustomerDraftCreatedBy")
-  customerDraftsDecided           CustomerDraft[]           @relation("CustomerDraftDecidedBy")
-  statusDraftsCreated             ShipmentStatusDraft[]     @relation("ShipmentStatusDraftCreatedBy")
-  statusDraftsDecided             ShipmentStatusDraft[]     @relation("ShipmentStatusDraftDecidedBy")
-  partyDraftsCreated              PartyDraft[]              @relation("PartyDraftCreatedBy")
-  partyDraftsDecided              PartyDraft[]              @relation("PartyDraftDecidedBy")
-  rateCardDraftsCreated           RateCardDraft[]           @relation("RateCardDraftCreatedBy")
-  rateCardDraftsDecided           RateCardDraft[]           @relation("RateCardDraftDecidedBy")
-  newCustomerBookingDraftsCreated NewCustomerBookingDraft[] @relation("NewCustomerBookingDraftCreatedBy")
-  newCustomerBookingDraftsDecided NewCustomerBookingDraft[] @relation("NewCustomerBookingDraftDecidedBy")
-  assistantApprovalGrants         AssistantApprovalGrant[]  @relation("AssistantApprovalGrantUser")
-  assistantApprovalsGranted       AssistantApprovalGrant[]  @relation("AssistantApprovalGrantedBy")
-  customsUpdated                  CustomsClearance[]        @relation("CustomsUpdatedBy")
-  customsFeesCreated              CustomsFee[]              @relation("CustomsFeeCreatedBy")
+  warehouseMovements                WarehouseMovement[]         @relation("WarehouseMovementCreatedBy")
+  grnDraftsCreated                  GrnDraft[]                  @relation("GrnDraftCreatedBy")
+  grnDraftsDecided                  GrnDraft[]                  @relation("GrnDraftDecidedBy")
+  quotationDraftsCreated            QuotationDraft[]            @relation("QuotationDraftCreatedBy")
+  quotationDraftsDecided            QuotationDraft[]            @relation("QuotationDraftDecidedBy")
+  bookingDraftsCreated              BookingDraft[]              @relation("BookingDraftCreatedBy")
+  bookingDraftsDecided              BookingDraft[]              @relation("BookingDraftDecidedBy")
+  tripDraftsCreated                 TripDraft[]                 @relation("TripDraftCreatedBy")
+  tripDraftsDecided                 TripDraft[]                 @relation("TripDraftDecidedBy")
+  releaseDraftsCreated              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftCreatedBy")
+  releaseDraftsDecided              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftDecidedBy")
+  invoiceDraftsCreated              InvoiceDraft[]              @relation("InvoiceDraftCreatedBy")
+  invoiceDraftsDecided              InvoiceDraft[]              @relation("InvoiceDraftDecidedBy")
+  receiptDraftsCreated              ReceiptDraft[]              @relation("ReceiptDraftCreatedBy")
+  receiptDraftsDecided              ReceiptDraft[]              @relation("ReceiptDraftDecidedBy")
+  customerDraftsCreated             CustomerDraft[]             @relation("CustomerDraftCreatedBy")
+  customerDraftsDecided             CustomerDraft[]             @relation("CustomerDraftDecidedBy")
+  statusDraftsCreated               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftCreatedBy")
+  statusDraftsDecided               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftDecidedBy")
+  partyDraftsCreated                PartyDraft[]                @relation("PartyDraftCreatedBy")
+  partyDraftsDecided                PartyDraft[]                @relation("PartyDraftDecidedBy")
+  rateCardDraftsCreated             RateCardDraft[]             @relation("RateCardDraftCreatedBy")
+  rateCardDraftsDecided             RateCardDraft[]             @relation("RateCardDraftDecidedBy")
+  newCustomerBookingDraftsCreated   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftCreatedBy")
+  newCustomerBookingDraftsDecided   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftDecidedBy")
+  newCustomerQuotationDraftsCreated NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftCreatedBy")
+  newCustomerQuotationDraftsDecided NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftDecidedBy")
+  assistantApprovalGrants           AssistantApprovalGrant[]    @relation("AssistantApprovalGrantUser")
+  assistantApprovalsGranted         AssistantApprovalGrant[]    @relation("AssistantApprovalGrantedBy")
+  customsUpdated                    CustomsClearance[]          @relation("CustomsUpdatedBy")
+  customsFeesCreated                CustomsFee[]                @relation("CustomsFeeCreatedBy")
 
   driverProfile         Driver?
   tripsCreated          Trip[]             @relation("TripCreatedBy")
@@ -339,9 +342,13 @@ model Location {
   /// ISO 3166-1 alpha-2.
   countryCode String       @map("country_code") @db.Char(2)
   isActive    Boolean      @default(true) @map("is_active")
+  /// The city a port (or other place) serves, a CITY location: a lookup by the city also finds it.
+  cityId      String?      @map("city_id") @db.Uuid
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  city               Location?             @relation("LocationCity", fields: [cityId], references: [id], onDelete: Restrict)
+  places             Location[]            @relation("LocationCity")
   ratesFrom          RateCard[]            @relation("RateOrigin")
   ratesTo            RateCard[]            @relation("RateDestination")
   rateDraftsFrom     RateCardDraft[]       @relation("RateDraftOrigin")
@@ -360,6 +367,7 @@ model Location {
   consolidationsFrom Consolidation[]       @relation("ConsolidationOrigin")
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
 
+  @@index([cityId])
   @@map("locations")
 }
 
@@ -484,10 +492,11 @@ model Customer {
   quotationDrafts QuotationDraft[]
   bookingDrafts   BookingDraft[]
 
-  invoiceDrafts InvoiceDraft[]
-  receiptDrafts ReceiptDraft[]
-  draft         CustomerDraft?
-  partyDrafts   PartyDraft[]
+  invoiceDrafts             InvoiceDraft[]
+  receiptDrafts             ReceiptDraft[]
+  draft                     CustomerDraft?
+  partyDrafts               PartyDraft[]
+  newCustomerQuotationDraft NewCustomerQuotationDraft?
 
   @@index([branchId])
   @@index([phone])
@@ -583,15 +592,16 @@ model RateCard {
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch         Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin         Location        @relation("RateOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination    Location        @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  containerType  ContainerType?  @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
-  chargeType     ChargeType      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
-  currencyRef    Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
-  approvedBy     User?           @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  createdBy      User            @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  quotationLines QuotationLine[]
+  branch            Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin            Location           @relation("RateOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination       Location           @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  containerType     ContainerType?     @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  chargeType        ChargeType         @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  currencyRef       Currency           @relation(fields: [currency], references: [code], onDelete: Restrict)
+  approvedBy        User?              @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy         User               @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  quotationLines    QuotationLine[]
+  invoiceDraftLines InvoiceDraftLine[]
 
   draft RateCardDraft?
 
@@ -638,16 +648,17 @@ model Quotation {
   createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer      Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  origin        Location        @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination   Location        @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  currencyRef   Currency        @relation(fields: [currency], references: [code], onDelete: Restrict)
-  createdBy     User            @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  lines         QuotationLine[]
-  booking       Booking?
-  draft         QuotationDraft? @relation("QuotationDraftResult")
-  bookingDrafts BookingDraft[]  @relation("BookingDraftSourceQuotation")
+  branch           Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer         Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  origin           Location                   @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination      Location                   @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currencyRef      Currency                   @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy        User                       @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  lines            QuotationLine[]
+  booking          Booking?
+  draft            QuotationDraft?            @relation("QuotationDraftResult")
+  newCustomerDraft NewCustomerQuotationDraft?
+  bookingDrafts    BookingDraft[]             @relation("BookingDraftSourceQuotation")
 
   @@index([branchId, status])
   @@index([customerId])
@@ -2018,6 +2029,7 @@ model Consolidation {
   shipments     ConsolidationShipment[]
   billLines     SupplierBillLine[]
   journalLines  JournalLine[]
+  bookingDrafts BookingDraft[]
 
   @@index([branchId, status])
   @@map("consolidations")
@@ -2589,13 +2601,14 @@ model AgentClient {
   tripDrafts    TripDraft[]
   releaseDrafts GoodsReleaseDraft[]
 
-  invoiceDrafts            InvoiceDraft[]
-  receiptDrafts            ReceiptDraft[]
-  customerDrafts           CustomerDraft[]
-  statusDrafts             ShipmentStatusDraft[]
-  partyDrafts              PartyDraft[]
-  rateCardDrafts           RateCardDraft[]
-  newCustomerBookingDrafts NewCustomerBookingDraft[]
+  invoiceDrafts              InvoiceDraft[]
+  receiptDrafts              ReceiptDraft[]
+  customerDrafts             CustomerDraft[]
+  statusDrafts               ShipmentStatusDraft[]
+  partyDrafts                PartyDraft[]
+  rateCardDrafts             RateCardDraft[]
+  newCustomerBookingDrafts   NewCustomerBookingDraft[]
+  newCustomerQuotationDrafts NewCustomerQuotationDraft[]
 
   @@map("agent_clients")
 }
@@ -2801,11 +2814,14 @@ model BookingDraft {
   decidedVia            DraftDecidedVia? @map("decided_via")
   rejectReason          String?          @map("reject_reason") @db.VarChar(500)
   bookingId             String?          @unique @map("booking_id") @db.Uuid
+  /// The open LCL container the booking goes in on approval (confirmed, its shipment added).
+  consolidationId       String?          @map("consolidation_id") @db.Uuid
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch          Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  consolidation   Consolidation?     @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
   sourceQuotation Quotation?         @relation("BookingDraftSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: Restrict)
   agentClient     AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy       User               @relation("BookingDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2815,6 +2831,7 @@ model BookingDraft {
 
   @@unique([agentClientId, createdById, idempotencyKey])
   @@index([branchId, state])
+  @@index([consolidationId])
   @@index([sourceQuotationId])
   @@index([replacesDraftId])
   @@map("booking_drafts")
@@ -3060,17 +3077,31 @@ model InvoiceDraft {
 }
 
 model InvoiceDraftLine {
-  draftId        String  @map("draft_id") @db.Uuid
-  lineNo         Int     @map("line_no")
-  chargeTypeCode String  @map("charge_type_code") @db.VarChar(20)
-  description    String? @db.VarChar(500)
-  quantity       Decimal @db.Decimal(18, 4)
-  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+  draftId        String           @map("draft_id") @db.Uuid
+  lineNo         Int              @map("line_no")
+  chargeTypeCode String           @map("charge_type_code") @db.VarChar(20)
+  description    String?          @db.VarChar(500)
+  quantity       Decimal          @db.Decimal(18, 4)
+  unitPrice      Decimal          @map("unit_price") @db.Decimal(18, 4)
+  /// Where unitPrice came from: typed by the staff member, or the system price NOLON found when
+  /// the draft was created (the shipment's quotation, or the approved rate card `rateCardId`).
+  priceSource    DraftPriceSource @default(TYPED) @map("price_source")
+  rateCardId     String?          @map("rate_card_id") @db.Uuid
 
-  draft InvoiceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  draft    InvoiceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  rateCard RateCard?    @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
 
   @@id([draftId, lineNo])
+  @@index([rateCardId])
   @@map("invoice_draft_lines")
+}
+
+enum DraftPriceSource {
+  TYPED
+  QUOTATION
+  RATE_CARD
+
+  @@map("draft_price_source")
 }
 
 /// A customer receipt proposed by the staff AI assistant (entry drafts). An approval records an
@@ -3360,6 +3391,82 @@ model NewCustomerBookingDraft {
   @@map("new_customer_booking_drafts")
 }
 
+/// A quotation proposed by the staff AI assistant for a customer not in NOLON yet (entry drafts),
+/// from one form with the new customer's details and the quotation's. Unlike a booking for a new
+/// customer there is no separate customer draft: a person approves this draft on the review
+/// screen, which creates the customer (CustomersService) and an ordinary DRAFT quotation for it
+/// (QuotationsService, priced by NOLON) in one transaction, with their permissions.
+model NewCustomerQuotationDraft {
+  id                    String           @id @default(uuid()) @db.Uuid
+  branchId              String           @map("branch_id") @db.Uuid
+  state                 EntryDraftState  @default(DRAFT)
+  version               Int              @default(1)
+  expiresAt             DateTime         @map("expires_at") @db.Timestamptz(3)
+  agentClientId         String           @map("agent_client_id") @db.Uuid
+  createdById           String           @map("created_by_id") @db.Uuid
+  idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
+  payloadHash           String           @map("payload_hash") @db.Char(64)
+  /// The staff member's words for the customer's and the quotation's values
+  /// (drafts/draft-evidence.ts), confirmed on approval.
+  evidence              Json             @default("[]")
+  /// The new customer (CustomerDraftRequest): contact details only, no amounts.
+  customer              Json
+  originLocationId      String           @map("origin_location_id") @db.Uuid
+  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode
+  loadType              LoadType?        @map("load_type")
+  cargoType             CargoType        @map("cargo_type")
+  cargoDescription      String?          @map("cargo_description") @db.VarChar(2000)
+  currency              String           @db.Char(3)
+  validUntil            DateTime         @map("valid_until") @db.Date
+  terms                 String?          @db.VarChar(4000)
+  /// The customer and the DRAFT quotation the approval created.
+  customerId            String?          @unique @map("customer_id") @db.Uuid
+  quotationId           String?          @unique @map("quotation_id") @db.Uuid
+  decidedById           String?          @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
+  /// The draft of this kind it replaced, at the person's request through the assistant. No foreign
+  /// key, as for the other kinds.
+  replacesDraftId       String?          @map("replaces_draft_id") @db.Uuid
+  /// SESSION: decided on the review screen; ASSISTANT: closed as replaced through the assistant.
+  decidedVia            DraftDecidedVia? @map("decided_via")
+  rejectReason          String?          @map("reject_reason") @db.VarChar(500)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch          Branch                          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdCustomer Customer?                       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quotation       Quotation?                      @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  agentClient     AgentClient                     @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
+  createdBy       User                            @relation("NewCustomerQuotationDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy       User?                           @relation("NewCustomerQuotationDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  lines           NewCustomerQuotationDraftLine[]
+
+  @@unique([agentClientId, createdById, idempotencyKey])
+  @@index([branchId, state])
+  @@index([replacesDraftId])
+  @@map("new_customer_quotation_drafts")
+}
+
+/// One proposed line of a quotation for a new customer: a rate card, a charge type with unit and
+/// price, or neither (the system price).
+model NewCustomerQuotationDraftLine {
+  draftId        String    @map("draft_id") @db.Uuid
+  lineNo         Int       @map("line_no")
+  rateCardId     String?   @map("rate_card_id") @db.Uuid
+  chargeTypeCode String?   @map("charge_type_code") @db.VarChar(20)
+  description    String?   @db.VarChar(500)
+  unit           RateUnit?
+  quantity       Decimal   @db.Decimal(18, 4)
+  unitPrice      Decimal?  @map("unit_price") @db.Decimal(18, 4)
+  discount       Decimal?  @db.Decimal(18, 4)
+
+  draft NewCustomerQuotationDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@id([draftId, lineNo])
+  @@map("new_customer_quotation_draft_lines")
+}
+
 /// What a form sent when NOLON refused to save it, kept for the staff assistant ("Review with the
 /// assistant"): the person's own input, readable only by that person (also through the assistant
 /// with their delegated token) and only until it expires. Never an entry and never draft evidence.
@@ -3386,4 +3493,34 @@ model AssistantFormReview {
   @@index([userId])
   @@index([expiresAt])
   @@map("assistant_form_reviews")
+}
+
+/// The outcome the assistant was given, or will be given, for one idempotency key of its drafts:
+/// NOT_CREATED when settle found no draft (then no create under the key ever commits), CREATED
+/// for a draft that is gone (the retention purge writes it, in its own transaction, just before
+/// it deletes the draft). A live draft answers for itself. A row is removed only 90 days
+/// (DRAFT_RETENTION_DAYS) after the assistant acknowledged it; one never acknowledged is kept.
+model AssistantDraftKey {
+  agentClientId  String          @map("agent_client_id") @db.Uuid
+  createdById    String          @map("created_by_id") @db.Uuid
+  /// The draft table the key belongs to (a key is scoped to its kind of draft).
+  draftTable     String          @map("draft_table") @db.VarChar(50)
+  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
+  outcome        DraftKeyOutcome
+  /// The draft created under the key (CREATED only); it may no longer exist.
+  draftId        String?         @map("draft_id") @db.Uuid
+  recordedAt     DateTime        @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  /// When the assistant said its task under this key is final.
+  ackedAt        DateTime?       @map("acked_at") @db.Timestamptz(6)
+
+  @@id([agentClientId, createdById, draftTable, idempotencyKey])
+  @@index([ackedAt])
+  @@map("assistant_draft_keys")
+}
+
+enum DraftKeyOutcome {
+  CREATED
+  NOT_CREATED
+
+  @@map("draft_key_outcome")
 }

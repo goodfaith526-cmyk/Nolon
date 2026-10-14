@@ -5,6 +5,7 @@ import { BookingDraftReview } from './BookingDraftReview';
 import { CustomerDraftReview } from './CustomerDraftReview';
 import { InvoiceDraftReview } from './InvoiceDraftReview';
 import { NewCustomerBookingDraftReview } from './NewCustomerBookingDraftReview';
+import { NewCustomerQuotationDraftReview } from './NewCustomerQuotationDraftReview';
 import { PartyDraftReview } from './PartyDraftReview';
 import { QuotationDraftReview } from './QuotationDraftReview';
 import { RateCardDraftReview } from './RateCardDraftReview';
@@ -20,6 +21,7 @@ export function DraftReviewPage({ kind, id }: { kind: string; id: string }) {
   if (kind === 'parties') return <PartyDraftReview id={id} />;
   if (kind === 'rate-cards') return <RateCardDraftReview id={id} />;
   if (kind === 'new-customer-bookings') return <NewCustomerBookingDraftReview id={id} />;
+  if (kind === 'new-customer-quotations') return <NewCustomerQuotationDraftReview id={id} />;
   if (kind === 'quotations') return <QuotationDraftReview id={id} />;
   if (kind === 'bookings') return <BookingDraftReview id={id} />;
   if (kind === 'trips') return <TripDraftReview id={id} />;

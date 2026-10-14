@@ -32,7 +32,9 @@ export function Consolidations() {
   const [status, setStatus] = useState<ConsolidationStatus | ''>('');
   const [bookable, setBookable] = useState(false);
   const canBook =
-    can(me, 'consolidation:update') && can(me, 'bookings:create') && can(me, 'bookings:approve');
+    can(me, 'container_booking:create') &&
+    can(me, 'bookings:create') &&
+    can(me, 'bookings:approve');
   const [q, setQ] = useState('');
   const [page, setPage] = useState<Page<ConsolidationSummaryDto> | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);

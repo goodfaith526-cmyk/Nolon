@@ -1,11 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
-  DraftEvidence,
   CreateCustomerRequest,
   CustomerDraftCreateRequest,
   CustomerDraftDto,
   CustomerDraftListItemDto,
   CustomerDraftRequest,
+  DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -16,26 +17,34 @@ import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
-  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
+  type DraftState,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
-  type LockedReplacement,
   decideInTx,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
+  type LockedReplacement,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -127,6 +136,19 @@ export class CustomerDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: CustomerDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { branchId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(customerRequestHash(branchId, input, evidence), async () => {
+      // As an approval would: a customer with this phone in the branch refuses it.
+      assertBranchAccess(user, branchId);
+      await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+      throwFirstConflict(
+        await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
+      );
+    });
+  }
+
   async create(
     user: AuthUser,
     body: CustomerDraftCreateRequest,
@@ -151,6 +173,7 @@ export class CustomerDraftsService {
           user,
           label: LABEL,
         });
+        await lockKeyInTx(tx, 'customer_drafts', scope);
         const existing = await tx.customerDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -183,6 +206,25 @@ export class CustomerDraftsService {
   }
 
   /**
+   * A pre-check's duplicate rule for a new customer proposed with another draft: the 409 that
+   * createInTx gives for a phone already taken in the branch, at `field` (the phone's path in the
+   * combined request). Reads only.
+   */
+  async requirePhoneFree(branchId: string, phone: string, field: string): Promise<void> {
+    const [issue] = (
+      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone }])
+    ).flat();
+    if (issue) {
+      throw new ConflictException({
+        message: issue.message,
+        fields: [field],
+        error: 'Conflict',
+        statusCode: 409,
+      });
+    }
+  }
+
+  /**
    * Creates a customer draft in the caller's transaction (a booking for a new customer, proposed
    * in one request with it); its id. The caller ran prepareNew and answered a replay of its own
    * request first, so the key is new here: one a customer draft already holds is refused as
@@ -206,6 +248,7 @@ export class CustomerDraftsService {
     const replaced = spec.replaced ?? null;
     const replacesDraftId = replaced?.id ?? null;
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
+    await lockKeyInTx(tx, 'customer_drafts', scope);
     const existing = await tx.customerDraft.findUnique({
       where: { agentClientId_createdById_idempotencyKey: scope },
       select: { id: true },
@@ -310,15 +353,43 @@ export class CustomerDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<CustomerDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<CustomerDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.customerDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: 1, phone: d.phone }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('customers:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'customer',
+        d,
+        d.customerId === null
+          ? null
+          : {
+              type: 'customer',
+              id: d.customerId,
+              number: d.customerNumber,
+              path: `/customers/${d.customerId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<CustomerDraftDto> {

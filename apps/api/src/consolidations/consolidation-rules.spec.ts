@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { ROLE_PERMISSIONS, type Permission } from '@nolon/shared';
 import { dec } from '../common/money.js';
 import {
   atOrPastOnSeaLeg,
   basisValueOf,
+  canBookInto,
   consolidationMoves,
   isClosed,
   isOpen,
@@ -11,6 +13,32 @@ import {
 } from './consolidation-rules.js';
 
 describe('consolidation rules', () => {
+  it('books into a container with container_booking and both booking rights, whatever else', () => {
+    const user = (...permissions: Permission[]) => ({ permissions: new Set(permissions) });
+    expect(
+      canBookInto(user('container_booking:create', 'bookings:create', 'bookings:approve')),
+    ).toBe(true);
+    // Container rights alone (the branch manager) or booking rights alone do not.
+    expect(canBookInto(user('consolidation:update', 'bookings:create', 'bookings:approve'))).toBe(
+      false,
+    );
+    expect(canBookInto(user('container_booking:create', 'bookings:create'))).toBe(false);
+    const role = (r: keyof typeof ROLE_PERMISSIONS) => ({ permissions: ROLE_PERMISSIONS[r] });
+    expect(
+      ['SALES', 'OPERATIONS', 'ADMINISTRATOR'].map((r) => canBookInto(role(r as 'SALES'))),
+    ).toEqual([true, true, true]);
+    for (const r of [
+      'BRANCH_MANAGER',
+      'MANAGEMENT',
+      'FINANCE',
+      'WAREHOUSE',
+      'CUSTOMS',
+      'DRIVER',
+    ] as const) {
+      expect(canBookInto(role(r)), r).toBe(false);
+    }
+  });
+
   it('moves a container one step at a time and maps each step to its shipments', () => {
     expect(consolidationMoves('OPEN')).toEqual(['CLOSED']);
     expect(consolidationMoves('ARRIVED')).toEqual(['DECONSOLIDATED']);

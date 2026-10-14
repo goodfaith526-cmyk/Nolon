@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -19,23 +20,31 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -96,6 +105,15 @@ export class GoodsReleaseDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: GoodsReleaseDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { shipmentId, ...input } = valuesOf(body);
+    return preCheck(releaseRequestHash(shipmentId, input), async () => {
+      await this.movements.prepareRelease(user, shipmentId, input);
+      await this.requireWarehouse(user, input.warehouseId);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: GoodsReleaseDraftCreateRequest,
@@ -132,6 +150,7 @@ export class GoodsReleaseDraftsService {
           user,
           label: LABEL,
         });
+        await lockKeyInTx(tx, 'goods_release_drafts', scope);
         const existing = await tx.goodsReleaseDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },
@@ -173,13 +192,21 @@ export class GoodsReleaseDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<GoodsReleaseDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<GoodsReleaseDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.goodsReleaseDraft.findMany({
-      where: { shipment: shipmentScope(user), ...stateFilter(status, now) },
+      where: {
+        shipment: shipmentScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -187,6 +214,26 @@ export class GoodsReleaseDraftsService {
       packages: d.packages,
       weightKg: toDecimalStringOrNull(d.weightKg),
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('warehouse:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'goods_release',
+        d,
+        d.movementId === null
+          ? null
+          : {
+              type: 'warehouse_movement',
+              id: d.movementId,
+              number: d.movementNumber,
+              path: `/shipments/${d.shipmentId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {

@@ -13,16 +13,21 @@ import type {
   QuotationSummaryDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
+import {
+  localDayFilter,
+  matchedLocations,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { Prisma, Quotation, QuotationLine } from '../generated/prisma/client.js';
+import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RatesService } from '../rates/rates.service.js';
@@ -71,13 +76,14 @@ export class QuotationsService {
   ) {}
 
   async list(user: AuthUser, filters: QuotationFilters): Promise<Page<QuotationSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.QuotationWhereInput = {
       ...listBranchScope(user, filters.branchId),
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       ...(filters.q
         ? {
             OR: [
@@ -97,7 +103,13 @@ export class QuotationsService {
       }),
       this.prisma.quotation.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<QuotationDto> {
@@ -154,6 +166,18 @@ export class QuotationsService {
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return { customerId: customer.id, branchId, ...prepared };
+  }
+
+  /**
+   * As prepareCreate, for a customer not in NOLON yet (a quotation for a new customer, proposed
+   * with it): priced in one of the user's branches, the one the customer will belong to. The
+   * caller adds the customer's id once it exists, before insertInTx.
+   */
+  async prepareForNewCustomer(user: AuthUser, branchId: string, input: QuotationInput) {
+    assertBranchAccess(user, branchId);
+    const today = await this.branchToday(branchId);
+    const prepared = await this.prepare(branchId, today, input);
+    return { branchId, ...prepared };
   }
 
   async insertInTx(
@@ -290,43 +314,49 @@ export class QuotationsService {
     if (input.validUntil < today)
       throw fieldRefusal('VALID_UNTIL_PAST', 'Valid-until is in the past', ['validUntil']);
 
+    const pricing = {
+      branchId,
+      onDate: today,
+      currency: input.currency,
+      originLocationId: input.originLocationId,
+      destinationLocationId: input.destinationLocationId,
+      mode: input.mode,
+      loadType: input.loadType ?? null,
+      cargoType: input.cargoType,
+    };
     const resolved = [];
     for (const [index, line] of input.lines.entries()) {
       const path = `lines.${index}`;
+      const rateLine = (rate: RateCard) => ({
+        rateCardId: rate.id,
+        chargeTypeCode: rate.chargeTypeCode,
+        unit: rate.unit,
+        unitPrice: rate.price,
+        minimumCharge: rate.minimumCharge,
+        description: line.description ?? null,
+        quantity: dec(line.quantity),
+        discount: dec(line.discount ?? '0'),
+      });
       if (line.rateCardId) {
         const rateCardId = line.rateCardId;
         const rate = await onFields(
           [`${path}.rateCardId`],
-          () =>
-            this.rates.requireUsableRate(rateCardId, {
-              branchId,
-              onDate: today,
-              currency: input.currency,
-              originLocationId: input.originLocationId,
-              destinationLocationId: input.destinationLocationId,
-              mode: input.mode,
-              loadType: input.loadType ?? null,
-              cargoType: input.cargoType,
-            }),
+          () => this.rates.requireUsableRate(rateCardId, pricing),
           'RATE_NOT_USABLE',
         );
-        resolved.push({
-          rateCardId: rate.id,
-          chargeTypeCode: rate.chargeTypeCode,
-          unit: rate.unit,
-          unitPrice: rate.price,
-          minimumCharge: rate.minimumCharge,
-          description: line.description ?? null,
-          quantity: dec(line.quantity),
-          discount: dec(line.discount ?? '0'),
-        });
+        resolved.push(rateLine(rate));
+      } else if (line.unitPrice === undefined) {
+        // No rate card and no price: the system price, from the one rate card that matches.
+        const rate = await this.rates.systemRate(
+          { ...pricing, chargeTypeCode: line.chargeTypeCode ?? null, unit: line.unit ?? null },
+          { noMatch: [`${path}.unitPrice`], several: [`${path}.rateCardId`] },
+        );
+        resolved.push(rateLine(rate));
       } else {
-        if (!line.unit || line.unitPrice === undefined || !line.chargeTypeCode) {
-          const missing = [
-            !line.chargeTypeCode && 'chargeTypeCode',
-            !line.unit && 'unit',
-            line.unitPrice === undefined && 'unitPrice',
-          ].filter((k): k is string => k !== false);
+        if (!line.unit || !line.chargeTypeCode) {
+          const missing = [!line.chargeTypeCode && 'chargeTypeCode', !line.unit && 'unit'].filter(
+            (k): k is string => k !== false,
+          );
           throw fieldRefusal(
             'MANUAL_LINE_INCOMPLETE',
             'A line without a rate needs a charge type, unit and price',

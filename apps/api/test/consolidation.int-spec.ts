@@ -579,8 +579,8 @@ describe('consolidated LCL containers', () => {
     const bookingsOf = () => t.prisma.booking.count({ where: { customerId: customers[0].id } });
     const before = await bookingsOf();
 
-    // Sales may not change containers, Warehouse only views them, PTS books only its customers.
-    await post(path, cookies.salesJed, body).expect(403);
+    // Warehouse only views containers, PTS books only its customers. (Sales book into a
+    // container too, container_booking: container-booking-drafts.int-spec.ts.)
     await post(path, cookies.warehouseJed, body).expect(403);
     await post(path, cookies.opsPts, body).expect(404);
     // The route and mode are the container's, never the request's.

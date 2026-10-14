@@ -4,7 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { AssistantDecidableKind, AssistantDraftDto } from '@nolon/shared';
+import type {
+  AssistantDecidableKind,
+  AssistantDraftDto,
+  DraftKeySettlementDto,
+  DraftStatus,
+  EntryDraftReviewFields,
+  MyDraftItemDto,
+  MyDraftKind,
+  MyDraftResult,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -39,6 +48,14 @@ export function decidedVia(via: DecisionVia): 'SESSION' | 'ASSISTANT' {
  * token) only creates drafts, under an idempotency key scoped to its client and the user it acts
  * for; reading, editing, approving and rejecting are a person's, with their own session.
  */
+/**
+ * The values a chat card names: the proposed request, and the rate cards NOLON priced lines from
+ * (a draft's `priceSources`), whose names carry their prices.
+ */
+function namedValues(draft: { request: unknown }): unknown {
+  return 'priceSources' in draft ? [draft.request, draft.priceSources] : draft.request;
+}
+
 @Injectable()
 export class DraftsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -105,7 +122,7 @@ export class DraftsService {
     resolved: string | null = null,
   ): Promise<AssistantDraftDto<D>> {
     await this.requireOwnDraft(user, table, draft.id, label);
-    const names = await referenceNames(this.prisma, user, draft.request);
+    const names = await referenceNames(this.prisma, user, namedValues(draft));
     return {
       kind,
       contentHash: contentHashOf({ ...draft, names, resolved }),
@@ -139,7 +156,7 @@ export class DraftsService {
     // The names are hashed too: a rate card's price is in its name, so a repricing since the
     // card was shown asks for a reload instead of approving a price nobody saw.
     const names =
-      contentHash === null ? {} : await referenceNames(this.prisma, user, draft.request);
+      contentHash === null ? {} : await referenceNames(this.prisma, user, namedValues(draft));
     if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names, resolved })) {
       throw new ConflictException(`This ${label} changed since you opened it: reload it`);
     }
@@ -377,6 +394,135 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
+/** A "my drafts" read: the user's own drafts, newest first. */
+export interface MyDraftsQuery {
+  /** The assistant client asking (its row id), when the assistant asks: only its drafts. */
+  agentClientId: string | null;
+  status?: DraftStatus;
+  /** Only drafts created at or after this time. */
+  since?: Date;
+  /**
+   * The next page: drafts after this one in the list's order (createdAt, then id, both newest
+   * first), from the last item's createdAt and id. Drafts made in one transaction share a
+   * createdAt, so the id breaks the tie; without `beforeId`, only drafts created before `before`.
+   */
+  before?: Date;
+  beforeId?: string;
+  /** Only these drafts (lower-case ids): the assistant looks up the drafts it made in one read. */
+  ids?: readonly string[];
+  limit: number;
+}
+
+/** The order of every "my drafts" list and page: newest first, then by id. */
+export const MY_DRAFTS_ORDER = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+/**
+ * The drafts made for this user, by the assistant asking when it is one (another assistant
+ * client's drafts are not its own). Each kind adds its own branch scope and status filter.
+ */
+export function mineWhere(
+  user: AuthUser,
+  query: MyDraftsQuery,
+): {
+  createdById: string;
+  agentClientId?: string;
+  createdAt?: { gte: Date };
+  AND?: (
+    | { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }
+    | { id: { in: string[] } }
+  )[];
+} {
+  const { before, beforeId, ids } = query;
+  const and = [
+    ...(before
+      ? [
+          {
+            OR: [
+              { createdAt: { lt: before } },
+              ...(beforeId ? [{ createdAt: before, id: { lt: beforeId } }] : []),
+            ],
+          },
+        ]
+      : []),
+    ...(ids ? [{ id: { in: [...ids] } }] : []),
+  ];
+  return {
+    createdById: user.id,
+    ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
+    ...(query.since ? { createdAt: { gte: query.since } } : {}),
+    ...(and.length > 0 ? { AND: and } : {}),
+  };
+}
+
+/**
+ * Each kind's review page segment (/drafts/<page>/<id> on the web). A GRN draft has none: it is
+ * reviewed with its document on the shipment's page.
+ */
+export const REVIEW_PAGES: Record<Exclude<MyDraftKind, 'grn'>, string> = {
+  booking: 'bookings',
+  new_customer_booking: 'new-customer-bookings',
+  quotation: 'quotations',
+  new_customer_quotation: 'new-customer-quotations',
+  invoice: 'invoices',
+  receipt: 'receipts',
+  trip: 'trips',
+  goods_release: 'releases',
+  shipment_status: 'shipment-statuses',
+  party: 'parties',
+  customer: 'customers',
+  rate_card: 'rate-cards',
+};
+
+/** A "my drafts" item before the branch code is added. */
+export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;
+
+/** A kind's list item as "my drafts" shows it, with the record its approval made. */
+export function myDraftItem(
+  kind: keyof typeof REVIEW_PAGES,
+  d: EntryDraftReviewFields,
+  result: MyDraftResult | null,
+): MyDraftRow {
+  return {
+    kind,
+    id: d.id,
+    status: d.status,
+    subject: d.subject,
+    branchId: d.branchId,
+    createdAt: d.createdAt,
+    expiresAt: d.expiresAt,
+    decidedAt: d.decidedAt,
+    decidedByName: d.decidedByName,
+    rejectReason: d.rejectReason,
+    reviewPath: `/drafts/${REVIEW_PAGES[kind]}/${d.id}`,
+    result,
+  };
+}
+
+/** The idempotency key a pre-check's body is parsed with: a check stores nothing under it. */
+const CHECK_KEY = 'pre-check-only';
+
+/**
+ * A pre-check's body, ready for the create's own schema: the values only, with no replaced draft
+ * and a placeholder key (whatever key was sent is ignored).
+ */
+export function checkRequest(body: unknown): unknown {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
+  const values = Object.entries(body).filter(
+    ([key]) => key !== 'replacesDraftId' && key !== 'idempotencyKey',
+  );
+  return { ...Object.fromEntries(values), idempotencyKey: CHECK_KEY };
+}
+
+/** A create request without its idempotency key (each member of a union on its own). */
+export type ValuesOf<T> = T extends unknown ? Omit<T, 'idempotencyKey'> : never;
+
+/** A create request without its idempotency key: the values a pre-check checks. */
+export function valuesOf<T extends { idempotencyKey: string }>(body: T): ValuesOf<T> {
+  const values: Partial<T> = { ...body };
+  delete values.idempotencyKey;
+  return values as ValuesOf<T>;
+}
+
 /**
  * The draft stored under an idempotency key, read before a create checks anything on live data, so
  * a replay is answered with the draft it made (whatever happened since: approved, or the records
@@ -388,19 +534,153 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
 export async function storedDraftUnderKey(
   client: Prisma.TransactionClient,
   table: DraftTable,
-  scope: { agentClientId: string; createdById: string; idempotencyKey: string },
+  scope: KeyScope,
   hash: string,
 ): Promise<string | null> {
+  const row = await draftUnderKey(client, table, scope);
+  if (!row) {
+    // Refused before any check: the key's outcome is on the ledger (NOT_CREATED, or a draft
+    // since purged), and no create under it ever commits.
+    if (await ledgerRow(client, table, scope)) throw keySettled();
+    return null;
+  }
+  if (row.payload_hash !== hash) throw keyReused();
+  return row.id;
+}
+
+/** An assistant client's idempotency key for one user, as a draft table scopes it. */
+export interface KeyScope {
+  agentClientId: string;
+  createdById: string;
+  idempotencyKey: string;
+}
+
+async function draftUnderKey(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<{ id: string; payload_hash: string } | null> {
   requireDraftTable(table);
   const rows = await client.$queryRaw<{ id: string; payload_hash: string }[]>`
     SELECT "id", "payload_hash" FROM ${Prisma.raw(`"${table}"`)}
     WHERE "agent_client_id" = ${scope.agentClientId}::uuid
       AND "created_by_id" = ${scope.createdById}::uuid
       AND "idempotency_key" = ${scope.idempotencyKey}`;
-  const row = rows[0];
-  if (!row) return null;
-  if (row.payload_hash !== hash) throw keyReused();
-  return row.id;
+  return rows[0] ?? null;
+}
+
+const ledgerKey = (table: DraftTable, scope: KeyScope) => ({
+  agentClientId_createdById_draftTable_idempotencyKey: { ...scope, draftTable: table },
+});
+
+function ledgerRow(client: Prisma.TransactionClient, table: DraftTable, scope: KeyScope) {
+  return client.assistantDraftKey.findUnique({
+    where: ledgerKey(table, scope),
+    select: { outcome: true, draftId: true, ackedAt: true },
+  });
+}
+
+/** pg advisory lock namespace (with a hash of the key): "nolon draft idempotency key". */
+const KEY_LOCK_NAMESPACE = 72_031_012;
+
+/**
+ * Takes the key's lock for the rest of the transaction, then refuses a key whose outcome is on
+ * the ledger without a live draft (settled as not created, or created and since purged). Every
+ * create takes it before its key lookup, and a settle takes the same lock, so a settle waits for
+ * a create in flight to commit (and then finds its draft), and a create after a settle finds the
+ * ledger row: "not created" is final, and a purged draft is never created again.
+ */
+export async function lockKeyInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<void> {
+  await takeKeyLock(tx, table, scope);
+  if ((await ledgerRow(tx, table, scope)) && !(await draftUnderKey(tx, table, scope))) {
+    throw keySettled();
+  }
+}
+
+async function takeKeyLock(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<void> {
+  requireDraftTable(table);
+  const name = `${table}:${scope.agentClientId}:${scope.createdById}:${scope.idempotencyKey}`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${KEY_LOCK_NAMESPACE}::int, hashtext(${name}))::text`;
+}
+
+/**
+ * Settles a key whose create the assistant got no answer for: CREATED with the draft committed
+ * under it (live, or purged since and kept on the ledger), or NOT_CREATED, recorded so that no
+ * create under the key ever commits afterwards. With `ack`, the assistant also says its task
+ * under the key is final: the ledger row then goes DRAFT_RETENTION_DAYS later, never before.
+ * Asks nothing of the user's permissions or branches (they may have changed since the create);
+ * only the same assistant client and user reach their own key.
+ */
+export async function settleKeyInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+  ack: boolean,
+): Promise<DraftKeySettlementDto> {
+  await takeKeyLock(tx, table, scope);
+  const draft = await draftUnderKey(tx, table, scope);
+  const ledger = await ledgerRow(tx, table, scope);
+  const answer: DraftKeySettlementDto = draft
+    ? { state: 'CREATED', draftId: draft.id }
+    : ledger?.outcome === 'CREATED' && ledger.draftId
+      ? { state: 'CREATED', draftId: ledger.draftId }
+      : { state: 'NOT_CREATED' };
+  const ackedAt = ack ? new Date() : null;
+  if (!ledger) {
+    await tx.assistantDraftKey.create({
+      data: {
+        ...scope,
+        draftTable: table,
+        outcome: answer.state,
+        draftId: answer.state === 'CREATED' ? answer.draftId : null,
+        ackedAt,
+      },
+    });
+  } else if (ackedAt && !ledger.ackedAt) {
+    await tx.assistantDraftKey.update({ where: ledgerKey(table, scope), data: { ackedAt } });
+  }
+  return answer;
+}
+
+/**
+ * Before the retention purge deletes drafts, inside its transaction: a CREATED ledger row for
+ * every draft of `table` it may delete, so a settle after the purge still answers CREATED and
+ * the key is never used again. Covers at least what the purge removes (removable(cutoff)).
+ */
+export async function recordPurgedKeysInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  cutoff: Date,
+): Promise<number> {
+  requireDraftTable(table);
+  return tx.$executeRaw`
+    INSERT INTO "assistant_draft_keys"
+      ("agent_client_id", "created_by_id", "draft_table", "idempotency_key", "outcome", "draft_id")
+    SELECT "agent_client_id", "created_by_id", ${table}, "idempotency_key", 'CREATED', "id"
+    FROM ${Prisma.raw(`"${table}"`)}
+    WHERE ("state" = 'REJECTED' AND "decided_at" <= ${cutoff})
+       OR ("state" = 'DRAFT' AND "expires_at" <= ${cutoff})
+    ON CONFLICT DO NOTHING`;
+}
+
+/** A create under a key whose outcome is already settled (for the assistant only). */
+export function keySettled(): ConflictException {
+  return new ConflictException({
+    message: 'This idempotency key is settled; use a new key',
+    code: 'KEY_SETTLED',
+    params: {},
+    fields: [],
+    error: 'Conflict',
+    statusCode: 409,
+  });
 }
 
 /** A key reused for another request: reveals nothing about the stored draft. */
@@ -422,6 +702,7 @@ export const DRAFT_TABLES = [
   'party_drafts',
   'rate_card_drafts',
   'new_customer_booking_drafts',
+  'new_customer_quotation_drafts',
 ] as const;
 export type DraftTable = (typeof DRAFT_TABLES)[number];
 

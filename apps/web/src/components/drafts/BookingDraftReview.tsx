@@ -6,6 +6,7 @@ import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
+import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame } from './DraftFrame';
 
 /** A booking the assistant proposed: its values as proposed, and the decision. */
@@ -27,7 +28,11 @@ export function BookingDraftReview({ id }: { id: string }) {
       draft={draft}
       apiPath="/booking-drafts"
       title={t('bookingTitle', { customer: draft.customerName })}
-      approveHint={t('bookingApproveHint')}
+      approveHint={
+        b.quotationId === undefined && b.consolidationId
+          ? t('containerBookingApproveHint')
+          : t('bookingApproveHint')
+      }
       result={
         draft.bookingId
           ? { label: draft.bookingNumber ?? '', href: `/bookings/${draft.bookingId}` }
@@ -59,6 +64,7 @@ export function BookingDraftReview({ id }: { id: string }) {
             </dd>
             <dt>{tb('cargoDescription')}</dt>
             <dd>{b.cargoDescription ?? '—'}</dd>
+            <DraftContainerDetails id={b.consolidationId} container={draft.container} />
           </>
         )}
         <dt>{tb('services')}</dt>
