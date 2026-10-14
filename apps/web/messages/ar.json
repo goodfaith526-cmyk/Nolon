@@ -74,7 +74,8 @@
     "consolidations": "الحاويات المجمعة",
     "alertSettings": "مدد التنبيهات",
     "apiKeys": "مفاتيح API",
-    "assistantDrafts": "مسودات المساعد"
+    "assistantDrafts": "مسودات المساعد",
+    "locations": "الموانئ والمدن"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -2270,5 +2271,24 @@
     "ALLOCATION_NOT_APPROVED": "الفاتورة {invoice} غير معتمدة: الدفع يكون على الفواتير المعتمدة فقط.",
     "ALLOCATION_OTHER_CURRENCY": "الفاتورة {invoice} بعملة {currency}: استلمها بتلك العملة.",
     "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك."
+  },
+  "Locations": {
+    "title": "الموانئ والمدن",
+    "hint": "الموانئ والمدن ونقاط الحدود. اربط كل ميناء بالمدينة التي يخدمها، فيجد البحث بالمدينة موانئها أيضاً. أوقف المكان بدل حذفه.",
+    "add": "إضافة مكان",
+    "kind": "النوع",
+    "code": "الرمز",
+    "name": "الاسم",
+    "nameAr": "الاسم (عربي)",
+    "nameEn": "الاسم (إنجليزي)",
+    "country": "رمز الدولة",
+    "city": "المدينة التي يخدمها",
+    "noCity": "بلا مدينة",
+    "none": "لا توجد أماكن بعد.",
+    "createdNotice": "أُضيف المكان.",
+    "kind_PORT": "ميناء",
+    "kind_CITY": "مدينة",
+    "kind_BORDER": "نقطة حدود",
+    "kind_OTHER": "أخرى"
   }
 }

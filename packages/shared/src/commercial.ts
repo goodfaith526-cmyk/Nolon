@@ -65,6 +65,17 @@ export interface Page<T> {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * On a list filtered by origin or destination: the locations each filter matched. A city matches
+   * itself and the places that serve it (its ports), so a client can say "including Jebel Ali".
+   */
+  matchedLocations?: RouteMatch;
+}
+
+/** The locations a route filter matched (null: no filter on that end). */
+export interface RouteMatch {
+  originLocationIds: string[] | null;
+  destinationLocationIds: string[] | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -79,6 +90,8 @@ export interface LocationDto {
   nameAr: string;
   countryCode: string;
   isActive: boolean;
+  /** The city this place serves (a port's city); a lookup by the city also finds it. */
+  cityId: string | null;
 }
 
 export interface CodeNameDto {
@@ -109,6 +122,8 @@ export interface LocationInput {
   nameAr: string;
   countryCode: string;
   isActive?: boolean;
+  /** A CITY location this place serves; not for a city itself. */
+  cityId?: string | null;
 }
 
 export interface CodeNameInput {

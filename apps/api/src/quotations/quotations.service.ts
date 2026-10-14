@@ -15,7 +15,12 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
-import { localDayFilter, type RouteFilters, routeWhere } from '../common/list-filters.js';
+import {
+  localDayFilter,
+  matchedLocations,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { onFields } from '../common/rule-issues.js';
@@ -71,13 +76,14 @@ export class QuotationsService {
   ) {}
 
   async list(user: AuthUser, filters: QuotationFilters): Promise<Page<QuotationSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.QuotationWhereInput = {
       ...listBranchScope(user, filters.branchId),
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       ...(filters.q
         ? {
             OR: [
@@ -97,7 +103,13 @@ export class QuotationsService {
       }),
       this.prisma.quotation.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<QuotationDto> {

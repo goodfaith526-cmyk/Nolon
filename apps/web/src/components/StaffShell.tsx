@@ -45,6 +45,7 @@ interface NavLink {
     | 'chartOfAccounts'
     | 'fxRates'
     | 'periods'
+    | 'locations'
     | 'users'
     | 'alertSettings'
     | 'apiKeys'
@@ -236,6 +237,12 @@ const NAV_SECTIONS: readonly {
         label: 'openingBalances',
         icon: 'balance',
         permission: 'manual_journals:approve',
+      },
+      {
+        href: '/locations',
+        label: 'locations',
+        icon: 'globe',
+        permission: 'master_data:view',
       },
       {
         href: '/alerts/settings',

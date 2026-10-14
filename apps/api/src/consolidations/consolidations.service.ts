@@ -34,7 +34,12 @@ import {
   listBranchScope,
 } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
-import { dateRange, type RouteFilters, routeWhere } from '../common/list-filters.js';
+import {
+  dateRange,
+  matchedLocations,
+  type RouteFilters,
+  routeWhere,
+} from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
@@ -155,6 +160,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     user: AuthUser,
     filters: ConsolidationFilters,
   ): Promise<Page<ConsolidationSummaryDto>> {
+    const route = await this.masterData.matchRoute(filters);
     if (filters.bookable && !canBookInto(user)) {
       throw new ForbiddenException('Missing permission to book into a container');
     }
@@ -162,7 +168,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       ...(filters.bookable ? { status: 'OPEN' } : listBranchScope(user, filters.branchId)),
       etd: dateRange(filters.from, filters.to),
       ...(filters.status && !filters.bookable ? { status: filters.status } : {}),
-      ...routeWhere(filters),
+      ...routeWhere(route),
       ...(filters.q
         ? {
             OR: [
@@ -182,7 +188,13 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       }),
       this.prisma.consolidation.count({ where }),
     ]);
-    return { items: items.map(toSummary), total, page: filters.page, pageSize: filters.pageSize };
+    return {
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      ...matchedLocations(route),
+    };
   }
 
   async get(user: AuthUser, id: string): Promise<ConsolidationDto> {

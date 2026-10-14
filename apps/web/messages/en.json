@@ -74,7 +74,8 @@
     "consolidations": "Containers (LCL)",
     "alertSettings": "Alert days",
     "apiKeys": "API keys",
-    "assistantDrafts": "Drafts from the assistant"
+    "assistantDrafts": "Drafts from the assistant",
+    "locations": "Ports and cities"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -2270,5 +2271,24 @@
     "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
     "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
     "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that."
+  },
+  "Locations": {
+    "title": "Ports and cities",
+    "hint": "Ports, cities and border points. Link each port to the city it serves, so a search by the city also finds its ports. Deactivate a place instead of deleting it.",
+    "add": "Add place",
+    "kind": "Type",
+    "code": "Code",
+    "name": "Name",
+    "nameAr": "Name (Arabic)",
+    "nameEn": "Name (English)",
+    "country": "Country code",
+    "city": "City it serves",
+    "noCity": "No city",
+    "none": "No places yet.",
+    "createdNotice": "Place added.",
+    "kind_PORT": "Port",
+    "kind_CITY": "City",
+    "kind_BORDER": "Border point",
+    "kind_OTHER": "Other"
   }
 }
