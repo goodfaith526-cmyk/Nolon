@@ -2264,6 +2264,11 @@
     "RATE_SEVERAL": "Several approved rate cards match this line: choose the rate card, or enter the price.",
     "QUOTED_PRICE_OTHER_CURRENCY": "The shipment's quotation prices this charge in another currency: invoice in that currency, or enter the price.",
     "QUOTED_PRICE_SEVERAL": "The shipment's quotation has several lines for this charge: enter the price.",
-    "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price."
+    "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price.",
+    "CASH_ACCOUNT_NOT_USABLE": "This cash or bank account cannot take this receipt: choose an active account of the customer's branch in the receipt's currency.",
+    "ALLOCATION_OTHER_CUSTOMER": "This invoice is not one of this customer's invoices.",
+    "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
+    "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
+    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that."
   }
 }

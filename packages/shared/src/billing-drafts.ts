@@ -1,6 +1,6 @@
 import type { CreateReceiptRequest, CustomerInvoiceInput } from './accounting.js';
 import type { CustomerDraftFields, DraftPriceSource } from './commercial-drafts.js';
-import type { DecimalString } from './currencies.js';
+import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
 /**
@@ -68,6 +68,31 @@ export type ReceiptDraftRequest = Omit<CreateReceiptRequest, 'fxRate'>;
 export interface ReceiptDraftCreateRequest extends ReceiptDraftRequest {
   idempotencyKey: string;
 }
+
+/** A cash or bank account a receipt for a customer may use (GET /receipt-drafts/cash-accounts). */
+export interface ReceiptCashAccountDto {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  currency: CurrencyCode;
+  isActive: boolean;
+}
+
+/** An approved invoice of the customer with something left to pay (GET /receipt-drafts/open-invoices). */
+export interface ReceiptOpenInvoiceDto {
+  id: string;
+  number: string | null;
+  currency: CurrencyCode;
+  total: DecimalString;
+  /** Total less payments and credit notes. */
+  outstanding: DecimalString;
+  invoiceDate: string;
+  dueDate: string;
+}
+
+/** Most open invoices GET /receipt-drafts/open-invoices returns, oldest due first. */
+export const RECEIPT_OPEN_INVOICES_MAX = 40;
 
 export interface ReceiptDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   request: ReceiptDraftRequest;
