@@ -8,6 +8,7 @@ import logoAr from '@/assets/brand/logo-ar.webp';
 import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
+import { assistantPageUrl } from '@/lib/assistant-page';
 import { useFoldedSections } from '@/lib/nav-folds';
 import { AlertsBell } from './alerts/Alerts';
 import { DRAFT_VIEW_PERMISSIONS } from './drafts/draft-kinds';
@@ -401,7 +402,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
               <AlertsBell />
               {me.assistantUrl ? (
                 <a
-                  href={me.assistantUrl}
+                  href={assistantPageUrl(me.assistantUrl, pathname)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="button ghost"
