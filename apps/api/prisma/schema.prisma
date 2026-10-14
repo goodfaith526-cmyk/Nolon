@@ -3407,3 +3407,33 @@ model AssistantFormReview {
   @@index([expiresAt])
   @@map("assistant_form_reviews")
 }
+
+/// The outcome the assistant was given, or will be given, for one idempotency key of its drafts:
+/// NOT_CREATED when settle found no draft (then no create under the key ever commits), CREATED
+/// for a draft that is gone (the retention purge writes it, in its own transaction, just before
+/// it deletes the draft). A live draft answers for itself. A row is removed only 90 days
+/// (DRAFT_RETENTION_DAYS) after the assistant acknowledged it; one never acknowledged is kept.
+model AssistantDraftKey {
+  agentClientId  String          @map("agent_client_id") @db.Uuid
+  createdById    String          @map("created_by_id") @db.Uuid
+  /// The draft table the key belongs to (a key is scoped to its kind of draft).
+  draftTable     String          @map("draft_table") @db.VarChar(50)
+  idempotencyKey String          @map("idempotency_key") @db.VarChar(100)
+  outcome        DraftKeyOutcome
+  /// The draft created under the key (CREATED only); it may no longer exist.
+  draftId        String?         @map("draft_id") @db.Uuid
+  recordedAt     DateTime        @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  /// When the assistant said its task under this key is final.
+  ackedAt        DateTime?       @map("acked_at") @db.Timestamptz(6)
+
+  @@id([agentClientId, createdById, draftTable, idempotencyKey])
+  @@index([ackedAt])
+  @@map("assistant_draft_keys")
+}
+
+enum DraftKeyOutcome {
+  CREATED
+  NOT_CREATED
+
+  @@map("draft_key_outcome")
+}

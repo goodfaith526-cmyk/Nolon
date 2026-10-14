@@ -9,6 +9,7 @@ import { DRAFT_RETENTION_DAYS } from '@nolon/shared';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { DRAFT_TABLES, recordPurgedKeysInTx } from './drafts.service.js';
 
 /**
  * The retention purge of entry drafts (data governance v2.1, section 4). "Expired" never meant
@@ -77,6 +78,8 @@ export type DraftPurgeResult =
       grnProposals: number;
       /** Forms kept for the assistant (assistant_form_reviews) that have expired. */
       formReviews: number;
+      /** Acknowledged key outcomes (assistant_draft_keys) past the retention period. */
+      draftKeys: number;
     };
 
 /** The time before which a rejected or expired draft is removed, for a purge at `now`. */
@@ -121,6 +124,9 @@ export class DraftRetentionService implements OnApplicationBootstrap, OnApplicat
       const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
         SELECT pg_try_advisory_xact_lock(${LOCK_KEY}) AS locked`;
       if (!lock?.locked) return { skipped: true };
+      // The outcome of every key whose draft goes, first and in this transaction: a settle after
+      // the purge still answers CREATED (drafts.service.ts settleKeyInTx).
+      for (const table of DRAFT_TABLES) await recordPurgedKeysInTx(tx, table, cutoff);
       const drafts = {} as Record<PurgedDraftModel, number>;
       for (const [model, purge] of Object.entries(PURGED_DRAFT_MODELS)) {
         drafts[model as PurgedDraftModel] = (await purge(tx, cutoff)).count;
@@ -150,7 +156,13 @@ export class DraftRetentionService implements OnApplicationBootstrap, OnApplicat
       const { count: formReviews } = await tx.assistantFormReview.deleteMany({
         where: { expiresAt: { lte: now } },
       });
-      return { skipped: false, drafts, grnProposals, formReviews };
+      // A key settled as not created is kept as long as a closed draft and its key.
+      // A key's ledger row goes only once the assistant acknowledged it, and as long after that
+      // as a closed draft is kept; one never acknowledged stays.
+      const { count: draftKeys } = await tx.assistantDraftKey.deleteMany({
+        where: { ackedAt: { lte: cutoff } },
+      });
+      return { skipped: false, drafts, grnProposals, formReviews, draftKeys };
     });
   }
 }

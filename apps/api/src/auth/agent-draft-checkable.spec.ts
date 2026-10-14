@@ -49,8 +49,10 @@ describe('pre-checks the staff assistant may call', () => {
     const withCreate = controllers()
       .filter((c) => c.text.includes('@AgentDraftWritable()'))
       .map((c) => c.file)
-      // A GRN draft comes from a document the assistant read, not from values a person typed.
-      .filter((f) => f !== join('warehouse', 'grn-drafts.controller.ts'));
+      // A GRN draft comes from a document the assistant read, not from values a person typed;
+      // the settle route answers for a create already made, with no values to check.
+      .filter((f) => f !== join('warehouse', 'grn-drafts.controller.ts'))
+      .filter((f) => f !== join('my-drafts', 'my-drafts.controller.ts'));
     expect(withCheck).toEqual(withCreate);
   });
 

@@ -39,6 +39,7 @@ import {
   withReplaced,
   withReplacedBy,
   MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -137,6 +138,7 @@ export class ShipmentStatusDraftsService {
           user,
           label: LABEL,
         });
+        await lockKeyInTx(tx, 'shipment_status_drafts', scope);
         const existing = await tx.shipmentStatusDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },

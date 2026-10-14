@@ -37,6 +37,16 @@ const ALLOWED: readonly { file: string; handler: RegExp }[] = [
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('customers:update'\)\n\s*create\(/,
   },
   {
+    // Settles the key of a create whose answer was lost: writes at most a "not created" record.
+    file: join('my-drafts', 'my-drafts.controller.ts'),
+    handler: /^\s*@Post\('settle'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*settle\(/,
+  },
+  {
+    // Acknowledges a settled key: writes at most its ledger row's acknowledgement.
+    file: join('my-drafts', 'my-drafts.controller.ts'),
+    handler: /^\s*@Post\('settle\/ack'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*acknowledge\(/,
+  },
+  {
     file: join('quotations', 'quotation-drafts.controller.ts'),
     handler: /^\s*@Post\(\)\n\s*@RequirePermission\('quotations:create'\)\n\s*create\(/,
   },
@@ -105,9 +115,11 @@ describe('routes the staff assistant may write to', () => {
     });
   });
 
-  it('are each a POST that creates, never an edit, decision or delete', () => {
+  it('are each a POST that creates (or settles a create), never an edit, decision or delete', () => {
     for (const m of markedRoutes()) {
-      expect(m.handler).toMatch(/^\s*@Post\(\)\n(\s*@RequirePermission\([^)]*\)\n)?\s*create\(/);
+      expect(m.handler).toMatch(
+        /^\s*@Post\(\)\n(\s*@RequirePermission\([^)]*\)\n)?\s*create\(|^\s*@Post\('settle(\/ack)?'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*(settle|acknowledge)\(/,
+      );
     }
   });
 });

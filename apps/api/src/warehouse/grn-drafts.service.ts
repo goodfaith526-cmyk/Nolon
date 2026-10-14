@@ -19,7 +19,7 @@ import {
   proposalRetainedUntil,
   requireOpen,
 } from '../drafts/draft-rules.js';
-import { DraftsService, keyReused, lockDraftRow } from '../drafts/drafts.service.js';
+import { DraftsService, keyReused, lockDraftRow, lockKeyInTx } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
@@ -172,6 +172,7 @@ export class GrnDraftsService {
           input.documentId,
           input.documentSha256,
         );
+        await lockKeyInTx(tx, 'grn_drafts', scope);
         const existing = await tx.grnDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: {
