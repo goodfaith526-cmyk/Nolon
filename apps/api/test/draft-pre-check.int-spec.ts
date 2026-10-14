@@ -241,6 +241,7 @@ describe('a pre-check', () => {
       '/booking-drafts',
       '/new-customer-booking-drafts',
       '/quotation-drafts',
+      '/new-customer-quotation-drafts',
       '/invoice-drafts',
       '/receipt-drafts',
       '/trip-drafts',

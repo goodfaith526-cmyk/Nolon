@@ -62,7 +62,8 @@ const quotationFields = {
 };
 
 export const quotationCreateBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();
-const updateBody = z.object(quotationFields).strict();
+/** A quotation without its customer (an update, or one for a new customer). */
+export const quotationInputBody = z.object(quotationFields).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 const listQuery = pageQuery
   .extend({
@@ -107,7 +108,7 @@ export class QuotationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<QuotationDto> {
-    return this.quotations.update(user, id, parse(updateBody, body));
+    return this.quotations.update(user, id, parse(quotationInputBody, body));
   }
 
   @Post(':id/send')

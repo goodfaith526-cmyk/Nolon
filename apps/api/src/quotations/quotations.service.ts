@@ -13,7 +13,7 @@ import type {
   QuotationSummaryDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import {
   localDayFilter,
@@ -166,6 +166,18 @@ export class QuotationsService {
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return { customerId: customer.id, branchId, ...prepared };
+  }
+
+  /**
+   * As prepareCreate, for a customer not in NOLON yet (a quotation for a new customer, proposed
+   * with it): priced in one of the user's branches, the one the customer will belong to. The
+   * caller adds the customer's id once it exists, before insertInTx.
+   */
+  async prepareForNewCustomer(user: AuthUser, branchId: string, input: QuotationInput) {
+    assertBranchAccess(user, branchId);
+    const today = await this.branchToday(branchId);
+    const prepared = await this.prepare(branchId, today, input);
+    return { branchId, ...prepared };
   }
 
   async insertInTx(

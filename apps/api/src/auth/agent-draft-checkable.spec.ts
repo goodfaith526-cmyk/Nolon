@@ -42,15 +42,15 @@ describe('pre-checks the staff assistant may call', () => {
     expect(files).toEqual([join('auth', 'auth.guard.ts'), join('auth', 'decorators.ts')]);
   });
 
-  it('sit next to every draft create the assistant may call, except the GRN draft', () => {
+  it('sit next to every draft create the assistant may call', () => {
     const withCheck = controllers()
       .filter((c) => c.text.includes('@AgentDraftCheckable()'))
       .map((c) => c.file);
     const withCreate = controllers()
       .filter((c) => c.text.includes('@AgentDraftWritable()'))
       .map((c) => c.file)
-      // A GRN draft comes from a document the assistant read, not from values a person typed.
-      .filter((f) => f !== join('warehouse', 'grn-drafts.controller.ts'));
+      // The settle route answers for a create already made, with no values to check.
+      .filter((f) => f !== join('my-drafts', 'my-drafts.controller.ts'));
     expect(withCheck).toEqual(withCreate);
   });
 
@@ -65,7 +65,8 @@ describe('pre-checks the staff assistant may call', () => {
         /^@AgentDraftCheckable\(\)\n\s*@Post\('check'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*@RequirePermission\([^)]*\)\n\s*check\(/,
       );
       expect(permissionOf(check), file).toBe(permissionOf(create ?? ''));
-      expect(check, file).toContain('this.drafts.checkValues(user, input)');
+      // A shipment's GRN drafts also take the shipment from the path, as their create does.
+      expect(check, file).toMatch(/this\.drafts\.checkValues\(user, (shipmentId, )?input\)/);
       expect(check.match(/this\.drafts\.\w+/g), file).toEqual(['this.drafts.checkValues']);
     }
   });

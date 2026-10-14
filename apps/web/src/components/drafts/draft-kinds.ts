@@ -16,6 +16,11 @@ export const DRAFT_KINDS = [
   { key: 'parties', api: '/party-drafts', view: 'customers:view' },
   { key: 'rate-cards', api: '/rate-card-drafts', view: 'rates:view' },
   { key: 'new-customer-bookings', api: '/new-customer-booking-drafts', view: 'bookings:view' },
+  {
+    key: 'new-customer-quotations',
+    api: '/new-customer-quotation-drafts',
+    view: 'quotations:view',
+  },
 ] as const satisfies readonly { key: string; api: string; view: Permission }[];
 
 export type DraftKind = (typeof DRAFT_KINDS)[number]['key'];

@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type {
   AgentClientCreatedDto,
   CustomerDto,
+  DraftCapabilitiesDto,
   EntryDraftSummaryDto,
   MyDraftItemDto,
   QuotationDraftDto,
@@ -259,5 +261,51 @@ describe('my drafts', () => {
     expect(ids(third)).not.toContain(a.id);
     expect(ids(third)).not.toContain(b.id);
     await r.agentGet(`/assistant-drafts/mine?beforeId=${a.id}`, tokens.agent).expect(400);
+  });
+
+  it('looks up drafts by id in one read, still only the ones the user may see', async () => {
+    const old = await proposeQuotation(dxbCustomer.id);
+    // Push it past the newest 50, where only paging would reach it.
+    await t.prisma.quotationDraft.update({
+      where: { id: old.id },
+      data: { createdAt: new Date(Date.now() - 365 * 86_400_000) },
+    });
+    const recent = await proposeQuotation(dxbCustomer.id);
+    const theirs = await proposeQuotation(dxbCustomer.id, tokens.other);
+    const query = `?ids=${[old.id, recent.id.toUpperCase(), theirs.id, randomUUID()].join(',')}`;
+    expect(ids(await mine(tokens.agent, query)).sort()).toEqual([old.id, recent.id].sort());
+    expect(ids(await mine(tokens.agent, `${query}&kind=booking`))).toEqual([]);
+    expect(ids(await mine(tokens.agentOther, query))).toEqual([]);
+    const tooMany = Array.from({ length: 51 }, () => randomUUID()).join(',');
+    await r.agentGet(`/assistant-drafts/mine?ids=${tooMany}`, tokens.agent).expect(400);
+    await r.agentGet('/assistant-drafts/mine?ids=nope', tokens.agent).expect(400);
+    await r.agentGet('/assistant-drafts/mine?ids=', tokens.agent).expect(400);
+  });
+});
+
+describe('draft capabilities', () => {
+  it('say what this NOLON offers and which kinds this user may create, to the assistant and on screen', async () => {
+    const caps = (await r.agentGet('/assistant-drafts/capabilities', tokens.agent).expect(200))
+      .body as DraftCapabilitiesDto;
+    expect(caps.api).toBe(1);
+    expect(caps.features).toEqual({
+      preCheck: true,
+      myDrafts: true,
+      settle: true,
+      settleAck: true,
+      myDraftsByIds: true,
+    });
+    const quotation = caps.kinds.find((k) => k.kind === 'quotation');
+    expect(quotation).toEqual({
+      kind: 'quotation',
+      path: '/quotation-drafts',
+      preCheck: true,
+      review: '/drafts/quotations/:id',
+      canCreate: true,
+      approval: 'both',
+    });
+    // Sales may not create a trip draft.
+    expect(caps.kinds.find((k) => k.kind === 'trip')?.canCreate).toBe(false);
+    await r.get('/assistant-drafts/capabilities', cookies.agent).expect(200);
   });
 });

@@ -59,6 +59,7 @@ import {
   withReplaced,
   withReplacedBy,
   MY_DRAFTS_ORDER,
+  lockKeyInTx,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -297,6 +298,7 @@ export class NewCustomerBookingDraftsService {
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
         const replaced = await lockReplacedPairInTx(tx, replacesDraftId, agentClientId, user);
+        await lockKeyInTx(tx, 'new_customer_booking_drafts', scope);
         const existing = await tx.newCustomerBookingDraft.findUnique({
           where: { agentClientId_createdById_idempotencyKey: scope },
           select: { id: true, payloadHash: true },

@@ -213,6 +213,7 @@ export const MY_DRAFT_KINDS = [
   'booking',
   'new_customer_booking',
   'quotation',
+  'new_customer_quotation',
   'invoice',
   'receipt',
   'trip',
@@ -221,6 +222,7 @@ export const MY_DRAFT_KINDS = [
   'party',
   'customer',
   'rate_card',
+  'grn',
 ] as const;
 export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
 
@@ -264,8 +266,67 @@ export interface MyDraftItemDto {
   decidedAt: string | null;
   decidedByName: string | null;
   rejectReason: string | null;
-  /** The draft's review page, without the locale: `/drafts/<page>/<id>`. */
+  /**
+   * The draft's review page, without the locale: `/drafts/<page>/<id>`; for a GRN draft, its
+   * shipment's page (`/shipments/<id>`).
+   */
   reviewPath: string;
   /** Set once approved. */
   result: MyDraftResult | null;
+}
+
+/** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */
+export const SETTLE_DRAFT_KINDS = MY_DRAFT_KINDS;
+export type SettleDraftKind = (typeof SETTLE_DRAFT_KINDS)[number];
+
+/** A settle request (POST /assistant-drafts/settle): the key of a create whose answer was lost. */
+export interface DraftKeySettleRequest {
+  kind: SettleDraftKind;
+  idempotencyKey: string;
+}
+
+/**
+ * The final answer for a create whose outcome the assistant did not get (a timeout, a lost
+ * connection). CREATED: a draft is committed under the key; read it through its kind's by-key
+ * route, where a 403 or 404 means only that the user may no longer see it (a permission or branch
+ * withdrawn since), never that it was not created. NOT_CREATED: nothing was committed, and from now on nothing will be: a create under this key is
+ * refused (409), even one already in flight. Any other answer (401, 403, 5xx) settles nothing.
+ */
+export type DraftKeySettlementDto =
+  { state: 'CREATED'; draftId: string } | { state: 'NOT_CREATED' };
+
+/** One draft kind as NOLON offers it to the assistant (GET /assistant-drafts/capabilities). */
+export interface DraftKindCapabilityDto {
+  kind: SettleDraftKind;
+  /** The kind's routes, without /api/v1 (`:shipmentId` stands for the shipment's id). */
+  path: string;
+  /** `POST <path>/check` exists: the create's checks, with nothing written. */
+  preCheck: boolean;
+  /**
+   * The review screen's path on the web, without the locale (`:id`: the draft's id). A GRN draft is
+   * reviewed with its document on the shipment's page (`:shipmentId`).
+   */
+  review: string;
+  /** This user holds the create's permissions now (NOLON checks them again on create). */
+  canCreate: boolean;
+  /** Where a person may decide: the review screen only, or also the assistant's chat. */
+  approval: 'screen' | 'both';
+}
+
+/**
+ * What this NOLON offers the assistant, so it can switch off what an older NOLON lacks: a 404 on
+ * this route means none of it. Kinds and features are only added; `api` changes only when an
+ * existing shape changes.
+ */
+export interface DraftCapabilitiesDto {
+  api: 1;
+  features: {
+    preCheck: boolean;
+    myDrafts: boolean;
+    settle: boolean;
+    settleAck: boolean;
+    /** GET /assistant-drafts/mine takes `ids` (up to MY_DRAFTS_MAX, comma-separated). */
+    myDraftsByIds: boolean;
+  };
+  kinds: DraftKindCapabilityDto[];
 }

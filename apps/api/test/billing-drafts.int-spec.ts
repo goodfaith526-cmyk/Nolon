@@ -5,11 +5,14 @@ import type {
   BookingDto,
   CustomerDto,
   CustomerInvoiceDto,
+  DraftPreCheckDto,
   EntryDraftSummaryDto,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
+  ReceiptCashAccountDto,
+  ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -517,5 +520,123 @@ describe('receipt drafts', () => {
     await expect(
       t.prisma.receiptDraftAllocation.deleteMany({ where: { draftId: draft.id } }),
     ).rejects.toThrow(/decided/);
+  });
+});
+
+describe('receipt drafts on the live card: pick lists and field refusals', () => {
+  const pick = (path: string, query: string, token = tokens.finance) =>
+    r.agentGet(`/receipt-drafts/${path}?${query}`, token);
+  const cashAccounts = async (query: string) =>
+    ((await pick('cash-accounts', query).expect(200)).body as { items: ReceiptCashAccountDto[] })
+      .items;
+  const openInvoices = async (query: string) =>
+    ((await pick('open-invoices', query).expect(200)).body as { items: ReceiptOpenInvoiceDto[] })
+      .items;
+
+  async function refusals(body: object) {
+    const result = (await r.agentPost('/receipt-drafts/check', tokens.finance, body).expect(200))
+      .body as DraftPreCheckDto;
+    if (result.ok) throw new Error('expected a refusal');
+    return result.refusals;
+  }
+
+  it("lists the cash accounts of the customer's branch, and its open invoices oldest due first", async () => {
+    const accounts = await cashAccounts(`customerId=${customer.id}`);
+    expect(accounts.map((a) => a.id)).toEqual(expect.arrayContaining([cashUsd.id, cashSdg.id]));
+    expect(accounts.find((a) => a.id === cashUsd.id)).toMatchObject({
+      code: cashUsd.code,
+      currency: 'USD',
+      isActive: true,
+    });
+
+    const invoice = await approvedInvoice('500');
+    const otherInvoice = await approvedInvoice('500', other.id);
+    const usd = await openInvoices(`customerId=${customer.id}&currency=USD`);
+    expect(usd.find((i) => i.id === invoice.id)).toMatchObject({
+      number: invoice.number,
+      currency: 'USD',
+      total: '500',
+      outstanding: '500',
+      dueDate: invoice.dueDate,
+    });
+    expect(usd.map((i) => i.id)).not.toContain(otherInvoice.id);
+    expect(usd.length).toBeLessThanOrEqual(40);
+    const due = usd.map((i) => i.dueDate);
+    expect(due).toEqual([...due].sort());
+    expect(await openInvoices(`customerId=${customer.id}&currency=SDG`)).toEqual([]);
+
+    // A part payment lowers what is outstanding; settling the rest takes it off the list.
+    const pay = async (amount: string) => {
+      const draft = await receiptDraft(
+        receiptRequest(invoice.id, { amount, allocations: [{ invoiceId: invoice.id, amount }] }),
+      );
+      await r
+        .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200);
+    };
+    await pay('120.5');
+    const partly = await openInvoices(`customerId=${customer.id}`);
+    expect(partly.find((i) => i.id === invoice.id)?.outstanding).toBe('379.5');
+    await pay('379.5');
+    expect((await openInvoices(`customerId=${customer.id}`)).map((i) => i.id)).not.toContain(
+      invoice.id,
+    );
+  });
+
+  it('is refused for a customer of another branch, without the create permission, or malformed', async () => {
+    for (const path of ['cash-accounts', 'open-invoices']) {
+      await pick(path, `customerId=${customer.id}`, tokens.financeJed).expect(404);
+      await pick(path, `customerId=${customer.id}`, tokens.sales).expect(403);
+      await pick(path, 'customerId=nope').expect(400);
+      await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
+    }
+    await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
+    await pick('cash-accounts', `customerId=${customer.id}&currency=USD`).expect(400);
+  });
+
+  it('refuses a bad cash account or allocation at its field, with a code', async () => {
+    const invoice = await approvedInvoice('500');
+    const otherInvoice = await approvedInvoice('500', other.id);
+    expect(await refusals(receiptRequest(invoice.id, { cashAccountId: cashSdg.id }))).toMatchObject(
+      [{ field: 'cashAccountId', code: 'CASH_ACCOUNT_NOT_USABLE' }],
+    );
+    expect(
+      await refusals(receiptRequest(invoice.id, { cashAccountId: randomUUID() })),
+    ).toMatchObject([{ field: 'cashAccountId', code: 'CASH_ACCOUNT_NOT_USABLE' }]);
+    expect(await refusals(receiptRequest(otherInvoice.id))).toMatchObject([
+      { field: 'allocations.0.invoiceId', code: 'ALLOCATION_OTHER_CUSTOMER' },
+    ]);
+    const unapproved = (
+      await r
+        .post('/customer-invoices', cookies.financePts, { shipmentId: await shipment() })
+        .expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(await refusals(receiptRequest(unapproved.id))).toMatchObject([
+      { field: 'allocations.0.invoiceId', code: 'ALLOCATION_NOT_APPROVED' },
+    ]);
+    const second = await approvedInvoice('300');
+    expect(
+      await refusals(
+        receiptRequest(invoice.id, {
+          amount: '900',
+          allocations: [
+            { invoiceId: invoice.id, amount: '500' },
+            { invoiceId: second.id, amount: '300.01' },
+          ],
+        }),
+      ),
+    ).toMatchObject([
+      {
+        field: 'allocations.1.amount',
+        code: 'ALLOCATION_EXCEEDS_BALANCE',
+        params: { invoice: second.number, balance: '300', currency: 'USD' },
+      },
+    ]);
+    // The create refuses the same values, and writes nothing.
+    const before = await t.prisma.receiptDraft.count();
+    await createReceiptDraft(
+      receiptRequest(second.id, { allocations: [{ invoiceId: second.id, amount: '300.01' }] }),
+    ).expect(400);
+    expect(await t.prisma.receiptDraft.count()).toBe(before);
   });
 });

@@ -512,5 +512,12 @@ export const FORM_REFUSALS = [
   'QUOTED_PRICE_OTHER_CURRENCY',
   'QUOTED_PRICE_SEVERAL',
   'PRICE_AS_ONE_UNIT',
+  // A receipt (receipt drafts): the cash or bank account, and each allocation to an invoice.
+  // Params of the allocation codes: `invoice` (its number), and `balance` and `currency`.
+  'CASH_ACCOUNT_NOT_USABLE',
+  'ALLOCATION_OTHER_CUSTOMER',
+  'ALLOCATION_NOT_APPROVED',
+  'ALLOCATION_OTHER_CURRENCY',
+  'ALLOCATION_EXCEEDS_BALANCE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

@@ -17,6 +17,8 @@ import {
   type EntryDraftSummaryDto,
   type ReceiptDraftDto,
   type ReceiptDraftListItemDto,
+  type ReceiptCashAccountDto,
+  type ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -29,7 +31,7 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
-import { parse, requiredText } from '../common/validation.js';
+import { currencyCode, parse, requiredText } from '../common/validation.js';
 import { createReceiptBody } from './billing.controller.js';
 import { ReceiptDraftsService } from './receipt-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
@@ -45,6 +47,10 @@ const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
+const cashAccountsQuery = z.object({ customerId: z.uuid() }).strict();
+const openInvoicesQuery = z
+  .object({ customerId: z.uuid(), currency: currencyCode.optional() })
+  .strict();
 
 /**
  * Receipt drafts (entry drafts). The staff assistant creates drafts and recovers the one it created
@@ -82,6 +88,30 @@ export class ReceiptDraftsController {
     @Param('key') key: string,
   ): Promise<EntryDraftSummaryDto> {
     return this.drafts.findByKey(user, parse(idempotencyKey, key));
+  }
+
+  /** The cash and bank accounts a receipt for the customer may use (the assistant's pick list). */
+  @AgentReadable()
+  @Get('cash-accounts')
+  @RequirePermission('receipts:create')
+  async cashAccounts(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<{ items: ReceiptCashAccountDto[] }> {
+    const { customerId } = parse(cashAccountsQuery, query);
+    return { items: await this.drafts.cashAccounts(user, customerId) };
+  }
+
+  /** The customer's open invoices a receipt may settle (the assistant's pick list). */
+  @AgentReadable()
+  @Get('open-invoices')
+  @RequirePermission('receipts:create')
+  async openInvoices(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<{ items: ReceiptOpenInvoiceDto[] }> {
+    const { customerId, currency } = parse(openInvoicesQuery, query);
+    return { items: await this.drafts.openInvoices(user, customerId, currency) };
   }
 
   @Get()
