@@ -195,6 +195,7 @@ describe('quotations for a new customer: the assistant proposes', () => {
       { field: 'name', quote: 'العميلة آمنة عثمان' },
       { field: 'phone', quote: 'رقمها' },
       { field: 'destinationLocationId', quote: 'لبورتسودان' },
+      { field: 'currency', quote: 'بالدولار' },
       { field: 'lines[0].quantity', quote: 'شحنتين' },
     ];
     const body = request({ evidence });
@@ -460,6 +461,7 @@ describe('quotations for a new customer: a person reviews', () => {
       { field: 'name', quote: 'آمنة' },
       { field: 'lines[1].unitPrice', quote: '15 ونص' },
       { field: 'originLocationId', quote: 'من هنا' },
+      { field: 'currency', quote: 'دولار' },
     ];
     const body = request({ evidence });
     const summary = await created(body);
@@ -472,6 +474,7 @@ describe('quotations for a new customer: a person reviews', () => {
     // Each value ticked first, and the prices reviewed.
     await approve({ pricingKey }).expect(400);
     await approve({ pricingKey, confirmed: ['name'] }).expect(400);
+    await approve({ pricingKey, confirmed: confirmed.filter((f) => f !== 'currency') }).expect(400);
     await approve({ confirmed }).expect(400);
     await approve({ pricingKey: 'f'.repeat(64), confirmed }).expect(409);
     expect(await customersWithPhone(body.customer.phone)).toBe(0);

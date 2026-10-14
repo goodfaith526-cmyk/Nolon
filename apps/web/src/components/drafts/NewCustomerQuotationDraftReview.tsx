@@ -50,6 +50,7 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
       label: tq('destination'),
       value: locationName(q.destinationLocationId),
     },
+    currency: { label: tq('currency'), value: q.currency },
   };
   for (const e of draft.evidence) {
     const match = LINE_FIELD.exec(e.field);
