@@ -23,6 +23,12 @@ import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.s
     ContainerBookingsRegistry,
     NewCustomerBookingDraftsService,
   ],
-  exports: [BookingReportsService, BookingsService, ContainerBookingsRegistry],
+  exports: [
+    BookingReportsService,
+    BookingsService,
+    ContainerBookingsRegistry,
+    BookingDraftsService,
+    NewCustomerBookingDraftsService,
+  ],
 })
 export class BookingsModule {}

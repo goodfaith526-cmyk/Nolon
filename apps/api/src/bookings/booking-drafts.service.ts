@@ -10,6 +10,7 @@ import type {
   BookingItemInput,
   ContainerChoice,
   CreateBookingRequest,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -23,21 +24,28 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
+  decidedVia,
   type DecisionVia,
   DraftsService,
-  decidedVia,
   keyReused,
-  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -198,6 +206,14 @@ export class BookingDraftsService {
     private readonly containers: ContainerBookingsRegistry,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: BookingDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(bookingRequestHash(input), async () => {
+      await this.prepare(user, input);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: BookingDraftCreateRequest,
@@ -285,15 +301,43 @@ export class BookingDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<BookingDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<BookingDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.bookingDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => reviewFields(d, user, now));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('bookings:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'booking',
+        d,
+        d.bookingId === null
+          ? null
+          : {
+              type: 'booking',
+              id: d.bookingId,
+              number: d.bookingNumber,
+              path: `/bookings/${d.bookingId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<BookingDraftDto> {

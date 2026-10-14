@@ -13,6 +13,7 @@ import {
   type AssistantDraftDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  type DraftPreCheckDto,
   type EntryDraftSummaryDto,
   type QuotationDraftDto,
   type QuotationDraftListItemDto,
@@ -20,16 +21,18 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftDecidable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
   RequirePermission,
 } from '../auth/decorators.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { QuotationDraftsService } from './quotation-drafts.service.js';
 import { quotationCreateBody } from './quotations.controller.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 const createBody = quotationCreateBody.extend({ idempotencyKey }).strict();
@@ -59,6 +62,17 @@ export class QuotationDraftsController {
     // replacesDraftId: the draft this one replaces, when the person asked for changes.
     const { replacesDraftId, rest } = splitReplaced(body);
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('quotations:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
   }
 
   @AgentReadable()

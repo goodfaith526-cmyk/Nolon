@@ -12,6 +12,7 @@ import {
 import {
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  type DraftPreCheckDto,
   NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
   type NewCustomerBookingDraftDto,
   type NewCustomerBookingDraftListItemDto,
@@ -20,6 +21,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
+  AgentDraftCheckable,
   AgentDraftWritable,
   AgentReadable,
   CurrentUser,
@@ -28,9 +30,10 @@ import {
 import { parse, requiredText } from '../common/validation.js';
 import { customerFields } from '../customers/customer-schemas.js';
 import { confirmedPaths, draftEvidencePaths } from '../drafts/draft-evidence.js';
-import { splitReplaced } from '../drafts/drafts.service.js';
+import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { bookingFields, itemBody } from './bookings.controller.js';
 import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.service.js';
+import { preCheckBody } from '../drafts/draft-rules.js';
 
 const MAX_ITEMS = 50;
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
@@ -139,6 +142,17 @@ export class NewCustomerBookingDraftsController {
     // person asked for changes.
     const { replacesDraftId, rest } = splitReplaced(body);
     return this.drafts.create(user, parse(createBody, rest), replacesDraftId);
+  }
+
+  /** What a create with these values would get now; nothing is written. */
+  @AgentDraftCheckable()
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('bookings:create', 'customers:create')
+  check(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<DraftPreCheckDto> {
+    return preCheckBody(createBody, checkRequest(body), (input) =>
+      this.drafts.checkValues(user, input),
+    );
   }
 
   @AgentReadable()

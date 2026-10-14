@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { seesTransportCosts } from '@nolon/shared';
+import { type DraftPreCheckDto, seesTransportCosts } from '@nolon/shared';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -20,22 +20,29 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -128,6 +135,15 @@ export class TripDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: TripDraftCreateRequest): Promise<DraftPreCheckDto> {
+    draftScope(user);
+    const input = valuesOf(body);
+    return preCheck(tripRequestHash(input), async () => {
+      await this.trips.prepareCreate(user, input);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: TripDraftCreateRequest,
@@ -208,19 +224,42 @@ export class TripDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<TripDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<TripDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.tripDraft.findMany({
-      where: { ...draftScope(user), ...stateFilter(status, now) },
+      where: {
+        ...draftScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     const routes = await this.routeNames(drafts);
     return drafts.map((d) => ({
       ...baseFields(d, user, now, routes),
       lineCount: d.shipments.length,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('transport_trips:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'trip',
+        d,
+        d.tripId === null
+          ? null
+          : { type: 'trip', id: d.tripId, number: d.tripNumber, path: `/trips/${d.tripId}` },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<TripDraftDto> {

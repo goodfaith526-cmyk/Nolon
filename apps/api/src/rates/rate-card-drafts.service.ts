@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   CreateRateCardRequest,
   DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -21,20 +22,27 @@ import {
   checkDraft,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
   decideInTx,
+  DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -125,6 +133,18 @@ export class RateCardDraftsService {
     private readonly drafts: DraftsService,
   ) {}
 
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: RateCardDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { branchId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(rateRequestHash(branchId, input, evidence), async () => {
+      // As an approval would: a rate card that duplicates another refuses it.
+      assertBranchAccess(user, branchId);
+      const request = createRequestOf(branchId, input);
+      await this.rates.prepareCreate(user, request);
+      throwFirstConflict(await this.rates.duplicateIssues(this.prisma, [request]));
+    });
+  }
+
   async create(
     user: AuthUser,
     body: RateCardDraftCreateRequest,
@@ -204,13 +224,21 @@ export class RateCardDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<RateCardDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<RateCardDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.rateCardDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -218,6 +246,21 @@ export class RateCardDraftsService {
       price: toDecimalString(d.price),
       currency: d.currency,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('rates:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'rate_card',
+        d,
+        d.rateCardId === null
+          ? null
+          : { type: 'rate_card', id: d.rateCardId, number: null, path: '/rates' },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<RateCardDraftDto> {

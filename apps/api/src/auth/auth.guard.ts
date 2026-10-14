@@ -11,6 +11,7 @@ import type { AuthenticatedRequest } from './auth-user.js';
 import { AuthService } from './auth.service.js';
 import { isAgentAuthorization, readAgentToken } from '../agent-auth/agent-secrets.js';
 import {
+  AGENT_DRAFT_CHECKABLE,
   AGENT_DRAFT_DECIDABLE,
   AGENT_DRAFT_WRITABLE,
   AGENT_READABLE,
@@ -68,13 +69,16 @@ export class AuthGuard implements CanActivate {
     if (!resolved) throw new UnauthorizedException('Not signed in');
     const { tokenId, user } = resolved;
     // @Public() routes too: only GET routes marked @AgentReadable(), and POST on the draft routes
-    // marked @AgentDraftWritable() or @AgentDraftDecidable(), are open to the assistant.
+    // marked @AgentDraftWritable(), @AgentDraftDecidable() or @AgentDraftCheckable(), are open to
+    // the assistant.
     const marked = (key: string) =>
       this.reflector.getAllAndOverride<boolean>(key, targets) === true;
     const open =
       (request.method === 'GET' && marked(AGENT_READABLE)) ||
       (request.method === 'POST' &&
-        (marked(AGENT_DRAFT_WRITABLE) || marked(AGENT_DRAFT_DECIDABLE)));
+        (marked(AGENT_DRAFT_WRITABLE) ||
+          marked(AGENT_DRAFT_DECIDABLE) ||
+          marked(AGENT_DRAFT_CHECKABLE)));
     const permitted =
       user !== null && !required?.some((permission) => !user.permissions.has(permission));
     await this.auth.recordAgentAccess(

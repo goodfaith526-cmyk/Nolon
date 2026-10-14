@@ -4,7 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { AssistantDecidableKind, AssistantDraftDto } from '@nolon/shared';
+import type {
+  AssistantDecidableKind,
+  AssistantDraftDto,
+  DraftStatus,
+  EntryDraftReviewFields,
+  MyDraftItemDto,
+  MyDraftKind,
+  MyDraftResult,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -383,6 +391,123 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   }
   const { replacesDraftId, ...rest } = body as Record<string, unknown>;
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
+}
+
+/** A "my drafts" read: the user's own drafts, newest first. */
+export interface MyDraftsQuery {
+  /** The assistant client asking (its row id), when the assistant asks: only its drafts. */
+  agentClientId: string | null;
+  status?: DraftStatus;
+  /** Only drafts created at or after this time. */
+  since?: Date;
+  /**
+   * The next page: drafts after this one in the list's order (createdAt, then id, both newest
+   * first), from the last item's createdAt and id. Drafts made in one transaction share a
+   * createdAt, so the id breaks the tie; without `beforeId`, only drafts created before `before`.
+   */
+  before?: Date;
+  beforeId?: string;
+  limit: number;
+}
+
+/** The order of every "my drafts" list and page: newest first, then by id. */
+export const MY_DRAFTS_ORDER = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+/**
+ * The drafts made for this user, by the assistant asking when it is one (another assistant
+ * client's drafts are not its own). Each kind adds its own branch scope and status filter.
+ */
+export function mineWhere(
+  user: AuthUser,
+  query: MyDraftsQuery,
+): {
+  createdById: string;
+  agentClientId?: string;
+  createdAt?: { gte: Date };
+  AND?: { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }[];
+} {
+  const { before, beforeId } = query;
+  const page = before
+    ? [
+        {
+          OR: [
+            { createdAt: { lt: before } },
+            ...(beforeId ? [{ createdAt: before, id: { lt: beforeId } }] : []),
+          ],
+        },
+      ]
+    : null;
+  return {
+    createdById: user.id,
+    ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
+    ...(query.since ? { createdAt: { gte: query.since } } : {}),
+    ...(page ? { AND: page } : {}),
+  };
+}
+
+/** Each kind's review page segment (/drafts/<page>/<id> on the web). */
+const REVIEW_PAGES: Record<MyDraftKind, string> = {
+  booking: 'bookings',
+  new_customer_booking: 'new-customer-bookings',
+  quotation: 'quotations',
+  invoice: 'invoices',
+  receipt: 'receipts',
+  trip: 'trips',
+  goods_release: 'releases',
+  shipment_status: 'shipment-statuses',
+  party: 'parties',
+  customer: 'customers',
+  rate_card: 'rate-cards',
+};
+
+/** A "my drafts" item before the branch code is added. */
+export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;
+
+/** A kind's list item as "my drafts" shows it, with the record its approval made. */
+export function myDraftItem(
+  kind: MyDraftKind,
+  d: EntryDraftReviewFields,
+  result: MyDraftResult | null,
+): MyDraftRow {
+  return {
+    kind,
+    id: d.id,
+    status: d.status,
+    subject: d.subject,
+    branchId: d.branchId,
+    createdAt: d.createdAt,
+    expiresAt: d.expiresAt,
+    decidedAt: d.decidedAt,
+    decidedByName: d.decidedByName,
+    rejectReason: d.rejectReason,
+    reviewPath: `/drafts/${REVIEW_PAGES[kind]}/${d.id}`,
+    result,
+  };
+}
+
+/** The idempotency key a pre-check's body is parsed with: a check stores nothing under it. */
+const CHECK_KEY = 'pre-check-only';
+
+/**
+ * A pre-check's body, ready for the create's own schema: the values only, with no replaced draft
+ * and a placeholder key (whatever key was sent is ignored).
+ */
+export function checkRequest(body: unknown): unknown {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
+  const values = Object.entries(body).filter(
+    ([key]) => key !== 'replacesDraftId' && key !== 'idempotencyKey',
+  );
+  return { ...Object.fromEntries(values), idempotencyKey: CHECK_KEY };
+}
+
+/** A create request without its idempotency key (each member of a union on its own). */
+export type ValuesOf<T> = T extends unknown ? Omit<T, 'idempotencyKey'> : never;
+
+/** A create request without its idempotency key: the values a pre-check checks. */
+export function valuesOf<T extends { idempotencyKey: string }>(body: T): ValuesOf<T> {
+  const values: Partial<T> = { ...body };
+  delete values.idempotencyKey;
+  return values as ValuesOf<T>;
 }
 
 /**

@@ -7,19 +7,20 @@ import {
 import {
   BOOKING_SERVICES,
   CARGO_TYPES,
-  LOAD_TYPES,
-  NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
-  SHIPPING_MODES,
   type CustomerDraftRequest,
   type DraftEvidence,
+  type DraftPreCheckDto,
   type DraftStatus,
   type EntryDraftCheck,
+  LOAD_TYPES,
+  NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
   type NewCustomerBookingDraftCreateRequest,
   type NewCustomerBookingDraftCustomer,
   type NewCustomerBookingDraftDto,
   type NewCustomerBookingDraftListItemDto,
   type NewCustomerBookingDraftSummaryDto,
   type NewCustomerBookingRequest,
+  SHIPPING_MODES,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -31,26 +32,33 @@ import {
 } from '../customers/customer-drafts.service.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
-  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
+  type DraftState,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
-  type LockedReplacement,
   decideInTx,
+  DraftsService,
   keyReused,
+  type LockedReplacement,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -244,6 +252,21 @@ export class NewCustomerBookingDraftsService {
    * to change: in the same transaction as the new pair, that draft and its customer draft are
    * closed as replaced, and the new booking draft and customer draft name them.
    */
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(
+    user: AuthUser,
+    body: NewCustomerBookingDraftCreateRequest,
+  ): Promise<DraftPreCheckDto> {
+    const { branchId, customer, booking, evidence = [] } = valuesOf(body);
+    return preCheck(newCustomerBookingHash(branchId, customer, booking, evidence), async () => {
+      await this.customerDrafts.prepareNew(user, branchId, customer);
+      // As the create would: a phone already taken in the branch refuses the pair.
+      await this.customerDrafts.requirePhoneFree(branchId, customer.phone, 'customer.phone');
+      await this.bookings.prepareWithoutCustomer(booking);
+      await this.requireContainer(user, booking);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: NewCustomerBookingDraftCreateRequest,
@@ -328,19 +351,47 @@ export class NewCustomerBookingDraftsService {
     return this.summary(draft);
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<NewCustomerBookingDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<NewCustomerBookingDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.newCustomerBookingDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     const customers = await this.customerDrafts.linkedOf(drafts.map((d) => d.customerDraftId));
     return drafts.map((d) => ({
       ...baseFields(d, linkedCustomer(customers, d), user, now),
       lineCount: bookingRequestOf(d).items.length,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('bookings:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'new_customer_booking',
+        d,
+        d.bookingId === null
+          ? null
+          : {
+              type: 'booking',
+              id: d.bookingId,
+              number: d.bookingNumber,
+              path: `/bookings/${d.bookingId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<NewCustomerBookingDraftDto> {

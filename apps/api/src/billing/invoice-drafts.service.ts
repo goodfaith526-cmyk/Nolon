@@ -2,10 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
+  DraftPriceSource,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  DraftPriceSource,
   InvoiceDraftCreateRequest,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
@@ -21,22 +22,29 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -110,6 +118,34 @@ export class InvoiceDraftsService {
     private readonly invoices: InvoicesService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: InvoiceDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { shipmentId, ...input } = valuesOf(body);
+    return preCheck(invoiceRequestHash({ shipmentId, ...input }), async () => {
+      const prepared = await this.invoices.prepareForShipment(user, shipmentId, input);
+      return {
+        total: toDecimalString(prepared.total),
+        currency: prepared.currency,
+        priceSources: prepared.lines.map((l) => ({
+          source: l.priceSource,
+          rateCardId: l.rateCardId,
+        })),
+        computed: prepared.lines.flatMap((l, i) =>
+          l.priceSource === 'TYPED'
+            ? []
+            : [
+                {
+                  field: `lines.${i}.unitPrice`,
+                  value: toDecimalString(l.unitPrice),
+                  source: l.priceSource,
+                  rateCardId: l.rateCardId,
+                },
+              ],
+        ),
+      };
+    });
+  }
 
   async create(
     user: AuthUser,
@@ -188,15 +224,43 @@ export class InvoiceDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<InvoiceDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<InvoiceDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.invoiceDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: d.lines.length }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('customer_invoices:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'invoice',
+        d,
+        d.invoiceId === null
+          ? null
+          : {
+              type: 'invoice',
+              id: d.invoiceId,
+              number: d.invoiceNumber,
+              path: `/invoices/${d.invoiceId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<InvoiceDraftDto> {

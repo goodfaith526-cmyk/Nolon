@@ -1,3 +1,5 @@
+import type { FormRefusal } from './commercial.js';
+import type { DraftPriceSource } from './commercial-drafts.js';
 import type { DecimalString } from './currencies.js';
 
 /**
@@ -162,4 +164,108 @@ export interface AssistantDraftApproveRequest {
 export interface AssistantApprovalGrantsDto {
   userId: string;
   kinds: AssistantDecidableKind[];
+}
+
+/**
+ * One reason a pre-check refused the values: the field it is about (its path in the request, null
+ * when the reason names none), NOLON's code for it (`INVALID` for a malformed value, null when the
+ * reason has none), the English message and its params.
+ */
+export interface DraftCheckRefusal {
+  field: string | null;
+  code: FormRefusal | 'INVALID' | null;
+  message: string;
+  params: Record<string, string>;
+}
+
+/**
+ * A value NOLON fills in when the draft is made (a line's system price), as a pre-check finds it
+ * now: `field` is its path in the request (`lines.0.unitPrice`), `value` a decimal string.
+ */
+export interface DraftComputedValue {
+  field: string;
+  value: DecimalString;
+  source: Exclude<DraftPriceSource['source'], 'TYPED'>;
+  rateCardId: string | null;
+}
+
+/**
+ * POST /<kind>-drafts/check: what a create with these values would get from NOLON now, for this
+ * user, without creating anything. `valuesHash` fingerprints the values checked (null when the
+ * body is malformed), so the assistant can tie the result to the values it holds; a create runs
+ * every check again. A refusal of the route itself (missing permission) stays an HTTP error.
+ */
+export type DraftPreCheckDto =
+  | {
+      ok: true;
+      valuesHash: string;
+      total: DecimalString | null;
+      currency: string | null;
+      /** The price of each line, for quotation and invoice drafts; null for other kinds. */
+      priceSources: DraftPriceSource[] | null;
+      /** The values NOLON would fill in (each system-priced line's unit price). */
+      computed: DraftComputedValue[];
+    }
+  | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
+
+/** Draft kinds in the staff member's "my drafts" list (GET /assistant-drafts/mine). */
+export const MY_DRAFT_KINDS = [
+  'booking',
+  'new_customer_booking',
+  'quotation',
+  'invoice',
+  'receipt',
+  'trip',
+  'goods_release',
+  'shipment_status',
+  'party',
+  'customer',
+  'rate_card',
+] as const;
+export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
+
+/** Most drafts one "my drafts" read returns. */
+export const MY_DRAFTS_MAX = 50;
+
+/** The kind of record an approval made, and the page that shows it (without the locale). */
+export interface MyDraftResult {
+  type:
+    | 'booking'
+    | 'quotation'
+    | 'invoice'
+    | 'receipt'
+    | 'trip'
+    | 'warehouse_movement'
+    | 'shipment'
+    | 'party'
+    | 'customer'
+    | 'rate_card';
+  id: string;
+  /** Null for records without a number (a party, a rate card). */
+  number: string | null;
+  /** Such as `/bookings/<id>`; a release and a party show on their shipment's or customer's page. */
+  path: string;
+}
+
+/**
+ * A draft the assistant made for this user, as "my drafts" lists it: only kinds the user may see
+ * now, in branches the user holds now.
+ */
+export interface MyDraftItemDto {
+  kind: MyDraftKind;
+  id: string;
+  status: DraftStatus;
+  /** What the draft is about (the customer, the shipment...), as its review list names it. */
+  subject: string;
+  branchId: string;
+  branchCode: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  rejectReason: string | null;
+  /** The draft's review page, without the locale: `/drafts/<page>/<id>`. */
+  reviewPath: string;
+  /** Set once approved. */
+  result: MyDraftResult | null;
 }

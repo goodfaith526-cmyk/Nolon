@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -21,22 +22,29 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftRow,
+  type MyDraftsQuery,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
+  MY_DRAFTS_ORDER,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -106,6 +114,16 @@ export class ReceiptDraftsService {
     private readonly accounts: AccountsService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: ReceiptDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(receiptRequestHash(input), async () => {
+      const prepared = await this.receipts.prepareCreate(user, input);
+      await this.preCheck(input, prepared.branchId, user);
+      return { total: toDecimalString(prepared.amount), currency: prepared.currency };
+    });
+  }
 
   async create(
     user: AuthUser,
@@ -182,13 +200,21 @@ export class ReceiptDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<ReceiptDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<ReceiptDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.receiptDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: MY_DRAFTS_ORDER,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -196,6 +222,26 @@ export class ReceiptDraftsService {
       amount: toDecimalString(d.amount),
       currency: d.currency,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    if (!user.permissions.has('receipts:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem(
+        'receipt',
+        d,
+        d.receiptId === null
+          ? null
+          : {
+              type: 'receipt',
+              id: d.receiptId,
+              number: d.receiptNumber,
+              path: `/receipts/${d.receiptId}`,
+            },
+      ),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<ReceiptDraftDto> {

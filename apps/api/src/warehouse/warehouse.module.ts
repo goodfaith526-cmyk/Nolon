@@ -26,6 +26,6 @@ import { WarehouseReportsService } from './warehouse-reports.service.js';
     GrnDraftsService,
     GoodsReleaseDraftsService,
   ],
-  exports: [WarehouseReportsService],
+  exports: [WarehouseReportsService, GoodsReleaseDraftsService],
 })
 export class WarehouseModule {}
