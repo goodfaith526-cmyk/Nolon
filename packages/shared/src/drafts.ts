@@ -269,3 +269,23 @@ export interface MyDraftItemDto {
   /** Set once approved. */
   result: MyDraftResult | null;
 }
+
+/** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */
+export const SETTLE_DRAFT_KINDS = [...MY_DRAFT_KINDS, 'grn'] as const;
+export type SettleDraftKind = (typeof SETTLE_DRAFT_KINDS)[number];
+
+/** A settle request (POST /assistant-drafts/settle): the key of a create whose answer was lost. */
+export interface DraftKeySettleRequest {
+  kind: SettleDraftKind;
+  idempotencyKey: string;
+}
+
+/**
+ * The final answer for a create whose outcome the assistant did not get (a timeout, a lost
+ * connection). CREATED: a draft is committed under the key; read it through its kind's by-key
+ * route, where a 403 or 404 means only that the user may no longer see it (a permission or branch
+ * withdrawn since), never that it was not created. NOT_CREATED: nothing was committed, and from now on nothing will be: a create under this key is
+ * refused (409), even one already in flight. Any other answer (401, 403, 5xx) settles nothing.
+ */
+export type DraftKeySettlementDto =
+  { state: 'CREATED'; draftId: string } | { state: 'NOT_CREATED' };

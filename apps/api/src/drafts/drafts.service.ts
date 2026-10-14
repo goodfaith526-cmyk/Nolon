@@ -7,6 +7,7 @@ import {
 import type {
   AssistantDecidableKind,
   AssistantDraftDto,
+  DraftKeySettlementDto,
   DraftStatus,
   EntryDraftReviewFields,
   MyDraftItemDto,
@@ -521,19 +522,153 @@ export function valuesOf<T extends { idempotencyKey: string }>(body: T): ValuesO
 export async function storedDraftUnderKey(
   client: Prisma.TransactionClient,
   table: DraftTable,
-  scope: { agentClientId: string; createdById: string; idempotencyKey: string },
+  scope: KeyScope,
   hash: string,
 ): Promise<string | null> {
+  const row = await draftUnderKey(client, table, scope);
+  if (!row) {
+    // Refused before any check: the key's outcome is on the ledger (NOT_CREATED, or a draft
+    // since purged), and no create under it ever commits.
+    if (await ledgerRow(client, table, scope)) throw keySettled();
+    return null;
+  }
+  if (row.payload_hash !== hash) throw keyReused();
+  return row.id;
+}
+
+/** An assistant client's idempotency key for one user, as a draft table scopes it. */
+export interface KeyScope {
+  agentClientId: string;
+  createdById: string;
+  idempotencyKey: string;
+}
+
+async function draftUnderKey(
+  client: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<{ id: string; payload_hash: string } | null> {
   requireDraftTable(table);
   const rows = await client.$queryRaw<{ id: string; payload_hash: string }[]>`
     SELECT "id", "payload_hash" FROM ${Prisma.raw(`"${table}"`)}
     WHERE "agent_client_id" = ${scope.agentClientId}::uuid
       AND "created_by_id" = ${scope.createdById}::uuid
       AND "idempotency_key" = ${scope.idempotencyKey}`;
-  const row = rows[0];
-  if (!row) return null;
-  if (row.payload_hash !== hash) throw keyReused();
-  return row.id;
+  return rows[0] ?? null;
+}
+
+const ledgerKey = (table: DraftTable, scope: KeyScope) => ({
+  agentClientId_createdById_draftTable_idempotencyKey: { ...scope, draftTable: table },
+});
+
+function ledgerRow(client: Prisma.TransactionClient, table: DraftTable, scope: KeyScope) {
+  return client.assistantDraftKey.findUnique({
+    where: ledgerKey(table, scope),
+    select: { outcome: true, draftId: true, ackedAt: true },
+  });
+}
+
+/** pg advisory lock namespace (with a hash of the key): "nolon draft idempotency key". */
+const KEY_LOCK_NAMESPACE = 72_031_012;
+
+/**
+ * Takes the key's lock for the rest of the transaction, then refuses a key whose outcome is on
+ * the ledger without a live draft (settled as not created, or created and since purged). Every
+ * create takes it before its key lookup, and a settle takes the same lock, so a settle waits for
+ * a create in flight to commit (and then finds its draft), and a create after a settle finds the
+ * ledger row: "not created" is final, and a purged draft is never created again.
+ */
+export async function lockKeyInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<void> {
+  await takeKeyLock(tx, table, scope);
+  if ((await ledgerRow(tx, table, scope)) && !(await draftUnderKey(tx, table, scope))) {
+    throw keySettled();
+  }
+}
+
+async function takeKeyLock(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+): Promise<void> {
+  requireDraftTable(table);
+  const name = `${table}:${scope.agentClientId}:${scope.createdById}:${scope.idempotencyKey}`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${KEY_LOCK_NAMESPACE}::int, hashtext(${name}))::text`;
+}
+
+/**
+ * Settles a key whose create the assistant got no answer for: CREATED with the draft committed
+ * under it (live, or purged since and kept on the ledger), or NOT_CREATED, recorded so that no
+ * create under the key ever commits afterwards. With `ack`, the assistant also says its task
+ * under the key is final: the ledger row then goes DRAFT_RETENTION_DAYS later, never before.
+ * Asks nothing of the user's permissions or branches (they may have changed since the create);
+ * only the same assistant client and user reach their own key.
+ */
+export async function settleKeyInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  scope: KeyScope,
+  ack: boolean,
+): Promise<DraftKeySettlementDto> {
+  await takeKeyLock(tx, table, scope);
+  const draft = await draftUnderKey(tx, table, scope);
+  const ledger = await ledgerRow(tx, table, scope);
+  const answer: DraftKeySettlementDto = draft
+    ? { state: 'CREATED', draftId: draft.id }
+    : ledger?.outcome === 'CREATED' && ledger.draftId
+      ? { state: 'CREATED', draftId: ledger.draftId }
+      : { state: 'NOT_CREATED' };
+  const ackedAt = ack ? new Date() : null;
+  if (!ledger) {
+    await tx.assistantDraftKey.create({
+      data: {
+        ...scope,
+        draftTable: table,
+        outcome: answer.state,
+        draftId: answer.state === 'CREATED' ? answer.draftId : null,
+        ackedAt,
+      },
+    });
+  } else if (ackedAt && !ledger.ackedAt) {
+    await tx.assistantDraftKey.update({ where: ledgerKey(table, scope), data: { ackedAt } });
+  }
+  return answer;
+}
+
+/**
+ * Before the retention purge deletes drafts, inside its transaction: a CREATED ledger row for
+ * every draft of `table` it may delete, so a settle after the purge still answers CREATED and
+ * the key is never used again. Covers at least what the purge removes (removable(cutoff)).
+ */
+export async function recordPurgedKeysInTx(
+  tx: Prisma.TransactionClient,
+  table: DraftTable,
+  cutoff: Date,
+): Promise<number> {
+  requireDraftTable(table);
+  return tx.$executeRaw`
+    INSERT INTO "assistant_draft_keys"
+      ("agent_client_id", "created_by_id", "draft_table", "idempotency_key", "outcome", "draft_id")
+    SELECT "agent_client_id", "created_by_id", ${table}, "idempotency_key", 'CREATED', "id"
+    FROM ${Prisma.raw(`"${table}"`)}
+    WHERE ("state" = 'REJECTED' AND "decided_at" <= ${cutoff})
+       OR ("state" = 'DRAFT' AND "expires_at" <= ${cutoff})
+    ON CONFLICT DO NOTHING`;
+}
+
+/** A create under a key whose outcome is already settled (for the assistant only). */
+export function keySettled(): ConflictException {
+  return new ConflictException({
+    message: 'This idempotency key is settled; use a new key',
+    code: 'KEY_SETTLED',
+    params: {},
+    fields: [],
+    error: 'Conflict',
+    statusCode: 409,
+  });
 }
 
 /** A key reused for another request: reveals nothing about the stored draft. */
