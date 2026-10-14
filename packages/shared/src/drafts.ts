@@ -290,3 +290,37 @@ export interface DraftKeySettleRequest {
  */
 export type DraftKeySettlementDto =
   { state: 'CREATED'; draftId: string } | { state: 'NOT_CREATED' };
+
+/** One draft kind as NOLON offers it to the assistant (GET /assistant-drafts/capabilities). */
+export interface DraftKindCapabilityDto {
+  kind: SettleDraftKind;
+  /** The kind's routes, without /api/v1 (`:shipmentId` stands for the shipment's id). */
+  path: string;
+  /** `POST <path>/check` exists: the create's checks, with nothing written. */
+  preCheck: boolean;
+  /**
+   * The review screen's path on the web, without the locale (`:id`: the draft's id). A GRN draft is
+   * reviewed with its document on the shipment's page (`:shipmentId`).
+   */
+  review: string;
+  /** This user holds the create's permissions now (NOLON checks them again on create). */
+  canCreate: boolean;
+  /** Where a person may decide: the review screen only, or also the assistant's chat. */
+  approval: 'screen' | 'both';
+}
+
+/**
+ * What this NOLON offers the assistant, so it can switch off what an older NOLON lacks: a 404 on
+ * this route means none of it. Kinds and features are only added; `api` changes only when an
+ * existing shape changes.
+ */
+export interface DraftCapabilitiesDto {
+  api: 1;
+  features: {
+    preCheck: boolean;
+    myDrafts: boolean;
+    settle: boolean;
+    settleAck: boolean;
+  };
+  kinds: DraftKindCapabilityDto[];
+}

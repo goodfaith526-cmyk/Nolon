@@ -447,7 +447,7 @@ export function mineWhere(
 }
 
 /** Each kind's review page segment (/drafts/<page>/<id> on the web). */
-const REVIEW_PAGES: Record<MyDraftKind, string> = {
+export const REVIEW_PAGES: Record<MyDraftKind, string> = {
   booking: 'bookings',
   new_customer_booking: 'new-customer-bookings',
   quotation: 'quotations',

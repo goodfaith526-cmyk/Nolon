@@ -14,6 +14,7 @@ import {
   MY_DRAFTS_MAX,
   MY_DRAFT_KINDS,
   SETTLE_DRAFT_KINDS,
+  type DraftCapabilitiesDto,
   type DraftKeySettlementDto,
   type MyDraftItemDto,
 } from '@nolon/shared';
@@ -21,6 +22,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentDraftWritable, AgentReadable, CurrentUser } from '../auth/decorators.js';
 import { parse } from '../common/validation.js';
+import { draftCapabilities } from './draft-capabilities.js';
 import { MyDraftsService } from './my-drafts.service.js';
 
 const mineQuery = z
@@ -49,6 +51,16 @@ const settleBody = z
 @Controller('assistant-drafts')
 export class MyDraftsController {
   constructor(private readonly drafts: MyDraftsService) {}
+
+  /**
+   * What this NOLON offers the assistant: features, and each draft kind's routes and review page,
+   * with whether this user may create it now. No route permission: it reveals no data.
+   */
+  @AgentReadable()
+  @Get('capabilities')
+  capabilities(@CurrentUser() user: AuthUser): DraftCapabilitiesDto {
+    return draftCapabilities(user);
+  }
 
   @AgentReadable()
   @Get('mine')
