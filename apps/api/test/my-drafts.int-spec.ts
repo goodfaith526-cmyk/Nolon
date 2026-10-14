@@ -1,6 +1,7 @@
 import type {
   AgentClientCreatedDto,
   CustomerDto,
+  DraftCapabilitiesDto,
   EntryDraftSummaryDto,
   MyDraftItemDto,
   QuotationDraftDto,
@@ -259,5 +260,31 @@ describe('my drafts', () => {
     expect(ids(third)).not.toContain(a.id);
     expect(ids(third)).not.toContain(b.id);
     await r.agentGet(`/assistant-drafts/mine?beforeId=${a.id}`, tokens.agent).expect(400);
+  });
+});
+
+describe('draft capabilities', () => {
+  it('say what this NOLON offers and which kinds this user may create, to the assistant and on screen', async () => {
+    const caps = (await r.agentGet('/assistant-drafts/capabilities', tokens.agent).expect(200))
+      .body as DraftCapabilitiesDto;
+    expect(caps.api).toBe(1);
+    expect(caps.features).toEqual({
+      preCheck: true,
+      myDrafts: true,
+      settle: true,
+      settleAck: true,
+    });
+    const quotation = caps.kinds.find((k) => k.kind === 'quotation');
+    expect(quotation).toEqual({
+      kind: 'quotation',
+      path: '/quotation-drafts',
+      preCheck: true,
+      review: '/drafts/quotations/:id',
+      canCreate: true,
+      approval: 'both',
+    });
+    // Sales may not create a trip draft.
+    expect(caps.kinds.find((k) => k.kind === 'trip')?.canCreate).toBe(false);
+    await r.get('/assistant-drafts/capabilities', cookies.agent).expect(200);
   });
 });
