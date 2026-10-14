@@ -20,7 +20,7 @@ import type {
 
 /**
  * The words the assistant may give for the customer; every other field it gives words for is the
- * quotation's (`originLocationId`, `destinationLocationId`, `lines[N].quantity`,
+ * quotation's (`originLocationId`, `destinationLocationId`, `currency`, `lines[N].quantity`,
  * `lines[N].unitPrice`, `lines[N].discount`).
  */
 export const NEW_CUSTOMER_QUOTATION_CUSTOMER_FIELDS = [

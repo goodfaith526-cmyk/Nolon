@@ -56,7 +56,7 @@ const customerBody = z
 // The values the assistant binds to the staff member's words: the customer's and the
 // quotation's, a line's value by its path.
 const CUSTOMER_WORDS: readonly string[] = NEW_CUSTOMER_QUOTATION_CUSTOMER_FIELDS;
-const QUOTATION_WORDS = ['originLocationId', 'destinationLocationId'];
+const QUOTATION_WORDS = ['originLocationId', 'destinationLocationId', 'currency'];
 const LINE_WORDS = /^lines\[(\d{1,2})\]\.(quantity|unitPrice|discount)$/;
 
 /** The line a path names (`lines[3].unitPrice` is line 3), or null for a field of the header. */
