@@ -385,6 +385,31 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
 }
 
+/** The idempotency key a pre-check's body is parsed with: a check stores nothing under it. */
+const CHECK_KEY = 'pre-check-only';
+
+/**
+ * A pre-check's body, ready for the create's own schema: the values only, with no replaced draft
+ * and a placeholder key (whatever key was sent is ignored).
+ */
+export function checkRequest(body: unknown): unknown {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
+  const values = Object.entries(body).filter(
+    ([key]) => key !== 'replacesDraftId' && key !== 'idempotencyKey',
+  );
+  return { ...Object.fromEntries(values), idempotencyKey: CHECK_KEY };
+}
+
+/** A create request without its idempotency key (each member of a union on its own). */
+export type ValuesOf<T> = T extends unknown ? Omit<T, 'idempotencyKey'> : never;
+
+/** A create request without its idempotency key: the values a pre-check checks. */
+export function valuesOf<T extends { idempotencyKey: string }>(body: T): ValuesOf<T> {
+  const values: Partial<T> = { ...body };
+  delete values.idempotencyKey;
+  return values as ValuesOf<T>;
+}
+
 /**
  * The draft stored under an idempotency key, read before a create checks anything on live data, so
  * a replay is answered with the draft it made (whatever happened since: approved, or the records

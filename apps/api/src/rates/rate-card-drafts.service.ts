@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   CreateRateCardRequest,
   DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -21,18 +22,20 @@ import {
   checkDraft,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
   decideInTx,
+  DraftsService,
   keyReused,
   lockReplacedInTx,
   replaceInTx,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -124,6 +127,18 @@ export class RateCardDraftsService {
     private readonly rates: RatesService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: RateCardDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { branchId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(rateRequestHash(branchId, input, evidence), async () => {
+      // As an approval would: a rate card that duplicates another refuses it.
+      assertBranchAccess(user, branchId);
+      const request = createRequestOf(branchId, input);
+      await this.rates.prepareCreate(user, request);
+      throwFirstConflict(await this.rates.duplicateIssues(this.prisma, [request]));
+    });
+  }
 
   async create(
     user: AuthUser,

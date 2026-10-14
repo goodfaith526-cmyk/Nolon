@@ -2,10 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
+  DraftPriceSource,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
-  DraftPriceSource,
   InvoiceDraftCreateRequest,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
@@ -21,20 +22,22 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -110,6 +113,22 @@ export class InvoiceDraftsService {
     private readonly invoices: InvoicesService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: InvoiceDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { shipmentId, ...input } = valuesOf(body);
+    return preCheck(invoiceRequestHash({ shipmentId, ...input }), async () => {
+      const prepared = await this.invoices.prepareForShipment(user, shipmentId, input);
+      return {
+        total: toDecimalString(prepared.total),
+        currency: prepared.currency,
+        priceSources: prepared.lines.map((l) => ({
+          source: l.priceSource,
+          rateCardId: l.rateCardId,
+        })),
+      };
+    });
+  }
 
   async create(
     user: AuthUser,

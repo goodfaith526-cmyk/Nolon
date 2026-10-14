@@ -10,6 +10,7 @@ import type {
   BookingItemInput,
   ContainerChoice,
   CreateBookingRequest,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -23,19 +24,21 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
+  decidedVia,
   type DecisionVia,
   DraftsService,
-  decidedVia,
   keyReused,
-  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -197,6 +200,14 @@ export class BookingDraftsService {
     private readonly drafts: DraftsService,
     private readonly containers: ContainerBookingsRegistry,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: BookingDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(bookingRequestHash(input), async () => {
+      await this.prepare(user, input);
+    });
+  }
 
   async create(
     user: AuthUser,

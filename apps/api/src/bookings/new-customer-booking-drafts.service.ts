@@ -7,19 +7,20 @@ import {
 import {
   BOOKING_SERVICES,
   CARGO_TYPES,
-  LOAD_TYPES,
-  NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
-  SHIPPING_MODES,
   type CustomerDraftRequest,
   type DraftEvidence,
+  type DraftPreCheckDto,
   type DraftStatus,
   type EntryDraftCheck,
+  LOAD_TYPES,
+  NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
   type NewCustomerBookingDraftCreateRequest,
   type NewCustomerBookingDraftCustomer,
   type NewCustomerBookingDraftDto,
   type NewCustomerBookingDraftListItemDto,
   type NewCustomerBookingDraftSummaryDto,
   type NewCustomerBookingRequest,
+  SHIPPING_MODES,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -31,24 +32,26 @@ import {
 } from '../customers/customer-drafts.service.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
-  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
+  type DraftState,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
-  type LockedReplacement,
   decideInTx,
+  DraftsService,
   keyReused,
+  type LockedReplacement,
   lockReplacedInTx,
   replaceInTx,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -244,6 +247,19 @@ export class NewCustomerBookingDraftsService {
    * to change: in the same transaction as the new pair, that draft and its customer draft are
    * closed as replaced, and the new booking draft and customer draft name them.
    */
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(
+    user: AuthUser,
+    body: NewCustomerBookingDraftCreateRequest,
+  ): Promise<DraftPreCheckDto> {
+    const { branchId, customer, booking, evidence = [] } = valuesOf(body);
+    return preCheck(newCustomerBookingHash(branchId, customer, booking, evidence), async () => {
+      await this.customerDrafts.prepareNew(user, branchId, customer);
+      await this.bookings.prepareWithoutCustomer(booking);
+      await this.requireContainer(user, booking);
+    });
+  }
+
   async create(
     user: AuthUser,
     body: NewCustomerBookingDraftCreateRequest,

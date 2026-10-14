@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -21,20 +22,22 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -106,6 +109,16 @@ export class ReceiptDraftsService {
     private readonly accounts: AccountsService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: ReceiptDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(receiptRequestHash(input), async () => {
+      const prepared = await this.receipts.prepareCreate(user, input);
+      await this.preCheck(input, prepared.branchId, user);
+      return { total: toDecimalString(prepared.amount), currency: prepared.currency };
+    });
+  }
 
   async create(
     user: AuthUser,

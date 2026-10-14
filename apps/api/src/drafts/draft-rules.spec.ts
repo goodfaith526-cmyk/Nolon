@@ -1,4 +1,5 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpStatus } from '@nestjs/common';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -7,11 +8,14 @@ import {
   draftStatus,
   metaAfterEdit,
   metaForAi,
+  preCheck,
+  preCheckBody,
   requestHash,
   requireOpen,
   sameStoredValue,
 } from './draft-rules.js';
-import { lockDraftRow } from './drafts.service.js';
+import { checkRequest, lockDraftRow, valuesOf } from './drafts.service.js';
+import { codedRefusal, fieldRefusal, parse } from '../common/validation.js';
 
 const FIELDS = ['customerId', 'amount', 'note'] as const;
 
@@ -92,5 +96,114 @@ describe('draft row lock', () => {
     await expect(lockDraftRow(tx, 'users; --' as 'grn_drafts', 'x')).rejects.toThrow(
       /Not a draft table/,
     );
+  });
+});
+
+describe('pre-checks', () => {
+  const HASH = 'a'.repeat(64);
+
+  it('pass with the totals the checks gave, or none', async () => {
+    expect(await preCheck(HASH, () => Promise.resolve())).toEqual({
+      ok: true,
+      valuesHash: HASH,
+      total: null,
+      currency: null,
+      priceSources: null,
+    });
+    const priced = await preCheck(HASH, () =>
+      Promise.resolve({ total: '10', currency: 'USD', priceSources: [] }),
+    );
+    expect(priced).toMatchObject({ ok: true, total: '10', currency: 'USD', priceSources: [] });
+  });
+
+  it('turn a field refusal into one refusal per field, with its code', async () => {
+    const result = await preCheck(HASH, () =>
+      Promise.reject(fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', ['a', 'b'])),
+    );
+    expect(result).toEqual({
+      ok: false,
+      valuesHash: HASH,
+      refusals: [
+        {
+          field: 'a',
+          code: 'SAME_ROUTE',
+          message: 'Origin and destination must differ',
+          params: {},
+        },
+        {
+          field: 'b',
+          code: 'SAME_ROUTE',
+          message: 'Origin and destination must differ',
+          params: {},
+        },
+      ],
+    });
+  });
+
+  it('keep a coded refusal with no field, and its params', async () => {
+    const result = await preCheck(HASH, () =>
+      Promise.reject(
+        codedRefusal(HttpStatus.FORBIDDEN, 'CONTAINER_BRANCH_ONLY', 'Not yours', {
+          container: 'C-1',
+        }),
+      ),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      refusals: [
+        {
+          field: null,
+          code: 'CONTAINER_BRANCH_ONLY',
+          message: 'Not yours',
+          params: { container: 'C-1' },
+        },
+      ],
+    });
+  });
+
+  it('keep a plain refusal as its message, and a parse failure as its paths', async () => {
+    const plain = await preCheck(HASH, () => Promise.reject(new ForbiddenException('No')));
+    expect(plain).toMatchObject({
+      ok: false,
+      refusals: [{ field: null, code: null, message: 'No' }],
+    });
+    const parsed = await preCheck(HASH, () => {
+      parse(z.object({ x: z.number() }), { x: 'no' });
+      return Promise.resolve();
+    });
+    expect(parsed).toMatchObject({ ok: false, refusals: [{ field: 'x', code: 'INVALID' }] });
+  });
+
+  it('let any other failure through', async () => {
+    await expect(preCheck(HASH, () => Promise.reject(new Error('db down')))).rejects.toThrow(
+      'db down',
+    );
+  });
+
+  it('refuse a malformed body per path, with no fingerprint and no check run', async () => {
+    let ran = false;
+    const result = await preCheckBody(
+      z.object({ a: z.string(), b: z.number() }).strict(),
+      { a: 1 },
+      () => {
+        ran = true;
+        return preCheck(HASH, () => Promise.resolve());
+      },
+    );
+    expect(ran).toBe(false);
+    expect(result).toMatchObject({ ok: false, valuesHash: null });
+    expect(!result.ok && result.refusals.map((x) => [x.field, x.code])).toEqual([
+      ['a', 'INVALID'],
+      ['b', 'INVALID'],
+    ]);
+  });
+
+  it('check the values only: the key and the replaced draft are not part of them', () => {
+    expect(checkRequest({ a: 1, idempotencyKey: 'mine', replacesDraftId: 'x' })).toEqual({
+      a: 1,
+      idempotencyKey: 'pre-check-only',
+    });
+    expect(checkRequest(null)).toBeNull();
+    expect(valuesOf({ a: 1, idempotencyKey: 'k' })).toEqual({ a: 1 });
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -17,19 +18,21 @@ import {
   checkDraft,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
   decideInTx,
+  DraftsService,
   keyReused,
   lockReplacedInTx,
   replaceInTx,
   replacementParentIds,
   storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -95,6 +98,14 @@ export class PartyDraftsService {
     private readonly customers: CustomersService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: PartyDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { customerId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(partyRequestHash(customerId, input, evidence), async () => {
+      await this.customers.prepareAddParty(user, customerId);
+    });
+  }
 
   async create(
     user: AuthUser,

@@ -8,6 +8,7 @@ import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
   CreateQuotationRequest,
+  DraftPreCheckDto,
   DraftPriceSource,
   DraftStatus,
   EntryDraftCheck,
@@ -25,20 +26,22 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   requestHash,
   requireOpen,
   resolvedKey,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
+  decidedVia,
   type DecisionVia,
   DraftsService,
-  decidedVia,
   keyReused,
-  storedDraftUnderKey,
   lockDraftRow,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -154,6 +157,19 @@ export class QuotationDraftsService {
    * this user now (customer in their branches, route, rates, currency...). Then: no draft under
    * the key creates one; the same request returns it; anything else is a 409.
    */
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: QuotationDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const input = valuesOf(body);
+    return preCheck(quotationRequestHash(input), async () => {
+      const prepared = await this.quotations.prepareCreate(user, input);
+      return {
+        total: toDecimalString(prepared.header.total),
+        currency: input.currency,
+        priceSources: sourcesOf(prepared),
+      };
+    });
+  }
+
   async create(
     user: AuthUser,
     body: QuotationDraftCreateRequest,
@@ -395,12 +411,7 @@ export class QuotationDraftsService {
           currency: draft.currency,
         },
         pricing: pricingOf(prepared),
-        // A line priced from a rate card (named, or the system price) shows which one.
-        priceSources: prepared.lines.map((l) =>
-          l.rateCardId === null
-            ? { source: 'TYPED', rateCardId: null }
-            : { source: 'RATE_CARD', rateCardId: l.rateCardId },
-        ),
+        priceSources: sourcesOf(prepared),
       };
     } catch (error) {
       if (
@@ -487,4 +498,15 @@ function baseFields(
     quotationId: d.quotationId,
     quotationNumber: d.quotation?.number ?? null,
   };
+}
+
+/** A line priced from a rate card (named, or the system price) shows which one. */
+function sourcesOf(prepared: {
+  lines: readonly { rateCardId: string | null }[];
+}): DraftPriceSource[] {
+  return prepared.lines.map((l) =>
+    l.rateCardId === null
+      ? { source: 'TYPED', rateCardId: null }
+      : { source: 'RATE_CARD', rateCardId: l.rateCardId },
+  );
 }

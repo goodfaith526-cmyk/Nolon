@@ -1,3 +1,5 @@
+import type { FormRefusal } from './commercial.js';
+import type { DraftPriceSource } from './commercial-drafts.js';
 import type { DecimalString } from './currencies.js';
 
 /**
@@ -163,3 +165,32 @@ export interface AssistantApprovalGrantsDto {
   userId: string;
   kinds: AssistantDecidableKind[];
 }
+
+/**
+ * One reason a pre-check refused the values: the field it is about (its path in the request, null
+ * when the reason names none), NOLON's code for it (`INVALID` for a malformed value, null when the
+ * reason has none), the English message and its params.
+ */
+export interface DraftCheckRefusal {
+  field: string | null;
+  code: FormRefusal | 'INVALID' | null;
+  message: string;
+  params: Record<string, string>;
+}
+
+/**
+ * POST /<kind>-drafts/check: what a create with these values would get from NOLON now, for this
+ * user, without creating anything. `valuesHash` fingerprints the values checked (null when the
+ * body is malformed), so the assistant can tie the result to the values it holds; a create runs
+ * every check again. A refusal of the route itself (missing permission) stays an HTTP error.
+ */
+export type DraftPreCheckDto =
+  | {
+      ok: true;
+      valuesHash: string;
+      total: DecimalString | null;
+      currency: string | null;
+      /** The price of each line, for quotation and invoice drafts; null for other kinds. */
+      priceSources: DraftPriceSource[] | null;
+    }
+  | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };

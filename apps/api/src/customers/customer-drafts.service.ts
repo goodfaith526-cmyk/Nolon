@@ -1,11 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
-  DraftEvidence,
   CreateCustomerRequest,
   CustomerDraftCreateRequest,
   CustomerDraftDto,
   CustomerDraftListItemDto,
   CustomerDraftRequest,
+  DraftEvidence,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -16,24 +17,26 @@ import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
 import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
 import {
-  type DraftState,
   approvedFields,
   checkDraft,
   draftExpiry,
+  type DraftState,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  DraftsService,
-  type LockedReplacement,
   decideInTx,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
+  type LockedReplacement,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -126,6 +129,19 @@ export class CustomerDraftsService {
     private readonly customers: CustomersService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: CustomerDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { branchId, evidence = [], ...input } = valuesOf(body);
+    return preCheck(customerRequestHash(branchId, input, evidence), async () => {
+      // As an approval would: a customer with this phone in the branch refuses it.
+      assertBranchAccess(user, branchId);
+      await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+      throwFirstConflict(
+        await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
+      );
+    });
+  }
 
   async create(
     user: AuthUser,

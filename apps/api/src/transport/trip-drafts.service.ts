@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { seesTransportCosts } from '@nolon/shared';
+import { type DraftPreCheckDto, seesTransportCosts } from '@nolon/shared';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -20,20 +20,22 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -127,6 +129,15 @@ export class TripDraftsService {
     private readonly trips: TripsService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: TripDraftCreateRequest): Promise<DraftPreCheckDto> {
+    draftScope(user);
+    const input = valuesOf(body);
+    return preCheck(tripRequestHash(input), async () => {
+      await this.trips.prepareCreate(user, input);
+    });
+  }
 
   async create(
     user: AuthUser,

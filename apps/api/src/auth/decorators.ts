@@ -12,6 +12,7 @@ export const REQUIRED_PERMISSIONS = 'auth:requiredPermissions';
 export const AGENT_READABLE = 'auth:agentReadable';
 export const AGENT_DRAFT_WRITABLE = 'auth:agentDraftWritable';
 export const AGENT_DRAFT_DECIDABLE = 'auth:agentDraftDecidable';
+export const AGENT_DRAFT_CHECKABLE = 'auth:agentDraftCheckable';
 
 /** Opts a route out of the session guard. Every other route requires a signed-in user. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -43,6 +44,13 @@ export const AgentDraftWritable = () => SetMetadata(AGENT_DRAFT_WRITABLE, true);
  * agent-draft-decidable.spec.ts carry it.
  */
 export const AgentDraftDecidable = () => SetMetadata(AGENT_DRAFT_DECIDABLE, true);
+
+/**
+ * Opens a POST route to the staff assistant for a draft's pre-check: the checks a create with the
+ * given values runs, with nothing written. Only the routes listed in agent-draft-checkable.spec.ts
+ * carry it, each with the permissions of its create.
+ */
+export const AgentDraftCheckable = () => SetMetadata(AGENT_DRAFT_CHECKABLE, true);
 
 /** The user the guard attached. Only valid on routes that are not @Public(). */
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

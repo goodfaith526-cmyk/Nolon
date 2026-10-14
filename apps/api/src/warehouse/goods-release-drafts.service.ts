@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
+  DraftPreCheckDto,
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
@@ -19,21 +20,23 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
 import {
-  type DecisionVia,
-  DraftsService,
   decidedVia,
   decideInTx,
+  type DecisionVia,
+  DraftsService,
   keyReused,
-  storedDraftUnderKey,
   lockReplacedInTx,
   replaceInTx,
   replacementParentIds,
+  storedDraftUnderKey,
+  valuesOf,
   withReplaced,
   withReplacedBy,
 } from '../drafts/drafts.service.js';
@@ -95,6 +98,15 @@ export class GoodsReleaseDraftsService {
     private readonly shipments: ShipmentsService,
     private readonly drafts: DraftsService,
   ) {}
+
+  /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
+  checkValues(user: AuthUser, body: GoodsReleaseDraftCreateRequest): Promise<DraftPreCheckDto> {
+    const { shipmentId, ...input } = valuesOf(body);
+    return preCheck(releaseRequestHash(shipmentId, input), async () => {
+      await this.movements.prepareRelease(user, shipmentId, input);
+      await this.requireWarehouse(user, input.warehouseId);
+    });
+  }
 
   async create(
     user: AuthUser,
