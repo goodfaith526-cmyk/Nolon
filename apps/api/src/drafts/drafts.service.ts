@@ -408,6 +408,8 @@ export interface MyDraftsQuery {
    */
   before?: Date;
   beforeId?: string;
+  /** Only these drafts (lower-case ids): the assistant looks up the drafts it made in one read. */
+  ids?: readonly string[];
   limit: number;
 }
 
@@ -425,24 +427,30 @@ export function mineWhere(
   createdById: string;
   agentClientId?: string;
   createdAt?: { gte: Date };
-  AND?: { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }[];
+  AND?: (
+    | { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }
+    | { id: { in: string[] } }
+  )[];
 } {
-  const { before, beforeId } = query;
-  const page = before
-    ? [
-        {
-          OR: [
-            { createdAt: { lt: before } },
-            ...(beforeId ? [{ createdAt: before, id: { lt: beforeId } }] : []),
-          ],
-        },
-      ]
-    : null;
+  const { before, beforeId, ids } = query;
+  const and = [
+    ...(before
+      ? [
+          {
+            OR: [
+              { createdAt: { lt: before } },
+              ...(beforeId ? [{ createdAt: before, id: { lt: beforeId } }] : []),
+            ],
+          },
+        ]
+      : []),
+    ...(ids ? [{ id: { in: [...ids] } }] : []),
+  ];
   return {
     createdById: user.id,
     ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
     ...(query.since ? { createdAt: { gte: query.since } } : {}),
-    ...(page ? { AND: page } : {}),
+    ...(and.length > 0 ? { AND: and } : {}),
   };
 }
 

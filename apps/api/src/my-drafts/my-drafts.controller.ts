@@ -34,6 +34,12 @@ const mineQuery = z
     // With `before`: the last item's id, so drafts sharing its createdAt are not skipped.
     beforeId: z.uuid().optional(),
     limit: z.coerce.number().int().min(1).max(MY_DRAFTS_MAX).default(20),
+    // Only these drafts: up to MY_DRAFTS_MAX ids, comma-separated.
+    ids: z
+      .string()
+      .transform((v) => v.split(',').map((id) => id.trim().toLowerCase()))
+      .pipe(z.array(z.uuid()).min(1).max(MY_DRAFTS_MAX))
+      .optional(),
   })
   .strict();
 
@@ -65,12 +71,14 @@ export class MyDraftsController {
   @AgentReadable()
   @Get('mine')
   mine(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<MyDraftItemDto[]> {
-    const { kind, since, before, beforeId, ...rest } = parse(mineQuery, query);
+    const { kind, since, before, beforeId, ids, limit, ...rest } = parse(mineQuery, query);
     if (beforeId && !before) throw new BadRequestException('beforeId needs before');
     return this.drafts.list(
       user,
       {
         ...rest,
+        // Asked by id, every one of them that is still listed fits in one answer.
+        ...(ids ? { ids, limit: MY_DRAFTS_MAX } : { limit }),
         ...(since ? { since: new Date(since) } : {}),
         ...(before ? { before: new Date(before), ...(beforeId ? { beforeId } : {}) } : {}),
       },
