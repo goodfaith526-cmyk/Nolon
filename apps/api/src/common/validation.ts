@@ -21,10 +21,12 @@ export function fieldRefusal(
   code: FormRefusal | null,
   message: string,
   fields: readonly string[],
+  params: Readonly<Record<string, string>> = {},
 ): BadRequestException {
   return new BadRequestException({
     message,
     code: code ?? undefined,
+    params,
     fields,
     error: 'Bad Request',
     statusCode: 400,

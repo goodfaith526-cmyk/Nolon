@@ -1,27 +1,31 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type {
-  AssistantDraftApproveRequest,
-  AssistantDraftDto,
-  DraftPreCheckDto,
-  DraftStatus,
-  EntryDraftCheck,
-  EntryDraftSummaryDto,
-  ReceiptDraftCreateRequest,
-  ReceiptDraftDto,
-  ReceiptDraftListItemDto,
-  ReceiptDraftRequest,
+import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  RECEIPT_ALLOCATIONS_MAX,
+  type AssistantDraftApproveRequest,
+  type AssistantDraftDto,
+  type DraftPreCheckDto,
+  type DraftStatus,
+  type EntryDraftCheck,
+  type EntryDraftSummaryDto,
+  type ReceiptDraftCreateRequest,
+  type ReceiptDraftDto,
+  type ReceiptDraftListItemDto,
+  type ReceiptDraftOptionsDto,
+  type ReceiptDraftRequest,
 } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
-import { dec, toDecimalString } from '../common/money.js';
+import { type Decimal, dec, toDecimalString } from '../common/money.js';
+import { fieldRefusal } from '../common/validation.js';
 import {
   approvedFields,
   checkDraft,
   decimalKey,
   draftExpiry,
   draftStatus,
+  isRefusal,
   preCheck,
   rejectedFields,
   requestHash,
@@ -49,6 +53,8 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { CustomersService } from '../customers/customers.service.js';
+import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
 const LABEL = 'receipt draft';
@@ -114,7 +120,48 @@ export class ReceiptDraftsService {
     private readonly receipts: ReceiptsService,
     private readonly accounts: AccountsService,
     private readonly drafts: DraftsService,
+    private readonly invoices: InvoicesService,
+    private readonly customers: CustomersService,
   ) {}
+
+  /**
+   * The pick lists of a receipt for this customer (the customer visible to the user; the receipt
+   * is the customer's branch's): its usable cash and bank accounts, and, when the user may view
+   * invoices, the customer's open ones.
+   */
+  async options(
+    user: AuthUser,
+    customerId: string,
+    currency: string | undefined,
+  ): Promise<ReceiptDraftOptionsDto> {
+    const customer = await this.customers.requireCustomer(user, customerId);
+    const accounts = await this.accounts.cashAccountsFor(customer.branchId);
+    const cashAccounts = accounts.filter((a) => currency === undefined || a.currency === currency);
+    if (!user.permissions.has('customer_invoices:view')) {
+      return { branchId: customer.branchId, cashAccounts, openInvoices: null };
+    }
+    const open = await this.invoices.list(user, {
+      customerId,
+      openOnly: true,
+      branchId: customer.branchId,
+      page: 1,
+      pageSize: RECEIPT_ALLOCATIONS_MAX,
+    });
+    const openInvoices = open.items
+      .filter((i) => currency === undefined || i.currency === currency)
+      .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
+      .map((i) => ({
+        id: i.id,
+        number: i.number,
+        currency: i.currency,
+        invoiceDate: i.invoiceDate,
+        dueDate: i.dueDate,
+        total: i.total,
+        balance: i.balance,
+        shipmentNumber: i.shipmentNumber,
+      }));
+    return { branchId: customer.branchId, cashAccounts, openInvoices };
+  }
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: ReceiptDraftCreateRequest): Promise<DraftPreCheckDto> {
@@ -380,20 +427,79 @@ export class ReceiptDraftsService {
    * user's branches, so a draft never carries another branch's invoice id. ReceiptsService checks
    * both again, with balances and status, under its locks on approval.
    */
+  /**
+   * The checks of the receipt's cash account and allocations that need no lock, each refused at
+   * its field: the account usable for the customer's branch and the currency; each allocation to
+   * an approved invoice of this customer, in the receipt's currency, within what is left on it
+   * (allocations to one invoice add up). The approval checks them again under the invoice locks.
+   */
   private async preCheck(
     input: ReceiptDraftRequest,
     branchId: string,
     user: AuthUser,
   ): Promise<void> {
-    await this.accounts.requireCash(this.prisma, input.cashAccountId, branchId, input.currency);
+    await this.accounts
+      .requireCash(this.prisma, input.cashAccountId, branchId, input.currency)
+      .catch((error: unknown) => {
+        if (!isRefusal(error)) throw error;
+        throw fieldRefusal('CASH_ACCOUNT_NOT_USABLE', error.message, ['cashAccountId']);
+      });
     const ids = input.allocations.map((a) => a.invoiceId);
     if (ids.length === 0) return;
-    const found = await this.prisma.customerInvoice.count({
+    const invoices = await this.prisma.customerInvoice.findMany({
       where: { id: { in: ids }, customerId: input.customerId, ...branchScope(user) },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        currency: true,
+        total: true,
+        paidAmount: true,
+        creditedAmount: true,
+      },
     });
-    if (found !== new Set(ids).size) {
-      throw new BadRequestException('An allocation is to an invoice of another customer');
-    }
+    const byId = new Map(invoices.map((i) => [i.id, i]));
+    const allocated = new Map<string, Decimal>();
+    input.allocations.forEach((a, i) => {
+      const invoice = byId.get(a.invoiceId);
+      const at = `allocations.${i}`;
+      if (!invoice) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_CUSTOMER',
+          'An allocation is to an invoice of another customer',
+          [`${at}.invoiceId`],
+        );
+      }
+      const params = { invoice: invoice.number ?? '', currency: invoice.currency };
+      if (invoice.status !== 'APPROVED') {
+        throw fieldRefusal(
+          'ALLOCATION_NOT_APPROVED',
+          `Invoice ${params.invoice} is not approved`,
+          [`${at}.invoiceId`],
+          params,
+        );
+      }
+      if (invoice.currency !== input.currency) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_CURRENCY',
+          `Invoice ${params.invoice} is in ${invoice.currency}; receive it in that currency`,
+          [`${at}.invoiceId`],
+          params,
+        );
+      }
+      const left = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
+      const sum = (allocated.get(invoice.id) ?? dec(0)).plus(dec(a.amount));
+      allocated.set(invoice.id, sum);
+      if (sum.gt(left)) {
+        const balance = toDecimalString(left);
+        throw fieldRefusal(
+          'ALLOCATION_EXCEEDS_BALANCE',
+          `Invoice ${params.invoice} has ${balance} ${invoice.currency} left`,
+          [`${at}.amount`],
+          { ...params, balance },
+        );
+      }
+    });
   }
 
   /** NOLON's checks of the receipt that need no lock (balances are checked on approval). */

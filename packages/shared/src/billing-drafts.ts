@@ -1,6 +1,6 @@
 import type { CreateReceiptRequest, CustomerInvoiceInput } from './accounting.js';
 import type { CustomerDraftFields, DraftPriceSource } from './commercial-drafts.js';
-import type { DecimalString } from './currencies.js';
+import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
 /**
@@ -68,6 +68,41 @@ export type ReceiptDraftRequest = Omit<CreateReceiptRequest, 'fxRate'>;
 export interface ReceiptDraftCreateRequest extends ReceiptDraftRequest {
   idempotencyKey: string;
 }
+
+/**
+ * GET /receipt-drafts/options?customerId=&currency=: what a receipt for this customer can take,
+ * for the assistant's pick lists. The receipt is the customer's branch's.
+ */
+export interface ReceiptDraftOptionsDto {
+  branchId: string;
+  /** Active, postable cash and bank accounts of that branch or shared, in `currency` if given. */
+  cashAccounts: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    currency: CurrencyCode;
+  }[];
+  /**
+   * The customer's approved invoices with a balance left, in `currency` if given, oldest due
+   * first (at most RECEIPT_ALLOCATIONS_MAX). Null when the user may not view invoices.
+   */
+  openInvoices:
+    | {
+        id: string;
+        number: string | null;
+        currency: CurrencyCode;
+        invoiceDate: string;
+        dueDate: string;
+        total: DecimalString;
+        balance: DecimalString;
+        shipmentNumber: string | null;
+      }[]
+    | null;
+}
+
+/** Most allocations one receipt takes, and most open invoices the options list. */
+export const RECEIPT_ALLOCATIONS_MAX = 100;
 
 export interface ReceiptDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   request: ReceiptDraftRequest;

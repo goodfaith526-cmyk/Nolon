@@ -17,6 +17,7 @@ import {
   type EntryDraftSummaryDto,
   type ReceiptDraftDto,
   type ReceiptDraftListItemDto,
+  type ReceiptDraftOptionsDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -29,7 +30,7 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
-import { parse, requiredText } from '../common/validation.js';
+import { currencyCode, parse, requiredText } from '../common/validation.js';
 import { createReceiptBody } from './billing.controller.js';
 import { ReceiptDraftsService } from './receipt-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
@@ -45,6 +46,7 @@ const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
+const optionsQuery = z.object({ customerId: z.uuid(), currency: currencyCode.optional() }).strict();
 
 /**
  * Receipt drafts (entry drafts). The staff assistant creates drafts and recovers the one it created
@@ -82,6 +84,15 @@ export class ReceiptDraftsController {
     @Param('key') key: string,
   ): Promise<EntryDraftSummaryDto> {
     return this.drafts.findByKey(user, parse(idempotencyKey, key));
+  }
+
+  /** The pick lists of a receipt for a customer: cash and bank accounts, open invoices. */
+  @AgentReadable()
+  @Get('options')
+  @RequirePermission('receipts:create')
+  options(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ReceiptDraftOptionsDto> {
+    const { customerId, currency } = parse(optionsQuery, query);
+    return this.drafts.options(user, customerId, currency);
   }
 
   @Get()
