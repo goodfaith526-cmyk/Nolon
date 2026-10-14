@@ -6,6 +6,7 @@ import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
+import { DraftPriceSourceNote } from './DraftPriceSourceNote';
 
 /** A quotation the assistant proposed: its values as proposed, and the decision. */
 export function QuotationDraftReview({ id }: { id: string }) {
@@ -24,13 +25,19 @@ export function QuotationDraftReview({ id }: { id: string }) {
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const q = draft.request;
   const pricing = draft.pricing;
+  // A line with neither a rate card nor a price takes the system price (the matching rate card).
+  const systemPriced = q.lines.some((l) => !l.rateCardId && l.unitPrice === undefined);
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/quotation-drafts"
       title={t('quotationTitle', { customer: draft.customerName })}
-      approveHint={t('quotationApproveHint')}
+      approveHint={
+        systemPriced
+          ? `${t('quotationApproveHint')} ${t('systemPriceHint')}`
+          : t('quotationApproveHint')
+      }
       result={
         draft.quotationId
           ? { label: draft.quotationNumber ?? '', href: `/quotations/${draft.quotationId}` }
@@ -96,6 +103,9 @@ export function QuotationDraftReview({ id }: { id: string }) {
                       />
                     ) : (
                       '—'
+                    )}
+                    {!line.rateCardId && line.unitPrice === undefined && (
+                      <DraftPriceSourceNote source={draft.priceSources?.[i]} />
                     )}
                   </td>
                   <td>

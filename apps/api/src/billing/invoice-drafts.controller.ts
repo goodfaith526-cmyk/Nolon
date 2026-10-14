@@ -27,6 +27,7 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import {
+  amount,
   currencyCode,
   dateString,
   optionalText,
@@ -45,7 +46,11 @@ const createBody = z
     invoiceDate: dateString,
     dueDate: dateString,
     notes: optionalText(2000),
-    lines: z.array(invoiceLine).min(1).max(100),
+    // No unit price: NOLON prices the line (the shipment's quotation, else its rate card).
+    lines: z
+      .array(invoiceLine.extend({ unitPrice: amount.optional() }))
+      .min(1)
+      .max(100),
     idempotencyKey,
   })
   .strict();

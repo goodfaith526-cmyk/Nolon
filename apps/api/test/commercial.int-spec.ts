@@ -629,13 +629,16 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         code: 'RATE_NOT_USABLE',
         fields: ['lines.1.rateCardId'],
       });
+      // A typed price needs its charge type and unit (a line without price takes the system
+      // price: system-prices.int-spec.ts).
       const manual = await post(
         '/quotations',
         cookies.salesDxb,
-        quotationBody(customer.id, [{ unit: 'PER_SHIPMENT', quantity: '1' }]),
+        quotationBody(customer.id, [{ unitPrice: '5', quantity: '1' }]),
       ).expect(400);
       expect(manual.body).toMatchObject({
-        fields: ['lines.0.chargeTypeCode', 'lines.0.unitPrice'],
+        code: 'MANUAL_LINE_INCOMPLETE',
+        fields: ['lines.0.chargeTypeCode', 'lines.0.unit'],
       });
       const lcl = await approvedRate({ loadType: 'LCL' });
       await post('/quotations', cookies.salesDxb, quotationBody(customer.id, lines(lcl.id))).expect(

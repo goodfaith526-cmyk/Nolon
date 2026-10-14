@@ -63,6 +63,8 @@ const bookingBody = z
     services: bookingFields.services,
     requestedDeparture: bookingFields.requestedDeparture,
     specialInstructions: bookingFields.specialInstructions,
+    // An open container the booking goes in on approval (confirmed, its shipment added).
+    consolidationId: z.uuid().nullish(),
     items: z
       .array(
         itemBody
@@ -84,7 +86,7 @@ const bookingBody = z
 // The values the assistant binds to the staff member's words: the customer's (kept on the
 // customer draft) and the booking's, a line's value by its path.
 const CUSTOMER_WORDS: readonly string[] = NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS;
-const BOOKING_WORDS = ['originLocationId', 'destinationLocationId'];
+const BOOKING_WORDS = ['originLocationId', 'destinationLocationId', 'consolidationId'];
 const LINE_WORDS = /^items\[(\d{1,2})\]\.(quantity|weightKg|volumeCbm)$/;
 
 /** The line a path names (`items[3].weightKg` is line 3), or null for a field of the header. */

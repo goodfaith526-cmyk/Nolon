@@ -2172,7 +2172,16 @@
     "customerNotApproved": "The customer draft was rejected or has expired, so this booking cannot be approved. Reject it, or ask the assistant for a new one.",
     "lineValue": "Line {line}: {field}",
     "bookingWithCustomer": "A booking was proposed with this customer:",
-    "openBookingDraft": "Open the booking draft"
+    "openBookingDraft": "Open the booking draft",
+    "container": "Container",
+    "containerHidden": "A container you cannot see",
+    "containerHint": "On approval the booking is confirmed and its shipment goes in this container, if it is still open with room.",
+    "containerBookingApproveHint": "Approving creates the booking, confirms it (its shipment is created) and puts the shipment in the container. If the container is no longer open or is full, nothing is created.",
+    "newCustomerContainerBookingApproveHint": "Approving creates the booking for the customer approved from the customer draft, confirms it and puts its shipment in the container. If the container is no longer open or is full, nothing is created. Add the shipper, consignee and notify party on the booking.",
+    "priceTyped": "Typed",
+    "priceQuotation": "System price: the shipment's quotation",
+    "priceRateCard": "System price: rate card",
+    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving."
   },
   "Fields": {
     "customerId": "Customer",
@@ -2244,6 +2253,14 @@
     "SHIPMENT_OTHER_BRANCH": "Shipment {shipment} belongs to a branch you do not work in, so you cannot put it in this container.",
     "SHIPMENT_NOT_LCL_SEA": "Shipment {shipment} is not an LCL sea shipment NOLON carries.",
     "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
-    "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first."
+    "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first.",
+    "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
+    "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
+    "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",
+    "RATE_NO_MATCH": "No approved rate card matches this line (route, mode, load, cargo, currency, charge, date): enter the price.",
+    "RATE_SEVERAL": "Several approved rate cards match this line: choose the rate card, or enter the price.",
+    "QUOTED_PRICE_OTHER_CURRENCY": "The shipment's quotation prices this charge in another currency: invoice in that currency, or enter the price.",
+    "QUOTED_PRICE_SEVERAL": "The shipment's quotation has several lines for this charge: enter the price.",
+    "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price."
   }
 }

@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -13,6 +8,7 @@ import type {
   BookingDraftRequest,
   BookingFromQuotationRequest,
   BookingItemInput,
+  ContainerChoice,
   CreateBookingRequest,
   DraftStatus,
   EntryDraftCheck,
@@ -23,6 +19,7 @@ import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
+  checkDraft,
   decimalKey,
   draftExpiry,
   draftStatus,
@@ -45,6 +42,7 @@ import {
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BookingsService, type PreparedBooking } from './bookings.service.js';
+import { ContainerBookingsRegistry } from './container-bookings.registry.js';
 
 const LABEL = 'booking draft';
 const ASSISTANT_ONLY = 'Booking drafts are proposed by the assistant';
@@ -61,7 +59,7 @@ const details = {
 
 type DraftRow = Prisma.BookingDraftGetPayload<{ include: typeof details }>;
 
-type DirectRequest = CreateBookingRequest;
+type DirectRequest = CreateBookingRequest & ContainerChoice;
 type FromQuotationRequest = BookingFromQuotationRequest & { quotationId: string };
 
 function isFromQuotation(
@@ -126,6 +124,7 @@ export function requestOf(d: DraftRow): BookingDraftRequest {
   }
   return {
     customerId: d.customerId,
+    ...(d.consolidationId ? { consolidationId: d.consolidationId } : {}),
     originLocationId: d.originLocationId,
     destinationLocationId: d.destinationLocationId,
     mode: d.mode,
@@ -166,6 +165,8 @@ export function bookingRequestHash(input: DirectRequest | FromQuotationRequest):
   }
   return requestHash({
     kind: 'DIRECT',
+    // Only when it names one: a draft without a container hashes as it did before.
+    ...(input.consolidationId ? { consolidationId: input.consolidationId.toLowerCase() } : {}),
     customerId: input.customerId.toLowerCase(),
     originLocationId: input.originLocationId.toLowerCase(),
     destinationLocationId: input.destinationLocationId.toLowerCase(),
@@ -182,6 +183,11 @@ export function bookingRequestHash(input: DirectRequest | FromQuotationRequest):
  * quotation or directly for a customer. A person approves (an ordinary DRAFT booking is created
  * through BookingsService in the same transaction, with that person's permissions and branches:
  * not confirmed, no shipment) or rejects. Access follows the customer's branch.
+ *
+ * A direct draft may name an open LCL container (`consolidationId`): approving it then books into
+ * the container as its page does (ContainerBookingsRegistry): the booking is recorded, confirmed
+ * and its shipment put in the container, in the approval's transaction, under the container's
+ * rules for the person approving (any branch may book into an open container).
  */
 @Injectable()
 export class BookingDraftsService {
@@ -189,6 +195,7 @@ export class BookingDraftsService {
     private readonly prisma: PrismaService,
     private readonly bookings: BookingsService,
     private readonly drafts: DraftsService,
+    private readonly containers: ContainerBookingsRegistry,
   ) {}
 
   async create(
@@ -243,6 +250,7 @@ export class BookingDraftsService {
                   loadType: input.loadType ?? null,
                   cargoType: input.cargoType,
                   cargoDescription: input.cargoDescription ?? null,
+                  consolidationId: input.consolidationId ?? null,
                 }),
             services: prepared.header.services,
             shipperId: input.shipperId ?? null,
@@ -299,7 +307,10 @@ export class BookingDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    return toDto(draft, user, now, check);
+    const container = draft.consolidationId
+      ? await this.containers.get().describe(draft.consolidationId)
+      : null;
+    return { ...toDto(draft, user, now, check), container };
   }
 
   /**
@@ -318,12 +329,15 @@ export class BookingDraftsService {
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
     const prepared = await this.prepare(user, serviceRequest(requestOf(current)));
+    const containerId = current.consolidationId;
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'booking_drafts', id);
       if (!locked) throw new NotFoundException('Booking draft not found');
       if (locked.state === 'APPROVED') return;
       requireOpen(locked, version, LABEL);
-      const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      const bookingId = containerId
+        ? await this.containers.get().bookInTx(tx, user, containerId, prepared)
+        : await this.bookings.insertInTx(tx, user, prepared);
       await tx.bookingDraft.update({
         where: { id },
         data: {
@@ -408,7 +422,11 @@ export class BookingDraftsService {
     return this.get(user, id);
   }
 
-  private prepare(
+  /**
+   * What NOLON checks on a real create, for this user now; for a draft that names a container,
+   * also that the booking fits it and that the user may book into it. Nothing is written.
+   */
+  private async prepare(
     user: AuthUser,
     input: DirectRequest | FromQuotationRequest,
   ): Promise<PreparedBooking> {
@@ -416,23 +434,18 @@ export class BookingDraftsService {
       const { quotationId, ...rest } = input;
       return this.bookings.prepareFromQuotation(user, quotationId, rest);
     }
-    return this.bookings.prepareCreate(user, input);
+    const { consolidationId, ...booking } = input;
+    if (consolidationId) {
+      await this.containers.get().requireBookable(user, consolidationId, booking);
+    }
+    return this.bookings.prepareCreate(user, booking);
   }
 
-  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
-    try {
+  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
+    return checkDraft(async () => {
       await this.prepare(user, serviceRequest(requestOf(draft)));
-      return { ok: true, total: null, currency: null };
-    } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException ||
-        error instanceof ConflictException
-      ) {
-        return { ok: false, message: error.message };
-      }
-      throw error;
-    }
+      return { total: null, currency: null };
+    });
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
@@ -476,7 +489,7 @@ function toDto(
   user: AuthUser,
   now: Date,
   check: EntryDraftCheck | null,
-): BookingDraftDto {
+): Omit<BookingDraftDto, 'container'> {
   return { ...baseFields(d, user, now), request: requestOf(d), check };
 }
 
@@ -492,7 +505,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<BookingDraftDto, 'request' | 'check'> {
+): Omit<BookingDraftDto, 'request' | 'check' | 'container'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('bookings:create');
   return {

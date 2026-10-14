@@ -108,6 +108,20 @@ export class ConsolidationsController {
     return this.consolidations.list(user, parse(listQuery, query));
   }
 
+  /**
+   * Open containers of every branch, for someone who books into them (container_booking) without
+   * seeing containers otherwise (Sales): the list with `bookable`, no costs.
+   */
+  @AgentReadable()
+  @Get('bookable')
+  @RequirePermission('container_booking:create', 'bookings:create', 'bookings:approve')
+  bookable(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<Page<ConsolidationSummaryDto>> {
+    return this.consolidations.list(user, { ...parse(pageQuery, query), bookable: true });
+  }
+
   /** Containers a supplier bill may charge, for the bill form. */
   @Get('billable')
   @RequirePermission('suppliers:create')
@@ -156,7 +170,7 @@ export class ConsolidationsController {
 
   /** An LCL booking made from the container's page, confirmed and put in the container. */
   @Post(':id/bookings')
-  @RequirePermission('consolidation:update', 'bookings:create', 'bookings:approve')
+  @RequirePermission('container_booking:create', 'bookings:create', 'bookings:approve')
   createBooking(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,

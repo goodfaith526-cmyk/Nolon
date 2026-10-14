@@ -39,6 +39,14 @@ export function decidedVia(via: DecisionVia): 'SESSION' | 'ASSISTANT' {
  * token) only creates drafts, under an idempotency key scoped to its client and the user it acts
  * for; reading, editing, approving and rejecting are a person's, with their own session.
  */
+/**
+ * The values a chat card names: the proposed request, and the rate cards NOLON priced lines from
+ * (a draft's `priceSources`), whose names carry their prices.
+ */
+function namedValues(draft: { request: unknown }): unknown {
+  return 'priceSources' in draft ? [draft.request, draft.priceSources] : draft.request;
+}
+
 @Injectable()
 export class DraftsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -105,7 +113,7 @@ export class DraftsService {
     resolved: string | null = null,
   ): Promise<AssistantDraftDto<D>> {
     await this.requireOwnDraft(user, table, draft.id, label);
-    const names = await referenceNames(this.prisma, user, draft.request);
+    const names = await referenceNames(this.prisma, user, namedValues(draft));
     return {
       kind,
       contentHash: contentHashOf({ ...draft, names, resolved }),
@@ -139,7 +147,7 @@ export class DraftsService {
     // The names are hashed too: a rate card's price is in its name, so a repricing since the
     // card was shown asks for a reload instead of approving a price nobody saw.
     const names =
-      contentHash === null ? {} : await referenceNames(this.prisma, user, draft.request);
+      contentHash === null ? {} : await referenceNames(this.prisma, user, namedValues(draft));
     if (contentHash !== null && contentHash !== contentHashOf({ ...draft, names, resolved })) {
       throw new ConflictException(`This ${label} changed since you opened it: reload it`);
     }

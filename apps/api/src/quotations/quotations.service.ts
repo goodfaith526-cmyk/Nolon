@@ -22,7 +22,7 @@ import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { Prisma, Quotation, QuotationLine } from '../generated/prisma/client.js';
+import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RatesService } from '../rates/rates.service.js';
@@ -290,43 +290,49 @@ export class QuotationsService {
     if (input.validUntil < today)
       throw fieldRefusal('VALID_UNTIL_PAST', 'Valid-until is in the past', ['validUntil']);
 
+    const pricing = {
+      branchId,
+      onDate: today,
+      currency: input.currency,
+      originLocationId: input.originLocationId,
+      destinationLocationId: input.destinationLocationId,
+      mode: input.mode,
+      loadType: input.loadType ?? null,
+      cargoType: input.cargoType,
+    };
     const resolved = [];
     for (const [index, line] of input.lines.entries()) {
       const path = `lines.${index}`;
+      const rateLine = (rate: RateCard) => ({
+        rateCardId: rate.id,
+        chargeTypeCode: rate.chargeTypeCode,
+        unit: rate.unit,
+        unitPrice: rate.price,
+        minimumCharge: rate.minimumCharge,
+        description: line.description ?? null,
+        quantity: dec(line.quantity),
+        discount: dec(line.discount ?? '0'),
+      });
       if (line.rateCardId) {
         const rateCardId = line.rateCardId;
         const rate = await onFields(
           [`${path}.rateCardId`],
-          () =>
-            this.rates.requireUsableRate(rateCardId, {
-              branchId,
-              onDate: today,
-              currency: input.currency,
-              originLocationId: input.originLocationId,
-              destinationLocationId: input.destinationLocationId,
-              mode: input.mode,
-              loadType: input.loadType ?? null,
-              cargoType: input.cargoType,
-            }),
+          () => this.rates.requireUsableRate(rateCardId, pricing),
           'RATE_NOT_USABLE',
         );
-        resolved.push({
-          rateCardId: rate.id,
-          chargeTypeCode: rate.chargeTypeCode,
-          unit: rate.unit,
-          unitPrice: rate.price,
-          minimumCharge: rate.minimumCharge,
-          description: line.description ?? null,
-          quantity: dec(line.quantity),
-          discount: dec(line.discount ?? '0'),
-        });
+        resolved.push(rateLine(rate));
+      } else if (line.unitPrice === undefined) {
+        // No rate card and no price: the system price, from the one rate card that matches.
+        const rate = await this.rates.systemRate(
+          { ...pricing, chargeTypeCode: line.chargeTypeCode ?? null, unit: line.unit ?? null },
+          { noMatch: [`${path}.unitPrice`], several: [`${path}.rateCardId`] },
+        );
+        resolved.push(rateLine(rate));
       } else {
-        if (!line.unit || line.unitPrice === undefined || !line.chargeTypeCode) {
-          const missing = [
-            !line.chargeTypeCode && 'chargeTypeCode',
-            !line.unit && 'unit',
-            line.unitPrice === undefined && 'unitPrice',
-          ].filter((k): k is string => k !== false);
+        if (!line.unit || !line.chargeTypeCode) {
+          const missing = [!line.chargeTypeCode && 'chargeTypeCode', !line.unit && 'unit'].filter(
+            (k): k is string => k !== false,
+          );
           throw fieldRefusal(
             'MANUAL_LINE_INCOMPLETE',
             'A line without a rate needs a charge type, unit and price',

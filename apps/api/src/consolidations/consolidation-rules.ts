@@ -5,6 +5,7 @@ import type {
   ShipmentStatus,
 } from '@nolon/shared';
 import { splitAmount } from '../accounting/journal-math.js';
+import type { AuthUser } from '../auth/auth-user.js';
 import { type Decimal, ZERO } from '../common/money.js';
 
 /**
@@ -81,6 +82,16 @@ export function atOrPastOnSeaLeg(status: ShipmentStatus, target: ShipmentStatus)
   const at = SEA_LEG.indexOf(status);
   const goal = SEA_LEG.indexOf(target);
   return at >= 0 && goal >= 0 && at >= goal;
+}
+
+/**
+ * Who may book into an open container, of any branch (POST /consolidations/:id/bookings, and a
+ * booking draft that names a container).
+ */
+export function canBookInto(user: Pick<AuthUser, 'permissions'>): boolean {
+  return (['container_booking:create', 'bookings:create', 'bookings:approve'] as const).every((p) =>
+    user.permissions.has(p),
+  );
 }
 
 /** Shipments are added or removed, the basis changed, or the container cancelled while open. */

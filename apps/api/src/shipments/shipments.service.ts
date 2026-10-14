@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type {
   BookingService,
+  CargoType,
   LoadType,
   Page,
   Permission,
@@ -209,6 +210,11 @@ export class ShipmentsService {
     customerId: string;
     status: ShipmentStatus;
     quotationId: string | null;
+    originLocationId: string;
+    destinationLocationId: string;
+    mode: ShippingMode;
+    loadType: LoadType | null;
+    cargoType: CargoType;
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -219,6 +225,11 @@ export class ShipmentsService {
         branchId: true,
         customerId: true,
         status: true,
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        cargoType: true,
         booking: { select: { quotationId: true } },
       },
     });

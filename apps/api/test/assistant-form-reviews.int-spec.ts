@@ -103,9 +103,13 @@ describe('a refused form kept for the assistant', () => {
     await r
       .post('/assistant-form-reviews', cookies.ops, { ...refusedBooking, form: 'quotation' })
       .expect(403);
+    // Booking into a container: Sales may (container_booking), Finance may not.
+    await r
+      .post('/assistant-form-reviews', cookies.finance, { ...refusedBooking, mode: 'container' })
+      .expect(403);
     await r
       .post('/assistant-form-reviews', cookies.sales, { ...refusedBooking, mode: 'container' })
-      .expect(403);
+      .expect(201);
   });
 
   it('refuses other forms, unknown fields and the assistant itself', async () => {

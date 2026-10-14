@@ -1,5 +1,5 @@
 import type { CreateReceiptRequest, CustomerInvoiceInput } from './accounting.js';
-import type { CustomerDraftFields } from './commercial-drafts.js';
+import type { CustomerDraftFields, DraftPriceSource } from './commercial-drafts.js';
 import type { DecimalString } from './currencies.js';
 import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 
@@ -20,14 +20,29 @@ export interface InvoiceDraftRequest extends Omit<CustomerInvoiceInput, 'fxRate'
   shipmentId: string;
 }
 
+/**
+ * A proposed invoice line. Without a unit price NOLON prices it (the system price): from the
+ * shipment's quotation line for that charge, else from the approved rate card that matches the
+ * shipment, the charge and the invoice date. The price found is stored in the draft.
+ */
+export interface InvoiceDraftLineInput {
+  chargeTypeCode: string;
+  description?: string | null;
+  quantity: DecimalString;
+  unitPrice?: DecimalString;
+}
+
 /** POST /invoice-drafts: the assistant proposes an invoice for a shipment. */
-export interface InvoiceDraftCreateRequest extends InvoiceDraftRequest {
+export interface InvoiceDraftCreateRequest extends Omit<InvoiceDraftRequest, 'lines'> {
+  lines: InvoiceDraftLineInput[];
   idempotencyKey: string;
 }
 
 export interface InvoiceDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   shipmentNumber: string;
   request: InvoiceDraftRequest;
+  /** Where each line's unit price came from, in the lines' order. */
+  priceSources: DraftPriceSource[];
   /** The total NOLON computes now (lines rounded to the currency). */
   check: EntryDraftCheck | null;
   invoiceId: string | null;
@@ -35,7 +50,10 @@ export interface InvoiceDraftDto extends EntryDraftReviewFields, CustomerDraftFi
   invoiceNumber: string | null;
 }
 
-export type InvoiceDraftListItemDto = Omit<InvoiceDraftDto, 'request' | 'check'> & {
+export type InvoiceDraftListItemDto = Omit<
+  InvoiceDraftDto,
+  'request' | 'check' | 'priceSources'
+> & {
   lineCount: number;
 };
 
