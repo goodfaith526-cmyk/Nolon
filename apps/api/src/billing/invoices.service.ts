@@ -14,6 +14,7 @@ import type {
   OpeningCustomerItemRequest,
   Page,
   PaymentStatus,
+  ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -29,6 +30,7 @@ import {
   requestedRate,
   roundMoney,
   sameRequestedRate,
+  toDecimalString,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
@@ -179,6 +181,38 @@ export class InvoicesService {
 
   async get(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
     return toDto(await this.findScoped(user, id), user);
+  }
+
+  /**
+   * A customer's approved invoices with something left to pay, in `currency` if given, oldest due
+   * first: what a receipt for them may settle. The customer must be visible to the user.
+   */
+  async openForCustomer(
+    user: AuthUser,
+    customerId: string,
+    currency: string | undefined,
+    limit: number,
+  ): Promise<ReceiptOpenInvoiceDto[]> {
+    const customer = await this.customers.requireCustomer(user, customerId);
+    const ids = await this.settlementIds(
+      reportBranchIds(user, customer.branchId),
+      'OPEN',
+      customer.id,
+    );
+    const invoices = await this.prisma.customerInvoice.findMany({
+      where: { id: { in: ids }, ...(currency ? { currency } : {}) },
+      orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+      take: limit,
+    });
+    return invoices.map((i) => ({
+      id: i.id,
+      number: i.number,
+      currency: i.currency,
+      total: toDecimalString(i.total),
+      outstanding: toDecimalString(i.total.minus(i.paidAmount).minus(i.creditedAmount)),
+      invoiceDate: fromDbDate(i.invoiceDate),
+      dueDate: fromDbDate(i.dueDate),
+    }));
   }
 
   /**

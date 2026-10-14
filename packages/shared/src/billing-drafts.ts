@@ -69,40 +69,30 @@ export interface ReceiptDraftCreateRequest extends ReceiptDraftRequest {
   idempotencyKey: string;
 }
 
-/**
- * GET /receipt-drafts/options?customerId=&currency=: what a receipt for this customer can take,
- * for the assistant's pick lists. The receipt is the customer's branch's.
- */
-export interface ReceiptDraftOptionsDto {
-  branchId: string;
-  /** Active, postable cash and bank accounts of that branch or shared, in `currency` if given. */
-  cashAccounts: {
-    id: string;
-    code: string;
-    nameEn: string;
-    nameAr: string;
-    currency: CurrencyCode;
-  }[];
-  /**
-   * The customer's approved invoices with a balance left, in `currency` if given, oldest due
-   * first (at most RECEIPT_ALLOCATIONS_MAX). Null when the user may not view invoices.
-   */
-  openInvoices:
-    | {
-        id: string;
-        number: string | null;
-        currency: CurrencyCode;
-        invoiceDate: string;
-        dueDate: string;
-        total: DecimalString;
-        balance: DecimalString;
-        shipmentNumber: string | null;
-      }[]
-    | null;
+/** A cash or bank account a receipt for a customer may use (GET /receipt-drafts/cash-accounts). */
+export interface ReceiptCashAccountDto {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  currency: CurrencyCode;
+  isActive: boolean;
 }
 
-/** Most allocations one receipt takes, and most open invoices the options list. */
-export const RECEIPT_ALLOCATIONS_MAX = 100;
+/** An approved invoice of the customer with something left to pay (GET /receipt-drafts/open-invoices). */
+export interface ReceiptOpenInvoiceDto {
+  id: string;
+  number: string | null;
+  currency: CurrencyCode;
+  total: DecimalString;
+  /** Total less payments and credit notes. */
+  outstanding: DecimalString;
+  invoiceDate: string;
+  dueDate: string;
+}
+
+/** Most open invoices GET /receipt-drafts/open-invoices returns, oldest due first. */
+export const RECEIPT_OPEN_INVOICES_MAX = 40;
 
 export interface ReceiptDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
   request: ReceiptDraftRequest;

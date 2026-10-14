@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
-  RECEIPT_ALLOCATIONS_MAX,
+  RECEIPT_OPEN_INVOICES_MAX,
   type AssistantDraftApproveRequest,
   type AssistantDraftDto,
   type DraftPreCheckDto,
@@ -10,8 +10,9 @@ import {
   type ReceiptDraftCreateRequest,
   type ReceiptDraftDto,
   type ReceiptDraftListItemDto,
-  type ReceiptDraftOptionsDto,
   type ReceiptDraftRequest,
+  type ReceiptCashAccountDto,
+  type ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -125,42 +126,22 @@ export class ReceiptDraftsService {
   ) {}
 
   /**
-   * The pick lists of a receipt for this customer (the customer visible to the user; the receipt
-   * is the customer's branch's): its usable cash and bank accounts, and, when the user may view
-   * invoices, the customer's open ones.
+   * The cash and bank accounts a receipt for this customer may use (the customer visible to the
+   * user; the receipt is the customer's branch's): active and postable, the branch's or shared.
    */
-  async options(
+  async cashAccounts(user: AuthUser, customerId: string): Promise<ReceiptCashAccountDto[]> {
+    const customer = await this.customers.requireCustomer(user, customerId);
+    const accounts = await this.accounts.cashAccountsFor(customer.branchId);
+    return accounts.map((a) => ({ ...a, isActive: true }));
+  }
+
+  /** The customer's open invoices a receipt may settle, oldest due first. */
+  openInvoices(
     user: AuthUser,
     customerId: string,
     currency: string | undefined,
-  ): Promise<ReceiptDraftOptionsDto> {
-    const customer = await this.customers.requireCustomer(user, customerId);
-    const accounts = await this.accounts.cashAccountsFor(customer.branchId);
-    const cashAccounts = accounts.filter((a) => currency === undefined || a.currency === currency);
-    if (!user.permissions.has('customer_invoices:view')) {
-      return { branchId: customer.branchId, cashAccounts, openInvoices: null };
-    }
-    const open = await this.invoices.list(user, {
-      customerId,
-      openOnly: true,
-      branchId: customer.branchId,
-      page: 1,
-      pageSize: RECEIPT_ALLOCATIONS_MAX,
-    });
-    const openInvoices = open.items
-      .filter((i) => currency === undefined || i.currency === currency)
-      .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
-      .map((i) => ({
-        id: i.id,
-        number: i.number,
-        currency: i.currency,
-        invoiceDate: i.invoiceDate,
-        dueDate: i.dueDate,
-        total: i.total,
-        balance: i.balance,
-        shipmentNumber: i.shipmentNumber,
-      }));
-    return { branchId: customer.branchId, cashAccounts, openInvoices };
+  ): Promise<ReceiptOpenInvoiceDto[]> {
+    return this.invoices.openForCustomer(user, customerId, currency, RECEIPT_OPEN_INVOICES_MAX);
   }
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */

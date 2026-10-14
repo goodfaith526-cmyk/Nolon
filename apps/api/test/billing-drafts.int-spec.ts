@@ -11,7 +11,8 @@ import type {
   InvoiceDraftListItemDto,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
-  ReceiptDraftOptionsDto,
+  ReceiptCashAccountDto,
+  ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -523,8 +524,14 @@ describe('receipt drafts', () => {
 });
 
 describe('receipt drafts on the live card: pick lists and field refusals', () => {
-  const options = (query: string, token = tokens.finance) =>
-    r.agentGet(`/receipt-drafts/options?${query}`, token);
+  const pick = (path: string, query: string, token = tokens.finance) =>
+    r.agentGet(`/receipt-drafts/${path}?${query}`, token);
+  const cashAccounts = async (query: string) =>
+    ((await pick('cash-accounts', query).expect(200)).body as { items: ReceiptCashAccountDto[] })
+      .items;
+  const openInvoices = async (query: string) =>
+    ((await pick('open-invoices', query).expect(200)).body as { items: ReceiptOpenInvoiceDto[] })
+      .items;
 
   async function refusals(body: object) {
     const result = (await r.agentPost('/receipt-drafts/check', tokens.finance, body).expect(200))
@@ -533,52 +540,58 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
     return result.refusals;
   }
 
-  it("lists the customer's branch's cash accounts and the customer's open invoices", async () => {
+  it("lists the cash accounts of the customer's branch, and its open invoices oldest due first", async () => {
+    const accounts = await cashAccounts(`customerId=${customer.id}`);
+    expect(accounts.map((a) => a.id)).toEqual(expect.arrayContaining([cashUsd.id, cashSdg.id]));
+    expect(accounts.find((a) => a.id === cashUsd.id)).toMatchObject({
+      code: cashUsd.code,
+      currency: 'USD',
+      isActive: true,
+    });
+
     const invoice = await approvedInvoice('500');
     const otherInvoice = await approvedInvoice('500', other.id);
-    const usd = (await options(`customerId=${customer.id}&currency=USD`).expect(200))
-      .body as ReceiptDraftOptionsDto;
-    expect(usd.branchId).toBe(pts);
-    const accountIds = usd.cashAccounts.map((a) => a.id);
-    expect(accountIds).toContain(cashUsd.id);
-    expect(accountIds).not.toContain(cashSdg.id);
-    expect(usd.cashAccounts.every((a) => a.currency === 'USD')).toBe(true);
-    expect(usd.openInvoices?.find((i) => i.id === invoice.id)).toMatchObject({
+    const usd = await openInvoices(`customerId=${customer.id}&currency=USD`);
+    expect(usd.find((i) => i.id === invoice.id)).toMatchObject({
       number: invoice.number,
       currency: 'USD',
-      balance: '500',
+      total: '500',
+      outstanding: '500',
+      dueDate: invoice.dueDate,
     });
-    expect(usd.openInvoices?.map((i) => i.id)).not.toContain(otherInvoice.id);
-    // Oldest due first.
-    const due = (usd.openInvoices ?? []).map((i) => i.dueDate);
+    expect(usd.map((i) => i.id)).not.toContain(otherInvoice.id);
+    expect(usd.length).toBeLessThanOrEqual(40);
+    const due = usd.map((i) => i.dueDate);
     expect(due).toEqual([...due].sort());
-    const any = (await options(`customerId=${customer.id}`).expect(200))
-      .body as ReceiptDraftOptionsDto;
-    expect(any.cashAccounts.map((a) => a.id)).toEqual(
-      expect.arrayContaining([cashUsd.id, cashSdg.id]),
-    );
+    expect(await openInvoices(`customerId=${customer.id}&currency=SDG`)).toEqual([]);
 
-    // A settled invoice leaves the list.
-    const paid = await receiptDraft(
-      receiptRequest(invoice.id, {
-        amount: '500',
-        allocations: [{ invoiceId: invoice.id, amount: '500' }],
-      }),
+    // A part payment lowers what is outstanding; settling the rest takes it off the list.
+    const pay = async (amount: string) => {
+      const draft = await receiptDraft(
+        receiptRequest(invoice.id, { amount, allocations: [{ invoiceId: invoice.id, amount }] }),
+      );
+      await r
+        .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200);
+    };
+    await pay('120.5');
+    const partly = await openInvoices(`customerId=${customer.id}`);
+    expect(partly.find((i) => i.id === invoice.id)?.outstanding).toBe('379.5');
+    await pay('379.5');
+    expect((await openInvoices(`customerId=${customer.id}`)).map((i) => i.id)).not.toContain(
+      invoice.id,
     );
-    await r
-      .post(`/receipt-drafts/${paid.id}/approve`, cookies.financePts, { version: 1 })
-      .expect(200);
-    const after = (await options(`customerId=${customer.id}&currency=USD`).expect(200))
-      .body as ReceiptDraftOptionsDto;
-    expect(after.openInvoices?.map((i) => i.id)).not.toContain(invoice.id);
   });
 
   it('is refused for a customer of another branch, without the create permission, or malformed', async () => {
-    await options(`customerId=${customer.id}`, tokens.financeJed).expect(404);
-    await options(`customerId=${customer.id}`, tokens.sales).expect(403);
-    await options('customerId=nope').expect(400);
-    await options(`customerId=${customer.id}&currency=usd`).expect(400);
-    await options(`customerId=${customer.id}&branchId=${pts}`).expect(400);
+    for (const path of ['cash-accounts', 'open-invoices']) {
+      await pick(path, `customerId=${customer.id}`, tokens.financeJed).expect(404);
+      await pick(path, `customerId=${customer.id}`, tokens.sales).expect(403);
+      await pick(path, 'customerId=nope').expect(400);
+      await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
+    }
+    await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
+    await pick('cash-accounts', `customerId=${customer.id}&currency=USD`).expect(400);
   });
 
   it('refuses a bad cash account or allocation at its field, with a code', async () => {
