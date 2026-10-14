@@ -4,7 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { AssistantDecidableKind, AssistantDraftDto } from '@nolon/shared';
+import type {
+  AssistantDecidableKind,
+  AssistantDraftDto,
+  DraftStatus,
+  EntryDraftReviewFields,
+  MyDraftItemDto,
+  MyDraftKind,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -383,6 +390,51 @@ export function splitReplaced(body: unknown): { replacesDraftId: string | null; 
   }
   const { replacesDraftId, ...rest } = body as Record<string, unknown>;
   return { replacesDraftId: parse(z.uuid(), replacesDraftId), rest };
+}
+
+/** A "my drafts" read: the user's own drafts, newest first. */
+export interface MyDraftsQuery {
+  /** The assistant client asking (its row id), when the assistant asks: only its drafts. */
+  agentClientId: string | null;
+  status?: DraftStatus;
+  /** Only drafts created at or after this time. */
+  since?: Date;
+  limit: number;
+}
+
+/**
+ * The drafts made for this user, by the assistant asking when it is one (another assistant
+ * client's drafts are not its own). Each kind adds its own branch scope and status filter.
+ */
+export function mineWhere(
+  user: AuthUser,
+  query: MyDraftsQuery,
+): { createdById: string; agentClientId?: string; createdAt?: { gte: Date } } {
+  return {
+    createdById: user.id,
+    ...(query.agentClientId !== null ? { agentClientId: query.agentClientId } : {}),
+    ...(query.since ? { createdAt: { gte: query.since } } : {}),
+  };
+}
+
+/** A kind's list item as "my drafts" shows it, with the record its approval made. */
+export function myDraftItem(
+  kind: MyDraftKind,
+  d: EntryDraftReviewFields,
+  result: { id: string | null; number: string | null },
+): MyDraftItemDto {
+  return {
+    kind,
+    id: d.id,
+    status: d.status,
+    subject: d.subject,
+    createdAt: d.createdAt,
+    expiresAt: d.expiresAt,
+    decidedAt: d.decidedAt,
+    decidedByName: d.decidedByName,
+    rejectReason: d.rejectReason,
+    result: result.id === null ? null : { id: result.id, number: result.number },
+  };
 }
 
 /** The idempotency key a pre-check's body is parsed with: a check stores nothing under it. */

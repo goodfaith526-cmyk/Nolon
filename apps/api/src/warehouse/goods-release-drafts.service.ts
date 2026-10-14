@@ -10,6 +10,7 @@ import type {
   GoodsReleaseDraftDto,
   GoodsReleaseDraftListItemDto,
   GoodsReleaseDraftRequest,
+  MyDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -33,6 +34,9 @@ import {
   DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
   storedDraftUnderKey,
@@ -185,13 +189,21 @@ export class GoodsReleaseDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<GoodsReleaseDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<GoodsReleaseDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.goodsReleaseDraft.findMany({
-      where: { shipment: shipmentScope(user), ...stateFilter(status, now) },
+      where: {
+        shipment: shipmentScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -199,6 +211,15 @@ export class GoodsReleaseDraftsService {
       packages: d.packages,
       weightKg: toDecimalStringOrNull(d.weightKg),
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('warehouse:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem('goods_release', d, { id: d.movementId, number: d.movementNumber }),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<GoodsReleaseDraftDto> {

@@ -15,6 +15,6 @@ import { RatesService } from './rates.service.js';
   imports: [AuditModule, MasterDataModule, CurrenciesModule, ImportsModule, DraftsModule],
   controllers: [RatesImportController, RatesController, RateCardDraftsController],
   providers: [RatesService, RatesImportService, RateCardDraftsService],
-  exports: [RatesService],
+  exports: [RatesService, RateCardDraftsService],
 })
 export class RatesModule {}

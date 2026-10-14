@@ -20,6 +20,6 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
     PublicTrackingService,
     ShipmentStatusDraftsService,
   ],
-  exports: [ShipmentReportsService, ShipmentsService],
+  exports: [ShipmentReportsService, ShipmentsService, ShipmentStatusDraftsService],
 })
 export class ShipmentsModule {}

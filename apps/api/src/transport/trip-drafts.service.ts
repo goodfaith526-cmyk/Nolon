@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { type DraftPreCheckDto, seesTransportCosts } from '@nolon/shared';
+import { type DraftPreCheckDto, type MyDraftItemDto, seesTransportCosts } from '@nolon/shared';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -33,6 +33,9 @@ import {
   DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
@@ -219,19 +222,34 @@ export class TripDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<TripDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<TripDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.tripDraft.findMany({
-      where: { ...draftScope(user), ...stateFilter(status, now) },
+      where: {
+        ...draftScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     const routes = await this.routeNames(drafts);
     return drafts.map((d) => ({
       ...baseFields(d, user, now, routes),
       lineCount: d.shipments.length,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('transport_trips:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) => myDraftItem('trip', d, { id: d.tripId, number: d.tripNumber }));
   }
 
   async get(user: AuthUser, id: string): Promise<TripDraftDto> {

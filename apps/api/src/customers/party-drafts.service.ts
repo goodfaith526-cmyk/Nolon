@@ -5,6 +5,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  MyDraftItemDto,
   PartyDraftCreateRequest,
   PartyDraftDto,
   PartyDraftListItemDto,
@@ -29,6 +30,9 @@ import {
   DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
   storedDraftUnderKey,
@@ -180,15 +184,30 @@ export class PartyDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<PartyDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<PartyDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.partyDraft.findMany({
-      where: { customer: branchScope(user), ...stateFilter(status, now) },
+      where: {
+        customer: branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: 1 }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('customers:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) => myDraftItem('party', d, { id: d.partyId, number: null }));
   }
 
   async get(user: AuthUser, id: string): Promise<PartyDraftDto> {

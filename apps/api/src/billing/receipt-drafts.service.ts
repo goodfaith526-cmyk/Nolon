@@ -6,6 +6,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  MyDraftItemDto,
   ReceiptDraftCreateRequest,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
@@ -35,6 +36,9 @@ import {
   DraftsService,
   keyReused,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
@@ -195,13 +199,21 @@ export class ReceiptDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<ReceiptDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<ReceiptDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.receiptDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -209,6 +221,15 @@ export class ReceiptDraftsService {
       amount: toDecimalString(d.amount),
       currency: d.currency,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('receipts:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem('receipt', d, { id: d.receiptId, number: d.receiptNumber }),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<ReceiptDraftDto> {

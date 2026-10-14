@@ -13,6 +13,7 @@ import {
   type DraftStatus,
   type EntryDraftCheck,
   LOAD_TYPES,
+  type MyDraftItemDto,
   NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
   type NewCustomerBookingDraftCreateRequest,
   type NewCustomerBookingDraftCustomer,
@@ -49,6 +50,9 @@ import {
   keyReused,
   type LockedReplacement,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
@@ -344,19 +348,36 @@ export class NewCustomerBookingDraftsService {
     return this.summary(draft);
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<NewCustomerBookingDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<NewCustomerBookingDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.newCustomerBookingDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     const customers = await this.customerDrafts.linkedOf(drafts.map((d) => d.customerDraftId));
     return drafts.map((d) => ({
       ...baseFields(d, linkedCustomer(customers, d), user, now),
       lineCount: bookingRequestOf(d).items.length,
     }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('bookings:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem('new_customer_booking', d, { id: d.bookingId, number: d.bookingNumber }),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<NewCustomerBookingDraftDto> {

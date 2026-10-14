@@ -194,3 +194,49 @@ export type DraftPreCheckDto =
       priceSources: DraftPriceSource[] | null;
     }
   | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
+
+/** Draft kinds in the staff member's "my drafts" list (GET /assistant-drafts/mine). */
+export const MY_DRAFT_KINDS = [
+  'booking',
+  'new_customer_booking',
+  'quotation',
+  'invoice',
+  'receipt',
+  'trip',
+  'goods_release',
+  'shipment_status',
+  'party',
+  'customer',
+  'rate_card',
+] as const;
+export type MyDraftKind = (typeof MY_DRAFT_KINDS)[number];
+
+/** Most drafts one "my drafts" read returns. */
+export const MY_DRAFTS_MAX = 50;
+
+/**
+ * What an approval made: the record of the draft's kind (a booking for a booking draft, the
+ * shipment whose status changed for a status draft...). `number` is null for records without one.
+ */
+export interface MyDraftResult {
+  id: string;
+  number: string | null;
+}
+
+/**
+ * A draft the assistant made for this user, as "my drafts" lists it: only kinds the user may see
+ * now, in branches the user holds now.
+ */
+export interface MyDraftItemDto {
+  kind: MyDraftKind;
+  id: string;
+  status: DraftStatus;
+  subject: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  rejectReason: string | null;
+  /** Set once approved. */
+  result: MyDraftResult | null;
+}

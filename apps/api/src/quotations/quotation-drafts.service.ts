@@ -13,6 +13,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  MyDraftItemDto,
   QuotationDraftCreateRequest,
   QuotationDraftDto,
   QuotationDraftListItemDto,
@@ -39,6 +40,9 @@ import {
   keyReused,
   lockDraftRow,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
@@ -242,15 +246,32 @@ export class QuotationDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<QuotationDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<QuotationDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.quotationDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: d.lines.length }));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('quotations:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem('quotation', d, { id: d.quotationId, number: d.quotationNumber }),
+    );
   }
 
   /** The draft, with whether NOLON would accept it now (checked, nothing written). */

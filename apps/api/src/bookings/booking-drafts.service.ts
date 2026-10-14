@@ -14,6 +14,7 @@ import type {
   DraftStatus,
   EntryDraftCheck,
   EntryDraftSummaryDto,
+  MyDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -36,6 +37,9 @@ import {
   keyReused,
   lockDraftRow,
   lockReplacedInTx,
+  mineWhere,
+  myDraftItem,
+  type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
@@ -296,15 +300,32 @@ export class BookingDraftsService {
     return toSummary(draft, new Date());
   }
 
-  async list(user: AuthUser, status?: DraftStatus): Promise<BookingDraftListItemDto[]> {
+  async list(
+    user: AuthUser,
+    status?: DraftStatus,
+    mine?: MyDraftsQuery,
+  ): Promise<BookingDraftListItemDto[]> {
     const now = new Date();
     const drafts = await this.prisma.bookingDraft.findMany({
-      where: { ...branchScope(user), ...stateFilter(status, now) },
+      where: {
+        ...branchScope(user),
+        ...stateFilter(status, now),
+        ...(mine ? mineWhere(user, mine) : {}),
+      },
       include: details,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: mine?.limit ?? 200,
     });
     return drafts.map((d) => reviewFields(d, user, now));
+  }
+
+  /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
+  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftItemDto[]> {
+    if (!user.permissions.has('bookings:view')) return [];
+    const drafts = await this.list(user, query.status, query);
+    return drafts.map((d) =>
+      myDraftItem('booking', d, { id: d.bookingId, number: d.bookingNumber }),
+    );
   }
 
   async get(user: AuthUser, id: string): Promise<BookingDraftDto> {

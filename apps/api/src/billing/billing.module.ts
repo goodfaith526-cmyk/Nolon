@@ -51,6 +51,6 @@ import { ReceiptsService } from './receipts.service.js';
     InvoiceDraftsService,
     ReceiptDraftsService,
   ],
-  exports: [BillingReportsService],
+  exports: [BillingReportsService, InvoiceDraftsService, ReceiptDraftsService],
 })
 export class BillingModule {}
