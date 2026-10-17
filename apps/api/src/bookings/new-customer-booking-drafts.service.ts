@@ -410,7 +410,7 @@ export class NewCustomerBookingDraftsService {
         ? await this.check(user, draft, request, customer)
         : null;
     const container = request.consolidationId
-      ? await this.containers.get().describe(request.consolidationId)
+      ? await this.containers.get().describe(user, request.consolidationId)
       : null;
     return {
       ...baseFields(draft, customer, user, now),

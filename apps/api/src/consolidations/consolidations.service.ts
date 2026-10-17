@@ -400,18 +400,40 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
   }
 
   /**
-   * A booking draft that names this container (ContainerBookingHandler): the same rules as a
-   * booking from the container's page, except that the draft's values are never changed to fit
-   * (the person approves what they read), so a booking that does not fit is refused, naming why.
+   * The container if this user could read it directly: an open one when they may book into
+   * containers (GET /consolidations/bookable), else with consolidation:view as GET
+   * /consolidations/:id does (findViewable). Null otherwise, or when it does not exist.
    */
-  async requireBookable(user: AuthUser, id: string, booking: ContainerBookingShape): Promise<void> {
+  private async readableByDraft(user: AuthUser, id: string): Promise<Consolidation | null> {
+    const container = await this.prisma.consolidation.findUnique({ where: { id } });
+    if (!container) return null;
+    if (isOpen(container.status) && canBookInto(user)) return container;
+    if (!user.permissions.has('consolidation:view')) return null;
+    try {
+      await this.findViewable(user, id);
+      return container;
+    } catch (error) {
+      if (error instanceof NotFoundException) return null;
+      throw error;
+    }
+  }
+
+  /** The container as a reference of a draft (ContainerBookingHandler.requireReference). */
+  async requireReference(user: AuthUser, id: string): Promise<void> {
+    await this.bookableReference(user, id);
+  }
+
+  /**
+   * A container a booking may name: the user may book into containers and read it directly
+   * (findViewable: not found otherwise, naming nothing of it), and it is open with room.
+   */
+  private async bookableReference(user: AuthUser, id: string) {
     if (!canBookInto(user)) {
       throw new ForbiddenException(
         'Booking into a container needs permission to change containers and to create and confirm bookings',
       );
     }
-    // Whoever may book into containers sees every open one; one that closed since the draft named
-    // it says so, rather than not found.
+    if (!(await this.readableByDraft(user, id))) throw new NotFoundException('Container not found');
     const container = await this.prisma.consolidation.findUnique({
       where: { id },
       include: summaryInclude,
@@ -419,6 +441,16 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     if (!container) throw new NotFoundException('Container not found');
     requireOpen(container);
     if (container._count.shipments >= MAX_CONTAINER_SHIPMENTS) throw full(container);
+    return container;
+  }
+
+  /**
+   * A booking draft that names this container (ContainerBookingHandler): the same rules as a
+   * booking from the container's page, except that the draft's values are never changed to fit
+   * (the person approves what they read), so a booking that does not fit is refused, naming why.
+   */
+  async requireBookable(user: AuthUser, id: string, booking: ContainerBookingShape): Promise<void> {
+    const container = await this.bookableReference(user, id);
     const params = { container: container.number };
     if (booking.mode !== 'SEA' || booking.loadType !== 'LCL') {
       throw codedRefusal(
@@ -474,11 +506,12 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
 
   /**
    * The container a booking draft names, for the draft's review screen: the caller has already
-   * found the draft in the user's branches, and the draft could name only a container open to
-   * booking when it was made. Null when the container no longer exists.
+   * found the draft in the user's branches. Shown only as this user could read it directly
+   * (findViewable); null otherwise or when it no longer exists, so a draft never shows more of a
+   * container than its direct read does (Codex on 98f9727).
    */
-  async describe(id: string): Promise<DraftContainer | null> {
-    const container = await this.prisma.consolidation.findUnique({ where: { id } });
+  async describe(user: AuthUser, id: string): Promise<DraftContainer | null> {
+    const container = await this.readableByDraft(user, id);
     if (!container) return null;
     return {
       id: container.id,

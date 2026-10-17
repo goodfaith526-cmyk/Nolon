@@ -292,6 +292,11 @@ export class BookingDraftsService {
       };
     }
     const checked = await this.bookings.checkPresent(user, input);
+    // A container named is a reference checked now, whatever else is missing (Codex on 98f9727):
+    // whether the booking fits it waits for its route and cargo (prepare, requireBookable).
+    if (input.consolidationId) {
+      await this.containers.get().requireReference(user, input.consolidationId);
+    }
     return { ...checked, quotationId: null, services: [...new Set(input.services ?? [])] };
   }
 
@@ -474,7 +479,7 @@ export class BookingDraftsService {
         ? await this.check(user, draft)
         : null;
     const container = draft.consolidationId
-      ? await this.containers.get().describe(draft.consolidationId)
+      ? await this.containers.get().describe(user, draft.consolidationId)
       : null;
     return { ...toDto(draft, user, now, check), container };
   }

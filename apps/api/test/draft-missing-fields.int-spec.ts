@@ -4,6 +4,7 @@ import type {
   AssistantDraftDto,
   BookingDraftDto,
   BookingDto,
+  ConsolidationDto,
   CustomerDto,
   DraftPreCheckDto,
   DriverDto,
@@ -69,6 +70,36 @@ const inDays = (days: number) =>
   new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 const summary = (res: { body: unknown }) => res.body as EntryDraftSummaryDto;
+const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+
+/** Containers this spec made, removed after it. */
+const containerIds: string[] = [];
+
+/** A container of a branch, from Jebel Ali to Port Sudan; cancelled when asked. */
+async function containerOf(
+  branch: string,
+  cookie: string,
+  cancelled = false,
+): Promise<ConsolidationDto> {
+  const made = (
+    await r
+      .post('/consolidations', cookie, {
+        branchId: branch,
+        originLocationId: jebelAli,
+        destinationLocationId: portSudan,
+        containerTypeCode: '20GP',
+        vesselName: 'ZZ MF Vessel',
+        etd: inDays(30),
+        shipmentIds: [],
+      })
+      .expect(201)
+  ).body as ConsolidationDto;
+  containerIds.push(made.id);
+  if (cancelled) {
+    await r.post(`/consolidations/${made.id}/cancel`, cookie, { reason: 'Test' }).expect(200);
+  }
+  return made;
+}
 
 /** A confirmed road booking of the DXB customer; its shipment. */
 async function roadShipment(): Promise<ShipmentDto> {
@@ -167,6 +198,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await deleteCommercialTestData(t.prisma);
+  await t.prisma.bookingDraft.deleteMany({ where: { consolidationId: { in: containerIds } } });
+  await t.prisma.consolidation.deleteMany({ where: { id: { in: containerIds } } });
   await deleteTestUsers(t.prisma);
   await t.close();
 });
@@ -771,5 +804,98 @@ describe('booking drafts with missing values', () => {
       .post(`/booking-drafts/${id}/reject`, cookies.opsDxb, { version: 1, reason: 'No' })
       .expect(200);
     await edit(cookies.opsDxb, { version: 2, specialInstructions: 'x' }).expect(409);
+  });
+  // Codex on 98f9727 (P1): a container named in a draft still missing values was not checked, so
+  // a cancelled container of another branch, which GET refuses, was stored and then shown on the
+  // draft (its number and ETD). A container named is now checked as a reference on every create
+  // and edit (the user may book into it: it exists and is open; any branch's open container is
+  // the one cross-branch case), whatever else is missing; whether the booking fits it waits for
+  // the booking's route and cargo.
+  describe('a container named in a draft still missing values', () => {
+    let jed: string;
+    beforeAll(async () => {
+      jed = await branchId(t.prisma, 'JED');
+    });
+
+    // Another branch's container the user may not read directly is not found, as GET says.
+    it('refuses a cancelled container of another branch, or of its own, and an unknown one; nothing is written', async () => {
+      const foreign = await containerOf(jed, cookies.opsJed, true);
+      await r.get(`/consolidations/${foreign.id}`, cookies.opsDxb).expect(404);
+      const own = await containerOf(dxb, cookies.opsDxb, true);
+      const before = await t.prisma.bookingDraft.count();
+      for (const [id, status, refusal] of [
+        [foreign.id, 404, undefined],
+        [own.id, 409, 'CONTAINER_NOT_OPEN'],
+        [randomUUID(), 404, undefined],
+      ] as const) {
+        const res = await create({
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+          consolidationId: id,
+        });
+        expect(res.status, id).toBe(status);
+        expect(code(res)).toBe(refusal);
+        // The pre-check says the same, and names no container data.
+        const checked = (
+          await r
+            .agentPost('/booking-drafts/check', tokens.ops, {
+              customerId: customer.id,
+              consolidationId: id,
+            })
+            .expect(200)
+        ).body as DraftPreCheckDto;
+        expect(checked.ok, id).toBe(false);
+        expect(JSON.stringify(checked)).not.toContain('ZZ MF Vessel');
+      }
+      expect(await t.prisma.bookingDraft.count()).toBe(before);
+    });
+
+    it('an edit naming such a container is refused, and the draft is not changed', async () => {
+      const foreign = await containerOf(jed, cookies.opsJed, true);
+      const { id } = summary(
+        await create({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201),
+      );
+      const edit = (consolidationId: string) =>
+        r.patch(`/booking-drafts/${id}`, cookies.opsDxb, { version: 1, consolidationId });
+      const refused = await edit(foreign.id);
+      expect(refused.status).toBe(404);
+      expect(JSON.stringify(refused.body)).not.toContain(foreign.number);
+      await edit(randomUUID()).expect(404);
+      const draft = await read(id);
+      expect(draft).toMatchObject({ version: 1, container: null });
+      expect(draft.request).not.toHaveProperty('consolidationId');
+    });
+
+    it("takes another branch's open container (the one cross-branch case) and shows it", async () => {
+      const open = await containerOf(jed, cookies.opsJed);
+      const { id } = summary(
+        await create({
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+          consolidationId: open.id,
+        }).expect(201),
+      );
+      expect((await read(id)).container).toMatchObject({ id: open.id, number: open.number });
+    });
+
+    it('shows nothing of a container a draft holds that the reader could not read directly', async () => {
+      const open = await containerOf(jed, cookies.opsJed);
+      const { id } = summary(
+        await create({
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+          consolidationId: open.id,
+        }).expect(201),
+      );
+      // Cancelled since by its branch: the draft's reader may no longer read it directly.
+      await r
+        .post(`/consolidations/${open.id}/cancel`, cookies.opsJed, { reason: 'Test' })
+        .expect(200);
+      await r.get(`/consolidations/${open.id}`, cookies.opsDxb).expect(404);
+      const draft = await read(id);
+      expect(draft.container).toBeNull();
+      expect(JSON.stringify(draft)).not.toContain('ZZ MF Vessel');
+      expect(JSON.stringify(draft)).not.toContain(open.number);
+    });
   });
 });
