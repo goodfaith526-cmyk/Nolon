@@ -1,5 +1,10 @@
 import type { DecimalString } from './currencies.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftValues,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  MissingFieldsReview,
+} from './drafts.js';
 import type { TripInput } from './transport.js';
 import type { GoodsReleaseRequest } from './warehouse.js';
 
@@ -9,17 +14,32 @@ import type { GoodsReleaseRequest } from './warehouse.js';
  * or a release draft, which issues a goods release note dated at the approval; or rejects it.
  */
 
-/** POST /trip-drafts: the assistant proposes a trip. */
-export interface TripDraftCreateRequest extends TripInput {
-  idempotencyKey: string;
-}
+/**
+ * A trip as a trip draft holds it: the branch and the kind are its key fields; the route may be
+ * missing, the shipments empty, and the fleet or carrier the kind needs absent.
+ */
+export type TripDraftValues = DraftValues<TripInput, 'originLocationId' | 'destinationLocationId'>;
 
-export interface TripDraftDto extends EntryDraftReviewFields {
+/** POST /trip-drafts: the assistant proposes a trip (shipments may be left out). */
+export type TripDraftCreateRequest = Omit<TripDraftValues, 'shipmentIds'> & {
+  idempotencyKey: string;
+  shipmentIds?: string[];
+};
+
+/**
+ * PATCH /trip-drafts/:id: a person fills in or changes values of an open draft, at the version
+ * they read. Each value given replaces the draft's (null clears it; `shipmentIds` as a whole).
+ */
+export type TripDraftUpdateRequest = Partial<Omit<TripDraftValues, 'branchId'>> & {
+  version: number;
+};
+
+export interface TripDraftDto extends EntryDraftReviewFields, MissingFieldsReview {
   /**
    * The proposed request, as stored; the agreed cost and its currency are null for a reviewer who
    * does not see transport costs (seesTransportCosts).
    */
-  request: TripInput;
+  request: TripDraftValues;
   /** The shipments' numbers, in the request's order (only those the reviewer can see). */
   shipmentNumbers: string[];
   /** The fleet the draft names, when the reviewer can see it. */

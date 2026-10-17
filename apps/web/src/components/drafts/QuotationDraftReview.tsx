@@ -6,6 +6,7 @@ import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
+import { MissingFields } from './MissingFields';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
 
 /** A quotation the assistant proposed: its values as proposed, and the decision. */
@@ -25,6 +26,9 @@ export function QuotationDraftReview({ id }: { id: string }) {
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const q = draft.request;
   const pricing = draft.pricing;
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const place = (id: string | null | undefined) => (id ? locationName(id) : '—');
+  const currency = q.currency ?? undefined;
   // A line with neither a rate card nor a price takes the system price (the matching rate card).
   const systemPriced = q.lines.some((l) => !l.rateCardId && l.unitPrice === undefined);
 
@@ -46,25 +50,26 @@ export function QuotationDraftReview({ id }: { id: string }) {
       approveBody={pricing ? { pricingKey: pricing.key } : null}
       onChanged={setRecord}
     >
+      <MissingFields draft={draft} apiPath="/quotation-drafts" onChanged={setRecord} />
       <dl className="details">
         <dt>{tq('route')}</dt>
         <dd>
           {tc('route', {
-            from: locationName(q.originLocationId),
-            to: locationName(q.destinationLocationId),
+            from: place(q.originLocationId),
+            to: place(q.destinationLocationId),
           })}
         </dd>
         <dt>{tq('mode')}</dt>
         <dd>
-          {te(`mode_${q.mode}`)}
-          {q.loadType ? ` · ${q.loadType}` : ''} · {te(`cargo_${q.cargoType}`)}
+          {q.mode ? te(`mode_${q.mode}`) : '—'}
+          {q.loadType ? ` · ${q.loadType}` : ''} · {q.cargoType ? te(`cargo_${q.cargoType}`) : '—'}
         </dd>
         <dt>{tq('cargoDescription')}</dt>
         <dd>{q.cargoDescription ?? '—'}</dd>
         <dt>{tq('currency')}</dt>
-        <dd dir="ltr">{q.currency}</dd>
+        <dd dir="ltr">{q.currency ?? '—'}</dd>
         <dt>{tq('validUntil')}</dt>
-        <dd dir="ltr">{q.validUntil}</dd>
+        <dd dir="ltr">{q.validUntil ?? '—'}</dd>
         <dt>{tq('terms')}</dt>
         <dd>{q.terms ?? '—'}</dd>
       </dl>
@@ -94,12 +99,12 @@ export function QuotationDraftReview({ id }: { id: string }) {
                   <td>
                     {(priced?.unit ?? line.unit) ? te(`unit_${priced?.unit ?? line.unit}`) : '—'}
                   </td>
-                  <td dir="ltr">{line.quantity}</td>
+                  <td dir="ltr">{line.quantity ?? '—'}</td>
                   <td>
                     {(priced?.unitPrice ?? line.unitPrice) ? (
                       <Money
                         value={priced?.unitPrice ?? line.unitPrice ?? ''}
-                        currency={q.currency}
+                        currency={currency}
                       />
                     ) : (
                       '—'
@@ -110,17 +115,14 @@ export function QuotationDraftReview({ id }: { id: string }) {
                   </td>
                   <td>
                     {(priced?.discount ?? line.discount) ? (
-                      <Money
-                        value={priced?.discount ?? line.discount ?? ''}
-                        currency={q.currency}
-                      />
+                      <Money value={priced?.discount ?? line.discount ?? ''} currency={currency} />
                     ) : (
                       '—'
                     )}
                   </td>
                   {pricing && (
                     <td>
-                      <Money value={priced?.lineTotal ?? ''} currency={q.currency} />
+                      <Money value={priced?.lineTotal ?? ''} currency={currency} />
                     </td>
                   )}
                 </tr>

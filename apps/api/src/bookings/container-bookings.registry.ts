@@ -32,6 +32,13 @@ export interface ContainerBookingHandler {
     booking: ContainerBookingShape,
   ): Promise<void>;
   /**
+   * The container as a reference, whatever else a draft still misses (requireBookable's first
+   * half): the user may book into containers and read this one directly (its branch's, or an open
+   * one of any branch: the one cross-branch case), and it is open with room. Not found when they
+   * could not read it directly, so a refusal names nothing of it. Nothing is written.
+   */
+  requireReference(user: AuthUser, consolidationId: string): Promise<void>;
+  /**
    * In the caller's transaction: locks the container, checks again that it is open with room,
    * records the prepared booking, confirms it (its shipment is created) and puts the shipment in
    * the container. The new booking's id.
@@ -44,9 +51,10 @@ export interface ContainerBookingHandler {
   ): Promise<string>;
   /**
    * The container as the review screen of a draft the caller found in the user's branches shows
-   * it; null when it no longer exists.
+   * it, only when this user could read it directly (GET /consolidations/:id); null otherwise, or
+   * when it no longer exists. A draft never shows more of a container than its direct read.
    */
-  describe(consolidationId: string): Promise<DraftContainer | null>;
+  describe(user: AuthUser, consolidationId: string): Promise<DraftContainer | null>;
 }
 
 @Injectable()

@@ -16,7 +16,10 @@ import type {
   QuotationDraftCreateRequest,
   QuotationDraftDto,
   QuotationDraftListItemDto,
+  QuotationDraftLine,
   QuotationDraftPricing,
+  QuotationDraftUpdateRequest,
+  QuotationDraftValues,
   QuotationInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -27,8 +30,13 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  checkDraft,
+  linePath,
+  missingOf,
+  patched,
   preCheck,
   requestHash,
+  requireComplete,
   storedValue,
   requireOpen,
   resolvedKey,
@@ -48,6 +56,7 @@ import {
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
+  type ValuesOf,
   withReplaced,
   withReplacedBy,
   MY_DRAFTS_ORDER,
@@ -85,29 +94,134 @@ export function storedLines(input: QuotationInput) {
   }));
 }
 
-/**
- * The request a stored draft proposes, in the shape QuotationsService takes. Values are given back
- * exactly as stored: a draft created from request R reads back as R in canonical form.
- */
-export function requestOf(row: StoredQuotation & { customerId: string }): CreateQuotationRequest {
-  return { customerId: row.customerId, ...quotationInputOf(row) };
+/** A draft's lines as stored: decimals as Decimal, absent values (a missing quantity) as null. */
+function draftLines(lines: readonly QuotationDraftLine[]) {
+  const decimal = (v: string | null | undefined) => (v === null || v === undefined ? null : dec(v));
+  return lines.map((line, i) => ({
+    lineNo: i + 1,
+    rateCardId: line.rateCardId ?? null,
+    chargeTypeCode: line.chargeTypeCode ?? null,
+    description: line.description ?? null,
+    unit: line.unit ?? null,
+    quantity: decimal(line.quantity),
+    unitPrice: decimal(line.unitPrice),
+    discount: decimal(line.discount),
+  }));
 }
 
-/** A quotation draft row as StoredQuotation (its value columns may hold NULL in the schema). */
-function storedOf(d: DraftRow): StoredQuotation & { customerId: string } {
+/**
+ * The request a stored draft proposes, as QuotationsService takes it once complete. Values are
+ * given back exactly as stored (a draft created from request R reads back as R in canonical
+ * form); a value the draft misses is null.
+ */
+export function requestOf(d: DraftRow): QuotationDraftValues {
   return {
     customerId: d.customerId,
-    originLocationId: storedValue(d.originLocationId, 'origin'),
-    destinationLocationId: storedValue(d.destinationLocationId, 'destination'),
-    mode: storedValue(d.mode, 'mode'),
-    loadType: d.loadType,
-    cargoType: storedValue(d.cargoType, 'cargo type'),
+    originLocationId: d.originLocationId,
+    destinationLocationId: d.destinationLocationId,
+    mode: d.mode,
+    loadType: d.loadType ?? null,
+    cargoType: d.cargoType,
     cargoDescription: d.cargoDescription,
-    currency: storedValue(d.currency, 'currency'),
-    validUntil: storedValue(d.validUntil, 'valid-until date'),
+    currency: d.currency,
+    validUntil: d.validUntil === null ? null : fromDbDate(d.validUntil),
     terms: d.terms,
-    lines: d.lines.map((l) => ({ ...l, quantity: storedValue(l.quantity, 'line quantity') })),
+    lines: d.lines.map((l) => ({
+      ...(l.rateCardId === null ? {} : { rateCardId: l.rateCardId }),
+      ...(l.chargeTypeCode === null ? {} : { chargeTypeCode: l.chargeTypeCode }),
+      description: l.description,
+      ...(l.unit === null ? {} : { unit: l.unit }),
+      quantity: l.quantity === null ? null : toDecimalString(l.quantity),
+      ...(l.unitPrice === null ? {} : { unitPrice: toDecimalString(l.unitPrice) }),
+      ...(l.discount === null ? {} : { discount: toDecimalString(l.discount) }),
+    })),
   };
+}
+
+/** The values a quotation requires (a quotation draft may miss them until a person fills them in). */
+const REQUIRED = [
+  'originLocationId',
+  'destinationLocationId',
+  'mode',
+  'cargoType',
+  'currency',
+  'validUntil',
+] as const;
+
+/**
+ * What a quotation draft still misses before it can be approved, from a quotation's own rules
+ * (quotations controller and QuotationsService.prepare): its required values, at least one line,
+ * each line's quantity, and the charge type and unit of a line priced by hand (a unit price and no
+ * rate card).
+ */
+export function quotationMissingFields(values: QuotationDraftValues): string[] {
+  const lines = values.lines.flatMap((line, i) => {
+    const manual = !line.rateCardId && line.unitPrice !== undefined && line.unitPrice !== null;
+    const fields: string[] = [];
+    if (line.quantity === null || line.quantity === undefined) fields.push('quantity');
+    if (manual && !line.chargeTypeCode) fields.push('chargeTypeCode');
+    if (manual && !line.unit) fields.push('unit');
+    return fields.map((field) => linePath('lines', i, field));
+  });
+  return [
+    ...missingOf(values, REQUIRED),
+    ...(values.lines.length === 0 ? ['lines'] : []),
+    ...lines,
+  ];
+}
+
+/** The quotation of a complete draft, in the shape QuotationsService takes. */
+export function completeQuotation(values: QuotationDraftValues): CreateQuotationRequest {
+  return {
+    ...values,
+    originLocationId: storedValue(values.originLocationId, 'origin'),
+    destinationLocationId: storedValue(values.destinationLocationId, 'destination'),
+    mode: storedValue(values.mode, 'mode'),
+    cargoType: storedValue(values.cargoType, 'cargo type'),
+    currency: storedValue(values.currency, 'currency'),
+    validUntil: storedValue(values.validUntil, 'valid-until date'),
+    lines: values.lines.map((line) => ({
+      ...line,
+      quantity: storedValue(line.quantity, 'line quantity'),
+    })),
+  };
+}
+
+/** A quotation draft's values from a create body (absent lines are none yet). */
+function valuesOfCreate(input: ValuesOf<QuotationDraftCreateRequest>): QuotationDraftValues {
+  return { ...input, lines: input.lines ?? [] };
+}
+
+/**
+ * The idempotency hash of a draft's values: a complete quotation's as it always was
+ * (quotationRequestHash); one missing values, its own normalised form with each missing value
+ * null, marked so it never equals a complete one.
+ */
+export function quotationDraftHash(values: QuotationDraftValues): string {
+  if (quotationMissingFields(values).length === 0) {
+    return quotationRequestHash(completeQuotation(values));
+  }
+  const lower = (v: string | null | undefined) => v?.toLowerCase() ?? null;
+  return requestHash({
+    incomplete: true,
+    customerId: values.customerId.toLowerCase(),
+    originLocationId: lower(values.originLocationId),
+    destinationLocationId: lower(values.destinationLocationId),
+    mode: values.mode ?? null,
+    loadType: values.loadType ?? null,
+    cargoType: values.cargoType ?? null,
+    cargoDescription: values.cargoDescription ?? null,
+    currency: values.currency ?? null,
+    validUntil: values.validUntil ?? null,
+    terms: values.terms ?? null,
+    lines: draftLines(values.lines).map((l) => ({
+      ...l,
+      rateCardId: l.rateCardId?.toLowerCase() ?? null,
+      quantity: decimalKey(l.quantity),
+      unitPrice: decimalKey(l.unitPrice),
+      discount: decimalKey(l.discount),
+    })),
+  });
 }
 
 /** A stored quotation (a quotation draft's, or a new customer's), without its customer. */
@@ -194,8 +308,14 @@ export class QuotationDraftsService {
    */
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: QuotationDraftCreateRequest): Promise<DraftPreCheckDto> {
-    const input = valuesOf(body);
-    return preCheck(quotationRequestHash(input), async () => {
+    const values = valuesOfCreate(valuesOf(body));
+    return preCheck(quotationDraftHash(values), async () => {
+      const missingFields = quotationMissingFields(values);
+      if (missingFields.length > 0) {
+        await this.quotations.checkPresent(user, values);
+        return { total: null, currency: null, missingFields };
+      }
+      const input = completeQuotation(values);
       const prepared = await this.quotations.prepareCreate(user, input);
       return {
         total: toDecimalString(prepared.header.total),
@@ -214,8 +334,25 @@ export class QuotationDraftsService {
                 },
               ],
         ),
+        missingFields,
       };
     });
+  }
+
+  /**
+   * The checks a draft's values get on create and on a person's edit: a complete quotation's in
+   * full (prepareCreate, prices included); one still missing values, those of the values present.
+   * The customer and its branch either way.
+   */
+  private async validate(
+    user: AuthUser,
+    values: QuotationDraftValues,
+  ): Promise<{ customerId: string; branchId: string }> {
+    if (quotationMissingFields(values).length > 0) {
+      return this.quotations.checkPresent(user, values);
+    }
+    const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
+    return { customerId: prepared.customerId, branchId: prepared.branchId };
   }
 
   async create(
@@ -224,14 +361,16 @@ export class QuotationDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, ...input } = body;
-    const hash = withReplaced(quotationRequestHash(input), replacesDraftId);
+    const { idempotencyKey, ...rest } = body;
+    const input = valuesOfCreate(rest);
+    const hash = withReplaced(quotationDraftHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'quotation_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    const prepared = await this.quotations.prepareCreate(user, input);
+    // The checks of a real quotation, on the values present; nothing is written.
+    const prepared = await this.validate(user, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -259,25 +398,52 @@ export class QuotationDraftsService {
             customerId: prepared.customerId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            originLocationId: input.originLocationId,
-            destinationLocationId: input.destinationLocationId,
-            mode: input.mode,
-            loadType: input.loadType ?? null,
-            cargoType: input.cargoType,
-            cargoDescription: input.cargoDescription ?? null,
-            currency: input.currency,
-            validUntil: toDbDate(input.validUntil),
-            terms: input.terms ?? null,
+            ...columnsOf(input),
           },
           select: { id: true },
         });
         await tx.quotationDraftLine.createMany({
-          data: storedLines(input).map((line) => ({ ...line, draftId: draft.id })),
+          data: draftLines(input.lines).map((line) => ({ ...line, draftId: draft.id })),
         });
         return draft.id;
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create, and the version moves on (a pricing shown before no longer applies).
+   * The assistant's request (its payload hash) stays the draft's, so a replay of that create still
+   * finds this draft.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: QuotationDraftUpdateRequest,
+  ): Promise<QuotationDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const values = patched(requestOf(current), patch);
+    await this.validate(user, values);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'quotation_drafts', id);
+      if (!locked) throw new NotFoundException('Quotation draft not found');
+      requireOpen(locked, version, LABEL);
+      await tx.quotationDraft.update({
+        where: { id },
+        data: { ...columnsOf(values), version: { increment: 1 } },
+      });
+      if (patch.lines !== undefined) {
+        await tx.quotationDraftLine.deleteMany({ where: { draftId: id } });
+        await tx.quotationDraftLine.createMany({
+          data: draftLines(values.lines).map((line) => ({ ...line, draftId: id })),
+        });
+      }
+    });
+    return this.get(user, id);
   }
 
   /** The assistant recovers the draft it created under a key; only that client and user find it. */
@@ -344,7 +510,7 @@ export class QuotationDraftsService {
         : { check: null, pricing: null, priceSources: null };
     return {
       ...baseFields(draft, user, now),
-      request: requestOf(storedOf(draft)),
+      request: requestOf(draft),
       check,
       pricing,
       priceSources,
@@ -367,8 +533,11 @@ export class QuotationDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is recorded while the draft misses a value (422, naming each one).
+    const values = requestOf(current);
+    requireComplete(quotationMissingFields(values));
     // The request is the one at `version`; the lock below refuses if it changed since.
-    const prepared = await this.quotations.prepareCreate(user, requestOf(storedOf(current)));
+    const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
     // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
     // chat card; this same `prepared` is what is inserted. Anything else asks for a reload.
     this.drafts.requireResolved(via, resolvedKey(prepared), LABEL, pricingKey);
@@ -475,12 +644,21 @@ export class QuotationDraftsService {
     user: AuthUser,
     draft: DraftRow,
   ): Promise<{
-    check: EntryDraftCheck;
+    check: EntryDraftCheck | null;
     pricing: QuotationDraftPricing | null;
     priceSources: DraftPriceSource[] | null;
   }> {
+    const values = requestOf(draft);
+    if (quotationMissingFields(values).length > 0) {
+      // No prices while values are missing; null check while those present pass (missingFields).
+      const present = await checkDraft(async () => {
+        await this.quotations.checkPresent(user, values);
+        return { total: null, currency: null };
+      });
+      return { check: present.ok ? null : present, pricing: null, priceSources: null };
+    }
     try {
-      const prepared = await this.quotations.prepareCreate(user, requestOf(storedOf(draft)));
+      const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
       return {
         check: {
           ok: true,
@@ -524,6 +702,22 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: d.lines.length,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: quotationMissingFields(requestOf(d)),
+  };
+}
+
+/** The value columns of a draft (its lines apart), a missing value as NULL. */
+function columnsOf(values: QuotationDraftValues) {
+  return {
+    originLocationId: values.originLocationId ?? null,
+    destinationLocationId: values.destinationLocationId ?? null,
+    mode: values.mode ?? null,
+    loadType: values.loadType ?? null,
+    cargoType: values.cargoType ?? null,
+    cargoDescription: values.cargoDescription ?? null,
+    currency: values.currency ?? null,
+    validUntil: values.validUntil ? toDbDate(values.validUntil) : null,
+    terms: values.terms ?? null,
   };
 }
 
@@ -571,7 +765,8 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: quotationMissingFields(requestOf(d)),
     quotationId: d.quotationId,
     quotationNumber: d.quotation?.number ?? null,
   };

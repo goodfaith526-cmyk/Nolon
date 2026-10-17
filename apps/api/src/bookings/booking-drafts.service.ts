@@ -1,13 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
   BookingDraftCreateRequest,
+  BookingDraftDirect,
+  BookingDraftFromQuotation,
+  BookingDraftItem,
+  BookingDraftUpdateRequest,
   BookingDraftDto,
   BookingDraftListItemDto,
   BookingDraftRequest,
   BookingFromQuotationRequest,
   BookingItemInput,
+  BookingService,
   ContainerChoice,
   CreateBookingRequest,
   DraftPreCheckDto,
@@ -24,9 +29,11 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  patched,
   preCheck,
   storedValue,
   requestHash,
+  requireComplete,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
@@ -53,6 +60,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BookingsService, type PreparedBooking } from './bookings.service.js';
 import { ContainerBookingsRegistry } from './container-bookings.registry.js';
+import { directBookingMissingFields, quotedBookingMissingFields } from './booking-draft-missing.js';
 
 const LABEL = 'booking draft';
 const ASSISTANT_ONLY = 'Booking drafts are proposed by the assistant';
@@ -71,21 +79,59 @@ type DraftRow = Prisma.BookingDraftGetPayload<{ include: typeof details }>;
 
 type DirectRequest = CreateBookingRequest & ContainerChoice;
 type FromQuotationRequest = BookingFromQuotationRequest & { quotationId: string };
+/** A draft's values: a direct booking's, or one made from a quotation, as stored. */
+type QuotedValues = BookingDraftFromQuotation & { quotationId: string };
+type DraftInput = BookingDraftDirect | QuotedValues;
 
-function isFromQuotation(
-  input: DirectRequest | FromQuotationRequest,
-): input is FromQuotationRequest {
-  return 'quotationId' in input && typeof input.quotationId === 'string';
+function isFromQuotation<Q extends { quotationId: string }, D>(input: Q | D): input is Q {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    'quotationId' in input &&
+    typeof input.quotationId === 'string'
+  );
 }
 
-function storedItems(items: readonly BookingItemInput[] | undefined) {
+/** What a booking draft still misses before it can be approved (booking-draft-missing.ts). */
+export function bookingMissingFields(input: DraftInput): string[] {
+  return isFromQuotation(input)
+    ? quotedBookingMissingFields(input)
+    : directBookingMissingFields(input);
+}
+
+function completeItems(items: readonly BookingDraftItem[] | undefined): BookingItemInput[] {
+  return (items ?? []).map((item) => ({
+    ...item,
+    cargoType: storedValue(item.cargoType, 'item cargo type'),
+    quantity: storedValue(item.quantity, 'item quantity'),
+  }));
+}
+
+/** The booking of a complete draft, in the shape BookingsService takes. */
+function completeBooking(input: DraftInput): DirectRequest | FromQuotationRequest {
+  if (isFromQuotation(input)) {
+    const { items, ...rest } = input;
+    return items === undefined ? rest : { ...rest, items: completeItems(items) };
+  }
+  return {
+    ...input,
+    originLocationId: storedValue(input.originLocationId, 'origin'),
+    destinationLocationId: storedValue(input.destinationLocationId, 'destination'),
+    mode: storedValue(input.mode, 'mode'),
+    cargoType: storedValue(input.cargoType, 'cargo type'),
+    services: input.services ?? [],
+    items: completeItems(input.items),
+  };
+}
+
+function storedItems(items: readonly BookingDraftItem[] | undefined) {
   const decimal = (v: string | null | undefined) => (v === null || v === undefined ? null : dec(v));
   return (items ?? []).map((item, i) => ({
     lineNo: i + 1,
-    cargoType: item.cargoType,
+    cargoType: item.cargoType ?? null,
     containerTypeCode: item.containerTypeCode ?? null,
     description: item.description ?? null,
-    quantity: item.quantity,
+    quantity: item.quantity ?? null,
     lengthCm: decimal(item.lengthCm),
     widthCm: decimal(item.widthCm),
     heightCm: decimal(item.heightCm),
@@ -96,17 +142,12 @@ function storedItems(items: readonly BookingItemInput[] | undefined) {
 
 type StoredItem = ReturnType<typeof storedItems>[number];
 
-function itemInput(
-  item: Omit<StoredItem, 'cargoType' | 'quantity'> & {
-    cargoType: StoredItem['cargoType'] | null;
-    quantity: number | null;
-  },
-): BookingItemInput {
+function itemInput(item: StoredItem): BookingDraftItem {
   return {
-    cargoType: storedValue(item.cargoType, 'item cargo type'),
+    cargoType: item.cargoType,
     containerTypeCode: item.containerTypeCode,
     description: item.description,
-    quantity: storedValue(item.quantity, 'item quantity'),
+    quantity: item.quantity,
     lengthCm: toDecimalStringOrNull(item.lengthCm),
     widthCm: toDecimalStringOrNull(item.widthCm),
     heightCm: toDecimalStringOrNull(item.heightCm),
@@ -115,7 +156,7 @@ function itemInput(
   };
 }
 
-/** The request a stored draft proposes, in the shape BookingsService takes. */
+/** The request a stored draft proposes, as stored (a value the draft misses is null). */
 export function requestOf(d: DraftRow): BookingDraftRequest {
   const parties = {
     shipperId: d.shipperId,
@@ -133,10 +174,6 @@ export function requestOf(d: DraftRow): BookingDraftRequest {
       ...parties,
     };
   }
-  // The source check (migration) guarantees route and cargo on a direct draft.
-  if (!d.originLocationId || !d.destinationLocationId || !d.mode || !d.cargoType) {
-    throw new Error(`Booking draft ${d.id} has no route or cargo`);
-  }
   return {
     customerId: d.customerId,
     ...(d.consolidationId ? { consolidationId: d.consolidationId } : {}),
@@ -151,8 +188,11 @@ export function requestOf(d: DraftRow): BookingDraftRequest {
   };
 }
 
-/** sha256 of the normalised request: decimals canonical, missing and null alike, keys sorted. */
-export function bookingRequestHash(input: DirectRequest | FromQuotationRequest): string {
+/**
+ * sha256 of the normalised request: decimals canonical, missing and null alike, keys sorted (a
+ * complete request hashes as it always has).
+ */
+export function bookingRequestHash(input: DraftInput): string {
   const lower = (v: string | null | undefined) => v?.toLowerCase() ?? null;
   const common = {
     services: input.services ? [...new Set(input.services)].sort() : null,
@@ -183,14 +223,22 @@ export function bookingRequestHash(input: DirectRequest | FromQuotationRequest):
     // Only when it names one: a draft without a container hashes as it did before.
     ...(input.consolidationId ? { consolidationId: input.consolidationId.toLowerCase() } : {}),
     customerId: input.customerId.toLowerCase(),
-    originLocationId: input.originLocationId.toLowerCase(),
-    destinationLocationId: input.destinationLocationId.toLowerCase(),
-    mode: input.mode,
+    originLocationId: lower(input.originLocationId),
+    destinationLocationId: lower(input.destinationLocationId),
+    mode: input.mode ?? null,
     loadType: input.loadType ?? null,
-    cargoType: input.cargoType,
+    cargoType: input.cargoType ?? null,
     cargoDescription: input.cargoDescription ?? null,
     ...common,
   });
+}
+
+/** What a draft is filed under and the services it stores, once its values are checked. */
+interface CheckedBooking {
+  branchId: string;
+  customerId: string;
+  quotationId: string | null;
+  services: BookingService[];
 }
 
 /**
@@ -217,8 +265,39 @@ export class BookingDraftsService {
   checkValues(user: AuthUser, body: BookingDraftCreateRequest): Promise<DraftPreCheckDto> {
     const input = valuesOf(body);
     return preCheck(bookingRequestHash(input), async () => {
-      await this.prepare(user, input);
+      await this.validate(user, input);
+      return { total: null, currency: null, missingFields: bookingMissingFields(input) };
     });
+  }
+
+  /**
+   * The checks a draft's values get on create and on a person's edit: a complete booking's in
+   * full (prepare, its container included); one still missing values, those of the values present.
+   */
+  private async validate(user: AuthUser, input: DraftInput): Promise<CheckedBooking> {
+    if (bookingMissingFields(input).length === 0) {
+      const prepared = await this.prepare(user, completeBooking(input));
+      return {
+        branchId: prepared.branchId,
+        customerId: prepared.customerId,
+        quotationId: prepared.quotationId,
+        services: prepared.header.services,
+      };
+    }
+    if (isFromQuotation(input)) {
+      const checked = await this.bookings.checkPresentFromQuotation(user, input.quotationId, input);
+      return {
+        ...checked,
+        services: [...new Set<BookingService>(input.services ?? ['MAIN_FREIGHT'])],
+      };
+    }
+    const checked = await this.bookings.checkPresent(user, input);
+    // A container named is a reference checked now, whatever else is missing (Codex on 98f9727):
+    // whether the booking fits it waits for its route and cargo (prepare, requireBookable).
+    if (input.consolidationId) {
+      await this.containers.get().requireReference(user, input.consolidationId);
+    }
+    return { ...checked, quotationId: null, services: [...new Set(input.services ?? [])] };
   }
 
   async create(
@@ -234,9 +313,8 @@ export class BookingDraftsService {
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'booking_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // What NOLON would check on a real create, for this user now; nothing is written.
-    const prepared = await this.prepare(user, input);
-    const fromQuotation = isFromQuotation(input);
+    // What NOLON would check on a real create, on the values present; nothing is written.
+    const prepared = await this.validate(user, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -265,25 +343,7 @@ export class BookingDraftsService {
             sourceQuotationId: prepared.quotationId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            ...(fromQuotation
-              ? {}
-              : {
-                  originLocationId: input.originLocationId,
-                  destinationLocationId: input.destinationLocationId,
-                  mode: input.mode,
-                  loadType: input.loadType ?? null,
-                  cargoType: input.cargoType,
-                  cargoDescription: input.cargoDescription ?? null,
-                  consolidationId: input.consolidationId ?? null,
-                }),
-            services: prepared.header.services,
-            shipperId: input.shipperId ?? null,
-            consigneeId: input.consigneeId ?? null,
-            notifyPartyId: input.notifyPartyId ?? null,
-            requestedDeparture: input.requestedDeparture
-              ? toDbDate(input.requestedDeparture)
-              : null,
-            specialInstructions: input.specialInstructions ?? null,
+            ...columnsOf(input, prepared.services),
           },
           select: { id: true },
         });
@@ -297,6 +357,65 @@ export class BookingDraftsService {
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create, and the version moves on. A draft made from a quotation takes no
+   * route, cargo or container (they come from the quotation). The assistant's request (its
+   * payload hash) stays the draft's, so a replay of that create still finds this draft.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: BookingDraftUpdateRequest,
+  ): Promise<BookingDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const stored = serviceRequest(requestOf(current));
+    let values: DraftInput;
+    if (isFromQuotation(stored)) {
+      const { services, shipperId, consigneeId, notifyPartyId, items, ...rest } = patch;
+      const { requestedDeparture, specialInstructions, ...others } = rest;
+      if (Object.values(others).some((v) => v !== undefined)) {
+        throw new BadRequestException(
+          'A booking made from a quotation takes its route and cargo from the quotation',
+        );
+      }
+      values = patched(stored, {
+        services,
+        shipperId,
+        consigneeId,
+        notifyPartyId,
+        requestedDeparture,
+        specialInstructions,
+        items,
+      });
+    } else {
+      values = patched(stored, patch);
+    }
+    const checked = await this.validate(user, values);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'booking_drafts', id);
+      if (!locked) throw new NotFoundException('Booking draft not found');
+      requireOpen(locked, version, LABEL);
+      await tx.bookingDraft.update({
+        where: { id },
+        data: { ...columnsOf(values, checked.services), version: { increment: 1 } },
+      });
+      if (patch.items !== undefined) {
+        await tx.bookingDraftItem.deleteMany({ where: { draftId: id } });
+        const items = storedItems(values.items);
+        if (items.length > 0) {
+          await tx.bookingDraftItem.createMany({
+            data: items.map((item) => ({ ...item, draftId: id })),
+          });
+        }
+      }
+    });
+    return this.get(user, id);
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -360,7 +479,7 @@ export class BookingDraftsService {
         ? await this.check(user, draft)
         : null;
     const container = draft.consolidationId
-      ? await this.containers.get().describe(draft.consolidationId)
+      ? await this.containers.get().describe(user, draft.consolidationId)
       : null;
     return { ...toDto(draft, user, now, check), container };
   }
@@ -380,7 +499,10 @@ export class BookingDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
-    const prepared = await this.prepare(user, serviceRequest(requestOf(current)));
+    // Nothing is recorded while the draft misses a value (422, naming each one).
+    const values = serviceRequest(requestOf(current));
+    requireComplete(bookingMissingFields(values));
+    const prepared = await this.prepare(user, completeBooking(values));
     const containerId = current.consolidationId;
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'booking_drafts', id);
@@ -493,11 +615,19 @@ export class BookingDraftsService {
     return this.bookings.prepareCreate(user, booking);
   }
 
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
-    return checkDraft(async () => {
-      await this.prepare(user, serviceRequest(requestOf(draft)));
+  /**
+   * Whether NOLON would accept the draft now; null while it misses values and those present pass
+   * (it waits for them: missingFields).
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const values = serviceRequest(requestOf(draft));
+    const complete = bookingMissingFields(values).length === 0;
+    const result = await checkDraft(async () => {
+      if (complete) await this.prepare(user, completeBooking(values));
+      else await this.validate(user, values);
       return { total: null, currency: null };
     });
+    return complete || !result.ok ? result : null;
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
@@ -510,8 +640,29 @@ export class BookingDraftsService {
   }
 }
 
+/** The value columns of a draft (its items apart), a missing value as NULL. */
+function columnsOf(input: DraftInput, services: BookingService[]) {
+  const quoted = isFromQuotation(input);
+  return {
+    // A draft made from a quotation stores no route or cargo (booking_drafts_source_check).
+    originLocationId: quoted ? null : (input.originLocationId ?? null),
+    destinationLocationId: quoted ? null : (input.destinationLocationId ?? null),
+    mode: quoted ? null : (input.mode ?? null),
+    loadType: quoted ? null : (input.loadType ?? null),
+    cargoType: quoted ? null : (input.cargoType ?? null),
+    cargoDescription: quoted ? null : (input.cargoDescription ?? null),
+    consolidationId: quoted ? null : (input.consolidationId ?? null),
+    services,
+    shipperId: input.shipperId ?? null,
+    consigneeId: input.consigneeId ?? null,
+    notifyPartyId: input.notifyPartyId ?? null,
+    requestedDeparture: input.requestedDeparture ? toDbDate(input.requestedDeparture) : null,
+    specialInstructions: input.specialInstructions ?? null,
+  };
+}
+
 /** The stored request without its display-only fields. */
-function serviceRequest(request: BookingDraftRequest): DirectRequest | FromQuotationRequest {
+function serviceRequest(request: BookingDraftRequest): DraftInput {
   if (request.quotationId === undefined) return request;
   return {
     quotationId: request.quotationId,
@@ -533,6 +684,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: d.items.length,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: bookingMissingFields(serviceRequest(requestOf(d))),
   };
 }
 
@@ -576,7 +728,8 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: bookingMissingFields(serviceRequest(requestOf(d))),
     bookingId: d.bookingId,
     bookingNumber: d.booking?.number ?? null,
   };

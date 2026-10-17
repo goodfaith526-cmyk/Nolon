@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import {
+  DRAFT_INCOMPLETE,
   DRAFT_PROPOSAL_RETENTION_DAYS,
   DRAFT_TTL_DAYS,
   type DraftFieldMatch,
@@ -63,12 +64,58 @@ export function requireOpen(
 }
 
 /**
- * A value column of a draft row, which may hold NULL since drafts can be saved with missing
- * values. Every draft written so far holds it, so a NULL here is a broken row, not a refusal.
+ * A value of a draft that its missing fields said is there (a draft is saved with missing values,
+ * MissingFieldsReview): absent here is a bug, not a refusal.
  */
-export function storedValue<T>(value: T | null, what: string): T {
-  if (value === null) throw new Error(`Entry draft has no ${what}`);
+export function storedValue<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) throw new Error(`Entry draft has no ${what}`);
   return value;
+}
+
+/** The path of a line's field in a request, as missing fields name it: `lines[0].quantity`. */
+export function linePath(list: string, index: number, field: string): string {
+  return `${list}[${index}].${field}`;
+}
+
+/** Each of `fields` that `values` does not hold (null or absent), in order. */
+export function missingOf<T extends object>(values: T, fields: readonly (keyof T & string)[]) {
+  return fields.filter((field) => values[field] === null || values[field] === undefined);
+}
+
+/**
+ * An approval refused while the draft misses values (422): nothing is recorded, and the body names
+ * each missing value (`missingFields`, and `fields` where the web reads a refusal's fields).
+ */
+export function draftIncomplete(missingFields: readonly string[]): HttpException {
+  return new HttpException(
+    {
+      message: `This draft is missing required values: ${missingFields.join(', ')}`,
+      code: DRAFT_INCOMPLETE,
+      missingFields: [...missingFields],
+      fields: [...missingFields],
+      params: {},
+      error: 'Unprocessable Entity',
+      statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+    },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+}
+
+/** Refuses an approval (422 DRAFT_INCOMPLETE) while anything is missing. */
+export function requireComplete(missingFields: readonly string[]): void {
+  if (missingFields.length > 0) throw draftIncomplete(missingFields);
+}
+
+/**
+ * A draft's values after a person's edit: each value the edit gives replaces the draft's (null
+ * clears it); a value it leaves out stays as it was.
+ */
+export function patched<T extends object>(current: T, patch: Partial<T>): T {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(patch) as [keyof T, T[keyof T]][]) {
+    if (value !== undefined) next[key] = value;
+  }
+  return next;
 }
 
 /** JSON with object keys sorted at every level, so equal requests hash equally. */
@@ -196,6 +243,8 @@ export interface PreCheckResult {
   currency: string | null;
   priceSources?: DraftPriceSource[] | null;
   computed?: DraftComputedValue[];
+  /** For kinds saved with missing values: what a draft of these values would still miss. */
+  missingFields?: string[];
 }
 
 const NO_TOTAL: PreCheckResult = { total: null, currency: null };
@@ -218,6 +267,7 @@ export async function preCheck(
       currency: result.currency,
       priceSources: result.priceSources ?? null,
       computed: result.computed ?? [],
+      ...(result.missingFields ? { missingFields: result.missingFields } : {}),
     };
   } catch (error) {
     if (isRefusal(error)) return { ok: false, valuesHash, refusals: refusalsOf(error) };

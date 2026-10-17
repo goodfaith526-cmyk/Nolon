@@ -198,6 +198,26 @@ export class RatesService {
   }
 
   /**
+   * The rules of a rate on the values a rate card draft holds so far (a draft is saved with
+   * missing values): branch access, and each value present checked as create checks it. What is
+   * missing, and the container type a container rate still needs, are left for the person to fill
+   * in; prepareCreate runs in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    branchId: string,
+    input: Partial<RateCardInput>,
+  ): Promise<void> {
+    assertBranchAccess(user, branchId);
+    // The rules check a location with the other end of its route; one given alone is checked here.
+    const { originLocationId: from, destinationLocationId: to } = input;
+    const alone = from && !to ? from : to && !from ? to : null;
+    if (alone) await this.masterData.requireLocation(alone);
+    const issues = await this.ruleChecker()(input);
+    throwFirstIssue(issues.filter((issue) => issue.code !== 'CONTAINER_TYPE_REQUIRED'));
+  }
+
+  /**
    * create's write, in the caller's transaction (an approved rate card draft): a DRAFT rate,
    * under the branch's rate lock, with its audit row. The caller ran prepareCreate.
    */
@@ -435,12 +455,7 @@ export class RatesService {
    * load type and cargo type. 400 on any mismatch.
    */
   async requireUsableRate(rateId: string, context: RatePricingContext): Promise<RateCard> {
-    const rate = await this.prisma.rateCard.findFirst({
-      where: { id: rateId, branchId: context.branchId },
-    });
-    if (!rate || rate.status !== 'APPROVED') {
-      throw new BadRequestException('Rate is not an approved rate of this branch');
-    }
+    const rate = await this.requireApprovedRate(rateId, context.branchId);
     const day = toDbDate(context.onDate);
     if (rate.validFrom > day || (rate.validTo !== null && rate.validTo < day)) {
       throw new BadRequestException('Rate is not valid today');
@@ -455,6 +470,18 @@ export class RatesService {
     ].filter((m): m is string => typeof m === 'string');
     if (mismatches.length > 0) {
       throw new BadRequestException(`Rate does not match the quotation: ${mismatches.join(', ')}`);
+    }
+    return rate;
+  }
+
+  /**
+   * An approved rate of the branch (a quotation line naming it, before the quotation it must match
+   * is complete); requireUsableRate checks the rest.
+   */
+  async requireApprovedRate(rateId: string, branchId: string): Promise<RateCard> {
+    const rate = await this.prisma.rateCard.findFirst({ where: { id: rateId, branchId } });
+    if (!rate || rate.status !== 'APPROVED') {
+      throw new BadRequestException('Rate is not an approved rate of this branch');
     }
     return rate;
   }

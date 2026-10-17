@@ -54,13 +54,13 @@ export const itemBody = z
   })
   .strict();
 
-const partyRefs = {
+export const partyRefs = {
   shipperId: z.uuid().nullish(),
   consigneeId: z.uuid().nullish(),
   notifyPartyId: z.uuid().nullish(),
 };
 
-const services = z.array(z.enum(BOOKING_SERVICES)).min(1).max(BOOKING_SERVICES.length);
+export const services = z.array(z.enum(BOOKING_SERVICES)).min(1).max(BOOKING_SERVICES.length);
 const items = z.array(itemBody).max(100);
 
 export const bookingFields = {

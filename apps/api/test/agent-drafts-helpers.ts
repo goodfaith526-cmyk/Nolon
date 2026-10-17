@@ -23,6 +23,10 @@ export function requests(t: TestApp) {
     get: (path: string, cookie: string) => t.http().get(`/api/v1${path}`).set('Cookie', cookie),
     post: (path: string, cookie: string, body: object = {}) =>
       t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
+    patch: (path: string, cookie: string, body: object = {}) =>
+      t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
+    agentPatch: (path: string, token: string, body: object = {}) =>
+      t.http().patch(`/api/v1${path}`).set('Authorization', `Bearer ${token}`).send(body),
     put: (path: string, cookie: string, body: object = {}) =>
       t.http().put(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
     agentGet: (path: string, token: string) =>

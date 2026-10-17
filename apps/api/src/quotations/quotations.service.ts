@@ -7,6 +7,7 @@ import {
 import type {
   CreateQuotationRequest,
   Page,
+  QuotationDraftValues,
   QuotationDto,
   QuotationInput,
   QuotationStatus,
@@ -166,6 +167,69 @@ export class QuotationsService {
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return { customerId: customer.id, branchId, ...prepared };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a quotation draft holds so far (a draft is saved
+   * with missing values): the customer (active, in the user's branches), and each value present
+   * checked as a quotation checks it (route, sea-only load type, currency, validity, each line's
+   * rate card and charge type). Prices and totals wait for the missing values; prepareCreate runs
+   * in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    input: QuotationDraftValues,
+  ): Promise<{ customerId: string; branchId: string }> {
+    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
+    const branchId = customer.branchId;
+    const from = input.originLocationId ?? null;
+    const to = input.destinationLocationId ?? null;
+    if (from !== null && to !== null) {
+      const route = ['originLocationId', 'destinationLocationId'];
+      if (from === to)
+        throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+      await onFields(route, () => this.masterData.requireRoute(from, to));
+    } else if (from !== null) {
+      await onFields(['originLocationId'], () => this.masterData.requireLocation(from));
+    } else if (to !== null) {
+      await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
+    }
+    if (input.mode && input.mode !== 'SEA' && input.loadType) {
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
+    }
+    const currency = input.currency;
+    if (currency) {
+      await onFields(
+        ['currency'],
+        () => this.currencies.requireActive(currency),
+        'CURRENCY_NOT_ACTIVE',
+      );
+    }
+    if (input.validUntil && input.validUntil < (await this.branchToday(branchId))) {
+      throw fieldRefusal('VALID_UNTIL_PAST', 'Valid-until is in the past', ['validUntil']);
+    }
+    for (const [index, line] of input.lines.entries()) {
+      const path = `lines.${index}`;
+      const rateCardId = line.rateCardId;
+      if (rateCardId) {
+        await onFields(
+          [`${path}.rateCardId`],
+          () => this.rates.requireApprovedRate(rateCardId, branchId),
+          'RATE_NOT_USABLE',
+        );
+      }
+      const chargeTypeCode = line.chargeTypeCode;
+      if (chargeTypeCode) {
+        await onFields(
+          [`${path}.chargeTypeCode`],
+          () => this.masterData.requireChargeType(chargeTypeCode),
+          'UNKNOWN_CHARGE_TYPE',
+        );
+      }
+    }
+    return { customerId: customer.id, branchId };
   }
 
   /**

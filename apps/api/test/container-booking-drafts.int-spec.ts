@@ -47,7 +47,6 @@ const cookies = { admin: '', opsDxb: '', opsJed: '', salesJed: '', adminJed: '',
 const tokens = { opsJed: '', salesJed: '', adminJed: '', whJed: '' };
 
 const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
-
 /** A DXB container from Jebel Ali to Port Sudan, open, empty. */
 async function openContainer(): Promise<ConsolidationDto> {
   return (
@@ -243,13 +242,16 @@ describe('booking drafts into an open container', () => {
       .post(`/consolidations/${container.id}/cancel`, cookies.opsDxb, { reason: 'Vessel missed' })
       .expect(200);
 
+    // Cancelled, another branch's container is no longer one the JED approver reads directly: the
+    // draft refuses it as not found and shows nothing of it (Codex on 98f9727).
     const draft = await readDraft(summary.id);
     expect(draft.check).toMatchObject({ ok: false });
-    expect(draft.check?.ok === false && draft.check.message).toMatch(/no longer open/);
-    const res = await r
+    expect(draft.check?.ok === false && draft.check.message).toBe('Container not found');
+    expect(draft.container).toBeNull();
+    expect(JSON.stringify(draft)).not.toContain(container.number);
+    await r
       .post(`/booking-drafts/${summary.id}/approve`, cookies.opsJed, { version: 1 })
-      .expect(409);
-    expect(code(res)).toBe('CONTAINER_NOT_OPEN');
+      .expect(404);
     expect((await readDraft(summary.id)).status).toBe('DRAFT');
     expect(await bookingsOfCustomer()).toBe(before);
   });

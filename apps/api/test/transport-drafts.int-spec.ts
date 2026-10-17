@@ -246,7 +246,8 @@ describe('trip drafts: the assistant proposes', () => {
     const body = res.body as EntryDraftSummaryDto;
     expect(body).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(Object.keys(body).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      // missingFields: paths of values still to fill in, never values.
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(JSON.stringify(body)).not.toContain('Morning run');
     expect(await t.prisma.tripShipment.count({ where: { shipmentId: shipment.id } })).toBe(0);
@@ -318,7 +319,8 @@ describe('trip drafts: a person reviews', () => {
       carrierName: null,
       shipmentNumbers: [shipment.number],
       check: { ok: true, total: null, currency: null },
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
+      missingFields: [],
     });
     expect(draft.request).toMatchObject({
       plannedDeparture: '2030-01-01T06:00:00.000Z',

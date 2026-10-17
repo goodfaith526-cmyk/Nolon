@@ -5,6 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  BookingDraftDirect,
+  BookingDraftFromQuotation,
+  BookingDraftItem,
   BookingDto,
   BookingFromQuotationRequest,
   BookingInput,
@@ -36,6 +39,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { bookingItemMissingFields } from './booking-draft-missing.js';
 import { cbmFromDimensions } from './cbm.js';
 
 export interface BookingFilters extends PageQuery, RouteFilters {
@@ -182,6 +186,90 @@ export class BookingsService {
       quotationId: quotation.id,
       ...prepared,
     };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a direct booking draft holds so far (a draft is
+   * saved with missing values): the customer (active, in the user's branches), and each value
+   * present checked as a booking checks it; what is missing is left for the person to fill in.
+   * prepareCreate runs in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    input: BookingDraftDirect,
+  ): Promise<{ branchId: string; customerId: string }> {
+    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
+    const from = input.originLocationId ?? null;
+    const to = input.destinationLocationId ?? null;
+    if (from !== null && to !== null) {
+      const route = ['originLocationId', 'destinationLocationId'];
+      if (from === to)
+        throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+      await onFields(route, () => this.masterData.requireRoute(from, to));
+    } else if (from !== null) {
+      await onFields(['originLocationId'], () => this.masterData.requireLocation(from));
+    } else if (to !== null) {
+      await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
+    }
+    if (input.mode && input.mode !== 'SEA' && input.loadType) {
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
+    }
+    await this.checkPresentLines(customer.id, input);
+    return { branchId: customer.branchId, customerId: customer.id };
+  }
+
+  /** As checkPresent, for a booking draft made from an approved quotation of the user's branches. */
+  async checkPresentFromQuotation(
+    user: AuthUser,
+    quotationId: string,
+    input: BookingDraftFromQuotation,
+  ): Promise<{ branchId: string; customerId: string; quotationId: string }> {
+    const quotation = await this.quotations.requireApproved(user, quotationId);
+    const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    await this.checkPresentLines(customer.id, input);
+    return { branchId: quotation.branchId, customerId: customer.id, quotationId: quotation.id };
+  }
+
+  /** The parties and cargo lines of a draft: a complete line in full, others on what they hold. */
+  private async checkPresentLines(
+    customerId: string,
+    input: {
+      shipperId?: string | null;
+      consigneeId?: string | null;
+      notifyPartyId?: string | null;
+      items?: BookingDraftItem[];
+    },
+  ): Promise<void> {
+    await this.customers.requireOwnParties(customerId, [
+      input.shipperId,
+      input.consigneeId,
+      input.notifyPartyId,
+    ]);
+    for (const [index, item] of (input.items ?? []).entries()) {
+      const path = `items.${index}`;
+      const { cargoType, quantity } = item;
+      if (cargoType && quantity && bookingItemMissingFields(item).length === 0) {
+        await this.prepareItem({ ...item, cargoType, quantity }, path);
+        continue;
+      }
+      const code = item.containerTypeCode;
+      if (!code) continue;
+      const containerType = [`${path}.containerTypeCode`];
+      if (cargoType && cargoType !== 'CONTAINER') {
+        throw fieldRefusal(
+          'CONTAINER_TYPE_NOT_APPLICABLE',
+          'Container type applies to container lines only',
+          containerType,
+        );
+      }
+      await onFields(
+        containerType,
+        () => this.masterData.requireContainerType(code),
+        'UNKNOWN_CONTAINER_TYPE',
+      );
+    }
   }
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */

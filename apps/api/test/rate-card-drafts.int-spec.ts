@@ -130,7 +130,8 @@ describe('rate card drafts: the assistant proposes', () => {
     const body = rateRequest();
     const summary = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
     expect(Object.keys(summary).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      // missingFields: paths of values still to fill in, never values.
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(summary).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(await ratesOn(body.validFrom)).toBe(0);

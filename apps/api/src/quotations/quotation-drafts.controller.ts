@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -31,11 +32,39 @@ import {
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { QuotationDraftsService } from './quotation-drafts.service.js';
-import { quotationCreateBody } from './quotations.controller.js';
+import { lineBody, quotationFields } from './quotations.controller.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-const createBody = quotationCreateBody.extend({ idempotencyKey }).strict();
+/**
+ * A quotation draft's values: a quotation's (quotationFields), each checked the same way when
+ * given, with only the customer required (owner decision, 2026-10-17): the draft belongs to the
+ * customer's branch. The rest, a line's quantity included, is filled in on review.
+ */
+const draftValues = {
+  ...quotationFields,
+  originLocationId: quotationFields.originLocationId.nullish(),
+  destinationLocationId: quotationFields.destinationLocationId.nullish(),
+  mode: quotationFields.mode.nullish(),
+  cargoType: quotationFields.cargoType.nullish(),
+  currency: quotationFields.currency.nullish(),
+  validUntil: quotationFields.validUntil.nullish(),
+  lines: z.array(lineBody.extend({ quantity: lineBody.shape.quantity.nullish() }).strict()).max(50),
+};
+const createBody = z
+  .object({
+    customerId: z.uuid(),
+    ...draftValues,
+    lines: draftValues.lines.optional(),
+    idempotencyKey,
+  })
+  .strict();
+/** A person's edit: any value but the customer, at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
+  .strict();
 const approveBody = z
   .object({ version: z.number().int().min(1), pricingKey: z.string().regex(/^[0-9a-f]{64}$/) })
   .strict();
@@ -101,6 +130,17 @@ export class QuotationDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<QuotationDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('quotations:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<QuotationDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')
