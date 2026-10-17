@@ -36,7 +36,7 @@ import {
 } from '../common/validation.js';
 import { QuotationsService } from './quotations.service.js';
 
-const lineBody = z
+export const lineBody = z
   .object({
     rateCardId: z.uuid().nullish(),
     chargeTypeCode: z.string().trim().toUpperCase().max(20).optional(),
@@ -48,7 +48,7 @@ const lineBody = z
   })
   .strict();
 
-const quotationFields = {
+export const quotationFields = {
   originLocationId: z.uuid(),
   destinationLocationId: z.uuid(),
   mode: z.enum(SHIPPING_MODES),

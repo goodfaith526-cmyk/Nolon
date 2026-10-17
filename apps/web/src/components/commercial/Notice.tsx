@@ -1,5 +1,6 @@
 'use client';
 
+import { DRAFT_INCOMPLETE } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useCallback } from 'react';
 import { ApiError } from '@/lib/api';
@@ -60,7 +61,9 @@ export function useFailureText(): (e: unknown) => string {
         if (why) return t('invalidDetail', { detail: why });
       }
       switch (failureStatus(e)) {
+        // 422: an approval refused while the draft misses values (DRAFT_INCOMPLETE names them).
         case 400:
+        case 422:
           return invalidInputText(e, {
             field: (key) => (tf.has(key) ? tf(key) : key),
             line: (n) => t('lineNo', { n }),
@@ -92,13 +95,16 @@ export function useFailureText(): (e: unknown) => string {
  */
 export function useRefusalReason(): (e: unknown) => string | null {
   const tr = useTranslations('Refusals');
+  const td = useTranslations('Drafts');
   return useCallback(
     (e: unknown) => {
       if (!(e instanceof ApiError) || (e.fields.length === 0 && !e.code)) return null;
+      // An approval refused (422) while the draft misses the values it names.
+      if (e.code === DRAFT_INCOMPLETE) return td('incompleteRefused');
       if (e.code && tr.has(e.code)) return tr(e.code, { ...e.params });
       return e.reason;
     },
-    [tr],
+    [tr, td],
   );
 }
 
@@ -145,9 +151,13 @@ export function invalidInputText(e: unknown, words: InvalidInputWords): string {
   return reason && reason !== 'Bad Request' ? words.detail(reason) : words.generic();
 }
 
-/** `items.0.weightKg` → "Weight (kg) (line 1)"; a path-less issue keeps the API's text. */
-function fieldName(path: string, words: InvalidInputWords): string {
-  if (!/^[A-Za-z0-9_.]+$/.test(path)) return path;
+/**
+ * `items.0.weightKg` (or `items[0].weightKg`, as a draft's missing values are named) → "Weight
+ * (kg) (line 1)"; a path-less issue keeps the API's text.
+ */
+function fieldName(apiPath: string, words: InvalidInputWords): string {
+  const path = apiPath.replace(/\[(\d+)\]/g, '.$1');
+  if (!/^[A-Za-z0-9_.]+$/.test(path)) return apiPath;
   const parts = path.split('.');
   const line = parts.find((p) => /^\d+$/.test(p));
   const named = parts.filter((p) => !/^\d+$/.test(p));

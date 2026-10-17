@@ -2185,7 +2185,16 @@
     "priceTyped": "Typed",
     "priceQuotation": "System price: the shipment's quotation",
     "priceRateCard": "System price: rate card",
-    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving."
+    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving.",
+    "missingTitle": "Missing before approval",
+    "missingHint": "The assistant saved this draft without these values. Fill them in and save; NOLON checks each value, and the draft can be approved once nothing is missing.",
+    "missingReadOnly": "This draft cannot be approved until these values are filled in.",
+    "missingChoose": "Choose…",
+    "missingSave": "Save values",
+    "missingSaved": "Values saved.",
+    "missingNewLine": "New line",
+    "missingNoShipments": "No shipment found.",
+    "incompleteRefused": "The draft still misses values."
   },
   "Fields": {
     "customerId": "Customer",
@@ -2233,7 +2242,13 @@
     "reason": "Reason",
     "note": "Note",
     "etd": "ETD",
-    "eta": "ETA"
+    "eta": "ETA",
+    "vehicleId": "Vehicle",
+    "driverId": "Driver",
+    "carrierId": "Carrier",
+    "agreedCost": "Agreed cost",
+    "shipmentIds": "Shipments",
+    "validFrom": "Valid from"
   },
   "Refusals": {
     "SAME_ROUTE": "From and To must be different places.",

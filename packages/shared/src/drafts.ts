@@ -70,6 +70,40 @@ export interface EntryDraftSummaryDto {
   lineCount: number;
   expiresAt: string;
   createdAt: string;
+  /**
+   * For kinds saved with missing values (trip, rate card, quotation, booking): the values the
+   * draft still misses before it can be approved (MissingFieldsReview), so the assistant can say
+   * so. Paths only, never values.
+   */
+  missingFields?: string[];
+}
+
+/**
+ * A record's request as an entry draft holds it (owner decision, 2026-10-17): a draft is saved
+ * with only its key fields, so each value the record requires (`K`) may be missing (null) until a
+ * person fills it in on the review screen. Every value present is checked as the record checks it.
+ */
+export type DraftValues<T, K extends keyof T> = Omit<T, K> & { [P in K]?: T[P] | null };
+
+/**
+ * The values a draft still misses before it can be approved, as request paths (`originLocationId`,
+ * `lines[0].quantity`), worked out from the record's own required rules. Empty when complete.
+ */
+export interface MissingFieldsReview {
+  missingFields: string[];
+}
+
+/** The code of an approval refused (422) while the draft misses values. */
+export const DRAFT_INCOMPLETE = 'DRAFT_INCOMPLETE';
+
+/** 422 body of an approval refused while the draft misses values; nothing was recorded. */
+export interface DraftIncompleteRefusal {
+  statusCode: 422;
+  code: typeof DRAFT_INCOMPLETE;
+  message: string;
+  missingFields: string[];
+  /** The same paths, where the web reads a refusal's fields. */
+  fields: string[];
 }
 
 /**
@@ -205,6 +239,11 @@ export type DraftPreCheckDto =
       priceSources: DraftPriceSource[] | null;
       /** The values NOLON would fill in (each system-priced line's unit price). */
       computed: DraftComputedValue[];
+      /**
+       * For kinds saved with missing values: what the draft would still miss (a create saves it,
+       * an approval waits for them). Absent for other kinds.
+       */
+      missingFields?: string[];
     }
   | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
 

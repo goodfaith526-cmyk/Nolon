@@ -172,7 +172,8 @@ describe('quotation drafts: the assistant proposes', () => {
     const body = res.body as EntryDraftSummaryDto;
     expect(body).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(Object.keys(body).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      // missingFields: paths of values still to fill in, never values.
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(JSON.stringify(body)).not.toContain('Ocean freight');
     // Nothing reached the quotations yet.
@@ -235,9 +236,6 @@ describe('quotation drafts: the assistant proposes', () => {
     const before = await t.prisma.quotationDraft.count();
     await createQuotationDraft(quotationRequest({ validUntil: '2020-01-01' })).expect(400);
     await createQuotationDraft(
-      quotationRequest({ lines: [{ quantity: '1', unitPrice: '10' }] }),
-    ).expect(400);
-    await createQuotationDraft(
       quotationRequest({ lines: [{ ...quotationRequest().lines[0], discount: '999999' }] }),
     ).expect(400);
     await createQuotationDraft({ ...quotationRequest(), idempotencyKey: 'short' }).expect(400);
@@ -272,7 +270,8 @@ describe('quotation drafts: a person reviews', () => {
     expect(draft.request.lines[0]).toMatchObject({ unitPrice: '1500.5', quantity: '2' });
     // 2 x 1500.50 - 1.50 discount.
     expect(draft.check).toEqual({ ok: true, total: '2999.5', currency: 'USD' });
-    expect(draft.actions).toEqual({ canEdit: false, canDecide: true });
+    // An open draft is editable on the review screen (PATCH) by those who may decide it.
+    expect(draft.actions).toEqual({ canEdit: true, canDecide: true });
     const list = (await r.get('/quotation-drafts?status=DRAFT', cookies.salesDxb).expect(200))
       .body as QuotationDraftListItemDto[];
     expect(list.map((d) => d.id)).toContain(draft.id);

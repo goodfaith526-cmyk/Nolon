@@ -8,6 +8,7 @@ import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { TripKindLabel, useDateTime } from '../transport/common';
 import { DraftFrame } from './DraftFrame';
+import { MissingFields } from './MissingFields';
 
 /** A trip the assistant proposed: its route, fleet and shipments as proposed, and the decision. */
 export function TripDraftReview({ id }: { id: string }) {
@@ -21,8 +22,9 @@ export function TripDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const trip = draft.request;
-  const from = locationName(trip.originLocationId);
-  const to = locationName(trip.destinationLocationId);
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const from = trip.originLocationId ? locationName(trip.originLocationId) : '—';
+  const to = trip.destinationLocationId ? locationName(trip.destinationLocationId) : '—';
 
   return (
     <DraftFrame
@@ -35,6 +37,12 @@ export function TripDraftReview({ id }: { id: string }) {
       }
       onChanged={setRecord}
     >
+      <MissingFields
+        draft={draft}
+        apiPath="/trip-drafts"
+        branchId={trip.branchId}
+        onChanged={setRecord}
+      />
       <dl className="details">
         <dt>{tt('kind')}</dt>
         <dd>

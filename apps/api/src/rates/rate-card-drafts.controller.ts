@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -34,11 +35,34 @@ import { RateCardDraftsService } from './rate-card-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
+/**
+ * A rate card draft's values: a rate's (rateFields), each checked the same way when given, with
+ * only the branch required (owner decision, 2026-10-17). The rest is filled in on review.
+ */
+const draftValues = {
+  ...rateFields,
+  originLocationId: rateFields.originLocationId.nullish(),
+  destinationLocationId: rateFields.destinationLocationId.nullish(),
+  mode: rateFields.mode.nullish(),
+  cargoType: rateFields.cargoType.nullish(),
+  unit: rateFields.unit.nullish(),
+  price: rateFields.price.nullish(),
+  minimumCharge: rateFields.minimumCharge.unwrap().nullish(),
+  chargeTypeCode: rateFields.chargeTypeCode.unwrap().nullish(),
+  currency: rateFields.currency.nullish(),
+  validFrom: rateFields.validFrom.nullish(),
+};
+/** A person's edit: any value but the branch, at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
+  .strict();
 const createBody = z
   .object({
     idempotencyKey,
     branchId: z.uuid(),
-    ...rateFields,
+    ...draftValues,
     // The values the assistant binds to the staff member's words (its BOUND_FIELDS).
     evidence: draftEvidence([
       'branchId',
@@ -113,6 +137,17 @@ export class RateCardDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<RateCardDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('rates:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<RateCardDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

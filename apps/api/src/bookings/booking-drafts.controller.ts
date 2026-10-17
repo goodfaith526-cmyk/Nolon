@@ -6,11 +6,13 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
 import {
   type AssistantDraftDto,
+  BOOKING_SERVICES,
   type BookingDraftDto,
   type BookingDraftListItemDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
@@ -29,9 +31,9 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
-import { parse, requiredText } from '../common/validation.js';
+import { dateString, optionalText, parse, requiredText } from '../common/validation.js';
 import { BookingDraftsService } from './booking-drafts.service.js';
-import { bookingCreateBody, bookingFromQuotationBody } from './bookings.controller.js';
+import { bookingFields, itemBody, partyRefs, services } from './bookings.controller.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
@@ -39,10 +41,57 @@ const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid 
  * From an approved quotation (quotationId), or directly for a customer (customerId); a direct one
  * may name an open container to go in (consolidationId).
  */
+/**
+ * A booking draft's values: a booking's (bookingFields, itemBody), each checked the same way when
+ * given, with only the customer required (owner decision, 2026-10-17), or the quotation for one
+ * made from a quotation. The rest, a cargo line's type and quantity included, is filled in on
+ * review.
+ */
+const draftItem = itemBody
+  .extend({
+    cargoType: itemBody.shape.cargoType.nullish(),
+    quantity: itemBody.shape.quantity.nullish(),
+  })
+  .strict();
+const draftItems = z.array(draftItem).max(100);
+const directValues = {
+  ...bookingFields,
+  originLocationId: bookingFields.originLocationId.nullish(),
+  destinationLocationId: bookingFields.destinationLocationId.nullish(),
+  mode: bookingFields.mode.nullish(),
+  cargoType: bookingFields.cargoType.nullish(),
+  services: z.array(z.enum(BOOKING_SERVICES)).max(BOOKING_SERVICES.length),
+  items: draftItems,
+  consolidationId: z.uuid().nullish(),
+};
+const quotedValues = {
+  services: services.optional(),
+  ...partyRefs,
+  requestedDeparture: dateString.nullish(),
+  specialInstructions: optionalText(2000),
+  items: draftItems.optional(),
+};
 const createBody = z.union([
-  bookingFromQuotationBody.extend({ idempotencyKey, quotationId: z.uuid() }).strict(),
-  bookingCreateBody.extend({ idempotencyKey, consolidationId: z.uuid().nullish() }).strict(),
+  z.object({ ...quotedValues, idempotencyKey, quotationId: z.uuid() }).strict(),
+  z
+    .object({
+      customerId: z.uuid(),
+      ...directValues,
+      services: directValues.services.optional(),
+      items: directValues.items.optional(),
+      idempotencyKey,
+    })
+    .strict(),
 ]);
+/**
+ * A person's edit: any value but the customer or the quotation, at the version they read (a draft
+ * made from a quotation refuses route and cargo values: BookingDraftsService.update).
+ */
+const updateBody = z
+  .object(directValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
+  .strict();
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
   .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
@@ -103,6 +152,17 @@ export class BookingDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<BookingDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('bookings:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<BookingDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

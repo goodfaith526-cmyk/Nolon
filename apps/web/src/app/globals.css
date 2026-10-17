@@ -3473,3 +3473,37 @@ fieldset > .line > .line-remove-button:hover {
 .form-dialog::backdrop {
   background: rgb(15 27 45 / 0.45);
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Draft review: the values an entry draft still misses before it can be approved.
+   --------------------------------------------------------------------------------------------- */
+
+.missing-fields {
+  border-inline-start: 4px solid var(--warn);
+}
+
+.missing-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge-missing {
+  --badge-bg: var(--warn-soft);
+  --badge-fg: var(--warn);
+}
+
+.missing-value :is(input, select) {
+  border-color: var(--warn);
+}
+
+.missing-fields fieldset {
+  margin: 0;
+  padding-block: 0.5rem;
+  padding-inline: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}

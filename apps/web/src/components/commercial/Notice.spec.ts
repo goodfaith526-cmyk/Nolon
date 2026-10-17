@@ -37,6 +37,19 @@ describe('invalidInputText', () => {
   });
 });
 
+describe('invalidInputText with a draft that misses values', () => {
+  it('names each missing value, with its line', () => {
+    const e = new ApiError(
+      422,
+      'x',
+      ['services', 'items[0].weightKg'],
+      'The draft is missing values',
+      'DRAFT_INCOMPLETE',
+    );
+    expect(invalidInputText(e, words)).toBe('Check: Services and Weight (kg) (line 1)');
+  });
+});
+
 describe('invalidInputText with a broken rule', () => {
   it('gives the reason for its code before the fields', () => {
     const e = new ApiError(
