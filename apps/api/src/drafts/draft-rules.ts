@@ -62,6 +62,15 @@ export function requireOpen(
   }
 }
 
+/**
+ * A value column of a draft row, which may hold NULL since drafts can be saved with missing
+ * values. Every draft written so far holds it, so a NULL here is a broken row, not a refusal.
+ */
+export function storedValue<T>(value: T | null, what: string): T {
+  if (value === null) throw new Error(`Entry draft has no ${what}`);
+  return value;
+}
+
 /** JSON with object keys sorted at every level, so equal requests hash equally. */
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;

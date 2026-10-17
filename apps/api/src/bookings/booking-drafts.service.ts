@@ -25,6 +25,7 @@ import {
   draftExpiry,
   draftStatus,
   preCheck,
+  storedValue,
   requestHash,
   requireOpen,
   stateFilter,
@@ -95,12 +96,17 @@ function storedItems(items: readonly BookingItemInput[] | undefined) {
 
 type StoredItem = ReturnType<typeof storedItems>[number];
 
-function itemInput(item: StoredItem): BookingItemInput {
+function itemInput(
+  item: Omit<StoredItem, 'cargoType' | 'quantity'> & {
+    cargoType: StoredItem['cargoType'] | null;
+    quantity: number | null;
+  },
+): BookingItemInput {
   return {
-    cargoType: item.cargoType,
+    cargoType: storedValue(item.cargoType, 'item cargo type'),
     containerTypeCode: item.containerTypeCode,
     description: item.description,
-    quantity: item.quantity,
+    quantity: storedValue(item.quantity, 'item quantity'),
     lengthCm: toDecimalStringOrNull(item.lengthCm),
     widthCm: toDecimalStringOrNull(item.widthCm),
     heightCm: toDecimalStringOrNull(item.heightCm),

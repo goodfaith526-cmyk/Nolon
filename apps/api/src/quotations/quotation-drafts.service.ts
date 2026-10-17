@@ -29,6 +29,7 @@ import {
   draftStatus,
   preCheck,
   requestHash,
+  storedValue,
   requireOpen,
   resolvedKey,
   stateFilter,
@@ -90,6 +91,23 @@ export function storedLines(input: QuotationInput) {
  */
 export function requestOf(row: StoredQuotation & { customerId: string }): CreateQuotationRequest {
   return { customerId: row.customerId, ...quotationInputOf(row) };
+}
+
+/** A quotation draft row as StoredQuotation (its value columns may hold NULL in the schema). */
+function storedOf(d: DraftRow): StoredQuotation & { customerId: string } {
+  return {
+    customerId: d.customerId,
+    originLocationId: storedValue(d.originLocationId, 'origin'),
+    destinationLocationId: storedValue(d.destinationLocationId, 'destination'),
+    mode: storedValue(d.mode, 'mode'),
+    loadType: d.loadType,
+    cargoType: storedValue(d.cargoType, 'cargo type'),
+    cargoDescription: d.cargoDescription,
+    currency: storedValue(d.currency, 'currency'),
+    validUntil: storedValue(d.validUntil, 'valid-until date'),
+    terms: d.terms,
+    lines: d.lines.map((l) => ({ ...l, quantity: storedValue(l.quantity, 'line quantity') })),
+  };
 }
 
 /** A stored quotation (a quotation draft's, or a new customer's), without its customer. */
@@ -326,7 +344,7 @@ export class QuotationDraftsService {
         : { check: null, pricing: null, priceSources: null };
     return {
       ...baseFields(draft, user, now),
-      request: requestOf(draft),
+      request: requestOf(storedOf(draft)),
       check,
       pricing,
       priceSources,
@@ -350,7 +368,7 @@ export class QuotationDraftsService {
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
     // The request is the one at `version`; the lock below refuses if it changed since.
-    const prepared = await this.quotations.prepareCreate(user, requestOf(current));
+    const prepared = await this.quotations.prepareCreate(user, requestOf(storedOf(current)));
     // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
     // chat card; this same `prepared` is what is inserted. Anything else asks for a reload.
     this.drafts.requireResolved(via, resolvedKey(prepared), LABEL, pricingKey);
@@ -462,7 +480,7 @@ export class QuotationDraftsService {
     priceSources: DraftPriceSource[] | null;
   }> {
     try {
-      const prepared = await this.quotations.prepareCreate(user, requestOf(draft));
+      const prepared = await this.quotations.prepareCreate(user, requestOf(storedOf(draft)));
       return {
         check: {
           ok: true,

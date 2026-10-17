@@ -24,6 +24,7 @@ import {
   draftStatus,
   preCheck,
   rejectedFields,
+  storedValue,
   requestHash,
   requireOpen,
   stateFilter,
@@ -66,18 +67,18 @@ type DraftRow = Prisma.RateCardDraftGetPayload<{ include: typeof details }>;
 /** The rate a stored draft proposes. Absent optional fields stay absent: the rate's defaults apply. */
 export function rateRequestOf(d: DraftRow): RateCardDraftRequest {
   return {
-    originLocationId: d.originLocationId,
-    destinationLocationId: d.destinationLocationId,
-    mode: d.mode,
+    originLocationId: storedValue(d.originLocationId, 'origin'),
+    destinationLocationId: storedValue(d.destinationLocationId, 'destination'),
+    mode: storedValue(d.mode, 'mode'),
     loadType: d.loadType,
-    cargoType: d.cargoType,
+    cargoType: storedValue(d.cargoType, 'cargo type'),
     containerTypeCode: d.containerTypeCode,
     ...(d.chargeTypeCode === null ? {} : { chargeTypeCode: d.chargeTypeCode }),
-    unit: d.unit,
-    price: toDecimalString(d.price),
+    unit: storedValue(d.unit, 'unit'),
+    price: toDecimalString(storedValue(d.price, 'price')),
     ...(d.minimumCharge === null ? {} : { minimumCharge: toDecimalString(d.minimumCharge) }),
-    currency: d.currency,
-    validFrom: fromDbDate(d.validFrom),
+    currency: storedValue(d.currency, 'currency'),
+    validFrom: fromDbDate(storedValue(d.validFrom, 'valid-from date')),
     validTo: fromDbDateOrNull(d.validTo),
     transitDays: d.transitDays,
     notes: d.notes,
@@ -245,8 +246,8 @@ export class RateCardDraftsService {
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
       lineCount: 1,
-      price: toDecimalString(d.price),
-      currency: d.currency,
+      price: toDecimalString(storedValue(d.price, 'price')),
+      currency: storedValue(d.currency, 'currency'),
     }));
   }
 
@@ -390,7 +391,7 @@ function baseFields(
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: `${d.origin.code} → ${d.destination.code}`,
+    subject: `${storedValue(d.origin, 'origin').code} → ${storedValue(d.destination, 'destination').code}`,
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -402,8 +403,8 @@ function baseFields(
     rejectReason: d.rejectReason,
     actions: { canEdit: false, canDecide: open },
     branchCode: d.branch.code,
-    originCode: d.origin.code,
-    destinationCode: d.destination.code,
+    originCode: storedValue(d.origin, 'origin').code,
+    destinationCode: storedValue(d.destination, 'destination').code,
     rateCardId: d.rateCardId,
   };
 }

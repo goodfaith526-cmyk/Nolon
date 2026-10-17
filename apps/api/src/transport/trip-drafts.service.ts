@@ -21,6 +21,7 @@ import {
   draftExpiry,
   draftStatus,
   preCheck,
+  storedValue,
   rejectedFields,
   requestHash,
   requireOpen,
@@ -83,8 +84,8 @@ export function requestOf(d: DraftRow): TripInput {
   return {
     branchId: d.branchId,
     kind: d.kind,
-    originLocationId: d.originLocationId,
-    destinationLocationId: d.destinationLocationId,
+    originLocationId: storedValue(d.originLocationId, 'origin'),
+    destinationLocationId: storedValue(d.destinationLocationId, 'destination'),
     plannedDeparture: d.plannedDeparture?.toISOString() ?? null,
     plannedArrival: d.plannedArrival?.toISOString() ?? null,
     vehicleId: d.vehicleId,
@@ -437,7 +438,13 @@ export class TripDraftsService {
 
   /** "AEJEA → SDPZU" for each draft's route, from the locations master. */
   private async routeNames(drafts: readonly DraftRow[]): Promise<Map<string, string>> {
-    const ids = [...new Set(drafts.flatMap((d) => [d.originLocationId, d.destinationLocationId]))];
+    const ids = [
+      ...new Set(
+        drafts
+          .flatMap((d) => [d.originLocationId, d.destinationLocationId])
+          .filter((v): v is string => v !== null),
+      ),
+    ];
     const locations = await this.prisma.location.findMany({
       where: { id: { in: ids } },
       select: { id: true, code: true },
@@ -446,7 +453,7 @@ export class TripDraftsService {
     return new Map(
       drafts.map((d) => [
         d.id,
-        `${code.get(d.originLocationId) ?? '?'} → ${code.get(d.destinationLocationId) ?? '?'}`,
+        `${codeOf(code, d.originLocationId)} → ${codeOf(code, d.destinationLocationId)}`,
       ]),
     );
   }
@@ -498,4 +505,8 @@ function baseFields(
     tripId: d.tripId,
     tripNumber: d.trip?.number ?? null,
   };
+}
+
+function codeOf(codes: ReadonlyMap<string, string>, id: string | null): string {
+  return (id === null ? undefined : codes.get(id)) ?? '?';
 }
