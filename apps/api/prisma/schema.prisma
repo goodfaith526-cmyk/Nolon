@@ -2718,14 +2718,14 @@ model QuotationDraft {
   idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
   /// sha256 of the normalised create request; a key reused with another request is refused.
   payloadHash           String           @map("payload_hash") @db.Char(64)
-  originLocationId      String           @map("origin_location_id") @db.Uuid
-  destinationLocationId String           @map("destination_location_id") @db.Uuid
-  mode                  ShippingMode
+  originLocationId      String?          @map("origin_location_id") @db.Uuid
+  destinationLocationId String?          @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode?
   loadType              LoadType?        @map("load_type")
-  cargoType             CargoType        @map("cargo_type")
+  cargoType             CargoType?       @map("cargo_type")
   cargoDescription      String?          @map("cargo_description") @db.VarChar(2000)
-  currency              String           @db.Char(3)
-  validUntil            DateTime         @map("valid_until") @db.Date
+  currency              String?          @db.Char(3)
+  validUntil            DateTime?        @map("valid_until") @db.Date
   terms                 String?          @db.VarChar(4000)
   decidedById           String?          @map("decided_by_id") @db.Uuid
   decidedAt             DateTime?        @map("decided_at") @db.Timestamptz(3)
@@ -2763,7 +2763,7 @@ model QuotationDraftLine {
   chargeTypeCode String?   @map("charge_type_code") @db.VarChar(20)
   description    String?   @db.VarChar(500)
   unit           RateUnit?
-  quantity       Decimal   @db.Decimal(18, 4)
+  quantity       Decimal?  @db.Decimal(18, 4)
   unitPrice      Decimal?  @map("unit_price") @db.Decimal(18, 4)
   discount       Decimal?  @db.Decimal(18, 4)
 
@@ -2841,17 +2841,17 @@ model BookingDraft {
  * One proposed cargo line of a booking draft.
  */
 model BookingDraftItem {
-  draftId           String    @map("draft_id") @db.Uuid
-  lineNo            Int       @map("line_no")
-  cargoType         CargoType @map("cargo_type")
-  containerTypeCode String?   @map("container_type_code") @db.VarChar(10)
-  description       String?   @db.VarChar(500)
-  quantity          Int
-  lengthCm          Decimal?  @map("length_cm") @db.Decimal(10, 2)
-  widthCm           Decimal?  @map("width_cm") @db.Decimal(10, 2)
-  heightCm          Decimal?  @map("height_cm") @db.Decimal(10, 2)
-  weightKg          Decimal?  @map("weight_kg") @db.Decimal(12, 3)
-  volumeCbm         Decimal?  @map("volume_cbm") @db.Decimal(12, 4)
+  draftId           String     @map("draft_id") @db.Uuid
+  lineNo            Int        @map("line_no")
+  cargoType         CargoType? @map("cargo_type")
+  containerTypeCode String?    @map("container_type_code") @db.VarChar(10)
+  description       String?    @db.VarChar(500)
+  quantity          Int?
+  lengthCm          Decimal?   @map("length_cm") @db.Decimal(10, 2)
+  widthCm           Decimal?   @map("width_cm") @db.Decimal(10, 2)
+  heightCm          Decimal?   @map("height_cm") @db.Decimal(10, 2)
+  weightKg          Decimal?   @map("weight_kg") @db.Decimal(12, 3)
+  volumeCbm         Decimal?   @map("volume_cbm") @db.Decimal(12, 4)
 
   draft BookingDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
@@ -2875,8 +2875,8 @@ model TripDraft {
   idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
   payloadHash           String           @map("payload_hash") @db.Char(64)
   kind                  TripKind
-  originLocationId      String           @map("origin_location_id") @db.Uuid
-  destinationLocationId String           @map("destination_location_id") @db.Uuid
+  originLocationId      String?          @map("origin_location_id") @db.Uuid
+  destinationLocationId String?          @map("destination_location_id") @db.Uuid
   plannedDeparture      DateTime?        @map("planned_departure") @db.Timestamptz(3)
   plannedArrival        DateTime?        @map("planned_arrival") @db.Timestamptz(3)
   vehicleId             String?          @map("vehicle_id") @db.Uuid
@@ -3300,18 +3300,18 @@ model RateCardDraft {
   payloadHash           String           @map("payload_hash") @db.Char(64)
   /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
   evidence              Json             @default("[]")
-  originLocationId      String           @map("origin_location_id") @db.Uuid
-  destinationLocationId String           @map("destination_location_id") @db.Uuid
-  mode                  ShippingMode
+  originLocationId      String?          @map("origin_location_id") @db.Uuid
+  destinationLocationId String?          @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode?
   loadType              LoadType?        @map("load_type")
-  cargoType             CargoType        @map("cargo_type")
+  cargoType             CargoType?       @map("cargo_type")
   containerTypeCode     String?          @map("container_type_code") @db.VarChar(10)
   chargeTypeCode        String?          @map("charge_type_code") @db.VarChar(20)
-  unit                  RateUnit
-  price                 Decimal          @db.Decimal(18, 4)
+  unit                  RateUnit?
+  price                 Decimal?         @db.Decimal(18, 4)
   minimumCharge         Decimal?         @map("minimum_charge") @db.Decimal(18, 4)
-  currency              String           @db.Char(3)
-  validFrom             DateTime         @map("valid_from") @db.Date
+  currency              String?          @db.Char(3)
+  validFrom             DateTime?        @map("valid_from") @db.Date
   validTo               DateTime?        @map("valid_to") @db.Date
   transitDays           Int?             @map("transit_days")
   notes                 String?          @db.VarChar(2000)
@@ -3330,8 +3330,8 @@ model RateCardDraft {
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin      Location    @relation("RateDraftOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination Location    @relation("RateDraftDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  origin      Location?   @relation("RateDraftOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location?   @relation("RateDraftDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
   rateCard    RateCard?   @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User        @relation("RateCardDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
