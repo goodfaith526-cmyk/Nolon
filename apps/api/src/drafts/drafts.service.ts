@@ -211,7 +211,8 @@ export class DraftsService {
  * The decision skeleton every draft type shares, inside one transaction: `lockParents` takes the
  * type's parent locks first (e.g. the shipment), then the draft row is locked. An approval of an
  * approved draft does nothing (returns false); otherwise the draft must be open at `version`,
- * `record` writes the entry through its own service and `mark` stores the decision.
+ * `gate` (an approval's completeness and validity gate, draft-completeness.ts) runs first on the
+ * row as locked, then `record` writes the entry through its own service.
  */
 export async function decideInTx(
   tx: Prisma.TransactionClient,
@@ -222,6 +223,7 @@ export async function decideInTx(
     label: string;
     approving: boolean;
     lockParents?: () => Promise<void>;
+    gate?: () => Promise<void>;
     record?: () => Promise<void>;
   },
 ): Promise<boolean> {
@@ -230,6 +232,7 @@ export async function decideInTx(
   if (!locked) throw new NotFoundException(`${capitalise(spec.label)} not found`);
   if (spec.approving && locked.state === 'APPROVED') return false;
   requireOpen(locked, spec.version, spec.label);
+  await spec.gate?.();
   await spec.record?.();
   return true;
 }

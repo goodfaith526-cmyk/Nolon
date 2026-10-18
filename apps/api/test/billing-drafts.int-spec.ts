@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
   AccountDto,
+  AssistantDraftDto,
   AgentClientCreatedDto,
   BookingDto,
   CustomerDto,
@@ -27,6 +28,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -53,6 +55,7 @@ const d = (monthDay: string) => `${year}-${monthDay}`;
 const cookies = { admin: '', financePts: '', financeJed: '', salesPts: '', opsPts: '' };
 const agentCookies = { financeAgent: '', salesAgent: '', financeJedAgent: '' };
 const tokens = { finance: '', sales: '', financeJed: '' };
+const agentIds = { financeAgent: '' };
 
 async function shipment(customerId = customer.id): Promise<string> {
   const loc = async (code: string) =>
@@ -167,6 +170,7 @@ beforeAll(async () => {
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
   }
+  agentIds.financeAgent = assistantUsers.financeAgent.id;
   client = await registerClient(t, cookies.admin, 'Billing draft platform');
   tokens.finance = await tokenFor(t, agentCookies.financeAgent, client);
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
@@ -208,6 +212,124 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await t.close();
+});
+
+// The approval gate (no-required-fields plan, 3.3): an incomplete or invalid draft is refused on
+// the review screen and in the assistant's chat, before anything is checked against the ledger,
+// and nothing live or financial is written; complete again, it approves once.
+describe('invoice and receipt drafts: the approval gate', () => {
+  const grant = (kinds: string[]) =>
+    r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, { kinds })
+      .expect(200);
+
+  it('refuses an invoice draft without lines on both paths, writing no invoice; then approves', async () => {
+    await grant(['invoice', 'receipt']);
+    const shipmentId = await shipment();
+    const draft = await invoiceDraft(invoiceRequest(shipmentId));
+    const lines = await t.prisma.invoiceDraftLine.findMany({ where: { draftId: draft.id } });
+    await t.prisma.invoiceDraftLine.deleteMany({ where: { draftId: draft.id } });
+
+    expectGateRefusal(
+      await r.post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 }),
+      ['lines'],
+    );
+    const card = (
+      await r.agentGet(`/invoice-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
+    ).body as AssistantDraftDto<InvoiceDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/invoice-drafts/${draft.id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      ['lines'],
+    );
+    // The usual refusals come first: another branch, no permission, an old version.
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.financeJed, { version: 1 })
+      .expect(404);
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.salesPts, { version: 1 })
+      .expect(403);
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 2 })
+      .expect(409);
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
+    expect(
+      await t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, invoiceId: null });
+
+    await t.prisma.invoiceDraftLine.createMany({ data: lines });
+    const approved = (
+      await r
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    const again = (
+      await r
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(again).toMatchObject({ status: 'APPROVED', invoiceId: approved.invoiceId });
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+  });
+
+  it('refuses a receipt draft holding an invalid currency on both paths, posting nothing', async () => {
+    await grant(['invoice', 'receipt']);
+    const invoice = await approvedInvoice('300');
+    const draft = await receiptDraft(
+      receiptRequest(invoice.id, {
+        amount: '100',
+        allocations: [{ invoiceId: invoice.id, amount: '100' }],
+      }),
+    );
+    await t.prisma.receiptDraft.update({ where: { id: draft.id }, data: { currency: 'usd' } });
+    const entries = await t.prisma.journalEntry.count();
+
+    expectGateRefusal(
+      await r.post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 }),
+      [],
+      ['currency'],
+    );
+    const card = (
+      await r.agentGet(`/receipt-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
+    ).body as AssistantDraftDto<ReceiptDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/receipt-drafts/${draft.id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      [],
+      ['currency'],
+    );
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financeJed, { version: 1 })
+      .expect(404);
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.salesPts, { version: 1 })
+      .expect(403);
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 2 })
+      .expect(409);
+    expect(await t.prisma.journalEntry.count()).toBe(entries);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(0);
+    expect(
+      await t.prisma.receiptDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, receiptId: null });
+
+    await t.prisma.receiptDraft.update({ where: { id: draft.id }, data: { currency: 'USD' } });
+    const approved = (
+      await r
+        .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as ReceiptDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+      .expect(200);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(1);
+  });
 });
 
 describe('invoice drafts: the assistant proposes', () => {

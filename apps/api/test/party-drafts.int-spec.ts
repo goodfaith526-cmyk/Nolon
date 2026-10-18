@@ -18,6 +18,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -271,6 +272,41 @@ describe('party drafts: a person reviews', () => {
         },
       }),
     ).rejects.toThrow(/decision_check/);
+  });
+});
+
+// The approval gate (no-required-fields plan, 3.3): a draft missing its name or holding a
+// malformed phone is refused before any check against live data, and no party is added.
+describe('party drafts: the approval gate', () => {
+  it('refuses a draft with a blank name and a bad phone, adding no party; then approves', async () => {
+    const customer = await newCustomer();
+    const draft = await partyDraft(partyRequest(customer.id));
+    await t.prisma.partyDraft.update({
+      where: { id: draft.id },
+      data: { name: '   ', phone: '0912000111' },
+    });
+    expectGateRefusal(
+      await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }),
+      ['name'],
+      ['phone'],
+    );
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesJed, { version: 1 }).expect(404);
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 }).expect(403);
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 2 }).expect(409);
+    expect(await partiesOf(customer.id)).toBe(0);
+    expect(await t.prisma.partyDraft.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
+      state: 'DRAFT',
+      version: 1,
+      partyId: null,
+    });
+
+    await t.prisma.partyDraft.update({
+      where: { id: draft.id },
+      data: { name: 'Omer Hassan', phone: '+249912000111' },
+    });
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }).expect(200);
+    await r.post(`/party-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }).expect(200);
+    expect(await partiesOf(customer.id)).toBe(1);
   });
 });
 

@@ -4,6 +4,7 @@ import type {
   AgentClientCreatedDto,
   AgentTokenResponse,
 } from '@nolon/shared';
+import { expect } from 'vitest';
 import { APP_ORIGIN, type TestApp } from './auth-test-app.js';
 
 // Shared by the entry draft integration tests: requests as a person (session cookie) and as the
@@ -84,4 +85,23 @@ export async function tokenFor(
     })
     .expect(200);
   return (res.body as AgentTokenResponse).accessToken;
+}
+
+/**
+ * An approval refused by the kind's completeness and validity gate (no-required-fields plan,
+ * 3.3): 422 DRAFT_INCOMPLETE naming what the draft misses and what it holds that is invalid.
+ */
+export function expectGateRefusal(
+  res: { status: number; body: unknown },
+  missing: string[],
+  invalid: string[] = [],
+): void {
+  expect(res.status).toBe(422);
+  expect(res.body).toMatchObject({
+    statusCode: 422,
+    code: 'DRAFT_INCOMPLETE',
+    missingFields: missing,
+    invalidFields: invalid,
+    fields: [...missing, ...invalid],
+  });
 }

@@ -31,12 +31,9 @@ import {
   draftExpiry,
   draftStatus,
   checkDraft,
-  linePath,
-  missingOf,
   patched,
   preCheck,
   requestHash,
-  requireComplete,
   storedValue,
   requireOpen,
   resolvedKey,
@@ -64,6 +61,7 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { quotationCompleteness, requireApprovable } from '../drafts/draft-completeness.js';
 import { QuotationsService } from './quotations.service.js';
 
 const LABEL = 'quotation draft';
@@ -79,6 +77,11 @@ const details = {
 } satisfies Prisma.QuotationDraftInclude;
 
 type DraftRow = Prisma.QuotationDraftGetPayload<{ include: typeof details }>;
+
+/** The draft as it stands inside a transaction that holds its row lock. */
+function lockedRow(tx: Prisma.TransactionClient, id: string): Promise<DraftRow> {
+  return tx.quotationDraft.findUniqueOrThrow({ where: { id }, include: details });
+}
 
 /** A create request's lines as stored: decimals as Decimal, absent values as null. */
 export function storedLines(input: QuotationInput) {
@@ -138,36 +141,12 @@ export function requestOf(d: DraftRow): QuotationDraftValues {
   };
 }
 
-/** The values a quotation requires (a quotation draft may miss them until a person fills them in). */
-const REQUIRED = [
-  'originLocationId',
-  'destinationLocationId',
-  'mode',
-  'cargoType',
-  'currency',
-  'validUntil',
-] as const;
-
 /**
- * What a quotation draft still misses before it can be approved, from a quotation's own rules
- * (quotations controller and QuotationsService.prepare): its required values, at least one line,
- * each line's quantity, and the charge type and unit of a line priced by hand (a unit price and no
- * rate card).
+ * What a quotation draft still misses before it can be approved: the approval gate's missing
+ * values (draft-completeness.ts), from a quotation's own rules.
  */
 export function quotationMissingFields(values: QuotationDraftValues): string[] {
-  const lines = values.lines.flatMap((line, i) => {
-    const manual = !line.rateCardId && line.unitPrice !== undefined && line.unitPrice !== null;
-    const fields: string[] = [];
-    if (line.quantity === null || line.quantity === undefined) fields.push('quantity');
-    if (manual && !line.chargeTypeCode) fields.push('chargeTypeCode');
-    if (manual && !line.unit) fields.push('unit');
-    return fields.map((field) => linePath('lines', i, field));
-  });
-  return [
-    ...missingOf(values, REQUIRED),
-    ...(values.lines.length === 0 ? ['lines'] : []),
-    ...lines,
-  ];
+  return quotationCompleteness(values).missing;
 }
 
 /** The quotation of a complete draft, in the shape QuotationsService takes. */
@@ -535,7 +514,7 @@ export class QuotationDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is recorded while the draft misses a value (422, naming each one).
     const values = requestOf(current);
-    requireComplete(quotationMissingFields(values));
+    requireApprovable(quotationCompleteness(values));
     // The request is the one at `version`; the lock below refuses if it changed since.
     const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
     // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
@@ -546,6 +525,8 @@ export class QuotationDraftsService {
       if (!locked) throw new NotFoundException('Quotation draft not found');
       if (locked.state === 'APPROVED') return;
       requireOpen(locked, version, LABEL);
+      // The gate again, on the row as locked: what is recorded is complete and valid.
+      requireApprovable(quotationCompleteness(requestOf(await lockedRow(tx, id))));
       const quotation = await this.quotations.insertInTx(tx, user, prepared);
       await tx.quotationDraft.update({
         where: { id },

@@ -22,10 +22,8 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
-  missingOf,
   patched,
   preCheck,
-  requireComplete,
   storedValue,
   rejectedFields,
   requestHash,
@@ -58,6 +56,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 import { forbidDriverOnly } from './trip-scope.js';
 import { TripsService } from './trips.service.js';
+import { requireApprovable, tripCompleteness } from '../drafts/draft-completeness.js';
 
 const LABEL = 'trip draft';
 
@@ -108,21 +107,11 @@ export function requestOf(d: DraftRow): TripDraftValues {
 }
 
 /**
- * What a trip draft still misses before it can be approved, from a trip's own rules (trips
- * service: prepareCreate and its kind shape): the route, at least one shipment, and what the
- * kind needs (an own trip its fleet vehicle and driver; an external one its carrier, agreed cost
- * and currency).
+ * What a trip draft still misses before it can be approved: the approval gate's missing values
+ * (draft-completeness.ts), from a trip's own rules.
  */
 export function tripMissingFields(values: TripDraftValues): string[] {
-  const kindNeeds =
-    values.kind === 'OWN'
-      ? missingOf(values, ['vehicleId', 'driverId'])
-      : missingOf(values, ['carrierId', 'agreedCost', 'currency']);
-  return [
-    ...missingOf(values, ['originLocationId', 'destinationLocationId']),
-    ...kindNeeds,
-    ...(values.shipmentIds.length === 0 ? ['shipmentIds'] : []),
-  ];
+  return tripCompleteness(values).missing;
 }
 
 /** The trip a complete draft proposes, in the shape TripsService takes. */
@@ -460,7 +449,7 @@ export class TripDraftsService {
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
     // Nothing is recorded while the draft misses a value (422, naming each one).
-    requireComplete(tripMissingFields(requestOf(current)));
+    requireApprovable(tripCompleteness(requestOf(current)));
     const prepared = await this.trips.prepareCreate(user, completeTrip(requestOf(current)));
     await this.prisma.$transaction(async (tx) => {
       let tripId = '';
@@ -470,6 +459,10 @@ export class TripDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.tripDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(tripCompleteness(requestOf(row)));
+        },
         record: async () => {
           tripId = await this.trips.insertInTx(tx, user, prepared);
         },

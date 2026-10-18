@@ -44,6 +44,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type Completeness,
+  partyCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 import { CustomersService } from './customers.service.js';
 
 const LABEL = 'party draft';
@@ -57,6 +62,11 @@ const details = {
 } satisfies Prisma.PartyDraftInclude;
 
 type DraftRow = Prisma.PartyDraftGetPayload<{ include: typeof details }>;
+
+/** A party draft's approval gate (draft-completeness.ts): its customer and the party. */
+export function partyDraftCompleteness(d: DraftRow): Completeness {
+  return partyCompleteness({ customerId: d.customerId, ...partyRequestOf(d) });
+}
 
 /** The party a stored draft proposes. */
 export function partyRequestOf(d: DraftRow): PartyDraftRequest {
@@ -255,6 +265,8 @@ export class PartyDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or recorded while the draft misses or holds an invalid value (422).
+    requireApprovable(partyDraftCompleteness(current));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     await this.customers.prepareAddParty(user, current.customerId);
@@ -268,6 +280,10 @@ export class PartyDraftsService {
         approving: true,
         lockParents: async () => {
           await this.customers.lockForPartyWrite(tx, current.customerId);
+        },
+        gate: async () => {
+          const row = await tx.partyDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(partyDraftCompleteness(row));
         },
         record: async () => {
           partyId = await this.customers.addPartyInTx(
