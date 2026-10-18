@@ -17,6 +17,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -404,6 +405,52 @@ describe("replacing a draft at the person's request", () => {
     ]);
     expect(racing.map((x) => x.status).sort()).toEqual([201, 409]);
     expect(await t.prisma.customerDraft.count({ where: { replacesDraftId: other.id } })).toBe(1);
+  });
+});
+
+// The approval gate (no-required-fields plan, 3.3): a draft holding a malformed value is refused
+// before any check against live data, and no customer is created; then it approves once.
+describe('customer drafts: the approval gate', () => {
+  it('refuses a draft holding a phone not in +E.164 form, creating no customer', async () => {
+    const draft = await customerDraft();
+    const phone = draft.request.phone;
+    await t.prisma.customerDraft.update({
+      where: { id: draft.id },
+      data: { phone: '0912345678' },
+    });
+    expectGateRefusal(
+      await r.post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 }),
+      [],
+      ['phone'],
+    );
+    await r
+      .post(`/customer-drafts/${draft.id}/approve`, cookies.salesJed, { version: 1 })
+      .expect(404);
+    await r
+      .post(`/customer-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(403);
+    await r
+      .post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 2 })
+      .expect(409);
+    expect(await t.prisma.customer.count({ where: { phone: '0912345678' } })).toBe(0);
+    expect(
+      await t.prisma.customerDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, customerId: null });
+
+    await t.prisma.customerDraft.update({
+      where: { id: draft.id },
+      data: { phone },
+    });
+    const approved = (
+      await r
+        .post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+        .expect(200)
+    ).body as CustomerDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r
+      .post(`/customer-drafts/${draft.id}/approve`, cookies.salesDxb, { version: 1 })
+      .expect(200);
+    expect(await t.prisma.customer.count({ where: { phone } })).toBe(1);
   });
 });
 

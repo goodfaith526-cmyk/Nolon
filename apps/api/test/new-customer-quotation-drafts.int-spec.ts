@@ -21,11 +21,13 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
+import type { Prisma } from '../src/generated/prisma/client.js';
 
 // Quotations for a new customer, proposed by the staff assistant in one request with the customer
 // (entry drafts). The assistant's users (agent-it-) create drafts; it- users approve them, which
@@ -672,6 +674,44 @@ describe('quotations for a new customer: a person reviews', () => {
         },
       }),
     ).rejects.toThrow(/new_customer_quotation_drafts_decision_check/);
+  });
+});
+
+// The approval gate (no-required-fields plan, 3.3), on both parts: the customer's details and
+// the quotation's values, before pricing or any live check; no customer, no quotation.
+describe('quotations for a new customer: the approval gate', () => {
+  it('refuses a quotation without lines and a customer with a bad phone; then approves once', async () => {
+    const summary = await created();
+    const stored = await t.prisma.newCustomerQuotationDraft.findUniqueOrThrow({
+      where: { id: summary.id },
+      include: { lines: true },
+    });
+    const customer = stored.customer as Prisma.InputJsonObject;
+    const phone = customer.phone as string;
+    await t.prisma.newCustomerQuotationDraftLine.deleteMany({ where: { draftId: summary.id } });
+    await t.prisma.newCustomerQuotationDraft.update({
+      where: { id: summary.id },
+      data: { customer: { ...customer, phone: '0912345678' } },
+    });
+    const approve = (cookie: string, version = 1) =>
+      r.post(`${API}/${summary.id}/approve`, cookie, { version, pricingKey: '0'.repeat(64) });
+    expectGateRefusal(await approve(cookies.salesDxb), ['quotation.lines'], ['customer.phone']);
+    await approve(cookies.salesJed).expect(404);
+    await approve(cookies.financeDxb).expect(403);
+    await approve(cookies.salesDxb, 2).expect(409);
+    expect(await customersWithPhone(phone)).toBe(0);
+    expect(
+      await t.prisma.newCustomerQuotationDraft.findUniqueOrThrow({ where: { id: summary.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, customerId: null, quotationId: null });
+
+    await t.prisma.newCustomerQuotationDraftLine.createMany({ data: stored.lines });
+    await t.prisma.newCustomerQuotationDraft.update({
+      where: { id: summary.id },
+      data: { customer },
+    });
+    await approveAsReviewed(summary.id, 200);
+    await approveAsReviewed(summary.id, 200);
+    expect(await customersWithPhone(phone)).toBe(1);
   });
 });
 

@@ -24,11 +24,9 @@ import {
   checkDraft,
   draftExpiry,
   draftStatus,
-  missingOf,
   patched,
   preCheck,
   rejectedFields,
-  requireComplete,
   sameStoredValue,
   storedValue,
   requestHash,
@@ -56,6 +54,7 @@ import {
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RatesService } from './rates.service.js';
+import { rateCardCompleteness, requireApprovable } from '../drafts/draft-completeness.js';
 
 const LABEL = 'rate card draft';
 const ASSISTANT_ONLY = 'Rate card drafts are proposed by the assistant';
@@ -95,28 +94,12 @@ export function rateRequestOf(d: DraftRow): RateCardDraftRequest {
   };
 }
 
-/** The values a rate requires (a rate card draft may miss them until a person fills them in). */
-const REQUIRED = [
-  'originLocationId',
-  'destinationLocationId',
-  'mode',
-  'cargoType',
-  'unit',
-  'price',
-  'currency',
-  'validFrom',
-] as const;
-
 /**
- * What a rate card draft still misses before it can be approved, from a rate's own rules
- * (rate-schemas and RatesService.ruleChecker): its required values, and the container type a
- * container rate needs.
+ * What a rate card draft still misses before it can be approved: the approval gate's missing
+ * values (draft-completeness.ts), from a rate's own rules.
  */
 export function rateMissingFields(input: RateCardDraftRequest): string[] {
-  return [
-    ...missingOf(input, REQUIRED),
-    ...(input.cargoType === 'CONTAINER' && !input.containerTypeCode ? ['containerTypeCode'] : []),
-  ];
+  return rateCardCompleteness(input).missing;
 }
 
 /** The rate of a complete draft, in the shape RatesService takes. */
@@ -433,7 +416,7 @@ export class RateCardDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is recorded while the draft misses a value (422, naming each one).
     const values = rateRequestOf(current);
-    requireComplete(rateMissingFields(values));
+    requireApprovable(rateCardCompleteness(values));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     const request = createRequestOf(current.branchId, completeRate(values));
@@ -446,6 +429,10 @@ export class RateCardDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.rateCardDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(rateCardCompleteness(rateRequestOf(row)));
+        },
         record: async () => {
           rateCardId = (await this.rates.createInTx(tx, user, request)).id;
         },

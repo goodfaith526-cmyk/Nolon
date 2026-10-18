@@ -19,11 +19,13 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
+import type { Prisma } from '../src/generated/prisma/client.js';
 
 // Bookings for a new customer, proposed by the staff assistant in one request with the customer
 // (entry drafts). The assistant's users (agent-it-) create drafts; it- users approve them, so the
@@ -455,6 +457,55 @@ describe('bookings for a new customer: a person reviews', () => {
         },
       }),
     ).rejects.toThrow(/new_customer_booking_drafts_decision_check/);
+  });
+});
+
+// The approval gate (no-required-fields plan, 3.3), on both parts: the customer draft's details
+// and the booking's values, before the customer's own status or any live check; nothing booked.
+describe('bookings for a new customer: the approval gate', () => {
+  it('refuses a booking without services and a customer with a bad phone; then books once', async () => {
+    const summary = await created();
+    const stored = await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({
+      where: { id: summary.id },
+    });
+    const customer = await t.prisma.customerDraft.findUniqueOrThrow({
+      where: { id: summary.customerDraftId },
+    });
+    const booking = stored.request as Prisma.InputJsonObject;
+    await t.prisma.newCustomerBookingDraft.update({
+      where: { id: summary.id },
+      data: { request: { ...booking, services: [] } },
+    });
+    await t.prisma.customerDraft.update({
+      where: { id: customer.id },
+      data: { phone: '0912345678' },
+    });
+    // The gate comes before "approve the new customer first".
+    expectGateRefusal(await approve(summary.id), ['booking.services'], ['customer.phone']);
+    await approve(summary.id, cookies.salesJed).expect(404);
+    await approve(summary.id, cookies.financeDxb).expect(403);
+    await approve(summary.id, cookies.salesDxb, { version: 2 }).expect(409);
+
+    await t.prisma.customerDraft.update({
+      where: { id: customer.id },
+      data: { phone: customer.phone },
+    });
+    await approveCustomer(summary.customerDraftId).expect(200);
+    expectGateRefusal(await approve(summary.id), ['booking.services']);
+    const { customerId } = (await read(summary.id)).customer;
+    if (customerId === null) throw new Error('The customer was not created');
+    expect(await t.prisma.booking.count({ where: { customerId } })).toBe(0);
+    expect(
+      await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id: summary.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, bookingId: null });
+
+    await t.prisma.newCustomerBookingDraft.update({
+      where: { id: summary.id },
+      data: { request: booking },
+    });
+    await approve(summary.id).expect(200);
+    await approve(summary.id).expect(200);
+    expect(await t.prisma.booking.count({ where: { customerId } })).toBe(1);
   });
 });
 

@@ -43,6 +43,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type Completeness,
+  requireApprovable,
+  shipmentStatusCompleteness,
+} from '../drafts/draft-completeness.js';
 import { ShipmentsService } from './shipments.service.js';
 import { permissionForTransition } from './state-machine.js';
 
@@ -58,6 +63,11 @@ const details = {
 } satisfies Prisma.ShipmentStatusDraftInclude;
 
 type DraftRow = Prisma.ShipmentStatusDraftGetPayload<{ include: typeof details }>;
+
+/** A shipment status draft's approval gate (draft-completeness.ts): its shipment and status. */
+export function statusDraftCompleteness(d: DraftRow): Completeness {
+  return shipmentStatusCompleteness({ shipmentId: d.shipmentId, status: d.status });
+}
 
 export function statusRequestOf(d: DraftRow): ShipmentStatusDraftRequest {
   return { status: d.status, locationId: d.locationId, note: d.note };
@@ -261,6 +271,8 @@ export class ShipmentStatusDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or applied while the draft misses or holds an invalid value (422).
+    requireApprovable(statusDraftCompleteness(current));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     const request = statusRequestOf(current);
@@ -274,6 +286,13 @@ export class ShipmentStatusDraftsService {
         approving: true,
         lockParents: async () => {
           await this.shipments.lockForChildWrite(tx, current.shipmentId, { exclusive: true });
+        },
+        gate: async () => {
+          const row = await tx.shipmentStatusDraft.findUniqueOrThrow({
+            where: { id },
+            include: details,
+          });
+          requireApprovable(statusDraftCompleteness(row));
         },
         record: async () => {
           await this.shipments.changeStatusInTx(tx, user, current.shipmentId, request);

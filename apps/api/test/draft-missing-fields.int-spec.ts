@@ -899,3 +899,139 @@ describe('booking drafts with missing values', () => {
     });
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// The approval gate on a draft still missing values (no-required-fields plan, 3.3)
+// -------------------------------------------------------------------------------------------
+
+describe('the approval gate on drafts still missing values', () => {
+  it('a trip: the usual refusals first, then 422 on both paths, and no trip', async () => {
+    await r
+      .put(`/users/${ids.opsAgent}/assistant-approvals`, cookies.admin, { kinds: ['trip'] })
+      .expect(200);
+    const { id } = summary(
+      await r
+        .agentPost('/trip-drafts', tokens.ops, {
+          idempotencyKey: draftKey(),
+          branchId: dxb,
+          kind: 'OWN',
+        })
+        .expect(201),
+    );
+    const trips = await t.prisma.trip.count();
+    const approve = (cookie: string, version = 1) =>
+      r.post(`/trip-drafts/${id}/approve`, cookie, { version });
+    await approve(cookies.opsJed).expect(404);
+    await approve(cookies.salesDxb).expect(403);
+    await approve(cookies.opsDxb, 2).expect(409);
+    expectIncomplete(await approve(cookies.opsDxb), TRIP_MISSING);
+    const card = (await r.agentGet(`/trip-drafts/${id}/assistant`, tokens.ops).expect(200))
+      .body as AssistantDraftDto<TripDraftDto>;
+    expectIncomplete(
+      await r.agentPost(`/trip-drafts/${id}/assistant-approve`, tokens.ops, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      TRIP_MISSING,
+    );
+    expect(await t.prisma.trip.count()).toBe(trips);
+    expect(await t.prisma.tripDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      state: 'DRAFT',
+      version: 1,
+      tripId: null,
+    });
+  });
+
+  it('a rate card: the usual refusals first, then 422, and no rate card', async () => {
+    const { id } = summary(
+      await r
+        .agentPost('/rate-card-drafts', tokens.sales, { idempotencyKey: draftKey(), branchId: dxb })
+        .expect(201),
+    );
+    const rates = await t.prisma.rateCard.count();
+    const approve = (cookie: string, version = 1) =>
+      r.post(`/rate-card-drafts/${id}/approve`, cookie, { version });
+    await approve(cookies.salesJed).expect(404);
+    await approve(cookies.opsDxb).expect(403);
+    await approve(cookies.salesDxb, 2).expect(409);
+    expectIncomplete(await approve(cookies.salesDxb), RATE_MISSING);
+    expect(await t.prisma.rateCard.count()).toBe(rates);
+    expect(await t.prisma.rateCardDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      state: 'DRAFT',
+      version: 1,
+      rateCardId: null,
+    });
+  });
+
+  it('a quotation: the usual refusals first, then 422 on both paths, and no quotation', async () => {
+    await r
+      .put(`/users/${ids.salesAgent}/assistant-approvals`, cookies.admin, { kinds: ['quotation'] })
+      .expect(200);
+    const { id } = summary(
+      await r
+        .agentPost('/quotation-drafts', tokens.sales, {
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+        })
+        .expect(201),
+    );
+    const quotations = await t.prisma.quotation.count({ where: { customerId: customer.id } });
+    const approve = (cookie: string, version = 1) =>
+      r.post(`/quotation-drafts/${id}/approve`, cookie, { version, pricingKey: '0'.repeat(64) });
+    await approve(cookies.salesJed).expect(404);
+    await approve(cookies.opsDxb).expect(403);
+    await approve(cookies.salesDxb, 2).expect(409);
+    expectIncomplete(await approve(cookies.salesDxb), QUOTATION_MISSING);
+    const card = (await r.agentGet(`/quotation-drafts/${id}/assistant`, tokens.sales).expect(200))
+      .body as AssistantDraftDto<QuotationDraftDto>;
+    expectIncomplete(
+      await r.agentPost(`/quotation-drafts/${id}/assistant-approve`, tokens.sales, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      QUOTATION_MISSING,
+    );
+    expect(await t.prisma.quotation.count({ where: { customerId: customer.id } })).toBe(quotations);
+    expect(await t.prisma.quotationDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      state: 'DRAFT',
+      version: 1,
+      quotationId: null,
+    });
+  });
+
+  it('a booking: the usual refusals first, then 422 on both paths, and no booking', async () => {
+    await r
+      .put(`/users/${ids.opsAgent}/assistant-approvals`, cookies.admin, { kinds: ['booking'] })
+      .expect(200);
+    const { id } = summary(
+      await r
+        .agentPost('/booking-drafts', tokens.ops, {
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+        })
+        .expect(201),
+    );
+    const bookings = await t.prisma.booking.count({ where: { customerId: customer.id } });
+    const approve = (cookie: string, version = 1) =>
+      r.post(`/booking-drafts/${id}/approve`, cookie, { version });
+    await approve(cookies.opsJed).expect(404);
+    await approve(cookies.whDxb).expect(403);
+    await approve(cookies.opsDxb, 2).expect(409);
+    expectIncomplete(await approve(cookies.opsDxb), BOOKING_MISSING);
+    const card = (await r.agentGet(`/booking-drafts/${id}/assistant`, tokens.ops).expect(200))
+      .body as AssistantDraftDto<BookingDraftDto>;
+    expectIncomplete(
+      await r.agentPost(`/booking-drafts/${id}/assistant-approve`, tokens.ops, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      BOOKING_MISSING,
+    );
+    expect(await t.prisma.booking.count({ where: { customerId: customer.id } })).toBe(bookings);
+    expect(await t.prisma.bookingDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      state: 'DRAFT',
+      version: 1,
+      bookingId: null,
+    });
+  });
+});

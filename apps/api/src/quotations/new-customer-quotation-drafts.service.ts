@@ -63,6 +63,11 @@ import {
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
+  type Completeness,
+  newCustomerQuotationCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
+import {
   normalisedQuotation,
   pricingOf,
   quotationInputOf,
@@ -88,6 +93,17 @@ const details = {
 type DraftRow = Prisma.NewCustomerQuotationDraftGetPayload<{ include: typeof details }>;
 
 type PreparedQuotation = Awaited<ReturnType<QuotationsService['prepareForNewCustomer']>>;
+
+/**
+ * A new customer quotation draft's approval gate (draft-completeness.ts), on both parts: the
+ * customer (`customer.name`...) and the quotation (`quotation.currency`...).
+ */
+export function newCustomerQuotationDraftCompleteness(d: DraftRow): Completeness {
+  return newCustomerQuotationCompleteness({
+    customer: customerOf(d),
+    quotation: quotationInputOf(d),
+  });
+}
 
 const CUSTOMER_FIELDS: readonly string[] = NEW_CUSTOMER_QUOTATION_CUSTOMER_FIELDS;
 
@@ -420,6 +436,9 @@ export class NewCustomerQuotationDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked, priced or recorded while the customer or the quotation misses or holds
+    // an invalid value (422).
+    requireApprovable(newCustomerQuotationDraftCompleteness(current));
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     const customer = createRequestOf(current.branchId, customerOf(current));
     // The request is the one at `version`; the lock below refuses if it changed since.
@@ -441,6 +460,13 @@ export class NewCustomerQuotationDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.newCustomerQuotationDraft.findUniqueOrThrow({
+            where: { id },
+            include: details,
+          });
+          requireApprovable(newCustomerQuotationDraftCompleteness(row));
+        },
         record: async () => {
           // Under the branch's customer lock: a phone taken since the create is a 409 here.
           customerId = (await this.customers.createInTx(tx, user, customer)).id;
