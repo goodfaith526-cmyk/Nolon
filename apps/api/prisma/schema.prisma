@@ -394,6 +394,10 @@ model ChargeType {
   nameEn    String   @map("name_en")
   nameAr    String   @map("name_ar")
   isActive  Boolean  @default(true) @map("is_active")
+  /// The booking service this charge belongs to, when it belongs to one (FREIGHT to
+  /// MAIN_FREIGHT). An invoice suggestion fills a rate-card line only for a charge whose service
+  /// the shipment has; with no service, the line is only offered.
+  service   BookingService?
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   rates          RateCard[]

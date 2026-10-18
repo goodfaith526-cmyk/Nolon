@@ -56,9 +56,14 @@ describe('pre-checks the staff assistant may call', () => {
 
   it("are each a POST 'check' with the create's permissions, calling only checkValues", () => {
     for (const { file, text } of controllers()) {
-      const checks = marked(text, '@AgentDraftCheckable()');
-      if (checks.length === 0) continue;
+      const marks = marked(text, '@AgentDraftCheckable()');
+      if (marks.length === 0) continue;
+      // Invoice drafts also open their suggestion (read-only), checked below.
+      const checks = marks.filter((m) => !/@Post\('suggest'\)/.test(m));
       expect(checks, file).toHaveLength(1);
+      expect(marks.length - checks.length, file).toBe(
+        file === join('billing', 'invoice-drafts.controller.ts') ? 1 : 0,
+      );
       const check = checks[0]!;
       const [create] = marked(text, '@AgentDraftWritable()');
       expect(check, file).toMatch(
@@ -69,5 +74,17 @@ describe('pre-checks the staff assistant may call', () => {
       expect(check, file).toMatch(/this\.drafts\.checkValues\(user, (shipmentId, )?input\)/);
       expect(check.match(/this\.drafts\.\w+/g), file).toEqual(['this.drafts.checkValues']);
     }
+  });
+
+  it("opens the invoice suggestion as a POST 'suggest' with the create's permission, calling only suggest", () => {
+    const file = join('billing', 'invoice-drafts.controller.ts');
+    const text = readFileSync(join(SRC, file), 'utf8');
+    const suggest = marked(text, '@AgentDraftCheckable()').find((m) =>
+      /@Post\('suggest'\)/.test(m),
+    );
+    expect(suggest).toMatch(
+      /^@AgentDraftCheckable\(\)\n\s*@Post\('suggest'\)\n\s*@HttpCode\(HttpStatus\.OK\)\n\s*@RequirePermission\('customer_invoices:create'\)\n\s*suggest\(/,
+    );
+    expect(suggest?.match(/this\.drafts\.\w+/g)).toEqual(['this.drafts.suggest']);
   });
 });

@@ -13,6 +13,8 @@ import type {
   InvoiceDraftListItemDto,
   InvoiceDraftRequest,
   InvoiceDraftUpdateRequest,
+  InvoiceSuggestRequest,
+  InvoiceSuggestionDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
@@ -239,7 +241,9 @@ export class InvoiceDraftsService {
         }).missing;
         return { total: null, currency: null, missingFields };
       }
-      const prepared = await this.invoices.prepareForShipment(user, ready.shipmentId, ready);
+      const prepared = await this.invoices.prepareForShipment(user, ready.shipmentId, ready, {
+        everyLine: true,
+      });
       draftBranch(user, branchId, prepared.branchId);
       return {
         total: toDecimalString(prepared.total),
@@ -263,6 +267,11 @@ export class InvoiceDraftsService {
         missingFields: [],
       };
     });
+  }
+
+  /** POST /invoice-drafts/suggest: the invoice NOLON derives for a shipment; nothing is written. */
+  suggest(user: AuthUser, input: InvoiceSuggestRequest): Promise<InvoiceSuggestionDto> {
+    return this.invoices.suggestForShipment(user, input);
   }
 
   /**

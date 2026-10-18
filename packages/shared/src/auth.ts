@@ -207,6 +207,8 @@ export interface AuthMeResponse {
     nameAr: string;
     timezone: string;
     today: string;
+    /** The branch's default currency (ISO 4217), from the currencies master. */
+    defaultCurrency: string;
   }[];
   /**
    * The staff AI assistant's address, or null when none is configured. The assistant reads only
