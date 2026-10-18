@@ -21,6 +21,7 @@ import {
   registerClient,
   requests,
   revokedBeforeTransaction,
+  roleRevokedBeforeTransaction,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
@@ -649,4 +650,47 @@ describe('customer drafts when the branch is revoked before the write', () => {
       .patch(`/customer-drafts/${saved.id}`, cookie, { version: 1, name: 'Changed' })
       .expect(200);
   });
+});
+
+// An every-branch role is read again inside the write's transaction too (Codex P88-1): a user
+// whose Management or Administrator role is removed after the request loaded it, holding no
+// membership of the branch, is refused the save and the edit (403), and nothing is written.
+describe('customer drafts when an every-branch role is revoked before the write', () => {
+  for (const role of ['MANAGEMENT', 'ADMINISTRATOR'] as const) {
+    it(`refuses the save and the edit once ${role} is gone`, async () => {
+      const agent = await createUser(t.prisma, ['SALES', role], [], AGENT_PREFIX);
+      const token = await tokenFor(t, await signIn(t, agent.email), client);
+      const person = await createUser(t.prisma, ['SALES', role], []);
+      const cookie = await signIn(t, person.email);
+
+      const key = draftKey();
+      const save = await roleRevokedBeforeTransaction(
+        t,
+        '/customer-drafts.service',
+        { userId: agent.id, role },
+        () => createDraft({ idempotencyKey: key, branchId: dxb, name: 'Role Gone' }, token),
+      );
+      expect(save.revoked).toBe(true);
+      expect(save.result.status).toBe(403);
+      expect(await t.prisma.customerDraft.count({ where: { idempotencyKey: key } })).toBe(0);
+
+      const { id } = (
+        await createDraft({ idempotencyKey: draftKey(), branchId: dxb }, token).expect(201)
+      ).body as EntryDraftSummaryDto;
+      const edit = await roleRevokedBeforeTransaction(
+        t,
+        '/customer-drafts.service',
+        { userId: person.id, role },
+        () => r.patch(`/customer-drafts/${id}`, cookie, { version: 1, name: 'Changed' }),
+      );
+      expect(edit.revoked).toBe(true);
+      expect(edit.result.status).toBe(403);
+      expect(await t.prisma.customerDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+        version: 1,
+        name: null,
+      });
+      // With the role held again, the same edit goes through.
+      await r.patch(`/customer-drafts/${id}`, cookie, { version: 1, name: 'Changed' }).expect(200);
+    });
+  }
 });

@@ -17,28 +17,49 @@ const user: AuthUser = {
   allowedBranchIds: ['dxb'],
 };
 
-function txReturning(rows: unknown[]) {
-  const queryRaw = vi.fn().mockResolvedValue(rows);
+/** A transaction whose raw queries answer `roles`, then `memberships`. */
+function tx(roles: string[], memberships: unknown[]) {
+  const queryRaw = vi
+    .fn()
+    .mockResolvedValueOnce(roles.map((role) => ({ role })))
+    .mockResolvedValueOnce(memberships);
   return { tx: { $queryRaw: queryRaw } as unknown as Prisma.TransactionClient, queryRaw };
 }
 
+const sqlOf = (queryRaw: ReturnType<typeof vi.fn>, call: number) =>
+  (queryRaw.mock.calls[call]?.[0] as readonly string[]).join('?');
+
 describe('the final branch check inside a write transaction', () => {
-  it('passes while the membership row is stored, and locks it', async () => {
-    const { tx, queryRaw } = txReturning([{ held: 1 }]);
-    await requireBranchMemberInTx(tx, user, 'dxb');
-    const sql = (queryRaw.mock.calls[0]?.[0] as readonly string[]).join('?');
-    expect(sql).toContain('"user_branches"');
-    expect(sql).toContain('FOR SHARE');
+  it('locks the roles, then the membership row, and passes while it is stored', async () => {
+    const { tx: t, queryRaw } = tx(['SALES'], [{ held: 1 }]);
+    await requireBranchMemberInTx(t, user, 'dxb');
+    expect(sqlOf(queryRaw, 0)).toContain('"user_roles"');
+    expect(sqlOf(queryRaw, 0)).toContain('FOR SHARE');
+    expect(sqlOf(queryRaw, 1)).toContain('"user_branches"');
+    expect(sqlOf(queryRaw, 1)).toContain('FOR SHARE');
   });
 
   it('refuses (403) once the membership is gone, whatever the request loaded', async () => {
-    const { tx } = txReturning([]);
-    await expect(requireBranchMemberInTx(tx, user, 'dxb')).rejects.toThrow(ForbiddenException);
+    const { tx: t } = tx(['SALES'], []);
+    await expect(requireBranchMemberInTx(t, user, 'dxb')).rejects.toThrow(ForbiddenException);
   });
 
-  it('leaves every-branch roles as their request loaded them', async () => {
-    const { tx, queryRaw } = txReturning([]);
-    await requireBranchMemberInTx(tx, { ...user, allBranches: true }, 'dxb');
-    expect(queryRaw).not.toHaveBeenCalled();
+  it('passes on an every-branch role still stored, without a membership', async () => {
+    for (const role of ['ADMINISTRATOR', 'MANAGEMENT']) {
+      const { tx: t, queryRaw } = tx(['SALES', role], []);
+      await requireBranchMemberInTx(t, { ...user, allowedBranchIds: [] }, 'dxb');
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('never trusts the request’s every-branch flag: a removed role falls to the membership', async () => {
+    const { tx: t } = tx(['SALES'], []);
+    await expect(
+      requireBranchMemberInTx(
+        t,
+        { ...user, roles: ['SALES', 'MANAGEMENT'], allBranches: true },
+        'dxb',
+      ),
+    ).rejects.toThrow(ForbiddenException);
   });
 });
