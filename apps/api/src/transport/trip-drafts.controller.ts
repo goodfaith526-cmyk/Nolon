@@ -38,11 +38,13 @@ import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 /**
- * A trip draft's values: a trip's (tripBody), each checked the same way when given, with only the
- * branch and the kind required (owner decision, 2026-10-17). The rest is filled in on review.
+ * A trip draft's values: a trip's (tripBody), each checked the same way when given, none of them
+ * required (owner decision, 2026-10-17). The branch is security context, always named (one of the
+ * user's). The rest, the kind included, is filled in on review.
  */
 const draftValues = {
   ...tripBody.shape,
+  kind: tripBody.shape.kind.nullish(),
   originLocationId: z.uuid().nullish(),
   destinationLocationId: z.uuid().nullish(),
   shipmentIds: z.array(z.uuid()).max(MAX_TRIP_SHIPMENTS),

@@ -36,7 +36,7 @@ export function QuotationDraftReview({ id }: { id: string }) {
     <DraftFrame
       draft={draft}
       apiPath="/quotation-drafts"
-      title={t('quotationTitle', { customer: draft.customerName })}
+      title={t('quotationTitle', { customer: draft.customerName ?? '—' })}
       approveHint={
         systemPriced
           ? `${t('quotationApproveHint')} ${t('systemPriceHint')}`

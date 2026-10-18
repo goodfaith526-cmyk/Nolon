@@ -339,7 +339,7 @@ describe('invoice drafts: the assistant proposes', () => {
     const body = res.body as EntryDraftSummaryDto;
     expect(body).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(Object.keys(body).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(JSON.stringify(body)).not.toContain('Freight Port Sudan');
     expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
@@ -380,7 +380,10 @@ describe('invoice drafts: the assistant proposes', () => {
     // The assistant gives no fx rate (the table's is used), and no status.
     await createInvoiceDraft(invoiceRequest(shipmentId, { fxRate: '1' })).expect(400);
     await createInvoiceDraft({ ...invoiceRequest(shipmentId), status: 'APPROVED' }).expect(400);
-    await createInvoiceDraft(invoiceRequest(shipmentId, { lines: [] })).expect(400);
+    // A draft may be saved without lines (filled in on review), never with a malformed one.
+    await createInvoiceDraft(
+      invoiceRequest(shipmentId, { lines: [{ chargeTypeCode: 'FREIGHT', quantity: 'two' }] }),
+    ).expect(400);
     expect(await t.prisma.invoiceDraft.count()).toBe(before);
   });
 
@@ -408,7 +411,7 @@ describe('invoice drafts: a person reviews', () => {
     expect(draft.check).toEqual({ ok: true, total: '201.01', currency: 'USD' });
     expect(draft).toMatchObject({
       customerId: customer.id,
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
     });
     expect(draft.request.lines[0]).toMatchObject({ quantity: '2', unitPrice: '100.505' });
     const list = (await r.get('/invoice-drafts?status=DRAFT', cookies.financePts).expect(200))
@@ -566,7 +569,7 @@ describe('receipt drafts', () => {
       cashAccountCode: cashUsd.code,
       invoiceNumbers: [invoice.number],
       check: { ok: true, total: '200', currency: 'USD' },
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
     });
     const list = (await r.get('/receipt-drafts?status=DRAFT', cookies.financePts).expect(200))
       .body as ReceiptDraftListItemDto[];
@@ -760,5 +763,209 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
       receiptRequest(second.id, { allocations: [{ invoiceId: second.id, amount: '300.01' }] }),
     ).expect(400);
     expect(await t.prisma.receiptDraft.count()).toBe(before);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): an invoice or receipt
+// draft may name only its branch (security context); a person fills in the rest (PATCH), and
+// approving is refused (422) on both paths while anything is missing, writing no invoice and
+// posting no entry.
+describe('invoice drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/invoice-drafts/${id}`, cookie).expect(200)).body as InvoiceDraftDto;
+
+  it('saves a draft naming only its branch, and reads it back with nulls', async () => {
+    const empty = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual([
+      'shipmentId',
+      'customerId',
+      'currency',
+      'invoiceDate',
+      'dueDate',
+      'lines',
+    ]);
+    expect(await read(empty.id)).toMatchObject({
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { shipmentId: null, currency: null, invoiceDate: null, dueDate: null, lines: [] },
+    });
+    const list = (await r.get('/invoice-drafts?status=DRAFT', cookies.financePts).expect(200))
+      .body as InvoiceDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(empty.id);
+    await r.get(`/invoice-drafts/${empty.id}`, cookies.financeJed).expect(404);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipmentId = await shipment();
+    const before = await t.prisma.invoiceDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createInvoiceDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ shipmentId, branchId: jed }, 400)).code).toBe('BRANCH_MISMATCH');
+    await refused({ branchId: pts, invoiceDate: 'soon' }, 400);
+    expect(await t.prisma.invoiceDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval on both paths while values are missing, then approves once filled in', async () => {
+    await r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
+        kinds: ['invoice', 'receipt'],
+      })
+      .expect(200);
+    const shipmentId = await shipment();
+    const { id } = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), shipmentId }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const missing = ['currency', 'invoiceDate', 'dueDate', 'lines'];
+    expectGateRefusal(
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 1 }),
+      missing,
+    );
+    const card = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+    expect(card.draft.missingFields).toEqual(missing);
+    expectGateRefusal(
+      await r.agentPost(`/invoice-drafts/${id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      missing,
+    );
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
+
+    const edit = (cookie: string, body: object) => r.patch(`/invoice-drafts/${id}`, cookie, body);
+    await edit(cookies.financeJed, { version: 1, currency: 'USD' }).expect(404);
+    await edit(cookies.salesPts, { version: 1, currency: 'USD' }).expect(403);
+    await r
+      .agentPatch(`/invoice-drafts/${id}`, tokens.finance, { version: 1, currency: 'USD' })
+      .expect(403);
+    await edit(cookies.financePts, { version: 2, currency: 'USD' }).expect(409);
+    await edit(cookies.financePts, { version: 1, dueDate: 'later' }).expect(400);
+    const filled = (
+      await edit(cookies.financePts, {
+        version: 1,
+        currency: 'USD',
+        invoiceDate: d('05-01'),
+        dueDate: d('05-31'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '250' }],
+      }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    const again = (
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(again.invoiceId).toBe(approved.invoiceId);
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+  });
+});
+
+describe('receipt drafts saved with missing values', () => {
+  const MISSING = ['customerId', 'receiptDate', 'currency', 'amount', 'cashAccountId'];
+  const read = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/receipt-drafts/${id}`, cookie).expect(200)).body as ReceiptDraftDto;
+
+  it('saves a draft naming only its branch, and reads it back with nulls', async () => {
+    const empty = (
+      await createReceiptDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(MISSING);
+    expect(await read(empty.id)).toMatchObject({
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { customerId: null, amount: null, cashAccountId: null, allocations: [] },
+    });
+    const list = (await r.get('/receipt-drafts?status=DRAFT', cookies.financePts).expect(200))
+      .body as ReceiptDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(empty.id);
+    await r.get(`/receipt-drafts/${empty.id}`, cookies.financeJed).expect(404);
+
+    const partial = (
+      await createReceiptDraft({
+        idempotencyKey: draftKey(),
+        customerId: customer.id,
+        amount: '50',
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['receiptDate', 'currency', 'cashAccountId']);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.receiptDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createReceiptDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
+      'BRANCH_MISMATCH',
+    );
+    await refused({ branchId: pts, amount: 'lots' }, 400);
+    expect(await t.prisma.receiptDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval on both paths while values are missing, then approves once filled in', async () => {
+    await r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
+        kinds: ['invoice', 'receipt'],
+      })
+      .expect(200);
+    const invoice = await approvedInvoice('300');
+    const { id } = (
+      await createReceiptDraft({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const missing = MISSING.slice(1);
+    const entries = await t.prisma.journalEntry.count();
+    expectGateRefusal(
+      await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 1 }),
+      missing,
+    );
+    const card = (await r.agentGet(`/receipt-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<ReceiptDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/receipt-drafts/${id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      missing,
+    );
+    expect(await t.prisma.journalEntry.count()).toBe(entries);
+
+    const edit = (cookie: string, body: object) => r.patch(`/receipt-drafts/${id}`, cookie, body);
+    await edit(cookies.financeJed, { version: 1, amount: '100' }).expect(404);
+    await edit(cookies.opsPts, { version: 1, amount: '100' }).expect(403);
+    await r
+      .agentPatch(`/receipt-drafts/${id}`, tokens.finance, { version: 1, amount: '100' })
+      .expect(403);
+    await edit(cookies.financePts, { version: 2, amount: '100' }).expect(409);
+    await edit(cookies.financePts, { version: 1, amount: 'lots' }).expect(400);
+    const filled = (
+      await edit(cookies.financePts, {
+        version: 1,
+        receiptDate: d('04-02'),
+        currency: 'USD',
+        amount: '100',
+        cashAccountId: cashUsd.id,
+        allocations: [{ invoiceId: invoice.id, amount: '100' }],
+      }).expect(200)
+    ).body as ReceiptDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as ReceiptDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(1);
   });
 });

@@ -3,6 +3,7 @@ import {
   RECEIPT_OPEN_INVOICES_MAX,
   type AssistantDraftApproveRequest,
   type AssistantDraftDto,
+  type CreateReceiptRequest,
   type DraftPreCheckDto,
   type DraftStatus,
   type EntryDraftCheck,
@@ -11,27 +12,33 @@ import {
   type ReceiptDraftDto,
   type ReceiptDraftListItemDto,
   type ReceiptDraftRequest,
+  type ReceiptDraftUpdateRequest,
   type ReceiptCashAccountDto,
   type ReceiptOpenInvoiceDto,
 } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
-import { type Decimal, dec, toDecimalString } from '../common/money.js';
+import { type Decimal, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { fieldRefusal } from '../common/validation.js';
 import {
   approvedFields,
   checkDraft,
   decimalKey,
+  draftBranch,
   draftExpiry,
   draftStatus,
   isRefusal,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
+  storedValue,
+  withBranch,
 } from '../drafts/draft-rules.js';
 import {
   decidedVia,
@@ -39,6 +46,7 @@ import {
   type DecisionVia,
   DraftsService,
   keyReused,
+  lockDraftRow,
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
@@ -74,38 +82,78 @@ const details = {
 
 type DraftRow = Prisma.ReceiptDraftGetPayload<{ include: typeof details }>;
 
-/** The receipt a stored draft proposes, as ReceiptsService takes it (no fx rate: the table's). */
+/** The receipt a stored draft proposes, as stored (a missing value is null; no fx rate). */
 export function receiptRequestOf(d: DraftRow): ReceiptDraftRequest {
   return {
     customerId: d.customerId,
-    receiptDate: fromDbDate(d.receiptDate),
+    receiptDate: d.receiptDate === null ? null : fromDbDate(d.receiptDate),
     currency: d.currency,
-    amount: toDecimalString(d.amount),
+    amount: toDecimalStringOrNull(d.amount),
     cashAccountId: d.cashAccountId,
     reference: d.reference,
     notes: d.notes,
     allocations: d.allocations.map((a) => ({
       invoiceId: a.invoiceId,
-      amount: toDecimalString(a.amount),
+      amount: toDecimalStringOrNull(a.amount),
     })),
   };
 }
 
+/** What a receipt draft still misses before it can be approved (the gate's missing values). */
+export function receiptMissingFields(request: ReceiptDraftRequest): string[] {
+  return receiptCompleteness(request).missing;
+}
+
+/** The receipt of a complete draft (the approval gate passed), as ReceiptsService takes it. */
+function completeReceipt(d: ReceiptDraftRequest): CreateReceiptRequest {
+  return {
+    customerId: storedValue(d.customerId, 'customer'),
+    receiptDate: storedValue(d.receiptDate, 'receipt date'),
+    currency: storedValue(d.currency, 'currency'),
+    amount: storedValue(d.amount, 'amount'),
+    cashAccountId: storedValue(d.cashAccountId, 'cash account'),
+    reference: d.reference ?? null,
+    notes: d.notes ?? null,
+    allocations: d.allocations.map((a) => ({
+      invoiceId: storedValue(a.invoiceId, 'allocation invoice'),
+      amount: storedValue(a.amount, 'allocation amount'),
+    })),
+  };
+}
+
+/** A create body's values (absent allocations are none yet), and the branch it names. */
+function valuesOfCreate(body: Omit<ReceiptDraftCreateRequest, 'idempotencyKey'>): {
+  values: ReceiptDraftRequest;
+  branchId: string | null;
+} {
+  const { branchId, allocations, ...rest } = body;
+  return { values: { ...rest, allocations: allocations ?? [] }, branchId: branchId ?? null };
+}
+
 /** sha256 of the normalised request: ids lower case, decimals canonical, null for absent. */
 export function receiptRequestHash(input: ReceiptDraftRequest): string {
+  const decimal = (v: string | null | undefined) => (v ? decimalKey(dec(v)) : null);
   return requestHash({
-    customerId: input.customerId.toLowerCase(),
-    receiptDate: input.receiptDate,
-    currency: input.currency,
-    amount: decimalKey(dec(input.amount)),
-    cashAccountId: input.cashAccountId.toLowerCase(),
+    customerId: input.customerId?.toLowerCase() ?? null,
+    receiptDate: input.receiptDate ?? null,
+    currency: input.currency ?? null,
+    amount: decimal(input.amount),
+    cashAccountId: input.cashAccountId?.toLowerCase() ?? null,
     reference: input.reference ?? null,
     notes: input.notes ?? null,
     allocations: input.allocations.map((a) => ({
-      invoiceId: a.invoiceId.toLowerCase(),
-      amount: decimalKey(dec(a.amount)),
+      invoiceId: a.invoiceId?.toLowerCase() ?? null,
+      amount: decimal(a.amount),
     })),
   });
+}
+
+/** A draft's checked values: its branch, its customer, the currency as NOLON writes it. */
+interface CheckedReceipt {
+  branchId: string;
+  customerId: string | null;
+  currency: string | null;
+  amount: Decimal | null;
 }
 
 /**
@@ -147,12 +195,51 @@ export class ReceiptDraftsService {
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: ReceiptDraftCreateRequest): Promise<DraftPreCheckDto> {
-    const input = valuesOf(body);
-    return preCheck(receiptRequestHash(input), async () => {
-      const prepared = await this.receipts.prepareCreate(user, input);
-      await this.preCheck(input, prepared.branchId, user);
-      return { total: toDecimalString(prepared.amount), currency: prepared.currency };
+    const { values, branchId } = valuesOfCreate(valuesOf(body));
+    return preCheck(withBranch(receiptRequestHash(values), branchId), async () => {
+      const checked = await this.validate(user, values, branchId);
+      const missingFields = receiptMissingFields(values);
+      return {
+        total:
+          missingFields.length === 0 && checked.amount ? toDecimalString(checked.amount) : null,
+        currency: missingFields.length === 0 ? checked.currency : null,
+        missingFields,
+      };
     });
+  }
+
+  /**
+   * The checks a draft's values get on create and on a person's edit: a complete receipt's that
+   * need no lock in full (prepareCreate, preCheck); one still missing values, those of the values
+   * present. The draft's branch is the customer's (which a branch given must be); with no
+   * customer yet, the branch given, one of the user's.
+   */
+  private async validate(
+    user: AuthUser,
+    values: ReceiptDraftRequest,
+    branchId: string | null,
+  ): Promise<CheckedReceipt> {
+    if (receiptMissingFields(values).length === 0) {
+      const request = completeReceipt(values);
+      const prepared = await this.receipts.prepareCreate(user, request);
+      const branch = draftBranch(user, branchId, prepared.branchId);
+      await this.preCheck(values, branch, user);
+      return {
+        branchId: branch,
+        customerId: prepared.customerId,
+        currency: prepared.currency,
+        amount: prepared.amount,
+      };
+    }
+    const present = await this.receipts.checkPresent(user, values);
+    const branch = draftBranch(user, branchId, present.branchId);
+    await this.preCheck({ ...values, currency: present.currency ?? values.currency }, branch, user);
+    return {
+      branchId: branch,
+      customerId: present.customerId,
+      currency: present.currency,
+      amount: values.amount ? dec(values.amount) : null,
+    };
   }
 
   async create(
@@ -161,16 +248,16 @@ export class ReceiptDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, ...input } = body;
-    const hash = withReplaced(receiptRequestHash(input), replacesDraftId);
+    const { idempotencyKey, ...rest } = body;
+    const { values: input, branchId } = valuesOfCreate(rest);
+    const hash = withReplaced(withBranch(receiptRequestHash(input), branchId), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'receipt_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real receipt that need no lock; nothing is written.
-    const prepared = await this.receipts.prepareCreate(user, input);
-    await this.preCheck(input, prepared.branchId, user);
+    // The checks of a real receipt that need no lock, on the values present; nothing is written.
+    const prepared = await this.validate(user, input, branchId);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -189,36 +276,60 @@ export class ReceiptDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, prepared.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.receiptDraft.create({
           data: {
             ...scope,
             replacesDraftId,
             branchId: prepared.branchId,
-            customerId: prepared.customerId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            receiptDate: toDbDate(input.receiptDate),
-            currency: prepared.currency,
-            amount: prepared.amount,
-            cashAccountId: input.cashAccountId,
-            reference: input.reference ?? null,
-            notes: input.notes ?? null,
+            ...columnsOf(input, prepared),
           },
           select: { id: true },
         });
-        await tx.receiptDraftAllocation.createMany({
-          data: input.allocations.map((a, i) => ({
-            draftId: draft.id,
-            lineNo: i + 1,
-            invoiceId: a.invoiceId,
-            amount: dec(a.amount),
-          })),
-        });
+        await tx.receiptDraftAllocation.createMany({ data: allocationRows(draft.id, input) });
         return draft.id;
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create (a customer named must be of the draft's branch), and the version
+   * moves on. The assistant's request (its payload hash) stays the draft's, so a replay of that
+   * create still finds this draft.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: ReceiptDraftUpdateRequest,
+  ): Promise<ReceiptDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const values = patched(receiptRequestOf(current), patch);
+    const checked = await this.validate(user, values, current.branchId);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'receipt_drafts', id);
+      if (!locked) throw new NotFoundException('Receipt draft not found');
+      requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
+      await tx.receiptDraft.update({
+        where: { id },
+        data: { ...columnsOf(values, checked), version: { increment: 1 } },
+      });
+      if (patch.allocations !== undefined) {
+        await tx.receiptDraftAllocation.deleteMany({ where: { draftId: id } });
+        await tx.receiptDraftAllocation.createMany({ data: allocationRows(id, values) });
+      }
+    });
+    return this.get(user, id);
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -250,7 +361,7 @@ export class ReceiptDraftsService {
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
       lineCount: d.allocations.length,
-      amount: toDecimalString(d.amount),
+      amount: toDecimalStringOrNull(d.amount),
       currency: d.currency,
     }));
   }
@@ -286,16 +397,19 @@ export class ReceiptDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    // Only the numbers of invoices the reviewer can see.
+    // Only the numbers of invoices the reviewer can see ('—' for an allocation without one yet).
+    const ids = draft.allocations.flatMap((a) => (a.invoiceId === null ? [] : [a.invoiceId]));
     const invoices = await this.prisma.customerInvoice.findMany({
-      where: { id: { in: draft.allocations.map((a) => a.invoiceId) }, ...branchScope(user) },
+      where: { id: { in: ids }, ...branchScope(user) },
       select: { id: true, number: true },
     });
     const numbers = new Map(invoices.map((i) => [i.id, i.number ?? '—']));
     return {
       ...baseFields(draft, user, now),
       request: receiptRequestOf(draft),
-      invoiceNumbers: draft.allocations.map((a) => numbers.get(a.invoiceId) ?? '—'),
+      invoiceNumbers: draft.allocations.map((a) =>
+        a.invoiceId === null ? '—' : (numbers.get(a.invoiceId) ?? '—'),
+      ),
       check,
     };
   }
@@ -316,7 +430,7 @@ export class ReceiptDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is checked, posted or recorded while the draft misses or holds an invalid value.
     requireApprovable(receiptCompleteness(receiptRequestOf(current)));
-    const request = receiptRequestOf(current);
+    const request = completeReceipt(receiptRequestOf(current));
     const prepared = await this.receipts.prepareCreate(user, request);
     await this.prisma.$transaction(async (tx) => {
       let receiptId = '';
@@ -426,16 +540,32 @@ export class ReceiptDraftsService {
     branchId: string,
     user: AuthUser,
   ): Promise<void> {
-    await this.accounts
-      .requireCash(this.prisma, input.cashAccountId, branchId, input.currency)
-      .catch((error: unknown) => {
-        if (!isRefusal(error)) throw error;
-        throw fieldRefusal('CASH_ACCOUNT_NOT_USABLE', error.message, ['cashAccountId']);
-      });
-    const ids = input.allocations.map((a) => a.invoiceId);
+    // Each on the values present (a draft is saved with missing values).
+    const cashAccountId = input.cashAccountId;
+    if (cashAccountId) {
+      await this.accounts
+        .requireCash(this.prisma, cashAccountId, branchId, input.currency ?? null)
+        .catch((error: unknown) => {
+          if (!isRefusal(error)) throw error;
+          throw fieldRefusal('CASH_ACCOUNT_NOT_USABLE', error.message, ['cashAccountId']);
+        });
+    }
+    const ids = input.allocations.flatMap((a) => (a.invoiceId ? [a.invoiceId] : []));
     if (ids.length === 0) return;
+    const customerId = input.customerId;
+    if (!customerId) {
+      // An allocation is to one of the customer's invoices: named once the customer is.
+      const named = input.allocations.flatMap((a, i) =>
+        a.invoiceId ? [`allocations.${i}.invoiceId`] : [],
+      );
+      throw fieldRefusal(
+        null,
+        "Name the customer before allocating to the customer's invoices",
+        named,
+      );
+    }
     const invoices = await this.prisma.customerInvoice.findMany({
-      where: { id: { in: ids }, customerId: input.customerId, ...branchScope(user) },
+      where: { id: { in: ids }, customerId, ...branchScope(user) },
       select: {
         id: true,
         number: true,
@@ -449,6 +579,7 @@ export class ReceiptDraftsService {
     const byId = new Map(invoices.map((i) => [i.id, i]));
     const allocated = new Map<string, Decimal>();
     input.allocations.forEach((a, i) => {
+      if (!a.invoiceId) return;
       const invoice = byId.get(a.invoiceId);
       const at = `allocations.${i}`;
       if (!invoice) {
@@ -467,7 +598,7 @@ export class ReceiptDraftsService {
           params,
         );
       }
-      if (invoice.currency !== input.currency) {
+      if (input.currency && invoice.currency !== input.currency) {
         throw fieldRefusal(
           'ALLOCATION_OTHER_CURRENCY',
           `Invoice ${params.invoice} is in ${invoice.currency}; receive it in that currency`,
@@ -475,6 +606,7 @@ export class ReceiptDraftsService {
           params,
         );
       }
+      if (!a.amount) return;
       const left = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
       const sum = (allocated.get(invoice.id) ?? dec(0)).plus(dec(a.amount));
       allocated.set(invoice.id, sum);
@@ -490,14 +622,20 @@ export class ReceiptDraftsService {
     });
   }
 
-  /** NOLON's checks of the receipt that need no lock (balances are checked on approval). */
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
-    return checkDraft(async () => {
-      const request = receiptRequestOf(draft);
-      const prepared = await this.receipts.prepareCreate(user, request);
-      await this.preCheck(request, prepared.branchId, user);
-      return { total: toDecimalString(prepared.amount), currency: prepared.currency };
+  /**
+   * NOLON's checks of the receipt that need no lock (balances are checked on approval). While
+   * the draft misses values, those of the values present: null when they pass.
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const request = receiptRequestOf(draft);
+    const result = await checkDraft(async () => {
+      const checked = await this.validate(user, request, draft.branchId);
+      return {
+        total: checked.amount ? toDecimalString(checked.amount) : null,
+        currency: checked.currency,
+      };
     });
+    return result.ok && receiptMissingFields(request).length > 0 ? null : result;
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
@@ -518,7 +656,31 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: d.allocations.length,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: receiptMissingFields(receiptRequestOf(d)),
   };
+}
+
+/** The header columns of a draft, a missing value as NULL. */
+function columnsOf(values: ReceiptDraftRequest, checked: CheckedReceipt) {
+  return {
+    customerId: checked.customerId,
+    receiptDate: values.receiptDate ? toDbDate(values.receiptDate) : null,
+    currency: checked.currency ?? values.currency ?? null,
+    amount: checked.amount,
+    cashAccountId: values.cashAccountId ?? null,
+    reference: values.reference ?? null,
+    notes: values.notes ?? null,
+  };
+}
+
+/** A draft's allocations as stored, a missing value as NULL. */
+function allocationRows(draftId: string, values: ReceiptDraftRequest) {
+  return values.allocations.map((a, i) => ({
+    draftId,
+    lineNo: i + 1,
+    invoiceId: a.invoiceId ?? null,
+    amount: a.amount ? dec(a.amount) : null,
+  }));
 }
 
 function baseFields(
@@ -533,8 +695,8 @@ function baseFields(
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
-    customerName: d.customer.name,
-    subject: d.customer.name,
+    customerName: d.customer?.name ?? null,
+    subject: d.customer?.name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -544,10 +706,11 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
-    cashAccountCode: d.cashAccount.code,
-    cashAccountNameEn: d.cashAccount.nameEn,
-    cashAccountNameAr: d.cashAccount.nameAr,
+    actions: { canEdit: open, canDecide: open },
+    missingFields: receiptMissingFields(receiptRequestOf(d)),
+    cashAccountCode: d.cashAccount?.code ?? null,
+    cashAccountNameEn: d.cashAccount?.nameEn ?? null,
+    cashAccountNameAr: d.cashAccount?.nameAr ?? null,
     receiptId: d.receiptId,
     receiptNumber: d.receipt?.number ?? null,
   };

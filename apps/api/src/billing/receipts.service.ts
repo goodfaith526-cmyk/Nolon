@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type {
   CreateReceiptRequest,
+  DecimalString,
   Page,
   ReceiptDto,
   ReceiptStatus,
@@ -148,6 +149,59 @@ export class ReceiptsService {
       decimals,
       amount,
       fxRate,
+    };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a receipt draft holds so far (a draft is saved with
+   * missing values): the customer (visible to the user) when named, the currency when given, the
+   * amount (positive, in the currency's decimals once both are given), each invoice once, and the
+   * allocations within the amount once both are given. The fx rate waits for the currency and the
+   * date. The customer's branch, or null with no customer. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    input: {
+      customerId?: string | null;
+      receiptDate?: string | null;
+      currency?: string | null;
+      amount?: DecimalString | null;
+      allocations: readonly { invoiceId?: string | null; amount?: DecimalString | null }[];
+    },
+  ): Promise<{ customerId: string | null; branchId: string | null; currency: string | null }> {
+    const customer = input.customerId
+      ? await this.customers.requireCustomer(user, input.customerId)
+      : null;
+    const currency = input.currency ? await this.currencies.requireActive(input.currency) : null;
+    const amount = input.amount ? dec(input.amount) : null;
+    if (amount !== null) {
+      const decimals = currency?.decimalPlaces ?? null;
+      if (!amount.gt(0) || (decimals !== null && !roundMoney(amount, decimals).eq(amount))) {
+        throw new BadRequestException(
+          decimals === null
+            ? 'Amount must be positive'
+            : `Amount must be positive with ${decimals} decimal places`,
+        );
+      }
+    }
+    const invoiceIds = input.allocations.flatMap((a) => (a.invoiceId ? [a.invoiceId] : []));
+    if (new Set(invoiceIds).size !== invoiceIds.length) {
+      throw new BadRequestException('Each invoice appears once');
+    }
+    const allocated = input.allocations.reduce(
+      (sum, a) => (a.amount ? sum.plus(dec(a.amount)) : sum),
+      ZERO,
+    );
+    if (amount !== null && allocated.gt(amount)) {
+      throw new BadRequestException('The allocations are more than the amount received');
+    }
+    if (currency && input.receiptDate) {
+      await this.fxRates.resolve(currency.code, input.receiptDate, null);
+    }
+    return {
+      customerId: customer?.id ?? null,
+      branchId: customer?.branchId ?? null,
+      currency: currency?.code ?? null,
     };
   }
 

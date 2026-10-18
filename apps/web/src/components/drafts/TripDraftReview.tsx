@@ -1,6 +1,6 @@
 'use client';
 
-import type { TripDraftDto } from '@nolon/shared';
+import { TRIP_KINDS, type TripDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
@@ -15,6 +15,7 @@ export function TripDraftReview({ id }: { id: string }) {
   const t = useTranslations('Drafts');
   const tt = useTranslations('Transport');
   const tc = useTranslations('Common');
+  const te = useTranslations('Enums');
   const master = useMasterData();
   const locationName = useLocationName(master);
   const dateTime = useDateTime();
@@ -25,6 +26,7 @@ export function TripDraftReview({ id }: { id: string }) {
   // A value the draft still misses shows as a dash (MissingFields names it).
   const from = trip.originLocationId ? locationName(trip.originLocationId) : '—';
   const to = trip.destinationLocationId ? locationName(trip.destinationLocationId) : '—';
+  const kinds = TRIP_KINDS.map((k) => ({ value: k, label: te(`tripKind_${k}`) }));
 
   return (
     <DraftFrame
@@ -41,13 +43,12 @@ export function TripDraftReview({ id }: { id: string }) {
         draft={draft}
         apiPath="/trip-drafts"
         branchId={trip.branchId}
+        choices={{ kind: kinds }}
         onChanged={setRecord}
       />
       <dl className="details">
         <dt>{tt('kind')}</dt>
-        <dd>
-          <TripKindLabel kind={trip.kind} />
-        </dd>
+        <dd>{trip.kind ? <TripKindLabel kind={trip.kind} /> : '—'}</dd>
         <dt>{tt('route')}</dt>
         <dd>{tc('route', { from, to })}</dd>
         <dt>{tt('plannedDeparture')}</dt>
@@ -61,7 +62,7 @@ export function TripDraftReview({ id }: { id: string }) {
             <dt>{tt('driver')}</dt>
             <dd>{draft.driverName ?? '—'}</dd>
           </>
-        ) : (
+        ) : trip.kind === 'EXTERNAL' ? (
           <>
             <dt>{tt('carrier')}</dt>
             <dd>{draft.carrierName ?? '—'}</dd>
@@ -78,7 +79,7 @@ export function TripDraftReview({ id }: { id: string }) {
               </>
             ) : null}
           </>
-        )}
+        ) : null}
         <dt>{tt('note')}</dt>
         <dd>{trip.notes ?? '—'}</dd>
         <dt>{tt('shipmentsSection')}</dt>

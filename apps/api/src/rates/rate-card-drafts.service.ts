@@ -14,6 +14,7 @@ import type {
   RateCardInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
@@ -275,6 +276,8 @@ export class RateCardDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, branchId);
         // Only a new request: the same offer already drafted or approved in the branch is refused
         // (409), so the assistant can say so; it is checked again under the lock on approval.
         if (request) throwFirstConflict(await this.rates.duplicateIssues(tx, [request]));
@@ -320,6 +323,8 @@ export class RateCardDraftsService {
       const locked = await lockDraftRow(tx, 'rate_card_drafts', id);
       if (!locked) throw new NotFoundException('Rate card draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.rateCardDraft.update({
         where: { id },
         data: {

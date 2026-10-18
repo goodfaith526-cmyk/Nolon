@@ -1,9 +1,11 @@
 import { randomInt } from 'node:crypto';
 import type {
   AgentClientCreatedDto,
+  AssistantDraftDto,
   BookingDto,
   CarrierDto,
   CustomerDto,
+  DraftPreCheckDto,
   DriverDto,
   EntryDraftSummaryDto,
   GoodsReleaseDraftDto,
@@ -27,6 +29,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -49,6 +52,7 @@ let driver: DriverDto;
 let carrier: CarrierDto;
 let warehouse: WarehouseDto;
 let jedWarehouse: WarehouseDto;
+let whAgentId: string;
 
 const cookies = {
   admin: '',
@@ -60,8 +64,14 @@ const cookies = {
   driverDxb: '',
   driverOpsDxb: '',
 };
-const agentCookies = { opsAgent: '', whAgent: '', salesAgent: '', opsJedAgent: '' };
-const tokens = { ops: '', wh: '', sales: '', opsJed: '' };
+const agentCookies = {
+  opsAgent: '',
+  whAgent: '',
+  salesAgent: '',
+  opsJedAgent: '',
+  whJedAgent: '',
+};
+const tokens = { ops: '', wh: '', sales: '', opsJed: '', whJed: '' };
 
 /** A confirmed road booking of the DXB customer; its shipment. */
 async function roadShipment(): Promise<ShipmentDto> {
@@ -171,15 +181,18 @@ beforeAll(async () => {
     whAgent: await createUser(t.prisma, ['WAREHOUSE'], ['DXB'], AGENT_PREFIX),
     salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
     opsJedAgent: await createUser(t.prisma, ['OPERATIONS'], ['JED'], AGENT_PREFIX),
+    whJedAgent: await createUser(t.prisma, ['WAREHOUSE'], ['JED'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
   }
+  whAgentId = assistantUsers.whAgent.id;
   client = await registerClient(t, cookies.admin, 'Transport draft platform');
   tokens.ops = await tokenFor(t, agentCookies.opsAgent, client);
   tokens.wh = await tokenFor(t, agentCookies.whAgent, client);
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
   tokens.opsJed = await tokenFor(t, agentCookies.opsJedAgent, client);
+  tokens.whJed = await tokenFor(t, agentCookies.whJedAgent, client);
 
   customer = (
     await r
@@ -576,7 +589,7 @@ describe('goods release drafts', () => {
       shipmentNumber: shipment.number,
       warehouseCode: warehouse.code,
       check: { ok: true, total: null, currency: null },
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
     });
     expect(draft.request).toMatchObject({ packages: 3, weightKg: '300.5' });
     const list = (await r.get('/release-drafts?status=DRAFT', cookies.whDxb).expect(200))
@@ -701,5 +714,188 @@ describe('goods release drafts', () => {
     expect(await t.prisma.goodsReleaseDraft.count({ where: { replacesDraftId: draft.id } })).toBe(
       0,
     );
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a release draft may name
+// no shipment yet (it then names its branch), no warehouse and no packages; a person fills them in
+// (PATCH), and approving is refused (422) on both paths until nothing is missing, releasing
+// nothing.
+describe('goods release drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.whDxb) =>
+    (await r.get(`/release-drafts/${id}`, cookie).expect(200)).body as GoodsReleaseDraftDto;
+  const releases = (shipmentId: string) =>
+    t.prisma.warehouseMovement.count({ where: { shipmentId, kind: 'RELEASE' } });
+
+  it('saves a draft naming only its branch, and reads it back with nulls', async () => {
+    const empty = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(['shipmentId', 'warehouseId', 'packages']);
+    expect(await read(empty.id)).toMatchObject({
+      shipmentId: null,
+      shipmentNumber: null,
+      warehouseCode: null,
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { warehouseId: null, packages: null },
+    });
+    const list = (await r.get('/release-drafts?status=DRAFT', cookies.whDxb).expect(200))
+      .body as GoodsReleaseDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({ packages: null });
+    await r.get(`/release-drafts/${empty.id}`, cookies.whJed).expect(404);
+  });
+
+  it('refuses a draft without a branch, of another branch, or a warehouse not its own', async () => {
+    const shipment = await heldShipment();
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.goodsReleaseDraft.count();
+    const res = await createReleaseDraft({ idempotencyKey: draftKey(), packages: 1 }).expect(400);
+    expect((res.body as { code?: string }).code).toBe('BRANCH_REQUIRED');
+    await createReleaseDraft({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    const mismatch = await createReleaseDraft({
+      idempotencyKey: draftKey(),
+      shipmentId: shipment.id,
+      branchId: jed,
+    }).expect(400);
+    expect((mismatch.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+    await createReleaseDraft({ idempotencyKey: draftKey(), branchId: dxb, packages: 0 }).expect(
+      400,
+    );
+    await createReleaseDraft({
+      idempotencyKey: draftKey(),
+      shipmentId: shipment.id,
+      warehouseId: jedWarehouse.id,
+    }).expect(404);
+    expect(await t.prisma.goodsReleaseDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval on both paths while values are missing, then approves once filled in', async () => {
+    await r
+      .put(`/users/${whAgentId}/assistant-approvals`, cookies.admin, { kinds: ['goods_release'] })
+      .expect(200);
+    const shipment = await heldShipment();
+    const { id } = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const missing = ['warehouseId', 'packages'];
+    expectGateRefusal(
+      await r.post(`/release-drafts/${id}/approve`, cookies.whDxb, { version: 1 }),
+      missing,
+    );
+    const card = (await r.agentGet(`/release-drafts/${id}/assistant`, tokens.wh).expect(200))
+      .body as AssistantDraftDto<GoodsReleaseDraftDto>;
+    expect(card.draft.missingFields).toEqual(missing);
+    expectGateRefusal(
+      await r.agentPost(`/release-drafts/${id}/assistant-approve`, tokens.wh, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      missing,
+    );
+    expect(await releases(shipment.id)).toBe(0);
+
+    const edit = (cookie: string, body: object) => r.patch(`/release-drafts/${id}`, cookie, body);
+    await edit(cookies.whJed, { version: 1, packages: 1 }).expect(404);
+    await edit(cookies.salesDxb, { version: 1, packages: 1 }).expect(403);
+    await r.agentPatch(`/release-drafts/${id}`, tokens.wh, { version: 1, packages: 1 }).expect(403);
+    await edit(cookies.whDxb, { version: 2, packages: 1 }).expect(409);
+    await edit(cookies.whDxb, { version: 1, packages: 1.5 }).expect(400);
+    await edit(cookies.whDxb, { version: 1, warehouseId: jedWarehouse.id }).expect(404);
+    const filled = (
+      await edit(cookies.whDxb, { version: 1, warehouseId: warehouse.id, packages: 2 }).expect(200)
+    ).body as GoodsReleaseDraftDto;
+    expect(filled).toMatchObject({
+      version: 2,
+      missingFields: [],
+      warehouseCode: warehouse.code,
+      check: { ok: true },
+    });
+    const approved = (
+      await r.post(`/release-drafts/${id}/approve`, cookies.whDxb, { version: 2 }).expect(200)
+    ).body as GoodsReleaseDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r.post(`/release-drafts/${id}/approve`, cookies.whDxb, { version: 2 }).expect(200);
+    expect(await releases(shipment.id)).toBe(1);
+  });
+});
+
+// A trip draft may now miss its kind too: approving waits for it.
+describe('trip drafts saved without a kind', () => {
+  it('saves one, names the kind as missing, and approves once it is filled in', async () => {
+    const shipment = await roadShipment();
+    const body = tripRequest([shipment.id]);
+    const { kind: _kind, ...withoutKind } = body;
+    void _kind;
+    const created = (await createTripDraft(withoutKind).expect(201)).body as EntryDraftSummaryDto;
+    expect(created.missingFields).toEqual(['kind']);
+    const draft = (await r.get(`/trip-drafts/${created.id}`, cookies.opsDxb).expect(200))
+      .body as TripDraftDto;
+    expect(draft.request.kind).toBeNull();
+    expectGateRefusal(
+      await r.post(`/trip-drafts/${created.id}/approve`, cookies.opsDxb, { version: 1 }),
+      ['kind'],
+    );
+    await r
+      .patch(`/trip-drafts/${created.id}`, cookies.opsDxb, { version: 1, kind: 'OWN' })
+      .expect(200);
+    const approved = (
+      await r.post(`/trip-drafts/${created.id}/approve`, cookies.opsDxb, { version: 2 }).expect(200)
+    ).body as TripDraftDto;
+    expect(approved.status).toBe('APPROVED');
+  });
+});
+
+// A shipment shared with a branch is visible there, but a release draft is filed in the
+// shipment's own branch: one the sharing branch's staff do not hold. Neither a save, its
+// pre-check nor an edit may file a draft there; nothing is written.
+describe('goods release drafts for a shipment shared with another branch', () => {
+  it('refuses to file a draft in the shipment branch the user does not hold', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipment = await heldShipment();
+    await t.prisma.shipmentBranch.create({ data: { shipmentId: shipment.id, branchId: jed } });
+    await r.get(`/shipments/${shipment.id}`, cookies.whJed).expect(200);
+    const before = await t.prisma.goodsReleaseDraft.count();
+    await createReleaseDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id },
+      tokens.whJed,
+    ).expect(403);
+    const mismatch = await createReleaseDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id, branchId: jed },
+      tokens.whJed,
+    ).expect(400);
+    expect((mismatch.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+    const check = (
+      await r
+        .agentPost('/release-drafts/check', tokens.whJed, {
+          idempotencyKey: draftKey(),
+          shipmentId: shipment.id,
+        })
+        .expect(200)
+    ).body as DraftPreCheckDto;
+    expect(check.ok).toBe(false);
+    expect(await t.prisma.goodsReleaseDraft.count()).toBe(before);
+
+    // A JED draft without a shipment cannot be moved onto it by an edit: it stays in its branch.
+    const { id } = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), branchId: jed }, tokens.whJed).expect(
+        201,
+      )
+    ).body as EntryDraftSummaryDto;
+    await r
+      .patch(`/release-drafts/${id}`, cookies.whJed, { version: 1, shipmentId: shipment.id })
+      .expect(400);
+    // The shipment's own branch still files one; the JED staff cannot edit it.
+    const own = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const shared = await r.patch(`/release-drafts/${own.id}`, cookies.whJed, {
+      version: 1,
+      packages: 1,
+    });
+    expect(shared.status).toBe(403);
+    expect(
+      await t.prisma.goodsReleaseDraft.findUniqueOrThrow({ where: { id: own.id } }),
+    ).toMatchObject({ version: 1, packages: null });
   });
 });

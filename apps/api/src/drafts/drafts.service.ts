@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -335,21 +336,38 @@ const PARENT_COLUMNS = {
  * For kinds whose approval locks the draft's parent (a shipment, a customer) before the draft:
  * the parents a replacement locks before it locks the old draft, so a replacement and an approval
  * take their locks in the same order and cannot wait on each other. The old draft's parent and
- * the new one's, deduplicated, in id order. A draft's parent never changes, so it is read without
- * a lock; a missing old draft is answered by lockReplacedInTx.
+ * the new one's, deduplicated, in id order (a draft that names no parent yet has none to lock). A
+ * draft's parent, once named, never changes (requireSameParent), so it is read without a lock; a
+ * missing old draft is answered by lockReplacedInTx.
  */
 export async function replacementParentIds(
   tx: Prisma.TransactionClient,
   table: keyof typeof PARENT_COLUMNS,
   replacesDraftId: string,
-  parentId: string,
+  parentId: string | null,
 ): Promise<string[]> {
   requireDraftTable(table);
   const column = PARENT_COLUMNS[table];
-  const rows = await tx.$queryRaw<{ parent_id: string }[]>`
+  const rows = await tx.$queryRaw<{ parent_id: string | null }[]>`
     SELECT ${Prisma.raw(`"${column}"`)} AS "parent_id" FROM ${Prisma.raw(`"${table}"`)}
     WHERE "id" = ${replacesDraftId}::uuid`;
-  return [...new Set([parentId, ...rows.map((r) => r.parent_id)])].sort();
+  const ids = [parentId, ...rows.map((r) => r.parent_id)].filter((v): v is string => v !== null);
+  return [...new Set(ids)].sort();
+}
+
+/**
+ * A person's edit of a draft whose approval locks its parent (a customer, a shipment) first: a
+ * parent the draft does not name yet may be filled in; one it names stays (400 otherwise), so the
+ * lock order of replacementParentIds holds.
+ */
+export function requireSameParent(
+  current: string | null,
+  next: string | null | undefined,
+  what: string,
+): void {
+  if (current !== null && next !== undefined && next !== current) {
+    throw new BadRequestException(`The draft's ${what}, once named, stays`);
+  }
 }
 
 /** The draft that replaced this one, if any. */

@@ -14,6 +14,7 @@ import type {
   TripInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
@@ -102,8 +103,13 @@ export function requestOf(d: DraftRow): TripDraftValues {
     externalVehicle: d.externalVehicle,
     externalDriver: d.externalDriver,
     notes: d.notes,
-    shipmentIds: d.shipments.map((s) => s.shipmentId),
+    shipmentIds: shipmentIdsOf(d),
   };
+}
+
+/** The shipments a draft names, in order (a line without its shipment yet names none). */
+function shipmentIdsOf(d: DraftRow): string[] {
+  return d.shipments.flatMap((s) => (s.shipmentId === null ? [] : [s.shipmentId]));
 }
 
 /**
@@ -118,6 +124,7 @@ export function tripMissingFields(values: TripDraftValues): string[] {
 export function completeTrip(values: TripDraftValues): TripInput {
   return {
     ...values,
+    kind: storedValue(values.kind, 'kind'),
     originLocationId: storedValue(values.originLocationId, 'origin'),
     destinationLocationId: storedValue(values.destinationLocationId, 'destination'),
   };
@@ -137,7 +144,7 @@ export function tripRequestHash(input: TripDraftValues): string {
   const time = (v: string | null | undefined) => (v ? new Date(v).toISOString() : null);
   return requestHash({
     branchId: input.branchId.toLowerCase(),
-    kind: input.kind,
+    kind: input.kind ?? null,
     originLocationId: lower(input.originLocationId),
     destinationLocationId: lower(input.destinationLocationId),
     plannedDeparture: time(input.plannedDeparture),
@@ -239,6 +246,8 @@ export class TripDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, input.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.tripDraft.create({
           data: {
@@ -247,7 +256,7 @@ export class TripDraftsService {
             branchId: input.branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            kind: input.kind,
+            kind: input.kind ?? null,
             originLocationId: input.originLocationId,
             destinationLocationId: input.destinationLocationId,
             plannedDeparture: prepared.plannedDeparture,
@@ -296,10 +305,12 @@ export class TripDraftsService {
       const locked = await lockDraftRow(tx, 'trip_drafts', id);
       if (!locked) throw new NotFoundException('Trip draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.tripDraft.update({
         where: { id },
         data: {
-          kind: values.kind,
+          kind: values.kind ?? null,
           originLocationId: values.originLocationId ?? null,
           destinationLocationId: values.destinationLocationId ?? null,
           plannedDeparture: prepared.plannedDeparture,
@@ -397,7 +408,7 @@ export class TripDraftsService {
       if (check?.ok) check = { ok: true, total: null, currency: null };
     }
     // Only the names and numbers the reviewer can see.
-    const shipmentIds = draft.shipments.map((s) => s.shipmentId);
+    const shipmentIds = shipmentIdsOf(draft);
     const [visible, vehicle, driverRow, carrier] = await Promise.all([
       this.prisma.shipment.findMany({
         where: { id: { in: shipmentIds }, ...shipmentScope(user) },

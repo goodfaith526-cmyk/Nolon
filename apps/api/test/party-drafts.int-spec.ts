@@ -21,6 +21,8 @@ import {
   expectGateRefusal,
   registerClient,
   requests,
+  revokedBeforeTransaction,
+  roleRevokedBeforeTransaction,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
@@ -437,4 +439,184 @@ describe("party drafts: replay and the staff member's words", () => {
     ).expect(400);
     expect(await t.prisma.partyDraft.count()).toBe(before);
   });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a party draft may name
+// no customer yet (it then names its branch) and no name; a person fills them in (PATCH), and
+// approving is refused (422) until nothing is missing, adding no party.
+describe('party drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.salesDxb) =>
+    (await r.get(`/party-drafts/${id}`, cookie).expect(200)).body as PartyDraftDto;
+
+  it('saves a draft naming only its branch, and a customer once named owns it', async () => {
+    const empty = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(['customerId', 'name']);
+    expect(await read(empty.id)).toMatchObject({
+      customerId: null,
+      customerNumber: null,
+      customerName: null,
+      check: null,
+      missingFields: ['customerId', 'name'],
+      actions: { canEdit: true, canDecide: true },
+      request: { name: null },
+    });
+    const list = (await r.get('/party-drafts?status=DRAFT', cookies.salesDxb).expect(200))
+      .body as PartyDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({ customerName: null });
+    // Another branch neither lists nor reads it.
+    const jedList = (await r.get('/party-drafts', cookies.salesJed).expect(200))
+      .body as PartyDraftListItemDto[];
+    expect(jedList.map((d) => d.id)).not.toContain(empty.id);
+    await r.get(`/party-drafts/${empty.id}`, cookies.salesJed).expect(404);
+
+    const customer = await newCustomer();
+    const partial = (
+      await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['name']);
+  });
+
+  it('refuses a draft without a branch, of another branch, or naming a branch not its customer’s', async () => {
+    const customer = await newCustomer();
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.partyDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ name: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
+      'BRANCH_MISMATCH',
+    );
+    await refused({ branchId: dxb, email: 'not an email' }, 400);
+    expect(await t.prisma.partyDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once filled in', async () => {
+    const customer = await newCustomer();
+    const { id } = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expectGateRefusal(
+      await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 1 }),
+      ['customerId', 'name'],
+    );
+    expect(await partiesOf(customer.id)).toBe(0);
+
+    const edit = (cookie: string, body: object) => r.patch(`/party-drafts/${id}`, cookie, body);
+    await edit(cookies.salesJed, { version: 1, name: 'x' }).expect(404);
+    await edit(cookies.opsDxb, { version: 1, name: 'x' }).expect(403);
+    await r.agentPatch(`/party-drafts/${id}`, tokens.sales, { version: 1, name: 'x' }).expect(403);
+    await edit(cookies.salesDxb, { version: 2, name: 'x' }).expect(409);
+    await edit(cookies.salesDxb, { version: 1, email: 'nope' }).expect(400);
+    const filled = (
+      await edit(cookies.salesDxb, {
+        version: 1,
+        customerId: customer.id,
+        name: 'Omer Later',
+      }).expect(200)
+    ).body as PartyDraftDto;
+    expect(filled).toMatchObject({
+      version: 2,
+      missingFields: [],
+      customerId: customer.id,
+      check: { ok: true },
+    });
+    // Once named, the customer stays: the draft's lock order rests on it.
+    const other = await newCustomer();
+    await edit(cookies.salesDxb, { version: 2, customerId: other.id }).expect(400);
+    const approved = (
+      await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200)
+    ).body as PartyDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200);
+    expect(await partiesOf(customer.id)).toBe(1);
+  });
+});
+
+// The branch a draft takes from its customer is checked again inside the write's transaction, as
+// stored then (Codex P88-1): a membership revoked after the request loaded the user's branches,
+// before the write, refuses the save and the edit (403), writing nothing.
+describe('party drafts when the customer branch is revoked before the write', () => {
+  it('refuses the save and the edit', async () => {
+    const customer = await newCustomer();
+    const agent = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
+    const token = await tokenFor(t, await signIn(t, agent.email), client);
+    const person = await createUser(t.prisma, ['SALES'], ['DXB']);
+    const cookie = await signIn(t, person.email);
+
+    const key = draftKey();
+    const save = await revokedBeforeTransaction(
+      t,
+      '/party-drafts.service',
+      { userId: agent.id, branchId: dxb },
+      () => createDraft({ idempotencyKey: key, customerId: customer.id, name: 'Revoked' }, token),
+    );
+    expect(save.revoked).toBe(true);
+    expect(save.result.status).toBe(403);
+    expect(await t.prisma.partyDraft.count({ where: { idempotencyKey: key } })).toBe(0);
+
+    const { id } = (
+      await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }, token).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const edit = await revokedBeforeTransaction(
+      t,
+      '/party-drafts.service',
+      { userId: person.id, branchId: dxb },
+      () => r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }),
+    );
+    expect(edit.revoked).toBe(true);
+    expect(edit.result.status).toBe(403);
+    expect(await t.prisma.partyDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      version: 1,
+      name: null,
+    });
+    await r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }).expect(200);
+  });
+});
+
+// The customer's branch is checked against an every-branch role read again inside the write's
+// transaction (Codex P88-1): once the role is removed, a user holding no membership of the branch
+// is refused the save and the edit (403), and nothing is written.
+describe('party drafts when an every-branch role is revoked before the write', () => {
+  for (const role of ['MANAGEMENT', 'ADMINISTRATOR'] as const) {
+    it(`refuses the save and the edit once ${role} is gone`, async () => {
+      const customer = await newCustomer();
+      const agent = await createUser(t.prisma, ['SALES', role], [], AGENT_PREFIX);
+      const token = await tokenFor(t, await signIn(t, agent.email), client);
+      const person = await createUser(t.prisma, ['SALES', role], []);
+      const cookie = await signIn(t, person.email);
+
+      const key = draftKey();
+      const save = await roleRevokedBeforeTransaction(
+        t,
+        '/party-drafts.service',
+        { userId: agent.id, role },
+        () => createDraft({ idempotencyKey: key, customerId: customer.id, name: 'Gone' }, token),
+      );
+      expect(save.revoked).toBe(true);
+      expect(save.result.status).toBe(403);
+      expect(await t.prisma.partyDraft.count({ where: { idempotencyKey: key } })).toBe(0);
+
+      const { id } = (
+        await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }, token).expect(
+          201,
+        )
+      ).body as EntryDraftSummaryDto;
+      const edit = await roleRevokedBeforeTransaction(
+        t,
+        '/party-drafts.service',
+        { userId: person.id, role },
+        () => r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }),
+      );
+      expect(edit.revoked).toBe(true);
+      expect(edit.result.status).toBe(403);
+      expect(await t.prisma.partyDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+        version: 1,
+        name: null,
+      });
+      await r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }).expect(200);
+    });
+  }
 });

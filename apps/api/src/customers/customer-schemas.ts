@@ -39,6 +39,21 @@ export const customerFields = {
   notes: optionalText(2000),
 };
 
+// The contact details a person gives in a chat; terms, credit and tax details are set later.
+// Each value is checked as a customer's when given; none is required (owner decision,
+// 2026-10-17). Customer drafts and new customer quotation and booking drafts take them.
+export const customerDraftFields = {
+  kind: customerFields.kind.nullish(),
+  name: customerFields.name.nullish(),
+  companyName: customerFields.companyName,
+  phone: customerFields.phone.nullish(),
+  whatsapp: customerFields.whatsapp,
+  email: customerFields.email,
+  city: customerFields.city,
+  address: customerFields.address,
+  notes: customerFields.notes,
+};
+
 export const createCustomerBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
 export const updateCustomerBody = z.object(customerFields).partial().strict();
 

@@ -16,6 +16,9 @@ import {
   type FormRefusal,
 } from '@nolon/shared';
 import type { z } from 'zod';
+import type { AuthUser } from '../auth/auth-user.js';
+import { assertBranchAccess } from '../auth/branch-scope.js';
+import { fieldRefusal } from '../common/validation.js';
 import { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -70,6 +73,46 @@ export function requireOpen(
 export function storedValue<T>(value: T | null | undefined, what: string): T {
   if (value === null || value === undefined) throw new Error(`Entry draft has no ${what}`);
   return value;
+}
+
+/**
+ * The branch a draft is saved in (no-required-fields plan, section 1). The branch is security
+ * context, never a business field, so it is never missing:
+ * - a draft whose parent is given (its customer, its shipment, its quotation) belongs to the
+ *   parent's branch; a branch given with it must be that one (400 BRANCH_MISMATCH), and it must be
+ *   one of the user's branches (403). A parent's lookup may see more than the user's branches (a
+ *   shipment shared with one of them), so a draft is never filed in a branch the user lacks;
+ * - a draft with no parent yet names its branch (400 BRANCH_REQUIRED otherwise), and that branch
+ *   must be one of the user's branches now, as NOLON loads them for this request (403).
+ */
+export function draftBranch(
+  user: AuthUser,
+  given: string | null | undefined,
+  parentBranchId: string | null,
+): string {
+  const named = given ? given.toLowerCase() : null;
+  if (parentBranchId !== null) {
+    if (named !== null && named !== parentBranchId.toLowerCase()) {
+      throw fieldRefusal('BRANCH_MISMATCH', 'This branch is not the branch of the record', [
+        'branchId',
+      ]);
+    }
+    assertBranchAccess(user, parentBranchId);
+    return parentBranchId;
+  }
+  if (named === null) {
+    throw fieldRefusal('BRANCH_REQUIRED', 'Choose the branch of this draft', ['branchId']);
+  }
+  assertBranchAccess(user, named);
+  return named;
+}
+
+/**
+ * A create request's hash with the branch it named, when it named one: a request that names no
+ * branch (every complete request an older client sends) hashes exactly as before.
+ */
+export function withBranch(hash: string, branchId: string | null | undefined): string {
+  return branchId ? requestHash({ hash, branchId: branchId.toLowerCase() }) : hash;
 }
 
 /** The path of a line's field in a request, as missing fields name it: `lines[0].quantity`. */

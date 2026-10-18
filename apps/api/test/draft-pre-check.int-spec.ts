@@ -35,7 +35,7 @@ let jedCustomer: CustomerDto;
 let jebelAli: string;
 let portSudan: string;
 
-const cookies = { admin: '', salesDxb: '', salesJed: '' };
+const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '' };
 const tokens = { sales: '', ops: '', wh: '', finance: '', admin: '' };
 
 const tomorrowPlus = (days: number) =>
@@ -102,6 +102,7 @@ beforeAll(async () => {
     admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX),
     salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
     salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+    opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
   };
   for (const key of Object.keys(people) as (keyof typeof people)[]) {
     cookies[key] = await signIn(t, people[key].email);
@@ -253,11 +254,67 @@ describe('a pre-check', () => {
     ];
     for (const path of paths) {
       const result = refused(await check(path, tokens.admin, {}));
-      expect(result.valuesHash, path).toBeNull();
-      expect(
-        result.refusals.every((x) => x.code === 'INVALID'),
-        path,
-      ).toBe(true);
+      // An empty body: the schema's refusals (no values to hash), or for a kind with no required
+      // business value, the branch such a draft needs when it names no customer or shipment.
+      const codes = result.refusals.map((x) => x.code);
+      if (result.valuesHash === null) {
+        expect(
+          codes.every((c) => c === 'INVALID'),
+          path,
+        ).toBe(true);
+      } else {
+        expect(result.refusals, path).toMatchObject([
+          { field: 'branchId', code: 'BRANCH_REQUIRED' },
+        ]);
+      }
+    }
+  });
+});
+
+// The seven kinds whose branch comes from their subject (customer, shipment, quotation) take an
+// optional branch on the pre-check as on the save: without a subject it is required
+// (BRANCH_REQUIRED); with one, a branch given must be the subject's (BRANCH_MISMATCH).
+describe('the pre-check of a draft whose branch comes from its subject', () => {
+  it('requires the branch without a subject, and refuses one not the subject’s', async () => {
+    const dxb = await branchId(t.prisma, 'DXB');
+    const jed = await branchId(t.prisma, 'JED');
+    const booking = (
+      await r
+        .post('/bookings', cookies.opsDxb, {
+          ...bookingRequest(),
+          items: [{ cargoType: 'GENERAL', quantity: 4 }],
+        })
+        .expect(201)
+    ).body as { id: string };
+    const confirmed = (await r.post(`/bookings/${booking.id}/confirm`, cookies.opsDxb).expect(200))
+      .body as { shipmentId: string };
+    const shipmentId = confirmed.shipmentId;
+    const kinds: { path: string; token: string; subject: object }[] = [
+      { path: '/quotation-drafts', token: tokens.sales, subject: { customerId: customer.id } },
+      { path: '/booking-drafts', token: tokens.ops, subject: { customerId: customer.id } },
+      { path: '/party-drafts', token: tokens.sales, subject: { customerId: customer.id } },
+      { path: '/receipt-drafts', token: tokens.finance, subject: { customerId: customer.id } },
+      { path: '/invoice-drafts', token: tokens.finance, subject: { shipmentId } },
+      { path: '/release-drafts', token: tokens.wh, subject: { shipmentId } },
+      { path: '/shipment-status-drafts', token: tokens.ops, subject: { shipmentId } },
+    ];
+    for (const { path, token, subject } of kinds) {
+      const none = refused(await check(path, token, { idempotencyKey: draftKey() }));
+      expect(none.refusals, path).toMatchObject([{ field: 'branchId', code: 'BRANCH_REQUIRED' }]);
+      const other = refused(
+        await check(path, token, { idempotencyKey: draftKey(), ...subject, branchId: jed }),
+      );
+      expect(other.refusals, path).toMatchObject([{ field: 'branchId', code: 'BRANCH_MISMATCH' }]);
+      const notHeld = refused(
+        await check(path, token, { idempotencyKey: draftKey(), branchId: jed }),
+      );
+      expect(notHeld.refusals.length, path).toBe(1);
+      // Its own branch, given or not, is the subject's.
+      for (const branch of [{}, { branchId: dxb }]) {
+        const ok = await check(path, token, { idempotencyKey: draftKey(), ...subject, ...branch });
+        expect(ok.ok ? [] : ok.refusals.map((x) => x.code), path).not.toContain('BRANCH_MISMATCH');
+        expect(ok.ok ? [] : ok.refusals.map((x) => x.code), path).not.toContain('BRANCH_REQUIRED');
+      }
     }
   });
 });

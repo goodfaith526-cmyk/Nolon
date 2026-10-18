@@ -5,6 +5,7 @@ import type {
   BookingDto,
   CustomerDto,
   EntryDraftSummaryDto,
+  DraftPreCheckDto,
   QuotationDraftDto,
   QuotationDraftListItemDto,
   QuotationDto,
@@ -721,5 +722,76 @@ describe("replacing a quotation draft at the person's request", () => {
     // A booking draft id is not a quotation draft: nothing to replace.
     const booking = await bookingDraft();
     await createQuotationDraft({ ...quotationRequest(), replacesDraftId: booking.id }).expect(404);
+  });
+});
+
+// A booking draft made from a quotation is filed in the quotation's branch, its customer's: a
+// branch given with it must be that one (400 BRANCH_MISMATCH), on a save and on its pre-check,
+// complete or not. A quotation whose branch is not its customer's is refused (409).
+describe("booking drafts from a quotation: the quotation's branch", () => {
+  async function approvedQuotation(): Promise<string> {
+    const qDraft = await quotationDraft();
+    const approved = (
+      await r
+        .post(`/quotation-drafts/${qDraft.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: qDraft.pricing?.key,
+        })
+        .expect(200)
+    ).body as QuotationDraftDto;
+    const quotationId = approved.quotationId!;
+    await r.post(`/quotations/${quotationId}/send`, cookies.salesDxb).expect(200);
+    await r.post(`/quotations/${quotationId}/approve`, cookies.branchMgrDxb).expect(200);
+    return quotationId;
+  }
+
+  it('takes the branch only when it is the quotation’s', async () => {
+    const quotationId = await approvedQuotation();
+    const dxb = await branchId(t.prisma, 'DXB');
+    const jed = await branchId(t.prisma, 'JED');
+    const items = [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }];
+    const before = await t.prisma.bookingDraft.count();
+    for (const body of [{ items }, {}]) {
+      const res = await createBookingDraft({
+        idempotencyKey: draftKey(),
+        quotationId,
+        branchId: jed,
+        ...body,
+      }).expect(400);
+      expect((res.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+      const check = (
+        await r
+          .agentPost('/booking-drafts/check', tokens.ops, {
+            idempotencyKey: draftKey(),
+            quotationId,
+            branchId: jed,
+            ...body,
+          })
+          .expect(200)
+      ).body as DraftPreCheckDto;
+      expect(check).toMatchObject({ ok: false, refusals: [{ code: 'BRANCH_MISMATCH' }] });
+    }
+    expect(await t.prisma.bookingDraft.count()).toBe(before);
+    const draft = await bookingDraft({
+      idempotencyKey: draftKey(),
+      quotationId,
+      branchId: dxb,
+      items,
+    });
+    expect(draft.branchId).toBe(dxb);
+  });
+
+  it("refuses a quotation whose branch is not its customer's", async () => {
+    const quotationId = await approvedQuotation();
+    const jed = await branchId(t.prisma, 'JED');
+    // Never made by NOLON (a quotation is priced in its customer's branch): forced here.
+    await t.prisma.quotation.update({ where: { id: quotationId }, data: { branchId: jed } });
+    const bookings = await t.prisma.booking.count({ where: { quotationId } });
+    await r
+      .post(`/bookings/from-quotation/${quotationId}`, cookies.admin, {
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
+      })
+      .expect(409);
+    expect(await t.prisma.booking.count({ where: { quotationId } })).toBe(bookings);
   });
 });

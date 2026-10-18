@@ -519,5 +519,9 @@ export const FORM_REFUSALS = [
   'ALLOCATION_NOT_APPROVED',
   'ALLOCATION_OTHER_CURRENCY',
   'ALLOCATION_EXCEEDS_BALANCE',
+  // An entry draft's branch (drafts saved with missing values): a draft with no customer or
+  // shipment yet names its branch; one with them belongs to their branch.
+  'BRANCH_REQUIRED',
+  'BRANCH_MISMATCH',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

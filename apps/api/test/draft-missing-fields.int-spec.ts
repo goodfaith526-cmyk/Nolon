@@ -248,7 +248,8 @@ describe('trip drafts with missing values', () => {
     const base = { branchId: dxb, kind: 'OWN' };
     const before = await t.prisma.tripDraft.count();
     await create({ idempotencyKey: draftKey(), kind: 'OWN' }).expect(400);
-    await create({ idempotencyKey: draftKey(), branchId: dxb }).expect(400);
+    // The kind may be missing (filled in on review), never one NOLON does not know.
+    await create({ idempotencyKey: draftKey(), branchId: dxb, kind: 'BUS' }).expect(400);
     await create({ ...base, idempotencyKey: draftKey(), originLocationId: 'nope' }).expect(400);
     // An unknown location, a route to itself, a carrier on an own trip, another branch.
     await create({ ...base, idempotencyKey: draftKey(), originLocationId: randomUUID() }).expect(
@@ -656,7 +657,12 @@ describe('quotation drafts with missing values', () => {
     await edit(cookies.salesJed, { version: 1, terms: 'x' }).expect(404);
     await edit(cookies.opsDxb, { version: 1, terms: 'x' }).expect(403);
     await edit(cookies.salesDxb, { version: 2, terms: 'x' }).expect(409);
-    await edit(cookies.salesDxb, { version: 1, customerId: jedCustomer.id }).expect(400);
+    // A customer outside the reviewer's branches is not found; one of another branch, for a
+    // reviewer of every branch, is not the draft's branch.
+    await edit(cookies.salesDxb, { version: 1, customerId: jedCustomer.id }).expect(404);
+    expect(
+      code(await edit(cookies.admin, { version: 1, customerId: jedCustomer.id }).expect(400)),
+    ).toBe('BRANCH_MISMATCH');
     await edit(cookies.salesDxb, { version: 1, validUntil: 'soon' }).expect(400);
     await edit(cookies.salesDxb, { version: 1, lines: [{ quantity: '-1' }] }).expect(400);
     await r
@@ -797,7 +803,10 @@ describe('booking drafts with missing values', () => {
     await edit(cookies.opsJed, { version: 1, specialInstructions: 'x' }).expect(404);
     await edit(cookies.whDxb, { version: 1, specialInstructions: 'x' }).expect(403);
     await edit(cookies.opsDxb, { version: 2, specialInstructions: 'x' }).expect(409);
-    await edit(cookies.opsDxb, { version: 1, customerId: jedCustomer.id }).expect(400);
+    await edit(cookies.opsDxb, { version: 1, customerId: jedCustomer.id }).expect(404);
+    expect(
+      code(await edit(cookies.admin, { version: 1, customerId: jedCustomer.id }).expect(400)),
+    ).toBe('BRANCH_MISMATCH');
     await edit(cookies.opsDxb, { version: 1, services: ['TELEPORT'] }).expect(400);
     await edit(cookies.opsDxb, { version: 1, items: [{ quantity: 1.5 }] }).expect(400);
     await r
@@ -1033,5 +1042,132 @@ describe('the approval gate on drafts still missing values', () => {
       version: 1,
       bookingId: null,
     });
+  });
+});
+
+// A quotation or booking draft may name no customer yet (no-required-fields plan, 3.2): it then
+// names its branch, the security context, which must be one of the user's; the customer, once
+// named, must be of that branch. Approving waits for the customer.
+describe('quotation and booking drafts saved without a customer', () => {
+  it('saves a quotation draft naming only its branch; the customer is filled in later', async () => {
+    const create = (body: object) => r.agentPost('/quotation-drafts', tokens.sales, body);
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.quotationDraft.count();
+    expect(code(await create({ idempotencyKey: draftKey(), currency: 'USD' }).expect(400))).toBe(
+      'BRANCH_REQUIRED',
+    );
+    await create({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    expect(
+      code(
+        await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
+          400,
+        ),
+      ),
+    ).toBe('BRANCH_MISMATCH');
+    expect(await t.prisma.quotationDraft.count()).toBe(before);
+
+    const { id, missingFields } = summary(
+      await create({ idempotencyKey: draftKey(), branchId: dxb }).expect(201),
+    );
+    expect(missingFields).toEqual(['customerId', ...QUOTATION_MISSING]);
+    const draft = (await r.get(`/quotation-drafts/${id}`, cookies.salesDxb).expect(200))
+      .body as QuotationDraftDto;
+    expect(draft).toMatchObject({ branchId: dxb, customerName: null, check: null });
+    await r.get(`/quotation-drafts/${id}`, cookies.salesJed).expect(404);
+    expectIncomplete(
+      await r.post(`/quotation-drafts/${id}/approve`, cookies.salesDxb, {
+        version: 1,
+        pricingKey: '0'.repeat(64),
+      }),
+      ['customerId', ...QUOTATION_MISSING],
+    );
+    const filled = (
+      await r
+        .patch(`/quotation-drafts/${id}`, cookies.salesDxb, {
+          version: 1,
+          customerId: customer.id,
+          originLocationId: jebelAli,
+          destinationLocationId: portSudan,
+          mode: 'SEA',
+          cargoType: 'GENERAL',
+          currency: 'USD',
+          validUntil: inDays(10),
+          lines: [
+            { chargeTypeCode: 'FREIGHT', unit: 'PER_SHIPMENT', quantity: '1', unitPrice: '80' },
+          ],
+        })
+        .expect(200)
+    ).body as QuotationDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r
+        .post(`/quotation-drafts/${id}/approve`, cookies.salesDxb, {
+          version: 2,
+          pricingKey: filled.pricing?.key ?? '',
+        })
+        .expect(200)
+    ).body as QuotationDraftDto;
+    expect(approved).toMatchObject({ status: 'APPROVED', customerName: customer.name });
+  });
+
+  it('saves a booking draft naming only its branch; the customer is filled in later', async () => {
+    const create = (body: object) => r.agentPost('/booking-drafts', tokens.ops, body);
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.bookingDraft.count();
+    expect(code(await create({ idempotencyKey: draftKey(), mode: 'SEA' }).expect(400))).toBe(
+      'BRANCH_REQUIRED',
+    );
+    await create({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    expect(
+      code(
+        await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
+          400,
+        ),
+      ),
+    ).toBe('BRANCH_MISMATCH');
+    expect(await t.prisma.bookingDraft.count()).toBe(before);
+
+    const { id, missingFields } = summary(
+      await create({ idempotencyKey: draftKey(), branchId: dxb }).expect(201),
+    );
+    expect(missingFields).toEqual(['customerId', ...BOOKING_MISSING]);
+    const draft = (await r.get(`/booking-drafts/${id}`, cookies.opsDxb).expect(200))
+      .body as BookingDraftDto;
+    expect(draft).toMatchObject({ branchId: dxb, customerName: null, check: null });
+    await r.get(`/booking-drafts/${id}`, cookies.opsJed).expect(404);
+    expectIncomplete(
+      await r.post(`/booking-drafts/${id}/approve`, cookies.opsDxb, { version: 1 }),
+      ['customerId', ...BOOKING_MISSING],
+    );
+    expect(
+      code(
+        await r
+          .patch(`/booking-drafts/${id}`, cookies.admin, {
+            version: 1,
+            customerId: jedCustomer.id,
+          })
+          .expect(400),
+      ),
+    ).toBe('BRANCH_MISMATCH');
+    const filled = (
+      await r
+        .patch(`/booking-drafts/${id}`, cookies.opsDxb, {
+          version: 1,
+          customerId: customer.id,
+          originLocationId: jebelAli,
+          destinationLocationId: portSudan,
+          mode: 'SEA',
+          cargoType: 'GENERAL',
+          services: ['MAIN_FREIGHT'],
+          items: [{ cargoType: 'GENERAL', quantity: 1 }],
+        })
+        .expect(200)
+    ).body as BookingDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r.post(`/booking-drafts/${id}/approve`, cookies.opsDxb, { version: 2 }).expect(200)
+    ).body as BookingDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    expect(approved.bookingId).not.toBeNull();
   });
 });

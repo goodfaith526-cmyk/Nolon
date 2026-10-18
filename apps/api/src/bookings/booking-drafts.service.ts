@@ -21,12 +21,14 @@ import type {
   EntryDraftSummaryDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
   checkDraft,
   decimalKey,
+  draftBranch,
   draftExpiry,
   draftStatus,
   patched,
@@ -35,6 +37,7 @@ import {
   requestHash,
   requireOpen,
   stateFilter,
+  withBranch,
 } from '../drafts/draft-rules.js';
 import {
   decidedVia,
@@ -50,6 +53,7 @@ import {
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
+  type ValuesOf,
   withReplaced,
   withReplacedBy,
   MY_DRAFTS_ORDER,
@@ -81,6 +85,18 @@ type FromQuotationRequest = BookingFromQuotationRequest & { quotationId: string 
 /** A draft's values: a direct booking's, or one made from a quotation, as stored. */
 type QuotedValues = BookingDraftFromQuotation & { quotationId: string };
 type DraftInput = BookingDraftDirect | QuotedValues;
+
+/**
+ * A create body's values, and the branch it names (security context, not a value): a direct
+ * draft's customer's, or the quotation's, which a branch given must be; with neither, the branch.
+ */
+function splitBranch(input: ValuesOf<BookingDraftCreateRequest>): {
+  values: DraftInput;
+  branchId: string | null;
+} {
+  const { branchId, ...values } = input;
+  return { values, branchId: branchId ?? null };
+}
 
 function isFromQuotation<Q extends { quotationId: string }, D>(input: Q | D): input is Q {
   return (
@@ -115,6 +131,7 @@ function completeBooking(input: DraftInput): DirectRequest | FromQuotationReques
   }
   return {
     ...input,
+    customerId: storedValue(input.customerId, 'customer'),
     originLocationId: storedValue(input.originLocationId, 'origin'),
     destinationLocationId: storedValue(input.destinationLocationId, 'destination'),
     mode: storedValue(input.mode, 'mode'),
@@ -222,7 +239,7 @@ export function bookingRequestHash(input: DraftInput): string {
     kind: 'DIRECT',
     // Only when it names one: a draft without a container hashes as it did before.
     ...(input.consolidationId ? { consolidationId: input.consolidationId.toLowerCase() } : {}),
-    customerId: input.customerId.toLowerCase(),
+    customerId: lower(input.customerId),
     originLocationId: lower(input.originLocationId),
     destinationLocationId: lower(input.destinationLocationId),
     mode: input.mode ?? null,
@@ -236,7 +253,7 @@ export function bookingRequestHash(input: DraftInput): string {
 /** What a draft is filed under and the services it stores, once its values are checked. */
 interface CheckedBooking {
   branchId: string;
-  customerId: string;
+  customerId: string | null;
   quotationId: string | null;
   services: BookingService[];
 }
@@ -263,9 +280,9 @@ export class BookingDraftsService {
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: BookingDraftCreateRequest): Promise<DraftPreCheckDto> {
-    const input = valuesOf(body);
-    return preCheck(bookingRequestHash(input), async () => {
-      await this.validate(user, input);
+    const { values: input, branchId } = splitBranch(valuesOf(body));
+    return preCheck(withBranch(bookingRequestHash(input), branchId), async () => {
+      await this.validate(user, input, branchId);
       return { total: null, currency: null, missingFields: bookingMissingFields(input) };
     });
   }
@@ -273,12 +290,19 @@ export class BookingDraftsService {
   /**
    * The checks a draft's values get on create and on a person's edit: a complete booking's in
    * full (prepare, its container included); one still missing values, those of the values present.
+   * A direct draft's branch is its customer's, which a branch given must be; with no customer
+   * yet, the branch given, one of the user's. One made from a quotation is the quotation's (its
+   * customer's), which a branch given must be too.
    */
-  private async validate(user: AuthUser, input: DraftInput): Promise<CheckedBooking> {
+  private async validate(
+    user: AuthUser,
+    input: DraftInput,
+    branchId: string | null,
+  ): Promise<CheckedBooking> {
     if (bookingMissingFields(input).length === 0) {
       const prepared = await this.prepare(user, completeBooking(input));
       return {
-        branchId: prepared.branchId,
+        branchId: draftBranch(user, branchId, prepared.branchId),
         customerId: prepared.customerId,
         quotationId: prepared.quotationId,
         services: prepared.header.services,
@@ -288,10 +312,11 @@ export class BookingDraftsService {
       const checked = await this.bookings.checkPresentFromQuotation(user, input.quotationId, input);
       return {
         ...checked,
+        branchId: draftBranch(user, branchId, checked.branchId),
         services: [...new Set<BookingService>(input.services ?? ['MAIN_FREIGHT'])],
       };
     }
-    const checked = await this.bookings.checkPresent(user, input);
+    const checked = await this.bookings.checkPresent(user, input, branchId);
     // A container named is a reference checked now, whatever else is missing (Codex on 98f9727):
     // whether the booking fits it waits for its route and cargo (prepare, requireBookable).
     if (input.consolidationId) {
@@ -306,15 +331,16 @@ export class BookingDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, ...input } = body;
-    const hash = withReplaced(bookingRequestHash(input), replacesDraftId);
+    const { idempotencyKey, ...rest } = body;
+    const { values: input, branchId } = splitBranch(rest);
+    const hash = withReplaced(withBranch(bookingRequestHash(input), branchId), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'booking_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
     // What NOLON would check on a real create, on the values present; nothing is written.
-    const prepared = await this.validate(user, input);
+    const prepared = await this.validate(user, input, branchId);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -333,17 +359,19 @@ export class BookingDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, prepared.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.bookingDraft.create({
           data: {
             ...scope,
             replacesDraftId,
-            branchId: prepared.branchId,
-            customerId: prepared.customerId,
             sourceQuotationId: prepared.quotationId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
             ...columnsOf(input, prepared.services),
+            branchId: prepared.branchId,
+            customerId: prepared.customerId,
           },
           select: { id: true },
         });
@@ -396,14 +424,21 @@ export class BookingDraftsService {
     } else {
       values = patched(stored, patch);
     }
-    const checked = await this.validate(user, values);
+    // A customer named here must be of the draft's branch: a draft never changes branch.
+    const checked = await this.validate(user, values, current.branchId);
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'booking_drafts', id);
       if (!locked) throw new NotFoundException('Booking draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.bookingDraft.update({
         where: { id },
-        data: { ...columnsOf(values, checked.services), version: { increment: 1 } },
+        data: {
+          ...columnsOf(values, checked.services),
+          customerId: checked.customerId,
+          version: { increment: 1 },
+        },
       });
       if (patch.items !== undefined) {
         await tx.bookingDraftItem.deleteMany({ where: { draftId: id } });
@@ -627,7 +662,7 @@ export class BookingDraftsService {
     const complete = bookingMissingFields(values).length === 0;
     const result = await checkDraft(async () => {
       if (complete) await this.prepare(user, completeBooking(values));
-      else await this.validate(user, values);
+      else await this.validate(user, values, draft.branchId);
       return { total: null, currency: null };
     });
     return complete || !result.ok ? result : null;
@@ -720,8 +755,8 @@ function baseFields(
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
     customerId: d.customerId,
-    customerName: d.customer.name,
-    subject: d.customer.name,
+    customerName: d.customer?.name ?? null,
+    subject: d.customer?.name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),

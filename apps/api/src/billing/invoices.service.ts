@@ -7,7 +7,7 @@ import {
 import type {
   CustomerInvoiceDto,
   CustomerInvoiceInput,
-  InvoiceDraftLineInput,
+  DecimalString,
   PriceSource,
   CustomerInvoiceSummaryDto,
   InvoiceStatus,
@@ -87,9 +87,17 @@ export interface PreparedInvoice {
   total: Decimal;
 }
 
+/** A line of an invoice draft ready to be priced: without a unit price, the system price. */
+export interface PriceableInvoiceLine {
+  chargeTypeCode: string;
+  description?: string | null;
+  quantity: DecimalString;
+  unitPrice?: DecimalString;
+}
+
 /** An invoice draft's values: a line without a unit price takes the system price. */
 export type InvoiceDraftValues = Omit<CustomerInvoiceInput, 'fxRate' | 'lines'> & {
-  lines: InvoiceDraftLineInput[];
+  lines: PriceableInvoiceLine[];
 };
 
 type BillingSource = Awaited<ReturnType<ShipmentsService['billingSource']>>;
@@ -483,6 +491,45 @@ export class InvoicesService {
       notes: input.notes ?? null,
       lines: lines.map((l, i) => ({ ...l, lineTotal: lineTotals[i] ?? dec(0) })),
       total,
+    };
+  }
+
+  /**
+   * The checks of prepareForShipment on the values an invoice draft holds so far (a draft is
+   * saved with missing values): the shipment as it is billed (the owning branch's, not
+   * cancelled, its customer visible) when named, the dates in order when both are given, the
+   * currency when given, each line's charge when given. Prices wait for prepareForShipment. The
+   * shipment's branch and customer, or null with no shipment. Nothing is written.
+   */
+  async checkPresentForShipment(
+    user: AuthUser,
+    shipmentId: string | null,
+    input: {
+      currency?: string | null;
+      invoiceDate?: string | null;
+      dueDate?: string | null;
+      lines: readonly { chargeTypeCode?: string | null }[];
+    },
+  ): Promise<{ branchId: string | null; customerId: string | null; currency: string | null }> {
+    let shipment: BillingSource | null = null;
+    if (shipmentId !== null) {
+      shipment = await this.shipments.billingSource(user, shipmentId);
+      if (shipment.status === 'CANCELLED') {
+        throw new ConflictException('A cancelled shipment is not invoiced');
+      }
+      await this.customers.requireCustomer(user, shipment.customerId);
+    }
+    if (input.dueDate && input.invoiceDate && input.dueDate < input.invoiceDate) {
+      throw new BadRequestException('The due date is before the invoice date');
+    }
+    const currency = input.currency ? await this.currencies.requireActive(input.currency) : null;
+    for (const line of input.lines) {
+      if (line.chargeTypeCode) await this.masterData.requireChargeType(line.chargeTypeCode);
+    }
+    return {
+      branchId: shipment?.branchId ?? null,
+      customerId: shipment?.customerId ?? null,
+      currency: currency?.code ?? null,
     };
   }
 

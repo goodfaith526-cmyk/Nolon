@@ -10,6 +10,7 @@ import type {
 import type { ConsolidationStatus } from './consolidation.js';
 import type { DecimalString } from './currencies.js';
 import type {
+  DraftBranchChoice,
   DraftValues,
   EntryDraftCheck,
   EntryDraftReviewFields,
@@ -31,33 +32,47 @@ import type {
 export type QuotationDraftLine = DraftValues<QuotationLineInput, 'quantity'>;
 
 /**
- * A quotation as a quotation draft holds it: the customer is its key field (the draft belongs to
- * the customer's branch); the route, cargo, currency, validity and lines may be missing.
+ * A quotation as a quotation draft holds it (no required business fields): the customer, route,
+ * cargo, currency, validity and lines may all be missing until a person fills them in.
  */
 export type QuotationDraftValues = DraftValues<
   Omit<CreateQuotationRequest, 'lines'>,
-  'originLocationId' | 'destinationLocationId' | 'mode' | 'cargoType' | 'currency' | 'validUntil'
+  | 'customerId'
+  | 'originLocationId'
+  | 'destinationLocationId'
+  | 'mode'
+  | 'cargoType'
+  | 'currency'
+  | 'validUntil'
 > & { lines: QuotationDraftLine[] };
 
+/** A quotation draft's values without its customer (the quotation part of a new customer's). */
+export type QuotationDraftQuotation = Omit<QuotationDraftValues, 'customerId'>;
+
 /** POST /quotation-drafts: the assistant proposes a quotation (lines may be left out). */
-export type QuotationDraftCreateRequest = Omit<QuotationDraftValues, 'lines'> & {
-  /** Scoped to the assistant client and the user it acts for. */
-  idempotencyKey: string;
-  lines?: QuotationDraftLine[];
-};
+export type QuotationDraftCreateRequest = Omit<QuotationDraftValues, 'lines'> &
+  DraftBranchChoice & {
+    /** Scoped to the assistant client and the user it acts for. */
+    idempotencyKey: string;
+    lines?: QuotationDraftLine[];
+  };
 
 /**
  * PATCH /quotation-drafts/:id: a person fills in or changes values of an open draft (null clears
- * a value, `lines` replace the draft's lines as a whole). The customer stays.
+ * a value, `lines` replace the draft's lines as a whole). A customer named must be of the
+ * draft's branch; the branch stays.
  */
-export type QuotationDraftUpdateRequest = Partial<Omit<QuotationDraftValues, 'customerId'>> & {
+export type QuotationDraftUpdateRequest = Partial<QuotationDraftValues> & {
   version: number;
 };
 
-/** Drafts made for a customer: the customer is in the reviewer's branches. */
+/**
+ * Drafts made for a customer: the customer is in the reviewer's branches. Null while the draft
+ * names no customer yet.
+ */
 export interface CustomerDraftFields {
-  customerId: string;
-  customerName: string;
+  customerId: string | null;
+  customerName: string | null;
 }
 
 /** Where a draft line's unit price comes from. */
@@ -135,12 +150,12 @@ export type BookingDraftFromQuotation = Omit<BookingFromQuotationRequest, 'items
 };
 
 /**
- * A direct booking as its draft holds it: the customer is its key field; the route, cargo,
- * services and lines may be missing.
+ * A direct booking as its draft holds it (no required business fields): the customer, route,
+ * cargo, services and lines may all be missing.
  */
 export type BookingDraftDirect = DraftValues<
   Omit<CreateBookingRequest, 'items' | 'services'>,
-  'originLocationId' | 'destinationLocationId' | 'mode' | 'cargoType'
+  'customerId' | 'originLocationId' | 'destinationLocationId' | 'mode' | 'cargoType'
 > &
   ContainerChoice & { services?: BookingService[]; items?: BookingDraftItem[] };
 
@@ -149,15 +164,17 @@ export type BookingDraftDirect = DraftValues<
  * (quotationId; route and cargo come from it) or directly for a customer.
  */
 export type BookingDraftCreateRequest =
-  | (BookingDraftFromQuotation & { idempotencyKey: string; quotationId: string })
-  | (BookingDraftDirect & { idempotencyKey: string });
+  | (BookingDraftFromQuotation &
+      DraftBranchChoice & { idempotencyKey: string; quotationId: string })
+  | (BookingDraftDirect & DraftBranchChoice & { idempotencyKey: string });
 
 /**
  * PATCH /booking-drafts/:id: a person fills in or changes values of an open draft (null clears a
- * value, `items` and `services` as a whole). The customer and the quotation stay; a draft made
- * from a quotation takes no route or cargo (they come from the quotation).
+ * value, `items` and `services` as a whole). The quotation and the branch stay; a direct draft's
+ * customer may be named, of the draft's branch; a draft made from a quotation takes no customer,
+ * route or cargo (they come from the quotation).
  */
-export type BookingDraftUpdateRequest = Partial<Omit<BookingDraftDirect, 'customerId'>> & {
+export type BookingDraftUpdateRequest = Partial<BookingDraftDirect> & {
   version: number;
 };
 

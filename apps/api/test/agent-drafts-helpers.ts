@@ -4,7 +4,7 @@ import type {
   AgentClientCreatedDto,
   AgentTokenResponse,
 } from '@nolon/shared';
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import { APP_ORIGIN, type TestApp } from './auth-test-app.js';
 
 // Shared by the entry draft integration tests: requests as a person (session cookie) and as the
@@ -104,4 +104,78 @@ export function expectGateRefusal(
     invalidFields: invalid,
     fields: [...missing, ...invalid],
   });
+}
+
+/**
+ * Runs `request` with `revoke` applied just as `serviceFile` (e.g. '/customer-drafts.service')
+ * starts a transaction: after the service checked the request against the user as the request
+ * loaded them, before its write; `restore` undoes it after. Says whether that moment came.
+ */
+export async function changedBeforeTransaction<T>(
+  t: TestApp,
+  serviceFile: string,
+  change: { revoke: () => Promise<unknown>; restore: () => Promise<unknown> },
+  request: () => Promise<T>,
+): Promise<{ result: T; revoked: boolean }> {
+  const original = t.prisma.$transaction.bind(t.prisma) as (...args: unknown[]) => Promise<unknown>;
+  let revoked = false;
+  const spy = vi.spyOn(t.prisma, '$transaction').mockImplementation((...args: unknown[]) => {
+    if (!revoked && new Error().stack?.includes(serviceFile)) {
+      revoked = true;
+      return change.revoke().then(() => original(...args));
+    }
+    return original(...args);
+  });
+  try {
+    return { result: await request(), revoked };
+  } finally {
+    spy.mockRestore();
+    await change.restore();
+  }
+}
+
+/** changedBeforeTransaction, removing the user's membership of `branchId`. */
+export function revokedBeforeTransaction<T>(
+  t: TestApp,
+  serviceFile: string,
+  membership: { userId: string; branchId: string },
+  request: () => Promise<T>,
+): Promise<{ result: T; revoked: boolean }> {
+  return changedBeforeTransaction(
+    t,
+    serviceFile,
+    {
+      revoke: () => t.prisma.userBranch.deleteMany({ where: membership }),
+      restore: () =>
+        t.prisma.userBranch.upsert({
+          where: { userId_branchId: membership },
+          create: membership,
+          update: {},
+        }),
+    },
+    request,
+  );
+}
+
+/** changedBeforeTransaction, removing one of the user's roles. */
+export function roleRevokedBeforeTransaction<T>(
+  t: TestApp,
+  serviceFile: string,
+  grant: { userId: string; role: 'ADMINISTRATOR' | 'MANAGEMENT' },
+  request: () => Promise<T>,
+): Promise<{ result: T; revoked: boolean }> {
+  return changedBeforeTransaction(
+    t,
+    serviceFile,
+    {
+      revoke: () => t.prisma.userRole.deleteMany({ where: grant }),
+      restore: () =>
+        t.prisma.userRole.upsert({
+          where: { userId_role: grant },
+          create: grant,
+          update: {},
+        }),
+    },
+    request,
+  );
 }

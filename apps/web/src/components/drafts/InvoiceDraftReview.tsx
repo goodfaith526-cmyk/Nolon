@@ -7,6 +7,8 @@ import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
+import { MissingFields } from './MissingFields';
+import { NEW_INVOICE_LINE_FIELDS } from './missing-fields';
 
 /** An invoice the assistant proposed for a shipment: its lines as proposed, and the decision. */
 export function InvoiceDraftReview({ id }: { id: string }) {
@@ -18,12 +20,15 @@ export function InvoiceDraftReview({ id }: { id: string }) {
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const inv = draft.request;
   const systemPriced = draft.priceSources.some((p) => p.source !== 'TYPED');
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const shipmentNumber = draft.shipmentNumber ?? '—';
+  const currency = inv.currency ?? undefined;
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/invoice-drafts"
-      title={t('invoiceTitle', { shipment: draft.shipmentNumber, customer: draft.customerName })}
+      title={t('invoiceTitle', { shipment: shipmentNumber, customer: draft.customerName ?? '—' })}
       approveHint={
         systemPriced
           ? `${t('invoiceApproveHint')} ${t('systemPriceHint')}`
@@ -39,19 +44,29 @@ export function InvoiceDraftReview({ id }: { id: string }) {
       }
       onChanged={setRecord}
     >
+      <MissingFields
+        draft={draft}
+        apiPath="/invoice-drafts"
+        newLineFields={NEW_INVOICE_LINE_FIELDS}
+        onChanged={setRecord}
+      />
       <dl className="details">
         <dt>{ti('shipment')}</dt>
         <dd dir="ltr">
-          <Link href={`/shipments/${inv.shipmentId}`}>{draft.shipmentNumber}</Link>
+          {inv.shipmentId ? (
+            <Link href={`/shipments/${inv.shipmentId}`}>{shipmentNumber}</Link>
+          ) : (
+            '—'
+          )}
         </dd>
         <dt>{ti('customer')}</dt>
-        <dd>{draft.customerName}</dd>
+        <dd>{draft.customerName ?? '—'}</dd>
         <dt>{ti('currency')}</dt>
-        <dd dir="ltr">{inv.currency}</dd>
+        <dd dir="ltr">{inv.currency ?? '—'}</dd>
         <dt>{ti('invoiceDate')}</dt>
-        <dd dir="ltr">{inv.invoiceDate}</dd>
+        <dd dir="ltr">{inv.invoiceDate ?? '—'}</dd>
         <dt>{ti('dueDate')}</dt>
-        <dd dir="ltr">{inv.dueDate}</dd>
+        <dd dir="ltr">{inv.dueDate ?? '—'}</dd>
         <dt>{tc('notes')}</dt>
         <dd>{inv.notes ?? '—'}</dd>
       </dl>
@@ -68,11 +83,11 @@ export function InvoiceDraftReview({ id }: { id: string }) {
           <tbody>
             {inv.lines.map((line, i) => (
               <tr key={i}>
-                <td dir="ltr">{line.chargeTypeCode}</td>
+                <td dir="ltr">{line.chargeTypeCode ?? '—'}</td>
                 <td>{line.description ?? '—'}</td>
-                <td dir="ltr">{line.quantity}</td>
+                <td dir="ltr">{line.quantity ?? '—'}</td>
                 <td>
-                  <Money value={line.unitPrice} currency={inv.currency} />
+                  {line.unitPrice ? <Money value={line.unitPrice} currency={currency} /> : '—'}
                   <DraftPriceSourceNote source={draft.priceSources[i]} />
                 </td>
               </tr>
