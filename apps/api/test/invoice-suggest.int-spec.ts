@@ -375,7 +375,7 @@ describe('invoice suggestion: a shipment without a quotation', () => {
 });
 
 describe('invoice suggestion: a minimum charge above the price per unit (Codex N89-1, N89-3)', () => {
-  it('offers 0.25 kg at 100 per kg with a minimum of 60 for the staff member to price, and prices 1 unit as 100', async () => {
+  it('fills 0.25 kg at 100 per kg with a minimum of 60 as 1 × 60 with its price, and prices 1 unit with no price as 100', async () => {
     // Its own route and charge, so the other cases' rates are untouched.
     const tag = `MN${randomUUID().slice(0, 6).toUpperCase()}`;
     const place = async (suffix: string) =>
@@ -431,18 +431,18 @@ describe('invoice suggestion: a minimum charge above the price per unit (Codex N
     ).body as BookingDto;
     const shipmentId = await confirmed(booking);
     const suggested = await suggestion({ shipmentId });
-    // 1 × 60 is what the tariff gives, but 1 unit with no price is 1 × 100: offered, not filled.
+    // 1 × 60 is what the tariff gives, but 1 unit with no price is 1 × 100: filled with its
+    // price, marked so the price is sent with the line (owner 2026-10-18).
     expect(suggested.lines).toEqual([
       expect.objectContaining({
         chargeTypeCode: code,
         quantity: '1',
         unitPrice: '60',
-        use: 'OFFER',
+        use: 'FILL',
+        fillPrice: true,
       }),
     ]);
-    expect(suggested.unresolved).toContainEqual(
-      expect.objectContaining({ path: 'lines.0.unitPrice', code: 'MINIMUM_CHARGE' }),
-    );
+    expect(suggested.unresolved).toEqual([]);
     const body = (lines: object[]) => ({
       idempotencyKey: draftKey(),
       shipmentId,
@@ -461,7 +461,7 @@ describe('invoice suggestion: a minimum charge above the price per unit (Codex N
       total: '100',
       computed: [{ field: 'lines.0.unitPrice', value: '100', source: 'RATE_CARD' }],
     });
-    // The minimum, entered as the suggestion names it: 60, in the check and in the draft made.
+    // The line as the suggestion fills it, its price sent: 60, in the check and in the draft made.
     const minimum = [{ chargeTypeCode: code, quantity: '1', unitPrice: '60' }];
     expect(await check(minimum)).toMatchObject({ ok: true, total: '60' });
     const created = (
@@ -473,11 +473,14 @@ describe('invoice suggestion: a minimum charge above the price per unit (Codex N
     // A quantity other than one below the minimum is still asked as one unit, never priced.
     const asked = await check([{ chargeTypeCode: code, quantity: '0.25' }]);
     expect(!asked.ok && asked.refusals.map((x) => x.code)).toEqual(['PRICE_AS_ONE_UNIT']);
-    // The direct create fills what it fills: never the offered line at a price nobody entered.
+    // The direct create fills the same line: 1 × 60.
     const invoice = (
       await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
     ).body as CustomerInvoiceDto;
-    expect(invoice.lines).toEqual([]);
+    expect(invoice.lines).toEqual([
+      expect.objectContaining({ chargeTypeCode: code, quantity: '1', unitPrice: '60' }),
+    ]);
+    expect(invoice.total).toBe('60');
   });
 });
 

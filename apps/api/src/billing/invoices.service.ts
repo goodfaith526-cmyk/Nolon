@@ -129,6 +129,8 @@ export interface DerivedInvoiceLine {
   rateCardId: string | null;
   service: BookingService | null;
   use: InvoiceSuggestionLineUse;
+  /** The unit price is part of the line: created without it, the line is priced otherwise. */
+  fillPrice: boolean;
 }
 
 /** The invoice NOLON derives for a shipment: the suggestion, and createForShipment's lines. */
@@ -437,6 +439,7 @@ export class InvoicesService {
         rateCardId: l.rateCardId,
         service: l.service,
         use: l.use,
+        fillPrice: l.fillPrice,
       })),
       unresolved: derived.unresolved,
       fingerprint: derived.fingerprint,
@@ -545,9 +548,20 @@ export class InvoicesService {
               `The shipment's quotation prices ${l.chargeTypeCode} in ${quotation.currency}: ` +
               `invoice in ${quotation.currency}, or enter the price`,
           });
-          lines.push({ ...line, quantity: l.quantity, unitPrice: null, use: 'OFFER' });
+          lines.push({
+            ...line,
+            quantity: l.quantity,
+            unitPrice: null,
+            use: 'OFFER',
+            fillPrice: false,
+          });
         } else {
-          lines.push({ ...line, ...quotedLine(l, currency.decimalPlaces), use: 'FILL' });
+          lines.push({
+            ...line,
+            ...quotedLine(l, currency.decimalPlaces),
+            use: 'FILL',
+            fillPrice: false,
+          });
         }
       }
     } else {
@@ -615,18 +629,10 @@ export class InvoicesService {
           });
         }
         const rated = ratedLine(rate, quantity, currency.decimalPlaces);
-        // Filled only where creating it without its price gives the same line (Codex N89-1, N89-3).
-        const reproduced = systemPriceGives(rate, rated, currency.decimalPlaces);
-        if (!reproduced) {
-          unresolved.push({
-            path: `${path}.unitPrice`,
-            code: 'MINIMUM_CHARGE',
-            message:
-              `The shipment is below ${chargeTypeCode}'s minimum charge of ` +
-              `${toDecimalString(rate.minimumCharge)} ${currency.code}: invoice it as quantity 1 ` +
-              'with that price entered',
-          });
-        }
+        // A minimum the system price would not give (0.25 kg at 100/kg, minimum 60: 1 × 60, while
+        // 1 unit with no price is 1 × 100) is filled with its price, marked so a caller sends
+        // the price with the line (owner 2026-10-18; Codex N89-1, N89-3).
+        const fillPrice = !systemPriceGives(rate, rated, currency.decimalPlaces);
         lines.push({
           chargeTypeCode,
           description: null,
@@ -635,7 +641,8 @@ export class InvoicesService {
           priceSource: 'RATE_CARD',
           rateCardId: rate.id,
           service,
-          use: covered && quantity !== null && reproduced ? 'FILL' : 'OFFER',
+          use: covered && quantity !== null ? 'FILL' : 'OFFER',
+          fillPrice,
         });
       }
     }

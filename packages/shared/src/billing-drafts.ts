@@ -119,6 +119,12 @@ export interface InvoiceSuggestionLineDto {
   /** The charge's service (master data), or null when the charge has none. */
   service: BookingService | null;
   use: InvoiceSuggestionLineUse;
+  /**
+   * The unit price is part of the line: created without it, NOLON prices the line otherwise (a
+   * minimum charge below the shipment's measure, invoiced as one unit at the minimum). A caller
+   * filling the line sends this price with it.
+   */
+  fillPrice: boolean;
 }
 
 export const INVOICE_SUGGESTION_ISSUES = [
@@ -132,11 +138,6 @@ export const INVOICE_SUGGESTION_ISSUES = [
   'SERVICE_NOT_MAPPED',
   /** The charge's service is not one of the shipment's services. */
   'SERVICE_NOT_ON_SHIPMENT',
-  /**
-   * The shipment is below the rate's minimum charge, invoiced as one unit at the minimum: that
-   * price is the staff member's to enter (one unit with no price is the price per unit).
-   */
-  'MINIMUM_CHARGE',
 ] as const;
 export type InvoiceSuggestionIssue = (typeof INVOICE_SUGGESTION_ISSUES)[number];
 

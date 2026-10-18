@@ -12,7 +12,7 @@ import { requestHash } from '../drafts/draft-rules.js';
 // for createForShipment.
 
 /** Changes when the rules below change, so an older suggestion's fingerprint no longer matches. */
-export const SUGGESTION_DERIVATION = 'invoice-suggestion/2';
+export const SUGGESTION_DERIVATION = 'invoice-suggestion/3';
 
 /**
  * The invoice's currency: the one asked for, else the quotation's (the agreed prices), else the
@@ -143,8 +143,8 @@ export function ratedPrice(
  * Whether a suggested rate card line is what the system price makes of its quantity: a line
  * filled without its price is created as suggested only then (Codex N89-1). A minimum charge on a
  * shipment measuring below it, with a price per unit at or above it (0.25 kg at 100/kg, minimum
- * 60: suggested 1 × 60, while 1 unit with no price is 1 × 100), is not: it is offered, priced by
- * the staff member.
+ * 60: suggested 1 × 60, while 1 unit with no price is 1 × 100), is not: it is filled with its
+ * price (`fillPrice`), never inferred from a caller's quantity (Codex N89-3).
  */
 export function systemPriceGives(
   rate: { price: Decimal; minimumCharge: Decimal },
@@ -165,7 +165,8 @@ export type SuggestionSource =
  * sha256 over what the suggestion was derived from and everything it derived (Codex N89-2: equal
  * fingerprints, same suggestion): the shipment, its owning branch, the currency and its source,
  * the pricing date, the due date, the source revision, each line whole (charge, description,
- * unit, quantity, price, where the price came from, its rate card, service and use), the
+ * unit, quantity, price, where the price came from, its rate card, service, use and
+ * whether its price is filled), the
  * unresolved points, and the version of these rules. A change of the shipment's measures or the
  * customer's payment terms changes a quantity or the due date, so the fingerprint.
  */
@@ -187,6 +188,7 @@ export function suggestionFingerprint(input: {
     rateCardId: string | null;
     service: BookingService | null;
     use: string;
+    fillPrice: boolean;
   }[];
   unresolved: readonly { path: string; code: string }[];
 }): string {
@@ -220,6 +222,7 @@ export function suggestionFingerprint(input: {
       l.rateCardId === null ? null : l.rateCardId.toLowerCase(),
       l.service,
       l.use,
+      l.fillPrice,
     ]),
     unresolved: input.unresolved.map((u) => [u.path, u.code]),
   });

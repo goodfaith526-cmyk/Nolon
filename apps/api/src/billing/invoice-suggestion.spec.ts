@@ -160,6 +160,7 @@ describe('invoice suggestion: fingerprint', () => {
         rateCardId: 'r1',
         service: null,
         use: 'FILL',
+        fillPrice: false,
       },
     ],
     unresolved: [] as { path: string; code: string }[],
@@ -204,6 +205,7 @@ describe('invoice suggestion: fingerprint', () => {
       { ...base, lines: [{ ...base.lines[0]!, description: 'x' }] },
       { ...base, lines: [{ ...base.lines[0]!, use: 'OFFER' }] },
       { ...base, lines: [{ ...base.lines[0]!, rateCardId: 'r2' }] },
+      { ...base, lines: [{ ...base.lines[0]!, fillPrice: true }] },
       { ...base, unresolved: [{ path: 'lines.0.quantity', code: 'QUANTITY_UNKNOWN' }] },
     ];
     for (const input of changed) expect(suggestionFingerprint(input)).not.toBe(fingerprint);
