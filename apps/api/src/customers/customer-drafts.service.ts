@@ -14,6 +14,7 @@ import type {
   NewCustomerBookingDraftCustomer,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
 import {
@@ -241,6 +242,8 @@ export class CustomerDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, branchId);
         if (replaced) await requireUnpaired(tx, replaced.id);
         return this.insertNewInTx(tx, {
           scope,
@@ -437,6 +440,8 @@ export class CustomerDraftsService {
       const locked = await lockDraftRow(tx, 'customer_drafts', id);
       if (!locked) throw new NotFoundException('Customer draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       if (patch.phone) {
         throwFirstConflict(
           await this.customers.duplicateIssues(tx, [

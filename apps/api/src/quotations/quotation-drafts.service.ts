@@ -24,6 +24,7 @@ import type {
   QuotationInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
@@ -388,6 +389,8 @@ export class QuotationDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, prepared.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.quotationDraft.create({
           data: {
@@ -432,6 +435,8 @@ export class QuotationDraftsService {
       const locked = await lockDraftRow(tx, 'quotation_drafts', id);
       if (!locked) throw new NotFoundException('Quotation draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.quotationDraft.update({
         where: { id },
         data: { ...columnsOf(values), version: { increment: 1 } },

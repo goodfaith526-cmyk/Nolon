@@ -13,6 +13,7 @@ import type {
   ShipmentStatus,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import {
@@ -230,6 +231,8 @@ export class ShipmentStatusDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, prepared.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.shipmentStatusDraft.create({
           data: {
@@ -275,6 +278,8 @@ export class ShipmentStatusDraftsService {
       const locked = await lockDraftRow(tx, 'shipment_status_drafts', id);
       if (!locked) throw new NotFoundException('Shipment status draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.shipmentStatusDraft.update({
         where: { id },
         data: {

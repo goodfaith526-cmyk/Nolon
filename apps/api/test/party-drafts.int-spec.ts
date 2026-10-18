@@ -21,6 +21,7 @@ import {
   expectGateRefusal,
   registerClient,
   requests,
+  revokedBeforeTransaction,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
@@ -530,5 +531,46 @@ describe('party drafts saved with missing values', () => {
     expect(approved.status).toBe('APPROVED');
     await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200);
     expect(await partiesOf(customer.id)).toBe(1);
+  });
+});
+
+// The branch a draft takes from its customer is checked again inside the write's transaction, as
+// stored then (Codex P88-1): a membership revoked after the request loaded the user's branches,
+// before the write, refuses the save and the edit (403), writing nothing.
+describe('party drafts when the customer branch is revoked before the write', () => {
+  it('refuses the save and the edit', async () => {
+    const customer = await newCustomer();
+    const agent = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
+    const token = await tokenFor(t, await signIn(t, agent.email), client);
+    const person = await createUser(t.prisma, ['SALES'], ['DXB']);
+    const cookie = await signIn(t, person.email);
+
+    const key = draftKey();
+    const save = await revokedBeforeTransaction(
+      t,
+      '/party-drafts.service',
+      { userId: agent.id, branchId: dxb },
+      () => createDraft({ idempotencyKey: key, customerId: customer.id, name: 'Revoked' }, token),
+    );
+    expect(save.revoked).toBe(true);
+    expect(save.result.status).toBe(403);
+    expect(await t.prisma.partyDraft.count({ where: { idempotencyKey: key } })).toBe(0);
+
+    const { id } = (
+      await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }, token).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const edit = await revokedBeforeTransaction(
+      t,
+      '/party-drafts.service',
+      { userId: person.id, branchId: dxb },
+      () => r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }),
+    );
+    expect(edit.revoked).toBe(true);
+    expect(edit.result.status).toBe(403);
+    expect(await t.prisma.partyDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      version: 1,
+      name: null,
+    });
+    await r.patch(`/party-drafts/${id}`, cookie, { version: 1, name: 'Omer' }).expect(200);
   });
 });

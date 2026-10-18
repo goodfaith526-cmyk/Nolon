@@ -4,7 +4,7 @@ import type {
   AgentClientCreatedDto,
   AgentTokenResponse,
 } from '@nolon/shared';
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import { APP_ORIGIN, type TestApp } from './auth-test-app.js';
 
 // Shared by the entry draft integration tests: requests as a person (session cookie) and as the
@@ -104,4 +104,36 @@ export function expectGateRefusal(
     invalidFields: invalid,
     fields: [...missing, ...invalid],
   });
+}
+
+/**
+ * Runs `request` with the user's membership of `branchId` removed just as `serviceFile` (e.g.
+ * '/customer-drafts.service') starts a transaction: after the service checked the request against
+ * the branches the user's request loaded, before its write. Says whether that moment came.
+ */
+export async function revokedBeforeTransaction<T>(
+  t: TestApp,
+  serviceFile: string,
+  membership: { userId: string; branchId: string },
+  request: () => Promise<T>,
+): Promise<{ result: T; revoked: boolean }> {
+  const original = t.prisma.$transaction.bind(t.prisma) as (...args: unknown[]) => Promise<unknown>;
+  let revoked = false;
+  const spy = vi.spyOn(t.prisma, '$transaction').mockImplementation((...args: unknown[]) => {
+    if (!revoked && new Error().stack?.includes(serviceFile)) {
+      revoked = true;
+      return t.prisma.userBranch.deleteMany({ where: membership }).then(() => original(...args));
+    }
+    return original(...args);
+  });
+  try {
+    return { result: await request(), revoked };
+  } finally {
+    spy.mockRestore();
+    await t.prisma.userBranch.upsert({
+      where: { userId_branchId: membership },
+      create: membership,
+      update: {},
+    });
+  }
 }

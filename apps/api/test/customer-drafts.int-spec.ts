@@ -20,6 +20,7 @@ import {
   expectGateRefusal,
   registerClient,
   requests,
+  revokedBeforeTransaction,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
@@ -596,5 +597,56 @@ describe('customer drafts saved with missing values', () => {
     expect(again.customerId).toBe(approved.customerId);
     expect(await t.prisma.customer.count({ where: { phone } })).toBe(1);
     await edit(cookies.salesDxb, { version: 3, notes: 'x' }).expect(409);
+  });
+});
+
+// The branch is checked again inside the write's transaction, as stored then (Codex P88-1): a
+// membership revoked after the request loaded the user's branches, before the write, refuses the
+// save and the edit (403), writing nothing.
+describe('customer drafts when the branch is revoked before the write', () => {
+  it('refuses the save and the edit, and still answers a replay', async () => {
+    const agent = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
+    const token = await tokenFor(t, await signIn(t, agent.email), client);
+    const person = await createUser(t.prisma, ['SALES'], ['DXB']);
+    const cookie = await signIn(t, person.email);
+
+    const key = draftKey();
+    const save = await revokedBeforeTransaction(
+      t,
+      '/customer-drafts.service',
+      { userId: agent.id, branchId: dxb },
+      () => createDraft({ idempotencyKey: key, branchId: dxb, name: 'Revoked Branch' }, token),
+    );
+    expect(save.revoked).toBe(true);
+    expect(save.result.status).toBe(403);
+    expect(await t.prisma.customerDraft.count({ where: { idempotencyKey: key } })).toBe(0);
+
+    // A request already saved is answered as it was, before any check on live data.
+    const body = { idempotencyKey: draftKey(), branchId: dxb, name: 'Saved Before' };
+    const saved = (await createDraft(body, token).expect(201)).body as EntryDraftSummaryDto;
+    const replay = await revokedBeforeTransaction(
+      t,
+      '/customer-drafts.service',
+      { userId: agent.id, branchId: dxb },
+      () => createDraft(body, token),
+    );
+    expect(replay.result.status).toBe(201);
+    expect((replay.result.body as EntryDraftSummaryDto).id).toBe(saved.id);
+
+    const edit = await revokedBeforeTransaction(
+      t,
+      '/customer-drafts.service',
+      { userId: person.id, branchId: dxb },
+      () => r.patch(`/customer-drafts/${saved.id}`, cookie, { version: 1, name: 'Changed' }),
+    );
+    expect(edit.revoked).toBe(true);
+    expect(edit.result.status).toBe(403);
+    expect(
+      await t.prisma.customerDraft.findUniqueOrThrow({ where: { id: saved.id } }),
+    ).toMatchObject({ version: 1, name: 'Saved Before' });
+    // With the branch held again, the same edit goes through.
+    await r
+      .patch(`/customer-drafts/${saved.id}`, cookie, { version: 1, name: 'Changed' })
+      .expect(200);
   });
 });

@@ -26,6 +26,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { dec } from '../common/money.js';
 import {
@@ -406,6 +407,8 @@ export class NewCustomerBookingDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, branchId);
         if (replaced) {
           requireReplaceablePair(replaced.booking, replaced.customer);
           await replaceInTx(tx, replaced.booking);
@@ -460,6 +463,8 @@ export class NewCustomerBookingDraftsService {
       const locked = await lockDraftRow(tx, TABLE, id);
       if (!locked) throw new NotFoundException('New customer booking draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       await tx.newCustomerBookingDraft.update({
         where: { id },
         data: {

@@ -25,6 +25,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { toDecimalString } from '../common/money.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
@@ -361,6 +362,8 @@ export class NewCustomerQuotationDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, branchId);
         // Only a new request: a phone already taken in the branch is refused (409), so the
         // assistant can say so instead of proposing a duplicate; it is checked again under the
         // lock on approval.
@@ -418,6 +421,8 @@ export class NewCustomerQuotationDraftsService {
       const locked = await lockDraftRow(tx, TABLE, id);
       if (!locked) throw new NotFoundException('New customer quotation draft not found');
       requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
       if (customerPatch.phone) {
         throwFirstConflict(
           await this.customers.duplicateIssues(tx, [
