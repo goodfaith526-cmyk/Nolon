@@ -103,7 +103,7 @@ describe('customer drafts: the assistant proposes', () => {
     const res = await createDraft(body).expect(201);
     const summary = res.body as EntryDraftSummaryDto;
     expect(Object.keys(summary).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(summary).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(await t.prisma.customer.count({ where: { phone: body.phone } })).toBe(0);
@@ -177,7 +177,7 @@ describe('customer drafts: a person reviews', () => {
     expect(other.some((d) => d.id === draft.id)).toBe(false);
     await r.get(`/customer-drafts/${draft.id}`, cookies.salesJed).expect(404);
     expect(draft.check).toEqual({ ok: true, total: null, currency: null });
-    expect(draft.actions).toEqual({ canEdit: false, canDecide: true });
+    expect(draft.actions).toEqual({ canEdit: true, canDecide: true });
     const view = (await r.get(`/customer-drafts/${draft.id}`, cookies.opsDxb).expect(200))
       .body as CustomerDraftDto;
     expect(view.actions.canDecide).toBe(false);
@@ -413,7 +413,8 @@ describe("replacing a draft at the person's request", () => {
 describe('customer drafts: the approval gate', () => {
   it('refuses a draft holding a phone not in +E.164 form, creating no customer', async () => {
     const draft = await customerDraft();
-    const phone = draft.request.phone;
+    const phone = draft.request.phone ?? '';
+    expect(phone).not.toBe('');
     await t.prisma.customerDraft.update({
       where: { id: draft.id },
       data: { phone: '0912345678' },
@@ -491,5 +492,109 @@ describe("customer drafts: the staff member's words", () => {
       }),
     ).expect(400);
     expect(await t.prisma.customerDraft.count()).toBe(before);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a customer draft names
+// only its branch (security context); the rest is filled in on review (PATCH), and approving is
+// refused (422) while anything is missing, creating no customer.
+describe('customer drafts saved with missing values', () => {
+  const MISSING = ['kind', 'name', 'phone'];
+  const read = async (id: string) =>
+    (await r.get(`/customer-drafts/${id}`, cookies.salesDxb).expect(200)).body as CustomerDraftDto;
+
+  it('saves an empty draft and a partly filled one, and reads them back with nulls', async () => {
+    const empty = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(MISSING);
+    const draft = await read(empty.id);
+    expect(draft).toMatchObject({
+      subject: '',
+      missingFields: MISSING,
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { kind: null, name: null, phone: null },
+    });
+    const list = (await r.get('/customer-drafts?status=DRAFT', cookies.salesDxb).expect(200))
+      .body as CustomerDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({ phone: null, subject: '' });
+    const mine = (await r.agentGet('/assistant-drafts/mine', tokens.sales).expect(200)).body as {
+      id: string;
+      subject: string;
+    }[];
+    expect(mine.find((d) => d.id === empty.id)).toMatchObject({ subject: '' });
+
+    const partial = (
+      await createDraft({
+        idempotencyKey: draftKey(),
+        branchId: dxb,
+        name: 'Partly Filled',
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['kind', 'phone']);
+  });
+
+  it('still checks every value given and the branch', async () => {
+    const before = await t.prisma.customerDraft.count();
+    await createDraft({ idempotencyKey: draftKey() }).expect(400);
+    await createDraft({ idempotencyKey: draftKey(), branchId: dxb, phone: '0912' }).expect(400);
+    await createDraft({ idempotencyKey: draftKey(), branchId: dxb, kind: 'ROBOT' }).expect(400);
+    await createDraft({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    expect(await t.prisma.customerDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once filled in', async () => {
+    const { id } = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    const customers = await t.prisma.customer.count();
+    expectGateRefusal(
+      await r.post(`/customer-drafts/${id}/approve`, cookies.salesDxb, { version: 1 }),
+      MISSING,
+    );
+    expect(await t.prisma.customer.count()).toBe(customers);
+
+    const edit = (cookie: string, body: object) => r.patch(`/customer-drafts/${id}`, cookie, body);
+    await edit(cookies.salesJed, { version: 1, name: 'x' }).expect(404);
+    await edit(cookies.opsDxb, { version: 1, name: 'x' }).expect(403);
+    await r
+      .agentPatch(`/customer-drafts/${id}`, tokens.sales, { version: 1, name: 'x' })
+      .expect(403);
+    await edit(cookies.salesDxb, { version: 2, name: 'x' }).expect(409);
+    await edit(cookies.salesDxb, { version: 1, phone: '0912' }).expect(400);
+    await edit(cookies.salesDxb, { version: 1, branchId: jed }).expect(400);
+    const taken = (
+      await r
+        .post('/customers', cookies.salesDxb, {
+          branchId: dxb,
+          kind: 'COMPANY',
+          name: 'Phone Holder',
+          phone: uniquePhone(),
+        })
+        .expect(201)
+    ).body as CustomerDto;
+    await edit(cookies.salesDxb, { version: 1, phone: taken.phone }).expect(409);
+    expect((await read(id)).version).toBe(1);
+
+    const phone = uniquePhone();
+    const filled = (
+      await edit(cookies.salesDxb, {
+        version: 1,
+        kind: 'INDIVIDUAL',
+        name: 'Filled In Later',
+        phone,
+      }).expect(200)
+    ).body as CustomerDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], subject: 'Filled In Later' });
+    await r.post(`/customer-drafts/${id}/approve`, cookies.salesDxb, { version: 1 }).expect(409);
+    const approved = (
+      await r.post(`/customer-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200)
+    ).body as CustomerDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    const again = (
+      await r.post(`/customer-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200)
+    ).body as CustomerDraftDto;
+    expect(again.customerId).toBe(approved.customerId);
+    expect(await t.prisma.customer.count({ where: { phone } })).toBe(1);
+    await edit(cookies.salesDxb, { version: 3, notes: 'x' }).expect(409);
   });
 });

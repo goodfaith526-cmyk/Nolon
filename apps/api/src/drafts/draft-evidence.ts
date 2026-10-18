@@ -50,6 +50,29 @@ export function evidenceOf(stored: Prisma.JsonValue): DraftEvidence[] {
   return parsed.success ? parsed.data : [];
 }
 
+/**
+ * The words left after a person's edit of an open draft: a value the person changed is theirs
+ * now, not a reading of the staff member's words, so its words go (a line's words too, when the
+ * person replaces the lines). The rest stay, to be ticked on approval as before.
+ */
+export function evidenceAfterEdit(
+  stored: Prisma.JsonValue,
+  changed: readonly string[],
+): Prisma.InputJsonArray {
+  const gone = (path: string) =>
+    changed.some((field) => path === field || path.startsWith(`${field}[`));
+  return evidenceOf(stored)
+    .filter((e) => !gone(e.field))
+    .map((e) => ({ field: e.field, quote: e.quote }));
+}
+
+/** The fields a person's edit gives a value for (null included: it clears the value). */
+export function changedFields(patch: object): string[] {
+  return Object.entries(patch)
+    .filter(([, value]) => value !== undefined)
+    .map(([field]) => field);
+}
+
 /** The words' part of a request hash: none when there are none, as drafts made before them. */
 export function evidenceHashPart(evidence: readonly DraftEvidence[]): object {
   return evidence.length === 0 ? {} : { evidence: evidence.map((e) => [e.field, e.quote]) };

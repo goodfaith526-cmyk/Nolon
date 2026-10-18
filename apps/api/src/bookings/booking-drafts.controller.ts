@@ -43,9 +43,9 @@ const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid 
  */
 /**
  * A booking draft's values: a booking's (bookingFields, itemBody), each checked the same way when
- * given, with only the customer required (owner decision, 2026-10-17), or the quotation for one
- * made from a quotation. The rest, a cargo line's type and quantity included, is filled in on
- * review.
+ * given, none of them required (owner decision, 2026-10-17); one made from a quotation names the
+ * quotation. A direct draft belongs to its customer's branch, or to the branch it names while it
+ * has no customer. The rest is filled in on review.
  */
 const draftItem = itemBody
   .extend({
@@ -55,6 +55,7 @@ const draftItem = itemBody
   .strict();
 const draftItems = z.array(draftItem).max(100);
 const directValues = {
+  customerId: z.uuid().nullish(),
   ...bookingFields,
   originLocationId: bookingFields.originLocationId.nullish(),
   destinationLocationId: bookingFields.destinationLocationId.nullish(),
@@ -75,8 +76,8 @@ const createBody = z.union([
   z.object({ ...quotedValues, idempotencyKey, quotationId: z.uuid() }).strict(),
   z
     .object({
-      customerId: z.uuid(),
       ...directValues,
+      branchId: z.uuid().nullish(),
       services: directValues.services.optional(),
       items: directValues.items.optional(),
       idempotencyKey,
@@ -84,8 +85,9 @@ const createBody = z.union([
     .strict(),
 ]);
 /**
- * A person's edit: any value but the customer or the quotation, at the version they read (a draft
- * made from a quotation refuses route and cargo values: BookingDraftsService.update).
+ * A person's edit: any value but the quotation, at the version they read (a customer of the
+ * draft's branch; a draft made from a quotation refuses customer, route and cargo values:
+ * BookingDraftsService.update).
  */
 const updateBody = z
   .object(directValues)

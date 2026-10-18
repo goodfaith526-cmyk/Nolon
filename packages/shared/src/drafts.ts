@@ -86,6 +86,23 @@ export interface EntryDraftSummaryDto {
 export type DraftValues<T, K extends keyof T> = Omit<T, K> & { [P in K]?: T[P] | null };
 
 /**
+ * The branch of a draft whose customer or shipment may be missing: the draft belongs to its
+ * customer's or shipment's branch; with neither, it names one of the user's branches (400
+ * BRANCH_REQUIRED otherwise, 403 outside them). A branch given with them must be theirs (400
+ * BRANCH_MISMATCH). The branch is security context, never a business field.
+ */
+export interface DraftBranchChoice {
+  branchId?: string | null;
+}
+
+/**
+ * PATCH /<kind>-drafts/:id: a person fills in or changes values of an open draft, at the version
+ * they read. Each value given replaces the draft's (null clears it; a list as a whole); the
+ * branch stays. The words of a value the person changes are dropped: it is theirs now.
+ */
+export type DraftUpdateRequest<T> = Partial<T> & { version: number };
+
+/**
  * The values a draft still misses before it can be approved, as request paths (`originLocationId`,
  * `lines[0].quantity`), worked out from the record's own required rules. Empty when complete.
  */

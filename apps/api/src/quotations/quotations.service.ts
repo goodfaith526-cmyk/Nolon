@@ -26,6 +26,7 @@ import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
+import { draftBranch } from '../drafts/draft-rules.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
@@ -179,9 +180,13 @@ export class QuotationsService {
   async checkPresent(
     user: AuthUser,
     input: QuotationDraftValues,
-  ): Promise<{ customerId: string; branchId: string }> {
-    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
-    const branchId = customer.branchId;
+    givenBranchId: string | null,
+  ): Promise<{ customerId: string | null; branchId: string }> {
+    const customer = input.customerId
+      ? await this.customers.requireActiveCustomer(user, input.customerId)
+      : null;
+    // The customer's branch, or with none yet the branch the draft names (one of the user's).
+    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;
     if (from !== null && to !== null) {
@@ -229,7 +234,7 @@ export class QuotationsService {
         );
       }
     }
-    return { customerId: customer.id, branchId };
+    return { customerId: customer?.id ?? null, branchId };
   }
 
   /**

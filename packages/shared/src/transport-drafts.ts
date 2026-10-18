@@ -1,5 +1,7 @@
 import type { DecimalString } from './currencies.js';
 import type {
+  DraftBranchChoice,
+  DraftUpdateRequest,
   DraftValues,
   EntryDraftCheck,
   EntryDraftReviewFields,
@@ -15,10 +17,13 @@ import type { GoodsReleaseRequest } from './warehouse.js';
  */
 
 /**
- * A trip as a trip draft holds it: the branch and the kind are its key fields; the route may be
- * missing, the shipments empty, and the fleet or carrier the kind needs absent.
+ * A trip as a trip draft holds it: the branch is its security context, never missing; the kind
+ * and route may be missing, the shipments empty, and the fleet or carrier the kind needs absent.
  */
-export type TripDraftValues = DraftValues<TripInput, 'originLocationId' | 'destinationLocationId'>;
+export type TripDraftValues = DraftValues<
+  TripInput,
+  'kind' | 'originLocationId' | 'destinationLocationId'
+>;
 
 /** POST /trip-drafts: the assistant proposes a trip (shipments may be left out). */
 export type TripDraftCreateRequest = Omit<TripDraftValues, 'shipmentIds'> & {
@@ -58,19 +63,35 @@ export type TripDraftListItemDto = Omit<
   lineCount: number;
 };
 
-/** The request of a goods release draft, as stored: released at the approval. */
-export type GoodsReleaseDraftRequest = Omit<GoodsReleaseRequest, 'occurredAt'>;
+/**
+ * The request of a goods release draft, as stored: released at the approval. The warehouse and
+ * the packages may be missing until a person fills them in.
+ */
+export type GoodsReleaseDraftRequest = DraftValues<
+  Omit<GoodsReleaseRequest, 'occurredAt'>,
+  'warehouseId' | 'packages'
+>;
 
-/** POST /release-drafts: the assistant proposes a goods release from a shipment. */
-export interface GoodsReleaseDraftCreateRequest extends GoodsReleaseDraftRequest {
-  idempotencyKey: string;
-  shipmentId: string;
-}
+/**
+ * POST /release-drafts: the assistant proposes a goods release from a shipment. No value is
+ * required; with no shipment yet, the draft names its branch.
+ */
+export type GoodsReleaseDraftCreateRequest = GoodsReleaseDraftRequest &
+  DraftBranchChoice & {
+    idempotencyKey: string;
+    shipmentId?: string | null;
+  };
 
-export interface GoodsReleaseDraftDto extends EntryDraftReviewFields {
-  shipmentId: string;
-  shipmentNumber: string;
-  warehouseCode: string;
+/** PATCH /release-drafts/:id: a shipment named must be of the draft's branch. */
+export type GoodsReleaseDraftUpdateRequest = DraftUpdateRequest<
+  GoodsReleaseDraftRequest & { shipmentId: string | null }
+>;
+
+export interface GoodsReleaseDraftDto extends EntryDraftReviewFields, MissingFieldsReview {
+  /** Null while the draft names no shipment (or warehouse) yet. */
+  shipmentId: string | null;
+  shipmentNumber: string | null;
+  warehouseCode: string | null;
   request: GoodsReleaseDraftRequest;
   check: EntryDraftCheck | null;
   movementId: string | null;
@@ -79,6 +100,6 @@ export interface GoodsReleaseDraftDto extends EntryDraftReviewFields {
 
 export type GoodsReleaseDraftListItemDto = Omit<GoodsReleaseDraftDto, 'request' | 'check'> & {
   lineCount: number;
-  packages: number;
+  packages: number | null;
   weightKg: DecimalString | null;
 };

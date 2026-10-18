@@ -10,6 +10,7 @@ import { useRecord } from '../finance/common';
 import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame, DraftStatusBadge } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { MissingFields } from './MissingFields';
 
 const LINE_FIELD = /^items\[(\d+)\]\.(quantity|weightKg|volumeCbm)$/;
 
@@ -39,13 +40,16 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
   const customer = draft.customer;
   const customerReady = customer.status === 'APPROVED' && customer.customerId !== null;
   const words = confirmedBody(draft.evidence, ticked);
+  // A value the draft still misses shows as a dash (MissingFields names it). The booking's are
+  // filled in here; the customer's on its customer draft.
+  const place = (id: string | null | undefined) => (id ? locationName(id) : '—');
+  const bookingMissing = draft.missingFields
+    .filter((f) => f.startsWith('booking.'))
+    .map((f) => f.slice('booking.'.length));
 
   const values: Record<string, { label: string; value: string }> = {
-    originLocationId: { label: tb('origin'), value: locationName(b.originLocationId) },
-    destinationLocationId: {
-      label: tb('destination'),
-      value: locationName(b.destinationLocationId),
-    },
+    originLocationId: { label: tb('origin'), value: place(b.originLocationId) },
+    destinationLocationId: { label: tb('destination'), value: place(b.destinationLocationId) },
     consolidationId: {
       label: t('container'),
       value: draft.container?.number ?? t('containerHidden'),
@@ -67,7 +71,7 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
     <DraftFrame
       draft={draft}
       apiPath="/new-customer-booking-drafts"
-      title={t('newCustomerBookingTitle', { customer: customer.name })}
+      title={t('newCustomerBookingTitle', { customer: customer.name ?? '—' })}
       approveHint={
         b.consolidationId
           ? t('newCustomerContainerBookingApproveHint')
@@ -81,6 +85,12 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
       approveBody={customerReady ? words : null}
       onChanged={setRecord}
     >
+      <MissingFields
+        draft={draft}
+        apiPath="/new-customer-booking-drafts"
+        missingFields={bookingMissing}
+        onChanged={setRecord}
+      />
       <div className="card stack">
         <div className="row">
           <h2>{t('newCustomer')}</h2>
@@ -95,11 +105,11 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
                 {customer.customerNumber ? ` (${customer.customerNumber})` : ''}
               </Link>
             ) : (
-              customer.name
+              (customer.name ?? '—')
             )}
           </dd>
           <dt>{t('phone')}</dt>
-          <dd dir="ltr">{customer.phone}</dd>
+          <dd dir="ltr">{customer.phone ?? '—'}</dd>
         </dl>
         <p>
           <Link href={`/drafts/customers/${customer.draftId}`}>{t('openCustomerDraft')}</Link>
@@ -117,15 +127,12 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
         <dd dir="ltr">{draft.branchCode}</dd>
         <dt>{tb('route')}</dt>
         <dd>
-          {tc('route', {
-            from: locationName(b.originLocationId),
-            to: locationName(b.destinationLocationId),
-          })}
+          {tc('route', { from: place(b.originLocationId), to: place(b.destinationLocationId) })}
         </dd>
         <dt>{tb('mode')}</dt>
         <dd>
-          {te(`mode_${b.mode}`)}
-          {b.loadType ? ` · ${b.loadType}` : ''} · {te(`cargo_${b.cargoType}`)}
+          {b.mode ? te(`mode_${b.mode}`) : '—'}
+          {b.loadType ? ` · ${b.loadType}` : ''} · {b.cargoType ? te(`cargo_${b.cargoType}`) : '—'}
         </dd>
         <dt>{tb('cargoDescription')}</dt>
         <dd>{b.cargoDescription ?? '—'}</dd>
@@ -152,11 +159,11 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
             {b.items.map((item, i) => (
               <tr key={i}>
                 <td>
-                  {te(`cargo_${item.cargoType}`)}
+                  {item.cargoType ? te(`cargo_${item.cargoType}`) : '—'}
                   {item.containerTypeCode ? ` ${item.containerTypeCode}` : ''}
                 </td>
                 <td>{item.description ?? '—'}</td>
-                <td dir="ltr">{item.quantity}</td>
+                <td dir="ltr">{item.quantity ?? '—'}</td>
                 <td dir="ltr">{item.weightKg ?? '—'}</td>
                 <td dir="ltr">{item.volumeCbm ?? '—'}</td>
               </tr>

@@ -274,7 +274,7 @@ export class WarehouseMovementsService {
   async prepareRelease(
     user: AuthUser,
     shipmentId: string,
-    input: GoodsReleaseRequest,
+    input: Pick<GoodsReleaseRequest, 'occurredAt'>,
   ): Promise<PreparedRelease> {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     if (shipment.status === 'CLOSED') {

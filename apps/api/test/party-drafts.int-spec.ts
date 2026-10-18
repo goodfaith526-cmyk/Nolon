@@ -438,3 +438,97 @@ describe("party drafts: replay and the staff member's words", () => {
     expect(await t.prisma.partyDraft.count()).toBe(before);
   });
 });
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a party draft may name
+// no customer yet (it then names its branch) and no name; a person fills them in (PATCH), and
+// approving is refused (422) until nothing is missing, adding no party.
+describe('party drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.salesDxb) =>
+    (await r.get(`/party-drafts/${id}`, cookie).expect(200)).body as PartyDraftDto;
+
+  it('saves a draft naming only its branch, and a customer once named owns it', async () => {
+    const empty = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(['customerId', 'name']);
+    expect(await read(empty.id)).toMatchObject({
+      customerId: null,
+      customerNumber: null,
+      customerName: null,
+      check: null,
+      missingFields: ['customerId', 'name'],
+      actions: { canEdit: true, canDecide: true },
+      request: { name: null },
+    });
+    const list = (await r.get('/party-drafts?status=DRAFT', cookies.salesDxb).expect(200))
+      .body as PartyDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({ customerName: null });
+    // Another branch neither lists nor reads it.
+    const jedList = (await r.get('/party-drafts', cookies.salesJed).expect(200))
+      .body as PartyDraftListItemDto[];
+    expect(jedList.map((d) => d.id)).not.toContain(empty.id);
+    await r.get(`/party-drafts/${empty.id}`, cookies.salesJed).expect(404);
+
+    const customer = await newCustomer();
+    const partial = (
+      await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['name']);
+  });
+
+  it('refuses a draft without a branch, of another branch, or naming a branch not its customer’s', async () => {
+    const customer = await newCustomer();
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.partyDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ name: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
+      'BRANCH_MISMATCH',
+    );
+    await refused({ branchId: dxb, email: 'not an email' }, 400);
+    expect(await t.prisma.partyDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once filled in', async () => {
+    const customer = await newCustomer();
+    const { id } = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expectGateRefusal(
+      await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 1 }),
+      ['customerId', 'name'],
+    );
+    expect(await partiesOf(customer.id)).toBe(0);
+
+    const edit = (cookie: string, body: object) => r.patch(`/party-drafts/${id}`, cookie, body);
+    await edit(cookies.salesJed, { version: 1, name: 'x' }).expect(404);
+    await edit(cookies.opsDxb, { version: 1, name: 'x' }).expect(403);
+    await r.agentPatch(`/party-drafts/${id}`, tokens.sales, { version: 1, name: 'x' }).expect(403);
+    await edit(cookies.salesDxb, { version: 2, name: 'x' }).expect(409);
+    await edit(cookies.salesDxb, { version: 1, email: 'nope' }).expect(400);
+    const filled = (
+      await edit(cookies.salesDxb, {
+        version: 1,
+        customerId: customer.id,
+        name: 'Omer Later',
+      }).expect(200)
+    ).body as PartyDraftDto;
+    expect(filled).toMatchObject({
+      version: 2,
+      missingFields: [],
+      customerId: customer.id,
+      check: { ok: true },
+    });
+    // Once named, the customer stays: the draft's lock order rests on it.
+    const other = await newCustomer();
+    await edit(cookies.salesDxb, { version: 2, customerId: other.id }).expect(400);
+    const approved = (
+      await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200)
+    ).body as PartyDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r.post(`/party-drafts/${id}/approve`, cookies.salesDxb, { version: 2 }).expect(200);
+    expect(await partiesOf(customer.id)).toBe(1);
+  });
+});

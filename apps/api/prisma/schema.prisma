@@ -2708,7 +2708,7 @@ enum EntryDraftState {
 model QuotationDraft {
   id                    String           @id @default(uuid()) @db.Uuid
   branchId              String           @map("branch_id") @db.Uuid
-  customerId            String           @map("customer_id") @db.Uuid
+  customerId            String?          @map("customer_id") @db.Uuid
   state                 EntryDraftState  @default(DRAFT)
   version               Int              @default(1)
   expiresAt             DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -2740,7 +2740,7 @@ model QuotationDraft {
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer    Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer    Customer?            @relation(fields: [customerId], references: [id], onDelete: Restrict)
   agentClient AgentClient          @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User                 @relation("QuotationDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   decidedBy   User?                @relation("QuotationDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
@@ -2782,7 +2782,7 @@ model QuotationDraftLine {
 model BookingDraft {
   id                    String           @id @default(uuid()) @db.Uuid
   branchId              String           @map("branch_id") @db.Uuid
-  customerId            String           @map("customer_id") @db.Uuid
+  customerId            String?          @map("customer_id") @db.Uuid
   /// The approved quotation the booking is made from, when it is.
   sourceQuotationId     String?          @map("source_quotation_id") @db.Uuid
   state                 EntryDraftState  @default(DRAFT)
@@ -2820,7 +2820,7 @@ model BookingDraft {
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch          Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer        Customer?          @relation(fields: [customerId], references: [id], onDelete: Restrict)
   consolidation   Consolidation?     @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
   sourceQuotation Quotation?         @relation("BookingDraftSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: Restrict)
   agentClient     AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
@@ -2874,7 +2874,7 @@ model TripDraft {
   createdById           String           @map("created_by_id") @db.Uuid
   idempotencyKey        String           @map("idempotency_key") @db.VarChar(100)
   payloadHash           String           @map("payload_hash") @db.Char(64)
-  kind                  TripKind
+  kind                  TripKind?
   originLocationId      String?          @map("origin_location_id") @db.Uuid
   destinationLocationId String?          @map("destination_location_id") @db.Uuid
   plannedDeparture      DateTime?        @map("planned_departure") @db.Timestamptz(3)
@@ -2916,12 +2916,12 @@ model TripDraft {
  * A shipment the trip draft puts on the trip, in the order proposed.
  */
 model TripDraftShipment {
-  draftId    String @map("draft_id") @db.Uuid
-  lineNo     Int    @map("line_no")
-  shipmentId String @map("shipment_id") @db.Uuid
+  draftId    String  @map("draft_id") @db.Uuid
+  lineNo     Int     @map("line_no")
+  shipmentId String? @map("shipment_id") @db.Uuid
 
   draft    TripDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  shipment Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  shipment Shipment? @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
 
   @@id([draftId, lineNo])
   @@unique([draftId, shipmentId])
@@ -2937,7 +2937,7 @@ model TripDraftShipment {
 model GoodsReleaseDraft {
   id              String           @id @default(uuid()) @db.Uuid
   branchId        String           @map("branch_id") @db.Uuid
-  shipmentId      String           @map("shipment_id") @db.Uuid
+  shipmentId      String?          @map("shipment_id") @db.Uuid
   state           EntryDraftState  @default(DRAFT)
   version         Int              @default(1)
   expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -2945,8 +2945,8 @@ model GoodsReleaseDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
-  warehouseId     String           @map("warehouse_id") @db.Uuid
-  packages        Int
+  warehouseId     String?          @map("warehouse_id") @db.Uuid
+  packages        Int?
   weightKg        Decimal?         @map("weight_kg") @db.Decimal(12, 3)
   partyName       String?          @map("party_name") @db.VarChar(200)
   note            String?          @db.VarChar(1000)
@@ -2963,8 +2963,8 @@ model GoodsReleaseDraft {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  warehouse   Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  shipment    Shipment?          @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  warehouse   Warehouse?         @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   agentClient AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User               @relation("GoodsReleaseDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   decidedBy   User?              @relation("GoodsReleaseDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
@@ -2991,10 +2991,10 @@ model CustomerDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
-  kind            CustomerKind
-  name            String           @db.VarChar(200)
+  kind            CustomerKind?
+  name            String?          @db.VarChar(200)
   companyName     String?          @map("company_name") @db.VarChar(200)
-  phone           String           @db.VarChar(20)
+  phone           String?          @db.VarChar(20)
   whatsapp        String?          @db.VarChar(20)
   email           String?          @db.VarChar(254)
   city            String?          @db.VarChar(100)
@@ -3035,8 +3035,8 @@ model CustomerDraft {
 model InvoiceDraft {
   id              String           @id @default(uuid()) @db.Uuid
   branchId        String           @map("branch_id") @db.Uuid
-  shipmentId      String           @map("shipment_id") @db.Uuid
-  customerId      String           @map("customer_id") @db.Uuid
+  shipmentId      String?          @map("shipment_id") @db.Uuid
+  customerId      String?          @map("customer_id") @db.Uuid
   state           EntryDraftState  @default(DRAFT)
   version         Int              @default(1)
   expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -3044,9 +3044,9 @@ model InvoiceDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
-  currency        String           @db.Char(3)
-  invoiceDate     DateTime         @map("invoice_date") @db.Date
-  dueDate         DateTime         @map("due_date") @db.Date
+  currency        String?          @db.Char(3)
+  invoiceDate     DateTime?        @map("invoice_date") @db.Date
+  dueDate         DateTime?        @map("due_date") @db.Date
   notes           String?          @db.VarChar(2000)
   decidedById     String?          @map("decided_by_id") @db.Uuid
   decidedAt       DateTime?        @map("decided_at") @db.Timestamptz(3)
@@ -3061,8 +3061,8 @@ model InvoiceDraft {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  customer    Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  shipment    Shipment?          @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  customer    Customer?          @relation(fields: [customerId], references: [id], onDelete: Restrict)
   agentClient AgentClient        @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User               @relation("InvoiceDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   decidedBy   User?              @relation("InvoiceDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
@@ -3079,10 +3079,10 @@ model InvoiceDraft {
 model InvoiceDraftLine {
   draftId        String           @map("draft_id") @db.Uuid
   lineNo         Int              @map("line_no")
-  chargeTypeCode String           @map("charge_type_code") @db.VarChar(20)
+  chargeTypeCode String?          @map("charge_type_code") @db.VarChar(20)
   description    String?          @db.VarChar(500)
-  quantity       Decimal          @db.Decimal(18, 4)
-  unitPrice      Decimal          @map("unit_price") @db.Decimal(18, 4)
+  quantity       Decimal?         @db.Decimal(18, 4)
+  unitPrice      Decimal?         @map("unit_price") @db.Decimal(18, 4)
   /// Where unitPrice came from: typed by the staff member, or the system price NOLON found when
   /// the draft was created (the shipment's quotation, or the approved rate card `rateCardId`).
   priceSource    DraftPriceSource @default(TYPED) @map("price_source")
@@ -3109,7 +3109,7 @@ enum DraftPriceSource {
 model ReceiptDraft {
   id              String           @id @default(uuid()) @db.Uuid
   branchId        String           @map("branch_id") @db.Uuid
-  customerId      String           @map("customer_id") @db.Uuid
+  customerId      String?          @map("customer_id") @db.Uuid
   state           EntryDraftState  @default(DRAFT)
   version         Int              @default(1)
   expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -3117,10 +3117,10 @@ model ReceiptDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
-  receiptDate     DateTime         @map("receipt_date") @db.Date
-  currency        String           @db.Char(3)
-  amount          Decimal          @db.Decimal(18, 4)
-  cashAccountId   String           @map("cash_account_id") @db.Uuid
+  receiptDate     DateTime?        @map("receipt_date") @db.Date
+  currency        String?          @db.Char(3)
+  amount          Decimal?         @db.Decimal(18, 4)
+  cashAccountId   String?          @map("cash_account_id") @db.Uuid
   reference       String?          @db.VarChar(100)
   notes           String?          @db.VarChar(2000)
   decidedById     String?          @map("decided_by_id") @db.Uuid
@@ -3136,8 +3136,8 @@ model ReceiptDraft {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer    Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  cashAccount Account                  @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  customer    Customer?                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  cashAccount Account?                 @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
   agentClient AgentClient              @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User                     @relation("ReceiptDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   decidedBy   User?                    @relation("ReceiptDraftDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
@@ -3152,13 +3152,13 @@ model ReceiptDraft {
 }
 
 model ReceiptDraftAllocation {
-  draftId   String  @map("draft_id") @db.Uuid
-  lineNo    Int     @map("line_no")
-  invoiceId String  @map("invoice_id") @db.Uuid
-  amount    Decimal @db.Decimal(18, 4)
+  draftId   String   @map("draft_id") @db.Uuid
+  lineNo    Int      @map("line_no")
+  invoiceId String?  @map("invoice_id") @db.Uuid
+  amount    Decimal? @db.Decimal(18, 4)
 
-  draft   ReceiptDraft    @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  invoice CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  draft   ReceiptDraft     @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  invoice CustomerInvoice? @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
 
   @@id([draftId, lineNo])
   @@unique([draftId, invoiceId])
@@ -3195,7 +3195,7 @@ enum DraftDecidedVia {
 model ShipmentStatusDraft {
   id              String           @id @default(uuid()) @db.Uuid
   branchId        String           @map("branch_id") @db.Uuid
-  shipmentId      String           @map("shipment_id") @db.Uuid
+  shipmentId      String?          @map("shipment_id") @db.Uuid
   state           EntryDraftState  @default(DRAFT)
   version         Int              @default(1)
   expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -3203,7 +3203,7 @@ model ShipmentStatusDraft {
   createdById     String           @map("created_by_id") @db.Uuid
   idempotencyKey  String           @map("idempotency_key") @db.VarChar(100)
   payloadHash     String           @map("payload_hash") @db.Char(64)
-  status          ShipmentStatus
+  status          ShipmentStatus?
   locationId      String?          @map("location_id") @db.Uuid
   note            String?          @db.VarChar(1000)
   /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
@@ -3221,7 +3221,7 @@ model ShipmentStatusDraft {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment    Shipment    @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  shipment    Shipment?   @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   location    Location?   @relation(fields: [locationId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User        @relation("ShipmentStatusDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -3240,7 +3240,7 @@ model ShipmentStatusDraft {
 model PartyDraft {
   id              String           @id @default(uuid()) @db.Uuid
   branchId        String           @map("branch_id") @db.Uuid
-  customerId      String           @map("customer_id") @db.Uuid
+  customerId      String?          @map("customer_id") @db.Uuid
   state           EntryDraftState  @default(DRAFT)
   version         Int              @default(1)
   expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
@@ -3250,7 +3250,7 @@ model PartyDraft {
   payloadHash     String           @map("payload_hash") @db.Char(64)
   /// The staff member's words for each value (drafts/draft-evidence.ts), confirmed on approval.
   evidence        Json             @default("[]")
-  name            String           @db.VarChar(200)
+  name            String?          @db.VarChar(200)
   companyName     String?          @map("company_name") @db.VarChar(200)
   phone           String?          @db.VarChar(20)
   email           String?          @db.VarChar(254)
@@ -3272,7 +3272,7 @@ model PartyDraft {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
   party       Party?      @relation(fields: [partyId], references: [id], onDelete: Restrict)
   agentClient AgentClient @relation(fields: [agentClientId], references: [id], onDelete: Restrict)
   createdBy   User        @relation("PartyDraftCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -3410,15 +3410,15 @@ model NewCustomerQuotationDraft {
   /// (drafts/draft-evidence.ts), confirmed on approval.
   evidence              Json             @default("[]")
   /// The new customer (CustomerDraftRequest): contact details only, no amounts.
-  customer              Json
-  originLocationId      String           @map("origin_location_id") @db.Uuid
-  destinationLocationId String           @map("destination_location_id") @db.Uuid
-  mode                  ShippingMode
+  customer              Json?
+  originLocationId      String?          @map("origin_location_id") @db.Uuid
+  destinationLocationId String?          @map("destination_location_id") @db.Uuid
+  mode                  ShippingMode?
   loadType              LoadType?        @map("load_type")
-  cargoType             CargoType        @map("cargo_type")
+  cargoType             CargoType?       @map("cargo_type")
   cargoDescription      String?          @map("cargo_description") @db.VarChar(2000)
-  currency              String           @db.Char(3)
-  validUntil            DateTime         @map("valid_until") @db.Date
+  currency              String?          @db.Char(3)
+  validUntil            DateTime?        @map("valid_until") @db.Date
   terms                 String?          @db.VarChar(4000)
   /// The customer and the DRAFT quotation the approval created.
   customerId            String?          @unique @map("customer_id") @db.Uuid
@@ -3457,7 +3457,7 @@ model NewCustomerQuotationDraftLine {
   chargeTypeCode String?   @map("charge_type_code") @db.VarChar(20)
   description    String?   @db.VarChar(500)
   unit           RateUnit?
-  quantity       Decimal   @db.Decimal(18, 4)
+  quantity       Decimal?  @db.Decimal(18, 4)
   unitPrice      Decimal?  @map("unit_price") @db.Decimal(18, 4)
   discount       Decimal?  @db.Decimal(18, 4)
 

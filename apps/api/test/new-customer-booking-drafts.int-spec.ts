@@ -155,7 +155,16 @@ describe('bookings for a new customer: the assistant proposes', () => {
     const body = request({ evidence });
     const summary = await created(body);
     expect(Object.keys(summary).sort()).toEqual(
-      ['createdAt', 'customerDraftId', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      [
+        'createdAt',
+        'customerDraftId',
+        'expiresAt',
+        'id',
+        'lineCount',
+        'missingFields',
+        'status',
+        'version',
+      ].sort(),
     );
     expect(summary).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     const draft = await read(summary.id);
@@ -227,7 +236,8 @@ describe('bookings for a new customer: the assistant proposes', () => {
   it('refuses bad fields: parties, no lines, a number for a weight, words for a missing line', async () => {
     const before = await t.prisma.newCustomerBookingDraft.count();
     await createDraft(request({}, { shipperId: jebelAli })).expect(400);
-    await createDraft(request({}, { items: [] })).expect(400);
+    // A draft may be saved without lines (filled in on review), never with a malformed one.
+    await createDraft(request({}, { items: [{ quantity: 1.5 }] })).expect(400);
     await createDraft(
       request({}, { items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: 12.5 }] }),
     ).expect(400);
@@ -699,5 +709,134 @@ describe("bookings for a new customer: replacing a pair at the person's request"
     await r
       .agentPost('/customer-drafts', tokens.sales, customerBody(pair.customerDraftId))
       .expect(201);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a booking for a new
+// customer may name only its branch (security context). A person fills in the booking (PATCH) and
+// the customer on its own customer draft, and approving is refused (422) while anything is
+// missing, creating no customer and no booking.
+describe('bookings for a new customer saved with missing values', () => {
+  const CUSTOMER_MISSING = ['customer.kind', 'customer.name', 'customer.phone'];
+  const BOOKING_MISSING = [
+    'booking.originLocationId',
+    'booking.destinationLocationId',
+    'booking.mode',
+    'booking.cargoType',
+    'booking.services',
+  ];
+
+  it('saves an empty draft and a partly filled one, and reads them back', async () => {
+    const empty = await created({ idempotencyKey: draftKey(), branchId: dxb });
+    expect(empty.missingFields).toEqual([...CUSTOMER_MISSING, ...BOOKING_MISSING]);
+    expect(await read(empty.id)).toMatchObject({
+      missingFields: [...CUSTOMER_MISSING, ...BOOKING_MISSING],
+      check: null,
+      actions: { canEdit: true },
+      customer: { draftId: empty.customerDraftId, name: null, phone: null },
+      request: { mode: null, services: [], items: [] },
+    });
+    const list = (await r.get(`${API}?status=DRAFT`, cookies.salesDxb).expect(200))
+      .body as NewCustomerBookingDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({
+      missingFields: [...CUSTOMER_MISSING, ...BOOKING_MISSING],
+    });
+    await r.get(`${API}/${empty.id}`, cookies.salesJed).expect(404);
+    await r.get(`/customer-drafts/${empty.customerDraftId}`, cookies.salesJed).expect(404);
+
+    const partial = await created({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      customer: { name: 'Partly Filled' },
+      booking: { mode: 'SEA', items: [{ weightKg: '100' }] },
+    });
+    expect(partial.missingFields).toEqual([
+      'customer.kind',
+      'customer.phone',
+      'booking.originLocationId',
+      'booking.destinationLocationId',
+      'booking.cargoType',
+      'booking.services',
+      'booking.items[0].cargoType',
+      'booking.items[0].quantity',
+    ]);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const before = await t.prisma.newCustomerBookingDraft.count();
+    // A new customer has no branch yet: the draft always names its own (a malformed request).
+    await createDraft({ idempotencyKey: draftKey(), customer: { name: 'No branch' } }).expect(400);
+    await createDraft({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    await createDraft({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      customer: { phone: '0912' },
+    }).expect(400);
+    await createDraft({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      booking: { mode: 'TELEPORT' },
+    }).expect(400);
+    expect(await t.prisma.newCustomerBookingDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once both are filled in', async () => {
+    const summary = await created({ idempotencyKey: draftKey(), branchId: dxb });
+    const { id } = summary;
+    expectGateRefusal(await approve(id, cookies.salesDxb, { version: 1, confirmed: [] }), [
+      ...CUSTOMER_MISSING,
+      ...BOOKING_MISSING,
+    ]);
+    expect(
+      await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, bookingId: null });
+
+    const edit = (cookie: string, body: object) => r.patch(`${API}/${id}`, cookie, body);
+    await edit(cookies.salesJed, { version: 1, mode: 'SEA' }).expect(404);
+    await edit(cookies.financeDxb, { version: 1, mode: 'SEA' }).expect(403);
+    await r.agentPatch(`${API}/${id}`, tokens.sales, { version: 1, mode: 'SEA' }).expect(403);
+    await edit(cookies.salesDxb, { version: 2, mode: 'SEA' }).expect(409);
+    await edit(cookies.salesDxb, { version: 1, mode: 'TELEPORT' }).expect(400);
+    // The customer is completed on its own customer draft.
+    await edit(cookies.salesDxb, { version: 1, customer: { name: 'x' } }).expect(400);
+
+    const booked = (
+      await edit(cookies.salesDxb, {
+        version: 1,
+        originLocationId: jebelAli,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'CONTAINER',
+        services: ['MAIN_FREIGHT'],
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
+      }).expect(200)
+    ).body as NewCustomerBookingDraftDto;
+    expect(booked).toMatchObject({ version: 2, missingFields: CUSTOMER_MISSING });
+    expectGateRefusal(
+      await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }),
+      CUSTOMER_MISSING,
+    );
+
+    const phone = uniquePhone();
+    await r
+      .patch(`/customer-drafts/${summary.customerDraftId}`, cookies.salesDxb, {
+        version: 1,
+        kind: 'INDIVIDUAL',
+        name: 'Filled In Later',
+        phone,
+      })
+      .expect(200);
+    await approveCustomer(summary.customerDraftId, { version: 2, confirmed: [] }).expect(200);
+    const ready = await read(id);
+    expect(ready).toMatchObject({ missingFields: [], check: { ok: true } });
+    const approved = (
+      await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }).expect(200)
+    ).body as NewCustomerBookingDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }).expect(200);
+    expect(
+      await t.prisma.booking.count({ where: { customerId: ready.customer.customerId ?? '' } }),
+    ).toBe(1);
   });
 });

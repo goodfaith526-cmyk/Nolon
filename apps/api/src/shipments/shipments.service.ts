@@ -486,6 +486,22 @@ export class ShipmentsService {
   }
 
   /**
+   * The checks of prepareStatusChange on what a status draft holds so far (a draft is saved with
+   * missing values): the shipment as the user sees it, when named, and the location, when given;
+   * the move itself waits for both the shipment and the status (prepareStatusChange). The
+   * shipment's branch, or null with no shipment. Nothing is written.
+   */
+  async checkStatusPresent(
+    user: AuthUser,
+    id: string | null,
+    input: { locationId?: string | null },
+  ): Promise<{ branchId: string | null }> {
+    const shipment = id === null ? null : await this.findScoped(user, id);
+    if (input.locationId) await this.masterData.requireLocation(input.locationId);
+    return { branchId: shipment?.branchId ?? null };
+  }
+
+  /**
    * A status change dated now, in the caller's transaction (an approved entry draft). The caller
    * checked access; the move and its permission are checked here under the shipment lock.
    */

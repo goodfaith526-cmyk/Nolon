@@ -2194,6 +2194,7 @@
     "missingSaved": "Values saved.",
     "missingNewLine": "New line",
     "missingNoShipments": "No shipment found.",
+    "missingNoCustomers": "No customer found.",
     "incompleteRefused": "The draft still misses values."
   },
   "Fields": {
@@ -2248,7 +2249,18 @@
     "carrierId": "Carrier",
     "agreedCost": "Agreed cost",
     "shipmentIds": "Shipments",
-    "validFrom": "Valid from"
+    "validFrom": "Valid from",
+    "kind": "Kind",
+    "shipmentId": "Shipment",
+    "warehouseId": "Warehouse",
+    "packages": "Packages",
+    "status": "Status",
+    "invoiceDate": "Invoice date",
+    "dueDate": "Due date",
+    "receiptDate": "Receipt date",
+    "cashAccountId": "Cash or bank account",
+    "invoiceId": "Invoice",
+    "allocations": "Allocations"
   },
   "Refusals": {
     "SAME_ROUTE": "From and To must be different places.",
@@ -2285,7 +2297,9 @@
     "ALLOCATION_OTHER_CUSTOMER": "This invoice is not one of this customer's invoices.",
     "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
     "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
-    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that."
+    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that.",
+    "BRANCH_REQUIRED": "Choose the branch of this draft.",
+    "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs."
   },
   "Locations": {
     "title": "Ports and cities",

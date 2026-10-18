@@ -216,13 +216,23 @@ export class AccountsService {
   }
 
   /** A cash or bank account usable by the branch, in the given currency. */
-  async requireCash(tx: Tx, id: string, branchId: string, currency: string): Promise<Account> {
+  /**
+   * A postable cash or bank account of `branchId` (or shared) holding `currency`. A null currency
+   * (a receipt draft that names no currency yet) checks the rest; the currency is checked once
+   * given, and always on posting.
+   */
+  async requireCash(
+    tx: Tx,
+    id: string,
+    branchId: string,
+    currency: string | null,
+  ): Promise<Account> {
     const account = await this.requirePostable(tx, id);
     if (!account.isCash) throw new BadRequestException('Not a cash or bank account');
     if (account.branchId !== null && account.branchId !== branchId) {
       throw new BadRequestException('This cash account belongs to another branch');
     }
-    if (account.currency !== currency) {
+    if (currency !== null && account.currency !== currency) {
       throw new BadRequestException(`This cash account holds ${account.currency ?? '—'}`);
     }
     return account;

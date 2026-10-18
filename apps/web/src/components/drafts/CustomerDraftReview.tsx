@@ -1,6 +1,6 @@
 'use client';
 
-import type { CustomerDraftDto } from '@nolon/shared';
+import { CUSTOMER_KINDS, type CustomerDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
@@ -8,6 +8,7 @@ import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { MissingFields } from './MissingFields';
 
 /** A new customer the assistant proposed: their contact details, and the decision. */
 export function CustomerDraftReview({ id }: { id: string }) {
@@ -23,12 +24,14 @@ export function CustomerDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const customer = draft.request;
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const kinds = CUSTOMER_KINDS.map((k) => ({ value: k, label: tcu(`kind_${k}`) }));
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/customer-drafts"
-      title={t('customerTitle', { name: customer.name })}
+      title={t('customerTitle', { name: customer.name ?? '—' })}
       approveHint={t('customerApproveHint')}
       result={
         draft.customerId
@@ -38,6 +41,12 @@ export function CustomerDraftReview({ id }: { id: string }) {
       approveBody={confirmedBody(draft.evidence, ticked)}
       onChanged={setRecord}
     >
+      <MissingFields
+        draft={draft}
+        apiPath="/customer-drafts"
+        choices={{ kind: kinds }}
+        onChanged={setRecord}
+      />
       {draft.bookingDraftId && (
         <p>
           {t('bookingWithCustomer')}{' '}
@@ -50,13 +59,13 @@ export function CustomerDraftReview({ id }: { id: string }) {
         <dt>{tcu('branch')}</dt>
         <dd dir="ltr">{draft.branchCode}</dd>
         <dt>{tcu('kind')}</dt>
-        <dd>{tcu(`kind_${customer.kind}`)}</dd>
+        <dd>{customer.kind ? tcu(`kind_${customer.kind}`) : '—'}</dd>
         <dt>{tcu('name')}</dt>
-        <dd>{customer.name}</dd>
+        <dd>{customer.name ?? '—'}</dd>
         <dt>{tcu('companyName')}</dt>
         <dd>{customer.companyName ?? '—'}</dd>
         <dt>{tcu('phone')}</dt>
-        <dd dir="ltr">{customer.phone}</dd>
+        <dd dir="ltr">{customer.phone ?? '—'}</dd>
         <dt>{tcu('whatsapp')}</dt>
         <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
         <dt>{tcu('email')}</dt>
@@ -72,8 +81,8 @@ export function CustomerDraftReview({ id }: { id: string }) {
         evidence={draft.evidence}
         values={{
           branchId: { label: tcu('branch'), value: draft.branchCode },
-          name: { label: tcu('name'), value: customer.name },
-          phone: { label: tcu('phone'), value: customer.phone },
+          name: { label: tcu('name'), value: customer.name ?? '—' },
+          phone: { label: tcu('phone'), value: customer.phone ?? '—' },
           whatsapp: { label: tcu('whatsapp'), value: customer.whatsapp ?? '—' },
         }}
         ticked={ticked}

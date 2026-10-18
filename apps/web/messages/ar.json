@@ -2194,6 +2194,7 @@
     "missingSaved": "تم حفظ القيم.",
     "missingNewLine": "سطر جديد",
     "missingNoShipments": "ما في شحنة.",
+    "missingNoCustomers": "ما في عميل.",
     "incompleteRefused": "المسودة لسه ناقصة قيم."
   },
   "Fields": {
@@ -2248,7 +2249,18 @@
     "carrierId": "الناقل",
     "agreedCost": "التكلفة المتفق عليها",
     "shipmentIds": "الشحنات",
-    "validFrom": "ساري من"
+    "validFrom": "ساري من",
+    "kind": "النوع",
+    "shipmentId": "الشحنة",
+    "warehouseId": "المخزن",
+    "packages": "عدد الطرود",
+    "status": "الحالة",
+    "invoiceDate": "تاريخ الفاتورة",
+    "dueDate": "تاريخ الاستحقاق",
+    "receiptDate": "تاريخ السند",
+    "cashAccountId": "حساب النقدية أو البنك",
+    "invoiceId": "الفاتورة",
+    "allocations": "التخصيصات"
   },
   "Refusals": {
     "SAME_ROUTE": "يجب أن يختلف «من» عن «إلى».",
@@ -2285,7 +2297,9 @@
     "ALLOCATION_OTHER_CUSTOMER": "هذه الفاتورة ليست من فواتير هذا العميل.",
     "ALLOCATION_NOT_APPROVED": "الفاتورة {invoice} غير معتمدة: الدفع يكون على الفواتير المعتمدة فقط.",
     "ALLOCATION_OTHER_CURRENCY": "الفاتورة {invoice} بعملة {currency}: استلمها بتلك العملة.",
-    "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك."
+    "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك.",
+    "BRANCH_REQUIRED": "اختر فرع هذه المسودة.",
+    "BRANCH_MISMATCH": "هذا الفرع ليس فرع العميل أو الشحنة: المسودة تتبع فرعهما."
   },
   "Locations": {
     "title": "الموانئ والمدن",

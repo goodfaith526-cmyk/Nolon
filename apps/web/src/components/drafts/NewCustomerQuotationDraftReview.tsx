@@ -1,6 +1,6 @@
 'use client';
 
-import type { NewCustomerQuotationDraftDto } from '@nolon/shared';
+import { CUSTOMER_KINDS, type NewCustomerQuotationDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
@@ -10,6 +10,7 @@ import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { MissingFields } from './MissingFields';
 
 const LINE_FIELD = /^lines\[(\d+)\]\.(quantity|unitPrice|discount)$/;
 
@@ -39,18 +40,19 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
   // A line with neither a rate card nor a price takes the system price (the matching rate card).
   const systemPriced = q.lines.some((l) => !l.rateCardId && l.unitPrice === undefined);
   const words = confirmedBody(draft.evidence, ticked);
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const place = (id: string | null | undefined) => (id ? locationName(id) : '—');
+  const currency = q.currency ?? undefined;
+  const kinds = CUSTOMER_KINDS.map((k) => ({ value: k, label: tcu(`kind_${k}`) }));
 
   const values: Record<string, { label: string; value: string }> = {
     branchId: { label: tcu('branch'), value: draft.branchCode },
-    name: { label: tcu('name'), value: customer.name },
-    phone: { label: tcu('phone'), value: customer.phone },
+    name: { label: tcu('name'), value: customer.name ?? '—' },
+    phone: { label: tcu('phone'), value: customer.phone ?? '—' },
     whatsapp: { label: tcu('whatsapp'), value: customer.whatsapp ?? '—' },
-    originLocationId: { label: tq('origin'), value: locationName(q.originLocationId) },
-    destinationLocationId: {
-      label: tq('destination'),
-      value: locationName(q.destinationLocationId),
-    },
-    currency: { label: tq('currency'), value: q.currency },
+    originLocationId: { label: tq('origin'), value: place(q.originLocationId) },
+    destinationLocationId: { label: tq('destination'), value: place(q.destinationLocationId) },
+    currency: { label: tq('currency'), value: q.currency ?? '—' },
   };
   for (const e of draft.evidence) {
     const match = LINE_FIELD.exec(e.field);
@@ -67,7 +69,7 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
     <DraftFrame
       draft={draft}
       apiPath="/new-customer-quotation-drafts"
-      title={t('newCustomerQuotationTitle', { customer: customer.name })}
+      title={t('newCustomerQuotationTitle', { customer: customer.name ?? '—' })}
       approveHint={
         systemPriced
           ? `${t('newCustomerQuotationApproveHint')} ${t('systemPriceHint')}`
@@ -81,13 +83,20 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
       approveBody={pricing && words ? { ...words, pricingKey: pricing.key } : null}
       onChanged={setRecord}
     >
+      <MissingFields
+        draft={draft}
+        apiPath="/new-customer-quotation-drafts"
+        request={{ customer, quotation: q }}
+        choices={{ kind: kinds }}
+        onChanged={setRecord}
+      />
       <div className="card stack">
         <h2>{t('newCustomer')}</h2>
         <dl className="details">
           <dt>{tcu('branch')}</dt>
           <dd dir="ltr">{draft.branchCode}</dd>
           <dt>{tcu('kind')}</dt>
-          <dd>{tcu(`kind_${customer.kind}`)}</dd>
+          <dd>{customer.kind ? tcu(`kind_${customer.kind}`) : '—'}</dd>
           <dt>{tcu('name')}</dt>
           <dd>
             {draft.customerId ? (
@@ -96,13 +105,13 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
                 {draft.customerNumber ? ` (${draft.customerNumber})` : ''}
               </Link>
             ) : (
-              customer.name
+              (customer.name ?? '—')
             )}
           </dd>
           <dt>{tcu('companyName')}</dt>
           <dd>{customer.companyName ?? '—'}</dd>
           <dt>{tcu('phone')}</dt>
-          <dd dir="ltr">{customer.phone}</dd>
+          <dd dir="ltr">{customer.phone ?? '—'}</dd>
           <dt>{tcu('whatsapp')}</dt>
           <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
           <dt>{tcu('email')}</dt>
@@ -118,22 +127,19 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
       <dl className="details">
         <dt>{tq('route')}</dt>
         <dd>
-          {tc('route', {
-            from: locationName(q.originLocationId),
-            to: locationName(q.destinationLocationId),
-          })}
+          {tc('route', { from: place(q.originLocationId), to: place(q.destinationLocationId) })}
         </dd>
         <dt>{tq('mode')}</dt>
         <dd>
-          {te(`mode_${q.mode}`)}
-          {q.loadType ? ` · ${q.loadType}` : ''} · {te(`cargo_${q.cargoType}`)}
+          {q.mode ? te(`mode_${q.mode}`) : '—'}
+          {q.loadType ? ` · ${q.loadType}` : ''} · {q.cargoType ? te(`cargo_${q.cargoType}`) : '—'}
         </dd>
         <dt>{tq('cargoDescription')}</dt>
         <dd>{q.cargoDescription ?? '—'}</dd>
         <dt>{tq('currency')}</dt>
-        <dd dir="ltr">{q.currency}</dd>
+        <dd dir="ltr">{q.currency ?? '—'}</dd>
         <dt>{tq('validUntil')}</dt>
-        <dd dir="ltr">{q.validUntil}</dd>
+        <dd dir="ltr">{q.validUntil ?? '—'}</dd>
         <dt>{tq('terms')}</dt>
         <dd>{q.terms ?? '—'}</dd>
       </dl>
@@ -163,12 +169,12 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
                   <td>
                     {(priced?.unit ?? line.unit) ? te(`unit_${priced?.unit ?? line.unit}`) : '—'}
                   </td>
-                  <td dir="ltr">{line.quantity}</td>
+                  <td dir="ltr">{line.quantity ?? '—'}</td>
                   <td>
                     {(priced?.unitPrice ?? line.unitPrice) ? (
                       <Money
                         value={priced?.unitPrice ?? line.unitPrice ?? ''}
-                        currency={q.currency}
+                        currency={currency}
                       />
                     ) : (
                       '—'
@@ -179,17 +185,14 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
                   </td>
                   <td>
                     {(priced?.discount ?? line.discount) ? (
-                      <Money
-                        value={priced?.discount ?? line.discount ?? ''}
-                        currency={q.currency}
-                      />
+                      <Money value={priced?.discount ?? line.discount ?? ''} currency={currency} />
                     ) : (
                       '—'
                     )}
                   </td>
                   {pricing && (
                     <td>
-                      <Money value={priced?.lineTotal ?? ''} currency={q.currency} />
+                      <Money value={priced?.lineTotal ?? ''} currency={currency} />
                     </td>
                   )}
                 </tr>

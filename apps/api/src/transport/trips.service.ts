@@ -318,7 +318,9 @@ export class TripsService {
     if (plannedDeparture && plannedArrival && plannedArrival < plannedDeparture) {
       throw new BadRequestException('The planned arrival cannot be before the departure');
     }
-    checkKindConflicts(input);
+    // What the kind rules out, once the kind is given.
+    const kind = input.kind;
+    if (kind) checkKindConflicts({ ...input, kind });
     const shipmentIds = [...new Set(input.shipmentIds)];
     if (shipmentIds.length !== input.shipmentIds.length) {
       throw new BadRequestException('Each shipment appears once');

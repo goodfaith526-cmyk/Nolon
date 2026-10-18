@@ -33,6 +33,7 @@ import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
+import { draftBranch } from '../drafts/draft-rules.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -197,8 +198,13 @@ export class BookingsService {
   async checkPresent(
     user: AuthUser,
     input: BookingDraftDirect,
-  ): Promise<{ branchId: string; customerId: string }> {
-    const customer = await this.customers.requireActiveCustomer(user, input.customerId);
+    givenBranchId: string | null,
+  ): Promise<{ branchId: string; customerId: string | null }> {
+    const customer = input.customerId
+      ? await this.customers.requireActiveCustomer(user, input.customerId)
+      : null;
+    // The customer's branch, or with none yet the branch the draft names (one of the user's).
+    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;
     if (from !== null && to !== null) {
@@ -216,8 +222,8 @@ export class BookingsService {
         'loadType',
       ]);
     }
-    await this.checkPresentLines(customer.id, input);
-    return { branchId: customer.branchId, customerId: customer.id };
+    await this.checkPresentLines(customer?.id ?? null, input);
+    return { branchId, customerId: customer?.id ?? null };
   }
 
   /** As checkPresent, for a booking draft made from an approved quotation of the user's branches. */
@@ -234,7 +240,7 @@ export class BookingsService {
 
   /** The parties and cargo lines of a draft: a complete line in full, others on what they hold. */
   private async checkPresentLines(
-    customerId: string,
+    customerId: string | null,
     input: {
       shipperId?: string | null;
       consigneeId?: string | null;
@@ -242,11 +248,21 @@ export class BookingsService {
       items?: BookingDraftItem[];
     },
   ): Promise<void> {
-    await this.customers.requireOwnParties(customerId, [
-      input.shipperId,
-      input.consigneeId,
-      input.notifyPartyId,
-    ]);
+    if (customerId === null) {
+      // A party is one of the customer's: it is named once the customer is.
+      const named = (['shipperId', 'consigneeId', 'notifyPartyId'] as const).filter(
+        (field) => input[field],
+      );
+      if (named.length > 0) {
+        throw fieldRefusal(null, "Name the customer before the customer's parties", named);
+      }
+    } else {
+      await this.customers.requireOwnParties(customerId, [
+        input.shipperId,
+        input.consigneeId,
+        input.notifyPartyId,
+      ]);
+    }
     for (const [index, item] of (input.items ?? []).entries()) {
       const path = `items.${index}`;
       const { cargoType, quantity } = item;

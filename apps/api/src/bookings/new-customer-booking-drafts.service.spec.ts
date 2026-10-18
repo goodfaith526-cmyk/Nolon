@@ -12,6 +12,7 @@ import {
   CUSTOMER_APPROVED_REFUSAL,
   CUSTOMER_CLOSED_REFUSAL,
   bookingRequestOf,
+  completeBookingRequest,
   customerNotReady,
   requireReplaceablePair,
   newCustomerBookingHash,
@@ -72,6 +73,56 @@ describe('bookings for a new customer: the stored request', () => {
     const json = JSON.parse(JSON.stringify(stored)) as Prisma.JsonValue;
     expect(bookingRequestOf({ id: 'x', request: json })).toEqual(stored);
     expect(() => bookingRequestOf({ id: 'x', request: { items: 3 } })).toThrow();
+  });
+
+  it('stores a complete booking exactly as before drafts could miss values', () => {
+    expect(storedRequest(booking)).toEqual({
+      originLocationId: 'a5d3f1c2-1111-4222-8333-944455556666',
+      destinationLocationId: 'b5d3f1c2-1111-4222-8333-944455556667',
+      mode: 'SEA',
+      loadType: 'FCL',
+      cargoType: 'CONTAINER',
+      cargoDescription: null,
+      services: ['MAIN_FREIGHT', 'CUSTOMS'],
+      requestedDeparture: null,
+      specialInstructions: null,
+      items: [
+        {
+          cargoType: 'CONTAINER',
+          containerTypeCode: '40HC',
+          description: null,
+          quantity: 2,
+          weightKg: '1500.5',
+          volumeCbm: null,
+        },
+      ],
+    });
+  });
+
+  it('stores and reads back a booking missing values, each missing value null', () => {
+    const stored = storedRequest({ mode: 'SEA', services: [], items: [{ weightKg: '2.50' }] });
+    expect(stored).toMatchObject({
+      originLocationId: null,
+      destinationLocationId: null,
+      mode: 'SEA',
+      cargoType: null,
+      services: [],
+      items: [{ cargoType: null, quantity: null, weightKg: '2.5' }],
+    });
+    const json = JSON.parse(JSON.stringify(stored)) as Prisma.JsonValue;
+    expect(bookingRequestOf({ id: 'x', request: json })).toEqual(stored);
+    expect(newCustomerBookingHash(BRANCH, {}, stored)).not.toBe(
+      newCustomerBookingHash(BRANCH, customer, booking),
+    );
+  });
+
+  it('gives a complete booking back in the shape BookingsService takes, never a null', () => {
+    const complete = completeBookingRequest(storedRequest(booking));
+    expect(complete.originLocationId).toBe('a5d3f1c2-1111-4222-8333-944455556666');
+    expect(complete.items[0]).toMatchObject({ cargoType: 'CONTAINER', quantity: 2 });
+    expect(() =>
+      completeBookingRequest(storedRequest({ ...booking, originLocationId: null })),
+    ).toThrow();
   });
 
   it('hashes equal requests equally and any change otherwise', () => {

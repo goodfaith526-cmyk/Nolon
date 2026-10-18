@@ -1,8 +1,11 @@
 import type {
+  DraftBranchChoice,
   DraftEvidence,
+  DraftUpdateRequest,
   EntryDraftCheck,
   EntryDraftReviewFields,
   EvidenceReviewFields,
+  MissingFieldsReview,
 } from './drafts.js';
 import type { ShipmentStatus } from './shipments.js';
 
@@ -14,24 +17,36 @@ import type { ShipmentStatus } from './shipments.js';
  */
 export const SHIPMENT_STATUS_DRAFT_EXCLUDED = ['CLOSED', 'ON_HOLD', 'CANCELLED'] as const;
 
+/** A status change as its draft holds it: the status may be missing until a person fills it in. */
 export interface ShipmentStatusDraftRequest {
-  status: ShipmentStatus;
+  status?: ShipmentStatus | null;
   locationId?: string | null;
   note?: string | null;
 }
 
-/** POST /shipment-status-drafts. */
-export interface ShipmentStatusDraftCreateRequest extends ShipmentStatusDraftRequest {
+/**
+ * POST /shipment-status-drafts: no value required. With no shipment yet, the draft names its
+ * branch.
+ */
+export interface ShipmentStatusDraftCreateRequest
+  extends ShipmentStatusDraftRequest, DraftBranchChoice {
   idempotencyKey: string;
-  shipmentId: string;
+  shipmentId?: string | null;
   evidence?: DraftEvidence[];
 }
 
-export interface ShipmentStatusDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
-  shipmentId: string;
-  shipmentNumber: string;
-  /** The shipment's status now, to read the proposed move against. */
-  currentStatus: ShipmentStatus;
+/** PATCH /shipment-status-drafts/:id: a shipment named must be of the draft's branch. */
+export type ShipmentStatusDraftUpdateRequest = DraftUpdateRequest<
+  ShipmentStatusDraftRequest & { shipmentId: string | null }
+>;
+
+export interface ShipmentStatusDraftDto
+  extends EntryDraftReviewFields, EvidenceReviewFields, MissingFieldsReview {
+  /** Null while the draft names no shipment yet. */
+  shipmentId: string | null;
+  shipmentNumber: string | null;
+  /** The shipment's status now, to read the proposed move against (null with no shipment). */
+  currentStatus: ShipmentStatus | null;
   locationName: string | null;
   request: ShipmentStatusDraftRequest;
   check: EntryDraftCheck | null;
@@ -42,6 +57,6 @@ export type ShipmentStatusDraftListItemDto = Omit<
   'request' | 'check' | 'evidence'
 > & {
   lineCount: number;
-  /** The proposed status (status is the draft's). */
-  targetStatus: ShipmentStatus;
+  /** The proposed status (status is the draft's); null while missing. */
+  targetStatus: ShipmentStatus | null;
 };

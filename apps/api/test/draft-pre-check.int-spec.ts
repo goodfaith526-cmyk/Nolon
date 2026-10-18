@@ -253,11 +253,19 @@ describe('a pre-check', () => {
     ];
     for (const path of paths) {
       const result = refused(await check(path, tokens.admin, {}));
-      expect(result.valuesHash, path).toBeNull();
-      expect(
-        result.refusals.every((x) => x.code === 'INVALID'),
-        path,
-      ).toBe(true);
+      // An empty body: the schema's refusals (no values to hash), or for a kind with no required
+      // business value, the branch such a draft needs when it names no customer or shipment.
+      const codes = result.refusals.map((x) => x.code);
+      if (result.valuesHash === null) {
+        expect(
+          codes.every((c) => c === 'INVALID'),
+          path,
+        ).toBe(true);
+      } else {
+        expect(result.refusals, path).toMatchObject([
+          { field: 'branchId', code: 'BRANCH_REQUIRED' },
+        ]);
+      }
     }
   });
 });

@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -34,12 +35,26 @@ import { PartyDraftsService } from './party-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-const createBody = partyBody
+/**
+ * A party draft's values: a party's (partyBody), each checked the same way when given, none of
+ * them required (owner decision, 2026-10-17). The draft belongs to the customer's branch, or to
+ * the branch it names while it has no customer.
+ */
+const draftValues = partyBody.extend({
+  name: partyBody.shape.name.nullish(),
+  customerId: z.uuid().nullish(),
+});
+const createBody = draftValues
   .extend({
     idempotencyKey,
-    customerId: z.uuid(),
+    branchId: z.uuid().nullish(),
     evidence: draftEvidence(['customerId', 'name', 'phone']),
   })
+  .strict();
+/** A person's edit: any value (a customer of the draft's branch), at the version they read. */
+const updateBody = draftValues
+  .partial()
+  .extend({ version: z.number().int().min(1) })
   .strict();
 const approveBody = z
   .object({ version: z.number().int().min(1), confirmed: confirmedFields })
@@ -100,6 +115,17 @@ export class PartyDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<PartyDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('customers:update')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<PartyDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

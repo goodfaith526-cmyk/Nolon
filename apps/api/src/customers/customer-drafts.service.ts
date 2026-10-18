@@ -5,6 +5,7 @@ import type {
   CustomerDraftDto,
   CustomerDraftListItemDto,
   CustomerDraftRequest,
+  CustomerDraftUpdateRequest,
   DraftEvidence,
   DraftPreCheckDto,
   DraftStatus,
@@ -15,23 +16,32 @@ import type {
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
-import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
+import {
+  changedFields,
+  evidenceAfterEdit,
+  evidenceHashPart,
+  evidenceOf,
+  requireConfirmed,
+} from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
   draftExpiry,
   type DraftState,
   draftStatus,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
+  storedValue,
 } from '../drafts/draft-rules.js';
 import {
   decideInTx,
   DraftsService,
   keyReused,
+  lockDraftRow,
   type LockedReplacement,
   lockReplacedInTx,
   mineWhere,
@@ -93,10 +103,10 @@ export function customerRequestHash(
   return requestHash({
     ...evidenceHashPart(evidence),
     branchId: branchId.toLowerCase(),
-    kind: input.kind,
-    name: input.name,
+    kind: input.kind ?? null,
+    name: input.name ?? null,
     companyName: input.companyName ?? null,
-    phone: input.phone,
+    phone: input.phone ?? null,
     whatsapp: input.whatsapp ?? null,
     email: input.email ?? null,
     city: input.city ?? null,
@@ -121,8 +131,49 @@ export function pairedWithOpenBooking(
   return booking !== null && draftStatus(booking.state, booking.expiresAt, now) === 'DRAFT';
 }
 
-function createRequestOf(branchId: string, input: CustomerDraftRequest): CreateCustomerRequest {
-  return { branchId, ...input };
+/** The values a customer draft holds, in the shape CustomersService.prepareCreate checks. */
+export function presentRequestOf(branchId: string, input: CustomerDraftRequest) {
+  return {
+    branchId,
+    ...input,
+    kind: input.kind ?? undefined,
+    name: input.name ?? undefined,
+    phone: input.phone ?? undefined,
+  };
+}
+
+/** The customer of a complete draft (the approval gate passed), as CustomersService creates it. */
+export function createRequestOf(
+  branchId: string,
+  input: CustomerDraftRequest,
+): CreateCustomerRequest {
+  return {
+    branchId,
+    ...input,
+    kind: storedValue(input.kind, 'kind'),
+    name: storedValue(input.name, 'name'),
+    phone: storedValue(input.phone, 'phone'),
+  };
+}
+
+/** What a customer draft still misses before it can be approved (the gate's missing values). */
+export function customerMissingFields(input: CustomerDraftRequest): string[] {
+  return customerCompleteness(input).missing;
+}
+
+/** The value columns of a draft, a missing value as NULL. */
+function columnsOf(input: CustomerDraftRequest) {
+  return {
+    kind: input.kind ?? null,
+    name: input.name ?? null,
+    companyName: input.companyName ?? null,
+    phone: input.phone ?? null,
+    whatsapp: input.whatsapp ?? null,
+    email: input.email ?? null,
+    city: input.city ?? null,
+    address: input.address ?? null,
+    notes: input.notes ?? null,
+  };
 }
 
 /**
@@ -147,10 +198,13 @@ export class CustomerDraftsService {
     return preCheck(customerRequestHash(branchId, input, evidence), async () => {
       // As an approval would: a customer with this phone in the branch refuses it.
       assertBranchAccess(user, branchId);
-      await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+      await this.customers.prepareCreate(user, presentRequestOf(branchId, input));
       throwFirstConflict(
-        await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: input.phone }]),
+        await this.customers.duplicateIssues(this.prisma, [
+          { branchId, phone: input.phone ?? undefined },
+        ]),
       );
+      return { total: null, currency: null, missingFields: customerMissingFields(input) };
     });
   }
 
@@ -167,8 +221,8 @@ export class CustomerDraftsService {
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'customer_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real create that need no lock; nothing is written.
-    await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+    // The checks of a real create that need no lock, on the values present; nothing is written.
+    await this.customers.prepareCreate(user, presentRequestOf(branchId, input));
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -207,7 +261,7 @@ export class CustomerDraftsService {
    * its own transaction (createInTx): the branch is the user's, the references exist.
    */
   async prepareNew(user: AuthUser, branchId: string, input: CustomerDraftRequest): Promise<void> {
-    await this.customers.prepareCreate(user, createRequestOf(branchId, input));
+    await this.customers.prepareCreate(user, presentRequestOf(branchId, input));
   }
 
   /**
@@ -282,6 +336,15 @@ export class CustomerDraftsService {
     });
   }
 
+  /** gateValuesOf for many customer drafts at once (a list of bookings for new customers), by id. */
+  async gateValuesOfMany(ids: readonly string[]): Promise<Map<string, CustomerGate>> {
+    const drafts = await this.prisma.customerDraft.findMany({
+      where: { id: { in: [...new Set(ids)] } },
+      select: { id: true, kind: true, name: true, phone: true },
+    });
+    return new Map(drafts.map(({ id, ...gate }) => [id, gate]));
+  }
+
   /**
    * The customer drafts a booking for a new customer waits for, by id, as its review screen shows
    * them. The caller read the booking drafts through their own branch scope; a customer draft is
@@ -307,6 +370,7 @@ export class CustomerDraftsService {
         {
           draftId: d.id,
           status: draftStatus(d.state, d.expiresAt, now),
+          // Null while the customer draft misses them.
           name: d.name,
           phone: d.phone,
           customerId: d.customerId,
@@ -334,7 +398,7 @@ export class CustomerDraftsService {
     // instead of proposing a duplicate; it is checked again under the lock on approval. A
     // replay is answered before this, even after its own approval took the phone.
     throwFirstConflict(
-      await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone }]),
+      await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone ?? undefined }]),
     );
     if (replaced) await replaceInTx(tx, replaced);
     const draft = await tx.customerDraft.create({
@@ -345,19 +409,51 @@ export class CustomerDraftsService {
         expiresAt: draftExpiry(),
         payloadHash: hash,
         evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
-        kind: input.kind,
-        name: input.name,
-        companyName: input.companyName ?? null,
-        phone: input.phone,
-        whatsapp: input.whatsapp ?? null,
-        email: input.email ?? null,
-        city: input.city ?? null,
-        address: input.address ?? null,
-        notes: input.notes ?? null,
+        ...columnsOf(input),
       },
       select: { id: true },
     });
     return draft.id;
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create (a phone already taken in the branch is refused, 409), and the
+   * version moves on. The words of a value the person changed are dropped. The assistant's
+   * request (its payload hash) stays the draft's, so a replay of that create still finds it.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: CustomerDraftUpdateRequest,
+  ): Promise<CustomerDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const values = patched(customerRequestOf(current), patch);
+    await this.customers.prepareCreate(user, presentRequestOf(current.branchId, values));
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'customer_drafts', id);
+      if (!locked) throw new NotFoundException('Customer draft not found');
+      requireOpen(locked, version, LABEL);
+      if (patch.phone) {
+        throwFirstConflict(
+          await this.customers.duplicateIssues(tx, [
+            { branchId: current.branchId, phone: patch.phone },
+          ]),
+        );
+      }
+      await tx.customerDraft.update({
+        where: { id },
+        data: {
+          ...columnsOf(values),
+          evidence: evidenceAfterEdit(current.evidence, changedFields(patch)),
+          version: { increment: 1 },
+        },
+      });
+    });
+    return this.get(user, id);
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -497,21 +593,27 @@ export class CustomerDraftsService {
     return this.get(user, id);
   }
 
-  /** NOLON's checks of a create, the phone included (binding only under the lock, on approval). */
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
-    return checkDraft(async () => {
+  /**
+   * NOLON's checks of a create, the phone included (binding only under the lock, on approval),
+   * on the values present. Null while the draft misses values and those present pass: it waits
+   * for them (missingFields).
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const result = await checkDraft(async () => {
       assertBranchAccess(user, draft.branchId);
       await this.customers.prepareCreate(
         user,
-        createRequestOf(draft.branchId, customerRequestOf(draft)),
+        presentRequestOf(draft.branchId, customerRequestOf(draft)),
       );
       throwFirstConflict(
         await this.customers.duplicateIssues(this.prisma, [
-          { branchId: draft.branchId, phone: draft.phone },
+          { branchId: draft.branchId, phone: draft.phone ?? undefined },
         ]),
       );
       return { total: null, currency: null };
     });
+    const missing = customerMissingFields(customerRequestOf(draft)).length > 0;
+    return result.ok && missing ? null : result;
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
@@ -549,6 +651,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: 1,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: customerMissingFields(customerRequestOf(d)),
   };
 }
 
@@ -563,7 +666,7 @@ function baseFields(
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: d.name,
+    subject: d.name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -573,7 +676,8 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: customerMissingFields(customerRequestOf(d)),
     branchCode: d.branch.code,
     customerId: d.customerId,
     customerNumber: d.customer?.number ?? null,

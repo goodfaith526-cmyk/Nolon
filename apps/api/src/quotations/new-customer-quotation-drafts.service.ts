@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import {
   CUSTOMER_KINDS,
-  type CreateCustomerRequest,
   type CustomerDraftRequest,
   type DraftEvidence,
   type DraftPreCheckDto,
@@ -19,23 +18,36 @@ import {
   type NewCustomerQuotationDraftDto,
   type NewCustomerQuotationDraftListItemDto,
   type NewCustomerQuotationDraftSummaryDto,
+  type NewCustomerQuotationDraftUpdateRequest,
   type QuotationDraftPricing,
+  type QuotationDraftQuotation,
   type QuotationInput,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
-import { toDbDate } from '../common/dates.js';
 import { toDecimalString } from '../common/money.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
-import { customerRequestHash } from '../customers/customer-drafts.service.js';
+import {
+  createRequestOf,
+  customerRequestHash,
+  presentRequestOf,
+} from '../customers/customer-drafts.service.js';
 import { CustomersService } from '../customers/customers.service.js';
-import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
+import {
+  changedFields,
+  evidenceAfterEdit,
+  evidenceHashPart,
+  evidenceOf,
+  requireConfirmed,
+} from '../drafts/draft-evidence.js';
 import {
   approvedFields,
+  checkDraft,
   draftExpiry,
   draftStatus,
   isRefusal,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
@@ -47,6 +59,7 @@ import {
   decideInTx,
   DraftsService,
   keyReused,
+  lockDraftRow,
   lockKeyInTx,
   MY_DRAFTS_ORDER,
   lockReplacedInTx,
@@ -65,14 +78,18 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type Completeness,
   newCustomerQuotationCompleteness,
+  quotationValuesCompleteness,
   requireApprovable,
 } from '../drafts/draft-completeness.js';
 import {
+  completeQuotationInput,
+  draftLines,
+  normalisedDraftQuotation,
   normalisedQuotation,
   pricingOf,
-  quotationInputOf,
+  quotationColumnsOf,
+  quotationValuesOf,
   sourcesOf,
-  storedLines,
 } from './quotation-drafts.service.js';
 import { QuotationsService } from './quotations.service.js';
 
@@ -94,15 +111,42 @@ type DraftRow = Prisma.NewCustomerQuotationDraftGetPayload<{ include: typeof det
 
 type PreparedQuotation = Awaited<ReturnType<QuotationsService['prepareForNewCustomer']>>;
 
+/** The two parts of a new customer quotation draft, each value possibly missing (null). */
+export interface NewCustomerQuotationValues {
+  customer: CustomerDraftRequest;
+  quotation: QuotationDraftQuotation;
+}
+
+/** The values a stored draft holds, exactly as stored. */
+function valuesOfRow(d: DraftRow): NewCustomerQuotationValues {
+  return { customer: customerOf(d), quotation: quotationValuesOf(d) };
+}
+
+/** A create body's values (a part left out holds nothing yet), its branch and its words. */
+function valuesOfCreate(body: Omit<NewCustomerQuotationDraftCreateRequest, 'idempotencyKey'>): {
+  branchId: string;
+  values: NewCustomerQuotationValues;
+  evidence: DraftEvidence[];
+} {
+  const { branchId, customer = {}, quotation = {}, evidence = [] } = body;
+  return {
+    branchId,
+    values: { customer, quotation: { ...quotation, lines: quotation.lines ?? [] } },
+    evidence,
+  };
+}
+
 /**
  * A new customer quotation draft's approval gate (draft-completeness.ts), on both parts: the
  * customer (`customer.name`...) and the quotation (`quotation.currency`...).
  */
 export function newCustomerQuotationDraftCompleteness(d: DraftRow): Completeness {
-  return newCustomerQuotationCompleteness({
-    customer: customerOf(d),
-    quotation: quotationInputOf(d),
-  });
+  return newCustomerQuotationCompleteness(valuesOfRow(d));
+}
+
+/** What the draft still misses before it can be approved (the gate's missing values). */
+export function newCustomerQuotationMissingFields(values: NewCustomerQuotationValues): string[] {
+  return newCustomerQuotationCompleteness(values).missing;
 }
 
 const CUSTOMER_FIELDS: readonly string[] = NEW_CUSTOMER_QUOTATION_CUSTOMER_FIELDS;
@@ -122,13 +166,13 @@ export function splitEvidence(evidence: readonly DraftEvidence[]): {
   };
 }
 
-/** The customer as the draft stores it (a JSON object): absent optional fields null. */
+/** The customer as the draft stores it (a JSON object): absent fields null. */
 export function storedCustomer(input: CustomerDraftRequest): CustomerDraftRequest {
   return {
-    kind: input.kind,
-    name: input.name,
+    kind: input.kind ?? null,
+    name: input.name ?? null,
     companyName: input.companyName ?? null,
-    phone: input.phone,
+    phone: input.phone ?? null,
     whatsapp: input.whatsapp ?? null,
     email: input.email ?? null,
     city: input.city ?? null,
@@ -138,10 +182,10 @@ export function storedCustomer(input: CustomerDraftRequest): CustomerDraftReques
 }
 
 const storedCustomerShape = z.object({
-  kind: z.enum(CUSTOMER_KINDS),
-  name: z.string(),
+  kind: z.enum(CUSTOMER_KINDS).nullable(),
+  name: z.string().nullable(),
   companyName: z.string().nullable(),
-  phone: z.string(),
+  phone: z.string().nullable(),
   whatsapp: z.string().nullable(),
   email: z.string().nullable(),
   city: z.string().nullable(),
@@ -149,8 +193,9 @@ const storedCustomerShape = z.object({
   notes: z.string().nullable(),
 });
 
-/** The new customer a stored draft proposes. */
+/** The new customer a stored draft proposes (none stored: every value missing). */
 export function customerOf(d: { id: string; customer: Prisma.JsonValue }): CustomerDraftRequest {
+  if (d.customer === null) return storedCustomer({});
   const parsed = storedCustomerShape.safeParse(d.customer);
   if (!parsed.success) {
     throw new Error(`New customer quotation draft ${d.id} has no valid customer`);
@@ -160,21 +205,25 @@ export function customerOf(d: { id: string; customer: Prisma.JsonValue }): Custo
 
 /**
  * sha256 of the whole request: the branch, the customer with its words (as a customer draft
- * hashes them), the quotation normalised as a quotation draft hashes it, and its words.
+ * hashes them), the quotation normalised as a quotation draft hashes it, and its words. A complete
+ * quotation hashes as it always did; one missing values in its own form, never equal to it.
  */
 export function newCustomerQuotationHash(
   branchId: string,
-  customer: CustomerDraftRequest,
-  quotation: QuotationInput,
+  values: NewCustomerQuotationValues,
   evidence: readonly DraftEvidence[] = [],
 ): string {
   const words = splitEvidence(evidence);
+  const { customer, quotation } = values;
   return requestHash({
     ...evidenceHashPart(words.quotation),
     kind: 'NEW_CUSTOMER_QUOTATION',
     branchId: branchId.toLowerCase(),
     customer: customerRequestHash(branchId, customer, words.customer),
-    quotation: normalisedQuotation(quotation),
+    quotation:
+      quotationValuesCompleteness(quotation).missing.length === 0
+        ? normalisedQuotation(completeQuotationInput(quotation))
+        : normalisedDraftQuotation(quotation),
   });
 }
 
@@ -222,12 +271,15 @@ export class NewCustomerQuotationDraftsService {
     user: AuthUser,
     body: NewCustomerQuotationDraftCreateRequest,
   ): Promise<DraftPreCheckDto> {
-    const { branchId, customer, quotation, evidence = [] } = valuesOf(body);
-    return preCheck(newCustomerQuotationHash(branchId, customer, quotation, evidence), async () => {
-      const prepared = await this.prepareNew(user, branchId, customer, quotation);
+    const { branchId, values, evidence } = valuesOfCreate(valuesOf(body));
+    return preCheck(newCustomerQuotationHash(branchId, values, evidence), async () => {
+      const missingFields = newCustomerQuotationMissingFields(values);
+      const prepared = await this.validate(user, branchId, values);
       // As a new request: a customer with this phone in the branch refuses it, at its field.
       const [taken] = (
-        await this.customers.duplicateIssues(this.prisma, [{ branchId, phone: customer.phone }])
+        await this.customers.duplicateIssues(this.prisma, [
+          { branchId, phone: values.customer.phone ?? undefined },
+        ])
       ).flat();
       if (taken) {
         throw new ConflictException({
@@ -237,9 +289,11 @@ export class NewCustomerQuotationDraftsService {
           statusCode: 409,
         });
       }
+      if (prepared === null) return { total: null, currency: null, missingFields };
+      const { quotation } = values;
       return {
         total: toDecimalString(prepared.header.total),
-        currency: quotation.currency,
+        currency: quotation.currency ?? null,
         priceSources: sourcesOf(prepared),
         // A line given no price takes the rate card's: what an approval would record now.
         computed: prepared.lines.flatMap((l, i) =>
@@ -254,6 +308,7 @@ export class NewCustomerQuotationDraftsService {
                 },
               ],
         ),
+        missingFields,
       };
     });
   }
@@ -273,9 +328,11 @@ export class NewCustomerQuotationDraftsService {
     if (!user.permissions.has('customers:create')) {
       throw new ForbiddenException('Proposing a new customer needs permission to add customers');
     }
-    const { idempotencyKey, branchId, customer, quotation, evidence = [] } = body;
+    const { idempotencyKey, ...rest } = body;
+    const { branchId, values, evidence } = valuesOfCreate(rest);
+    const { customer, quotation } = values;
     const hash = withReplaced(
-      newCustomerQuotationHash(branchId, customer, quotation, evidence),
+      newCustomerQuotationHash(branchId, values, evidence),
       replacesDraftId,
     );
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
@@ -283,8 +340,9 @@ export class NewCustomerQuotationDraftsService {
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, TABLE, scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real create that need no lock, for both parts; nothing is written.
-    await this.prepareNew(user, branchId, customer, quotation);
+    // The checks of a real create that need no lock, for both parts (those of the values present
+    // while values are missing); nothing is written.
+    await this.validate(user, branchId, values);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -307,7 +365,9 @@ export class NewCustomerQuotationDraftsService {
         // assistant can say so instead of proposing a duplicate; it is checked again under the
         // lock on approval.
         throwFirstConflict(
-          await this.customers.duplicateIssues(tx, [{ branchId, phone: customer.phone }]),
+          await this.customers.duplicateIssues(tx, [
+            { branchId, phone: customer.phone ?? undefined },
+          ]),
         );
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.newCustomerQuotationDraft.create({
@@ -319,25 +379,72 @@ export class NewCustomerQuotationDraftsService {
             payloadHash: hash,
             evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
             customer: { ...storedCustomer(customer) },
-            originLocationId: quotation.originLocationId,
-            destinationLocationId: quotation.destinationLocationId,
-            mode: quotation.mode,
-            loadType: quotation.loadType ?? null,
-            cargoType: quotation.cargoType,
-            cargoDescription: quotation.cargoDescription ?? null,
-            currency: quotation.currency,
-            validUntil: toDbDate(quotation.validUntil),
-            terms: quotation.terms ?? null,
+            ...quotationColumnsOf(quotation),
           },
           select: { id: true },
         });
         await tx.newCustomerQuotationDraftLine.createMany({
-          data: storedLines(quotation).map((line) => ({ ...line, draftId: draft.id })),
+          data: draftLines(quotation.lines).map((line) => ({ ...line, draftId: draft.id })),
         });
         return draft.id;
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create, a phone given is refused when a customer of the branch holds it, a
+   * changed value's words go (the person's now), and the version moves on (a pricing shown before
+   * no longer applies). The assistant's request (its payload hash) stays the draft's.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: NewCustomerQuotationDraftUpdateRequest,
+  ): Promise<NewCustomerQuotationDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, customer: customerPatch = {}, quotation: quotationPatch = {} } = input;
+    requireOpen(current, version, LABEL);
+    const stored = valuesOfRow(current);
+    const values = {
+      customer: patched(stored.customer, customerPatch),
+      quotation: patched(stored.quotation, quotationPatch),
+    };
+    // The draft's branch stays: a draft never changes branch.
+    await this.validate(user, current.branchId, values);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, TABLE, id);
+      if (!locked) throw new NotFoundException('New customer quotation draft not found');
+      requireOpen(locked, version, LABEL);
+      if (customerPatch.phone) {
+        throwFirstConflict(
+          await this.customers.duplicateIssues(tx, [
+            { branchId: current.branchId, phone: customerPatch.phone },
+          ]),
+        );
+      }
+      await tx.newCustomerQuotationDraft.update({
+        where: { id },
+        data: {
+          customer: { ...storedCustomer(values.customer) },
+          ...quotationColumnsOf(values.quotation),
+          evidence: evidenceAfterEdit(current.evidence, [
+            ...changedFields(customerPatch),
+            ...changedFields(quotationPatch),
+          ]),
+          version: { increment: 1 },
+        },
+      });
+      if (quotationPatch.lines !== undefined) {
+        await tx.newCustomerQuotationDraftLine.deleteMany({ where: { draftId: id } });
+        await tx.newCustomerQuotationDraftLine.createMany({
+          data: draftLines(values.quotation.lines).map((line) => ({ ...line, draftId: id })),
+        });
+      }
+    });
+    return this.get(user, id);
   }
 
   async findByKey(
@@ -372,7 +479,7 @@ export class NewCustomerQuotationDraftsService {
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
       lineCount: d.lines.length,
-      phone: customerOf(d).phone,
+      phone: customerOf(d).phone ?? null,
     }));
   }
 
@@ -411,7 +518,7 @@ export class NewCustomerQuotationDraftsService {
     return {
       ...baseFields(draft, user, now),
       customer: customerOf(draft),
-      request: quotationInputOf(draft),
+      request: quotationValuesOf(draft),
       evidence: evidenceOf(draft.evidence),
       check,
       pricing,
@@ -446,7 +553,7 @@ export class NewCustomerQuotationDraftsService {
       user,
       current.branchId,
       customerOf(current),
-      quotationInputOf(current),
+      completeQuotationInput(quotationValuesOf(current)),
     );
     // Exactly the prices the person reviewed (rate cards resolved); this same `prepared` is what
     // is inserted. Anything else asks for a reload.
@@ -517,8 +624,33 @@ export class NewCustomerQuotationDraftsService {
     customer: CustomerDraftRequest,
     quotation: QuotationInput,
   ): Promise<PreparedQuotation> {
-    await this.customers.prepareCreate(user, createRequestOf(branchId, customer));
+    await this.customers.prepareCreate(user, presentRequestOf(branchId, customer));
     return underQuotation(() => this.quotations.prepareForNewCustomer(user, branchId, quotation));
+  }
+
+  /**
+   * The checks a draft's values get on create and on a person's edit: with the quotation
+   * complete, prepareNew's in full (prices included); with values missing, those of the values
+   * present (the customer's, the quotation's as a quotation draft's), and no prices (null).
+   */
+  private async validate(
+    user: AuthUser,
+    branchId: string,
+    values: NewCustomerQuotationValues,
+  ): Promise<PreparedQuotation | null> {
+    if (quotationValuesCompleteness(values.quotation).missing.length === 0) {
+      return this.prepareNew(
+        user,
+        branchId,
+        values.customer,
+        completeQuotationInput(values.quotation),
+      );
+    }
+    await this.customers.prepareCreate(user, presentRequestOf(branchId, values.customer));
+    await underQuotation(() =>
+      this.quotations.checkPresent(user, { ...values.quotation, customerId: null }, branchId),
+    );
+    return null;
   }
 
   /**
@@ -529,23 +661,34 @@ export class NewCustomerQuotationDraftsService {
     user: AuthUser,
     draft: DraftRow,
   ): Promise<{
-    check: EntryDraftCheck;
+    check: EntryDraftCheck | null;
     pricing: QuotationDraftPricing | null;
     priceSources: DraftPriceSource[] | null;
   }> {
+    const values = valuesOfRow(draft);
+    const phoneTaken = async () =>
+      throwFirstConflict(
+        await this.customers.duplicateIssues(this.prisma, [
+          { branchId: draft.branchId, phone: values.customer.phone ?? undefined },
+        ]),
+      );
+    if (newCustomerQuotationMissingFields(values).length > 0) {
+      // No prices while values are missing; null check while those present pass (missingFields).
+      const present = await checkDraft(async () => {
+        await this.validate(user, draft.branchId, values);
+        await phoneTaken();
+        return { total: null, currency: null };
+      });
+      return { check: present.ok ? null : present, pricing: null, priceSources: null };
+    }
     try {
-      const customer = customerOf(draft);
       const prepared = await this.prepareNew(
         user,
         draft.branchId,
-        customer,
-        quotationInputOf(draft),
+        values.customer,
+        completeQuotationInput(values.quotation),
       );
-      throwFirstConflict(
-        await this.customers.duplicateIssues(this.prisma, [
-          { branchId: draft.branchId, phone: customer.phone },
-        ]),
-      );
+      await phoneTaken();
       return {
         check: {
           ok: true,
@@ -573,10 +716,6 @@ export class NewCustomerQuotationDraftsService {
   }
 }
 
-function createRequestOf(branchId: string, input: CustomerDraftRequest): CreateCustomerRequest {
-  return { branchId, ...input };
-}
-
 function toSummary(d: DraftRow, now: Date): NewCustomerQuotationDraftSummaryDto {
   return {
     id: d.id,
@@ -585,6 +724,7 @@ function toSummary(d: DraftRow, now: Date): NewCustomerQuotationDraftSummaryDto 
     lineCount: d.lines.length,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: newCustomerQuotationMissingFields(valuesOfRow(d)),
   };
 }
 
@@ -607,7 +747,7 @@ function baseFields(
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: customerOf(d).name,
+    subject: customerOf(d).name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -617,11 +757,12 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
     branchCode: d.branch.code,
     customerId: d.customerId,
     customerNumber: d.createdCustomer?.number ?? null,
     quotationId: d.quotationId,
     quotationNumber: d.quotation?.number ?? null,
+    missingFields: newCustomerQuotationMissingFields(valuesOfRow(d)),
   };
 }

@@ -38,10 +38,10 @@ import { preCheckBody } from '../drafts/draft-rules.js';
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 /**
  * A quotation draft's values: a quotation's (quotationFields), each checked the same way when
- * given, with only the customer required (owner decision, 2026-10-17): the draft belongs to the
- * customer's branch. The rest, a line's quantity included, is filled in on review.
+ * given, none of them required (owner decision, 2026-10-17). The draft belongs to the customer's
+ * branch, or to the branch it names while it has no customer. The rest is filled in on review.
  */
-const draftValues = {
+export const quotationDraftFields = {
   ...quotationFields,
   originLocationId: quotationFields.originLocationId.nullish(),
   destinationLocationId: quotationFields.destinationLocationId.nullish(),
@@ -51,15 +51,16 @@ const draftValues = {
   validUntil: quotationFields.validUntil.nullish(),
   lines: z.array(lineBody.extend({ quantity: lineBody.shape.quantity.nullish() }).strict()).max(50),
 };
+const draftValues = { customerId: z.uuid().nullish(), ...quotationDraftFields };
 const createBody = z
   .object({
-    customerId: z.uuid(),
     ...draftValues,
+    branchId: z.uuid().nullish(),
     lines: draftValues.lines.optional(),
     idempotencyKey,
   })
   .strict();
-/** A person's edit: any value but the customer, at the version they read. */
+/** A person's edit: any value (a customer of the draft's branch), at the version they read. */
 const updateBody = z
   .object(draftValues)
   .partial()

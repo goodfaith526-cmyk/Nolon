@@ -22,6 +22,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -571,5 +572,97 @@ describe("shipment status drafts: the staff member's words", () => {
     await createDraft(
       statusRequest(shipment.id, { evidence: [{ field: 'note', quote: 'x' }] }),
     ).expect(400);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a status draft may name
+// no shipment yet (it then names its branch) and no status; a person fills them in (PATCH), and
+// approving is refused (422) until nothing is missing, moving no shipment.
+describe('shipment status drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.opsDxb) =>
+    (await r.get(`/shipment-status-drafts/${id}`, cookie).expect(200))
+      .body as ShipmentStatusDraftDto;
+
+  it('saves a draft naming only its branch, and one naming only its shipment', async () => {
+    const empty = (await createDraft({ idempotencyKey: draftKey(), branchId: dxb }).expect(201))
+      .body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(['shipmentId', 'status']);
+    expect(await read(empty.id)).toMatchObject({
+      shipmentId: null,
+      shipmentNumber: null,
+      currentStatus: null,
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { status: null },
+    });
+    const list = (await r.get('/shipment-status-drafts?status=DRAFT', cookies.opsDxb).expect(200))
+      .body as ShipmentStatusDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({ targetStatus: null });
+    await r.get(`/shipment-status-drafts/${empty.id}`, cookies.opsJed).expect(404);
+    // A driver sees only the shipments of their own trips: none of a draft without one.
+    await r.get(`/shipment-status-drafts/${empty.id}`, cookies.driverDxb).expect(404);
+
+    const shipment = await roadShipment();
+    const partial = (
+      await createDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['status']);
+    expect(await read(partial.id)).toMatchObject({
+      shipmentNumber: shipment.number,
+      currentStatus: 'CREATED',
+      check: null,
+    });
+  });
+
+  it('refuses a draft without a branch, of another branch, or a status it cannot set', async () => {
+    const before = await t.prisma.shipmentStatusDraft.count();
+    const jed = await branchId(t.prisma, 'JED');
+    const res = await createDraft({ idempotencyKey: draftKey(), note: 'x' }).expect(400);
+    expect((res.body as { code?: string }).code).toBe('BRANCH_REQUIRED');
+    await createDraft({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    await createDraft({ idempotencyKey: draftKey(), branchId: dxb, status: 'FLYING' }).expect(400);
+    expect(await t.prisma.shipmentStatusDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once filled in', async () => {
+    const shipment = await roadShipment();
+    const { id } = (
+      await createDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expectGateRefusal(
+      await r.post(`/shipment-status-drafts/${id}/approve`, cookies.opsDxb, { version: 1 }),
+      ['status'],
+    );
+    expect(await shipmentStatus(shipment.id)).toBe('CREATED');
+
+    const edit = (cookie: string, body: object) =>
+      r.patch(`/shipment-status-drafts/${id}`, cookie, body);
+    await edit(cookies.opsJed, { version: 1, status: 'TRIP_SCHEDULED' }).expect(404);
+    await edit(cookies.salesDxb, { version: 1, status: 'TRIP_SCHEDULED' }).expect(403);
+    await r
+      .agentPatch(`/shipment-status-drafts/${id}`, tokens.ops, { version: 1, note: 'x' })
+      .expect(403);
+    await edit(cookies.opsDxb, { version: 2, status: 'TRIP_SCHEDULED' }).expect(409);
+    await edit(cookies.opsDxb, { version: 1, status: 'FLYING' }).expect(400);
+    // Once named, the shipment stays.
+    const other = await roadShipment();
+    await edit(cookies.opsDxb, { version: 1, shipmentId: other.id }).expect(400);
+    const filled = (
+      await edit(cookies.opsDxb, { version: 1, status: 'TRIP_SCHEDULED' }).expect(200)
+    ).body as ShipmentStatusDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    await r
+      .post(`/shipment-status-drafts/${id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(409);
+    const approved = (
+      await r
+        .post(`/shipment-status-drafts/${id}/approve`, cookies.opsDxb, { version: 2 })
+        .expect(200)
+    ).body as ShipmentStatusDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r
+      .post(`/shipment-status-drafts/${id}/approve`, cookies.opsDxb, { version: 2 })
+      .expect(200);
+    expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
   });
 });

@@ -14,11 +14,13 @@ import {
   type EntryDraftCheck,
   LOAD_TYPES,
   NEW_CUSTOMER_BOOKING_CUSTOMER_FIELDS,
+  type NewCustomerBookingDraftBooking,
   type NewCustomerBookingDraftCreateRequest,
   type NewCustomerBookingDraftCustomer,
   type NewCustomerBookingDraftDto,
   type NewCustomerBookingDraftListItemDto,
   type NewCustomerBookingDraftSummaryDto,
+  type NewCustomerBookingDraftUpdateRequest,
   type NewCustomerBookingRequest,
   SHIPPING_MODES,
 } from '@nolon/shared';
@@ -30,23 +32,32 @@ import {
   CustomerDraftsService,
   customerRequestHash,
 } from '../customers/customer-drafts.service.js';
-import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
+import {
+  changedFields,
+  evidenceAfterEdit,
+  evidenceHashPart,
+  evidenceOf,
+  requireConfirmed,
+} from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
   draftExpiry,
   type DraftState,
   draftStatus,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
+  storedValue,
 } from '../drafts/draft-rules.js';
 import {
   decideInTx,
   DraftsService,
   keyReused,
+  lockDraftRow,
   type LockedReplacement,
   lockReplacedInTx,
   mineWhere,
@@ -64,7 +75,9 @@ import {
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
+  bookingValuesCompleteness,
   type Completeness,
+  type CustomerGate,
   newCustomerBookingCompleteness,
   requireApprovable,
 } from '../drafts/draft-completeness.js';
@@ -137,16 +150,19 @@ function canonical(value: string | null | undefined): string | null {
 }
 
 /**
- * The booking as the draft stores it (a JSON object): absent optional fields null, services
- * without repeats, measurements as canonical decimal strings, never numbers.
+ * The booking as the draft stores it (a JSON object): absent fields null (a missing value too),
+ * services without repeats, measurements as canonical decimal strings, never numbers. A complete
+ * booking is stored, and hashed, exactly as before drafts could miss values.
  */
-export function storedRequest(input: NewCustomerBookingRequest): NewCustomerBookingRequest {
+export function storedRequest(
+  input: NewCustomerBookingDraftBooking,
+): NewCustomerBookingDraftBooking {
   return {
-    originLocationId: input.originLocationId.toLowerCase(),
-    destinationLocationId: input.destinationLocationId.toLowerCase(),
-    mode: input.mode,
+    originLocationId: input.originLocationId?.toLowerCase() ?? null,
+    destinationLocationId: input.destinationLocationId?.toLowerCase() ?? null,
+    mode: input.mode ?? null,
     loadType: input.loadType ?? null,
-    cargoType: input.cargoType,
+    cargoType: input.cargoType ?? null,
     cargoDescription: input.cargoDescription ?? null,
     services: [...new Set(input.services)],
     requestedDeparture: input.requestedDeparture ?? null,
@@ -154,10 +170,10 @@ export function storedRequest(input: NewCustomerBookingRequest): NewCustomerBook
     // Only when it names one: a booking without a container is stored and hashed as before.
     ...(input.consolidationId ? { consolidationId: input.consolidationId.toLowerCase() } : {}),
     items: input.items.map((item) => ({
-      cargoType: item.cargoType,
+      cargoType: item.cargoType ?? null,
       containerTypeCode: item.containerTypeCode ?? null,
       description: item.description ?? null,
-      quantity: item.quantity,
+      quantity: item.quantity ?? null,
       weightKg: canonical(item.weightKg),
       volumeCbm: canonical(item.volumeCbm),
     })),
@@ -165,11 +181,11 @@ export function storedRequest(input: NewCustomerBookingRequest): NewCustomerBook
 }
 
 const storedShape = z.object({
-  originLocationId: z.string(),
-  destinationLocationId: z.string(),
-  mode: z.enum(SHIPPING_MODES),
+  originLocationId: z.string().nullable(),
+  destinationLocationId: z.string().nullable(),
+  mode: z.enum(SHIPPING_MODES).nullable(),
   loadType: z.enum(LOAD_TYPES).nullable(),
-  cargoType: z.enum(CARGO_TYPES),
+  cargoType: z.enum(CARGO_TYPES).nullable(),
   cargoDescription: z.string().nullable(),
   services: z.array(z.enum(BOOKING_SERVICES)),
   requestedDeparture: z.string().nullable(),
@@ -177,24 +193,71 @@ const storedShape = z.object({
   consolidationId: z.string().optional(),
   items: z.array(
     z.object({
-      cargoType: z.enum(CARGO_TYPES),
+      cargoType: z.enum(CARGO_TYPES).nullable(),
       containerTypeCode: z.string().nullable(),
       description: z.string().nullable(),
-      quantity: z.number().int(),
+      quantity: z.number().int().nullable(),
       weightKg: z.string().nullable(),
       volumeCbm: z.string().nullable(),
     }),
   ),
 });
 
-/** The booking a stored draft proposes. */
+/** The booking a stored draft proposes (a missing value null). */
 export function bookingRequestOf(d: {
   id: string;
   request: Prisma.JsonValue;
-}): NewCustomerBookingRequest {
+}): NewCustomerBookingDraftBooking {
   const parsed = storedShape.safeParse(d.request);
   if (!parsed.success) throw new Error(`New customer booking draft ${d.id} has no valid booking`);
   return parsed.data;
+}
+
+/** Whether the booking part misses no value (its customer apart). */
+function bookingComplete(booking: NewCustomerBookingDraftBooking): boolean {
+  return bookingValuesCompleteness(booking).missing.length === 0;
+}
+
+/** The booking of a complete draft (the approval gate passed), as BookingsService takes it. */
+export function completeBookingRequest(
+  booking: NewCustomerBookingDraftBooking,
+): NewCustomerBookingRequest {
+  return {
+    ...booking,
+    originLocationId: storedValue(booking.originLocationId, 'origin'),
+    destinationLocationId: storedValue(booking.destinationLocationId, 'destination'),
+    mode: storedValue(booking.mode, 'mode'),
+    cargoType: storedValue(booking.cargoType, 'cargo type'),
+    items: booking.items.map((item) => ({
+      ...item,
+      cargoType: storedValue(item.cargoType, 'line cargo type'),
+      quantity: storedValue(item.quantity, 'line quantity'),
+    })),
+  };
+}
+
+/** A create body's values: a part left out holds nothing yet (no services, no lines). */
+function valuesOfCreate(body: Omit<NewCustomerBookingDraftCreateRequest, 'idempotencyKey'>): {
+  branchId: string;
+  customer: CustomerDraftRequest;
+  booking: NewCustomerBookingDraftBooking;
+  evidence: DraftEvidence[];
+} {
+  const { branchId, customer = {}, booking = {}, evidence = [] } = body;
+  return {
+    branchId,
+    customer,
+    booking: { ...booking, services: booking.services ?? [], items: booking.items ?? [] },
+    evidence,
+  };
+}
+
+/** The approval gate's findings on both parts (customer draft's values, the booking's). */
+function pairCompleteness(
+  customer: CustomerGate,
+  booking: NewCustomerBookingDraftBooking,
+): Completeness {
+  return newCustomerBookingCompleteness({ customer, booking });
 }
 
 /**
@@ -204,7 +267,7 @@ export function bookingRequestOf(d: {
 export function newCustomerBookingHash(
   branchId: string,
   customer: CustomerDraftRequest,
-  booking: NewCustomerBookingRequest,
+  booking: NewCustomerBookingDraftBooking,
   evidence: readonly DraftEvidence[] = [],
 ): string {
   const words = splitEvidence(evidence);
@@ -263,14 +326,45 @@ export class NewCustomerBookingDraftsService {
     user: AuthUser,
     body: NewCustomerBookingDraftCreateRequest,
   ): Promise<DraftPreCheckDto> {
-    const { branchId, customer, booking, evidence = [] } = valuesOf(body);
+    const { branchId, customer, booking, evidence } = valuesOfCreate(valuesOf(body));
     return preCheck(newCustomerBookingHash(branchId, customer, booking, evidence), async () => {
-      await this.customerDrafts.prepareNew(user, branchId, customer);
+      await this.validate(user, branchId, customer, booking);
       // As the create would: a phone already taken in the branch refuses the pair.
-      await this.customerDrafts.requirePhoneFree(branchId, customer.phone, 'customer.phone');
-      await this.bookings.prepareWithoutCustomer(booking);
-      await this.requireContainer(user, booking);
+      if (customer.phone) {
+        await this.customerDrafts.requirePhoneFree(branchId, customer.phone, 'customer.phone');
+      }
+      return {
+        total: null,
+        currency: null,
+        missingFields: pairCompleteness(customer, booking).missing,
+      };
     });
+  }
+
+  /**
+   * The checks a pair's values get on create (and the booking's on a person's edit), that need no
+   * lock: the customer's values present (customer drafts' own checks); the booking's in full once
+   * complete (route, services, lines, the container it fits), else those of the values present
+   * (a container named is a reference checked now; whether the booking fits it waits).
+   */
+  private async validate(
+    user: AuthUser,
+    branchId: string,
+    customer: CustomerDraftRequest | null,
+    booking: NewCustomerBookingDraftBooking,
+  ): Promise<void> {
+    if (customer !== null) await this.customerDrafts.prepareNew(user, branchId, customer);
+    else assertBranchAccess(user, branchId);
+    if (bookingComplete(booking)) {
+      const complete = completeBookingRequest(booking);
+      await this.bookings.prepareWithoutCustomer(complete);
+      await this.requireContainer(user, complete);
+      return;
+    }
+    await this.bookings.checkPresent(user, { ...booking, customerId: null }, branchId);
+    if (booking.consolidationId) {
+      await this.containers.get().requireReference(user, booking.consolidationId);
+    }
   }
 
   async create(
@@ -284,7 +378,8 @@ export class NewCustomerBookingDraftsService {
     if (!user.permissions.has('customers:create')) {
       throw new ForbiddenException('Proposing a new customer needs permission to add customers');
     }
-    const { idempotencyKey, branchId, customer, booking, evidence = [] } = body;
+    const { idempotencyKey, ...rest } = body;
+    const { branchId, customer, booking, evidence } = valuesOfCreate(rest);
     const hash = withReplaced(
       newCustomerBookingHash(branchId, customer, booking, evidence),
       replacesDraftId,
@@ -294,10 +389,9 @@ export class NewCustomerBookingDraftsService {
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, TABLE, scope, hash);
     if (stored !== null) return this.summary(await this.findScoped(user, stored));
-    // The checks of a real create that need no lock, for both parts; nothing is written.
-    await this.customerDrafts.prepareNew(user, branchId, customer);
-    await this.bookings.prepareWithoutCustomer(booking);
-    await this.requireContainer(user, booking);
+    // The checks of a real create that need no lock, for both parts (those of the values present
+    // while values are missing); nothing is written.
+    await this.validate(user, branchId, customer, booking);
     const words = splitEvidence(evidence);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
@@ -345,6 +439,39 @@ export class NewCustomerBookingDraftsService {
     return this.summary(await this.findScoped(user, id));
   }
 
+  /**
+   * A person fills in or changes the booking's values of an open draft, at the version they read:
+   * they are checked as on create, a changed value's words go (the person's now), and the version
+   * moves on. The customer is completed on its own customer draft; the branch stays. The
+   * assistant's request (its payload hash) stays the draft's.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: NewCustomerBookingDraftUpdateRequest,
+  ): Promise<NewCustomerBookingDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const booking = patched(bookingRequestOf(current), patch);
+    await this.validate(user, current.branchId, null, booking);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, TABLE, id);
+      if (!locked) throw new NotFoundException('New customer booking draft not found');
+      requireOpen(locked, version, LABEL);
+      await tx.newCustomerBookingDraft.update({
+        where: { id },
+        data: {
+          request: { ...storedRequest(booking) },
+          evidence: evidenceAfterEdit(current.evidence, changedFields(patch)),
+          version: { increment: 1 },
+        },
+      });
+    });
+    return this.get(user, id);
+  }
+
   async findByKey(
     user: AuthUser,
     idempotencyKey: string,
@@ -374,10 +501,13 @@ export class NewCustomerBookingDraftsService {
       orderBy: MY_DRAFTS_ORDER,
       take: mine?.limit ?? 200,
     });
-    const customers = await this.customerDrafts.linkedOf(drafts.map((d) => d.customerDraftId));
+    const ids = drafts.map((d) => d.customerDraftId);
+    const customers = await this.customerDrafts.linkedOf(ids);
+    const gates = await this.customerDrafts.gateValuesOfMany(ids);
     return drafts.map((d) => ({
       ...baseFields(d, linkedCustomer(customers, d), user, now),
       lineCount: bookingRequestOf(d).items.length,
+      missingFields: pairCompleteness(gateOf(gates, d), bookingRequestOf(d)).missing,
     }));
   }
 
@@ -423,6 +553,7 @@ export class NewCustomerBookingDraftsService {
       evidence: evidenceOf(draft.evidence),
       check,
       container,
+      missingFields: (await this.completeness(draft)).missing,
     };
   }
 
@@ -453,7 +584,7 @@ export class NewCustomerBookingDraftsService {
     if (notReady !== null || customer.customerId === null) {
       throw new ConflictException(notReady ?? 'Approve the new customer first');
     }
-    const { consolidationId, ...request } = bookingRequestOf(current);
+    const { consolidationId, ...request } = completeBookingRequest(bookingRequestOf(current));
     await this.requireContainer(user, { ...request, consolidationId });
     const prepared = await this.bookings.prepareCreate(user, {
       ...request,
@@ -516,17 +647,25 @@ export class NewCustomerBookingDraftsService {
   /**
    * NOLON's checks of the booking now: with its customer once that is approved (the customer in
    * the user's branches and active included), else those that need no customer. That the
-   * customer is not approved yet is shown from `customer`, not as a refusal.
+   * customer is not approved yet is shown from `customer`, not as a refusal. While the booking
+   * misses values, those present (null when they pass: `missingFields` says what is missing).
    */
-  private check(
+  private async check(
     user: AuthUser,
     draft: DraftRow,
-    request: NewCustomerBookingRequest,
+    request: NewCustomerBookingDraftBooking,
     customer: NewCustomerBookingDraftCustomer,
-  ): Promise<EntryDraftCheck> {
+  ): Promise<EntryDraftCheck | null> {
+    if (!bookingComplete(request)) {
+      const present = await checkDraft(async () => {
+        await this.validate(user, draft.branchId, null, request);
+        return { total: null, currency: null };
+      });
+      return present.ok ? null : present;
+    }
     return checkDraft(async () => {
       assertBranchAccess(user, draft.branchId);
-      const { consolidationId, ...booking } = request;
+      const { consolidationId, ...booking } = completeBookingRequest(request);
       await this.requireContainer(user, { ...booking, consolidationId });
       if (customer.customerId !== null) {
         await this.bookings.prepareCreate(user, { ...booking, customerId: customer.customerId });
@@ -555,17 +694,17 @@ export class NewCustomerBookingDraftsService {
     draft: DraftRow,
     client: Prisma.TransactionClient = this.prisma,
   ): Promise<Completeness> {
-    return newCustomerBookingCompleteness({
-      customer: await this.customerDrafts.gateValuesOf(draft.customerDraftId, client),
-      booking: bookingRequestOf(draft),
-    });
+    return pairCompleteness(
+      await this.customerDrafts.gateValuesOf(draft.customerDraftId, client),
+      bookingRequestOf(draft),
+    );
   }
 
   private async customerOf(draft: DraftRow): Promise<NewCustomerBookingDraftCustomer> {
     return linkedCustomer(await this.customerDrafts.linkedOf([draft.customerDraftId]), draft);
   }
 
-  private summary(d: DraftRow): NewCustomerBookingDraftSummaryDto {
+  private async summary(d: DraftRow): Promise<NewCustomerBookingDraftSummaryDto> {
     return {
       id: d.id,
       status: draftStatus(d.state, d.expiresAt, new Date()),
@@ -574,6 +713,7 @@ export class NewCustomerBookingDraftsService {
       expiresAt: d.expiresAt.toISOString(),
       createdAt: d.createdAt.toISOString(),
       customerDraftId: d.customerDraftId,
+      missingFields: (await this.completeness(d)).missing,
     };
   }
 
@@ -623,6 +763,13 @@ async function lockReplacedPairInTx(
   return { booking, customer };
 }
 
+function gateOf(gates: Map<string, CustomerGate>, d: DraftRow): CustomerGate {
+  const gate = gates.get(d.customerDraftId);
+  // A foreign key holds the customer draft while this draft exists.
+  if (!gate) throw new Error(`New customer booking draft ${d.id} has no customer draft`);
+  return gate;
+}
+
 function linkedCustomer(
   customers: Map<string, NewCustomerBookingDraftCustomer>,
   d: DraftRow,
@@ -638,14 +785,17 @@ function baseFields(
   customer: NewCustomerBookingDraftCustomer,
   user: AuthUser,
   now: Date,
-): Omit<NewCustomerBookingDraftDto, 'request' | 'check' | 'evidence' | 'container'> {
+): Omit<
+  NewCustomerBookingDraftDto,
+  'request' | 'check' | 'evidence' | 'container' | 'missingFields'
+> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open = status === 'DRAFT' && !user.agent && user.permissions.has('bookings:create');
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: customer.name,
+    subject: customer.name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -655,7 +805,7 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
     branchCode: d.branch.code,
     customer,
     bookingId: d.bookingId,

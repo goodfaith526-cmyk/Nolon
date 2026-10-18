@@ -5,6 +5,7 @@ import {
   CARGO_TYPES,
   type CarrierDto,
   type CodeNameDto,
+  type CustomerSummaryDto,
   type DraftActions,
   type DriverDto,
   type Page,
@@ -24,9 +25,13 @@ import {
   type MissingPath,
   NEW_LINE_FIELDS,
   type Value,
+  newLinePath,
   parsePath,
   patchBody,
 } from './missing-fields';
+
+/** The choices a review screen offers for a value of its kind (a warehouse, a status...). */
+export type MissingChoices = Record<string, { value: string; label: string }[]>;
 
 /** A draft whose missing values a person can fill in on its review screen. */
 interface EditableDraft {
@@ -46,12 +51,23 @@ export function MissingFields<D extends EditableDraft>({
   draft,
   apiPath,
   branchId,
+  request,
+  missingFields,
+  newLineFields = NEW_LINE_FIELDS,
+  choices = {},
   onChanged,
 }: {
   draft: D;
   apiPath: string;
   /** The draft's branch: only its vehicles and drivers are offered (NOLON checks them). */
   branchId?: string;
+  /** The values as the PATCH body has them, when not `draft.request` (a kind of two parts). */
+  request?: object;
+  /** The paths this form fills in, when not all of `draft.missingFields`. */
+  missingFields?: string[];
+  /** The values of a new line, for a draft saved without lines. */
+  newLineFields?: readonly string[];
+  choices?: MissingChoices;
   onChanged: (draft: D) => void;
 }) {
   const t = useTranslations('Drafts');
@@ -61,8 +77,9 @@ export function MissingFields<D extends EditableDraft>({
   const [values, setValues] = useState<Record<string, Value>>({});
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
-  if (draft.missingFields.length === 0) return null;
-  const paths = draft.missingFields.map(parsePath);
+  const missing = missingFields ?? draft.missingFields;
+  if (missing.length === 0) return null;
+  const paths = missing.map(parsePath);
   const editable = draft.actions.canEdit;
 
   const label = (p: MissingPath) => {
@@ -78,7 +95,10 @@ export function MissingFields<D extends EditableDraft>({
     try {
       const saved = await api<D>(`${apiPath}/${draft.id}`, {
         method: 'PATCH',
-        body: { ...patchBody(draft.request, paths, values), version: draft.version },
+        body: {
+          ...patchBody(request ?? draft.request, paths, values, newLineFields),
+          version: draft.version,
+        },
       });
       setValues({});
       setNotice({ ok: true, text: t('missingSaved') });
@@ -104,18 +124,19 @@ export function MissingFields<D extends EditableDraft>({
       {editable && (
         <form className="stack" onSubmit={(e) => void save(e)}>
           {paths.map((p) =>
-            p.path === 'lines' ? (
+            p.field === 'lines' && p.list === undefined ? (
               <fieldset key={p.path} className="stack">
                 <legend>{t('missingNewLine')}</legend>
-                {NEW_LINE_FIELDS.map((field) => (
+                {newLineFields.map((field) => (
                   <MissingControl
                     key={field}
                     field={field}
                     label={tf(field)}
-                    path={`lines.new.${field}`}
-                    value={values[`lines.new.${field}`]}
+                    path={newLinePath(p, field)}
+                    value={values[newLinePath(p, field)]}
                     onChange={set}
                     branchId={branchId}
+                    choices={choices}
                   />
                 ))}
               </fieldset>
@@ -128,6 +149,7 @@ export function MissingFields<D extends EditableDraft>({
                 value={values[p.path]}
                 onChange={set}
                 branchId={branchId}
+                choices={choices}
               />
             ),
           )}
@@ -151,6 +173,7 @@ function MissingControl({
   value,
   onChange,
   branchId,
+  choices,
 }: {
   field: string;
   label: string;
@@ -158,6 +181,7 @@ function MissingControl({
   value: Value | undefined;
   onChange: (path: string, value: Value) => void;
   branchId?: string;
+  choices: MissingChoices;
 }) {
   const t = useTranslations('Drafts');
   const te = useTranslations('Enums');
@@ -169,8 +193,10 @@ function MissingControl({
       .filter((c) => c.isActive)
       .map((c) => ({ value: c.code, label: `${c.code} · ${localName(c)}` }));
 
-  let options: { value: string; label: string }[] | null = null;
-  if (field === 'originLocationId' || field === 'destinationLocationId') {
+  let options: { value: string; label: string }[] | null = choices[field] ?? null;
+  if (options !== null) {
+    // The review screen's own choices for this value.
+  } else if (field === 'originLocationId' || field === 'destinationLocationId') {
     options = (master?.locations ?? [])
       .filter((l) => l.isActive)
       .map((l) => ({ value: l.id, label: `${localName(l)} (${l.code})` }));
@@ -197,8 +223,19 @@ function MissingControl({
       />
     );
   }
-  if (field === 'shipmentIds') {
-    return <ShipmentPicker label={label} path={path} value={value} onChange={onChange} />;
+  if (field === 'shipmentIds' || field === 'shipmentId') {
+    return (
+      <ShipmentPicker
+        label={label}
+        path={path}
+        value={value}
+        onChange={onChange}
+        single={field === 'shipmentId'}
+      />
+    );
+  }
+  if (field === 'customerId') {
+    return <CustomerPicker label={label} path={path} value={text} onChange={onChange} />;
   }
   if (field === 'services') {
     const picked = Array.isArray(value) ? value : [];
@@ -232,7 +269,7 @@ function MissingControl({
             </option>
           ))}
         </select>
-      ) : field === 'validFrom' || field === 'validUntil' ? (
+      ) : DATE_FIELDS.has(field) ? (
         <input type="date" value={text} onChange={(e) => onChange(path, e.target.value)} />
       ) : (
         <input
@@ -243,6 +280,96 @@ function MissingControl({
         />
       )}
     </label>
+  );
+}
+
+const DATE_FIELDS = new Set(['validFrom', 'validUntil', 'invoiceDate', 'dueDate', 'receiptDate']);
+
+/** Searches NOLON's customers (those the reviewer sees) and picks one. */
+function CustomerPicker({
+  label,
+  path,
+  value,
+  onChange,
+}: {
+  label: string;
+  path: string;
+  value: string;
+  onChange: (path: string, value: Value) => void;
+}) {
+  const t = useTranslations('Drafts');
+  const tc = useTranslations('Common');
+  const failure = useFailureText();
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<CustomerSummaryDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function search() {
+    setError(null);
+    try {
+      const page = await api<Page<CustomerSummaryDto>>(
+        `/customers?pageSize=20&q=${encodeURIComponent(q)}`,
+      );
+      setResults(page.items);
+    } catch (e) {
+      setError(failure(e));
+    }
+  }
+
+  return (
+    <fieldset className="field missing-value">
+      <legend>{label}</legend>
+      <SearchBox q={q} onQ={setQ} onSearch={() => void search()} label={tc('search')} />
+      {error && <p className="error">{error}</p>}
+      {results?.length === 0 && <p className="muted">{t('missingNoCustomers')}</p>}
+      {(results ?? []).map((c) => (
+        <label key={c.id} className="field inline">
+          <input
+            type="radio"
+            name={path}
+            checked={value === c.id}
+            onChange={() => onChange(path, c.id)}
+          />
+          <span dir="ltr">{c.number}</span>
+          <span>{c.name}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+/** A search field and its button; Enter searches too. */
+function SearchBox({
+  q,
+  onQ,
+  onSearch,
+  label,
+}: {
+  q: string;
+  onQ: (q: string) => void;
+  onSearch: () => void;
+  label: string;
+}) {
+  return (
+    <div className="line">
+      <label className="field grow">
+        <span>{label}</span>
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => onQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onSearch();
+            }
+          }}
+        />
+      </label>
+      <button type="button" onClick={onSearch}>
+        {label}
+      </button>
+    </div>
   );
 }
 
@@ -289,17 +416,22 @@ function FleetSelect({
   );
 }
 
-/** Searches NOLON's shipments (those the reviewer sees) and picks the trip's shipments. */
+/**
+ * Searches NOLON's shipments (those the reviewer sees) and picks the trip's shipments, or one
+ * shipment (`single`: a release's, an invoice's...).
+ */
 function ShipmentPicker({
   label,
   path,
   value,
   onChange,
+  single = false,
 }: {
   label: string;
   path: string;
   value: Value | undefined;
   onChange: (path: string, value: Value) => void;
+  single?: boolean;
 }) {
   const t = useTranslations('Drafts');
   const tc = useTranslations('Common');
@@ -307,7 +439,7 @@ function ShipmentPicker({
   const [q, setQ] = useState('');
   const [results, setResults] = useState<ShipmentSummaryDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const picked = Array.isArray(value) ? value : [];
+  const picked = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
 
   async function search() {
     setError(null);
@@ -324,36 +456,23 @@ function ShipmentPicker({
   return (
     <fieldset className="field missing-value">
       <legend>{label}</legend>
-      <div className="line">
-        <label className="field grow">
-          <span>{tc('search')}</span>
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void search();
-              }
-            }}
-          />
-        </label>
-        <button type="button" onClick={() => void search()}>
-          {tc('search')}
-        </button>
-      </div>
+      <SearchBox q={q} onQ={setQ} onSearch={() => void search()} label={tc('search')} />
       {error && <p className="error">{error}</p>}
       {results?.length === 0 && <p className="muted">{t('missingNoShipments')}</p>}
       {(results ?? []).map((s) => (
         <label key={s.id} className="field inline">
           <input
-            type="checkbox"
+            type={single ? 'radio' : 'checkbox'}
+            name={path}
             checked={picked.includes(s.id)}
             onChange={(e) =>
               onChange(
                 path,
-                e.target.checked ? [...picked, s.id] : picked.filter((x) => x !== s.id),
+                single
+                  ? s.id
+                  : e.target.checked
+                    ? [...picked, s.id]
+                    : picked.filter((x) => x !== s.id),
               )
             }
           />

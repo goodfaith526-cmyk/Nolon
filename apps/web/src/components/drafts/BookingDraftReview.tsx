@@ -30,7 +30,7 @@ export function BookingDraftReview({ id }: { id: string }) {
     <DraftFrame
       draft={draft}
       apiPath="/booking-drafts"
-      title={t('bookingTitle', { customer: draft.customerName })}
+      title={t('bookingTitle', { customer: draft.customerName ?? '—' })}
       approveHint={
         b.quotationId === undefined && b.consolidationId
           ? t('containerBookingApproveHint')

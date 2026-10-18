@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -38,7 +39,38 @@ import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 // The fx rate is the rate table's for the receipt date, never the assistant's.
-const createBody = createReceiptBody.omit({ fxRate: true }).extend({ idempotencyKey }).strict();
+/**
+ * A receipt draft's values: a receipt's (createReceiptBody), each checked the same way when
+ * given, none of them required (owner decision, 2026-10-17). The draft belongs to the customer's
+ * branch, or to the branch it names while it has no customer.
+ */
+const fields = createReceiptBody.shape;
+const draftValues = {
+  customerId: fields.customerId.nullish(),
+  receiptDate: fields.receiptDate.nullish(),
+  currency: fields.currency.nullish(),
+  amount: fields.amount.nullish(),
+  cashAccountId: fields.cashAccountId.nullish(),
+  reference: fields.reference,
+  notes: fields.notes,
+  allocations: z
+    .array(z.object({ invoiceId: z.uuid().nullish(), amount: fields.amount.nullish() }).strict())
+    .max(100),
+};
+const createBody = z
+  .object({
+    ...draftValues,
+    allocations: draftValues.allocations.optional(),
+    branchId: z.uuid().nullish(),
+    idempotencyKey,
+  })
+  .strict();
+/** A person's edit: any value (a customer of the draft's branch), at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
+  .strict();
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
   .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
@@ -127,6 +159,17 @@ export class ReceiptDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ReceiptDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('receipts:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ReceiptDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

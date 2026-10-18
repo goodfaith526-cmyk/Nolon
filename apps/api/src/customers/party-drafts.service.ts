@@ -9,25 +9,37 @@ import type {
   PartyDraftDto,
   PartyDraftListItemDto,
   PartyDraftRequest,
+  PartyDraftUpdateRequest,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
-import { evidenceHashPart, evidenceOf, requireConfirmed } from '../drafts/draft-evidence.js';
+import {
+  changedFields,
+  evidenceAfterEdit,
+  evidenceHashPart,
+  evidenceOf,
+  requireConfirmed,
+} from '../drafts/draft-evidence.js';
 import {
   approvedFields,
   checkDraft,
+  draftBranch,
   draftExpiry,
   draftStatus,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
+  storedValue,
+  withBranch,
 } from '../drafts/draft-rules.js';
 import {
   decideInTx,
   DraftsService,
   keyReused,
+  lockDraftRow,
   lockReplacedInTx,
   mineWhere,
   myDraftItem,
@@ -35,6 +47,7 @@ import {
   type MyDraftsQuery,
   replaceInTx,
   replacementParentIds,
+  requireSameParent,
   storedDraftUnderKey,
   valuesOf,
   withReplaced,
@@ -63,6 +76,40 @@ const details = {
 
 type DraftRow = Prisma.PartyDraftGetPayload<{ include: typeof details }>;
 
+/**
+ * The drafts a user sees: those of a customer in their branches (access follows the customer, as
+ * it always has), and those naming no customer yet, by the draft's own branch.
+ */
+function draftScope(user: AuthUser): Prisma.PartyDraftWhereInput {
+  return { OR: [{ customer: branchScope(user) }, { customerId: null, ...branchScope(user) }] };
+}
+
+/** A party draft's customer and party, as stored (a missing value is null). */
+type PartyValues = PartyDraftRequest & { customerId: string | null };
+
+function valuesOfRow(d: DraftRow): PartyValues {
+  return { customerId: d.customerId, ...partyRequestOf(d) };
+}
+
+/** The value columns of a draft, a missing value as NULL. */
+function columnsOf(values: PartyValues) {
+  return {
+    customerId: values.customerId ?? null,
+    name: values.name ?? null,
+    companyName: values.companyName ?? null,
+    phone: values.phone ?? null,
+    email: values.email ?? null,
+    countryCode: values.countryCode ?? null,
+    city: values.city ?? null,
+    address: values.address ?? null,
+  };
+}
+
+/** What a party draft still misses before it can be approved (the gate's missing values). */
+export function partyMissingFields(d: DraftRow): string[] {
+  return partyDraftCompleteness(d).missing;
+}
+
 /** A party draft's approval gate (draft-completeness.ts): its customer and the party. */
 export function partyDraftCompleteness(d: DraftRow): Completeness {
   return partyCompleteness({ customerId: d.customerId, ...partyRequestOf(d) });
@@ -83,14 +130,14 @@ export function partyRequestOf(d: DraftRow): PartyDraftRequest {
 
 /** sha256 of the normalised request and the staff member's words (customer included): ids lower case, absent fields null. */
 export function partyRequestHash(
-  customerId: string,
+  customerId: string | null | undefined,
   input: PartyDraftRequest,
   evidence: readonly DraftEvidence[] = [],
 ): string {
   return requestHash({
     ...evidenceHashPart(evidence),
-    customerId: customerId.toLowerCase(),
-    name: input.name,
+    customerId: customerId?.toLowerCase() ?? null,
+    name: input.name ?? null,
     companyName: input.companyName ?? null,
     phone: input.phone ?? null,
     email: input.email ?? null,
@@ -117,10 +164,27 @@ export class PartyDraftsService {
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: PartyDraftCreateRequest): Promise<DraftPreCheckDto> {
-    const { customerId, evidence = [], ...input } = valuesOf(body);
-    return preCheck(partyRequestHash(customerId, input, evidence), async () => {
-      await this.customers.prepareAddParty(user, customerId);
+    const { customerId = null, branchId, evidence = [], ...input } = valuesOf(body);
+    const hash = withBranch(partyRequestHash(customerId, input, evidence), branchId);
+    return preCheck(hash, async () => {
+      await this.validate(user, customerId, branchId);
+      const missingFields = partyCompleteness({ customerId, ...input }).missing;
+      return { total: null, currency: null, missingFields };
     });
+  }
+
+  /**
+   * The checks of a real addParty that need no lock, on the customer when named: the draft's
+   * branch is the customer's (which a branch given must be); with no customer yet, the branch
+   * given, one of the user's.
+   */
+  private async validate(
+    user: AuthUser,
+    customerId: string | null,
+    branchId: string | null | undefined,
+  ): Promise<{ branchId: string }> {
+    const customer = customerId ? await this.customers.prepareAddParty(user, customerId) : null;
+    return { branchId: draftBranch(user, branchId, customer?.branchId ?? null) };
   }
 
   async create(
@@ -129,15 +193,18 @@ export class PartyDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, customerId, evidence = [], ...input } = body;
-    const hash = withReplaced(partyRequestHash(customerId, input, evidence), replacesDraftId);
+    const { idempotencyKey, customerId = null, branchId, evidence = [], ...input } = body;
+    const hash = withReplaced(
+      withBranch(partyRequestHash(customerId, input, evidence), branchId),
+      replacesDraftId,
+    );
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'party_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real addParty that need no lock; nothing is written.
-    const prepared = await this.customers.prepareAddParty(user, customerId);
+    // The checks of a real addParty that need no lock, on the values present; nothing is written.
+    const prepared = await this.validate(user, customerId, branchId);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // An approval locks the customer, then the draft: a replacement takes the same order.
@@ -167,17 +234,10 @@ export class PartyDraftsService {
             ...scope,
             replacesDraftId,
             branchId: prepared.branchId,
-            customerId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
             evidence: evidence.map((e) => ({ field: e.field, quote: e.quote })),
-            name: input.name,
-            companyName: input.companyName ?? null,
-            phone: input.phone ?? null,
-            email: input.email ?? null,
-            countryCode: input.countryCode ?? null,
-            city: input.city ?? null,
-            address: input.address ?? null,
+            ...columnsOf({ customerId, ...input }),
           },
           select: { id: true },
         });
@@ -187,10 +247,41 @@ export class PartyDraftsService {
     return toSummary(await this.findScoped(user, id), new Date());
   }
 
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create (a customer named must be of the draft's branch, and once named it
+   * stays: an approval locks it before the draft), and the version
+   * moves on. The words of a value the person changed are dropped. The assistant's request (its
+   * payload hash) stays the draft's, so a replay of that create still finds this draft.
+   */
+  async update(user: AuthUser, id: string, input: PartyDraftUpdateRequest): Promise<PartyDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    requireSameParent(current.customerId, patch.customerId, 'customer');
+    const values = patched(valuesOfRow(current), patch);
+    await this.validate(user, values.customerId, current.branchId);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'party_drafts', id);
+      if (!locked) throw new NotFoundException('Party draft not found');
+      requireOpen(locked, version, LABEL);
+      await tx.partyDraft.update({
+        where: { id },
+        data: {
+          ...columnsOf(values),
+          evidence: evidenceAfterEdit(current.evidence, changedFields(patch)),
+          version: { increment: 1 },
+        },
+      });
+    });
+    return this.get(user, id);
+  }
+
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const draft = await this.prisma.partyDraft.findFirst({
-      where: { agentClientId, createdById: user.id, idempotencyKey, customer: branchScope(user) },
+      where: { agentClientId, createdById: user.id, idempotencyKey, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Party draft not found');
@@ -205,7 +296,7 @@ export class PartyDraftsService {
     const now = new Date();
     const drafts = await this.prisma.partyDraft.findMany({
       where: {
-        customer: branchScope(user),
+        ...draftScope(user),
         ...stateFilter(status, now),
         ...(mine ? mineWhere(user, mine) : {}),
       },
@@ -224,7 +315,7 @@ export class PartyDraftsService {
       myDraftItem(
         'party',
         d,
-        d.partyId === null
+        d.partyId === null || d.customerId === null
           ? null
           : { type: 'party', id: d.partyId, number: null, path: `/customers/${d.customerId}` },
       ),
@@ -269,7 +360,8 @@ export class PartyDraftsService {
     requireApprovable(partyDraftCompleteness(current));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
-    await this.customers.prepareAddParty(user, current.customerId);
+    const customerId = storedValue(current.customerId, 'customer');
+    await this.customers.prepareAddParty(user, customerId);
     await this.prisma.$transaction(async (tx) => {
       let partyId = '';
       const decided = await decideInTx(tx, {
@@ -279,19 +371,17 @@ export class PartyDraftsService {
         label: LABEL,
         approving: true,
         lockParents: async () => {
-          await this.customers.lockForPartyWrite(tx, current.customerId);
+          await this.customers.lockForPartyWrite(tx, customerId);
         },
         gate: async () => {
           const row = await tx.partyDraft.findUniqueOrThrow({ where: { id }, include: details });
           requireApprovable(partyDraftCompleteness(row));
         },
         record: async () => {
-          partyId = await this.customers.addPartyInTx(
-            tx,
-            user,
-            current.customerId,
-            partyRequestOf(current),
-          );
+          partyId = await this.customers.addPartyInTx(tx, user, customerId, {
+            ...partyRequestOf(current),
+            name: storedValue(current.name, 'name'),
+          });
         },
       });
       if (decided) {
@@ -327,17 +417,22 @@ export class PartyDraftsService {
     return this.get(user, id);
   }
 
-  /** NOLON's checks of adding the party now (checked again on approval). */
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
+  /**
+   * NOLON's checks of adding the party now (checked again on approval). Null while the draft
+   * names no customer yet: it waits for it (missingFields).
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const customerId = draft.customerId;
+    if (customerId === null) return null;
     return checkDraft(async () => {
-      await this.customers.prepareAddParty(user, draft.customerId);
+      await this.customers.prepareAddParty(user, customerId);
       return { total: null, currency: null };
     });
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
     const draft = await this.prisma.partyDraft.findFirst({
-      where: { id, customer: branchScope(user) },
+      where: { id, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Party draft not found');
@@ -353,6 +448,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: 1,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: partyMissingFields(d),
   };
 }
 
@@ -367,7 +463,7 @@ function baseFields(
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: d.name,
+    subject: d.name ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -377,10 +473,11 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: partyMissingFields(d),
     customerId: d.customerId,
-    customerNumber: d.customer.number,
-    customerName: d.customer.name,
+    customerNumber: d.customer?.number ?? null,
+    customerName: d.customer?.name ?? null,
     partyId: d.partyId,
   };
 }
