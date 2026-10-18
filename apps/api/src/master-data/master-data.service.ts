@@ -176,6 +176,14 @@ export class MasterDataService {
     return type;
   }
 
+  /** The active charge types among `codes` (for their service), by code. */
+  async activeChargeTypes(codes: readonly string[]): Promise<Map<string, ChargeType>> {
+    const types = await this.prisma.chargeType.findMany({
+      where: { code: { in: [...codes] }, isActive: true },
+    });
+    return new Map(types.map((t) => [t.code, t]));
+  }
+
   async requireDocumentType(code: string): Promise<DocumentType> {
     const type = await this.prisma.documentType.findUnique({ where: { code } });
     if (!type?.isActive)

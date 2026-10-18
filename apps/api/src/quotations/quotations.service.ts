@@ -12,6 +12,7 @@ import type {
   QuotationInput,
   QuotationStatus,
   QuotationSummaryDto,
+  RateUnit,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
@@ -123,6 +124,8 @@ export class QuotationsService {
    * caller has already checked access to the shipment.
    */
   async invoiceSource(id: string): Promise<{
+    id: string;
+    updatedAt: Date;
     currency: string;
     lines: {
       chargeTypeCode: string;
@@ -130,7 +133,7 @@ export class QuotationsService {
       quantity: Prisma.Decimal;
       unitPrice: Prisma.Decimal;
       lineTotal: Prisma.Decimal;
-      unit: string;
+      unit: RateUnit;
     }[];
   } | null> {
     const quotation = await this.prisma.quotation.findUnique({
@@ -139,6 +142,8 @@ export class QuotationsService {
     });
     if (!quotation) return null;
     return {
+      id: quotation.id,
+      updatedAt: quotation.updatedAt,
       currency: quotation.currency,
       lines: quotation.lines.map((l) => ({
         chargeTypeCode: l.chargeTypeCode,

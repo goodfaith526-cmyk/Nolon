@@ -349,7 +349,21 @@ export async function preCheckBody<T>(
 function refusalsOf(error: HttpException): DraftCheckRefusal[] {
   const response = error.getResponse();
   const body = typeof response === 'object' && response !== null ? response : {};
-  const raw = body as { message?: unknown; code?: unknown; fields?: unknown; params?: unknown };
+  // Several refusals (fieldRefusals): each one as its own.
+  const several = (body as { refusals?: unknown }).refusals;
+  if (Array.isArray(several)) {
+    return several.flatMap((b: unknown) => refusalsOfBody(b, error.message));
+  }
+  return refusalsOfBody(body, error.message);
+}
+
+function refusalsOfBody(body: unknown, fallback: string): DraftCheckRefusal[] {
+  const raw = (typeof body === 'object' && body !== null ? body : {}) as {
+    message?: unknown;
+    code?: unknown;
+    fields?: unknown;
+    params?: unknown;
+  };
   // `parse` inside a service: the message is the list of invalid paths.
   if (Array.isArray(raw.message)) {
     return raw.message.map((path) => ({
@@ -359,7 +373,7 @@ function refusalsOf(error: HttpException): DraftCheckRefusal[] {
       params: {},
     }));
   }
-  const message = typeof raw.message === 'string' ? raw.message : error.message;
+  const message = typeof raw.message === 'string' ? raw.message : fallback;
   const code = FORM_REFUSALS.includes(raw.code as FormRefusal) ? (raw.code as FormRefusal) : null;
   const params: Record<string, string> = {};
   if (typeof raw.params === 'object' && raw.params !== null) {

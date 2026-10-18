@@ -48,7 +48,8 @@ export const AgentDraftDecidable = () => SetMetadata(AGENT_DRAFT_DECIDABLE, true
 /**
  * Opens a POST route to the staff assistant for a draft's pre-check: the checks a create with the
  * given values runs, with nothing written. Only the routes listed in agent-draft-checkable.spec.ts
- * carry it, each with the permissions of its create.
+ * carry it, each with the permissions of its create; and POST /invoice-drafts/suggest, the
+ * invoice NOLON derives for a shipment, also read-only.
  */
 export const AgentDraftCheckable = () => SetMetadata(AGENT_DRAFT_CHECKABLE, true);
 

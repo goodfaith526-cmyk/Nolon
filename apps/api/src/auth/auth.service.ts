@@ -259,7 +259,14 @@ export class AuthService {
   async describe(user: AuthUser, now: Date = new Date()): Promise<AuthMeResponse> {
     const rows = await this.prisma.branch.findMany({
       where: { id: { in: [...user.allowedBranchIds] } },
-      select: { id: true, code: true, nameEn: true, nameAr: true, timezone: true },
+      select: {
+        id: true,
+        code: true,
+        nameEn: true,
+        nameAr: true,
+        timezone: true,
+        defaultCurrency: true,
+      },
       orderBy: { code: 'asc' },
     });
     const branches = rows.map((b) => ({ ...b, today: todayIn(b.timezone, now) }));

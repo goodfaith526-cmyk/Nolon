@@ -223,6 +223,14 @@ export class ShipmentsService {
     mode: ShippingMode;
     loadType: LoadType | null;
     cargoType: CargoType;
+    services: BookingService[];
+    items: {
+      cargoType: CargoType;
+      containerTypeCode: string | null;
+      quantity: number;
+      weightKg: Prisma.Decimal | null;
+      volumeCbm: Prisma.Decimal | null;
+    }[];
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -238,6 +246,17 @@ export class ShipmentsService {
         mode: true,
         loadType: true,
         cargoType: true,
+        services: true,
+        items: {
+          select: {
+            cargoType: true,
+            containerTypeCode: true,
+            quantity: true,
+            weightKg: true,
+            volumeCbm: true,
+          },
+          orderBy: { lineNo: 'asc' },
+        },
         booking: { select: { quotationId: true } },
       },
     });

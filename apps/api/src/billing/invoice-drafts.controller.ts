@@ -18,6 +18,7 @@ import {
   type EntryDraftSummaryDto,
   type InvoiceDraftDto,
   type InvoiceDraftListItemDto,
+  type InvoiceSuggestionDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -87,6 +88,13 @@ const assistantApproveBody = z
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
+const suggestBody = z
+  .object({
+    shipmentId: z.uuid(),
+    currency: currencyCode.optional(),
+    invoiceDate: dateString.optional(),
+  })
+  .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
 
 /**
@@ -115,6 +123,18 @@ export class InvoiceDraftsController {
     return preCheckBody(createBody, checkRequest(body), (input) =>
       this.drafts.checkValues(user, input),
     );
+  }
+
+  /**
+   * What NOLON would put on an invoice for the shipment (its quotation, else its rate cards), for
+   * the currency and invoice date given or NOLON's defaults; nothing is written.
+   */
+  @AgentDraftCheckable()
+  @Post('suggest')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('customer_invoices:create')
+  suggest(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<InvoiceSuggestionDto> {
+    return this.drafts.suggest(user, parse(suggestBody, body));
   }
 
   @AgentReadable()

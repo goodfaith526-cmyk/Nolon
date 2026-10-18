@@ -1,5 +1,6 @@
 import type { CreateReceiptRequest, CustomerInvoiceInput } from './accounting.js';
-import type { CustomerDraftFields, DraftPriceSource } from './commercial-drafts.js';
+import type { BookingService, RateUnit } from './commercial.js';
+import type { CustomerDraftFields, DraftPriceSource, PriceSource } from './commercial-drafts.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type {
   DraftBranchChoice,
@@ -74,6 +75,91 @@ export type InvoiceDraftCreateRequest = Omit<InvoiceDraftRequest, 'lines' | 'shi
 export type InvoiceDraftUpdateRequest = DraftUpdateRequest<
   Omit<InvoiceDraftRequest, 'lines'> & { lines: InvoiceDraftLineInput[] }
 >;
+
+/**
+ * POST /invoice-drafts/suggest: what NOLON would put on an invoice for this shipment, read-only
+ * (nothing is written). `currency` and `invoiceDate`, when given, are the ones to derive for;
+ * otherwise NOLON's defaults. Access is the invoice's: the shipment's owning branch only.
+ */
+export interface InvoiceSuggestRequest {
+  shipmentId: string;
+  currency?: CurrencyCode;
+  invoiceDate?: string;
+}
+
+/**
+ * Why the suggestion is in its currency: the one asked for, the shipment's quotation's, the
+ * customer's preferred currency, else the branch default.
+ */
+export const INVOICE_SUGGESTION_CURRENCY_SOURCES = [
+  'REQUESTED',
+  'QUOTATION',
+  'CUSTOMER',
+  'BRANCH',
+] as const;
+export type InvoiceSuggestionCurrencySource = (typeof INVOICE_SUGGESTION_CURRENCY_SOURCES)[number];
+
+/**
+ * FILL: the line is the invoice's (the quotation's line, or a rate card for a charge of a service
+ * the shipment has, its quantity exact). OFFER: a line to propose, never to fill on its own.
+ */
+export type InvoiceSuggestionLineUse = 'FILL' | 'OFFER';
+
+export interface InvoiceSuggestionLineDto {
+  chargeTypeCode: string;
+  description: string | null;
+  /** The pricing unit (the quotation line's or the rate card's). */
+  unit: RateUnit;
+  /** Null when the unit's measure is missing or ambiguous on the shipment (`unresolved` says). */
+  quantity: DecimalString | null;
+  /** Null when no price applies in this currency (`unresolved` says). */
+  unitPrice: DecimalString | null;
+  priceSource: PriceSource;
+  rateCardId: string | null;
+  /** The charge's service (master data), or null when the charge has none. */
+  service: BookingService | null;
+  use: InvoiceSuggestionLineUse;
+}
+
+export const INVOICE_SUGGESTION_ISSUES = [
+  /** The quotation prices the shipment in another currency. */
+  'QUOTED_PRICE_OTHER_CURRENCY',
+  /** Several approved rate cards match one charge: no line is suggested for it. */
+  'RATE_SEVERAL',
+  /** A measure the unit needs is missing or ambiguous: the quantity is left empty. */
+  'QUANTITY_UNKNOWN',
+  /** The charge has no service: a tariff is not proof the charge happened. */
+  'SERVICE_NOT_MAPPED',
+  /** The charge's service is not one of the shipment's services. */
+  'SERVICE_NOT_ON_SHIPMENT',
+] as const;
+export type InvoiceSuggestionIssue = (typeof INVOICE_SUGGESTION_ISSUES)[number];
+
+export interface InvoiceSuggestionUnresolved {
+  /** The field it concerns: `lines.<i>.quantity`, `lines.<i>.unitPrice`, `lines.<i>` or `lines`. */
+  path: string;
+  code: InvoiceSuggestionIssue;
+  message: string;
+}
+
+export interface InvoiceSuggestionDto {
+  shipmentId: string;
+  /** The shipment's owning branch, where the invoice belongs. */
+  branchId: string;
+  currency: CurrencyCode;
+  currencySource: InvoiceSuggestionCurrencySource;
+  invoiceDate: string;
+  /** The invoice date plus the customer's payment terms. */
+  dueDate: string;
+  lines: InvoiceSuggestionLineDto[];
+  unresolved: InvoiceSuggestionUnresolved[];
+  /**
+   * sha256 over what the suggestion was derived from: the shipment, its owning branch, the
+   * currency, the pricing date, the source revision (the quotation's or the rate cards' ids and
+   * `updatedAt`) and each line's charge, unit and service. Equal fingerprints, same suggestion.
+   */
+  fingerprint: string;
+}
 
 export interface InvoiceDraftDto
   extends EntryDraftReviewFields, CustomerDraftFields, MissingFieldsReview {

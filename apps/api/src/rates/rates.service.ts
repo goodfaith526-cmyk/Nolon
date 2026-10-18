@@ -487,13 +487,11 @@ export class RatesService {
   }
 
   /**
-   * The system price of a line that names no rate card and gives no price: the only APPROVED rate
-   * of the branch, valid on `onDate`, for this route, mode, load type, cargo type and currency,
-   * and for the charge type and unit when given. Of rates that differ only by start date, the
-   * latest started replaces the older ones. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
-   * the candidates) when the line must say which (a charge type, a unit or the rate card).
+   * The offers systemRate chooses from: the APPROVED rates of the branch valid on `onDate` that
+   * match the context, one per container type, charge and unit (the latest started of rates that
+   * differ only by start date). Read-only.
    */
-  async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {
+  async systemRates(context: RateMatchContext): Promise<RateCard[]> {
     const day = toDbDate(context.onDate);
     const rates = await this.prisma.rateCard.findMany({
       where: {
@@ -517,7 +515,18 @@ export class RatesService {
       const offer = [rate.containerTypeCode ?? '', rate.chargeTypeCode, rate.unit].join('|');
       if (!offers.has(offer)) offers.set(offer, rate);
     }
-    const [only, ...others] = [...offers.values()];
+    return [...offers.values()];
+  }
+
+  /**
+   * The system price of a line that names no rate card and gives no price: the only APPROVED rate
+   * of the branch, valid on `onDate`, for this route, mode, load type, cargo type and currency,
+   * and for the charge type and unit when given. Of rates that differ only by start date, the
+   * latest started replaces the older ones. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
+   * the candidates) when the line must say which (a charge type, a unit or the rate card).
+   */
+  async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {
+    const [only, ...others] = await this.systemRates(context);
     if (!only) {
       throw fieldRefusal(
         'RATE_NO_MATCH',
