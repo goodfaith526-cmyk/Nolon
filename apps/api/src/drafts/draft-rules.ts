@@ -78,9 +78,10 @@ export function storedValue<T>(value: T | null | undefined, what: string): T {
 /**
  * The branch a draft is saved in (no-required-fields plan, section 1). The branch is security
  * context, never a business field, so it is never missing:
- * - a draft whose parent is given (its customer, its shipment) belongs to the parent's branch,
- *   which the parent's own lookup has already checked against the user's branches; a branch given
- *   with it must be that one (400 BRANCH_MISMATCH);
+ * - a draft whose parent is given (its customer, its shipment, its quotation) belongs to the
+ *   parent's branch; a branch given with it must be that one (400 BRANCH_MISMATCH), and it must be
+ *   one of the user's branches (403). A parent's lookup may see more than the user's branches (a
+ *   shipment shared with one of them), so a draft is never filed in a branch the user lacks;
  * - a draft with no parent yet names its branch (400 BRANCH_REQUIRED otherwise), and that branch
  *   must be one of the user's branches now, as NOLON loads them for this request (403).
  */
@@ -96,6 +97,7 @@ export function draftBranch(
         'branchId',
       ]);
     }
+    assertBranchAccess(user, parentBranchId);
     return parentBranchId;
   }
   if (named === null) {

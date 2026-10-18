@@ -73,7 +73,14 @@ const quotedValues = {
   items: draftItems.optional(),
 };
 const createBody = z.union([
-  z.object({ ...quotedValues, idempotencyKey, quotationId: z.uuid() }).strict(),
+  z
+    .object({
+      ...quotedValues,
+      branchId: z.uuid().nullish(),
+      idempotencyKey,
+      quotationId: z.uuid(),
+    })
+    .strict(),
   z
     .object({
       ...directValues,

@@ -166,6 +166,7 @@ export class BookingsService {
   ): Promise<PreparedBooking> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
     const prepared = await this.prepare(customer.id, {
       originLocationId: quotation.originLocationId,
       destinationLocationId: quotation.destinationLocationId,
@@ -234,6 +235,7 @@ export class BookingsService {
   ): Promise<{ branchId: string; customerId: string; quotationId: string }> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
     await this.checkPresentLines(customer.id, input);
     return { branchId: quotation.branchId, customerId: customer.id, quotationId: quotation.id };
   }
@@ -575,4 +577,15 @@ function toDto(b: BookingWithDetails): BookingDto {
       volumeCbm: toDecimalStringOrNull(i.volumeCbm),
     })),
   };
+}
+
+/**
+ * A booking made from a quotation is filed in the quotation's branch, which is its customer's: a
+ * quotation is priced in its customer's branch and a customer never changes branch. Checked anyway,
+ * so a booking can never land in a branch other than its customer's (409).
+ */
+function requireSameBranch(quotationBranchId: string, customerBranchId: string): void {
+  if (quotationBranchId !== customerBranchId) {
+    throw new ConflictException("This quotation is not in its customer's branch");
+  }
 }

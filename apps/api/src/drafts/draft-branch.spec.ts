@@ -34,9 +34,14 @@ function refusalCode(run: () => unknown): unknown {
 
 describe("a draft's branch (security context, never a business value)", () => {
   it("is the customer's or shipment's branch once the draft names one", () => {
-    expect(draftBranch(user, null, JED)).toBe(JED);
-    expect(draftBranch(user, undefined, JED)).toBe(JED);
-    expect(draftBranch(user, JED.toUpperCase(), JED)).toBe(JED);
+    expect(draftBranch(user, null, DXB)).toBe(DXB);
+    expect(draftBranch(user, undefined, DXB)).toBe(DXB);
+    expect(draftBranch(user, DXB.toUpperCase(), DXB)).toBe(DXB);
+  });
+
+  it("refuses a parent's branch the user does not hold (a shipment shared with theirs)", () => {
+    expect(() => draftBranch(user, null, JED)).toThrow(ForbiddenException);
+    expect(() => draftBranch(user, JED, JED)).toThrow(ForbiddenException);
   });
 
   it("refuses a branch given that is not the customer's or shipment's", () => {

@@ -164,7 +164,8 @@ export type BookingDraftDirect = DraftValues<
  * (quotationId; route and cargo come from it) or directly for a customer.
  */
 export type BookingDraftCreateRequest =
-  | (BookingDraftFromQuotation & { idempotencyKey: string; quotationId: string })
+  | (BookingDraftFromQuotation &
+      DraftBranchChoice & { idempotencyKey: string; quotationId: string })
   | (BookingDraftDirect & DraftBranchChoice & { idempotencyKey: string });
 
 /**

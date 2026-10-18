@@ -5,6 +5,7 @@ import type {
   BookingDto,
   CarrierDto,
   CustomerDto,
+  DraftPreCheckDto,
   DriverDto,
   EntryDraftSummaryDto,
   GoodsReleaseDraftDto,
@@ -63,8 +64,14 @@ const cookies = {
   driverDxb: '',
   driverOpsDxb: '',
 };
-const agentCookies = { opsAgent: '', whAgent: '', salesAgent: '', opsJedAgent: '' };
-const tokens = { ops: '', wh: '', sales: '', opsJed: '' };
+const agentCookies = {
+  opsAgent: '',
+  whAgent: '',
+  salesAgent: '',
+  opsJedAgent: '',
+  whJedAgent: '',
+};
+const tokens = { ops: '', wh: '', sales: '', opsJed: '', whJed: '' };
 
 /** A confirmed road booking of the DXB customer; its shipment. */
 async function roadShipment(): Promise<ShipmentDto> {
@@ -174,6 +181,7 @@ beforeAll(async () => {
     whAgent: await createUser(t.prisma, ['WAREHOUSE'], ['DXB'], AGENT_PREFIX),
     salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
     opsJedAgent: await createUser(t.prisma, ['OPERATIONS'], ['JED'], AGENT_PREFIX),
+    whJedAgent: await createUser(t.prisma, ['WAREHOUSE'], ['JED'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
@@ -184,6 +192,7 @@ beforeAll(async () => {
   tokens.wh = await tokenFor(t, agentCookies.whAgent, client);
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
   tokens.opsJed = await tokenFor(t, agentCookies.opsJedAgent, client);
+  tokens.whJed = await tokenFor(t, agentCookies.whJedAgent, client);
 
   customer = (
     await r
@@ -834,5 +843,59 @@ describe('trip drafts saved without a kind', () => {
       await r.post(`/trip-drafts/${created.id}/approve`, cookies.opsDxb, { version: 2 }).expect(200)
     ).body as TripDraftDto;
     expect(approved.status).toBe('APPROVED');
+  });
+});
+
+// A shipment shared with a branch is visible there, but a release draft is filed in the
+// shipment's own branch: one the sharing branch's staff do not hold. Neither a save, its
+// pre-check nor an edit may file a draft there; nothing is written.
+describe('goods release drafts for a shipment shared with another branch', () => {
+  it('refuses to file a draft in the shipment branch the user does not hold', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipment = await heldShipment();
+    await t.prisma.shipmentBranch.create({ data: { shipmentId: shipment.id, branchId: jed } });
+    await r.get(`/shipments/${shipment.id}`, cookies.whJed).expect(200);
+    const before = await t.prisma.goodsReleaseDraft.count();
+    await createReleaseDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id },
+      tokens.whJed,
+    ).expect(403);
+    const mismatch = await createReleaseDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id, branchId: jed },
+      tokens.whJed,
+    ).expect(400);
+    expect((mismatch.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+    const check = (
+      await r
+        .agentPost('/release-drafts/check', tokens.whJed, {
+          idempotencyKey: draftKey(),
+          shipmentId: shipment.id,
+        })
+        .expect(200)
+    ).body as DraftPreCheckDto;
+    expect(check.ok).toBe(false);
+    expect(await t.prisma.goodsReleaseDraft.count()).toBe(before);
+
+    // A JED draft without a shipment cannot be moved onto it by an edit: it stays in its branch.
+    const { id } = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), branchId: jed }, tokens.whJed).expect(
+        201,
+      )
+    ).body as EntryDraftSummaryDto;
+    await r
+      .patch(`/release-drafts/${id}`, cookies.whJed, { version: 1, shipmentId: shipment.id })
+      .expect(400);
+    // The shipment's own branch still files one; the JED staff cannot edit it.
+    const own = (
+      await createReleaseDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const shared = await r.patch(`/release-drafts/${own.id}`, cookies.whJed, {
+      version: 1,
+      packages: 1,
+    });
+    expect(shared.status).toBe(403);
+    expect(
+      await t.prisma.goodsReleaseDraft.findUniqueOrThrow({ where: { id: own.id } }),
+    ).toMatchObject({ version: 1, packages: null });
   });
 });

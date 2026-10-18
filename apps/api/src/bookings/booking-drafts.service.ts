@@ -86,14 +86,13 @@ type QuotedValues = BookingDraftFromQuotation & { quotationId: string };
 type DraftInput = BookingDraftDirect | QuotedValues;
 
 /**
- * A create body's values, and the branch a direct draft names (security context, not a value):
- * one made from a quotation belongs to the quotation's branch.
+ * A create body's values, and the branch it names (security context, not a value): a direct
+ * draft's customer's, or the quotation's, which a branch given must be; with neither, the branch.
  */
 function splitBranch(input: ValuesOf<BookingDraftCreateRequest>): {
   values: DraftInput;
   branchId: string | null;
 } {
-  if (isFromQuotation(input)) return { values: input, branchId: null };
   const { branchId, ...values } = input;
   return { values, branchId: branchId ?? null };
 }
@@ -291,7 +290,8 @@ export class BookingDraftsService {
    * The checks a draft's values get on create and on a person's edit: a complete booking's in
    * full (prepare, its container included); one still missing values, those of the values present.
    * A direct draft's branch is its customer's, which a branch given must be; with no customer
-   * yet, the branch given, one of the user's. One made from a quotation is the quotation's.
+   * yet, the branch given, one of the user's. One made from a quotation is the quotation's (its
+   * customer's), which a branch given must be too.
    */
   private async validate(
     user: AuthUser,
@@ -301,9 +301,7 @@ export class BookingDraftsService {
     if (bookingMissingFields(input).length === 0) {
       const prepared = await this.prepare(user, completeBooking(input));
       return {
-        branchId: isFromQuotation(input)
-          ? prepared.branchId
-          : draftBranch(user, branchId, prepared.branchId),
+        branchId: draftBranch(user, branchId, prepared.branchId),
         customerId: prepared.customerId,
         quotationId: prepared.quotationId,
         services: prepared.header.services,
@@ -313,6 +311,7 @@ export class BookingDraftsService {
       const checked = await this.bookings.checkPresentFromQuotation(user, input.quotationId, input);
       return {
         ...checked,
+        branchId: draftBranch(user, branchId, checked.branchId),
         services: [...new Set<BookingService>(input.services ?? ['MAIN_FREIGHT'])],
       };
     }

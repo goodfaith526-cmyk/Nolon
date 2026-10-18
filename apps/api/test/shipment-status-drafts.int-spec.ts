@@ -3,6 +3,7 @@ import type {
   BookingDto,
   CustomerDto,
   DriverDto,
+  DraftPreCheckDto,
   EntryDraftSummaryDto,
   ShipmentDto,
   ShipmentStatusDraftDto,
@@ -664,5 +665,70 @@ describe('shipment status drafts saved with missing values', () => {
       .post(`/shipment-status-drafts/${id}/approve`, cookies.opsDxb, { version: 2 })
       .expect(200);
     expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
+  });
+});
+
+// A shipment shared with a branch is visible there, but a draft is filed in the shipment's own
+// branch: one the sharing branch's staff do not hold. Neither a save, its pre-check nor an edit
+// may file a draft there (403); nothing is written.
+describe('shipment status drafts for a shipment shared with another branch', () => {
+  it('refuses to file a draft in the shipment branch the user does not hold', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipment = await roadShipment();
+    await t.prisma.shipmentBranch.create({ data: { shipmentId: shipment.id, branchId: jed } });
+    // The JED staff see the shipment...
+    await r.get(`/shipments/${shipment.id}`, cookies.opsJed).expect(200);
+    const before = await t.prisma.shipmentStatusDraft.count();
+    // ...but cannot file a draft of it in DXB, with or without the status, or naming their branch.
+    await createDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id },
+      tokens.opsJed,
+    ).expect(403);
+    await createDraft(statusRequest(shipment.id), tokens.opsJed).expect(403);
+    const mismatch = await createDraft(
+      { idempotencyKey: draftKey(), shipmentId: shipment.id, branchId: jed },
+      tokens.opsJed,
+    ).expect(400);
+    expect((mismatch.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+    const check = (
+      await r
+        .agentPost('/shipment-status-drafts/check', tokens.opsJed, {
+          idempotencyKey: draftKey(),
+          shipmentId: shipment.id,
+        })
+        .expect(200)
+    ).body as DraftPreCheckDto;
+    expect(check.ok).toBe(false);
+    expect(await t.prisma.shipmentStatusDraft.count()).toBe(before);
+
+    // A JED draft without a shipment cannot be moved onto it by an edit either: the draft stays in
+    // its branch, which is not the shipment's.
+    const { id } = (
+      await createDraft({ idempotencyKey: draftKey(), branchId: jed }, tokens.opsJed).expect(201)
+    ).body as EntryDraftSummaryDto;
+    await r
+      .patch(`/shipment-status-drafts/${id}`, cookies.opsJed, {
+        version: 1,
+        shipmentId: shipment.id,
+      })
+      .expect(400);
+    expect(await t.prisma.shipmentStatusDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      version: 1,
+      shipmentId: null,
+      branchId: jed,
+    });
+    // The shipment's own branch still files it; the JED staff, who see it through the shipment,
+    // cannot edit it.
+    const own = (
+      await createDraft({ idempotencyKey: draftKey(), shipmentId: shipment.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const shared = await r.patch(`/shipment-status-drafts/${own.id}`, cookies.opsJed, {
+      version: 1,
+      status: 'TRIP_SCHEDULED',
+    });
+    expect(shared.status).toBe(403);
+    expect(
+      await t.prisma.shipmentStatusDraft.findUniqueOrThrow({ where: { id: own.id } }),
+    ).toMatchObject({ version: 1, status: null });
   });
 });
