@@ -12,7 +12,7 @@ import { requestHash } from '../drafts/draft-rules.js';
 // for createForShipment.
 
 /** Changes when the rules below change, so an older suggestion's fingerprint no longer matches. */
-export const SUGGESTION_DERIVATION = 'invoice-suggestion/1';
+export const SUGGESTION_DERIVATION = 'invoice-suggestion/2';
 
 /**
  * The invoice's currency: the one asked for, else the quotation's (the agreed prices), else the
@@ -122,23 +122,61 @@ export function ratedLine(
     : { quantity, unitPrice: rate.price };
 }
 
+/**
+ * The unit price a rate card gives an invoice line of `quantity` that names no price (the system
+ * price), on a shipment measuring `measured` of the rate's unit (unitQuantity; null when unknown).
+ * Below the minimum charge, the minimum as one unit: when `quantity` × price is below it, and when
+ * the line is one unit for a shipment whose own measure is below it, which is the line ratedLine
+ * suggests (Codex N89-1: 0.25 kg at 100/kg with a minimum of 60 is suggested and created as 1 ×
+ * 60, never 1 × 100). `oneUnit` when the minimum applies to a quantity other than 1.
+ */
+export function ratedPrice(
+  rate: { price: Decimal; minimumCharge: Decimal },
+  quantity: Decimal,
+  measured: Decimal | null,
+  decimalPlaces: number,
+): { unitPrice: Decimal } | { oneUnit: Decimal } {
+  const below = (q: Decimal) =>
+    roundMoney(q.times(rate.price), decimalPlaces).lt(rate.minimumCharge);
+  if (below(quantity) || (quantity.eq(1) && measured !== null && below(measured))) {
+    return quantity.eq(1) ? { unitPrice: rate.minimumCharge } : { oneUnit: rate.minimumCharge };
+  }
+  return { unitPrice: rate.price };
+}
+
 /** What a suggestion was derived from: the shipment's quotation, or the rate cards that matched. */
 export type SuggestionSource =
   | { quotation: { id: string; updatedAt: Date } }
   | { rateCards: readonly { id: string; updatedAt: Date }[] };
 
 /**
- * sha256 over what the suggestion was derived from: the shipment, its owning branch, the
- * currency, the pricing date, the source revision, each line's charge, unit and service, and
- * the version of these rules.
+ * sha256 over what the suggestion was derived from and everything it derived (Codex N89-2: equal
+ * fingerprints, same suggestion): the shipment, its owning branch, the currency and its source,
+ * the pricing date, the due date, the source revision, each line whole (charge, description,
+ * unit, quantity, price, where the price came from, its rate card, service and use), the
+ * unresolved points, and the version of these rules. A change of the shipment's measures or the
+ * customer's payment terms changes a quantity or the due date, so the fingerprint.
  */
 export function suggestionFingerprint(input: {
   shipmentId: string;
   branchId: string;
   currency: string;
+  currencySource: InvoiceSuggestionCurrencySource;
   pricingDate: string;
+  dueDate: string;
   source: SuggestionSource;
-  lines: readonly { chargeTypeCode: string; unit: RateUnit; service: BookingService | null }[];
+  lines: readonly {
+    chargeTypeCode: string;
+    description: string | null;
+    unit: RateUnit;
+    quantity: Decimal | null;
+    unitPrice: Decimal | null;
+    priceSource: string;
+    rateCardId: string | null;
+    service: BookingService | null;
+    use: string;
+  }[];
+  unresolved: readonly { path: string; code: string }[];
 }): string {
   const revision = (r: { id: string; updatedAt: Date }) => ({
     id: r.id.toLowerCase(),
@@ -158,6 +196,19 @@ export function suggestionFingerprint(input: {
               .map(revision)
               .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
           },
-    lines: input.lines.map((l) => [l.chargeTypeCode, l.unit, l.service]),
+    currencySource: input.currencySource,
+    dueDate: input.dueDate,
+    lines: input.lines.map((l) => [
+      l.chargeTypeCode,
+      l.description,
+      l.unit,
+      l.quantity === null ? null : l.quantity.toFixed(),
+      l.unitPrice === null ? null : l.unitPrice.toFixed(),
+      l.priceSource,
+      l.rateCardId === null ? null : l.rateCardId.toLowerCase(),
+      l.service,
+      l.use,
+    ]),
+    unresolved: input.unresolved.map((u) => [u.path, u.code]),
   });
 }

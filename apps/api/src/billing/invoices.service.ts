@@ -57,6 +57,7 @@ import {
   invoiceCurrency,
   quotedLine,
   ratedLine,
+  ratedPrice,
   suggestionFingerprint,
   unitQuantity,
 } from './invoice-suggestion.js';
@@ -624,6 +625,7 @@ export class InvoicesService {
         });
       }
     }
+    const dueDate = addDays(invoiceDate, customer.paymentTermsDays);
     return {
       shipmentId: shipment.id,
       branchId: shipment.branchId,
@@ -631,16 +633,19 @@ export class InvoicesService {
       currency,
       currencySource: chosen.source,
       invoiceDate,
-      dueDate: addDays(invoiceDate, customer.paymentTermsDays),
+      dueDate,
       lines,
       unresolved,
       fingerprint: suggestionFingerprint({
         shipmentId: shipment.id,
         branchId: shipment.branchId,
         currency: currency.code,
+        currencySource: chosen.source,
         pricingDate: invoiceDate,
+        dueDate,
         source,
         lines,
+        unresolved,
       }),
     };
   }
@@ -842,11 +847,20 @@ export class InvoicesService {
       },
       { noMatch: [`${path}.unitPrice`], several: [`${path}.unitPrice`] },
     );
-    const amount = roundMoney(quantity.times(rate.price), decimalPlaces);
+    // The shipment's own measure of the rate's unit: one unit below the minimum is the minimum,
+    // as the suggestion derives it (Codex N89-1).
+    const measured = unitQuantity(
+      rate.unit,
+      shipment.items,
+      rate.containerTypeCode,
+      shipment.cargoType,
+    );
+    const priced = ratedPrice(rate, quantity, measured, decimalPlaces);
     return {
-      unitPrice: amount.lt(rate.minimumCharge)
-        ? asOneUnit(rate.minimumCharge, "the rate card's minimum charge")
-        : rate.price,
+      unitPrice:
+        'oneUnit' in priced
+          ? asOneUnit(priced.oneUnit, "the rate card's minimum charge")
+          : priced.unitPrice,
       priceSource: 'RATE_CARD',
       rateCardId: rate.id,
     };

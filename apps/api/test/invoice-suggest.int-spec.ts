@@ -8,6 +8,8 @@ import type {
   CustomerDto,
   CustomerInvoiceDto,
   DraftPreCheckDto,
+  EntryDraftSummaryDto,
+  InvoiceDraftDto,
   InvoiceSuggestionDto,
   QuotationDto,
 } from '@nolon/shared';
@@ -369,6 +371,112 @@ describe('invoice suggestion: a shipment without a quotation', () => {
         .map((l) => [l.chargeTypeCode, l.quantity, l.unitPrice]),
     );
     expect(invoice.total).toBe('350');
+  });
+});
+
+describe('invoice suggestion: a minimum charge, suggested and created the same (Codex N89-1)', () => {
+  it('invoices 0.25 kg at 100 per kg with a minimum of 60 as 60, suggested, created, checked and drafted', async () => {
+    // Its own route and charge, so the other cases' rates are untouched.
+    const tag = `MN${randomUUID().slice(0, 6).toUpperCase()}`;
+    const place = async (suffix: string) =>
+      (
+        await t.prisma.location.create({
+          data: {
+            code: `${tag}${suffix}`,
+            kind: 'CITY',
+            nameEn: `Minimum test ${tag}${suffix}`,
+            nameAr: 'مدينة اختبار الحد الأدنى',
+            countryCode: 'SD',
+          },
+        })
+      ).id;
+    const [origin, destination] = [await place('A'), await place('B')];
+    const code = `${tag}KG`;
+    await t.prisma.chargeType.create({
+      data: { code, nameEn: 'Minimum test', nameAr: 'رسم اختبار', service: 'MAIN_FREIGHT' },
+    });
+    const by = (await t.prisma.user.findFirstOrThrow({ select: { id: true } })).id;
+    await t.prisma.rateCard.create({
+      data: {
+        branchId: pts,
+        originLocationId: origin,
+        destinationLocationId: destination,
+        mode: 'ROAD',
+        cargoType: 'GENERAL',
+        chargeTypeCode: code,
+        unit: 'PER_KG',
+        price: '100',
+        minimumCharge: '60',
+        currency: 'USD',
+        validFrom: new Date(`${day(-30)}T00:00:00Z`),
+        validTo: null,
+        status: 'APPROVED',
+        createdById: by,
+        approvedById: by,
+        approvedAt: new Date(),
+      },
+    });
+    const booking = (
+      await r
+        .post('/bookings', cookies.salesPts, {
+          customerId: customer.id,
+          originLocationId: origin,
+          destinationLocationId: destination,
+          mode: 'ROAD',
+          cargoType: 'GENERAL',
+          services: ['MAIN_FREIGHT'],
+          items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: '0.25' }],
+        })
+        .expect(201)
+    ).body as BookingDto;
+    const shipmentId = await confirmed(booking);
+    const suggested = await suggestion({ shipmentId });
+    expect(suggested.lines).toEqual([
+      expect.objectContaining({
+        chargeTypeCode: code,
+        quantity: '1',
+        unitPrice: '60',
+        use: 'FILL',
+      }),
+    ]);
+    // The agent sends the quantity and leaves the price to NOLON: the same 60.
+    const body = {
+      idempotencyKey: draftKey(),
+      shipmentId,
+      currency: suggested.currency,
+      invoiceDate: suggested.invoiceDate,
+      dueDate: suggested.dueDate,
+      notes: null,
+      lines: [{ chargeTypeCode: code, quantity: '1' }],
+    };
+    const checked = (await r.agentPost('/invoice-drafts/check', tokens.finance, body).expect(200))
+      .body as DraftPreCheckDto;
+    expect(checked).toMatchObject({
+      ok: true,
+      total: '60',
+      computed: [{ field: 'lines.0.unitPrice', value: '60', source: 'RATE_CARD' }],
+    });
+    const created = (await r.agentPost('/invoice-drafts', tokens.finance, body).expect(201))
+      .body as EntryDraftSummaryDto;
+    const draft = (await r.get(`/invoice-drafts/${created.id}`, cookies.financePts).expect(200))
+      .body as InvoiceDraftDto;
+    expect(draft.check).toMatchObject({ ok: true, total: '60' });
+    // The direct create from the shipment: the same.
+    const invoice = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(invoice.lines.map((l) => [l.quantity, l.unitPrice])).toEqual([['1', '60']]);
+    expect(invoice.total).toBe('60');
+    // A quantity other than one below the minimum is still asked as one unit, never priced.
+    const fractional = {
+      ...body,
+      idempotencyKey: draftKey(),
+      lines: [{ chargeTypeCode: code, quantity: '0.25' }],
+    };
+    const asked = (
+      await r.agentPost('/invoice-drafts/check', tokens.finance, fractional).expect(200)
+    ).body as DraftPreCheckDto;
+    expect(!asked.ok && asked.refusals.map((x) => x.code)).toEqual(['PRICE_AS_ONE_UNIT']);
   });
 });
 

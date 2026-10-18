@@ -7,6 +7,7 @@ import {
   invoiceCurrency,
   quotedLine,
   ratedLine,
+  ratedPrice,
   suggestionFingerprint,
   unitQuantity,
 } from './invoice-suggestion.js';
@@ -112,19 +113,51 @@ describe('invoice suggestion: prices', () => {
   });
 });
 
+describe('invoice suggestion: the system price of a rate card line (Codex N89-1)', () => {
+  const rate = { price: dec(100), minimumCharge: dec(60) };
+  it('gives the minimum to the one unit ratedLine suggests below it, so suggestion and create agree', () => {
+    const suggested = ratedLine(rate, dec('0.25'), 2);
+    expect(suggested).toEqual({ quantity: dec(1), unitPrice: dec(60) });
+    expect(ratedPrice(rate, dec(1), dec('0.25'), 2)).toEqual({ unitPrice: dec(60) });
+  });
+  it('keeps the price above the minimum, and asks for one unit below it at another quantity', () => {
+    expect(ratedPrice(rate, dec(3), dec(3), 2)).toEqual({ unitPrice: dec(100) });
+    // One unit of a shipment measuring more: the price, as typed.
+    expect(ratedPrice(rate, dec(1), dec(3), 2)).toEqual({ unitPrice: dec(100) });
+    // Unknown measure: only the line's own quantity decides.
+    expect(ratedPrice(rate, dec(1), null, 2)).toEqual({ unitPrice: dec(100) });
+    expect(ratedPrice(rate, dec('0.25'), dec('0.25'), 2)).toEqual({ oneUnit: dec(60) });
+  });
+});
+
 describe('invoice suggestion: fingerprint', () => {
   const base = {
     shipmentId: 'A0000000-0000-4000-8000-000000000001',
     branchId: 'b0000000-0000-4000-8000-000000000002',
     currency: 'USD',
+    currencySource: 'BRANCH' as const,
     pricingDate: '2026-10-18',
+    dueDate: '2026-11-17',
     source: {
       rateCards: [
         { id: 'r2', updatedAt: new Date('2026-10-01T00:00:00Z') },
         { id: 'r1', updatedAt: new Date('2026-10-02T00:00:00Z') },
       ],
     },
-    lines: [{ chargeTypeCode: 'FREIGHT', unit: 'PER_SHIPMENT' as const, service: null }],
+    lines: [
+      {
+        chargeTypeCode: 'FREIGHT',
+        description: null,
+        unit: 'PER_SHIPMENT' as const,
+        quantity: dec(1),
+        unitPrice: dec(300),
+        priceSource: 'RATE_CARD',
+        rateCardId: 'r1',
+        service: null,
+        use: 'FILL',
+      },
+    ],
+    unresolved: [] as { path: string; code: string }[],
   };
   const fingerprint = suggestionFingerprint(base);
 
@@ -157,6 +190,16 @@ describe('invoice suggestion: fingerprint', () => {
       { ...base, source: { quotation: { id: 'q1', updatedAt: new Date(0) } } },
       { ...base, lines: [{ ...base.lines[0]!, unit: 'PER_KG' as const }] },
       { ...base, lines: [{ ...base.lines[0]!, service: 'MAIN_FREIGHT' as const }] },
+      // Everything it derived (Codex N89-2): equal fingerprints, same suggestion.
+      { ...base, dueDate: '2026-12-02' },
+      { ...base, currencySource: 'CUSTOMER' as const },
+      { ...base, lines: [{ ...base.lines[0]!, quantity: dec(2) }] },
+      { ...base, lines: [{ ...base.lines[0]!, quantity: null }] },
+      { ...base, lines: [{ ...base.lines[0]!, unitPrice: dec(60) }] },
+      { ...base, lines: [{ ...base.lines[0]!, description: 'x' }] },
+      { ...base, lines: [{ ...base.lines[0]!, use: 'OFFER' }] },
+      { ...base, lines: [{ ...base.lines[0]!, rateCardId: 'r2' }] },
+      { ...base, unresolved: [{ path: 'lines.0.quantity', code: 'QUANTITY_UNKNOWN' }] },
     ];
     for (const input of changed) expect(suggestionFingerprint(input)).not.toBe(fingerprint);
   });
@@ -173,7 +216,9 @@ describe('invoice suggestion: derivation', () => {
   });
 
   /** InvoicesService over fakes: a direct shipment (no quotation) with MAIN_FREIGHT only. */
-  function service(options: { quotation?: object; paymentTermsDays?: number } = {}) {
+  function service(
+    options: { quotation?: object; paymentTermsDays?: number; items?: CargoLine[] } = {},
+  ) {
     const fakes = {
       shipments: {
         billingSource: () =>
@@ -189,7 +234,10 @@ describe('invoice suggestion: derivation', () => {
             loadType: 'LCL',
             cargoType: 'GENERAL',
             services: ['MAIN_FREIGHT'],
-            items: [item({ quantity: 2, weightKg: dec(100) }), item({ quantity: 1 })],
+            items: options.items ?? [
+              item({ quantity: 2, weightKg: dec(100) }),
+              item({ quantity: 1 }),
+            ],
           }),
       },
       customers: {
@@ -312,5 +360,23 @@ describe('invoice suggestion: derivation', () => {
       { path: 'lines.0.unitPrice', code: 'QUOTED_PRICE_OTHER_CURRENCY' },
     ]);
     expect(other.fingerprint).not.toBe(own.fingerprint);
+  });
+
+  it('changes its fingerprint with the shipment measures alone, and the payment terms alone (Codex N89-2)', async () => {
+    const at = { invoiceDate: '2026-10-18' };
+    const kg = (weightKg: string) => [item({ quantity: 1, weightKg: dec(weightKg) })];
+    const one = await service({ items: kg('1') }).deriveForShipment(user, 's1', at);
+    const two = await service({ items: kg('2') }).deriveForShipment(user, 's1', at);
+    expect(two.lines.find((l) => l.chargeTypeCode === 'THC')?.quantity).toEqual(dec(2));
+    expect(two.fingerprint).not.toBe(one.fingerprint);
+    const again = await service({ items: kg('1') }).deriveForShipment(user, 's1', at);
+    expect(again.fingerprint).toBe(one.fingerprint);
+    const later = await service({ items: kg('1'), paymentTermsDays: 45 }).deriveForShipment(
+      user,
+      's1',
+      at,
+    );
+    expect(later.dueDate).not.toBe(one.dueDate);
+    expect(later.fingerprint).not.toBe(one.fingerprint);
   });
 });
