@@ -33,7 +33,6 @@ import {
   preCheck,
   storedValue,
   requestHash,
-  requireComplete,
   requireOpen,
   stateFilter,
 } from '../drafts/draft-rules.js';
@@ -60,7 +59,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BookingsService, type PreparedBooking } from './bookings.service.js';
 import { ContainerBookingsRegistry } from './container-bookings.registry.js';
-import { directBookingMissingFields, quotedBookingMissingFields } from './booking-draft-missing.js';
+import { bookingCompleteness, requireApprovable } from '../drafts/draft-completeness.js';
 
 const LABEL = 'booking draft';
 const ASSISTANT_ONLY = 'Booking drafts are proposed by the assistant';
@@ -92,11 +91,12 @@ function isFromQuotation<Q extends { quotationId: string }, D>(input: Q | D): in
   );
 }
 
-/** What a booking draft still misses before it can be approved (booking-draft-missing.ts). */
+/**
+ * What a booking draft still misses before it can be approved: the approval gate's missing values
+ * (draft-completeness.ts), from a booking's own rules.
+ */
 export function bookingMissingFields(input: DraftInput): string[] {
-  return isFromQuotation(input)
-    ? quotedBookingMissingFields(input)
-    : directBookingMissingFields(input);
+  return bookingCompleteness(input).missing;
 }
 
 function completeItems(items: readonly BookingDraftItem[] | undefined): BookingItemInput[] {
@@ -501,7 +501,7 @@ export class BookingDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is recorded while the draft misses a value (422, naming each one).
     const values = serviceRequest(requestOf(current));
-    requireComplete(bookingMissingFields(values));
+    requireApprovable(bookingCompleteness(values));
     const prepared = await this.prepare(user, completeBooking(values));
     const containerId = current.consolidationId;
     await this.prisma.$transaction(async (tx) => {
@@ -509,6 +509,9 @@ export class BookingDraftsService {
       if (!locked) throw new NotFoundException('Booking draft not found');
       if (locked.state === 'APPROVED') return;
       requireOpen(locked, version, LABEL);
+      // The gate again, on the row as locked: what is recorded is complete and valid.
+      const row = await tx.bookingDraft.findUniqueOrThrow({ where: { id }, include: details });
+      requireApprovable(bookingCompleteness(serviceRequest(requestOf(row))));
       const bookingId = containerId
         ? await this.containers.get().bookInTx(tx, user, containerId, prepared)
         : await this.bookings.insertInTx(tx, user, prepared);

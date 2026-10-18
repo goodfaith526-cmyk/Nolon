@@ -83,27 +83,31 @@ export function missingOf<T extends object>(values: T, fields: readonly (keyof T
 }
 
 /**
- * An approval refused while the draft misses values (422): nothing is recorded, and the body names
- * each missing value (`missingFields`, and `fields` where the web reads a refusal's fields).
+ * An approval refused while the draft misses values, or holds values the record would refuse
+ * (422): nothing is recorded, and the body names each one (`missingFields`, `invalidFields`, and
+ * both in `fields` where the web reads a refusal's fields).
  */
-export function draftIncomplete(missingFields: readonly string[]): HttpException {
+export function draftIncomplete(
+  missingFields: readonly string[],
+  invalidFields: readonly string[] = [],
+): HttpException {
+  const reasons = [
+    ...(missingFields.length > 0 ? [`missing required values: ${missingFields.join(', ')}`] : []),
+    ...(invalidFields.length > 0 ? [`holding invalid values: ${invalidFields.join(', ')}`] : []),
+  ];
   return new HttpException(
     {
-      message: `This draft is missing required values: ${missingFields.join(', ')}`,
+      message: `This draft is ${reasons.join('; ')}`,
       code: DRAFT_INCOMPLETE,
       missingFields: [...missingFields],
-      fields: [...missingFields],
+      invalidFields: [...invalidFields],
+      fields: [...new Set([...missingFields, ...invalidFields])],
       params: {},
       error: 'Unprocessable Entity',
       statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
     },
     HttpStatus.UNPROCESSABLE_ENTITY,
   );
-}
-
-/** Refuses an approval (422 DRAFT_INCOMPLETE) while anything is missing. */
-export function requireComplete(missingFields: readonly string[]): void {
-  if (missingFields.length > 0) throw draftIncomplete(missingFields);
 }
 
 /**

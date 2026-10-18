@@ -48,6 +48,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type CustomerGate,
+  customerCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 import { CustomersService } from './customers.service.js';
 
 const LABEL = 'customer draft';
@@ -266,6 +271,18 @@ export class CustomerDraftsService {
   }
 
   /**
+   * The values the approval gate (draft-completeness.ts) reads of a customer draft, through
+   * `client` (a transaction holding a lock on a draft linked to it, or the plain client): the
+   * customer part of a booking for a new customer.
+   */
+  gateValuesOf(id: string, client: Prisma.TransactionClient = this.prisma): Promise<CustomerGate> {
+    return client.customerDraft.findUniqueOrThrow({
+      where: { id },
+      select: { kind: true, name: true, phone: true },
+    });
+  }
+
+  /**
    * The customer drafts a booking for a new customer waits for, by id, as its review screen shows
    * them. The caller read the booking drafts through their own branch scope; a customer draft is
    * in the same branch as its booking draft.
@@ -425,6 +442,8 @@ export class CustomerDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or recorded while the draft misses or holds an invalid value (422).
+    requireApprovable(customerCompleteness(customerRequestOf(current)));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     const request = createRequestOf(current.branchId, customerRequestOf(current));
@@ -437,6 +456,10 @@ export class CustomerDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.customerDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(customerCompleteness(customerRequestOf(row)));
+        },
         record: async () => {
           customerId = (await this.customers.createInTx(tx, user, request)).id;
         },

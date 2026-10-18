@@ -93,16 +93,22 @@ export interface MissingFieldsReview {
   missingFields: string[];
 }
 
-/** The code of an approval refused (422) while the draft misses values. */
+/**
+ * The code of an approval refused (422) while the draft misses values, or holds values the record
+ * would refuse. Every kind's approval runs its completeness and validity gate first, before
+ * anything is checked against live data or recorded.
+ */
 export const DRAFT_INCOMPLETE = 'DRAFT_INCOMPLETE';
 
-/** 422 body of an approval refused while the draft misses values; nothing was recorded. */
+/** 422 body of an approval refused by the gate; nothing was recorded. */
 export interface DraftIncompleteRefusal {
   statusCode: 422;
   code: typeof DRAFT_INCOMPLETE;
   message: string;
   missingFields: string[];
-  /** The same paths, where the web reads a refusal's fields. */
+  /** Values the draft holds that the record would refuse as malformed (usually none). */
+  invalidFields: string[];
+  /** Both lists' paths, where the web reads a refusal's fields. */
   fields: string[];
 }
 

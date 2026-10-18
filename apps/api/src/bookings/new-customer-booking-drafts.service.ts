@@ -63,6 +63,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type Completeness,
+  newCustomerBookingCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 import { BookingsService } from './bookings.service.js';
 import { ContainerBookingsRegistry } from './container-bookings.registry.js';
 
@@ -436,6 +441,9 @@ export class NewCustomerBookingDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or recorded while the customer or the booking misses or holds an invalid
+    // value (422).
+    requireApprovable(await this.completeness(current));
     // Each value ticked against the staff member's words on the review screen.
     requireConfirmed(evidenceOf(current.evidence), confirmed);
     // An approved customer draft never changes again (a database trigger), so its customer
@@ -459,6 +467,13 @@ export class NewCustomerBookingDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.newCustomerBookingDraft.findUniqueOrThrow({
+            where: { id },
+            include: details,
+          });
+          requireApprovable(await this.completeness(row, tx));
+        },
         record: async () => {
           bookingId = consolidationId
             ? await this.containers.get().bookInTx(tx, user, consolidationId, prepared)
@@ -530,6 +545,20 @@ export class NewCustomerBookingDraftsService {
     if (booking.consolidationId) {
       await this.containers.get().requireBookable(user, booking.consolidationId, booking);
     }
+  }
+
+  /**
+   * The approval gate (draft-completeness.ts) on both parts: the customer draft's details
+   * (`customer.name`...) and the booking's values.
+   */
+  private async completeness(
+    draft: DraftRow,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<Completeness> {
+    return newCustomerBookingCompleteness({
+      customer: await this.customerDrafts.gateValuesOf(draft.customerDraftId, client),
+      booking: bookingRequestOf(draft),
+    });
   }
 
   private async customerOf(draft: DraftRow): Promise<NewCustomerBookingDraftCustomer> {

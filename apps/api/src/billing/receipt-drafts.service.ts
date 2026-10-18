@@ -57,6 +57,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptsService } from './receipts.service.js';
+import { receiptCompleteness, requireApprovable } from '../drafts/draft-completeness.js';
 
 const LABEL = 'receipt draft';
 const ASSISTANT_ONLY = 'Receipt drafts are proposed by the assistant';
@@ -313,6 +314,8 @@ export class ReceiptDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked, posted or recorded while the draft misses or holds an invalid value.
+    requireApprovable(receiptCompleteness(receiptRequestOf(current)));
     const request = receiptRequestOf(current);
     const prepared = await this.receipts.prepareCreate(user, request);
     await this.prisma.$transaction(async (tx) => {
@@ -323,6 +326,10 @@ export class ReceiptDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.receiptDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(receiptCompleteness(receiptRequestOf(row)));
+        },
         record: async () => {
           receiptId = await this.receipts.createInTx(tx, user, prepared, request);
         },

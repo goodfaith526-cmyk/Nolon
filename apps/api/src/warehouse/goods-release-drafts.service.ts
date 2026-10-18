@@ -48,6 +48,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type Completeness,
+  goodsReleaseCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
@@ -65,6 +70,11 @@ const details = {
 } satisfies Prisma.GoodsReleaseDraftInclude;
 
 type DraftRow = Prisma.GoodsReleaseDraftGetPayload<{ include: typeof details }>;
+
+/** A goods release draft's approval gate (draft-completeness.ts): its shipment and release. */
+export function releaseDraftCompleteness(d: DraftRow): Completeness {
+  return goodsReleaseCompleteness({ shipmentId: d.shipmentId, ...releaseRequestOf(d) });
+}
 
 /** The release a stored draft proposes, in the shape WarehouseMovementsService takes. */
 export function releaseRequestOf(d: DraftRow): GoodsReleaseDraftRequest {
@@ -265,6 +275,8 @@ export class GoodsReleaseDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or released while the draft misses or holds an invalid value (422).
+    requireApprovable(releaseDraftCompleteness(current));
     const request = releaseRequestOf(current);
     const prepared = await this.movements.prepareRelease(user, current.shipmentId, request);
     await this.prisma.$transaction(async (tx) => {
@@ -277,6 +289,13 @@ export class GoodsReleaseDraftsService {
         approving: true,
         lockParents: async () => {
           await this.shipments.lockForChildWrite(tx, current.shipmentId, { exclusive: true });
+        },
+        gate: async () => {
+          const row = await tx.goodsReleaseDraft.findUniqueOrThrow({
+            where: { id },
+            include: details,
+          });
+          requireApprovable(releaseDraftCompleteness(row));
         },
         record: async () => {
           movementId = await this.movements.releaseInTx(tx, user, prepared, request);

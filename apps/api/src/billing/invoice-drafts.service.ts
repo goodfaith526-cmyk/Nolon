@@ -50,6 +50,11 @@ import {
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { InvoicesService } from './invoices.service.js';
+import {
+  type Completeness,
+  invoiceCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 
 const LABEL = 'invoice draft';
 const ASSISTANT_ONLY = 'Invoice drafts are proposed by the assistant';
@@ -65,6 +70,14 @@ const details = {
 } satisfies Prisma.InvoiceDraftInclude;
 
 type DraftRow = Prisma.InvoiceDraftGetPayload<{ include: typeof details }>;
+
+/**
+ * An invoice draft's approval gate (draft-completeness.ts): the invoice it proposes, with the
+ * customer its shipment gave it.
+ */
+export function invoiceDraftCompleteness(d: DraftRow): Completeness {
+  return invoiceCompleteness({ ...invoiceRequestOf(d), customerId: d.customerId });
+}
 
 /** The invoice a stored draft proposes, as InvoicesService.prepareForShipment takes it. */
 export function invoiceRequestOf(d: DraftRow): InvoiceDraftRequest {
@@ -301,6 +314,8 @@ export class InvoiceDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
+    // Nothing is checked or recorded while the draft misses or holds an invalid value (422).
+    requireApprovable(invoiceDraftCompleteness(current));
     const { shipmentId, ...input } = invoiceRequestOf(current);
     const prepared = await this.invoices.prepareForShipment(user, shipmentId, input);
     await this.prisma.$transaction(async (tx) => {
@@ -311,6 +326,10 @@ export class InvoiceDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.invoiceDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(invoiceDraftCompleteness(row));
+        },
         record: async () => {
           invoiceId = await this.invoices.insertInTx(tx, user, prepared);
         },

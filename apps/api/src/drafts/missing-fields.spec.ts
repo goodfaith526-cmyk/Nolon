@@ -19,7 +19,8 @@ import {
 } from '../quotations/quotation-drafts.service.js';
 import { evidenceAfterEdit, rateMissingFields } from '../rates/rate-card-drafts.service.js';
 import { tripMissingFields, tripRequestHash } from '../transport/trip-drafts.service.js';
-import { draftIncomplete, patched, requireComplete } from './draft-rules.js';
+import { requireApprovable } from './draft-completeness.js';
+import { draftIncomplete, patched } from './draft-rules.js';
 
 // Entry drafts saved with missing values (owner decision, 2026-10-17): what each kind still
 // misses before an approval, from the record's own required rules.
@@ -218,7 +219,7 @@ describe('drafts: edits and incomplete approvals', () => {
   });
 
   it('refuses an approval with 422 DRAFT_INCOMPLETE naming each missing value', () => {
-    expect(() => requireComplete([])).not.toThrow();
+    expect(() => requireApprovable({ missing: [], invalid: [] })).not.toThrow();
     const error = draftIncomplete(['originLocationId', 'lines[0].quantity']);
     expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect(error.getResponse()).toMatchObject({
@@ -227,6 +228,6 @@ describe('drafts: edits and incomplete approvals', () => {
       fields: ['originLocationId', 'lines[0].quantity'],
       statusCode: 422,
     });
-    expect(() => requireComplete(['mode'])).toThrow();
+    expect(() => requireApprovable({ missing: ['mode'], invalid: [] })).toThrow();
   });
 });
