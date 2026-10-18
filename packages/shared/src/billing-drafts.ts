@@ -132,6 +132,11 @@ export const INVOICE_SUGGESTION_ISSUES = [
   'SERVICE_NOT_MAPPED',
   /** The charge's service is not one of the shipment's services. */
   'SERVICE_NOT_ON_SHIPMENT',
+  /**
+   * The shipment is below the rate's minimum charge, invoiced as one unit at the minimum: that
+   * price is the staff member's to enter (one unit with no price is the price per unit).
+   */
+  'MINIMUM_CHARGE',
 ] as const;
 export type InvoiceSuggestionIssue = (typeof INVOICE_SUGGESTION_ISSUES)[number];
 

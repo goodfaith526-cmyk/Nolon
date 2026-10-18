@@ -59,6 +59,7 @@ import {
   ratedLine,
   ratedPrice,
   suggestionFingerprint,
+  systemPriceGives,
   unitQuantity,
 } from './invoice-suggestion.js';
 
@@ -613,15 +614,28 @@ export class InvoicesService {
               'it only if it applies',
           });
         }
+        const rated = ratedLine(rate, quantity, currency.decimalPlaces);
+        // Filled only where creating it without its price gives the same line (Codex N89-1, N89-3).
+        const reproduced = systemPriceGives(rate, rated, currency.decimalPlaces);
+        if (!reproduced) {
+          unresolved.push({
+            path: `${path}.unitPrice`,
+            code: 'MINIMUM_CHARGE',
+            message:
+              `The shipment is below ${chargeTypeCode}'s minimum charge of ` +
+              `${toDecimalString(rate.minimumCharge)} ${currency.code}: invoice it as quantity 1 ` +
+              'with that price entered',
+          });
+        }
         lines.push({
           chargeTypeCode,
           description: null,
           unit: rate.unit,
-          ...ratedLine(rate, quantity, currency.decimalPlaces),
+          ...rated,
           priceSource: 'RATE_CARD',
           rateCardId: rate.id,
           service,
-          use: covered && quantity !== null ? 'FILL' : 'OFFER',
+          use: covered && quantity !== null && reproduced ? 'FILL' : 'OFFER',
         });
       }
     }
@@ -847,15 +861,7 @@ export class InvoicesService {
       },
       { noMatch: [`${path}.unitPrice`], several: [`${path}.unitPrice`] },
     );
-    // The shipment's own measure of the rate's unit: one unit below the minimum is the minimum,
-    // as the suggestion derives it (Codex N89-1).
-    const measured = unitQuantity(
-      rate.unit,
-      shipment.items,
-      rate.containerTypeCode,
-      shipment.cargoType,
-    );
-    const priced = ratedPrice(rate, quantity, measured, decimalPlaces);
+    const priced = ratedPrice(rate, quantity, decimalPlaces);
     return {
       unitPrice:
         'oneUnit' in priced

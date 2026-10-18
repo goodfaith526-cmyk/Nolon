@@ -374,8 +374,8 @@ describe('invoice suggestion: a shipment without a quotation', () => {
   });
 });
 
-describe('invoice suggestion: a minimum charge, suggested and created the same (Codex N89-1)', () => {
-  it('invoices 0.25 kg at 100 per kg with a minimum of 60 as 60, suggested, created, checked and drafted', async () => {
+describe('invoice suggestion: a minimum charge above the price per unit (Codex N89-1, N89-3)', () => {
+  it('offers 0.25 kg at 100 per kg with a minimum of 60 for the staff member to price, and prices 1 unit as 100', async () => {
     // Its own route and charge, so the other cases' rates are untouched.
     const tag = `MN${randomUUID().slice(0, 6).toUpperCase()}`;
     const place = async (suffix: string) =>
@@ -431,52 +431,53 @@ describe('invoice suggestion: a minimum charge, suggested and created the same (
     ).body as BookingDto;
     const shipmentId = await confirmed(booking);
     const suggested = await suggestion({ shipmentId });
+    // 1 × 60 is what the tariff gives, but 1 unit with no price is 1 × 100: offered, not filled.
     expect(suggested.lines).toEqual([
       expect.objectContaining({
         chargeTypeCode: code,
         quantity: '1',
         unitPrice: '60',
-        use: 'FILL',
+        use: 'OFFER',
       }),
     ]);
-    // The agent sends the quantity and leaves the price to NOLON: the same 60.
-    const body = {
+    expect(suggested.unresolved).toContainEqual(
+      expect.objectContaining({ path: 'lines.0.unitPrice', code: 'MINIMUM_CHARGE' }),
+    );
+    const body = (lines: object[]) => ({
       idempotencyKey: draftKey(),
       shipmentId,
       currency: suggested.currency,
       invoiceDate: suggested.invoiceDate,
       dueDate: suggested.dueDate,
       notes: null,
-      lines: [{ chargeTypeCode: code, quantity: '1' }],
-    };
-    const checked = (await r.agentPost('/invoice-drafts/check', tokens.finance, body).expect(200))
-      .body as DraftPreCheckDto;
-    expect(checked).toMatchObject({
-      ok: true,
-      total: '60',
-      computed: [{ field: 'lines.0.unitPrice', value: '60', source: 'RATE_CARD' }],
+      lines,
     });
-    const created = (await r.agentPost('/invoice-drafts', tokens.finance, body).expect(201))
-      .body as EntryDraftSummaryDto;
+    const check = async (lines: object[]) =>
+      (await r.agentPost('/invoice-drafts/check', tokens.finance, body(lines)).expect(200))
+        .body as DraftPreCheckDto;
+    // A caller's 1 unit with no price stays quantity × the system price (Codex N89-3): 100.
+    expect(await check([{ chargeTypeCode: code, quantity: '1' }])).toMatchObject({
+      ok: true,
+      total: '100',
+      computed: [{ field: 'lines.0.unitPrice', value: '100', source: 'RATE_CARD' }],
+    });
+    // The minimum, entered as the suggestion names it: 60, in the check and in the draft made.
+    const minimum = [{ chargeTypeCode: code, quantity: '1', unitPrice: '60' }];
+    expect(await check(minimum)).toMatchObject({ ok: true, total: '60' });
+    const created = (
+      await r.agentPost('/invoice-drafts', tokens.finance, body(minimum)).expect(201)
+    ).body as EntryDraftSummaryDto;
     const draft = (await r.get(`/invoice-drafts/${created.id}`, cookies.financePts).expect(200))
       .body as InvoiceDraftDto;
     expect(draft.check).toMatchObject({ ok: true, total: '60' });
-    // The direct create from the shipment: the same.
+    // A quantity other than one below the minimum is still asked as one unit, never priced.
+    const asked = await check([{ chargeTypeCode: code, quantity: '0.25' }]);
+    expect(!asked.ok && asked.refusals.map((x) => x.code)).toEqual(['PRICE_AS_ONE_UNIT']);
+    // The direct create fills what it fills: never the offered line at a price nobody entered.
     const invoice = (
       await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
     ).body as CustomerInvoiceDto;
-    expect(invoice.lines.map((l) => [l.quantity, l.unitPrice])).toEqual([['1', '60']]);
-    expect(invoice.total).toBe('60');
-    // A quantity other than one below the minimum is still asked as one unit, never priced.
-    const fractional = {
-      ...body,
-      idempotencyKey: draftKey(),
-      lines: [{ chargeTypeCode: code, quantity: '0.25' }],
-    };
-    const asked = (
-      await r.agentPost('/invoice-drafts/check', tokens.finance, fractional).expect(200)
-    ).body as DraftPreCheckDto;
-    expect(!asked.ok && asked.refusals.map((x) => x.code)).toEqual(['PRICE_AS_ONE_UNIT']);
+    expect(invoice.lines).toEqual([]);
   });
 });
 

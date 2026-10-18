@@ -9,6 +9,7 @@ import {
   ratedLine,
   ratedPrice,
   suggestionFingerprint,
+  systemPriceGives,
   unitQuantity,
 } from './invoice-suggestion.js';
 
@@ -113,20 +114,24 @@ describe('invoice suggestion: prices', () => {
   });
 });
 
-describe('invoice suggestion: the system price of a rate card line (Codex N89-1)', () => {
+describe('invoice suggestion: the system price of a rate card line (Codex N89-1, N89-3)', () => {
   const rate = { price: dec(100), minimumCharge: dec(60) };
-  it('gives the minimum to the one unit ratedLine suggests below it, so suggestion and create agree', () => {
-    const suggested = ratedLine(rate, dec('0.25'), 2);
-    expect(suggested).toEqual({ quantity: dec(1), unitPrice: dec(60) });
-    expect(ratedPrice(rate, dec(1), dec('0.25'), 2)).toEqual({ unitPrice: dec(60) });
+  it("prices a line from its own quantity only, never from the shipment's measure", () => {
+    expect(ratedPrice(rate, dec(1), 2)).toEqual({ unitPrice: dec(100) });
+    expect(ratedPrice(rate, dec(3), 2)).toEqual({ unitPrice: dec(100) });
+    expect(ratedPrice(rate, dec('0.25'), 2)).toEqual({ oneUnit: dec(60) });
+    expect(ratedPrice({ price: dec(1), minimumCharge: dec(50) }, dec(1), 2)).toEqual({
+      unitPrice: dec(50),
+    });
   });
-  it('keeps the price above the minimum, and asks for one unit below it at another quantity', () => {
-    expect(ratedPrice(rate, dec(3), dec(3), 2)).toEqual({ unitPrice: dec(100) });
-    // One unit of a shipment measuring more: the price, as typed.
-    expect(ratedPrice(rate, dec(1), dec(3), 2)).toEqual({ unitPrice: dec(100) });
-    // Unknown measure: only the line's own quantity decides.
-    expect(ratedPrice(rate, dec(1), null, 2)).toEqual({ unitPrice: dec(100) });
-    expect(ratedPrice(rate, dec('0.25'), dec('0.25'), 2)).toEqual({ oneUnit: dec(60) });
+  it('fills a suggested line only when the system price makes the same of it', () => {
+    // 0.25 kg at 100/kg, minimum 60: suggested 1 × 60, but 1 unit with no price is 1 × 100.
+    expect(systemPriceGives(rate, ratedLine(rate, dec('0.25'), 2), 2)).toBe(false);
+    expect(systemPriceGives(rate, ratedLine(rate, dec(3), 2), 2)).toBe(true);
+    // 10 kg at 1/kg, minimum 50: 1 × 50 either way.
+    const low = { price: dec(1), minimumCharge: dec(50) };
+    expect(systemPriceGives(low, ratedLine(low, dec(10), 2), 2)).toBe(true);
+    expect(systemPriceGives(rate, ratedLine(rate, null, 2), 2)).toBe(true);
   });
 });
 

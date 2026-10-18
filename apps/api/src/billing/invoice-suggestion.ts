@@ -124,24 +124,36 @@ export function ratedLine(
 
 /**
  * The unit price a rate card gives an invoice line of `quantity` that names no price (the system
- * price), on a shipment measuring `measured` of the rate's unit (unitQuantity; null when unknown).
- * Below the minimum charge, the minimum as one unit: when `quantity` × price is below it, and when
- * the line is one unit for a shipment whose own measure is below it, which is the line ratedLine
- * suggests (Codex N89-1: 0.25 kg at 100/kg with a minimum of 60 is suggested and created as 1 ×
- * 60, never 1 × 100). `oneUnit` when the minimum applies to a quantity other than 1.
+ * price): the rate's price; below the minimum charge, the minimum as one unit (`oneUnit` when the
+ * quantity is not 1, to invoice it as one). Only the line's own quantity decides: a caller's
+ * quantity × system price is never second-guessed from the shipment (Codex N89-3).
  */
 export function ratedPrice(
   rate: { price: Decimal; minimumCharge: Decimal },
   quantity: Decimal,
-  measured: Decimal | null,
   decimalPlaces: number,
 ): { unitPrice: Decimal } | { oneUnit: Decimal } {
-  const below = (q: Decimal) =>
-    roundMoney(q.times(rate.price), decimalPlaces).lt(rate.minimumCharge);
-  if (below(quantity) || (quantity.eq(1) && measured !== null && below(measured))) {
+  if (roundMoney(quantity.times(rate.price), decimalPlaces).lt(rate.minimumCharge)) {
     return quantity.eq(1) ? { unitPrice: rate.minimumCharge } : { oneUnit: rate.minimumCharge };
   }
   return { unitPrice: rate.price };
+}
+
+/**
+ * Whether a suggested rate card line is what the system price makes of its quantity: a line
+ * filled without its price is created as suggested only then (Codex N89-1). A minimum charge on a
+ * shipment measuring below it, with a price per unit at or above it (0.25 kg at 100/kg, minimum
+ * 60: suggested 1 × 60, while 1 unit with no price is 1 × 100), is not: it is offered, priced by
+ * the staff member.
+ */
+export function systemPriceGives(
+  rate: { price: Decimal; minimumCharge: Decimal },
+  line: { quantity: Decimal | null; unitPrice: Decimal },
+  decimalPlaces: number,
+): boolean {
+  if (line.quantity === null) return true;
+  const priced = ratedPrice(rate, line.quantity, decimalPlaces);
+  return 'unitPrice' in priced && priced.unitPrice.eq(line.unitPrice);
 }
 
 /** What a suggestion was derived from: the shipment's quotation, or the rate cards that matched. */
