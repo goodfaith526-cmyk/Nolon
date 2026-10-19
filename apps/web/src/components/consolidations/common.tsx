@@ -89,15 +89,18 @@ export function ConsolidationDetailFields({ value }: { value: ConsolidationDto |
 
 /**
  * Search the user's shipments and pick LCL sea ones. The list is narrowed here for convenience
- * only: the API checks the mode, load type, status, branch and other containers again.
+ * only: the API checks the mode, load type, port, status, branch and other containers again.
  */
 export function LclShipmentPicker({
   exclude,
+  originLocationId,
   onPick,
   onError,
   disabled = false,
 }: {
   exclude: readonly string[];
+  /** The container's port of loading, once known: shipments leaving from another are left out. */
+  originLocationId?: string;
   onPick: (shipment: ShipmentSummaryDto) => void;
   onError: (e: unknown) => void;
   disabled?: boolean;
@@ -114,7 +117,14 @@ export function LclShipmentPicker({
       const page = await api<Page<ShipmentSummaryDto>>(
         `/shipments?pageSize=50&q=${encodeURIComponent(q)}`,
       );
-      setResults(page.items.filter((s) => hasSeaLeg(s.mode) && s.loadType === 'LCL'));
+      setResults(
+        page.items.filter(
+          (s) =>
+            hasSeaLeg(s.mode) &&
+            s.loadType === 'LCL' &&
+            (!originLocationId || s.originLocationId === originLocationId),
+        ),
+      );
     } catch (e) {
       onError(e);
     }

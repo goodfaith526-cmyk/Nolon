@@ -40,6 +40,11 @@ export interface ExpenseSummaryDto {
 
 export interface ExpenseDto extends ExpenseSummaryDto {
   fxRate: FxRateString;
+  /**
+   * The rate the user entered on the document, which it keeps; null when the rate is the FX
+   * table's for the document's date (an edit then sends none, and the table's rate applies).
+   */
+  enteredFxRate: FxRateString | null;
   cashAccountId: string;
   cashAccountCode: string;
   cashAccountNameEn: string;

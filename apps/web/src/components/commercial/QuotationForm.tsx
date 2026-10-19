@@ -20,7 +20,9 @@ import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { asciiDigits } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
+import { todayString } from '@/lib/money';
 import { icons } from '../Icons';
+import { useMe } from '../StaffShell';
 import { CustomerPicker } from './CustomerPicker';
 import { cargoChoices } from './cargo';
 import { ModePicker } from './ModePicker';
@@ -67,6 +69,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const t = useTranslations('Quotations');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const me = useMe();
   const name = useLocalName();
   const master = useMasterData();
   const failure = useFailureText();
@@ -114,16 +117,26 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   }, [notice, invalid]);
 
   const branchId = quotation?.branchId ?? customer?.branchId;
+  // The quotation's branch's date: the day the API checks a rate card's validity on.
+  const today = me.branches.find((b) => b.id === branchId)?.today ?? todayString();
 
   useEffect(() => {
     if (!origin || !destination || !branchId) return;
     let cancelled = false;
-    const query = `status=APPROVED&originLocationId=${origin}&destinationLocationId=${destination}&mode=${mode}&pageSize=100`;
+    const query = `status=APPROVED&originLocationId=${origin}&destinationLocationId=${destination}&mode=${mode}&validOn=${today}&pageSize=100`;
     api<Page<RateCardDto>>(`/rates?${query}`)
       .then((page) => {
         if (!cancelled) {
-          // Rate cards of every branch price a quotation (owner, 2026-10-19).
-          setRates(page.items.filter((r) => r.currency === currency));
+          // Rate cards of every branch price a quotation (owner, 2026-10-19). Only the cards the
+          // API accepts for this quotation are offered: same currency, load type and cargo type.
+          setRates(
+            page.items.filter(
+              (r) =>
+                r.currency === currency &&
+                (r.loadType ?? '') === (hasSeaLeg(mode) ? loadType : '') &&
+                r.cargoType === cargoType,
+            ),
+          );
         }
       })
       .catch(() => {
@@ -132,7 +145,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     return () => {
       cancelled = true;
     };
-  }, [origin, destination, mode, currency, branchId]);
+  }, [origin, destination, mode, currency, loadType, cargoType, today, branchId]);
 
   function updateLine(key: number, patch: Partial<LineState>) {
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));

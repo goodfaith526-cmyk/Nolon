@@ -321,6 +321,22 @@ export class BookingsService {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft booking can be edited');
+    if (existing.quotationId) {
+      // The quotation priced this route and mode, and the invoice is priced from the quotation.
+      const changed = [
+        input.originLocationId.toLowerCase() !== existing.originLocationId && 'originLocationId',
+        input.destinationLocationId.toLowerCase() !== existing.destinationLocationId &&
+          'destinationLocationId',
+        input.mode !== existing.mode && 'mode',
+      ].filter((f): f is string => typeof f === 'string');
+      if (changed.length > 0) {
+        throw fieldRefusal(
+          'QUOTED_ROUTE_FIXED',
+          'A booking made from a quotation keeps the quotation route and mode',
+          changed,
+        );
+      }
+    }
     const prepared = await this.prepare(existing.customerId, input);
     await this.prisma.$transaction(async (tx) => {
       await casStatus(tx, id, ['DRAFT'], prepared.header);

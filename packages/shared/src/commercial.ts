@@ -526,6 +526,8 @@ export const FORM_REFUSALS = [
   'DIMENSIONS_TOGETHER',
   'VOLUME_TOO_LARGE',
   'VALID_UNTIL_PAST',
+  // A booking made from a quotation: its route and mode are the quotation's.
+  'QUOTED_ROUTE_FIXED',
   'CURRENCY_NOT_ACTIVE',
   'RATE_NOT_USABLE',
   // The system price (no rate card and no price given): none or several rate cards match.
@@ -541,6 +543,7 @@ export const FORM_REFUSALS = [
   'SAME_CONTAINER',
   'SHIPMENT_OTHER_BRANCH',
   'SHIPMENT_NOT_LCL_SEA',
+  'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
   // A booking that names an open container (booking drafts): it must fit the container.
@@ -549,6 +552,8 @@ export const FORM_REFUSALS = [
   'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
   // An invoice draft line priced by NOLON (no unit price given), from the shipment's quotation.
   'QUOTED_PRICE_OTHER_CURRENCY',
+  // A draft invoice moved to another currency without its prices entered anew: `from`, `to`.
+  'INVOICE_CURRENCY_REPRICE',
   'QUOTED_PRICE_SEVERAL',
   'PRICE_AS_ONE_UNIT',
   // A receipt (receipt drafts): the cash or bank account, and each allocation to an invoice.

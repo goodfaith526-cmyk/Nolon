@@ -22,6 +22,7 @@ import type {
   Page,
   PaymentStatus,
   ReceiptOpenInvoiceDto,
+  UpdateCustomerInvoiceRequest,
 } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -914,7 +915,7 @@ export class InvoicesService {
   async update(
     user: AuthUser,
     id: string,
-    input: CustomerInvoiceInput,
+    input: UpdateCustomerInvoiceRequest,
   ): Promise<CustomerInvoiceDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft invoice is edited');
@@ -932,12 +933,27 @@ export class InvoicesService {
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     await this.prisma.$transaction(async (tx) => {
       await lockStatus(tx, id, 'DRAFT');
+      // The line prices are amounts in the invoice's currency: a new currency keeps none of them
+      // as they stand (3,670 AED is not 3,670 USD). The request says it priced the lines anew.
+      const { currency: current } = await tx.customerInvoice.findUniqueOrThrow({
+        where: { id },
+        select: { currency: true },
+      });
+      if (current !== currency.code && input.repriced !== true) {
+        throw fieldRefusal(
+          'INVOICE_CURRENCY_REPRICE',
+          `The invoice is in ${current}: to invoice in ${currency.code}, enter every price in ${currency.code} (repriced)`,
+          ['currency'],
+          { from: current, to: currency.code },
+        );
+      }
       await tx.customerInvoiceLine.deleteMany({ where: { invoiceId: id } });
       await tx.customerInvoice.update({
         where: { id },
         data: {
           currency: currency.code,
           fxRate,
+          requestedFxRate: requestedRate(input.fxRate),
           invoiceDate: toDbDate(input.invoiceDate),
           dueDate: toDbDate(input.dueDate),
           notes: input.notes ?? null,
@@ -1093,6 +1109,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
   return {
     ...toSummary(i),
     fxRate: i.fxRate.toFixed(),
+    enteredFxRate: toDecimalStringOrNull(i.requestedFxRate),
     totalUsd: i.totalUsd.toFixed(),
     notes: i.notes,
     lines: i.lines.map((l) => ({
