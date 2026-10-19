@@ -18,7 +18,7 @@ interface LineState {
   description: string;
   quantity: string;
   unitPrice: string;
-  /** A saved line's price, in the invoice's saved currency. */
+  /** A saved line's price, in the invoice's saved currency, while its charge and price are untouched. */
   savedPrice?: string;
 }
 
@@ -94,8 +94,15 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
     );
   }
 
+  // A saved price belongs to its line's charge as saved: once the charge or the price is changed,
+  // it never comes back (Codex F92-6).
   function updateLine(key: number, patch: Partial<LineState>) {
-    setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+    const repriced = patch.chargeTypeCode !== undefined || patch.unitPrice !== undefined;
+    setLines((all) =>
+      all.map((l) =>
+        l.key === key ? { ...l, ...patch, ...(repriced ? { savedPrice: undefined } : {}) } : l,
+      ),
+    );
   }
 
   async function submit(e: FormEvent<HTMLFormElement>) {
