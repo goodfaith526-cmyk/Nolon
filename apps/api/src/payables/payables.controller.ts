@@ -84,7 +84,7 @@ const billFields = {
   currency: currencyCode,
   fxRate: fxRate.nullish(),
   billDate: dateString,
-  dueDate: dateString,
+  dueDate: dateString.nullish(),
   notes: optionalText(2000),
   lines: z.array(billLine).min(1).max(100),
 };

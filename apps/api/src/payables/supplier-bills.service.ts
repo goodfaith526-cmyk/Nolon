@@ -22,7 +22,7 @@ import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { beforeLocalToday, branchZones, dateRange } from '../common/list-filters.js';
 import {
   type Decimal,
@@ -190,7 +190,7 @@ export class SupplierBillsService {
     if (done) return this.retry(user, done, input);
     const supplier = await this.suppliers.requireSupplier(input.supplierId);
     if (!supplier.isActive) throw new BadRequestException('The supplier is inactive');
-    const draft = await this.checkDraft(user, input);
+    const draft = await this.checkDraft(user, input, supplier.paymentTermsDays);
     try {
       await this.prisma.supplierBill.create({
         data: {
@@ -214,11 +214,13 @@ export class SupplierBillsService {
   }
 
   /** An exact retry returns the bill the request created; any other reuse is a 409. */
-  private retry(
+  private async retry(
     user: AuthUser,
     existing: Prisma.SupplierBillGetPayload<{ include: { lines: true } }>,
     input: CreateSupplierBillRequest,
   ): Promise<SupplierBillDto> {
+    // A retry that left the due date out matches the date generated from the terms (C1).
+    const { paymentTermsDays } = await this.suppliers.requireSupplier(existing.supplierId);
     const same =
       !existing.isOpening &&
       existing.supplierId === input.supplierId &&
@@ -227,7 +229,7 @@ export class SupplierBillsService {
       existing.currency === input.currency &&
       sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(existing.billDate) === input.billDate &&
-      fromDbDate(existing.dueDate) === input.dueDate &&
+      fromDbDate(existing.dueDate) === billDueDate(input, paymentTermsDays) &&
       existing.supplierReference === (input.supplierReference ?? null) &&
       existing.notes === (input.notes ?? null) &&
       existing.lines.length === input.lines.length &&
@@ -257,7 +259,8 @@ export class SupplierBillsService {
   async update(user: AuthUser, id: string, input: SupplierBillInput): Promise<SupplierBillDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft bill is edited');
-    const draft = await this.checkDraft(user, input);
+    const supplier = await this.suppliers.requireSupplier(existing.supplierId);
+    const draft = await this.checkDraft(user, input, supplier.paymentTermsDays);
     await this.prisma.$transaction(async (tx) => {
       await lockStatus(tx, id, ['DRAFT']);
       await tx.supplierBillLine.deleteMany({ where: { billId: id } });
@@ -612,9 +615,10 @@ export class SupplierBillsService {
    * references (a shipment the user may see, an external trip of the bill's branch, an active
    * charge type or expense category). Amounts are in the currency's minor units.
    */
-  private async checkDraft(user: AuthUser, input: SupplierBillInput) {
+  private async checkDraft(user: AuthUser, input: SupplierBillInput, paymentTermsDays: number) {
     assertBranchAccess(user, input.branchId);
-    if (input.dueDate < input.billDate) {
+    const dueDate = billDueDate(input, paymentTermsDays);
+    if (dueDate < input.billDate) {
       throw new BadRequestException('The due date is before the bill date');
     }
     const currency = await this.currencies.requireActive(input.currency);
@@ -697,7 +701,7 @@ export class SupplierBillsService {
         fxRate,
         requestedFxRate: requestedRate(input.fxRate),
         billDate: toDbDate(input.billDate),
-        dueDate: toDbDate(input.dueDate),
+        dueDate: toDbDate(dueDate),
         notes: input.notes ?? null,
         total,
         totalUsd: toUsd(total, fxRate, currency.code),
@@ -713,6 +717,19 @@ export class SupplierBillsService {
     if (!bill) throw new NotFoundException('Supplier bill not found');
     return bill;
   }
+}
+
+/**
+ * A bill's due date (functional review C1). A due date the client sends is kept as sent. Without
+ * one, it is generated on each save of the draft (create, edit or an exact retry) from the bill
+ * date plus the supplier's payment terms in days, as customer invoices take theirs from the
+ * customer's terms; a later change of the bill date or of the terms moves it on the next save.
+ */
+function billDueDate(
+  input: Pick<SupplierBillInput, 'billDate' | 'dueDate'>,
+  paymentTermsDays: number,
+): string {
+  return input.dueDate ?? addDays(input.billDate, paymentTermsDays);
 }
 
 function checkAmount(amount: Decimal, decimals: number, label = 'Amount'): void {

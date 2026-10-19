@@ -19,6 +19,7 @@ import type {
   ShipmentEventKind,
   ShipmentStatus,
   ShipmentStatusRequest,
+  ShipmentPickPage,
   ShipmentSummaryDto,
   ShipmentUpdateRequest,
   ShippingMode,
@@ -178,6 +179,65 @@ export class ShipmentsService {
       page: filters.page,
       pageSize: filters.pageSize,
       ...matchedLocations(route),
+    };
+  }
+
+  /**
+   * Shipments to pick for a document of `branchId` (functional review C10): visible to the user
+   * and in that branch (its own or sharing it), not cancelled, whose number or customer name
+   * contains `q`. The shipment numbered exactly `q` (any case) comes apart as `exact`, so a typed
+   * number is found however many shipments contain it; the others page by number.
+   */
+  async pick(
+    user: AuthUser,
+    branchId: string,
+    filters: { q?: string; page: number; pageSize: number },
+  ): Promise<ShipmentPickPage> {
+    assertBranchAccess(user, branchId);
+    const q = filters.q ?? '';
+    const base: Prisma.ShipmentWhereInput[] = [
+      this.scope(user),
+      { OR: [{ branchId }, { sharedBranches: { some: { branchId } } }] },
+      { status: { not: 'CANCELLED' } },
+    ];
+    const exact = q
+      ? await this.prisma.shipment.findFirst({
+          where: { AND: [...base, { number: { equals: q, mode: 'insensitive' } }] },
+          include: summary,
+        })
+      : null;
+    const where: Prisma.ShipmentWhereInput = {
+      AND: [
+        ...base,
+        ...(exact ? [{ id: { not: exact.id } }] : []),
+        ...(q
+          ? [
+              {
+                OR: [
+                  { number: { contains: q, mode: 'insensitive' as const } },
+                  { customer: { name: { contains: q, mode: 'insensitive' as const } } },
+                ],
+              },
+            ]
+          : []),
+      ],
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.shipment.findMany({
+        where,
+        include: summary,
+        orderBy: { number: 'asc' },
+        skip: (filters.page - 1) * filters.pageSize,
+        take: filters.pageSize,
+      }),
+      this.prisma.shipment.count({ where }),
+    ]);
+    return {
+      exact: exact ? toSummary(exact) : null,
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
     };
   }
 

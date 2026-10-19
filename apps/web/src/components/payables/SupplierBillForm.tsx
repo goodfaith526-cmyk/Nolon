@@ -7,36 +7,43 @@ import {
   type CreateSupplierBillRequest,
   type ExpenseCategoryDto,
   type Page,
-  type ShipmentSummaryDto,
   type SupplierBillDto,
   type SupplierBillInput,
   type SupplierBillLineInput,
   type SupplierBillLineKind,
+  type SupplierDto,
   type SupplierSummaryDto,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchCurrency, branchToday } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
-import { AMOUNT_PATTERN, FX_RATE_PATTERN, todayString } from '@/lib/money';
+import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useApiList } from '../finance/reports/ReportKit';
 import { useRecord } from '../finance/common';
 import { can, useMe } from '../StaffShell';
+import { type PickedShipment, ShipmentPicker } from './ShipmentPicker';
 
 interface LineDraft {
   key: number;
   kind: SupplierBillLineKind;
   chargeTypeCode: string;
-  /** The shipment's number as typed; resolved to its id on save. */
-  shipmentNumber: string;
+  /** The shipment picked from the list (functional review C10). */
+  shipment: PickedShipment | null;
   tripId: string;
   consolidationId: string;
   expenseCategoryCode: string;
   description: string;
   amount: string;
+  /**
+   * The agreed cost a picked trip put in `amount` (functional review C2), with that trip and its
+   * currency; null once the person typed an amount, or for any other line.
+   */
+  copied: { tripId: string; currency: string; amount: string } | null;
 }
 
 let nextKey = 1;
@@ -44,13 +51,25 @@ const emptyLine = (kind: SupplierBillLineKind = 'EXPENSE'): LineDraft => ({
   key: nextKey++,
   kind,
   chargeTypeCode: '',
-  shipmentNumber: '',
+  shipment: null,
   tripId: '',
   consolidationId: '',
   expenseCategoryCode: '',
   description: '',
   amount: '',
+  copied: null,
 });
+
+/**
+ * A line without the amount a trip copied into it, when the person has not changed that amount
+ * (C2): used when the line's trip, kind or the bill's currency changes. A typed amount is kept.
+ */
+function dropCopied(line: LineDraft): LineDraft {
+  if (!line.copied) return line;
+  return line.amount === line.copied.amount
+    ? { ...line, amount: '', copied: null }
+    : { ...line, copied: null };
+}
 
 /** New bill (no id) or a draft's edit page. The API checks every amount, date and reference. */
 export function SupplierBillForm({ id }: { id?: string }) {
@@ -76,7 +95,18 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
   const [suppliers, setSuppliers] = useState<SupplierSummaryDto[] | null>(null);
   const [supplierId, setSupplierId] = useState(bill?.supplierId ?? '');
   const [branchId, setBranchId] = useState(bill?.branchId ?? me.branches[0]?.id ?? '');
-  const [currency, setCurrency] = useState(bill?.currency ?? 'USD');
+  // A new bill's currency is its branch's (functional review C2, C4), read from /auth/me and
+  // following the branch until the person picks one (null until then), which is kept. A carrier's
+  // trips may be in several currencies, so none of them is taken: the form offers each.
+  const [currencyChoice, setCurrencyChoice] = useState<string | null>(bill?.currency ?? null);
+  const currency = currencyChoice ?? branchCurrency(me, branchId);
+  // A new bill is dated today in its branch (C9), following the branch until a date is typed.
+  const [billDateChoice, setBillDate] = useState<string | null>(bill?.billDate ?? null);
+  const billDate = billDateChoice ?? branchToday(me, branchId);
+  // Left empty, the API makes the due date the bill date plus the supplier's payment terms when
+  // the bill is saved (C1); a date the person enters is sent and kept.
+  const [dueDate, setDueDate] = useState(bill?.dueDate ?? '');
+  const [termsDays, setTermsDays] = useState<number | null>(null);
   const [trips, setTrips] = useState<BillableTripDto[]>([]);
   const [containers, setContainers] = useState<BillableConsolidationDto[]>([]);
   const categories = useApiList<ExpenseCategoryDto>('/accounting/expense-categories', true);
@@ -86,12 +116,13 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
           key: nextKey++,
           kind: l.kind,
           chargeTypeCode: l.chargeTypeCode ?? '',
-          shipmentNumber: l.shipmentNumber ?? '',
+          shipment: l.shipmentId ? { id: l.shipmentId, number: l.shipmentNumber ?? '' } : null,
           tripId: l.tripId ?? '',
           consolidationId: l.consolidationId ?? '',
           expenseCategoryCode: l.expenseCategoryCode ?? '',
           description: l.description ?? '',
           amount: l.amount,
+          copied: null,
         }))
       : [emptyLine()],
   );
@@ -104,6 +135,21 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
       .then((page) => setSuppliers(page.items))
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
   }, [bill, failure]);
+
+  useEffect(() => {
+    if (!supplierId) return;
+    let cancelled = false;
+    api<SupplierDto>(`/suppliers/${supplierId}`)
+      .then((s) => {
+        if (!cancelled) setTermsDays(s.paymentTermsDays);
+      })
+      .catch(() => {
+        // Without the terms the hint names no number of days; the API still applies them.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supplierId]);
 
   useEffect(() => {
     if (!supplierId || !branchId || !can(me, 'transport_trips:view')) return;
@@ -169,21 +215,63 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
   const update = (key: number, patch: Partial<LineDraft>) =>
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  /** The shipment id for a typed number (exact match among those the user may see). */
-  async function shipmentId(number: string): Promise<string | null> {
-    const page = await api<Page<ShipmentSummaryDto>>(
-      `/shipments?pageSize=5&q=${encodeURIComponent(number)}`,
+  // Billable trips of the supplier in currencies other than the bill's, offered as a choice of
+  // currency (C2): never one taken on the person's behalf.
+  const otherCurrencies = [
+    ...trips
+      .filter((tr) => tr.currency !== currency)
+      .reduce(
+        (counts, tr) => counts.set(tr.currency, (counts.get(tr.currency) ?? 0) + 1),
+        new Map<string, number>(),
+      ),
+  ];
+
+  /**
+   * Another currency for the bill. Amounts trips copied in are dropped (they were in the old
+   * currency), unless the person changed them, and trips of another currency are unpicked (C2).
+   */
+  function linesIn(next: string) {
+    setLines((all) =>
+      all.map((l) => {
+        const trip = trips.find((tr) => tr.tripId === l.tripId);
+        const unpicked = trip && trip.currency !== next ? { ...l, tripId: '' } : l;
+        return l.copied && l.copied.currency !== next ? dropCopied(unpicked) : unpicked;
+      }),
     );
-    return page.items.find((s) => s.number === number)?.id ?? null;
   }
 
-  async function toInput(l: LineDraft, index: number): Promise<SupplierBillLineInput> {
+  function changeCurrency(next: string) {
+    setCurrencyChoice(next);
+    linesIn(next);
+  }
+
+  /** Another branch; a currency that follows the branch changes with it (see `currency`). */
+  function changeBranch(next: string) {
+    setBranchId(next);
+    if (currencyChoice === null) linesIn(branchCurrency(me, next));
+  }
+
+  /**
+   * A trip picked on a line puts its agreed cost, in its currency, in the amount (C2), unless the
+   * person typed an amount; the amount stays editable. Another trip, or none, drops a copied
+   * amount the person did not change, and copies the new trip's.
+   */
+  function pickTrip(line: LineDraft, tripId: string) {
+    const trip = trips.find((tr) => tr.tripId === tripId);
+    const cleared = dropCopied(line);
+    const copy = trip && trip.currency === currency && cleared.amount === '';
+    update(line.key, {
+      tripId,
+      amount: copy ? trip.agreedCost : cleared.amount,
+      copied: copy ? { tripId, currency: trip.currency, amount: trip.agreedCost } : null,
+    });
+  }
+
+  function toInput(l: LineDraft, index: number): SupplierBillLineInput {
     const base = { kind: l.kind, description: l.description.trim() || null, amount: l.amount };
     if (l.kind === 'SHIPMENT_COST') {
-      const number = l.shipmentNumber.trim();
-      const found = number ? await shipmentId(number) : null;
-      if (!found) throw new LineError(t('shipmentNotFound', { line: index + 1 }));
-      return { ...base, shipmentId: found, chargeTypeCode: l.chargeTypeCode };
+      if (!l.shipment) throw new LineError(t('chooseShipmentFirst', { line: index + 1 }));
+      return { ...base, shipmentId: l.shipment.id, chargeTypeCode: l.chargeTypeCode };
     }
     if (l.kind === 'TRIP') return { ...base, tripId: l.tripId };
     if (l.kind === 'CONSOLIDATION') {
@@ -204,10 +292,10 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
         supplierReference: field(form, 'supplierReference').trim() || null,
         currency,
         fxRate: currency === 'USD' || fxRate === '' ? null : fxRate,
-        billDate: field(form, 'billDate'),
-        dueDate: field(form, 'dueDate'),
+        billDate,
+        dueDate: dueDate || null,
         notes: field(form, 'notes').trim() || null,
-        lines: await Promise.all(lines.map((l, i) => toInput(l, i))),
+        lines: lines.map((l, i) => toInput(l, i)),
       };
       if (bill) {
         await api<SupplierBillDto>(`/supplier-bills/${bill.id}`, { method: 'PATCH', body: input });
@@ -249,7 +337,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
         </label>
         <label className="field">
           {t('branch')}
-          <select value={branchId} required onChange={(e) => setBranchId(e.target.value)}>
+          <select value={branchId} required onChange={(e) => changeBranch(e.target.value)}>
             {me.branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.code} · {name(b)}
@@ -268,7 +356,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
         </label>
         <label className="field">
           {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <select value={currency} required onChange={(e) => changeCurrency(e.target.value)}>
             {master.currencies
               .filter((c) => c.isActive)
               .map((c) => (
@@ -298,19 +386,37 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
             name="billDate"
             type="date"
             required
-            defaultValue={bill?.billDate ?? todayString()}
+            value={billDate}
+            onChange={(e) => setBillDate(e.target.value)}
           />
         </label>
         <label className="field">
-          {t('dueDate')}
+          {t('dueDateOptional')}
           <input
             name="dueDate"
             type="date"
-            required
-            defaultValue={bill?.dueDate ?? todayString()}
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
           />
+          {dueDate === '' && (
+            <span className="muted">
+              {termsDays === null
+                ? t('dueDateFromTermsUnknown')
+                : t('dueDateFromTerms', { days: termsDays })}
+            </span>
+          )}
         </label>
       </div>
+      {otherCurrencies.length > 0 && (
+        <div className="row">
+          <span className="muted">{t('tripsInOtherCurrencies')}</span>
+          {otherCurrencies.map(([code, count]) => (
+            <button key={code} type="button" onClick={() => changeCurrency(code)}>
+              {t('useTripCurrency', { currency: code, count })}
+            </button>
+          ))}
+        </div>
+      )}
 
       <fieldset className="stack">
         <legend>{t('lines')}</legend>
@@ -321,7 +427,12 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
               {t('lineKind')} {index + 1}
               <select
                 value={l.kind}
-                onChange={(e) => update(l.key, { kind: e.target.value as SupplierBillLineKind })}
+                onChange={(e) =>
+                  update(l.key, {
+                    ...dropCopied(l),
+                    kind: e.target.value as SupplierBillLineKind,
+                  })
+                }
               >
                 {SUPPLIER_BILL_LINE_KINDS.map((k) => (
                   <option key={k} value={k}>
@@ -332,15 +443,14 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
             </label>
             {l.kind === 'SHIPMENT_COST' && (
               <>
-                <label className="field">
+                <div className="field">
                   {t('shipmentNumber')}
-                  <input
-                    required
-                    dir="ltr"
-                    value={l.shipmentNumber}
-                    onChange={(e) => update(l.key, { shipmentNumber: e.target.value })}
+                  <ShipmentPicker
+                    branchId={branchId}
+                    value={l.shipment}
+                    onChange={(shipment) => update(l.key, { shipment })}
                   />
-                </label>
+                </div>
                 <label className="field">
                   {t('chargeType')}
                   <select
@@ -395,11 +505,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
             {l.kind === 'TRIP' && (
               <label className="field">
                 {t('trip')}
-                <select
-                  required
-                  value={l.tripId}
-                  onChange={(e) => update(l.key, { tripId: e.target.value })}
-                >
+                <select required value={l.tripId} onChange={(e) => pickTrip(l, e.target.value)}>
                   <option value="">{t('chooseTrip')}</option>
                   {tripChoices.map((c) => (
                     <option key={c.tripId} value={c.tripId}>
@@ -444,7 +550,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
                 dir="ltr"
                 pattern={AMOUNT_PATTERN}
                 value={l.amount}
-                onChange={(e) => update(l.key, { amount: e.target.value })}
+                onChange={(e) => update(l.key, { amount: e.target.value, copied: null })}
               />
             </label>
             {lines.length > 1 && (

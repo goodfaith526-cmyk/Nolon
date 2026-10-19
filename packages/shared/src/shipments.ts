@@ -3,6 +3,7 @@ import type {
   CargoType,
   DateString,
   LoadType,
+  Page,
   ShippingMode,
 } from './commercial.js';
 
@@ -101,6 +102,16 @@ export interface ShipmentSummaryDto {
   status: ShipmentStatus;
   eta: DateString | null;
   createdAt: string;
+}
+
+/**
+ * Shipments to pick for a document of one branch (GET /shipments/pick; functional review C10):
+ * those visible in the branch and not cancelled, matching the search on their number or customer.
+ * `exact` is the shipment whose number is the search (any case), shown first and left out of
+ * `items`, so it is found however many others match; `items` pages through the others by number.
+ */
+export interface ShipmentPickPage extends Page<ShipmentSummaryDto> {
+  exact: ShipmentSummaryDto | null;
 }
 
 export interface ShipmentItemDto {

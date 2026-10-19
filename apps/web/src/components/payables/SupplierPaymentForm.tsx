@@ -11,11 +11,12 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchCurrency, branchToday } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
-import { AMOUNT_PATTERN, FX_RATE_PATTERN, todayString } from '@/lib/money';
+import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
-import { Money, cashAccountsFor, useAccounts } from '../finance/common';
+import { Money, cashAccountsFor, chosenCashAccount, useAccounts } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { BillNumber } from './SupplierBills';
 
@@ -35,8 +36,14 @@ export function SupplierPaymentForm({ supplierId: initialSupplier }: { supplierI
   const [suppliers, setSuppliers] = useState<SupplierSummaryDto[] | null>(null);
   const [supplierId, setSupplierId] = useState(initialSupplier ?? '');
   const [branchId, setBranchId] = useState(me.branches[0]?.id ?? '');
-  const [currency, setCurrency] = useState('USD');
+  // The currency is the branch's (functional review C4), read from /auth/me and following the
+  // branch until the person picks one (null until then), which is kept.
+  const [currencyChoice, setCurrency] = useState<string | null>(null);
+  const currency = currencyChoice ?? branchCurrency(me, branchId);
   const [cashAccountId, setCashAccountId] = useState('');
+  // Dated today in the branch (C9), following the branch until a date is typed.
+  const [dateChoice, setDate] = useState<string | null>(null);
+  const paymentDate = dateChoice ?? branchToday(me, branchId);
   const [bills, setBills] = useState<SupplierBillSummaryDto[] | null>(null);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [requestId] = useState(() => crypto.randomUUID());
@@ -70,7 +77,9 @@ export function SupplierPaymentForm({ supplierId: initialSupplier }: { supplierI
   if (!master) return <p className="muted">{tc('loading')}</p>;
 
   const cashAccounts = cashAccountsFor(accounts, branchId, currency);
-  const selectedCash = cashAccounts.some((a) => a.id === cashAccountId) ? cashAccountId : '';
+  // The only matching account is taken; another branch or currency drops one that no longer
+  // matches (C4).
+  const selectedCash = chosenCashAccount(cashAccounts, cashAccountId);
   const payable = (bills ?? []).filter((b) => b.branchId === branchId);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -81,7 +90,7 @@ export function SupplierPaymentForm({ supplierId: initialSupplier }: { supplierI
       requestId,
       supplierId,
       branchId,
-      paymentDate: field(form, 'paymentDate'),
+      paymentDate,
       currency,
       fxRate: currency === 'USD' || fxRate === '' ? null : fxRate,
       cashAccountId: selectedCash,
@@ -138,11 +147,17 @@ export function SupplierPaymentForm({ supplierId: initialSupplier }: { supplierI
         </label>
         <label className="field">
           {t('paymentDate')}
-          <input name="paymentDate" type="date" required defaultValue={todayString()} />
+          <input
+            name="paymentDate"
+            type="date"
+            required
+            value={paymentDate}
+            onChange={(e) => setDate(e.target.value)}
+          />
         </label>
         <label className="field">
           {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <select value={currency} required onChange={(e) => setCurrency(e.target.value)}>
             {master.currencies
               .filter((c) => c.isActive)
               .map((c) => (

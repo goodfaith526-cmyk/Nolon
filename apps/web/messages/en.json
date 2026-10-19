@@ -763,7 +763,13 @@
     "cancelReason": "Cancellation reason",
     "cancelledNotice": "Receipt cancelled.",
     "openJournal": "Journal entry",
-    "openCancelJournal": "Cancellation entry"
+    "openCancelJournal": "Cancellation entry",
+    "chooseCurrency": "Choose the currency",
+    "currencyFromInvoices": "The customer's open invoices are all in {currency}.",
+    "mixedCurrencies": "The open invoices are in several currencies: choose the receipt's currency.",
+    "payBalance": "Pay balance",
+    "distribute": "Allocate the amount, oldest invoice first",
+    "distributedRest": "{amount} {currency} is left over and will be held as an advance."
   },
   "Journals": {
     "title": "Journal entries",
@@ -870,7 +876,8 @@
     "expenseCategoriesHint": "Each category posts general expenses and expense lines of supplier bills to its account.",
     "categoryCode": "Code",
     "chooseAccount": "Choose an account",
-    "addCategory": "Add"
+    "addCategory": "Add",
+    "typeFromParent": "The parent account's type."
   },
   "FxRates": {
     "title": "Exchange rates",
@@ -1746,7 +1753,8 @@
     "cancelReason": "Cancellation reason",
     "cancelledNotice": "Credit note cancelled.",
     "openInvoice": "Invoice",
-    "openJournal": "Journal entry"
+    "openJournal": "Journal entry",
+    "fullBalance": "Full balance ({amount} {currency})"
   },
   "Suppliers": {
     "title": "Suppliers",
@@ -1795,7 +1803,6 @@
     "lineFor": "For",
     "lineAmount": "Amount",
     "shipmentNumber": "Shipment number",
-    "shipmentNotFound": "Line {line}: no shipment you can see has this number.",
     "chargeType": "Charge",
     "chooseChargeType": "Choose a charge",
     "trip": "Trip",
@@ -1821,7 +1828,17 @@
     "payment": "Payment",
     "paymentDate": "Payment date",
     "consolidation": "Container",
-    "chooseConsolidation": "Choose a container"
+    "chooseConsolidation": "Choose a container",
+    "dueDateOptional": "Due date (optional)",
+    "dueDateFromTerms": "Left empty, it is the bill date plus the supplier's {days} days of payment terms.",
+    "dueDateFromTermsUnknown": "Left empty, it is the bill date plus the supplier's payment terms.",
+    "tripsInOtherCurrencies": "This supplier's trips to bill are also in:",
+    "useTripCurrency": "{currency} ({count, plural, one {# trip} other {# trips}})",
+    "shipmentSearch": "Shipment number or customer",
+    "exactMatch": "Exact match:",
+    "moreShipments": "More shipments",
+    "noShipments": "No shipment of this branch matches.",
+    "chooseShipmentFirst": "Line {line}: choose the shipment."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
