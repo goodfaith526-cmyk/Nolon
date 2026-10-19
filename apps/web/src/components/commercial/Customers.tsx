@@ -157,13 +157,15 @@ export function CustomerForm({
   const [preferredCurrency, setPreferredCurrency] = useState(customer?.preferredCurrency ?? '');
   // The credit limit's currency (functional review B8). An existing limit keeps its currency. A
   // new or empty limit's currency follows the preferred currency chosen on this form, else the
-  // branch's currency, until the person picks one (null until then), which is kept.
+  // branch's currency, until the person picks one (null until then), which is kept. Typing an
+  // amount also keeps the currency shown then (Codex F93-2): a typed limit never changes currency.
   const hasLimit = customer?.creditLimit !== null && customer?.creditLimit !== undefined;
   const [creditCurrencyChoice, setCreditCurrency] = useState<string | null>(
     hasLimit ? (customer?.creditLimitCurrency ?? null) : null,
   );
   const branchCurrency = me.branches.find((b) => b.id === branchId)?.defaultCurrency ?? '';
   const creditCurrency = creditCurrencyChoice ?? (preferredCurrency || branchCurrency);
+  const [creditLimitText, setCreditLimitText] = useState(customer?.creditLimit ?? '');
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -320,7 +322,13 @@ export function CustomerForm({
             inputMode="decimal"
             dir="ltr"
             pattern="\d{1,14}(\.\d{1,4})?"
-            defaultValue={customer?.creditLimit ?? ''}
+            value={creditLimitText}
+            onChange={(e) => {
+              setCreditLimitText(e.target.value);
+              if (e.target.value !== '' && creditCurrencyChoice === null && creditCurrency) {
+                setCreditCurrency(creditCurrency);
+              }
+            }}
           />
         </label>
         <label className="field">

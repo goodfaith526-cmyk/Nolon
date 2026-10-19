@@ -474,7 +474,8 @@
     "discountTotal": "Discounts",
     "currencyFromCustomer": "Suggested: the customer's preferred currency.",
     "currencyFromBranch": "Suggested: the branch's currency.",
-    "validUntilFromDays": "Suggested: {days} days from today."
+    "validUntilFromDays": "Suggested: {days} days from today.",
+    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed."
   },
   "Bookings": {
     "title": "Bookings",
@@ -530,6 +531,7 @@
     "addToContainerHint": "The booking leaves from the container's port of loading, sea LCL. Saving confirms it, creates its shipment and puts it in the container.",
     "pickCustomerToSave": "Choose the customer at the top of the form to save.",
     "fromQuotationTitle": "New booking from quotation {number}",
+    "notSet": "Not set",
     "fromQuotationHint": "Filled in from the quotation. Review it and save: nothing is created until you save. The route, mode and cargo stay the quotation's.",
     "itemsFromQuotation": "Container lines come from the quotation's per-container charges. Check them before saving.",
     "partiesFromLastBooking": "Suggested from the customer's last booking, {number}. Change them if needed.",
