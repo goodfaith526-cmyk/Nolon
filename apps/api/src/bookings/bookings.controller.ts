@@ -24,7 +24,14 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
-import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
+import {
+  clearableText,
+  dateString,
+  optionalText,
+  pageQuery,
+  parse,
+  requiredText,
+} from '../common/validation.js';
 import { BookingsService } from './bookings.service.js';
 
 /**
@@ -70,7 +77,7 @@ export const bookingFields = {
   mode: z.enum(SHIPPING_MODES),
   loadType: z.enum(LOAD_TYPES).nullish(),
   cargoType: z.enum(CARGO_TYPES).nullish(),
-  cargoDescription: optionalText(2000),
+  cargoDescription: clearableText(2000),
   services,
   ...partyRefs,
   requestedDeparture: dateString.nullish(),

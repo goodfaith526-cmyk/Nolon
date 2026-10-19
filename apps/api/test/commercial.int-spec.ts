@@ -1130,6 +1130,26 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       );
       // Road has no FCL/LCL, whatever was saved.
       expect(await edit(lcl, { mode: 'ROAD' })).toMatchObject({ loadType: null });
+
+      // Saved nulls the lines would fill stay null (F91-5).
+      const nulls = await create({
+        loadType: null,
+        cargoDescription: null,
+        items: [container, { ...pallet, description: 'Line detail' }],
+      });
+      expect(nulls).toMatchObject({ loadType: null, cargoDescription: null });
+      expect(await edit(nulls)).toMatchObject({ loadType: null, cargoDescription: null });
+
+      // Null or empty given clears; left out keeps (F91-6).
+      const clear = async (value: null | '') => {
+        const b = await create({ cargoDescription: 'Remove this description', items: [pallet] });
+        expect((await edit(b)).cargoDescription).toBe('Remove this description');
+        expect((await edit(b, { cargoDescription: value, loadType: null })).cargoDescription).toBe(
+          null,
+        );
+      };
+      await clear(null);
+      await clear('');
     });
 
     it('rejects measurements that would overflow or be rounded by the database', async () => {

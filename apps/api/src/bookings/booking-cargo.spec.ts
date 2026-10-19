@@ -128,6 +128,40 @@ describe('bookingCargoHeader on an edit that leaves the header out (Codex F91-1.
     });
   });
 
+  it('keeps saved nulls the lines would fill (F91-5)', () => {
+    const items = [container, { ...pallet, description: 'Line detail' }];
+    const stored = saved({ cargoType: 'CONTAINER', items });
+    expect(bookingCargoHeader(lines('SEA', items), stored)).toEqual({
+      loadType: null,
+      cargoType: 'CONTAINER',
+      cargoDescription: null,
+    });
+    // Saved apart from the lines, they stay apart when the lines change.
+    expect(bookingCargoHeader(lines('SEA', [pallet]), stored)).toMatchObject({
+      loadType: null,
+      cargoDescription: null,
+    });
+  });
+
+  it('clears an FCL/LCL or description given as null (F91-6)', () => {
+    const stored = saved({
+      loadType: 'LCL',
+      cargoType: 'PALLET',
+      cargoDescription: 'Remove this description',
+      items: [pallet],
+    });
+    expect(
+      bookingCargoHeader(
+        { ...lines('SEA', [pallet]), loadType: null, cargoDescription: null },
+        stored,
+      ),
+    ).toEqual({ loadType: null, cargoType: 'PALLET', cargoDescription: null });
+    // A booking has a cargo type: null is taken as left out.
+    expect(bookingCargoHeader({ ...lines('SEA', [barrel]), cargoType: null }).cargoType).toBe(
+      'BARREL',
+    );
+  });
+
   it('still takes a value given over the saved one', () => {
     const stored = saved({ loadType: 'LCL', cargoType: 'CONTAINER', items: [container] });
     expect(
