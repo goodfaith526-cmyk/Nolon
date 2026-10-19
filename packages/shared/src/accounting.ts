@@ -293,6 +293,11 @@ export interface InvoicePaymentDto {
 
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   fxRate: FxRateString;
+  /**
+   * The rate the user entered on the document, which it keeps; null when the rate is the FX
+   * table's for the document's date (an edit then sends none, and the table's rate applies).
+   */
+  enteredFxRate: FxRateString | null;
   totalUsd: DecimalString;
   notes: string | null;
   lines: CustomerInvoiceLineDto[];

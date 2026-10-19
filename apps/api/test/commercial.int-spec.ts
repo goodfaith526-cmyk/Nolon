@@ -910,6 +910,34 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(409);
     });
 
+    it('keeps a quoted booking on the quotation’s route and mode; the cargo stays editable', async () => {
+      const q = await approvedQuotation(customer.id);
+      const booking = (await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(201))
+        .body as BookingDto;
+      const edit = {
+        originLocationId: jebelAli,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'CONTAINER',
+        services: ['MAIN_FREIGHT'],
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 2 }],
+      };
+      const moved = await patch(`/bookings/${booking.id}`, cookies.salesDxb, {
+        ...edit,
+        destinationLocationId: jeddah,
+        mode: 'SEA_ROAD',
+      }).expect(400);
+      expect(moved.body).toMatchObject({
+        code: 'QUOTED_ROUTE_FIXED',
+        fields: ['destinationLocationId', 'mode'],
+      });
+      const saved = (await patch(`/bookings/${booking.id}`, cookies.salesDxb, edit).expect(200))
+        .body as BookingDto;
+      expect(saved.destinationLocationId).toBe(portSudan);
+      expect(saved.items).toHaveLength(1);
+    });
+
     function directBooking(overrides: object = {}) {
       return {
         customerId: customer.id,

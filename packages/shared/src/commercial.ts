@@ -526,6 +526,8 @@ export const FORM_REFUSALS = [
   'DIMENSIONS_TOGETHER',
   'VOLUME_TOO_LARGE',
   'VALID_UNTIL_PAST',
+  // A booking made from a quotation: its route and mode are the quotation's.
+  'QUOTED_ROUTE_FIXED',
   'CURRENCY_NOT_ACTIVE',
   'RATE_NOT_USABLE',
   // The system price (no rate card and no price given): none or several rate cards match.
@@ -541,6 +543,7 @@ export const FORM_REFUSALS = [
   'SAME_CONTAINER',
   'SHIPMENT_OTHER_BRANCH',
   'SHIPMENT_NOT_LCL_SEA',
+  'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
   // A booking that names an open container (booking drafts): it must fit the container.

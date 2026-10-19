@@ -31,6 +31,7 @@ import {
   requestedRate,
   roundMoney,
   sameRequestedRate,
+  toDecimalStringOrNull,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -765,6 +766,7 @@ function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
   return {
     ...toSummary(b),
     fxRate: b.fxRate.toFixed(),
+    enteredFxRate: toDecimalStringOrNull(b.requestedFxRate),
     totalUsd: b.totalUsd.toFixed(),
     notes: b.notes,
     lines: b.lines.map((l) => ({

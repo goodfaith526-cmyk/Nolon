@@ -392,6 +392,13 @@ describe('consolidated LCL containers', () => {
     const noVolume = await lclShipment(customers[2], null);
     // Not an LCL sea shipment: 400.
     await newContainer([fcl]).expect(400);
+    // Loaded at the container's port only, as a booking made for the container.
+    const fromPortSudan = await lclShipment(customers[1], '4', {
+      originLocationId: portSudan,
+      destinationLocationId: jeddahPort,
+    });
+    const otherPort = await newContainer([fromPortSudan]).expect(400);
+    expect(otherPort.body).toMatchObject({ code: 'SHIPMENT_OTHER_PORT' });
     // Between ports only.
     await newContainer([lcl], { destinationLocationId: khartoum }).expect(400);
     // Sales has no access to containers; Warehouse only views them.

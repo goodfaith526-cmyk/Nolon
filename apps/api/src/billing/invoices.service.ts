@@ -929,6 +929,9 @@ export class InvoicesService {
       quantity: dec(l.quantity),
       unitPrice: dec(l.unitPrice),
     }));
+    if (existing.shipmentId) {
+      await this.refuseQuotedPricesInOtherCurrency(user, existing.shipmentId, currency.code, lines);
+    }
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     await this.prisma.$transaction(async (tx) => {
       await lockStatus(tx, id, 'DRAFT');
@@ -938,6 +941,7 @@ export class InvoicesService {
         data: {
           currency: currency.code,
           fxRate,
+          requestedFxRate: requestedRate(input.fxRate),
           invoiceDate: toDbDate(input.invoiceDate),
           dueDate: toDbDate(input.dueDate),
           notes: input.notes ?? null,
@@ -957,6 +961,43 @@ export class InvoicesService {
       });
     });
     return this.get(user, id);
+  }
+
+  /**
+   * An edited draft whose currency is not its shipment's quotation's keeps no quoted price as it
+   * stands: 3,670 quoted in AED is not 3,670 USD (the derivation refuses the same, as
+   * QUOTED_PRICE_OTHER_CURRENCY). A line whose charge and unit price are a quotation line's (its
+   * unit price, or its total as one unit) is refused; a price entered in the invoice's currency
+   * is kept.
+   */
+  private async refuseQuotedPricesInOtherCurrency(
+    user: AuthUser,
+    shipmentId: string,
+    currency: string,
+    lines: readonly { chargeTypeCode: string; unitPrice: Decimal }[],
+  ): Promise<void> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    if (!shipment.quotationId) return;
+    const quotation = await this.quotations.invoiceSource(shipment.quotationId);
+    if (!quotation || quotation.currency === currency) return;
+    const fields = lines.flatMap((line, index) =>
+      quotation.lines.some(
+        (q) =>
+          q.chargeTypeCode === line.chargeTypeCode &&
+          // A discounted quotation line is invoiced as one unit at its total.
+          (q.unitPrice.eq(line.unitPrice) || q.lineTotal.eq(line.unitPrice)),
+      )
+        ? [`lines.${index}.unitPrice`]
+        : [],
+    );
+    if (fields.length > 0) {
+      throw fieldRefusal(
+        'QUOTED_PRICE_OTHER_CURRENCY',
+        `The shipment's quotation prices these lines in ${quotation.currency}: ` +
+          `invoice in ${quotation.currency}, or enter the prices in ${currency}`,
+        fields,
+      );
+    }
   }
 
   /**
@@ -1093,6 +1134,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
   return {
     ...toSummary(i),
     fxRate: i.fxRate.toFixed(),
+    enteredFxRate: toDecimalStringOrNull(i.requestedFxRate),
     totalUsd: i.totalUsd.toFixed(),
     notes: i.notes,
     lines: i.lines.map((l) => ({

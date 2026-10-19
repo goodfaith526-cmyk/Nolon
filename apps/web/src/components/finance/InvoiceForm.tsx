@@ -149,12 +149,15 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
           <label className="field">
             {t('fxRateOptional')}
             <input
+              // Only a rate the user entered is sent back: otherwise the FX table's rate for the
+              // date applies again. A changed currency starts empty.
+              key={currency}
               name="fxRate"
               inputMode="decimal"
               dir="ltr"
               pattern={FX_RATE_PATTERN}
               disabled={currency === 'USD'}
-              defaultValue={invoice.currency === 'USD' ? '' : invoice.fxRate}
+              defaultValue={currency === invoice.currency ? (invoice.enteredFxRate ?? '') : ''}
             />
           </label>
           <label className="field">

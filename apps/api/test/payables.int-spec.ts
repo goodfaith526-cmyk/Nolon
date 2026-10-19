@@ -144,8 +144,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
         { chargeTypeCode: 'DUTIES', quantity: '1', unitPrice: '100000.50' },
       ],
     }).expect(200);
-    return (await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200))
-      .body as CustomerInvoiceDto;
+    const approved = (
+      await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200)
+    ).body as CustomerInvoiceDto;
+    // The rate entered is the one an edit form offers again.
+    expect([approved.fxRate, approved.enteredFxRate]).toEqual(['600', '600']);
+    return approved;
   }
 
   /** A completed external trip of `carrier` (600,000 SDG at 600), split 750/250 by weight. */
@@ -196,6 +200,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
         ...body,
       }).expect(201)
     ).body as SupplierBillDto;
+    expect(draft.enteredFxRate).toBe('fxRate' in body ? body.fxRate : '600');
     return (await post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).expect(200))
       .body as SupplierBillDto;
   }

@@ -218,7 +218,8 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
                 {t('currency')}
                 <select
                   value={l.currency}
-                  onChange={(e) => updateLine(l.key, { currency: e.target.value })}
+                  // Another currency's rate never carries over to the line.
+                  onChange={(e) => updateLine(l.key, { currency: e.target.value, fxRate: '' })}
                 >
                   {master.currencies
                     .filter((c) => c.isActive || c.code === l.currency)
