@@ -145,8 +145,9 @@ beforeAll(async () => {
   khartoum = await loc('SDKRT');
   const people = {
     admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX),
-    salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
-    salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+    // Sales here also make rates (the Sales & Marketing Manager's, owner 2026-10-19).
+    salesDxb: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['DXB']),
+    salesJed: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['JED']),
     opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
     opsJed: await createUser(t.prisma, ['OPERATIONS'], ['JED']),
     whDxb: await createUser(t.prisma, ['WAREHOUSE'], ['DXB']),
@@ -155,7 +156,12 @@ beforeAll(async () => {
     cookies[key] = await signIn(t, people[key].email);
   }
   const assistantUsers = {
-    salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
+    salesAgent: await createUser(
+      t.prisma,
+      ['SALES', 'SALES_MARKETING_MANAGER'],
+      ['DXB'],
+      AGENT_PREFIX,
+    ),
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
@@ -676,13 +682,8 @@ describe('quotation drafts with missing values', () => {
 // Bookings
 // -------------------------------------------------------------------------------------------
 
-const BOOKING_MISSING = [
-  'originLocationId',
-  'destinationLocationId',
-  'mode',
-  'cargoType',
-  'services',
-];
+// Services are never missing: every booking carries the main freight (owner, 2026-10-19).
+const BOOKING_MISSING = ['originLocationId', 'destinationLocationId', 'mode', 'cargoType'];
 
 describe('booking drafts with missing values', () => {
   const create = (body: object) => r.agentPost('/booking-drafts', tokens.ops, body);
@@ -715,7 +716,7 @@ describe('booking drafts with missing values', () => {
       }).expect(201),
     );
     expect(items.missingFields).toEqual([
-      ...BOOKING_MISSING.filter((f) => f !== 'services'),
+      ...BOOKING_MISSING,
       'items[0].cargoType',
       'items[0].quantity',
       'items[1].containerTypeCode',

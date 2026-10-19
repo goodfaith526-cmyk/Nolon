@@ -473,7 +473,7 @@ describe('bookings for a new customer: a person reviews', () => {
 // The approval gate (no-required-fields plan, 3.3), on both parts: the customer draft's details
 // and the booking's values, before the customer's own status or any live check; nothing booked.
 describe('bookings for a new customer: the approval gate', () => {
-  it('refuses a booking without services and a customer with a bad phone; then books once', async () => {
+  it('refuses a booking without a cargo type and a customer with a bad phone; then books once', async () => {
     const summary = await created();
     const stored = await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({
       where: { id: summary.id },
@@ -484,14 +484,14 @@ describe('bookings for a new customer: the approval gate', () => {
     const booking = stored.request as Prisma.InputJsonObject;
     await t.prisma.newCustomerBookingDraft.update({
       where: { id: summary.id },
-      data: { request: { ...booking, services: [] } },
+      data: { request: { ...booking, cargoType: null } },
     });
     await t.prisma.customerDraft.update({
       where: { id: customer.id },
       data: { phone: '0912345678' },
     });
     // The gate comes before "approve the new customer first".
-    expectGateRefusal(await approve(summary.id), ['booking.services'], ['customer.phone']);
+    expectGateRefusal(await approve(summary.id), ['booking.cargoType'], ['customer.phone']);
     await approve(summary.id, cookies.salesJed).expect(404);
     await approve(summary.id, cookies.financeDxb).expect(403);
     await approve(summary.id, cookies.salesDxb, { version: 2 }).expect(409);
@@ -501,7 +501,7 @@ describe('bookings for a new customer: the approval gate', () => {
       data: { phone: customer.phone },
     });
     await approveCustomer(summary.customerDraftId).expect(200);
-    expectGateRefusal(await approve(summary.id), ['booking.services']);
+    expectGateRefusal(await approve(summary.id), ['booking.cargoType']);
     const { customerId } = (await read(summary.id)).customer;
     if (customerId === null) throw new Error('The customer was not created');
     expect(await t.prisma.booking.count({ where: { customerId } })).toBe(0);
@@ -509,13 +509,15 @@ describe('bookings for a new customer: the approval gate', () => {
       await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id: summary.id } }),
     ).toMatchObject({ state: 'DRAFT', version: 1, bookingId: null });
 
+    // Services are optional: every booking carries the main freight (owner, 2026-10-19).
     await t.prisma.newCustomerBookingDraft.update({
       where: { id: summary.id },
-      data: { request: booking },
+      data: { request: { ...booking, services: [] } },
     });
     await approve(summary.id).expect(200);
     await approve(summary.id).expect(200);
-    expect(await t.prisma.booking.count({ where: { customerId } })).toBe(1);
+    const booked = await t.prisma.booking.findMany({ where: { customerId } });
+    expect(booked.map((b) => b.services)).toEqual([['MAIN_FREIGHT']]);
   });
 });
 
@@ -723,7 +725,6 @@ describe('bookings for a new customer saved with missing values', () => {
     'booking.destinationLocationId',
     'booking.mode',
     'booking.cargoType',
-    'booking.services',
   ];
 
   it('saves an empty draft and a partly filled one, and reads them back', async () => {
@@ -756,7 +757,6 @@ describe('bookings for a new customer saved with missing values', () => {
       'booking.originLocationId',
       'booking.destinationLocationId',
       'booking.cargoType',
-      'booking.services',
       'booking.items[0].cargoType',
       'booking.items[0].quantity',
     ]);

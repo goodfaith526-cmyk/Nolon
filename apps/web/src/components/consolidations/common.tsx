@@ -1,6 +1,11 @@
 'use client';
 
-import type { ConsolidationDto, Page, ShipmentSummaryDto } from '@nolon/shared';
+import {
+  hasSeaLeg,
+  type ConsolidationDto,
+  type Page,
+  type ShipmentSummaryDto,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { api } from '@/lib/api';
@@ -109,7 +114,7 @@ export function LclShipmentPicker({
       const page = await api<Page<ShipmentSummaryDto>>(
         `/shipments?pageSize=50&q=${encodeURIComponent(q)}`,
       );
-      setResults(page.items.filter((s) => s.mode === 'SEA' && s.loadType === 'LCL'));
+      setResults(page.items.filter((s) => hasSeaLeg(s.mode) && s.loadType === 'LCL'));
     } catch (e) {
       onError(e);
     }

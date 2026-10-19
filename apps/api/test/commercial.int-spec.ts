@@ -38,10 +38,20 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
   let portSudan: string;
   let jeddah: string;
   const cookies: Record<
-    'admin' | 'salesDxb' | 'salesJed' | 'managerDxb' | 'opsDxb' | 'financeDxb' | 'driver',
+    | 'admin'
+    | 'salesDxb'
+    | 'salesJed'
+    | 'pricingDxb'
+    | 'pricingJed'
+    | 'managerDxb'
+    | 'opsDxb'
+    | 'financeDxb'
+    | 'driver',
     string
   > = {
     admin: '',
+    pricingDxb: '',
+    pricingJed: '',
     salesDxb: '',
     salesJed: '',
     managerDxb: '',
@@ -96,9 +106,9 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
   }
 
   async function approvedRate(overrides: object = {}): Promise<RateCardDto> {
-    const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb, overrides)).expect(201))
+    const draft = (await post('/rates', cookies.pricingDxb, rateBody(dxb, overrides)).expect(201))
       .body as RateCardDto;
-    return (await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200))
+    return (await post(`/rates/${draft.id}/approve`, cookies.pricingDxb).expect(200))
       .body as RateCardDto;
   }
 
@@ -144,6 +154,8 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       admin: await createUser(t.prisma, ['ADMINISTRATOR']),
       salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
       salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+      pricingDxb: await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['DXB']),
+      pricingJed: await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['JED']),
       managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
       opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
       financeDxb: await createUser(t.prisma, ['FINANCE'], ['DXB']),
@@ -332,7 +344,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       ).entries;
 
     it('records a rate’s edits and approval field by field, before and after', async () => {
-      const sales = await createUser(t.prisma, ['SALES'], ['DXB']);
+      const sales = await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['DXB']);
       const cookie = await signIn(t, sales.email);
       const draft = (await post('/rates', cookie, rateBody(dxb, { price: '2300' })).expect(201))
         .body as RateCardDto;
@@ -340,7 +352,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         200,
       );
       await patch(`/rates/${draft.id}`, cookie, { price: '2350' }).expect(200); // no change: no row
-      await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200);
+      await post(`/rates/${draft.id}/approve`, cookies.pricingDxb).expect(200);
 
       const own = await entries(cookies.managerDxb, `userId=${sales.id}&entity=RATE`);
       expect(own.map((e) => e.action)).toEqual(['UPDATED', 'CREATED']);
@@ -362,7 +374,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
           { field: 'price', before: null, after: '2300' },
         ]),
       );
-      const [approval] = await entries(cookies.managerDxb, `userId=${ids.managerDxb}&entity=RATE`);
+      const [approval] = await entries(cookies.managerDxb, `userId=${ids.pricingDxb}&entity=RATE`);
       expect(approval).toMatchObject({
         action: 'APPROVED',
         changes: [{ field: 'status', before: 'DRAFT', after: 'APPROVED' }],
@@ -518,48 +530,85 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
   });
 
   describe('rates', () => {
-    it('Sales drafts, the Branch Manager approves, the approved rate is frozen', async () => {
-      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
+    it('the Sales & Marketing Manager makes, edits and approves rates; an approved rate is frozen', async () => {
+      // Sales and the Branch Manager no longer make or approve rates (owner, 2026-10-19).
+      await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(403);
+      const draft = (await post('/rates', cookies.pricingDxb, rateBody(dxb)).expect(201))
         .body as RateCardDto;
       expect(draft.status).toBe('DRAFT');
       expect(draft.price).toBe('1250.5');
+      await patch(`/rates/${draft.id}`, cookies.salesDxb, { price: '1300' }).expect(403);
       await post(`/rates/${draft.id}/approve`, cookies.salesDxb).expect(403);
-      await patch(`/rates/${draft.id}`, cookies.salesDxb, { price: '1300' }).expect(200);
-      const approved = (await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(200))
+      await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(403);
+      await patch(`/rates/${draft.id}`, cookies.pricingDxb, { price: '1300' }).expect(200);
+      const approved = (await post(`/rates/${draft.id}/approve`, cookies.pricingDxb).expect(200))
         .body as RateCardDto;
       expect(approved.status).toBe('APPROVED');
       expect(approved.price).toBe('1300');
-      await patch(`/rates/${draft.id}`, cookies.salesDxb, { price: '1' }).expect(409);
-      await post(`/rates/${draft.id}/approve`, cookies.managerDxb).expect(409);
+      await patch(`/rates/${draft.id}`, cookies.pricingDxb, { price: '1' }).expect(409);
+      await post(`/rates/${draft.id}/approve`, cookies.pricingDxb).expect(409);
     });
 
     it('only roles with rates:cancel cancel a rate', async () => {
       const rate = await approvedRate();
       await post(`/rates/${rate.id}/cancel`, cookies.salesDxb).expect(403);
       await post(`/rates/${rate.id}/cancel`, cookies.managerDxb).expect(403);
-      const res = await post(`/rates/${rate.id}/cancel`, cookies.admin).expect(200);
+      const res = await post(`/rates/${rate.id}/cancel`, cookies.pricingDxb).expect(200);
       expect((res.body as RateCardDto).status).toBe('CANCELLED');
+      const other = await approvedRate({ price: '999' });
+      await post(`/rates/${other.id}/cancel`, cookies.admin).expect(200);
     });
 
-    it('is branch-scoped and validates its references', async () => {
-      await post('/rates', cookies.salesDxb, rateBody(jed)).expect(403);
-      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
-        .body as RateCardDto;
-      await get(`/rates/${draft.id}`, cookies.salesJed).expect(404);
+    it('every branch reads every rate; only its own branch changes it', async () => {
+      const draft = (
+        await post('/rates', cookies.pricingDxb, rateBody(dxb, { price: '777' })).expect(201)
+      ).body as RateCardDto;
+      // Read from another branch, by any role with rates:view.
+      expect((await get(`/rates/${draft.id}`, cookies.salesJed).expect(200)).body).toMatchObject({
+        id: draft.id,
+        branchId: dxb,
+      });
+      const listed = (
+        await get(`/rates?branchId=${dxb}&pageSize=100`, cookies.salesJed).expect(200)
+      ).body as { items: RateCardDto[] };
+      expect(listed.items.map((r) => r.id)).toContain(draft.id);
+      const all = (await get('/rates?pageSize=100', cookies.opsDxb).expect(200)).body as {
+        items: RateCardDto[];
+      };
+      expect(new Set(all.items.map((r) => r.branchId)).size).toBeGreaterThanOrEqual(1);
+      // Changed only by a rate maker of its branch.
+      await patch(`/rates/${draft.id}`, cookies.pricingJed, { price: '1' }).expect(404);
+      await post(`/rates/${draft.id}/approve`, cookies.pricingJed).expect(404);
+      await post(`/rates/${draft.id}/cancel`, cookies.pricingJed).expect(404);
+      // The driver holds no rates:view.
+      await get(`/rates/${draft.id}`, cookies.driver).expect(403);
+    });
+
+    it('validates its branch and references', async () => {
+      await post('/rates', cookies.pricingDxb, rateBody(jed)).expect(403);
       await post(
         '/rates',
-        cookies.salesDxb,
+        cookies.pricingDxb,
         rateBody(dxb, { destinationLocationId: jebelAli }),
       ).expect(400);
-      await post('/rates', cookies.salesDxb, rateBody(dxb, { containerTypeCode: null })).expect(
+      await post('/rates', cookies.pricingDxb, rateBody(dxb, { containerTypeCode: null })).expect(
         400,
       );
-      await post('/rates', cookies.salesDxb, rateBody(dxb, { mode: 'ROAD' })).expect(400);
-      await post('/rates', cookies.salesDxb, rateBody(dxb, { price: '-1' })).expect(400);
-      await post('/rates', cookies.salesDxb, rateBody(dxb, { price: 12.5 })).expect(400);
+      await post('/rates', cookies.pricingDxb, rateBody(dxb, { mode: 'ROAD' })).expect(400);
+      // Sea and road together keeps the sea leg's FCL/LCL.
+      const seaRoad = (
+        await post(
+          '/rates',
+          cookies.pricingDxb,
+          rateBody(dxb, { mode: 'SEA_ROAD', loadType: 'LCL', price: '88' }),
+        ).expect(201)
+      ).body as RateCardDto;
+      expect(seaRoad).toMatchObject({ mode: 'SEA_ROAD', loadType: 'LCL' });
+      await post('/rates', cookies.pricingDxb, rateBody(dxb, { price: '-1' })).expect(400);
+      await post('/rates', cookies.pricingDxb, rateBody(dxb, { price: 12.5 })).expect(400);
       await post(
         '/rates',
-        cookies.salesDxb,
+        cookies.pricingDxb,
         rateBody(dxb, { validFrom: '2026-02-01', validTo: '2026-01-01' }),
       ).expect(400);
     });
@@ -683,8 +732,8 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       ).expect(400);
     });
 
-    it('refuses draft, foreign-branch, wrong-currency rates and oversized discounts', async () => {
-      const draft = (await post('/rates', cookies.salesDxb, rateBody(dxb)).expect(201))
+    it('refuses draft and wrong-currency rates and oversized discounts; takes another branch’s rate', async () => {
+      const draft = (await post('/rates', cookies.pricingDxb, rateBody(dxb)).expect(201))
         .body as RateCardDto;
       await post(
         '/quotations',
@@ -692,17 +741,20 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         quotationBody(customer.id, [{ rateCardId: draft.id, quantity: '1' }]),
       ).expect(400);
 
-      const jedRateDraft = (
-        await post('/rates', cookies.salesJed, rateBody(jed, { originLocationId: jeddah })).expect(
-          201,
-        )
+      // Rate cards are shared by every branch (owner, 2026-10-19): a JED rate prices a DXB quotation.
+      const jedRate = (
+        await post('/rates', cookies.pricingJed, rateBody(jed, { price: '640' })).expect(201)
       ).body as RateCardDto;
-      await post(`/rates/${jedRateDraft.id}/approve`, cookies.admin).expect(200);
-      await post(
-        '/quotations',
-        cookies.salesDxb,
-        quotationBody(customer.id, [{ rateCardId: jedRateDraft.id, quantity: '1' }]),
-      ).expect(400);
+      await post(`/rates/${jedRate.id}/approve`, cookies.pricingJed).expect(200);
+      const fromJed = (
+        await post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(customer.id, [{ rateCardId: jedRate.id, quantity: '1' }]),
+        ).expect(201)
+      ).body as QuotationDto;
+      expect(fromJed.branchId).toBe(dxb);
+      expect(fromJed.lines[0]).toMatchObject({ rateCardId: jedRate.id, lineTotal: '640' });
 
       const usd = await approvedRate();
       await post(
@@ -925,12 +977,40 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
           items: [{ cargoType: 'CONTAINER', quantity: 1, containerTypeCode: 'XX' }],
         }),
       ).toMatchObject({ fields: ['items.0.containerTypeCode'] });
-      expect(await refused({ services: [] })).toMatchObject({ message: ['services'] });
       expect(await refused({ mode: 'ROAD' })).toMatchObject({ fields: ['loadType'] });
       expect(await refused({ destinationLocationId: jeddah })).toMatchObject({
         code: 'SAME_ROUTE',
         fields: ['originLocationId', 'destinationLocationId'],
       });
+    });
+
+    it('always carries the main freight, and takes sea and road together', async () => {
+      // The main freight is not a choice on the form (owner, 2026-10-19): it is always added.
+      const plain = (
+        await post('/bookings', cookies.salesDxb, directBooking({ services: [] })).expect(201)
+      ).body as BookingDto;
+      expect(plain.services).toEqual(['MAIN_FREIGHT']);
+      const customs = (
+        await post('/bookings', cookies.salesDxb, directBooking({ services: ['CUSTOMS'] })).expect(
+          201,
+        )
+      ).body as BookingDto;
+      expect([...customs.services].sort()).toEqual(['CUSTOMS', 'MAIN_FREIGHT']);
+      // Sea, then road, keeps FCL/LCL; road alone refuses it.
+      const both = (
+        await post(
+          '/bookings',
+          cookies.salesDxb,
+          directBooking({ mode: 'SEA_ROAD', loadType: 'LCL' }),
+        ).expect(201)
+      ).body as BookingDto;
+      expect(both).toMatchObject({ mode: 'SEA_ROAD', loadType: 'LCL' });
+      await post(
+        '/bookings',
+        cookies.salesDxb,
+        directBooking({ mode: 'ROAD', loadType: 'LCL' }),
+      ).expect(400);
+      await post('/bookings', cookies.salesDxb, directBooking({ mode: 'AIR' })).expect(400);
     });
 
     it('rejects measurements that would overflow or be rounded by the database', async () => {

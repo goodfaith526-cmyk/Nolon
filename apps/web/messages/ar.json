@@ -163,7 +163,8 @@
     "FINANCE": "المالية",
     "WAREHOUSE": "المستودع",
     "CUSTOMS": "الجمارك",
-    "DRIVER": "سائق / نقل"
+    "DRIVER": "سائق / نقل",
+    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق"
   },
   "Common": {
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
@@ -279,6 +280,7 @@
     "rate_CANCELLED": "ملغى",
     "mode_SEA": "بحري",
     "mode_ROAD": "بري",
+    "mode_SEA_ROAD": "بحري وبري",
     "cargo_CONTAINER": "حاويات",
     "cargo_PALLET": "طبالي",
     "cargo_BARREL": "براميل",

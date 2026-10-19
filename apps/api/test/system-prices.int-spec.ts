@@ -262,7 +262,8 @@ beforeAll(async () => {
   // THC: two units, so the line must say which.
   await rate('thcKg', { chargeTypeCode: 'THC', unit: 'PER_KG', price: '0.5' }, by);
   await rate('thcCbm', { chargeTypeCode: 'THC', unit: 'PER_CBM', price: '20' }, by);
-  // STORAGE only in another branch; DOCS only as a draft: neither prices a PTS line.
+  // STORAGE only in another branch: rate cards are shared, so it prices a PTS line when PTS has
+  // none (owner, 2026-10-19). DOCS only as a draft: it prices nothing.
   await rate(
     'storageJed',
     { chargeTypeCode: 'STORAGE', unit: 'PER_SHIPMENT', price: '40', branchId: jed },
@@ -354,10 +355,16 @@ describe('quotation drafts: the system price', () => {
     expect(kg.pricing?.total).toBe('50');
   });
 
+  it("takes another branch's rate card when the quotation's own branch has none", async () => {
+    const storage = await quotationDraft([{ chargeTypeCode: 'STORAGE', quantity: '1' }]);
+    expect(storage.priceSources).toEqual([{ source: 'RATE_CARD', rateCardId: rates.storageJed }]);
+    expect(storage.pricing?.total).toBe('40');
+  });
+
   it('refuses, under the line, when no rate card or several match', async () => {
     const before = await t.prisma.quotationDraft.count();
-    for (const charge of ['STORAGE', 'DOCS', 'PICKUP']) {
-      // Another branch's rate, a rate not approved, no rate at all.
+    for (const charge of ['DOCS', 'PICKUP']) {
+      // A rate not approved, no rate at all.
       const res = await createQuotationDraft(
         quotationRequest([{ chargeTypeCode: charge, quantity: '1' }]),
       ).expect(400);
@@ -525,11 +532,9 @@ describe('invoice drafts: the system price', () => {
     expect(message(minimum)).toContain('50.00 USD');
     const thc = await refused(direct, { chargeTypeCode: 'THC', quantity: '1' });
     expect([code(thc), fields(thc)]).toEqual(['RATE_SEVERAL', ['lines.0.unitPrice']]);
-    for (const charge of ['STORAGE', 'DOCS']) {
-      expect(code(await refused(direct, { chargeTypeCode: charge, quantity: '1' }))).toBe(
-        'RATE_NO_MATCH',
-      );
-    }
+    expect(code(await refused(direct, { chargeTypeCode: 'DOCS', quantity: '1' }))).toBe(
+      'RATE_NO_MATCH',
+    );
     expect(await t.prisma.invoiceDraft.count()).toBe(before);
   });
 

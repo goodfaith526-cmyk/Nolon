@@ -2,7 +2,7 @@
 
 import {
   BOOKING_SERVICES,
-  CARGO_TYPES,
+  OFFERED_CARGO_TYPES,
   type CarrierDto,
   type CodeNameDto,
   type CustomerSummaryDto,
@@ -206,7 +206,7 @@ function MissingControl({
   else if (field === 'mode')
     options = SHIPPING_MODES.map((m) => ({ value: m, label: te(`mode_${m}`) }));
   else if (field === 'cargoType') {
-    options = CARGO_TYPES.map((c) => ({ value: c, label: te(`cargo_${c}`) }));
+    options = OFFERED_CARGO_TYPES.map((c) => ({ value: c, label: te(`cargo_${c}`) }));
   } else if (field === 'unit') {
     options = RATE_UNITS.map((u) => ({ value: u, label: te(`unit_${u}`) }));
   }
@@ -242,7 +242,8 @@ function MissingControl({
     return (
       <fieldset className="field missing-value">
         <legend>{label}</legend>
-        {BOOKING_SERVICES.map((s) => (
+        {/* Every booking carries the main freight: it is not a choice. */}
+        {BOOKING_SERVICES.filter((s) => s !== 'MAIN_FREIGHT').map((s) => (
           <label key={s} className="field inline">
             <input
               type="checkbox"

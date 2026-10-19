@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { isBranchCode, isCurrencyCodeFormat, isLocale, localeDirection } from './index.js';
+import {
+  SHIPPING_MODES,
+  hasRoadLeg,
+  hasSeaLeg,
+  isBranchCode,
+  isCurrencyCodeFormat,
+  isLocale,
+  localeDirection,
+  modeOfLegs,
+} from './index.js';
 
 describe('shared constants', () => {
   it('accepts only known branch codes', () => {
@@ -23,5 +32,17 @@ describe('shared constants', () => {
     expect(isLocale('fr')).toBe(false);
     expect(localeDirection('ar')).toBe('rtl');
     expect(localeDirection('en')).toBe('ltr');
+  });
+});
+
+describe('shipping mode legs (sea, road, or both)', () => {
+  it('maps the two ticks to a mode and back', () => {
+    expect(modeOfLegs(true, false)).toBe('SEA');
+    expect(modeOfLegs(false, true)).toBe('ROAD');
+    expect(modeOfLegs(true, true)).toBe('SEA_ROAD');
+    expect(modeOfLegs(false, false)).toBeNull();
+    for (const mode of SHIPPING_MODES) {
+      expect(modeOfLegs(hasSeaLeg(mode), hasRoadLeg(mode))).toBe(mode);
+    }
   });
 });

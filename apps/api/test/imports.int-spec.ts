@@ -244,13 +244,14 @@ describe('Excel import of customers and rates', () => {
         update: zziFields,
       })
     ).id;
+    // The Sales users also make rates: rates are the Sales & Marketing Manager's (owner, 2026-10-19).
     const users = {
       admin: await createUser(t.prisma, ['ADMINISTRATOR']),
-      salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
-      salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+      salesDxb: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['DXB']),
+      salesJed: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['JED']),
       opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
       managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
-      salesZzi: await createUser(t.prisma, ['SALES'], ['ZZI']),
+      salesZzi: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['ZZI']),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);

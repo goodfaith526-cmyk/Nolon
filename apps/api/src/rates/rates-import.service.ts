@@ -79,7 +79,10 @@ export const RATE_COLUMNS: readonly ImportColumn<Column>[] = [
     required: true,
     list: 'modes',
     label: { en: 'Mode', ar: 'نمط الشحن' },
-    hint: { en: 'SEA or ROAD', ar: 'SEA (بحري) أو ROAD (بري)' },
+    hint: {
+      en: 'SEA, ROAD or SEA_ROAD (sea, then road)',
+      ar: 'SEA (بحري) أو ROAD (بري) أو SEA_ROAD (بحري ثم بري)',
+    },
   },
   {
     key: 'loadType',
@@ -186,6 +189,7 @@ export const RATE_COLUMNS: readonly ImportColumn<Column>[] = [
 const ENUM_LABELS: Record<string, Labeled> = {
   SEA: { en: 'Sea', ar: 'بحري' },
   ROAD: { en: 'Road', ar: 'بري' },
+  SEA_ROAD: { en: 'Sea and road', ar: 'بحري وبري' },
   FCL: { en: 'Full container load', ar: 'حاوية كاملة' },
   LCL: { en: 'Less than container load', ar: 'شحنة مجمّعة' },
   CONTAINER: { en: 'Container', ar: 'حاويات' },

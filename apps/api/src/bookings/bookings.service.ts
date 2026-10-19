@@ -19,6 +19,7 @@ import type {
   NewCustomerBookingRequest,
   Page,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
@@ -218,7 +219,7 @@ export class BookingsService {
     } else if (to !== null) {
       await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
     }
-    if (input.mode && input.mode !== 'SEA' && input.loadType) {
+    if (input.mode && !hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);
@@ -409,14 +410,15 @@ export class BookingsService {
     await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
-    if (input.mode !== 'SEA' && input.loadType) {
+    if (!hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);
     }
-    const services: BookingService[] = [...new Set(input.services)];
-    if (services.length === 0)
-      throw fieldRefusal('SERVICE_REQUIRED', 'Choose at least one service', ['services']);
+    // Every booking carries the main freight (owner, 2026-10-19): it is not a choice on the form.
+    const services: BookingService[] = [
+      ...new Set<BookingService>(['MAIN_FREIGHT', ...input.services]),
+    ];
     const parties = [input.shipperId, input.consigneeId, input.notifyPartyId];
     if (customerId !== null) {
       await this.customers.requireOwnParties(customerId, parties);

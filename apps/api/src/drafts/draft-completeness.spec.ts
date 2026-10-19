@@ -119,14 +119,14 @@ describe('booking', () => {
     services: ['MAIN_FREIGHT'],
   };
 
-  it('names the customer, route, mode, cargo type and services of a direct booking', () => {
+  // Services are not asked for: every booking carries the main freight.
+  it('names the customer, route, mode and cargo type of a direct booking', () => {
     expect(bookingCompleteness({}).missing).toEqual([
       'customerId',
       'originLocationId',
       'destinationLocationId',
       'mode',
       'cargoType',
-      'services',
     ]);
     expect(bookingCompleteness(direct)).toEqual(OK);
   });
@@ -377,7 +377,6 @@ describe('drafts for a new customer', () => {
         'booking.destinationLocationId',
         'booking.mode',
         'booking.cargoType',
-        'booking.services',
       ],
       invalid: [],
     });
