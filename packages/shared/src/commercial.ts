@@ -481,8 +481,11 @@ export interface BookingInput {
   originLocationId: string;
   destinationLocationId: string;
   mode: ShippingMode;
+  /** Omitted: FCL when a line is a container, else LCL (a mode with a sea leg only). */
   loadType?: LoadType | null;
-  cargoType: CargoType;
+  /** Omitted: the first line's. Required when the booking has no lines. */
+  cargoType?: CargoType | null;
+  /** Omitted: the lines' descriptions. */
   cargoDescription?: string | null;
   services: BookingService[];
   shipperId?: string | null;

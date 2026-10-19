@@ -334,7 +334,7 @@ describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => 
       .filter((l) => l.textContent?.startsWith(label))
       [index]?.querySelector('input') as HTMLInputElement;
 
-  it('sends sea and road together as SEA_ROAD and keeps FCL/LCL for it', async () => {
+  it('sends sea and road together as SEA_ROAD, leaving FCL/LCL to the API', async () => {
     await render();
     expect(modeBox('mode_SEA').checked).toBe(true);
     expect(modeBox('mode_ROAD').checked).toBe(false);
@@ -349,12 +349,57 @@ describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => 
     await flush();
     expect(api).toHaveBeenCalledWith('/bookings/bk1', {
       method: 'PATCH',
-      body: expect.objectContaining({ mode: 'SEA_ROAD', loadType: 'FCL' }) as unknown,
+      body: expect.objectContaining({ mode: 'SEA_ROAD' }) as unknown,
     });
+  });
+
+  it('asks the cargo type and description on the lines only, and no FCL/LCL', async () => {
+    await render({
+      ...booking,
+      cargoDescription: 'Tyres',
+      items: [
+        {
+          lineNo: 1,
+          cargoType: 'PALLET',
+          containerTypeCode: null,
+          description: null,
+          quantity: 2,
+          lengthCm: null,
+          widthCm: null,
+          heightCm: null,
+          weightKg: null,
+          volumeCbm: null,
+        },
+      ],
+    } as unknown as BookingDto);
+    expect(document.querySelectorAll('select option[value="FCL"]')).toHaveLength(0);
+    expect(document.querySelectorAll('textarea[name="cargoDescription"]')).toHaveLength(0);
+    // One cargo type choice, on the line.
+    const cargo = [...document.querySelectorAll('select')].filter((s) =>
+      [...s.options].some((o) => o.value === 'BARREL'),
+    );
+    expect(cargo).toHaveLength(1);
+    // An older booking's description shows on its line, so a save keeps it.
+    expect(fieldInput('cargoDescription').value).toBe('Tyres');
+    api.mockResolvedValueOnce({ ...booking, id: 'bk1' });
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+    const sent = api.mock.calls.find((c) => c[0] === '/bookings/bk1')?.[1] as {
+      body: Record<string, unknown>;
+    };
+    expect(sent.body).not.toHaveProperty('loadType');
+    expect(sent.body).not.toHaveProperty('cargoType');
+    expect(sent.body).not.toHaveProperty('cargoDescription');
+    expect(sent.body.items).toEqual([
+      expect.objectContaining({ cargoType: 'PALLET', description: 'Tyres' }),
+    ]);
   });
 
   it('offers container, pallet and barrel, and no main freight tick', async () => {
     await render();
+    click(buttonByText('addItem'));
     const cargo = [...document.querySelectorAll('select')].find((s) =>
       [...s.options].some((o) => o.value === 'BARREL'),
     );

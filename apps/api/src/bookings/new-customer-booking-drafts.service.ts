@@ -228,7 +228,7 @@ export function completeBookingRequest(
     originLocationId: storedValue(booking.originLocationId, 'origin'),
     destinationLocationId: storedValue(booking.destinationLocationId, 'destination'),
     mode: storedValue(booking.mode, 'mode'),
-    cargoType: storedValue(booking.cargoType, 'cargo type'),
+    cargoType: booking.cargoType ?? null,
     items: booking.items.map((item) => ({
       ...item,
       cargoType: storedValue(item.cargoType, 'line cargo type'),

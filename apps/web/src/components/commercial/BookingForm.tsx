@@ -2,9 +2,7 @@
 
 import {
   BOOKING_SERVICES,
-  LOAD_TYPES,
   cbmOf,
-  hasSeaLeg,
   type BookingDto,
   type BookingService,
   type CargoType,
@@ -13,7 +11,6 @@ import {
   type CreateFormReviewRequest,
   type CustomerDto,
   type CustomerSummaryDto,
-  type LoadType,
   type ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
@@ -110,21 +107,21 @@ export function BookingForm({
     booking?.destinationLocationId ?? consolidation?.destinationLocationId ?? '',
   );
   const [mode, setMode] = useState<ShippingMode>(booking?.mode ?? 'SEA');
-  const [loadType, setLoadType] = useState<LoadType>(
-    booking?.loadType ?? (consolidation ? 'LCL' : 'FCL'),
-  );
-  const [cargoType, setCargoType] = useState<CargoType>(
-    booking?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'),
-  );
   const [services, setServices] = useState<BookingService[]>(
     booking?.services.filter((s) => s !== 'MAIN_FREIGHT') ?? [],
   );
   const [items, setItems] = useState<ItemState[]>(
-    booking?.items.map((i) => ({
+    booking?.items.map((i, index) => ({
       key: nextKey++,
       cargoType: i.cargoType,
       containerTypeCode: i.containerTypeCode ?? '',
-      description: i.description ?? '',
+      // The goods are described on their lines only: an older booking's own description shows on
+      // its first line when no line has one, so a save keeps it.
+      description:
+        i.description ??
+        (index === 0 && booking.items.every((l) => !l.description)
+          ? (booking.cargoDescription ?? '')
+          : ''),
       quantity: String(i.quantity),
       lengthCm: i.lengthCm ?? '',
       widthCm: i.widthCm ?? '',
@@ -201,8 +198,6 @@ export function BookingForm({
     // A container's booking takes its port of loading, mode and load type from the container.
     const fields = {
       destinationLocationId: destination,
-      cargoType,
-      cargoDescription: text('cargoDescription'),
       services,
       shipperId: text('shipperId'),
       consigneeId: text('consigneeId'),
@@ -225,7 +220,6 @@ export function BookingForm({
       ...fields,
       originLocationId: origin,
       mode,
-      loadType: hasSeaLeg(mode) ? loadType : null,
     };
     setBusy(true);
     setNotice(null);
@@ -373,39 +367,6 @@ export function BookingForm({
             invalid={markGroup('mode')}
             note={<FieldNote note={note} path="mode" />}
           />
-          {hasSeaLeg(mode) && (
-            <label className="field">
-              {t('loadType')}
-              <select
-                {...mark('loadType')}
-                value={loadType}
-                disabled={consolidation !== undefined}
-                onChange={(e) => setLoadType(e.target.value as LoadType)}
-              >
-                {LOAD_TYPES.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-              <FieldNote note={note} path="loadType" />
-            </label>
-          )}
-          <label className="field">
-            {t('cargoType')}
-            <select
-              {...mark('cargoType')}
-              value={cargoType}
-              onChange={(e) => setCargoType(e.target.value as CargoType)}
-            >
-              {cargoChoices(cargoType).map((c) => (
-                <option key={c} value={c}>
-                  {te(`cargo_${c}`)}
-                </option>
-              ))}
-            </select>
-            <FieldNote note={note} path="cargoType" />
-          </label>
           <label className="field">
             {t('requestedDeparture')}
             <input
@@ -533,7 +494,7 @@ export function BookingForm({
                 </label>
               ))}
               <label className="field">
-                {t('itemDescription')}
+                {t('cargoDescription')}
                 <input
                   {...mark(`items.${index}.description`)}
                   value={i.description}
@@ -556,7 +517,9 @@ export function BookingForm({
             <button
               type="button"
               className="ghost add-line"
-              onClick={() => setItems((all) => [...all, emptyItem(cargoType)])}
+              onClick={() =>
+                setItems((all) => [...all, emptyItem(all.at(-1)?.cargoType ?? 'PALLET')])
+              }
             >
               {icons.plus}
               <span>{t('addItem')}</span>
@@ -571,16 +534,6 @@ export function BookingForm({
           <p>{t('sectionNotesHint')}</p>
         </header>
         <div className="form-section-body stack">
-          <label className="field">
-            {t('cargoDescription')}
-            <textarea
-              name="cargoDescription"
-              rows={2}
-              {...mark('cargoDescription')}
-              defaultValue={booking?.cargoDescription ?? ''}
-            />
-            <FieldNote note={note} path="cargoDescription" />
-          </label>
           <label className="field">
             {t('specialInstructions')}
             <textarea

@@ -69,7 +69,7 @@ export const bookingFields = {
   destinationLocationId: z.uuid(),
   mode: z.enum(SHIPPING_MODES),
   loadType: z.enum(LOAD_TYPES).nullish(),
-  cargoType: z.enum(CARGO_TYPES),
+  cargoType: z.enum(CARGO_TYPES).nullish(),
   cargoDescription: optionalText(2000),
   services,
   ...partyRefs,

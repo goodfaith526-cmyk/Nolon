@@ -41,6 +41,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { bookingCargoDescription, bookingCargoType, bookingLoadType } from './booking-cargo.js';
 import { bookingItemMissingFields } from './booking-draft-missing.js';
 import { cbmFromDimensions } from './cbm.js';
 
@@ -425,6 +426,11 @@ export class BookingsService {
     } else if (parties.some((p) => p !== null && p !== undefined)) {
       throw new BadRequestException('A booking for a new customer names no parties yet');
     }
+    // Asked on each line only; a booking with no lines names its cargo type.
+    const cargoType = bookingCargoType(input.cargoType, input.items);
+    if (cargoType === null) {
+      throw fieldRefusal(null, 'Give the cargo type or a cargo line', ['cargoType']);
+    }
     const items = [];
     for (const [index, item] of input.items.entries()) {
       items.push({ lineNo: index + 1, ...(await this.prepareItem(item, `items.${index}`)) });
@@ -434,9 +440,9 @@ export class BookingsService {
         originLocationId: input.originLocationId,
         destinationLocationId: input.destinationLocationId,
         mode: input.mode,
-        loadType: input.loadType ?? null,
-        cargoType: input.cargoType,
-        cargoDescription: input.cargoDescription ?? null,
+        loadType: bookingLoadType(input.mode, input.loadType, input.items),
+        cargoType,
+        cargoDescription: bookingCargoDescription(input.cargoDescription, input.items),
         services,
         shipperId: input.shipperId ?? null,
         consigneeId: input.consigneeId ?? null,

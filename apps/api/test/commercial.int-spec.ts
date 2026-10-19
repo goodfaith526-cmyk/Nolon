@@ -1013,6 +1013,56 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post('/bookings', cookies.salesDxb, directBooking({ mode: 'AIR' })).expect(400);
     });
 
+    it('takes cargo type, FCL/LCL and description from the lines when left out', async () => {
+      // The form asks them on the lines only (owner «نظّف», 2026-10-19).
+      const derived = async (body: object) =>
+        (
+          await post(
+            '/bookings',
+            cookies.salesDxb,
+            directBooking({
+              loadType: undefined,
+              cargoType: undefined,
+              cargoDescription: undefined,
+              ...body,
+            }),
+          ).expect(201)
+        ).body as BookingDto;
+      const pallet = { cargoType: 'PALLET', quantity: 2, description: 'Tyres' };
+      const container = { cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 };
+      expect(await derived({ items: [pallet, { ...pallet, description: 'Oil' }] })).toMatchObject({
+        cargoType: 'PALLET',
+        loadType: 'LCL',
+        cargoDescription: 'Tyres\nOil',
+      });
+      expect(
+        await derived({ mode: 'SEA_ROAD', items: [{ ...container, description: 'Cars' }, pallet] }),
+      ).toMatchObject({ cargoType: 'CONTAINER', loadType: 'FCL', cargoDescription: 'Cars\nTyres' });
+      expect(await derived({ mode: 'ROAD', items: [container] })).toMatchObject({
+        cargoType: 'CONTAINER',
+        loadType: null,
+        cargoDescription: null,
+      });
+      // What is given is kept, as before.
+      expect(
+        await derived({
+          loadType: 'LCL',
+          cargoType: 'BARREL',
+          cargoDescription: 'Chemicals',
+          items: [container],
+        }),
+      ).toMatchObject({ cargoType: 'BARREL', loadType: 'LCL', cargoDescription: 'Chemicals' });
+      // With no lines, the cargo type is asked for.
+      const refused = (
+        await post(
+          '/bookings',
+          cookies.salesDxb,
+          directBooking({ cargoType: undefined, loadType: undefined, items: [] }),
+        ).expect(400)
+      ).body as { fields?: string[] };
+      expect(refused.fields).toEqual(['cargoType']);
+    });
+
     it('rejects measurements that would overflow or be rounded by the database', async () => {
       const item = (fields: object) =>
         directBooking({ items: [{ cargoType: 'PALLET', quantity: 1, ...fields }] });
