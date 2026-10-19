@@ -301,6 +301,7 @@ describe('accounting: journals, invoices, receipts, periods', () => {
       ).body as CustomerInvoiceDto;
       const body = {
         currency: 'USD',
+        repriced: true,
         invoiceDate: d('03-12'),
         dueDate: d('03-12'),
         lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '10' }],

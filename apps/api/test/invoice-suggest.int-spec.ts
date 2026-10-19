@@ -519,59 +519,43 @@ describe('invoice suggestion: a shipment with a quotation', () => {
     expect(other.fingerprint).not.toBe(own.fingerprint);
   });
 
-  it('an edit to another currency refuses the quoted prices as they stand', async () => {
+  it('changes currency only with every price entered anew, whatever the numbers (Codex F92-1)', async () => {
     const shipmentId = await quotedShipment([
-      { chargeTypeCode: charge.freight, unit: 'PER_SHIPMENT', quantity: '2', unitPrice: '100' },
-      {
-        chargeTypeCode: charge.docs,
-        unit: 'PER_SHIPMENT',
-        quantity: '1',
-        unitPrice: '30',
-        discount: '5',
-      },
+      { chargeTypeCode: charge.freight, unit: 'PER_SHIPMENT', quantity: '1', unitPrice: '100' },
     ]);
     const invoice = (
       await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
     ).body as CustomerInvoiceDto;
     // The table's rate: none was entered.
     expect(invoice.enteredFxRate).toBeNull();
-    const edit = (currency: string, freight: string, docs: string, fxRate: string | null) => ({
-      currency,
-      fxRate,
-      invoiceDate: invoice.invoiceDate,
-      dueDate: invoice.dueDate,
-      lines: [
-        { chargeTypeCode: charge.freight, quantity: '2', unitPrice: freight },
-        { chargeTypeCode: charge.docs, quantity: '1', unitPrice: docs },
-      ],
-    });
     const path = `/customer-invoices/${invoice.id}`;
-    const refused = await r
-      .patch(path, cookies.financePts, edit('EUR', '100', '25', '1.1'))
-      .expect(400);
+    const edit = (currency: string, price: string, extra: object = {}) =>
+      r.patch(path, cookies.financePts, {
+        currency,
+        fxRate: currency === 'USD' ? null : '1.1',
+        invoiceDate: invoice.invoiceDate,
+        dueDate: invoice.dueDate,
+        lines: [{ chargeTypeCode: charge.freight, quantity: '1', unitPrice: price }],
+        ...extra,
+      });
+    // USD → EUR: refused unless the prices were entered in EUR, even a different number.
+    const refused = await edit('EUR', '92').expect(400);
     expect(refused.body).toMatchObject({
-      code: 'QUOTED_PRICE_OTHER_CURRENCY',
-      fields: ['lines.0.unitPrice', 'lines.1.unitPrice'],
+      code: 'INVOICE_CURRENCY_REPRICE',
+      fields: ['currency'],
+      params: { from: 'USD', to: 'EUR' },
     });
-    // Prices entered in the new currency are kept, with the rate entered.
-    const repriced = (
-      await r.patch(path, cookies.financePts, edit('EUR', '92', '23', '1.1')).expect(200)
-    ).body as CustomerInvoiceDto;
-    expect([repriced.currency, repriced.total, repriced.enteredFxRate]).toEqual([
-      'EUR',
-      '207',
-      '1.1',
-    ]);
-    // Back in the quotation's currency, its prices are right again; no rate is entered.
-    const back = (
-      await r.patch(path, cookies.financePts, edit('USD', '100', '25', null)).expect(200)
-    ).body as CustomerInvoiceDto;
-    expect([back.currency, back.total, back.fxRate, back.enteredFxRate]).toEqual([
-      'USD',
-      '225',
-      '1',
-      null,
-    ]);
+    const eur = (await edit('EUR', '92', { repriced: true }).expect(200))
+      .body as CustomerInvoiceDto;
+    expect([eur.currency, eur.total, eur.enteredFxRate]).toEqual(['EUR', '92', '1.1']);
+    // EUR → AED with the EUR prices as they stand: refused (not compared with the quotation).
+    await edit('AED', '92').expect(400);
+    // A price equal to the quoted number is fine when entered in the invoice's own currency.
+    const same = (await edit('EUR', '100').expect(200)).body as CustomerInvoiceDto;
+    expect([same.currency, same.total]).toEqual(['EUR', '100']);
+    expect((await r.get(path, cookies.financePts).expect(200)).body).toMatchObject({
+      currency: 'EUR',
+    });
   });
 });
 

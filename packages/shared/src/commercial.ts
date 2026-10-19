@@ -552,6 +552,8 @@ export const FORM_REFUSALS = [
   'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
   // An invoice draft line priced by NOLON (no unit price given), from the shipment's quotation.
   'QUOTED_PRICE_OTHER_CURRENCY',
+  // A draft invoice moved to another currency without its prices entered anew: `from`, `to`.
+  'INVOICE_CURRENCY_REPRICE',
   'QUOTED_PRICE_SEVERAL',
   'PRICE_AS_ONE_UNIT',
   // A receipt (receipt drafts): the cash or bank account, and each allocation to an invoice.

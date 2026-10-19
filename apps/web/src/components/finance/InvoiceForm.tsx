@@ -1,6 +1,6 @@
 'use client';
 
-import type { CustomerInvoiceDto, CustomerInvoiceInput } from '@nolon/shared';
+import type { CustomerInvoiceDto, UpdateCustomerInvoiceRequest } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
@@ -18,6 +18,8 @@ interface LineState {
   description: string;
   quantity: string;
   unitPrice: string;
+  /** A saved line's price, in the invoice's saved currency. */
+  savedPrice?: string;
 }
 
 let nextKey = 1;
@@ -69,6 +71,7 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
           description: l.description ?? '',
           quantity: l.quantity,
           unitPrice: l.unitPrice,
+          savedPrice: l.unitPrice,
         })),
   );
   const [busy, setBusy] = useState(false);
@@ -79,6 +82,18 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
   );
   const defaultCharge = chargeTypes[0]?.code ?? '';
 
+  // The prices are amounts in the invoice's currency: another currency takes none of them over,
+  // so each is entered again; back in the invoice's own currency, its prices return.
+  function changeCurrency(next: string) {
+    setCurrency(next);
+    setLines((all) =>
+      all.map((l) => ({
+        ...l,
+        unitPrice: next === invoice.currency ? (l.savedPrice ?? '') : '',
+      })),
+    );
+  }
+
   function updateLine(key: number, patch: Partial<LineState>) {
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
@@ -87,8 +102,10 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const fxRate = field(form, 'fxRate').trim();
-    const body: CustomerInvoiceInput = {
+    const body: UpdateCustomerInvoiceRequest = {
       currency,
+      // A changed currency cleared every price, so each was entered in the new currency.
+      repriced: currency !== invoice.currency || undefined,
       fxRate: currency === 'USD' || fxRate === '' ? null : fxRate,
       invoiceDate: field(form, 'invoiceDate'),
       dueDate: field(form, 'dueDate'),
@@ -132,11 +149,14 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
         <header>
           <h2>{t('sectionDetails')}</h2>
           <p>{t('fxRateHint', { currency })}</p>
+          {currency !== invoice.currency && (
+            <p className="error">{t('repriceHint', { from: invoice.currency, to: currency })}</p>
+          )}
         </header>
         <div className="form-section-body form-grid">
           <label className="field">
             {t('currency')}
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <select value={currency} onChange={(e) => changeCurrency(e.target.value)}>
               {master.currencies
                 .filter((c) => c.isActive || c.code === invoice.currency)
                 .map((c) => (

@@ -520,6 +520,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
       ).body as CustomerInvoiceDto;
       await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
         currency: 'SAR',
+        repriced: true,
         fxRate: '3.75',
         invoiceDate: d('03-10'),
         dueDate: d('03-10'),

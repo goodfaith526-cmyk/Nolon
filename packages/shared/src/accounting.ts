@@ -334,6 +334,15 @@ export interface CustomerInvoiceInput {
   lines: CustomerInvoiceLineInput[];
 }
 
+/** PATCH /customer-invoices/:id: a draft invoice's values, replaced as a whole. */
+export interface UpdateCustomerInvoiceRequest extends CustomerInvoiceInput {
+  /**
+   * Required (true) to change the currency: every line price was entered in the new currency.
+   * A currency change without it is refused (INVOICE_CURRENCY_REPRICE).
+   */
+  repriced?: boolean;
+}
+
 /** A draft for the shipment, prefilled from its quotation when it has one. */
 export interface CreateCustomerInvoiceRequest {
   shipmentId: string;
