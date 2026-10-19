@@ -111,17 +111,11 @@ export function BookingForm({
     booking?.services.filter((s) => s !== 'MAIN_FREIGHT') ?? [],
   );
   const [items, setItems] = useState<ItemState[]>(
-    booking?.items.map((i, index) => ({
+    booking?.items.map((i) => ({
       key: nextKey++,
       cargoType: i.cargoType,
       containerTypeCode: i.containerTypeCode ?? '',
-      // The goods are described on their lines only: an older booking's own description shows on
-      // its first line when no line has one, so a save keeps it.
-      description:
-        i.description ??
-        (index === 0 && booking.items.every((l) => !l.description)
-          ? (booking.cargoDescription ?? '')
-          : ''),
+      description: i.description ?? '',
       quantity: String(i.quantity),
       lengthCm: i.lengthCm ?? '',
       widthCm: i.widthCm ?? '',

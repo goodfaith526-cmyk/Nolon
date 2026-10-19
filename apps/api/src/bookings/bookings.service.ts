@@ -41,7 +41,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
-import { bookingCargoDescription, bookingCargoType, bookingLoadType } from './booking-cargo.js';
+import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
 import { bookingItemMissingFields } from './booking-draft-missing.js';
 import { cbmFromDimensions } from './cbm.js';
 
@@ -322,7 +322,7 @@ export class BookingsService {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft booking can be edited');
-    const prepared = await this.prepare(existing.customerId, input);
+    const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
@@ -402,8 +402,16 @@ export class BookingsService {
     return booking;
   }
 
-  /** `customerId` null: a booking for a customer not in NOLON yet, which names no parties. */
-  private async prepare(customerId: string | null, input: BookingInput) {
+  /**
+   * `customerId` null: a booking for a customer not in NOLON yet, which names no parties.
+   * `stored`: the booking an edit changes, whose cargo header a value left out keeps
+   * (bookingCargoHeader).
+   */
+  private async prepare(
+    customerId: string | null,
+    input: BookingInput,
+    stored?: BookingCargo | null,
+  ) {
     const route = ['originLocationId', 'destinationLocationId'];
     if (input.originLocationId === input.destinationLocationId) {
       throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
@@ -427,7 +435,8 @@ export class BookingsService {
       throw new BadRequestException('A booking for a new customer names no parties yet');
     }
     // Asked on each line only; a booking with no lines names its cargo type.
-    const cargoType = bookingCargoType(input.cargoType, input.items);
+    const cargo = bookingCargoHeader(input, stored);
+    const cargoType = cargo.cargoType;
     if (cargoType === null) {
       throw fieldRefusal(null, 'Give the cargo type or a cargo line', ['cargoType']);
     }
@@ -440,9 +449,9 @@ export class BookingsService {
         originLocationId: input.originLocationId,
         destinationLocationId: input.destinationLocationId,
         mode: input.mode,
-        loadType: bookingLoadType(input.mode, input.loadType, input.items),
+        loadType: cargo.loadType,
         cargoType,
-        cargoDescription: bookingCargoDescription(input.cargoDescription, input.items),
+        cargoDescription: cargo.cargoDescription,
         services,
         shipperId: input.shipperId ?? null,
         consigneeId: input.consigneeId ?? null,

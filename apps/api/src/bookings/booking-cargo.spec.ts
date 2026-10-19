@@ -1,75 +1,137 @@
 import { describe, expect, it } from 'vitest';
-import { bookingCargoDescription, bookingCargoType, bookingLoadType } from './booking-cargo.js';
+import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
 
 const container = { cargoType: 'CONTAINER' as const };
 const pallet = { cargoType: 'PALLET' as const };
 const barrel = { cargoType: 'BARREL' as const };
 
-describe('bookingCargoType', () => {
-  it('keeps the one given', () => {
-    expect(bookingCargoType('BARREL', [container])).toBe('BARREL');
-  });
-
-  it("takes the first line's when none is given", () => {
-    expect(bookingCargoType(undefined, [pallet, container])).toBe('PALLET');
-    expect(bookingCargoType(null, [container])).toBe('CONTAINER');
-  });
-
-  it('is null with neither', () => {
-    expect(bookingCargoType(undefined, [])).toBeNull();
-  });
+const lines = (mode: BookingCargo['mode'], items: BookingCargo['items']) => ({ mode, items });
+const saved = (fields: Partial<BookingCargo>): BookingCargo => ({
+  mode: 'SEA',
+  loadType: null,
+  cargoType: null,
+  cargoDescription: null,
+  items: [],
+  ...fields,
 });
 
-describe('bookingLoadType', () => {
-  it('keeps the one given', () => {
-    expect(bookingLoadType('SEA', 'LCL', [container])).toBe('LCL');
-  });
-
-  it('is FCL when a line is a container, else LCL, for any mode with a sea leg', () => {
-    expect(bookingLoadType('SEA', undefined, [container])).toBe('FCL');
-    expect(bookingLoadType('SEA_ROAD', null, [pallet, container])).toBe('FCL');
-    expect(bookingLoadType('SEA', undefined, [pallet, barrel])).toBe('LCL');
-    expect(bookingLoadType('SEA_ROAD', undefined, [barrel])).toBe('LCL');
-  });
-
-  it('is null for a road booking or with no lines', () => {
-    expect(bookingLoadType('ROAD', undefined, [container])).toBeNull();
-    expect(bookingLoadType('SEA', undefined, [])).toBeNull();
-  });
-
-  it('passes a road load type through for the sea-only check to refuse', () => {
-    expect(bookingLoadType('ROAD', 'FCL', [])).toBe('FCL');
-  });
-});
-
-describe('bookingCargoDescription', () => {
-  it('keeps the one given', () => {
-    expect(bookingCargoDescription('Spare parts', [{ ...pallet, description: 'Tyres' }])).toBe(
-      'Spare parts',
-    );
-  });
-
-  it("joins the lines' descriptions, each once, in line order", () => {
+describe('bookingCargoHeader on a new booking', () => {
+  it('keeps what is given', () => {
     expect(
-      bookingCargoDescription(undefined, [
-        { ...pallet, description: ' Tyres ' },
-        { ...barrel, description: null },
-        { ...pallet, description: 'Oil' },
-        { ...pallet, description: 'Tyres' },
-        { ...pallet, description: '  ' },
-      ]),
+      bookingCargoHeader({
+        ...lines('SEA', [{ ...container, description: 'Cars' }]),
+        loadType: 'LCL',
+        cargoType: 'BARREL',
+        cargoDescription: 'Chemicals',
+      }),
+    ).toEqual({ loadType: 'LCL', cargoType: 'BARREL', cargoDescription: 'Chemicals' });
+  });
+
+  it("takes the first line's cargo type, and FCL when a line is a container, else LCL", () => {
+    expect(bookingCargoHeader(lines('SEA', [pallet, container]))).toMatchObject({
+      cargoType: 'PALLET',
+      loadType: 'FCL',
+    });
+    expect(bookingCargoHeader(lines('SEA_ROAD', [pallet, barrel]))).toMatchObject({
+      cargoType: 'PALLET',
+      loadType: 'LCL',
+    });
+  });
+
+  it('gives no FCL/LCL to a road booking, and nothing without lines', () => {
+    expect(bookingCargoHeader(lines('ROAD', [container]))).toMatchObject({ loadType: null });
+    expect(bookingCargoHeader(lines('SEA', []))).toEqual({
+      loadType: null,
+      cargoType: null,
+      cargoDescription: null,
+    });
+  });
+
+  it('passes a road load type given through, for the sea-only check to refuse', () => {
+    expect(bookingCargoHeader({ ...lines('ROAD', []), loadType: 'FCL' })).toMatchObject({
+      loadType: 'FCL',
+    });
+  });
+
+  it("joins the lines' descriptions, each once, in line order, within 2000 characters", () => {
+    expect(
+      bookingCargoHeader(
+        lines('SEA', [
+          { ...pallet, description: ' Tyres ' },
+          { ...barrel, description: null },
+          { ...pallet, description: 'Oil' },
+          { ...pallet, description: 'Tyres' },
+          { ...pallet, description: '  ' },
+        ]),
+      ).cargoDescription,
     ).toBe('Tyres\nOil');
-  });
-
-  it('is null when no line describes the goods', () => {
-    expect(bookingCargoDescription(null, [pallet])).toBeNull();
-  });
-
-  it('stays within the 2000 characters the API takes', () => {
-    const lines = Array.from({ length: 10 }, (_, n) => ({
+    const long = Array.from({ length: 10 }, (_, n) => ({
       ...pallet,
       description: `${n}`.repeat(500),
     }));
-    expect(bookingCargoDescription(undefined, lines)).toHaveLength(2000);
+    expect(bookingCargoHeader(lines('SEA', long)).cargoDescription).toHaveLength(2000);
+  });
+});
+
+describe('bookingCargoHeader on an edit that leaves the header out (Codex F91-1..4)', () => {
+  it('follows the lines when the saved header followed them', () => {
+    const stored = saved({
+      loadType: 'LCL',
+      cargoType: 'PALLET',
+      cargoDescription: 'Tyres',
+      items: [{ ...pallet, description: 'Tyres' }],
+    });
+    expect(
+      bookingCargoHeader(lines('SEA', [{ ...container, description: 'Cars' }]), stored),
+    ).toEqual({ loadType: 'FCL', cargoType: 'CONTAINER', cargoDescription: 'Cars' });
+    // Untouched, it stays as saved.
+    expect(bookingCargoHeader(lines('SEA', stored.items), stored)).toEqual({
+      loadType: 'LCL',
+      cargoType: 'PALLET',
+      cargoDescription: 'Tyres',
+    });
+  });
+
+  it('keeps an FCL/LCL saved apart from the lines (F91-2)', () => {
+    const lcl = saved({ loadType: 'LCL', cargoType: 'CONTAINER', items: [container] });
+    expect(bookingCargoHeader(lines('SEA', [container]), lcl).loadType).toBe('LCL');
+    const fcl = saved({ loadType: 'FCL', cargoType: 'PALLET', items: [pallet] });
+    expect(bookingCargoHeader(lines('SEA_ROAD', [pallet, barrel]), fcl).loadType).toBe('FCL');
+    // A road booking has none, whatever was saved.
+    expect(bookingCargoHeader(lines('ROAD', [pallet]), fcl).loadType).toBeNull();
+  });
+
+  it("keeps a general description saved apart from the lines', whole (F91-1, F91-3)", () => {
+    const general = 'x'.repeat(2000);
+    const stored = saved({
+      cargoType: 'PALLET',
+      cargoDescription: general,
+      items: [{ ...pallet, description: 'Line-level detail' }, pallet],
+    });
+    expect(
+      bookingCargoHeader(
+        lines('SEA', [{ ...pallet, description: 'Line-level detail' }, pallet]),
+        stored,
+      ).cargoDescription,
+    ).toBe(general);
+    // With no line described, the saved one stays too.
+    const undescribed = saved({ cargoType: 'PALLET', cargoDescription: 'Legacy', items: [pallet] });
+    expect(bookingCargoHeader(lines('SEA', [pallet]), undescribed).cargoDescription).toBe('Legacy');
+  });
+
+  it('keeps the cargo type of a booking with no lines (F91-4)', () => {
+    const headerOnly = saved({ loadType: 'LCL', cargoType: 'GENERAL' });
+    expect(bookingCargoHeader(lines('SEA', []), headerOnly)).toEqual({
+      loadType: 'LCL',
+      cargoType: 'GENERAL',
+      cargoDescription: null,
+    });
+  });
+
+  it('still takes a value given over the saved one', () => {
+    const stored = saved({ loadType: 'LCL', cargoType: 'CONTAINER', items: [container] });
+    expect(
+      bookingCargoHeader({ ...lines('SEA', [container]), loadType: 'FCL' }, stored).loadType,
+    ).toBe('FCL');
   });
 });

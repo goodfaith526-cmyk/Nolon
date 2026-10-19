@@ -379,8 +379,8 @@ describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => 
       [...s.options].some((o) => o.value === 'BARREL'),
     );
     expect(cargo).toHaveLength(1);
-    // An older booking's description shows on its line, so a save keeps it.
-    expect(fieldInput('cargoDescription').value).toBe('Tyres');
+    // An older booking's general description is not copied onto a line: the API keeps it.
+    expect(fieldInput('cargoDescription').value).toBe('');
     api.mockResolvedValueOnce({ ...booking, id: 'bk1' });
     act(() => {
       (document.querySelector('form') as HTMLFormElement).requestSubmit();
@@ -393,7 +393,7 @@ describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => 
     expect(sent.body).not.toHaveProperty('cargoType');
     expect(sent.body).not.toHaveProperty('cargoDescription');
     expect(sent.body.items).toEqual([
-      expect.objectContaining({ cargoType: 'PALLET', description: 'Tyres' }),
+      expect.objectContaining({ cargoType: 'PALLET', description: null }),
     ]);
   });
 
