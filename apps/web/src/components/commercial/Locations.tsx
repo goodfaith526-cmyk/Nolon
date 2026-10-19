@@ -26,6 +26,9 @@ export function Locations() {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<LocationKind>('PORT');
+  // The new location's city and country: a place with a city takes the city's country.
+  const [cityId, setCityId] = useState('');
+  const [country, setCountry] = useState('');
 
   const load = useCallback(() => {
     api<MasterDataDto>('/master-data')
@@ -63,7 +66,7 @@ export function Locations() {
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
       countryCode: field(form, 'countryCode').trim().toUpperCase(),
-      cityId: kind === 'CITY' ? null : field(form, 'cityId') || null,
+      cityId: chosenCity?.id ?? null,
     };
     const ok = await run(
       () => api<LocationDto>('/master-data/locations', { method: 'POST', body }),
@@ -72,6 +75,8 @@ export function Locations() {
     if (ok) {
       element.reset();
       setKind('PORT');
+      setCityId('');
+      setCountry('');
     }
   }
 
@@ -80,6 +85,8 @@ export function Locations() {
   }
 
   const cities = (locations ?? []).filter((l) => l.kind === 'CITY');
+  // The city picked for the new place (a city has none): its country is the place's.
+  const chosenCity = kind === 'CITY' ? undefined : cities.find((c) => c.id === cityId);
   const canCreate = can(me, 'master_data:create');
   const canUpdate = can(me, 'master_data:update');
   const cityName = (id: string | null) => {
@@ -143,12 +150,30 @@ export function Locations() {
                 maxLength={2}
                 dir="ltr"
                 pattern="[A-Za-z]{2}"
+                value={chosenCity ? chosenCity.countryCode : country}
+                readOnly={chosenCity !== undefined}
+                aria-describedby={chosenCity ? 'location-country-from-city' : undefined}
+                onChange={(e) => setCountry(e.target.value)}
               />
+              {chosenCity && (
+                <small id="location-country-from-city" className="muted">
+                  {t('countryFromCity')}
+                </small>
+              )}
             </label>
             {kind !== 'CITY' && (
               <label className="field">
                 <span>{t('city')}</span>
-                <select name="cityId" defaultValue="">
+                <select
+                  name="cityId"
+                  value={cityId}
+                  onChange={(e) => {
+                    setCityId(e.target.value);
+                    const city = cities.find((c) => c.id === e.target.value);
+                    // Kept if the city is cleared again, still editable then.
+                    if (city) setCountry(city.countryCode);
+                  }}
+                >
                   <option value="">{t('noCity')}</option>
                   {cityOptions(null)}
                 </select>

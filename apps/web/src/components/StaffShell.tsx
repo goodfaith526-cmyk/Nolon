@@ -38,7 +38,6 @@ interface NavLink {
     | 'expenses'
     | 'openingBalances'
     | 'journals'
-    | 'trialBalance'
     | 'reports'
     | 'operationalReports'
     | 'managementDashboard'
@@ -202,12 +201,6 @@ const NAV_SECTIONS: readonly {
         href: '/reports',
         label: 'reports',
         icon: 'report',
-        permission: 'financial_reports:view',
-      },
-      {
-        href: '/accounting/trial-balance',
-        label: 'trialBalance',
-        icon: 'balance',
         permission: 'financial_reports:view',
       },
     ],

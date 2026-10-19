@@ -632,6 +632,8 @@ export const FORM_REFUSALS = [
   // shipment yet names its branch; one with them belongs to their branch.
   'BRANCH_REQUIRED',
   'BRANCH_MISMATCH',
+  // A location (master data) with a city is in the city's country: params `city` and `country`.
+  'CITY_OTHER_COUNTRY',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

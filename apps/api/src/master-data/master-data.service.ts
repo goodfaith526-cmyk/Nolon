@@ -23,6 +23,7 @@ import type {
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RouteFilters } from '../common/list-filters.js';
+import { fieldRefusal } from '../common/validation.js';
 
 /**
  * Ports and cities, container types, charge types and document types (plus the currency master, read through
@@ -64,7 +65,8 @@ export class MasterDataService {
   }
 
   async createLocation(input: LocationInput): Promise<LocationDto> {
-    await this.requireCityOf(null, input.kind, input.cityId);
+    const city = await this.requireCityOf(null, input.kind, input.cityId);
+    requireCityCountry(city, input.countryCode);
     try {
       return toLocationDto(await this.prisma.location.create({ data: input }));
     } catch (error) {
@@ -78,7 +80,21 @@ export class MasterDataService {
     if (!existing) throw new NotFoundException('Location not found');
     const kind = input.kind ?? existing.kind;
     const cityId = input.cityId === undefined ? existing.cityId : input.cityId;
-    await this.requireCityOf(id, kind, cityId);
+    const countryCode = input.countryCode ?? existing.countryCode;
+    const city = await this.requireCityOf(id, kind, cityId);
+    // Checked when the country or the city changes (a place saved before the check keeps its own).
+    if (input.countryCode !== undefined || input.cityId !== undefined) {
+      requireCityCountry(city, countryCode);
+    }
+    // A city's places stay in its country.
+    if (kind === 'CITY' && countryCode !== existing.countryCode) {
+      const elsewhere = await this.prisma.location.count({
+        where: { cityId: id, countryCode: { not: countryCode } },
+      });
+      if (elsewhere > 0) {
+        throw fieldRefusal(null, 'Places of this city are in its current country', ['countryCode']);
+      }
+    }
     // A city that places name as theirs stays a city.
     if (kind !== 'CITY' && existing.kind === 'CITY') {
       const places = await this.prisma.location.count({ where: { cityId: id } });
@@ -141,17 +157,21 @@ export class MasterDataService {
     };
   }
 
-  /** A place's city: a CITY location other than itself; a city has none (one level only). */
+  /**
+   * A place's city: a CITY location other than itself; a city has none (one level only). Returns
+   * the city, or null for a location without one.
+   */
   private async requireCityOf(
     id: string | null,
     kind: LocationKind,
     cityId: string | null | undefined,
-  ): Promise<void> {
-    if (!cityId) return;
+  ): Promise<Location | null> {
+    if (!cityId) return null;
     if (kind === 'CITY') throw new BadRequestException('A city does not belong to another city');
     if (cityId === id) throw new BadRequestException('A location cannot be its own city');
     const city = await this.prisma.location.findUnique({ where: { id: cityId } });
     if (city?.kind !== 'CITY') throw new BadRequestException('cityId must be a city');
+    return city;
   }
 
   /** 400 unless the location exists and is active. */
@@ -204,6 +224,18 @@ export class MasterDataService {
     if (!type?.isActive)
       throw new BadRequestException(`Unknown or inactive document type: ${code}`);
     return type;
+  }
+}
+
+/** A place with a city is in the city's country (the form fills it in from the city). */
+function requireCityCountry(city: Location | null, countryCode: string): void {
+  if (city && city.countryCode !== countryCode) {
+    throw fieldRefusal(
+      'CITY_OTHER_COUNTRY',
+      `The city ${city.code} is in ${city.countryCode}: the place must be in the same country`,
+      ['countryCode', 'cityId'],
+      { city: city.code, country: city.countryCode },
+    );
   }
 }
 

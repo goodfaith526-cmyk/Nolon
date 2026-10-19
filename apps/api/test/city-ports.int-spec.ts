@@ -142,6 +142,56 @@ describe('a place and its city', () => {
   });
 });
 
+describe('a place and its city: one country', () => {
+  it('refuses a place in another country than its city, in the service', async () => {
+    const refused = (
+      await r
+        .post(
+          '/master-data/locations',
+          cookies.admin,
+          location('S', 'PORT', { cityId: city.id, countryCode: 'SA' }),
+        )
+        .expect(400)
+    ).body as { code: string; fields: string[]; params: Record<string, string> };
+    expect(refused).toMatchObject({
+      code: 'CITY_OTHER_COUNTRY',
+      fields: ['countryCode', 'cityId'],
+      params: { city: city.code, country: 'AE' },
+    });
+
+    // Without a city the place names its own country, which stays required.
+    const noCountry: Record<string, unknown> = location('N', 'PORT');
+    delete noCountry.countryCode;
+    await r.post('/master-data/locations', cookies.admin, noCountry).expect(400);
+    const saudi = await createLocation(location('S', 'PORT', { countryCode: 'SA' }));
+    expect(saudi).toMatchObject({ countryCode: 'SA', cityId: null });
+
+    // Picking a city of another country, or moving a place away from its city's country.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.admin, { cityId: city.id })
+      .expect(400)
+      .expect((res) => expect((res.body as { code: string }).code).toBe('CITY_OTHER_COUNTRY'));
+    await patch(`/master-data/locations/${port.id}`, cookies.admin, { countryCode: 'SA' })
+      .expect(400)
+      .expect((res) => expect((res.body as { code: string }).code).toBe('CITY_OTHER_COUNTRY'));
+    // A city whose places are in its country keeps that country.
+    await patch(`/master-data/locations/${city.id}`, cookies.admin, { countryCode: 'SA' }).expect(
+      400,
+    );
+    // The city and its country together.
+    const moved = (
+      await patch(`/master-data/locations/${saudi.id}`, cookies.admin, {
+        cityId: city.id,
+        countryCode: 'AE',
+      }).expect(200)
+    ).body as LocationDto;
+    expect(moved).toMatchObject({ cityId: city.id, countryCode: 'AE' });
+    // Who may only view master data changes nothing.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.sales, { cityId: null }).expect(403);
+    // Not one of the city's places for the lists below.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.admin, { cityId: null }).expect(200);
+  });
+});
+
 describe('lists filtered by a city', () => {
   it('find rates from its ports and say which locations they matched', async () => {
     const byCity = (

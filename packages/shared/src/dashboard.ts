@@ -1,5 +1,7 @@
+import type { AlertKind } from './alerts.js';
 import type { BookingSummaryDto, QuotationSummaryDto } from './commercial.js';
 import type { DecimalString } from './currencies.js';
+import type { CustomsStatus } from './customs.js';
 import type { ReportBranchDto, ReportLocationDto } from './reports.js';
 import type { ShipmentStatus } from './shipments.js';
 import type { TripStatus } from './transport.js';
@@ -18,6 +20,28 @@ export interface DashboardDto {
     recent: QuotationSummaryDto[];
   } | null;
   bookings: { draft: number; confirmed: number; recent: BookingSummaryDto[] } | null;
+  /** warehouse:view: goods in warehouses now, and today's receipts and releases (branch day). */
+  warehouse: {
+    shipments: number;
+    packages: number;
+    weightKg: DecimalString;
+    receivedToday: number;
+    releasedToday: number;
+  } | null;
+  /** customs:view: customs files not cleared, of shipments not cancelled, by status. */
+  customs: { open: number; byStatus: { status: CustomsStatus; count: number }[] } | null;
+  /**
+   * transport_trips:view: trips planned, and on the road (departed or arrived, not completed). A
+   * Driver counts only their own trips (`ownOnly`).
+   */
+  trips: { planned: number; onTheRoad: number; ownOnly: boolean } | null;
+  /**
+   * Assistant drafts still waiting for a decision that this user may approve or reject now, of the
+   * kinds they may view. Null when they may view no kind.
+   */
+  drafts: { awaitingReview: number } | null;
+  /** The alerts that concern this user (GET /alerts), counted by kind. Null when none concerns them. */
+  alerts: { total: number; byKind: { kind: AlertKind; count: number }[] } | null;
 }
 
 /**

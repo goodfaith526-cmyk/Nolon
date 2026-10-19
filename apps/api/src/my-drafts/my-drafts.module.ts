@@ -25,5 +25,6 @@ import { MyDraftsService } from './my-drafts.service.js';
   ],
   controllers: [MyDraftsController],
   providers: [MyDraftsService],
+  exports: [MyDraftsService],
 })
 export class MyDraftsModule {}

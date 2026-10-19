@@ -76,6 +76,7 @@ describe('Excel import of customers and rates', () => {
     opsDxb: '',
     managerDxb: '',
     salesZzi: '',
+    salesDxbJed: '',
   };
   // A start date of its own, so the rate duplicates checked here are only this run's.
   const day = `2031-${String(randomInt(1, 13)).padStart(2, '0')}-${String(randomInt(1, 29)).padStart(2, '0')}`;
@@ -252,6 +253,7 @@ describe('Excel import of customers and rates', () => {
       opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
       managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
       salesZzi: await createUser(t.prisma, ['SALES', 'SALES_MARKETING_MANAGER'], ['ZZI']),
+      salesDxbJed: await createUser(t.prisma, ['SALES'], ['DXB', 'JED']),
     };
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
@@ -282,7 +284,8 @@ describe('Excel import of customers and rates', () => {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(res.body as Parameters<ExcelJS.Xlsx['load']>[0]);
       const [data, , lists] = wb.worksheets;
-      expect(data?.getCell('A1').value).toBe('Branch code *');
+      // One branch: the code may be left empty (that branch).
+      expect(data?.getCell('A1').value).toBe('Branch code');
       const listed: string[] = [];
       lists?.eachRow((row, n) => {
         if (n > 1) listed.push(row.getCell(1).text);
@@ -475,6 +478,83 @@ describe('Excel import of customers and rates', () => {
       ).body as ImportRowsInvalidBody;
       expect(codesOf(body.preview)).toEqual([[3, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
       expect(await myCustomers()).toBe(before);
+    });
+
+    it('takes the only branch of a one-branch user for an empty branch code', async () => {
+      const file = await xlsx([
+        CUSTOMER_HEADER,
+        customerRow({ branch: null }),
+        customerRow({ branch: 'DXB' }),
+      ]);
+      const preview = (
+        await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
+      ).body as ImportPreviewDto;
+      expect(preview).toMatchObject({ totalRows: 2, validRows: 2, issues: [] });
+      const done = (
+        await commit('/customers/import', cookies.salesDxb, file, randomUUID()).expect(201)
+      ).body as ImportResultDto;
+      const made = await t.prisma.customer.findMany({ where: { id: { in: done.ids } } });
+      expect(made.map((c) => c.branchId)).toEqual([dxb, dxb]);
+
+      // Without the column at all, too.
+      const noColumn = await xlsx([
+        CUSTOMER_HEADER.slice(1),
+        customerRow({ branch: null }).slice(1),
+      ]);
+      await upload('/customers/import/preview', cookies.salesDxb, noColumn)
+        .expect(200)
+        .expect((res) => expect((res.body as ImportPreviewDto).validRows).toBe(1));
+    });
+
+    it('still checks a branch code given by a one-branch user, and an inactive only branch', async () => {
+      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: 'JED' })]);
+      const preview = (
+        await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
+      ).body as ImportPreviewDto;
+      expect(codesOf(preview)).toEqual([[2, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
+
+      // The only branch is not active: an empty code is not taken for it.
+      await t.prisma.branch.update({ where: { id: zzi }, data: { isActive: false } });
+      try {
+        const empty = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);
+        const inactive = (
+          await upload('/customers/import/preview', cookies.salesZzi, empty).expect(200)
+        ).body as ImportPreviewDto;
+        expect(codesOf(inactive)).toEqual([[2, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
+      } finally {
+        await t.prisma.branch.update({ where: { id: zzi }, data: { isActive: true } });
+      }
+    });
+
+    it('needs the branch code from a user of several branches', async () => {
+      const before = await myCustomers();
+      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);
+      const body = (
+        await commit('/customers/import', cookies.salesDxbJed, file, randomUUID()).expect(422)
+      ).body as ImportRowsInvalidBody;
+      expect(codesOf(body.preview)).toEqual([[2, 'branchCode', 'REQUIRED']]);
+      expect(await myCustomers()).toBe(before);
+      // Their template marks it required.
+      const template = await t
+        .http()
+        .get('/api/v1/customers/import/template?locale=en')
+        .set('Cookie', cookies.salesDxbJed)
+        .buffer(true)
+        .parse((response, done) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (c: Buffer) => chunks.push(c));
+          response.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(template.body as Parameters<ExcelJS.Xlsx['load']>[0]);
+      expect(wb.worksheets[0]?.getCell('A1').value).toBe('Branch code *');
+      // Without the column, their file is refused as a whole.
+      const noColumn = await xlsx([
+        CUSTOMER_HEADER.slice(1),
+        customerRow({ branch: null }).slice(1),
+      ]);
+      await upload('/customers/import/preview', cookies.salesDxbJed, noColumn).expect(400);
     });
 
     it('replays only an exact retry: another file, user or kind under the request id is a 409', async () => {

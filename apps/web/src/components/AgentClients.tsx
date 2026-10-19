@@ -74,10 +74,10 @@ export function AgentClients() {
   }
 
   return (
-    <section className="stack">
+    <section className="stack" aria-labelledby="agent-clients-title">
       <div className="page-head">
         <div>
-          <h2>{t('title')}</h2>
+          <h2 id="agent-clients-title">{t('title')}</h2>
           <p className="muted">{t('hint')}</p>
         </div>
       </div>
