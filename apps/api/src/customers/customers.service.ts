@@ -535,6 +535,16 @@ export class CustomersService {
     return customer;
   }
 
+  /** The ids of the customer's parties, oldest first (the caller checked the customer). */
+  async partyIds(customerId: string): Promise<string[]> {
+    const parties = await this.prisma.party.findMany({
+      where: { customerId },
+      select: { id: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return parties.map((p) => p.id);
+  }
+
   /** 400 unless every given party belongs to this customer. */
   async requireOwnParties(customerId: string, partyIds: (string | null | undefined)[]) {
     const ids = [...new Set(partyIds.filter((p): p is string => typeof p === 'string'))];

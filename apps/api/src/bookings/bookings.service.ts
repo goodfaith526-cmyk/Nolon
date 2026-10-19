@@ -9,9 +9,11 @@ import type {
   BookingDraftFromQuotation,
   BookingDraftItem,
   BookingDto,
+  BookingFromQuotationPreviewDto,
   BookingFromQuotationRequest,
   BookingInput,
   BookingItemInput,
+  BookingPartySuggestionDto,
   BookingService,
   BookingStatus,
   BookingSummaryDto,
@@ -64,6 +66,9 @@ type Tx = Prisma.TransactionClient;
 
 /** Largest value `booking_items.volume_cbm` (Decimal(12, 4)) holds. */
 const MAX_VOLUME_CBM = dec('99999999.9999');
+
+/** Largest quantity a cargo line takes (the request schema's limit). */
+const MAX_ITEM_QUANTITY = 100_000;
 
 const details = {
   items: { orderBy: { lineNo: 'asc' } },
@@ -137,6 +142,134 @@ export class BookingsService {
     input: BookingFromQuotationRequest,
   ): Promise<BookingDto> {
     return this.insert(user, await this.prepareFromQuotation(user, quotationId, input));
+  }
+
+  /**
+   * The parties a new booking of this customer may start from (functional review B5). Generated
+   * when the person picks the customer on a new booking: the shipper, consignee and notify party
+   * of the customer's latest booking (not cancelled, in the user's branches) that names any, else
+   * the customer's only party as consignee when it has exactly one. Each suggested party is
+   * checked to be the customer's still. Picking another customer asks again and drops the old
+   * suggestion; the form shows where it comes from and keeps a party the person chose; the save
+   * checks each party again. The customer must be active and in the user's branches (404).
+   */
+  async partySuggestion(user: AuthUser, customerId: string): Promise<BookingPartySuggestionDto> {
+    const customer = await this.customers.requireActiveCustomer(user, customerId);
+    return this.suggestParties(user, customer.id);
+  }
+
+  /**
+   * What a booking made from this approved quotation starts from (functional review B1), for the
+   * person to review and then save with createFromQuotation; nothing is written here. Generated
+   * when the person opens "To booking": route, mode, load type and cargo are the quotation's (a
+   * booking from a quotation keeps them); the container lines come from the quotation lines priced
+   * per container whose rate card names an active container type, one line per container type
+   * with the largest whole quantity of its lines (two charges on the same containers, freight and
+   * handling say, are the same containers, not twice as many). Other charges are never turned
+   * into cargo lines. The parties are partySuggestion's. Whatever the person changes before saving
+   * is what is saved.
+   */
+  async previewFromQuotation(
+    user: AuthUser,
+    quotationId: string,
+  ): Promise<BookingFromQuotationPreviewDto> {
+    const quotation = await this.quotations.requireApproved(user, quotationId);
+    const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
+    const existing = await this.prisma.booking.findFirst({
+      where: { quotationId: quotation.id },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException('This quotation already has a booking');
+    const items: BookingItemInput[] = [];
+    if (quotation.cargoType === 'CONTAINER') {
+      const lines = await this.quotations.perContainerLines(quotation.id);
+      const active = await this.masterData.activeContainerTypeCodes(
+        lines.map((l) => l.containerTypeCode),
+      );
+      const containers = new Map<string, number>();
+      for (const line of lines) {
+        // A booking counts whole containers (1 to 100000, as a cargo line takes).
+        if (!active.has(line.containerTypeCode) || !line.quantity.isInteger()) continue;
+        if (line.quantity.lt(1) || line.quantity.gt(MAX_ITEM_QUANTITY)) continue;
+        // A count of containers (whole, checked above), not an amount.
+        const quantity = line.quantity.toNumber();
+        containers.set(
+          line.containerTypeCode,
+          Math.max(quantity, containers.get(line.containerTypeCode) ?? 0),
+        );
+      }
+      for (const [containerTypeCode, quantity] of containers) {
+        items.push({ cargoType: 'CONTAINER', containerTypeCode, quantity });
+      }
+    }
+    return {
+      quotationId: quotation.id,
+      quotationNumber: quotation.number,
+      branchId: quotation.branchId,
+      customerId: customer.id,
+      customerName: customer.name,
+      originLocationId: quotation.originLocationId,
+      destinationLocationId: quotation.destinationLocationId,
+      mode: quotation.mode,
+      loadType: quotation.loadType,
+      cargoType: quotation.cargoType,
+      cargoDescription: quotation.cargoDescription,
+      items,
+      parties: await this.suggestParties(user, customer.id),
+    };
+  }
+
+  private async suggestParties(
+    user: AuthUser,
+    customerId: string,
+  ): Promise<BookingPartySuggestionDto> {
+    const own = new Set(await this.customers.partyIds(customerId));
+    const none = {
+      customerId,
+      source: null,
+      bookingId: null,
+      bookingNumber: null,
+      shipperId: null,
+      consigneeId: null,
+      notifyPartyId: null,
+    };
+    const last = await this.prisma.booking.findFirst({
+      where: {
+        customerId,
+        ...branchScope(user),
+        status: { not: 'CANCELLED' },
+        OR: [
+          { shipperId: { not: null } },
+          { consigneeId: { not: null } },
+          { notifyPartyId: { not: null } },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, number: true, shipperId: true, consigneeId: true, notifyPartyId: true },
+    });
+    const kept = (id: string | null) => (id !== null && own.has(id) ? id : null);
+    if (last) {
+      const parties = {
+        shipperId: kept(last.shipperId),
+        consigneeId: kept(last.consigneeId),
+        notifyPartyId: kept(last.notifyPartyId),
+      };
+      if (parties.shipperId || parties.consigneeId || parties.notifyPartyId) {
+        return {
+          ...none,
+          source: 'LAST_BOOKING',
+          bookingId: last.id,
+          bookingNumber: last.number,
+          ...parties,
+        };
+      }
+    }
+    const [only, ...more] = own;
+    if (only !== undefined && more.length === 0) {
+      return { ...none, source: 'ONLY_PARTY', consigneeId: only };
+    }
+    return none;
   }
 
   /**

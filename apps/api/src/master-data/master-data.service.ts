@@ -176,6 +176,15 @@ export class MasterDataService {
     return type;
   }
 
+  /** The codes among `codes` of active container types. */
+  async activeContainerTypeCodes(codes: readonly string[]): Promise<Set<string>> {
+    const types = await this.prisma.containerType.findMany({
+      where: { code: { in: [...codes] }, isActive: true },
+      select: { code: true },
+    });
+    return new Set(types.map((t) => t.code));
+  }
+
   async requireChargeType(code: string): Promise<ChargeType> {
     const type = await this.prisma.chargeType.findUnique({ where: { code } });
     if (!type?.isActive) throw new BadRequestException(`Unknown or inactive charge type: ${code}`);
