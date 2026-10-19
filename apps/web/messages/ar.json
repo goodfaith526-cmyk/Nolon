@@ -471,7 +471,10 @@
     "minimum": "الحد الأدنى",
     "lineTotal": "المبلغ",
     "subtotal": "المجموع",
-    "discountTotal": "الخصومات"
+    "discountTotal": "الخصومات",
+    "currencyFromCustomer": "مقترح: العملة المفضلة للعميل.",
+    "currencyFromBranch": "مقترح: عملة الفرع.",
+    "validUntilFromDays": "مقترح: {days} يوم من اليوم."
   },
   "Bookings": {
     "title": "الحجوزات",
@@ -525,7 +528,12 @@
     "openShipment": "فتح الشحنة",
     "addToContainer": "حجز LCL جديد في الحاوية {number}",
     "addToContainerHint": "ينطلق الحجز من ميناء التحميل الخاص بالحاوية، شحن بحري LCL. الحفظ يؤكد الحجز وينشئ شحنته ويضيفها إلى الحاوية مباشرة.",
-    "pickCustomerToSave": "اختر العميل في أعلى النموذج لتتمكن من الحفظ."
+    "pickCustomerToSave": "اختر العميل في أعلى النموذج لتتمكن من الحفظ.",
+    "fromQuotationTitle": "حجز جديد من عرض السعر {number}",
+    "fromQuotationHint": "معبّى من عرض السعر. راجعه واحفظه: ما بيتعمل حجز قبل الحفظ. المسار والنمط والبضاعة بتفضل زي العرض.",
+    "itemsFromQuotation": "بنود الحاويات جات من رسوم العرض المسعّرة بالحاوية. راجعها قبل الحفظ.",
+    "partiesFromLastBooking": "مقترحة من آخر حجز للعميل، {number}. غيّرها لو محتاج.",
+    "partiesFromOnlyParty": "مقترح: الطرف الوحيد للعميل، كمستلم. غيّرو لو محتاج."
   },
   "Shipments": {
     "title": "الشحنات",

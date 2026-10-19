@@ -11,6 +11,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { onlyBranch } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
@@ -26,6 +27,8 @@ export function ConsolidationForm() {
   const localName = useLocalName();
   const failure = useFailureText();
   const router = useRouter();
+  // With one branch the user is not asked (functional review B7); the API checks it on save.
+  const single = onlyBranch(me);
   const [branchId, setBranchId] = useState(me.branches[0]?.id ?? '');
   const [picked, setPicked] = useState<ShipmentSummaryDto[]>([]);
   const [busy, setBusy] = useState(false);
@@ -94,16 +97,18 @@ export function ConsolidationForm() {
       <Notice notice={notice} />
       <form className="card stack" onSubmit={(e) => void onSubmit(e)}>
         <div className="grid">
-          <label className="field">
-            <span>{t('branch')}</span>
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
-              {me.branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.code} · {localName(b)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!single && (
+            <label className="field">
+              <span>{t('branch')}</span>
+              <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
+                {me.branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.code} · {localName(b)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="field">
             <span>{t('originPort')}</span>
             {portSelect('originLocationId')}

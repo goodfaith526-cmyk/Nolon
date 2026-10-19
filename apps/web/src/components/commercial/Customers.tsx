@@ -10,6 +10,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { onlyBranch } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -148,6 +149,21 @@ export function CustomerForm({
   const failure = useFailureText();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // With one branch the user is not asked (functional review B7); the API checks it on save.
+  const single = onlyBranch(me);
+  const [branchId, setBranchId] = useState(
+    customer?.branchId ?? single?.id ?? me.branches[0]?.id ?? '',
+  );
+  const [preferredCurrency, setPreferredCurrency] = useState(customer?.preferredCurrency ?? '');
+  // The credit limit's currency (functional review B8). An existing limit keeps its currency. A
+  // new or empty limit's currency follows the preferred currency chosen on this form, else the
+  // branch's currency, until the person picks one (null until then), which is kept.
+  const hasLimit = customer?.creditLimit !== null && customer?.creditLimit !== undefined;
+  const [creditCurrencyChoice, setCreditCurrency] = useState<string | null>(
+    hasLimit ? (customer?.creditLimitCurrency ?? null) : null,
+  );
+  const branchCurrency = me.branches.find((b) => b.id === branchId)?.defaultCurrency ?? '';
+  const creditCurrency = creditCurrencyChoice ?? (preferredCurrency || branchCurrency);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -177,7 +193,7 @@ export function CustomerForm({
         ? await api<CustomerDto>(`/customers/${customer.id}`, { method: 'PATCH', body })
         : await api<CustomerDto>('/customers', {
             method: 'POST',
-            body: { ...body, branchId: field(form, 'branchId') },
+            body: { ...body, branchId },
           });
       onSaved(saved);
     } catch (err) {
@@ -194,10 +210,15 @@ export function CustomerForm({
       <h2>{customer ? t('editTitle', { name: customer.name }) : t('add')}</h2>
       <Notice notice={notice} />
       <div className="grid">
-        {!customer && (
+        {!customer && !single && (
           <label className="field">
             {t('branch')}
-            <select name="branchId" required>
+            <select
+              name="branchId"
+              required
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+            >
               {me.branches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {name(b)}
@@ -262,7 +283,11 @@ export function CustomerForm({
         </label>
         <label className="field">
           {t('preferredCurrency')}
-          <select name="preferredCurrency" defaultValue={customer?.preferredCurrency ?? ''}>
+          <select
+            name="preferredCurrency"
+            value={preferredCurrency}
+            onChange={(e) => setPreferredCurrency(e.target.value)}
+          >
             <option value="">—</option>
             {currencies.map((c) => (
               <option key={c.code} value={c.code}>
@@ -300,7 +325,11 @@ export function CustomerForm({
         </label>
         <label className="field">
           {t('creditLimitCurrency')}
-          <select name="creditLimitCurrency" defaultValue={customer?.creditLimitCurrency ?? 'USD'}>
+          <select
+            name="creditLimitCurrency"
+            value={creditCurrency}
+            onChange={(e) => setCreditCurrency(e.target.value)}
+          >
             {currencies.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.code}

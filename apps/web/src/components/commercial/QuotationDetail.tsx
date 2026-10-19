@@ -1,9 +1,9 @@
 'use client';
 
-import type { BookingDto, QuotationDto } from '@nolon/shared';
+import type { QuotationDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useRouter } from '@/i18n/navigation';
+import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { failureStatus, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -22,7 +22,6 @@ export function QuotationDetail({ id }: { id: string }) {
   const name = useLocalName();
   const locationName = useLocationName(master);
   const failure = useFailureText();
-  const router = useRouter();
   const [quotation, setQuotation] = useState<QuotationDto | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
@@ -51,19 +50,6 @@ export function QuotationDetail({ id }: { id: string }) {
     } catch (e) {
       // An approval after the validity date marks the quotation expired.
       if (failureStatus(e) === 409 && action !== 'expire') load();
-      setNotice({ ok: false, text: failure(e) });
-    }
-  }
-
-  async function toBooking() {
-    setNotice(null);
-    try {
-      const booking = await api<BookingDto>(`/bookings/from-quotation/${id}`, {
-        method: 'POST',
-        body: {},
-      });
-      router.push(`/bookings/${booking.id}`);
-    } catch (e) {
       setNotice({ ok: false, text: failure(e) });
     }
   }
@@ -122,9 +108,10 @@ export function QuotationDetail({ id }: { id: string }) {
             </>
           )}
           {status === 'APPROVED' && quotation.bookingId === null && can(me, 'bookings:create') && (
-            <button type="button" className="primary" onClick={() => void toBooking()}>
+            // Opens the booking form filled from this quotation; nothing is created until it is saved.
+            <Link href={`/quotations/${id}/booking`} className="button primary">
               {t('toBooking')}
-            </button>
+            </Link>
           )}
         </div>
       </div>
