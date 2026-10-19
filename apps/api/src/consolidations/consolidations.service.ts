@@ -469,14 +469,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         params,
       );
     }
-    if (!booking.services.includes('MAIN_FREIGHT')) {
-      throw codedRefusal(
-        HttpStatus.BAD_REQUEST,
-        'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
-        `A booking in container ${container.number} includes the main freight`,
-        params,
-      );
-    }
+    // The main freight is not checked: every booking carries it (BookingsService.prepare adds it).
   }
 
   /**

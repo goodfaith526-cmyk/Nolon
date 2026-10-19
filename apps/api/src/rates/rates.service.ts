@@ -496,8 +496,8 @@ export class RatesService {
 
   /**
    * The offers systemRate chooses from: the APPROVED rates valid on `onDate` that match the
-   * context, one per container type, charge and unit (the latest started of rates that differ only
-   * by start date). The document's own branch's rates when it has any that match; else those of
+   * context, one per branch, container type, charge and unit (the latest started of rates that
+   * differ only by start date: two branches' rates are always two offers). The document's own branch's rates when it has any that match; else those of
    * every branch (rate cards are shared by all branches). Read-only.
    */
   async systemRates(context: RateMatchContext): Promise<RateCard[]> {
@@ -530,7 +530,13 @@ export class RatesService {
     });
     const offers = new Map<string, RateCard>();
     for (const rate of rates) {
-      const offer = [rate.containerTypeCode ?? '', rate.chargeTypeCode, rate.unit].join('|');
+      // Per branch: two branches' rates are different offers (rateKey), never revisions of one.
+      const offer = [
+        rate.branchId,
+        rate.containerTypeCode ?? '',
+        rate.chargeTypeCode,
+        rate.unit,
+      ].join('|');
       if (!offers.has(offer)) offers.set(offer, rate);
     }
     return [...offers.values()];
@@ -538,9 +544,10 @@ export class RatesService {
 
   /**
    * The system price of a line that names no rate card and gives no price: the only APPROVED rate
-   * (of the document's branch, else of every branch: systemRates), valid on `onDate`, for this route, mode, load type, cargo type and currency,
-   * and for the charge type and unit when given. Of rates that differ only by start date, the
-   * latest started replaces the older ones. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
+   * (of the document's branch, else of every branch: systemRates), valid on `onDate`, for this
+   * route, mode, load type, cargo type and currency, and for the charge type and unit when given.
+   * Of one branch's rates that differ only by start date, the latest started replaces the older
+   * ones; rates of two branches are never one offer. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
    * the candidates) when the line must say which (a charge type, a unit or the rate card).
    */
   async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {

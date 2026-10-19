@@ -274,6 +274,18 @@ beforeAll(async () => {
     { chargeTypeCode: 'DOCS', unit: 'PER_SHIPMENT', price: '15', status: 'DRAFT' },
     by,
   );
+  // OTHER only in two other branches, same offer: two offers, never one silently (Codex N90-1).
+  const dxb = await branchId(t.prisma, 'DXB');
+  await rate(
+    'otherJed',
+    { chargeTypeCode: 'OTHER', unit: 'PER_SHIPMENT', price: '100', branchId: jed },
+    by,
+  );
+  await rate(
+    'otherDxb',
+    { chargeTypeCode: 'OTHER', unit: 'PER_SHIPMENT', price: '200', branchId: dxb },
+    by,
+  );
   // DELIVERY: 1 per kg, at least 50.
   await rate(
     'delivery',
@@ -359,6 +371,13 @@ describe('quotation drafts: the system price', () => {
     const storage = await quotationDraft([{ chargeTypeCode: 'STORAGE', quantity: '1' }]);
     expect(storage.priceSources).toEqual([{ source: 'RATE_CARD', rateCardId: rates.storageJed }]);
     expect(storage.pricing?.total).toBe('40');
+    // Two other branches with the same offer: the line must say which, whichever was made last.
+    const several = await createQuotationDraft(
+      quotationRequest([{ chargeTypeCode: 'OTHER', quantity: '1' }]),
+    ).expect(400);
+    expect(code(several)).toBe('RATE_SEVERAL');
+    expect(message(several)).toContain(rates.otherJed);
+    expect(message(several)).toContain(rates.otherDxb);
   });
 
   it('refuses, under the line, when no rate card or several match', async () => {
@@ -534,6 +553,10 @@ describe('invoice drafts: the system price', () => {
     expect([code(thc), fields(thc)]).toEqual(['RATE_SEVERAL', ['lines.0.unitPrice']]);
     expect(code(await refused(direct, { chargeTypeCode: 'DOCS', quantity: '1' }))).toBe(
       'RATE_NO_MATCH',
+    );
+    // Two other branches' rates for the same offer: no silent pick (Codex N90-1).
+    expect(code(await refused(direct, { chargeTypeCode: 'OTHER', quantity: '1' }))).toBe(
+      'RATE_SEVERAL',
     );
     expect(await t.prisma.invoiceDraft.count()).toBe(before);
   });
