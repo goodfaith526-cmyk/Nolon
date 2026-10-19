@@ -54,6 +54,9 @@ interface LineState {
 }
 
 let nextKey = 1;
+/** A line that already holds an amount: a price or discount typed, or a rate card picked. */
+const hasAmount = (l: LineState) => l.unitPrice !== '' || l.discount !== '' || l.rateCardId !== '';
+
 const emptyLine = (): LineState => ({
   key: nextKey++,
   rateCardId: '',
@@ -88,10 +91,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   // its branch's; the branch's today plus the configured days). Picking another customer asks
   // again; a currency or date the person chose (a `...Choice`, null until then) is kept, and an
   // edit keeps what the quotation holds. Nothing is suggested before the customer.
+  // A suggested currency is applied only while no line holds an amount (Codex F93-1): once a
+  // price, discount or rate is on a line, the currency stays as it is (`autoCurrency`) and the
+  // suggestion is only shown, so an amount is never sent in a currency it was not entered in.
   const [currencyChoice, setCurrency] = useState<string | null>(quotation?.currency ?? null);
   const [validUntilChoice, setValidUntil] = useState<string | null>(quotation?.validUntil ?? null);
   const [defaults, setDefaults] = useState<QuotationDefaultsDto | null>(null);
-  const currency = currencyChoice ?? defaults?.currency ?? '';
+  const [autoCurrency, setAutoCurrency] = useState('');
+  const currency = currencyChoice ?? autoCurrency;
   const validUntil = validUntilChoice ?? defaults?.validUntil ?? '';
   const [lines, setLines] = useState<LineState[]>(
     quotation?.lines.map((l) => ({
@@ -107,6 +114,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   );
   const [rates, setRates] = useState<RateCardDto[]>([]);
   const [busy, setBusy] = useState(false);
+  // The lines as last rendered, for deciding whether a suggestion that arrives later applies.
+  const linesNow = useRef(lines);
+  useEffect(() => {
+    linesNow.current = lines;
+  }, [lines]);
 
   // The route starts empty: the person picks it (functional review B6).
   const origin = originChoice;
@@ -136,7 +148,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     let cancelled = false;
     api<QuotationDefaultsDto>(`/quotations/defaults?customerId=${customerId}`)
       .then((d) => {
-        if (!cancelled) setDefaults(d);
+        if (cancelled) return;
+        setDefaults(d);
+        if (!linesNow.current.some(hasAmount)) setAutoCurrency(d.currency);
       })
       .catch(() => undefined);
     return () => {
@@ -398,11 +412,16 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   </option>
                 ))}
             </select>
-            {defaults && currencyChoice === null && (
+            {defaults && currencyChoice === null && currency === defaults.currency && (
               <small className="muted">
                 {defaults.currencySource === 'CUSTOMER'
                   ? t('currencyFromCustomer')
                   : t('currencyFromBranch')}
+              </small>
+            )}
+            {defaults && currencyChoice === null && currency !== defaults.currency && (
+              <small className="muted">
+                {t('currencySuggestionNotApplied', { currency: defaults.currency })}
               </small>
             )}
             <FieldNote note={note} path="currency" />

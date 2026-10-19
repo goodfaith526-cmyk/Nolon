@@ -157,13 +157,21 @@ describe('QuotationForm new quotation defaults (functional review B3, B4, B6)', 
     expect(api).not.toHaveBeenCalledWith(expect.stringContaining('/quotations/defaults'));
   });
 
-  it("takes the customer's defaults, follows another customer, and drops a rate of the old currency", async () => {
+  it("takes the customer's defaults and follows another customer while no line holds an amount", async () => {
     await pick('First', 'c1');
     expect(currency().value).toBe('AED');
     expect(validUntil().value).toBe('2026-11-18');
     expect(document.body.textContent).toContain('currencyFromCustomer');
     expect(document.body.textContent).toContain('validUntilFromDays');
 
+    click(buttonByText('change'));
+    await pick('Second', 'c2');
+    expect(currency().value).toBe('USD');
+    expect(document.body.textContent).toContain('currencyFromBranch');
+  });
+
+  it('keeps the currency of a rate already picked when another customer suggests another one', async () => {
+    await pick('First', 'c1');
     change(selects()[0] as HTMLSelectElement, 'l1');
     change(selects()[1] as HTMLSelectElement, 'l2');
     await flush();
@@ -172,10 +180,25 @@ describe('QuotationForm new quotation defaults (functional review B3, B4, B6)', 
 
     click(buttonByText('change'));
     await pick('Second', 'c2');
-    expect(currency().value).toBe('USD');
-    expect(document.body.textContent).toContain('currencyFromBranch');
-    // The AED rate is not offered in USD: the line is picked again, not kept unseen.
-    expect(rateSelect().value).toBe('');
+    // The AED rate stays priced in AED: the USD suggestion is shown, not applied.
+    expect(currency().value).toBe('AED');
+    expect(rateSelect().value).toBe('r1');
+    expect(document.body.textContent).toContain('currencySuggestionNotApplied');
+  });
+
+  it('keeps AED for a typed price when a USD customer is picked next (Codex F93-1)', async () => {
+    await pick('First', 'c1');
+    expect(currency().value).toBe('AED');
+    change(document.querySelector('input[aria-label="unitPrice"]') as HTMLInputElement, '100');
+
+    click(buttonByText('change'));
+    await pick('Second', 'c2');
+    expect(currency().value).toBe('AED');
+    expect(
+      (document.querySelector('input[aria-label="unitPrice"]') as HTMLInputElement).value,
+    ).toBe('100');
+    expect(document.body.textContent).toContain('currencySuggestionNotApplied');
+    expect(document.body.textContent).not.toContain('currencyFromBranch');
   });
 
   it('keeps a currency and a date the person chose when the customer changes', async () => {

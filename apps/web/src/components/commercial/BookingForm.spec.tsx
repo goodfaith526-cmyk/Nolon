@@ -493,6 +493,24 @@ describe('BookingForm from a quotation (functional review B1)', () => {
     expect(api).not.toHaveBeenCalledWith('/bookings', expect.anything());
   });
 
+  it('shows a quotation without a load type as not set, not FCL (Codex F93-4)', async () => {
+    api.mockReset();
+    api.mockResolvedValue(customer([]));
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm fromQuotation={{ ...preview, loadType: null }} />);
+    });
+    await flush();
+    const loadType = [...document.querySelectorAll('select')].find((s) =>
+      [...s.options].some((o) => o.value === 'LCL'),
+    ) as HTMLSelectElement;
+    expect(loadType.disabled).toBe(true);
+    expect(loadType.value).toBe('');
+    expect(loadType.selectedOptions[0]?.textContent).toBe('notSet');
+  });
+
   it('starts with one empty line when the quotation prices no containers', async () => {
     api.mockReset();
     api.mockResolvedValue(customer([]));
@@ -594,6 +612,31 @@ describe('BookingForm new booking: empty route and suggested parties (functional
     await renderNew();
     expect(routeSelects().map((s) => s.value)).toEqual(['', '']);
     expect(routeSelects().every((s) => s.required)).toBe(true);
+  });
+
+  it('does not refill a party the person cleared before a late suggestion (Codex F93-3)', async () => {
+    await renderNew();
+    let answer: (s: BookingPartySuggestionDto) => void = () => {};
+    const fallback = api.getMockImplementation() as (path: string) => Promise<unknown>;
+    api.mockImplementation((path: string) =>
+      path.startsWith('/bookings/party-suggestion?')
+        ? new Promise<BookingPartySuggestionDto>((resolve) => {
+            answer = resolve;
+          })
+        : fallback(path),
+    );
+    await pick('First', 'c1');
+    // The person picks a shipper, then clears it, before the suggestion answers.
+    changeValue(select('shipperId'), 'c1-c');
+    changeValue(select('shipperId'), '');
+    await act(async () => {
+      answer(suggestionFor('c1'));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(select('shipperId').value).toBe('');
+    // A field never touched still takes the suggestion.
+    expect(select('consigneeId').value).toBe('c1-c');
   });
 
   it("suggests the customer's last booking parties, keeps a change, and drops them for another customer", async () => {

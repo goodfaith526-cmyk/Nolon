@@ -179,6 +179,16 @@ describe('credit limit currency (functional review B8)', () => {
     expect(creditCurrency().value).toBe('USD');
   });
 
+  it('a typed limit keeps its currency when the preferred currency changes (Codex F93-2)', async () => {
+    await render(<CustomerForm onCancel={() => {}} onSaved={() => {}} />);
+    change(byName<HTMLSelectElement>('preferredCurrency') as HTMLSelectElement, 'EUR');
+    expect(creditCurrency().value).toBe('EUR');
+    change(byName<HTMLInputElement>('creditLimit') as HTMLInputElement, '100');
+    change(byName<HTMLSelectElement>('preferredCurrency') as HTMLSelectElement, 'SAR');
+    expect(creditCurrency().value).toBe('EUR');
+    expect(byName<HTMLInputElement>('creditLimit')?.value).toBe('100');
+  });
+
   it('an existing limit keeps its currency; an empty one takes the preferred currency', async () => {
     const existing = {
       id: 'c1',
