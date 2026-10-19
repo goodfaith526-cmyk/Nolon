@@ -24,8 +24,9 @@ const CUSTOMS_STAGE: readonly ShipmentStatus[] = ['CUSTOMS_IN_PROGRESS', 'CUSTOM
 
 /**
  * The shipment's customs file: clearance status, declaration number, broker, dates, notes and
- * fees. Fees are recorded only (no journal entry). The shipment's own customs statuses move
- * through the shipment status endpoint, as the state machine allows.
+ * fees. Fees are recorded only (no journal entry). Saving the file moves the shipment to
+ * customs in progress or cleared when the state machine allows it (the API does this); the
+ * manual status buttons stay for moves without a file.
  */
 export function ShipmentCustoms({
   shipment,
@@ -88,6 +89,19 @@ export function ShipmentCustoms({
     if (saved) {
       setData(saved);
       setEditing(false);
+      // Saving the file may have moved the shipment (functional review D1): show its status now.
+      try {
+        const now = await api<ShipmentDto>(`/shipments/${shipmentId}`);
+        if (now.status !== shipment.status) {
+          setNotice({
+            ok: true,
+            text: t('savedAndMoved', { status: te(`shipment_${now.status}`) }),
+          });
+        }
+        onShipmentChange(now);
+      } catch {
+        // The file is saved; the shipment page shows its status when it next loads.
+      }
     }
   }
 
@@ -213,6 +227,7 @@ export function ShipmentCustoms({
             <textarea name="note" maxLength={2000} defaultValue={clearance?.note ?? ''} />
           </label>
           <p className="muted">{t('clearedHint')}</p>
+          <p className="muted">{t('movesShipmentHint')}</p>
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {tc('save')}

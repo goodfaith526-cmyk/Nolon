@@ -9,7 +9,14 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { StatusBadge } from '../StatusBadge';
 
 /** The consolidated containers an LCL shipment is (or was) in, on the shipment page. */
-export function ShipmentConsolidations({ shipmentId }: { shipmentId: string }) {
+export function ShipmentConsolidations({
+  shipmentId,
+  onLoaded,
+}: {
+  shipmentId: string;
+  /** The list once loaded, for the containers panel beside it (functional review D4). */
+  onLoaded?: (list: ShipmentConsolidationDto[]) => void;
+}) {
   const t = useTranslations('Consolidations');
   const tc = useTranslations('Common');
   const failure = useFailureText();
@@ -20,7 +27,9 @@ export function ShipmentConsolidations({ shipmentId }: { shipmentId: string }) {
     let cancelled = false;
     api<ShipmentConsolidationDto[]>(`/shipments/${shipmentId}/consolidations`)
       .then((items) => {
-        if (!cancelled) setList(items);
+        if (cancelled) return;
+        setList(items);
+        onLoaded?.(items);
       })
       .catch((e: unknown) => {
         if (!cancelled) setNotice({ ok: false, text: failure(e) });
@@ -28,7 +37,7 @@ export function ShipmentConsolidations({ shipmentId }: { shipmentId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [shipmentId, failure]);
+  }, [shipmentId, failure, onLoaded]);
 
   return (
     <div className="panel">

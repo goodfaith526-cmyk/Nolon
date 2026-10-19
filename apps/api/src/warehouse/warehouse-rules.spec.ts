@@ -11,6 +11,7 @@ import {
   type TimedMovement,
   receiptStatusOptions,
   releasableAt,
+  remainingWeightKg,
   totalsByWarehouse,
 } from './warehouse-rules.js';
 
@@ -201,5 +202,31 @@ describe('heldPackages and extraPackagesOnReceipt', () => {
     // Goods sent on to KRT after the release: a backdated PTS receipt still counts them.
     const onward = [...log, timed('RECEIPT', 'krt', 4, 12)];
     expect(extraPackagesOnReceipt(4, onward, day(11), 1)).toBe(1);
+  });
+});
+
+describe('remainingWeightKg (functional review D5)', () => {
+  it('is what was weighed in minus out, per warehouse, over several releases', () => {
+    const movements = [
+      receipt('A', 10, '100'),
+      release('A', 1, '12.5'),
+      release('A', 2, '20'),
+      receipt('B', 4, '40'),
+    ];
+    expect(remainingWeightKg(movements, 'A')?.toFixed()).toBe('67.5');
+    expect(remainingWeightKg(movements, 'B')?.toFixed()).toBe('40');
+  });
+
+  it('is unknown when a receipt or a release there has no weight', () => {
+    expect(remainingWeightKg([receipt('A', 10, '100'), receipt('A', 2)], 'A')).toBeNull();
+    expect(remainingWeightKg([receipt('A', 10, '100'), release('A', 1)], 'A')).toBeNull();
+    // A weightless movement in another warehouse does not matter.
+    expect(remainingWeightKg([receipt('A', 3, '30'), receipt('B', 1)], 'A')?.toFixed()).toBe('30');
+  });
+
+  it('is null when nothing is held or the weights leave nothing', () => {
+    expect(remainingWeightKg([receipt('A', 2, '20'), release('A', 2, '20')], 'A')).toBeNull();
+    expect(remainingWeightKg([receipt('A', 2, '20'), release('A', 1, '25')], 'A')).toBeNull();
+    expect(remainingWeightKg([], 'A')).toBeNull();
   });
 });

@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type {
   Page,
   SupplierDto,
@@ -110,6 +115,53 @@ export class SuppliersService {
     return this.get(user, id);
   }
 
+  /**
+   * Suppliers that look like the same company as a carrier (functional review D3): the same name
+   * (any case, spaces around ignored) or, when the carrier has one, the same phone. Active or not:
+   * an inactive one is still the same company, to reactivate rather than duplicate.
+   */
+  async carrierMatches(carrierId: string): Promise<SupplierSummaryDto[]> {
+    const carrier = await this.fleet.carrierContact(carrierId);
+    return (
+      await this.prisma.supplier.findMany({
+        where: matchingCarrier(carrier),
+        orderBy: { name: 'asc' },
+      })
+    ).map(toSummary);
+  }
+
+  /**
+   * Creates a supplier from a carrier's name and phone and links the carrier to it, in one
+   * transaction (functional review D3): the carrier and the supplier stay two records, linked as
+   * setCarrier links them. The carrier row is locked first, so two requests for the same carrier
+   * run one after the other and the second finds it linked. 409 when the carrier is already
+   * linked, or when a supplier with the same name or phone exists (link that one instead).
+   */
+  async createFromCarrier(user: AuthUser, carrierId: string): Promise<SupplierDto> {
+    const created = await this.prisma.$transaction(async (tx) => {
+      const carrier = await this.fleet.lockCarrierInTx(tx, carrierId);
+      if (carrier.supplierId) {
+        throw new ConflictException('The carrier is already linked to a supplier');
+      }
+      const same = await tx.supplier.findFirst({
+        where: matchingCarrier(carrier),
+        orderBy: { name: 'asc' },
+      });
+      if (same) {
+        throw new ConflictException(
+          `Supplier ${same.number} (${same.name}) has the same name or phone: link the carrier to it`,
+        );
+      }
+      const number = formatDocumentNumber('SUP', await nextSequenceValue(tx, 'SUPPLIER'));
+      const supplier = await tx.supplier.create({
+        data: { number, name: carrier.name, phone: carrier.phone, createdById: user.id },
+      });
+      await this.fleet.setCarrierSupplier(tx, carrierId, { supplierId: supplier.id });
+      return supplier;
+    });
+    return this.get(user, created.id);
+  }
+
   /** 404 unless the supplier exists (active or not): for reads and settling existing bills. */
   async requireSupplier(id: string): Promise<Supplier> {
     const supplier = await this.prisma.supplier.findUnique({ where: { id } });
@@ -137,6 +189,19 @@ async function lockSupplier(tx: Tx, id: string, mode: 'UPDATE' | 'SHARE'): Promi
           SELECT "id" FROM "suppliers" WHERE "id" = ${id}::uuid FOR SHARE`;
   if (rows.length === 0) throw new NotFoundException('Supplier not found');
   return tx.supplier.findUniqueOrThrow({ where: { id } });
+}
+
+/** Suppliers with a carrier's name (any case, trimmed) or, when it has one, its phone. */
+function matchingCarrier(carrier: {
+  name: string;
+  phone: string | null;
+}): Prisma.SupplierWhereInput {
+  return {
+    OR: [
+      { name: { equals: carrier.name.trim(), mode: 'insensitive' } },
+      ...(carrier.phone ? [{ phone: carrier.phone }] : []),
+    ],
+  };
 }
 
 function toSummary(s: Supplier): SupplierSummaryDto {

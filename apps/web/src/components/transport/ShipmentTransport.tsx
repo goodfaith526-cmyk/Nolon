@@ -13,7 +13,14 @@ import { TripKindLabel, useDateTime } from './common';
 import { PrintLink } from '../print/PrintLink';
 
 /** The shipment's trips: one per road leg, in order. */
-export function ShipmentTrips({ shipmentId }: { shipmentId: string }) {
+export function ShipmentTrips({
+  shipmentId,
+  canPlanTrip = false,
+}: {
+  shipmentId: string;
+  /** Shows "trip for this shipment" (functional review D2); the API checks it on save. */
+  canPlanTrip?: boolean;
+}) {
   const t = useTranslations('Transport');
   const tc = useTranslations('Common');
   const master = useMasterData();
@@ -41,6 +48,13 @@ export function ShipmentTrips({ shipmentId }: { shipmentId: string }) {
     <div className="panel">
       <div className="panel-head">
         <h2>{t('shipmentTrips')}</h2>
+        {canPlanTrip && (
+          <div className="actions">
+            <Link href={`/trips/new?shipmentId=${shipmentId}`} className="button">
+              {t('tripForShipment')}
+            </Link>
+          </div>
+        )}
       </div>
       <Notice notice={notice} />
       {trips === null ? (

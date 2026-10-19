@@ -618,7 +618,9 @@
     "fileTooLarge": "الملف أكبر من 10 ميجابايت.",
     "fileRejected": "يُقبل PDF أو صور JPEG وPNG وWebP فقط.",
     "sharedBranches": "فروع مشاركة",
-    "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة."
+    "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة.",
+    "inConsolidation": "تُشحن هذه الشحنة في الحاوية المجمّعة {number}: حاويتها هي حاوية التجميع، وتظهر هنا للقراءة فقط.",
+    "containerTypeFromBooking": "من بنود الحجز، وفيها نوع الحاوية هذا وحده."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -962,7 +964,10 @@
     "releasedNotice": "أُخرجت البضاعة: {number}.",
     "photoAdded": "أُضيفت الصورة.",
     "photoTooLarge": "حجم الصورة لا يتجاوز 10 ميجابايت.",
-    "photoRejected": "تُقبل صور JPEG وPNG وWebP فقط."
+    "photoRejected": "تُقبل صور JPEG وPNG وWebP فقط.",
+    "useRemaining": "استخدم المتبقي: {remaining}",
+    "remainingSuggested": "الطرود المتبقية للاستلام. عُدّها وأكّد.",
+    "weightHeldSuggested": "مقترح: الوزن المتبقي في هذا المخزن، للإفراج عنه كله."
   },
   "Customs": {
     "section": "الجمارك",
@@ -976,9 +981,11 @@
     "note": "ملاحظات",
     "updated": "آخر تحديث",
     "clearedHint": "الملف المخلَّص يحتاج تاريخ التخليص، ولا يكون قبل تاريخ التقديم.",
+    "movesShipmentHint": "حفظ ملف قيد الإجراء ينقل الشحنة إلى «جمارك جارية»، وحفظ ملف مخلَّص ينقلها إلى «تم التخليص» بتاريخ التخليص، متى أمكن للشحنة أخذ هذه الخطوة.",
     "documentsHint": "تُرفع المستندات الجمركية في مستندات الشحنة أدناه.",
     "moveShipment": "الشحنة: {status}",
     "shipmentMoved": "حالة الشحنة الآن: {status}.",
+    "savedAndMoved": "حُفظ الملف. حالة الشحنة الآن: {status}.",
     "fees": "الرسوم الجمركية",
     "feeDescription": "البيان",
     "amount": "المبلغ",
@@ -1118,7 +1125,23 @@
     "podSaved": "حُفظ إثبات التسليم {number}.",
     "podSavedMoved": "حُفظ إثبات التسليم {number}، وأصبحت الشحنة: {status}.",
     "noPods": "لا يوجد إثبات تسليم بعد.",
-    "files": "التوقيع والصور"
+    "files": "التوقيع والصور",
+    "arriveAndComplete": "وصلت وأُكملت",
+    "arrivedAndCompletedNotice": "سُجّل وصول الرحلة وإكمالها.",
+    "arrivedNotCompleted": "سُجّل الوصول، لكن تعذّر إكمال الرحلة: {reason} استخدم «إكمال الرحلة» لإنهائها.",
+    "tripForShipment": "رحلة لهذه الشحنة",
+    "originFromShipment": "مقترح: موقع الشحنة الحالي. تأكد من نقطة بداية الرحلة.",
+    "destinationFromShipment": "مقترح: وجهة الشحنة.",
+    "vehicleFromLastTrip": "مقترح: عربة آخر رحلة لهذا السائق ({trip}).",
+    "supplier": "المورد",
+    "noSupplier": "بدون مورد",
+    "notLinked": "غير مربوط",
+    "createSupplier": "إنشاء مورد",
+    "supplierCreated": "أُنشئ مورد من الناقل ورُبط به.",
+    "supplierExists": "يوجد مورد بنفس الاسم أو الهاتف. اربط الناقل به بدل إنشاء مورد آخر:",
+    "linkTo": "ربط بـ {supplier}",
+    "carrierNotLinked": "أُضيف الناقل لكنه لم يُربط بالمورد: {reason}",
+    "nameFromUser": "عُبّئ من اسم المستخدم المربوط، ويمكنك تعديله."
   },
   "Consolidations": {
     "title": "الحاويات المجمعة",

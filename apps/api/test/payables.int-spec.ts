@@ -19,6 +19,7 @@ import type {
   ReceiptDto,
   SupplierBillDto,
   SupplierDto,
+  SupplierSummaryDto,
   SupplierPaymentDto,
   TripDto,
 } from '@nolon/shared';
@@ -653,6 +654,81 @@ describe('credit notes, payables, expenses and opening balances', () => {
         supplierName: supplier.name,
       });
       expect(supplier.number).toMatch(/^NOL-SUP-\d{6}$/);
+    });
+
+    describe('a supplier made from a carrier (functional review D3)', () => {
+      const tag = randomUUID().slice(0, 6).toUpperCase();
+      const newCarrier = async (name: string, phone: string | null = uniquePhone()) =>
+        (await post('/transport/carriers', cookies.opsPts, { name, phone }).expect(201))
+          .body as CarrierDto;
+      const carrierOf = async (id: string) =>
+        ((await get('/transport/carriers', cookies.opsPts).expect(200)).body as CarrierDto[]).find(
+          (c) => c.id === id,
+        );
+      const fromCarrier = (id: string, cookie = cookies.financePts) =>
+        post(`/suppliers/from-carrier/${id}`, cookie);
+
+      it('creates the supplier from the carrier and links them, once', async () => {
+        const c = await newCarrier(`D3 Trucks ${tag}`);
+        expect(
+          (await get(`/suppliers/matching-carrier/${c.id}`, cookies.financePts).expect(200)).body,
+        ).toEqual([]);
+        const made = (await fromCarrier(c.id).expect(201)).body as SupplierDto;
+        expect(made).toMatchObject({ name: c.name, phone: c.phone, isActive: true });
+        expect(made.carriers).toEqual([{ id: c.id, name: c.name }]);
+        expect(await carrierOf(c.id)).toMatchObject({ supplierId: made.id, supplierName: c.name });
+        // Linked already: a second request makes nothing.
+        await fromCarrier(c.id).expect(409);
+        expect(await t.prisma.supplier.count({ where: { name: c.name } })).toBe(1);
+      });
+
+      it('refuses a duplicate by name or phone and offers the existing supplier', async () => {
+        const phone = uniquePhone();
+        const existing = (
+          await post('/suppliers', cookies.financePts, {
+            name: `D3 Haulage ${tag}`,
+            phone,
+          }).expect(201)
+        ).body as SupplierDto;
+        // Same name in another case, no phone.
+        const byName = await newCarrier(`d3 haulage ${tag}`.toUpperCase(), null);
+        const matches = (
+          await get(`/suppliers/matching-carrier/${byName.id}`, cookies.financePts).expect(200)
+        ).body as SupplierSummaryDto[];
+        expect(matches.map((m) => m.id)).toEqual([existing.id]);
+        await fromCarrier(byName.id).expect(409);
+        // Same phone, another name.
+        const byPhone = await newCarrier(`D3 Other ${tag}`, phone);
+        await fromCarrier(byPhone.id).expect(409);
+        expect(await t.prisma.supplier.count({ where: { phone } })).toBe(1);
+        expect((await carrierOf(byName.id))?.supplierId).toBeNull();
+        expect((await carrierOf(byPhone.id))?.supplierId).toBeNull();
+        // Linking the existing supplier instead goes through the carrier link.
+        await put(
+          `/suppliers/${existing.id}/carriers/${byPhone.id}`,
+          cookies.financePts,
+          {},
+        ).expect(200);
+        expect((await carrierOf(byPhone.id))?.supplierId).toBe(existing.id);
+      });
+
+      it("needs both entities' permissions; an unknown carrier is 404", async () => {
+        const c = await newCarrier(`D3 Perm ${tag}`);
+        // Sales: no suppliers; Branch Manager: suppliers without create; Driver: neither.
+        await fromCarrier(c.id, cookies.salesPts).expect(403);
+        await fromCarrier(c.id, cookies.managerPts).expect(403);
+        await fromCarrier(c.id, cookies.driverPts).expect(403);
+        await get(`/suppliers/matching-carrier/${c.id}`, cookies.salesPts).expect(403);
+        await fromCarrier(randomUUID()).expect(404);
+        expect((await carrierOf(c.id))?.supplierId).toBeNull();
+      });
+
+      it('two requests at once for one carrier make one supplier', async () => {
+        const c = await newCarrier(`D3 Race ${tag}`);
+        const results = await Promise.all([fromCarrier(c.id), fromCarrier(c.id)]);
+        expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+        expect(await t.prisma.supplier.count({ where: { name: c.name } })).toBe(1);
+      });
     });
 
     it('a bill for shipment costs and expenses posts to their accounts and the payable', async () => {

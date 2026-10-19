@@ -182,6 +182,25 @@ export class SuppliersController {
     return this.suppliers.update(user, id, parse(supplierUpdateBody, body));
   }
 
+  /** Suppliers with the carrier's name or phone, before making one from it (review D3). */
+  @Get('matching-carrier/:carrierId')
+  @RequirePermission('suppliers:view', 'transport_fleet:view')
+  matchingCarrier(
+    @Param('carrierId', ParseUUIDPipe) carrierId: string,
+  ): Promise<SupplierSummaryDto[]> {
+    return this.suppliers.carrierMatches(carrierId);
+  }
+
+  /** A supplier made from a carrier and linked to it (review D3); 409 on a likely duplicate. */
+  @Post('from-carrier/:carrierId')
+  @RequirePermission('suppliers:create', 'suppliers:update', 'transport_fleet:view')
+  createFromCarrier(
+    @CurrentUser() user: AuthUser,
+    @Param('carrierId', ParseUUIDPipe) carrierId: string,
+  ): Promise<SupplierDto> {
+    return this.suppliers.createFromCarrier(user, carrierId);
+  }
+
   /** Links a carrier to the supplier whose bills settle its trips (annex C rule 11a). */
   @Put(':id/carriers/:carrierId')
   @RequirePermission('suppliers:update', 'transport_fleet:view')

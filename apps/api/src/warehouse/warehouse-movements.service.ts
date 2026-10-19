@@ -31,6 +31,7 @@ import {
   heldPackages,
   receiptStatusOptions,
   releasableAt,
+  remainingWeightKg,
   totalsByWarehouse,
 } from './warehouse-rules.js';
 import { type MovementWarehouse, WarehousesService } from './warehouses.service.js';
@@ -118,6 +119,7 @@ export class WarehouseMovementsService {
         onHandPackages: t.onHandPackages,
         receivedWeightKg: toDecimalString(t.receivedWeightKg),
         releasedWeightKg: toDecimalString(t.releasedWeightKg),
+        remainingWeightKg: toDecimalStringOrNull(remainingWeightKg(movements, warehouseId)),
       });
     }
     const has = (permission: Permission) => user.permissions.has(permission);
