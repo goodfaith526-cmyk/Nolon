@@ -14,6 +14,7 @@ import type {
   QuotationSummaryDto,
   RateUnit,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
@@ -204,7 +205,7 @@ export class QuotationsService {
     } else if (to !== null) {
       await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
     }
-    if (input.mode && input.mode !== 'SEA' && input.loadType) {
+    if (input.mode && !hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);
@@ -226,7 +227,7 @@ export class QuotationsService {
       if (rateCardId) {
         await onFields(
           [`${path}.rateCardId`],
-          () => this.rates.requireApprovedRate(rateCardId, branchId),
+          () => this.rates.requireApprovedRate(rateCardId),
           'RATE_NOT_USABLE',
         );
       }
@@ -375,7 +376,7 @@ export class QuotationsService {
     await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
-    if (input.mode !== 'SEA' && input.loadType) {
+    if (!hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);

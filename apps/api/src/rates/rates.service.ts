@@ -16,9 +16,10 @@ import type {
   RateUnit,
   ShippingMode,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
@@ -124,14 +125,18 @@ export interface RateFilters extends PageQuery {
   mode?: ShippingMode;
   /** Valid on this date (YYYY-MM-DD). */
   validOn?: string;
-  /** One of the user's branches (403 otherwise); else all of them. */
+  /** The rates of this branch; else of every branch. */
   branchId?: string;
 }
 
 /**
- * Selling rates (scope 7). Workflow: Sales create and edit DRAFT rates; a user with rates:approve
- * approves them; an approved rate is never edited, only cancelled (rates:cancel) and replaced.
- * Only approved rates in their validity window feed quotations.
+ * Selling rates (scope 7). Workflow: the Sales & Marketing Manager creates and edits DRAFT rates
+ * and approves them (rates:approve); an approved rate is never edited, only cancelled
+ * (rates:cancel) and replaced. Only approved rates in their validity window feed quotations.
+ *
+ * Rate cards are read by every branch (owner, 2026-10-19): any user with rates:view sees the rates
+ * of all branches, and a quotation or invoice of any branch is priced from them. A rate still
+ * belongs to a branch, and only a user of that branch changes it.
  */
 @Injectable()
 export class RatesService {
@@ -142,10 +147,10 @@ export class RatesService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(user: AuthUser, filters: RateFilters): Promise<Page<RateCardDto>> {
+  async list(filters: RateFilters): Promise<Page<RateCardDto>> {
     const route = await this.masterData.matchRoute(filters);
     const where: Prisma.RateCardWhereInput = {
-      ...listBranchScope(user, filters.branchId),
+      ...(filters.branchId ? { branchId: filters.branchId } : {}),
       ...(filters.status ? { status: filters.status } : {}),
       ...routeWhere(route),
       ...(filters.mode ? { mode: filters.mode } : {}),
@@ -177,8 +182,11 @@ export class RatesService {
     };
   }
 
-  async get(user: AuthUser, id: string): Promise<RateCardDto> {
-    return toDto(await this.findScoped(user, id));
+  /** A rate of any branch (rate cards are read by every branch). */
+  async get(id: string): Promise<RateCardDto> {
+    const rate = await this.prisma.rateCard.findUnique({ where: { id } });
+    if (!rate) throw new NotFoundException('Rate not found');
+    return toDto(rate);
   }
 
   /**
@@ -450,12 +458,12 @@ export class RatesService {
   }
 
   /**
-   * For quotation lines: an APPROVED rate of the quotation's branch, valid on `onDate`
+   * For quotation lines: an APPROVED rate of any branch, valid on `onDate`
    * (YYYY-MM-DD, branch time), that prices exactly this quotation: same currency, route, mode,
    * load type and cargo type. 400 on any mismatch.
    */
   async requireUsableRate(rateId: string, context: RatePricingContext): Promise<RateCard> {
-    const rate = await this.requireApprovedRate(rateId, context.branchId);
+    const rate = await this.requireApprovedRate(rateId);
     const day = toDbDate(context.onDate);
     if (rate.validFrom > day || (rate.validTo !== null && rate.validTo < day)) {
       throw new BadRequestException('Rate is not valid today');
@@ -475,27 +483,37 @@ export class RatesService {
   }
 
   /**
-   * An approved rate of the branch (a quotation line naming it, before the quotation it must match
+   * An approved rate of any branch (a quotation line naming it, before the quotation it must match
    * is complete); requireUsableRate checks the rest.
    */
-  async requireApprovedRate(rateId: string, branchId: string): Promise<RateCard> {
-    const rate = await this.prisma.rateCard.findFirst({ where: { id: rateId, branchId } });
+  async requireApprovedRate(rateId: string): Promise<RateCard> {
+    const rate = await this.prisma.rateCard.findUnique({ where: { id: rateId } });
     if (!rate || rate.status !== 'APPROVED') {
-      throw new BadRequestException('Rate is not an approved rate of this branch');
+      throw new BadRequestException('Rate is not an approved rate card');
     }
     return rate;
   }
 
   /**
-   * The offers systemRate chooses from: the APPROVED rates of the branch valid on `onDate` that
-   * match the context, one per container type, charge and unit (the latest started of rates that
-   * differ only by start date). Read-only.
+   * The offers systemRate chooses from: the APPROVED rates valid on `onDate` that match the
+   * context, one per branch, container type, charge and unit (the latest started of rates that
+   * differ only by start date: two branches' rates are always two offers). The document's own branch's rates when it has any that match; else those of
+   * every branch (rate cards are shared by all branches). Read-only.
    */
   async systemRates(context: RateMatchContext): Promise<RateCard[]> {
+    const own = await this.matchingRates(context, context.branchId);
+    return own.length > 0 ? own : this.matchingRates(context, null);
+  }
+
+  /** systemRates of one branch, or of every branch (`branchId` null). */
+  private async matchingRates(
+    context: RateMatchContext,
+    branchId: string | null,
+  ): Promise<RateCard[]> {
     const day = toDbDate(context.onDate);
     const rates = await this.prisma.rateCard.findMany({
       where: {
-        branchId: context.branchId,
+        ...(branchId === null ? {} : { branchId }),
         status: 'APPROVED',
         validFrom: { lte: day },
         OR: [{ validTo: null }, { validTo: { gte: day } }],
@@ -512,7 +530,13 @@ export class RatesService {
     });
     const offers = new Map<string, RateCard>();
     for (const rate of rates) {
-      const offer = [rate.containerTypeCode ?? '', rate.chargeTypeCode, rate.unit].join('|');
+      // Per branch: two branches' rates are different offers (rateKey), never revisions of one.
+      const offer = [
+        rate.branchId,
+        rate.containerTypeCode ?? '',
+        rate.chargeTypeCode,
+        rate.unit,
+      ].join('|');
       if (!offers.has(offer)) offers.set(offer, rate);
     }
     return [...offers.values()];
@@ -520,9 +544,10 @@ export class RatesService {
 
   /**
    * The system price of a line that names no rate card and gives no price: the only APPROVED rate
-   * of the branch, valid on `onDate`, for this route, mode, load type, cargo type and currency,
-   * and for the charge type and unit when given. Of rates that differ only by start date, the
-   * latest started replaces the older ones. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
+   * (of the document's branch, else of every branch: systemRates), valid on `onDate`, for this
+   * route, mode, load type, cargo type and currency, and for the charge type and unit when given.
+   * Of one branch's rates that differ only by start date, the latest started replaces the older
+   * ones; rates of two branches are never one offer. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
    * the candidates) when the line must say which (a charge type, a unit or the rate card).
    */
   async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {
@@ -530,7 +555,7 @@ export class RatesService {
     if (!only) {
       throw fieldRefusal(
         'RATE_NO_MATCH',
-        `No approved rate card of this branch matches (route, mode, load, cargo, currency${
+        `No approved rate card matches (route, mode, load, cargo, currency${
           context.chargeTypeCode ? `, charge ${context.chargeTypeCode}` : ''
         }${context.unit ? `, unit ${context.unit}` : ''}, valid on ${context.onDate}): ` +
           'enter the price',
@@ -617,7 +642,7 @@ export class RatesService {
         if (destination) add('destinationLocationId', 'UNKNOWN_LOCATION', destination);
         if (!origin && !destination) add('destinationLocationId', 'SAME_ROUTE', route);
       }
-      if (input.mode && input.mode !== 'SEA' && input.loadType) {
+      if (input.mode && !hasSeaLeg(input.mode) && input.loadType) {
         add('loadType', 'LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea rates only');
       }
       if (input.cargoType === 'CONTAINER') {

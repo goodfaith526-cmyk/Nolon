@@ -147,6 +147,7 @@ enum Role {
   WAREHOUSE
   CUSTOMS
   DRIVER
+  SALES_MARKETING_MANAGER
 
   @@map("role")
 }
@@ -409,9 +410,11 @@ model ChargeType {
   @@map("charge_types")
 }
 
+/// SEA_ROAD: a sea leg, then a road leg from the port of discharge.
 enum ShippingMode {
   SEA
   ROAD
+  SEA_ROAD
 
   @@map("shipping_mode")
 }

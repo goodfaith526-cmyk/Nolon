@@ -97,10 +97,11 @@ beforeAll(async () => {
     (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
   jebelAli = await loc('AEJEA');
   portSudan = await loc('SDPZU');
+  // The "sales" people here make rates: the Sales & Marketing Manager role (owner, 2026-10-19).
   const people = {
     admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX),
-    salesDxb: await createUser(t.prisma, ['SALES'], ['DXB']),
-    salesJed: await createUser(t.prisma, ['SALES'], ['JED']),
+    salesDxb: await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['DXB']),
+    salesJed: await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['JED']),
     opsDxb: await createUser(t.prisma, ['OPERATIONS'], ['DXB']),
     managerDxb: await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']),
   };
@@ -108,7 +109,7 @@ beforeAll(async () => {
     cookies[key] = await signIn(t, people[key].email);
   }
   const assistantUsers = {
-    salesAgent: await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX),
+    salesAgent: await createUser(t.prisma, ['SALES_MARKETING_MANAGER'], ['DXB'], AGENT_PREFIX),
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
@@ -230,7 +231,9 @@ describe('rate card drafts: a person reviews', () => {
         where: { entityId: rate.id, action: 'CREATED' },
       }),
     ).toBe(1);
-    await r.post(`/rates/${rate.id}/approve`, cookies.managerDxb).expect(200);
+    // A Branch Manager no longer approves rates; the Sales & Marketing Manager does.
+    await r.post(`/rates/${rate.id}/approve`, cookies.managerDxb).expect(403);
+    await r.post(`/rates/${rate.id}/approve`, cookies.salesDxb).expect(200);
   });
 
   it('a replay after the approval returns the saved draft, not a refusal', async () => {

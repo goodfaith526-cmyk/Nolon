@@ -172,13 +172,12 @@ describe('quotation drafts: missing fields', () => {
 describe('booking drafts: missing fields', () => {
   const direct: BookingDraftDirect = { customerId: ID };
 
-  it('names the route, mode, cargo type and services of a direct booking', () => {
+  it('names the route, mode and cargo type of a direct booking (services are optional)', () => {
     expect(directBookingMissingFields(direct)).toEqual([
       'originLocationId',
       'destinationLocationId',
       'mode',
       'cargoType',
-      'services',
     ]);
     expect(
       directBookingMissingFields({

@@ -212,7 +212,8 @@ export interface BookingGate {
 
 /**
  * A direct booking's values (bookings controller and BookingsService.prepare): its route, mode
- * and cargo type, at least one service, and what its lines miss (a booking may have no lines).
+ * and cargo type, and what its lines miss (a booking may have no lines). Services are optional:
+ * every booking carries the main freight.
  */
 export function bookingValuesCompleteness(values: BookingGate): Completeness {
   const f = new Findings()
@@ -220,7 +221,6 @@ export function bookingValuesCompleteness(values: BookingGate): Completeness {
     .require('destinationLocationId', values.destinationLocationId)
     .require('mode', values.mode)
     .require('cargoType', values.cargoType);
-  if ((values.services ?? []).length === 0) f.missing.push('services');
   return f.merge(bookingItemsCompleteness(values.items)).result();
 }
 

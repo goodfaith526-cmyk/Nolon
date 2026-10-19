@@ -1,14 +1,15 @@
 'use client';
 
 import {
-  CARGO_TYPES,
   LOAD_TYPES,
+  OFFERED_CARGO_TYPES,
   RATE_STATUSES,
   RATE_UNITS,
-  SHIPPING_MODES,
+  hasSeaLeg,
   type Page,
   type RateCardDto,
   type RateStatus,
+  type ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
@@ -19,6 +20,7 @@ import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data'
 import { can, useMe } from '../StaffShell';
 import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
+import { ModePicker } from './ModePicker';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function Rates() {
@@ -27,6 +29,7 @@ export function Rates() {
   const te = useTranslations('Enums');
   const me = useMe();
   const master = useMasterData();
+  const name = useLocalName();
   const locationName = useLocationName(master);
   const failure = useFailureText();
   const [status, setStatus] = useState<RateStatus | ''>('');
@@ -44,6 +47,13 @@ export function Rates() {
   useEffect(load, [load]);
 
   if (!can(me, 'rates:view')) return <p className="error">{tc('noAccess')}</p>;
+
+  // Every branch reads the rate cards; a rate is changed by a user of its own branch.
+  const ofMine = (r: RateCardDto) => me.allBranches || me.branches.some((b) => b.id === r.branchId);
+  const branchName = (id: string) => {
+    const branch = master?.branches.find((b) => b.id === id);
+    return branch ? name(branch) : '';
+  };
 
   async function act(rate: RateCardDto, action: 'approve' | 'cancel') {
     setNotice(null);
@@ -103,6 +113,7 @@ export function Rates() {
           <table>
             <thead>
               <tr>
+                <th>{t('branch')}</th>
                 <th>{t('route')}</th>
                 <th>{t('mode')}</th>
                 <th>{t('cargo')}</th>
@@ -115,6 +126,7 @@ export function Rates() {
             <tbody>
               {page.items.map((r) => (
                 <tr key={r.id} className={r.status === 'CANCELLED' ? 'inactive' : ''}>
+                  <td>{branchName(r.branchId)}</td>
                   <td>
                     {tc('route', {
                       from: locationName(r.originLocationId),
@@ -146,12 +158,12 @@ export function Rates() {
                   </td>
                   <td>
                     <div className="actions">
-                      {r.status === 'DRAFT' && can(me, 'rates:approve') && (
+                      {r.status === 'DRAFT' && ofMine(r) && can(me, 'rates:approve') && (
                         <button type="button" onClick={() => void act(r, 'approve')}>
                           {t('approve')}
                         </button>
                       )}
-                      {r.status !== 'CANCELLED' && can(me, 'rates:cancel') && (
+                      {r.status !== 'CANCELLED' && ofMine(r) && can(me, 'rates:cancel') && (
                         <button type="button" onClick={() => void act(r, 'cancel')}>
                           {t('cancel')}
                         </button>
@@ -176,7 +188,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
   const name = useLocalName();
   const master = useMasterData();
   const failure = useFailureText();
-  const [mode, setMode] = useState<string>('SEA');
+  const [mode, setMode] = useState<ShippingMode>('SEA');
   const [cargo, setCargo] = useState<string>('CONTAINER');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -190,7 +202,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
       originLocationId: field(form, 'originLocationId'),
       destinationLocationId: field(form, 'destinationLocationId'),
       mode,
-      loadType: mode === 'SEA' ? field(form, 'loadType') || null : null,
+      loadType: hasSeaLeg(mode) ? field(form, 'loadType') || null : null,
       cargoType: cargo,
       containerTypeCode: cargo === 'CONTAINER' ? field(form, 'containerTypeCode') : null,
       chargeTypeCode: field(form, 'chargeTypeCode'),
@@ -253,17 +265,8 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
             ))}
           </select>
         </label>
-        <label className="field">
-          {t('mode')}
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            {SHIPPING_MODES.map((m) => (
-              <option key={m} value={m}>
-                {te(`mode_${m}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'SEA' && (
+        <ModePicker label={t('mode')} value={mode} onChange={setMode} />
+        {hasSeaLeg(mode) && (
           <label className="field">
             {t('loadType')}
             <select name="loadType">
@@ -278,7 +281,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
         <label className="field">
           {t('cargo')}
           <select value={cargo} onChange={(e) => setCargo(e.target.value)}>
-            {CARGO_TYPES.map((c) => (
+            {OFFERED_CARGO_TYPES.map((c) => (
               <option key={c} value={c}>
                 {te(`cargo_${c}`)}
               </option>

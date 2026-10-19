@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "shipping_mode" ADD VALUE 'SEA_ROAD';
+
+-- AlterEnum
+ALTER TYPE "role" ADD VALUE 'SALES_MARKETING_MANAGER';

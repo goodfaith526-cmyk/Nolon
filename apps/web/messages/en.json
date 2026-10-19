@@ -163,7 +163,8 @@
     "FINANCE": "Finance",
     "WAREHOUSE": "Warehouse",
     "CUSTOMS": "Customs",
-    "DRIVER": "Driver / Transport"
+    "DRIVER": "Driver / Transport",
+    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager"
   },
   "Common": {
     "invalidInput": "Check the fields and try again.",
@@ -279,6 +280,7 @@
     "rate_CANCELLED": "Cancelled",
     "mode_SEA": "Sea",
     "mode_ROAD": "Road",
+    "mode_SEA_ROAD": "Sea and road",
     "cargo_CONTAINER": "Container",
     "cargo_PALLET": "Pallets",
     "cargo_BARREL": "Barrels",

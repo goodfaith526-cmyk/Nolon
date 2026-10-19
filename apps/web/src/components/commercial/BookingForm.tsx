@@ -2,9 +2,9 @@
 
 import {
   BOOKING_SERVICES,
-  CARGO_TYPES,
   LOAD_TYPES,
-  SHIPPING_MODES,
+  cbmOf,
+  hasSeaLeg,
   type BookingDto,
   type BookingService,
   type CargoType,
@@ -24,7 +24,9 @@ import { asciiDigits } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { can, useMe } from '../StaffShell';
+import { cargoChoices } from './cargo';
 import { CustomerPicker } from './CustomerPicker';
+import { ModePicker } from './ModePicker';
 import { FormDialog } from './FormDialog';
 import {
   invalidFields,
@@ -74,10 +76,14 @@ const hasDimensions = (i: ItemState) => i.lengthCm !== '' || i.widthCm !== '' ||
 
 const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
 
+/** The services to choose from: every booking carries the main freight, so it is not one. */
+const CHOSEN_SERVICES = BOOKING_SERVICES.filter((s) => s !== 'MAIN_FREIGHT');
+
 type PartyField = 'shipperId' | 'consigneeId' | 'notifyPartyId';
 
 /**
- * New direct booking, or edit of a draft. CBM is computed by the API from the dimensions. With
+ * New direct booking, or edit of a draft. CBM is computed by the API from the dimensions, and
+ * shown as they are typed (the same rounding, from @nolon/shared). With
  * `consolidation`, an LCL sea booking from that container's port of loading: saving confirms it
  * and puts its shipment in the container.
  */
@@ -108,9 +114,11 @@ export function BookingForm({
     booking?.loadType ?? (consolidation ? 'LCL' : 'FCL'),
   );
   const [cargoType, setCargoType] = useState<CargoType>(
-    booking?.cargoType ?? (consolidation ? 'GENERAL' : 'CONTAINER'),
+    booking?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'),
   );
-  const [services, setServices] = useState<BookingService[]>(booking?.services ?? ['MAIN_FREIGHT']);
+  const [services, setServices] = useState<BookingService[]>(
+    booking?.services.filter((s) => s !== 'MAIN_FREIGHT') ?? [],
+  );
   const [items, setItems] = useState<ItemState[]>(
     booking?.items.map((i) => ({
       key: nextKey++,
@@ -123,7 +131,7 @@ export function BookingForm({
       heightCm: i.heightCm ?? '',
       weightKg: i.weightKg ?? '',
       volumeCbm: i.lengthCm ? '' : (i.volumeCbm ?? ''),
-    })) ?? [emptyItem(consolidation ? 'GENERAL' : 'CONTAINER')],
+    })) ?? [emptyItem(consolidation ? 'PALLET' : 'CONTAINER')],
   );
   const [busy, setBusy] = useState(false);
   const [partyIds, setPartyIds] = useState<Record<PartyField, string>>({
@@ -217,7 +225,7 @@ export function BookingForm({
       ...fields,
       originLocationId: origin,
       mode,
-      loadType: mode === 'SEA' ? loadType : null,
+      loadType: hasSeaLeg(mode) ? loadType : null,
     };
     setBusy(true);
     setNotice(null);
@@ -357,23 +365,15 @@ export function BookingForm({
             </select>
             <FieldNote note={note} path="destinationLocationId" />
           </label>
-          <label className="field">
-            {t('mode')}
-            <select
-              {...mark('mode')}
-              value={mode}
-              disabled={consolidation !== undefined}
-              onChange={(e) => setMode(e.target.value as ShippingMode)}
-            >
-              {SHIPPING_MODES.map((m) => (
-                <option key={m} value={m}>
-                  {te(`mode_${m}`)}
-                </option>
-              ))}
-            </select>
-            <FieldNote note={note} path="mode" />
-          </label>
-          {mode === 'SEA' && (
+          <ModePicker
+            label={t('mode')}
+            value={mode}
+            onChange={setMode}
+            disabled={consolidation !== undefined}
+            invalid={markGroup('mode')}
+            note={<FieldNote note={note} path="mode" />}
+          />
+          {hasSeaLeg(mode) && (
             <label className="field">
               {t('loadType')}
               <select
@@ -398,7 +398,7 @@ export function BookingForm({
               value={cargoType}
               onChange={(e) => setCargoType(e.target.value as CargoType)}
             >
-              {CARGO_TYPES.map((c) => (
+              {cargoChoices(cargoType).map((c) => (
                 <option key={c} value={c}>
                   {te(`cargo_${c}`)}
                 </option>
@@ -435,7 +435,7 @@ export function BookingForm({
           <p>{t('servicesHint')}</p>
         </header>
         <div className="form-section-body checks" {...markGroup('services')}>
-          {BOOKING_SERVICES.map((s) => (
+          {CHOSEN_SERVICES.map((s) => (
             <label key={s}>
               <input
                 type="checkbox"
@@ -472,7 +472,7 @@ export function BookingForm({
                     });
                   }}
                 >
-                  {CARGO_TYPES.map((c) => (
+                  {cargoChoices(i.cargoType).map((c) => (
                     <option key={c} value={c}>
                       {te(`cargo_${c}`)}
                     </option>
@@ -518,9 +518,13 @@ export function BookingForm({
                     inputMode="decimal"
                     dir="ltr"
                     {...mark(`items.${index}.${k}`)}
-                    value={i[k]}
+                    value={
+                      k === 'volumeCbm' && hasDimensions(i)
+                        ? (cbmOf(i.lengthCm, i.widthCm, i.heightCm, i.quantity) ?? '')
+                        : i[k]
+                    }
                     // Once one dimension is typed the other two are asked for here, and the API
-                    // computes the CBM from them.
+                    // computes the CBM from them; it shows here as they are typed.
                     required={DIMENSIONS.includes(k) && hasDimensions(i)}
                     disabled={k === 'volumeCbm' && hasDimensions(i)}
                     onChange={(e) => updateItem(i.key, { [k]: asciiDigits(e.target.value) })}

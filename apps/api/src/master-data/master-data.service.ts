@@ -34,14 +34,20 @@ export class MasterDataService {
   constructor(private readonly prisma: PrismaService) {}
 
   async all(): Promise<MasterDataDto> {
-    const [locations, containerTypes, chargeTypes, documentTypes, currencies] = await Promise.all([
-      this.prisma.location.findMany({ orderBy: [{ countryCode: 'asc' }, { code: 'asc' }] }),
-      this.prisma.containerType.findMany({ orderBy: { code: 'asc' } }),
-      this.prisma.chargeType.findMany({ orderBy: { code: 'asc' } }),
-      this.prisma.documentType.findMany({ orderBy: { code: 'asc' } }),
-      this.prisma.currency.findMany({ orderBy: { code: 'asc' } }),
-    ]);
+    const [branches, locations, containerTypes, chargeTypes, documentTypes, currencies] =
+      await Promise.all([
+        this.prisma.branch.findMany({
+          select: { id: true, code: true, nameEn: true, nameAr: true },
+          orderBy: { code: 'asc' },
+        }),
+        this.prisma.location.findMany({ orderBy: [{ countryCode: 'asc' }, { code: 'asc' }] }),
+        this.prisma.containerType.findMany({ orderBy: { code: 'asc' } }),
+        this.prisma.chargeType.findMany({ orderBy: { code: 'asc' } }),
+        this.prisma.documentType.findMany({ orderBy: { code: 'asc' } }),
+        this.prisma.currency.findMany({ orderBy: { code: 'asc' } }),
+      ]);
     return {
+      branches,
       locations: locations.map(toLocationDto),
       containerTypes: containerTypes.map(toCodeNameDto),
       chargeTypes: chargeTypes.map(toCodeNameDto),

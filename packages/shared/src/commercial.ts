@@ -7,15 +7,44 @@ import type { Locale } from './locales.js';
  * data: ports, container types and charge types are tables the client extends.
  */
 
-export const SHIPPING_MODES = ['SEA', 'ROAD'] as const;
+/** SEA_ROAD: a sea leg, then a road leg from the port of discharge (owner, 2026-10-19). */
+export const SHIPPING_MODES = ['SEA', 'ROAD', 'SEA_ROAD'] as const;
 export type ShippingMode = (typeof SHIPPING_MODES)[number];
 
-/** Sea only. */
+/** The mode has a sea leg: FCL/LCL apply, and sea statuses and consolidation. */
+export function hasSeaLeg(mode: ShippingMode): boolean {
+  return mode === 'SEA' || mode === 'SEA_ROAD';
+}
+
+/** The mode has a road leg of its own (main freight by road). */
+export function hasRoadLeg(mode: ShippingMode): boolean {
+  return mode === 'ROAD' || mode === 'SEA_ROAD';
+}
+
+/** The mode of a sea leg and a road leg chosen as two ticks; null when neither is ticked. */
+export function modeOfLegs(sea: boolean, road: boolean): ShippingMode | null {
+  if (sea && road) return 'SEA_ROAD';
+  if (sea) return 'SEA';
+  if (road) return 'ROAD';
+  return null;
+}
+
+/** Modes with a sea leg only. */
 export const LOAD_TYPES = ['FCL', 'LCL'] as const;
 export type LoadType = (typeof LOAD_TYPES)[number];
 
 export const CARGO_TYPES = ['CONTAINER', 'PALLET', 'BARREL', 'GENERAL'] as const;
 export type CargoType = (typeof CARGO_TYPES)[number];
+
+/**
+ * The cargo types offered on a new booking, quotation or rate (owner, 2026-10-19): container,
+ * pallet or barrel. GENERAL stays readable on records made before.
+ */
+export const OFFERED_CARGO_TYPES = [
+  'CONTAINER',
+  'PALLET',
+  'BARREL',
+] as const satisfies readonly CargoType[];
 
 export const RATE_UNITS = [
   'PER_CONTAINER',
@@ -106,8 +135,18 @@ export interface CurrencyDto extends CodeNameDto {
   decimalPlaces: number;
 }
 
+/** A branch by name, for showing which branch a record belongs to (e.g. a shared rate card). */
+export interface BranchNameDto {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+}
+
 /** GET /master-data: everything the commercial and shipment screens need for their dropdowns. */
 export interface MasterDataDto {
+  /** Every branch, by name only. */
+  branches: BranchNameDto[];
   locations: LocationDto[];
   containerTypes: CodeNameDto[];
   chargeTypes: CodeNameDto[];
@@ -525,3 +564,34 @@ export const FORM_REFUSALS = [
   'BRANCH_MISMATCH',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
+
+/** A non-negative decimal as text, scaled to `scale` places; null when it is not one or has more. */
+function scaledDecimal(value: string, scale: number): bigint | null {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return null;
+  const [, whole = '', fraction = ''] = match;
+  if (fraction.length > scale) return null;
+  return BigInt(whole + fraction.padEnd(scale, '0'));
+}
+
+/**
+ * CBM of `quantity` pieces of L × W × H centimetres, rounded half up to 4 places: the same value
+ * the API stores (bookings/cbm.ts), for showing while the form is filled in. Null until the three
+ * dimensions (up to 2 decimals each) and a whole quantity are given.
+ */
+export function cbmOf(
+  lengthCm: string,
+  widthCm: string,
+  heightCm: string,
+  quantity: string,
+): DecimalString | null {
+  const dims = [lengthCm, widthCm, heightCm].map((v) => scaledDecimal(v, 2));
+  const pieces = scaledDecimal(quantity, 0);
+  if (pieces === null || dims.some((d) => d === null)) return null;
+  // Each dimension is in hundredths: the product is in 1e-6 cm³; a CBM is 1e6 cm³.
+  const product = dims.reduce<bigint>((a, d) => a * (d ?? 0n), pieces);
+  // 1e-6 cm³ to 1e-4 CBM: divide by 1e8, half up.
+  const tenThousandths = (product + 50_000_000n) / 100_000_000n;
+  const text = tenThousandths.toString().padStart(5, '0');
+  return `${text.slice(0, -4)}.${text.slice(-4)}`;
+}

@@ -568,7 +568,11 @@ describe('warehouse and customs', () => {
     });
 
     it('storage only: both sides are allowed, none is preselected, the receipt says which', async () => {
+      // Every new booking carries the main freight (owner, 2026-10-19); a storage-only shipment
+      // is one booked before that.
       const s = await confirmedShipment(['WAREHOUSE']);
+      expect([...s.services].sort()).toEqual(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await t.prisma.shipment.update({ where: { id: s.id }, data: { services: ['WAREHOUSE'] } });
       const v = await view(s.id);
       expect(v.actions.receiptStatuses).toEqual([
         'RECEIVED_ORIGIN_WAREHOUSE',

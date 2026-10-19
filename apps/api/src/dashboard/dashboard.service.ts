@@ -26,7 +26,7 @@ export class DashboardService {
     const can = (permission: Permission) => user.permissions.has(permission);
     const [customers, rates, quotations, bookings] = await Promise.all([
       can('customers:view') ? this.customerFigures(user) : null,
-      can('rates:view') ? this.rateFigures(user) : null,
+      can('rates:view') ? this.rateFigures() : null,
       can('quotations:view') ? this.quotationFigures(user) : null,
       can('bookings:view') ? this.bookingFigures(user) : null,
     ]);
@@ -38,10 +38,11 @@ export class DashboardService {
     return { total: page.total };
   }
 
-  private async rateFigures(user: AuthUser) {
+  /** Rate cards are shared by every branch: the figures are the company's. */
+  private async rateFigures() {
     const [draft, approved] = await Promise.all([
-      this.rates.list(user, { ...COUNT, status: 'DRAFT' }),
-      this.rates.list(user, { ...COUNT, status: 'APPROVED' }),
+      this.rates.list({ ...COUNT, status: 'DRAFT' }),
+      this.rates.list({ ...COUNT, status: 'APPROVED' }),
     ]);
     return { draft: draft.total, approved: approved.total };
   }

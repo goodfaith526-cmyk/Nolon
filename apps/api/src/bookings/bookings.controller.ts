@@ -60,7 +60,8 @@ export const partyRefs = {
   notifyPartyId: z.uuid().nullish(),
 };
 
-export const services = z.array(z.enum(BOOKING_SERVICES)).min(1).max(BOOKING_SERVICES.length);
+/** The services besides the main freight, which every booking carries (it may be listed too). */
+export const services = z.array(z.enum(BOOKING_SERVICES)).max(BOOKING_SERVICES.length);
 const items = z.array(itemBody).max(100);
 
 export const bookingFields = {

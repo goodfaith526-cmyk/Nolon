@@ -25,6 +25,7 @@ import type {
   ShipmentConsolidationDto,
   ShipmentStatus,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import { seesConsolidationCosts } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import {
@@ -452,7 +453,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
   async requireBookable(user: AuthUser, id: string, booking: ContainerBookingShape): Promise<void> {
     const container = await this.bookableReference(user, id);
     const params = { container: container.number };
-    if (booking.mode !== 'SEA' || booking.loadType !== 'LCL') {
+    if (!hasSeaLeg(booking.mode) || booking.loadType !== 'LCL') {
       throw codedRefusal(
         HttpStatus.BAD_REQUEST,
         'CONTAINER_BOOKING_NOT_LCL_SEA',
@@ -468,14 +469,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         params,
       );
     }
-    if (!booking.services.includes('MAIN_FREIGHT')) {
-      throw codedRefusal(
-        HttpStatus.BAD_REQUEST,
-        'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
-        `A booking in container ${container.number} includes the main freight`,
-        params,
-      );
-    }
+    // The main freight is not checked: every booking carries it (BookingsService.prepare adds it).
   }
 
   /**

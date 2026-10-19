@@ -304,3 +304,78 @@ describe('BookingForm refused save', () => {
     expect(document.querySelectorAll('.field-error')).toHaveLength(0);
   });
 });
+
+describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  async function render(value: BookingDto = booking) {
+    api.mockReset();
+    api.mockResolvedValue(customer([]));
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm booking={value} />);
+    });
+    await flush();
+  }
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  const modeBox = (label: string) =>
+    [...document.querySelectorAll('fieldset label')]
+      .find((l) => l.textContent?.trim() === label)
+      ?.querySelector('input') as HTMLInputElement;
+  const fieldInput = (label: string, index = 0) =>
+    [...document.querySelectorAll('label.field')]
+      .filter((l) => l.textContent?.startsWith(label))
+      [index]?.querySelector('input') as HTMLInputElement;
+
+  it('sends sea and road together as SEA_ROAD and keeps FCL/LCL for it', async () => {
+    await render();
+    expect(modeBox('mode_SEA').checked).toBe(true);
+    expect(modeBox('mode_ROAD').checked).toBe(false);
+    // The only ticked leg cannot be unticked.
+    expect(modeBox('mode_SEA').disabled).toBe(true);
+    click(modeBox('mode_ROAD'));
+    expect(modeBox('mode_SEA').disabled).toBe(false);
+    api.mockResolvedValueOnce({ ...booking, id: 'bk1' });
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+    expect(api).toHaveBeenCalledWith('/bookings/bk1', {
+      method: 'PATCH',
+      body: expect.objectContaining({ mode: 'SEA_ROAD', loadType: 'FCL' }) as unknown,
+    });
+  });
+
+  it('offers container, pallet and barrel, and no main freight tick', async () => {
+    await render();
+    const cargo = [...document.querySelectorAll('select')].find((s) =>
+      [...s.options].some((o) => o.value === 'BARREL'),
+    );
+    expect([...(cargo?.options ?? [])].map((o) => o.value)).toEqual([
+      'CONTAINER',
+      'PALLET',
+      'BARREL',
+    ]);
+    expect(document.body.textContent).not.toContain('service_MAIN_FREIGHT');
+    expect(document.body.textContent).toContain('service_CUSTOMS');
+  });
+
+  it('shows the CBM as the dimensions are typed', async () => {
+    await render();
+    click(buttonByText('addItem'));
+    typeInto(fieldInput('quantity'), '10');
+    typeInto(fieldInput('lengthCm'), '120');
+    typeInto(fieldInput('widthCm'), '100');
+    expect(fieldInput('volumeCbm').value).toBe('');
+    typeInto(fieldInput('heightCm'), '150');
+    expect(fieldInput('volumeCbm').value).toBe('18.0000');
+    expect(fieldInput('volumeCbm').disabled).toBe(true);
+  });
+});

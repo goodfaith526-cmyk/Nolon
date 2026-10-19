@@ -195,6 +195,25 @@ describe('booking drafts into an open container', () => {
     expect(await bookingsOfCustomer()).toBe(1);
   });
 
+  it('books into a container with the services left out: the main freight is implied', async () => {
+    // Every booking carries the main freight (owner, 2026-10-19; Codex N90-2).
+    const container = await openContainer();
+    const body = lclBooking(container.id, { services: undefined });
+    const checked = (await r.agentPost('/booking-drafts/check', tokens.opsJed, body).expect(200))
+      .body as { ok: boolean };
+    expect(checked.ok).toBe(true);
+    const summary = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    const approved = (
+      await r
+        .post(`/booking-drafts/${summary.id}/approve`, cookies.opsJed, { version: 1 })
+        .expect(200)
+    ).body as BookingDraftDto;
+    const booking = (await r.get(`/bookings/${approved.bookingId}`, cookies.opsJed).expect(200))
+      .body as BookingDto;
+    expect(booking.services).toEqual(['MAIN_FREIGHT']);
+    expect(booking.status).toBe('CONFIRMED');
+  });
+
   it('refuses a booking that does not fit the container, naming why, and stores nothing', async () => {
     const container = await openContainer();
     const before = await t.prisma.bookingDraft.count({ where: { consolidationId: container.id } });
@@ -213,9 +232,6 @@ describe('booking drafts into an open container', () => {
         400,
       ),
     ).toBe('CONTAINER_BOOKING_OTHER_PORT');
-    expect(await refused(lclBooking(container.id, { services: ['LAST_MILE'] }), 400)).toBe(
-      'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
-    );
     // Warehouse sees bookings but books nothing, into a container or not.
     await createDraft(lclBooking(container.id), tokens.whJed).expect(403);
     // A container that does not exist, and a bad id.

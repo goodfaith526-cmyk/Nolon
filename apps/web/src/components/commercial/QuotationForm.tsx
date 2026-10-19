@@ -1,10 +1,9 @@
 'use client';
 
 import {
-  CARGO_TYPES,
   LOAD_TYPES,
   RATE_UNITS,
-  SHIPPING_MODES,
+  hasSeaLeg,
   type CargoType,
   type CreateFormReviewRequest,
   type CustomerSummaryDto,
@@ -23,6 +22,8 @@ import { asciiDigits } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { CustomerPicker } from './CustomerPicker';
+import { cargoChoices } from './cargo';
+import { ModePicker } from './ModePicker';
 import {
   invalidFields,
   invalidGroupProps,
@@ -121,7 +122,8 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     api<Page<RateCardDto>>(`/rates?${query}`)
       .then((page) => {
         if (!cancelled) {
-          setRates(page.items.filter((r) => r.branchId === branchId && r.currency === currency));
+          // Rate cards of every branch price a quotation (owner, 2026-10-19).
+          setRates(page.items.filter((r) => r.currency === currency));
         }
       })
       .catch(() => {
@@ -147,7 +149,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
       originLocationId: origin,
       destinationLocationId: destination,
       mode,
-      loadType: mode === 'SEA' && loadType ? loadType : null,
+      loadType: hasSeaLeg(mode) && loadType ? loadType : null,
       cargoType,
       cargoDescription: text('cargoDescription'),
       currency,
@@ -257,22 +259,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             </select>
             <FieldNote note={note} path="destinationLocationId" />
           </label>
-          <label className="field">
-            {t('mode')}
-            <select
-              {...mark('mode')}
-              value={mode}
-              onChange={(e) => setMode(e.target.value as ShippingMode)}
-            >
-              {SHIPPING_MODES.map((m) => (
-                <option key={m} value={m}>
-                  {te(`mode_${m}`)}
-                </option>
-              ))}
-            </select>
-            <FieldNote note={note} path="mode" />
-          </label>
-          {mode === 'SEA' && (
+          <ModePicker
+            label={t('mode')}
+            value={mode}
+            onChange={setMode}
+            invalid={markGroup('mode')}
+            note={<FieldNote note={note} path="mode" />}
+          />
+          {hasSeaLeg(mode) && (
             <label className="field">
               {t('loadType')}
               <select
@@ -296,7 +290,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               value={cargoType}
               onChange={(e) => setCargoType(e.target.value as CargoType)}
             >
-              {CARGO_TYPES.map((c) => (
+              {cargoChoices(cargoType).map((c) => (
                 <option key={c} value={c}>
                   {te(`cargo_${c}`)}
                 </option>
