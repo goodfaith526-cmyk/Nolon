@@ -101,6 +101,13 @@ export class ReceiptApplicationsService {
     try {
       await this.prisma.$transaction(async (tx) => {
         await lockPostedReceipt(tx, receiptId);
+        // A retry that waited on the lock behind its own first attempt replays it here, before
+        // the balances that attempt used up are checked again.
+        const replay = await tx.receiptApplication.findUnique({ where: { id: input.requestId } });
+        if (replay) {
+          sameRequest(user, receiptId, replay, input);
+          return;
+        }
         const invoices = await lockInvoices(tx, [input.invoiceId]);
         const invoice = invoices.get(input.invoiceId);
         if (!invoice) throw new NotFoundException('Invoice not found');

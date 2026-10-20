@@ -423,6 +423,44 @@ describe('receipt advance applications', () => {
     expect(await invoiceNow(inv.id)).toMatchObject({ paidAmount: '100' });
   });
 
+  it.each([
+    ['the whole advance', '100', '0'],
+    ["the invoice's whole balance", '250', '150'],
+  ])(
+    'replays the same request twice in flight once, when it used up %s',
+    async (_, amount, left) => {
+      const receipt = await advance(amount, d('03-05'));
+      const inv = await invoice({ currency: 'USD', invoiceDate: d('03-06') }, '100');
+      const body = applyBody(inv.id, '100', d('03-07'));
+      // Hold the receipt so both copies of the request pass the first lookup and queue on its lock.
+      let release = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let held = () => {};
+      const holding = new Promise<void>((resolve) => (held = resolve));
+      const hold = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "receipts" WHERE "id" = ${receipt.id}::uuid FOR UPDATE`;
+          held();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+      await holding;
+      const requests = [1, 2].map(() =>
+        post(`/receipts/${receipt.id}/applications`, cookies.financePts, body).then((r) => r),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      release();
+      await hold;
+      const results = await Promise.all(requests);
+      expect(results.map((r) => r.status)).toEqual([200, 200]);
+      const after = (await get(`/receipts/${receipt.id}`).expect(200)).body as ReceiptDto;
+      expect(after).toMatchObject({ applied: '100', unallocated: left });
+      expect(after.applications).toHaveLength(1);
+      expect(await invoiceNow(inv.id)).toMatchObject({ paidAmount: '100' });
+    },
+  );
+
   it('refuses a receipt that allocated all of its amount', async () => {
     const inv = await invoice({ currency: 'USD', invoiceDate: d('04-01') }, '100');
     const full = (
