@@ -42,21 +42,22 @@ model Branch {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users           UserBranch[]
-  customers       Customer[]
-  rateCards       RateCard[]
-  quotations      Quotation[]
-  bookings        Booking[]
-  shipments       Shipment[]
-  sharedShipments ShipmentBranch[]
-  auditEvents     AuditEvent[]
-  shipmentEvents  ShipmentEvent[]
-  documents       Document[]
-  accounts        Account[]
-  journalEntries  JournalEntry[]
-  journalLines    JournalLine[]
-  invoices        CustomerInvoice[]
-  receipts        Receipt[]
+  users               UserBranch[]
+  customers           Customer[]
+  rateCards           RateCard[]
+  quotations          Quotation[]
+  bookings            Booking[]
+  shipments           Shipment[]
+  sharedShipments     ShipmentBranch[]
+  auditEvents         AuditEvent[]
+  shipmentEvents      ShipmentEvent[]
+  documents           Document[]
+  accounts            Account[]
+  journalEntries      JournalEntry[]
+  journalLines        JournalLine[]
+  invoices            CustomerInvoice[]
+  receipts            Receipt[]
+  receiptApplications ReceiptApplication[]
 
   warehouses                 Warehouse[]
   storageLocations           StorageLocation[]
@@ -174,23 +175,25 @@ model User {
   /// Forms this user could not save and opened with the staff assistant.
   assistantFormReviews AssistantFormReview[]
 
-  customersCreated  Customer[]        @relation("CustomerCreatedBy")
-  ratesCreated      RateCard[]        @relation("RateCreatedBy")
-  ratesApproved     RateCard[]        @relation("RateApprovedBy")
-  quotationsCreated Quotation[]       @relation("QuotationCreatedBy")
-  bookingsCreated   Booking[]         @relation("BookingCreatedBy")
-  shipmentsCreated  Shipment[]        @relation("ShipmentCreatedBy")
-  shipmentEvents    ShipmentEvent[]
-  documentsUploaded Document[]        @relation("DocumentUploadedBy")
-  documentsDeleted  Document[]        @relation("DocumentDeletedBy")
-  periodsClosed     FiscalPeriod[]    @relation("PeriodClosedBy")
-  fxRatesCreated    FxRate[]          @relation("FxRateCreatedBy")
-  journalsCreated   JournalEntry[]    @relation("JournalCreatedBy")
-  journalsPosted    JournalEntry[]    @relation("JournalPostedBy")
-  invoicesCreated   CustomerInvoice[] @relation("InvoiceCreatedBy")
-  invoicesApproved  CustomerInvoice[] @relation("InvoiceApprovedBy")
-  receiptsCreated   Receipt[]         @relation("ReceiptCreatedBy")
-  receiptsCancelled Receipt[]         @relation("ReceiptCancelledBy")
+  customersCreated            Customer[]           @relation("CustomerCreatedBy")
+  ratesCreated                RateCard[]           @relation("RateCreatedBy")
+  ratesApproved               RateCard[]           @relation("RateApprovedBy")
+  quotationsCreated           Quotation[]          @relation("QuotationCreatedBy")
+  bookingsCreated             Booking[]            @relation("BookingCreatedBy")
+  shipmentsCreated            Shipment[]           @relation("ShipmentCreatedBy")
+  shipmentEvents              ShipmentEvent[]
+  documentsUploaded           Document[]           @relation("DocumentUploadedBy")
+  documentsDeleted            Document[]           @relation("DocumentDeletedBy")
+  periodsClosed               FiscalPeriod[]       @relation("PeriodClosedBy")
+  fxRatesCreated              FxRate[]             @relation("FxRateCreatedBy")
+  journalsCreated             JournalEntry[]       @relation("JournalCreatedBy")
+  journalsPosted              JournalEntry[]       @relation("JournalPostedBy")
+  invoicesCreated             CustomerInvoice[]    @relation("InvoiceCreatedBy")
+  invoicesApproved            CustomerInvoice[]    @relation("InvoiceApprovedBy")
+  receiptsCreated             Receipt[]            @relation("ReceiptCreatedBy")
+  receiptsCancelled           Receipt[]            @relation("ReceiptCancelledBy")
+  receiptApplicationsCreated  ReceiptApplication[] @relation("ReceiptApplicationCreatedBy")
+  receiptApplicationsReversed ReceiptApplication[] @relation("ReceiptApplicationReversedBy")
 
   warehouseMovements                WarehouseMovement[]         @relation("WarehouseMovementCreatedBy")
   grnDraftsCreated                  GrnDraft[]                  @relation("GrnDraftCreatedBy")
@@ -1249,6 +1252,8 @@ enum JournalSource {
   EXPENSE
   OPENING_BALANCE
   CONSOLIDATION_ALLOCATION
+  /// A receipt's advance applied to a later invoice of the same customer.
+  RECEIPT_APPLICATION
 
   @@map("journal_source")
 }
@@ -1275,27 +1280,29 @@ model JournalEntry {
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch                  Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  period                  FiscalPeriod      @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  reversalOf              JournalEntry?     @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy              JournalEntry?     @relation("JournalReversal")
-  createdBy               User              @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  postedBy                User?             @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  branch                  Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  period                  FiscalPeriod        @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  reversalOf              JournalEntry?       @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy              JournalEntry?       @relation("JournalReversal")
+  createdBy               User                @relation("JournalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedBy                User?               @relation("JournalPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
   lines                   JournalLine[]
-  invoice                 CustomerInvoice?  @relation("InvoiceJournal")
-  receipt                 Receipt?          @relation("ReceiptJournal")
-  receiptCancel           Receipt?          @relation("ReceiptCancelJournal")
-  tripExpense             TripExpense?      @relation("TripExpenseJournal")
-  tripExpenseCancel       TripExpense?      @relation("TripExpenseCancelJournal")
-  tripAccrual             Trip?             @relation("TripAccrualJournal")
-  creditNote              CreditNote?       @relation("CreditNoteJournal")
-  supplierBill            SupplierBill?     @relation("SupplierBillJournal")
-  supplierBillCancel      SupplierBill?     @relation("SupplierBillCancelJournal")
-  supplierPayment         SupplierPayment?  @relation("SupplierPaymentJournal")
-  supplierPaymentCancel   SupplierPayment?  @relation("SupplierPaymentCancelJournal")
-  expense                 Expense?          @relation("ExpenseJournal")
-  expenseCancel           Expense?          @relation("ExpenseCancelJournal")
-  consolidationAllocation SupplierBillLine? @relation("BillLineAllocationJournal")
+  invoice                 CustomerInvoice?    @relation("InvoiceJournal")
+  receipt                 Receipt?            @relation("ReceiptJournal")
+  receiptCancel           Receipt?            @relation("ReceiptCancelJournal")
+  tripExpense             TripExpense?        @relation("TripExpenseJournal")
+  tripExpenseCancel       TripExpense?        @relation("TripExpenseCancelJournal")
+  tripAccrual             Trip?               @relation("TripAccrualJournal")
+  creditNote              CreditNote?         @relation("CreditNoteJournal")
+  supplierBill            SupplierBill?       @relation("SupplierBillJournal")
+  supplierBillCancel      SupplierBill?       @relation("SupplierBillCancelJournal")
+  supplierPayment         SupplierPayment?    @relation("SupplierPaymentJournal")
+  supplierPaymentCancel   SupplierPayment?    @relation("SupplierPaymentCancelJournal")
+  expense                 Expense?            @relation("ExpenseJournal")
+  expenseCancel           Expense?            @relation("ExpenseCancelJournal")
+  consolidationAllocation SupplierBillLine?   @relation("BillLineAllocationJournal")
+  receiptApplication      ReceiptApplication? @relation("ReceiptApplicationJournal")
+  receiptApplicationRev   ReceiptApplication? @relation("ReceiptApplicationReverseJournal")
 
   @@index([branchId, entryDate])
   @@index([source, sourceId])
@@ -1410,6 +1417,7 @@ model CustomerInvoice {
   approvedBy        User?                 @relation("InvoiceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   lines             CustomerInvoiceLine[]
   allocations       ReceiptAllocation[]
+  applications      ReceiptApplication[]
   creditNotes       CreditNote[]
 
   draft                   InvoiceDraft?            @relation("InvoiceDraftResult")
@@ -1471,15 +1479,16 @@ model Receipt {
   createdById          String        @map("created_by_id") @db.Uuid
   createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  branch        Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  currencyRef   Currency            @relation(fields: [currency], references: [code], onDelete: Restrict)
-  cashAccount   Account             @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
-  journalEntry  JournalEntry        @relation("ReceiptJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
-  cancelJournal JournalEntry?       @relation("ReceiptCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
-  createdBy     User                @relation("ReceiptCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  cancelledBy   User?               @relation("ReceiptCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  branch        Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer      Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  currencyRef   Currency             @relation(fields: [currency], references: [code], onDelete: Restrict)
+  cashAccount   Account              @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry         @relation("ReceiptJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal JournalEntry?        @relation("ReceiptCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy     User                 @relation("ReceiptCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy   User?                @relation("ReceiptCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
   allocations   ReceiptAllocation[]
+  applications  ReceiptApplication[]
 
   draft ReceiptDraft? @relation("ReceiptDraftResult")
 
@@ -1504,6 +1513,51 @@ model ReceiptAllocation {
   @@unique([receiptId, invoiceId])
   @@index([invoiceId])
   @@map("receipt_allocations")
+}
+
+/// ACTIVE until reversed; a reversal posts the reversing entry, the row is never deleted.
+enum ReceiptApplicationStatus {
+  ACTIVE
+  REVERSED
+
+  @@map("receipt_application_status")
+}
+
+/// Part of a receipt's advance (what it did not allocate when recorded) applied later to an
+/// approved invoice of the same customer, branch and currency. `id` is the client's request id,
+/// so a retry returns the first application. `amount` is in that currency; `advanceUsd` is the
+/// advance's USD value it clears (at the receipt rate) and `relievedUsd` the receivable's (at the
+/// invoice rate). The entry reclassifies the advance to the receivable; a reversal posts the
+/// mirror entry and gives the amount back to the advance.
+model ReceiptApplication {
+  id                    String                   @id @db.Uuid
+  receiptId             String                   @map("receipt_id") @db.Uuid
+  invoiceId             String                   @map("invoice_id") @db.Uuid
+  branchId              String                   @map("branch_id") @db.Uuid
+  applicationDate       DateTime                 @map("application_date") @db.Date
+  amount                Decimal                  @db.Decimal(18, 4)
+  advanceUsd            Decimal                  @map("advance_usd") @db.Decimal(18, 4)
+  relievedUsd           Decimal                  @map("relieved_usd") @db.Decimal(18, 4)
+  status                ReceiptApplicationStatus @default(ACTIVE)
+  journalEntryId        String                   @unique @map("journal_entry_id") @db.Uuid
+  reverseJournalEntryId String?                  @unique @map("reverse_journal_entry_id") @db.Uuid
+  reverseReason         String?                  @map("reverse_reason")
+  reversedAt            DateTime?                @map("reversed_at") @db.Timestamptz(3)
+  reversedById          String?                  @map("reversed_by_id") @db.Uuid
+  createdById           String                   @map("created_by_id") @db.Uuid
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  receipt        Receipt         @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  invoice        CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  branch         Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  journalEntry   JournalEntry    @relation("ReceiptApplicationJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  reverseJournal JournalEntry?   @relation("ReceiptApplicationReverseJournal", fields: [reverseJournalEntryId], references: [id], onDelete: Restrict)
+  createdBy      User            @relation("ReceiptApplicationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reversedBy     User?           @relation("ReceiptApplicationReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
+
+  @@index([receiptId])
+  @@index([invoiceId])
+  @@map("receipt_applications")
 }
 
 // ---------------------------------------------------------------------------------------------
