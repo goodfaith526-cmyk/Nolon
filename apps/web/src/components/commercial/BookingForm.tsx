@@ -2,7 +2,6 @@
 
 import {
   BOOKING_SERVICES,
-  LOAD_TYPES,
   cbmOf,
   hasSeaLeg,
   type BookingDto,
@@ -16,7 +15,6 @@ import {
   type CreateFormReviewRequest,
   type CustomerDto,
   type CustomerSummaryDto,
-  type LoadType,
   type ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
@@ -132,16 +130,6 @@ export function BookingForm({
     initial?.destinationLocationId ?? consolidation?.destinationLocationId ?? '',
   );
   const [mode, setMode] = useState<ShippingMode>(initial?.mode ?? 'SEA');
-  // A quotation without a load type shows it as not set ('') rather than a default (Codex
-  // F93-4): defaults are for a new direct booking only.
-  const [loadType, setLoadType] = useState<LoadType | ''>(
-    fromQuotation
-      ? (fromQuotation.loadType ?? '')
-      : (booking?.loadType ?? (consolidation ? 'LCL' : 'FCL')),
-  );
-  const [cargoType, setCargoType] = useState<CargoType>(
-    initial?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'),
-  );
   const [services, setServices] = useState<BookingService[]>(
     booking?.services.filter((s) => s !== 'MAIN_FREIGHT') ?? [],
   );
@@ -254,8 +242,6 @@ export function BookingForm({
     // A container's booking takes its port of loading, mode and load type from the container.
     const fields = {
       destinationLocationId: destination,
-      cargoType,
-      cargoDescription: text('cargoDescription'),
       services,
       shipperId: text('shipperId'),
       consigneeId: text('consigneeId'),
@@ -278,7 +264,6 @@ export function BookingForm({
       ...fields,
       originLocationId: origin,
       mode,
-      loadType: hasSeaLeg(mode) && loadType ? loadType : null,
     };
     setBusy(true);
     setNotice(null);
@@ -489,41 +474,22 @@ export function BookingForm({
             invalid={markGroup('mode')}
             note={<FieldNote note={note} path="mode" />}
           />
-          {hasSeaLeg(mode) && (
-            <label className="field">
-              {t('loadType')}
-              <select
-                {...mark('loadType')}
-                value={loadType}
-                disabled={consolidation !== undefined || fromQuotation !== undefined}
-                onChange={(e) => setLoadType(e.target.value as LoadType)}
-              >
-                {loadType === '' && <option value="">{t('notSet')}</option>}
-                {LOAD_TYPES.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-              <FieldNote note={note} path="loadType" />
-            </label>
+          {fromQuotation && (
+            // The quotation's own cargo header, shown as the booking will take it; a direct
+            // booking asks it on the lines only (owner «نظّف», 2026-10-19).
+            <>
+              {hasSeaLeg(mode) && (
+                <label className="field">
+                  {t('loadType')}
+                  <input value={fromQuotation.loadType ?? t('notSet')} disabled readOnly />
+                </label>
+              )}
+              <label className="field">
+                {t('cargoType')}
+                <input value={te(`cargo_${fromQuotation.cargoType}`)} disabled readOnly />
+              </label>
+            </>
           )}
-          <label className="field">
-            {t('cargoType')}
-            <select
-              {...mark('cargoType')}
-              value={cargoType}
-              disabled={fromQuotation !== undefined}
-              onChange={(e) => setCargoType(e.target.value as CargoType)}
-            >
-              {cargoChoices(cargoType).map((c) => (
-                <option key={c} value={c}>
-                  {te(`cargo_${c}`)}
-                </option>
-              ))}
-            </select>
-            <FieldNote note={note} path="cargoType" />
-          </label>
           <label className="field">
             {t('requestedDeparture')}
             <input
@@ -655,7 +621,7 @@ export function BookingForm({
                 </label>
               ))}
               <label className="field">
-                {t('itemDescription')}
+                {t('cargoDescription')}
                 <input
                   {...mark(`items.${index}.description`)}
                   value={i.description}
@@ -678,7 +644,9 @@ export function BookingForm({
             <button
               type="button"
               className="ghost add-line"
-              onClick={() => setItems((all) => [...all, emptyItem(cargoType)])}
+              onClick={() =>
+                setItems((all) => [...all, emptyItem(all.at(-1)?.cargoType ?? 'PALLET')])
+              }
             >
               {icons.plus}
               <span>{t('addItem')}</span>
@@ -693,18 +661,18 @@ export function BookingForm({
           <p>{t('sectionNotesHint')}</p>
         </header>
         <div className="form-section-body stack">
-          <label className="field">
-            {t('cargoDescription')}
-            <textarea
-              name="cargoDescription"
-              rows={2}
-              {...mark('cargoDescription')}
-              disabled={fromQuotation !== undefined}
-              placeholder={fromQuotation ? t('notSet') : undefined}
-              defaultValue={initial?.cargoDescription ?? ''}
-            />
-            <FieldNote note={note} path="cargoDescription" />
-          </label>
+          {fromQuotation && (
+            <label className="field">
+              {t('cargoDescription')}
+              <textarea
+                rows={2}
+                disabled
+                readOnly
+                placeholder={t('notSet')}
+                value={fromQuotation.cargoDescription ?? ''}
+              />
+            </label>
+          )}
           <label className="field">
             {t('specialInstructions')}
             <textarea

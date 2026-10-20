@@ -514,7 +514,7 @@
     "sectionPartiesHint": "Shipper, consignee and notify party, from the customer's list.",
     "servicesHint": "What NOLON handles on this booking.",
     "sectionNotes": "Notes",
-    "sectionNotesHint": "Cargo description and special instructions.",
+    "sectionNotesHint": "Special instructions.",
     "containerType": "Container type",
     "quantity": "Quantity",
     "lengthCm": "Length (cm)",
