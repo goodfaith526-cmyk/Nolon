@@ -37,6 +37,16 @@ export const CARGO_TYPES = ['CONTAINER', 'PALLET', 'BARREL', 'GENERAL'] as const
 export type CargoType = (typeof CARGO_TYPES)[number];
 
 /**
+ * The load type of a quotation or rate whose FCL/LCL is not chosen (functional review B2): FCL for
+ * a container, else LCL, on a mode with a sea leg; none without one. Bookings follow the same rule
+ * from their lines (#91). A load type that is chosen, LCL for a container included, is kept.
+ */
+export function loadTypeOf(mode: ShippingMode, cargoType: CargoType): LoadType | null {
+  if (!hasSeaLeg(mode)) return null;
+  return cargoType === 'CONTAINER' ? 'FCL' : 'LCL';
+}
+
+/**
  * The cargo types offered on a new booking, quotation or rate (owner, 2026-10-19): container,
  * pallet or barrel. GENERAL stays readable on records made before.
  */

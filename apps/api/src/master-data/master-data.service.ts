@@ -189,6 +189,16 @@ export class MasterDataService {
     return location;
   }
 
+  /**
+   * As requireLocation, inside the caller's transaction: the location is share-locked until it
+   * commits, so it cannot be deactivated or changed meanwhile (an edit locks it for update).
+   */
+  async requireLocationInTx(tx: Tx, id: string): Promise<Location> {
+    const location = await lockLocation(tx, id, 'SHARE');
+    if (!location?.isActive) throw new BadRequestException('Unknown or inactive location');
+    return location;
+  }
+
   async requireRoute(originId: string, destinationId: string): Promise<void> {
     if (originId === destinationId) {
       throw new BadRequestException('Origin and destination must differ');

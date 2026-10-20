@@ -40,6 +40,7 @@ const warehouseBody = z
     nameEn: requiredText(200),
     nameAr: requiredText(200),
     address: optionalText(500),
+    locationId: z.uuid().nullish(),
   })
   .strict();
 
@@ -48,6 +49,7 @@ const warehouseUpdateBody = z
     nameEn: requiredText(200).optional(),
     nameAr: requiredText(200).optional(),
     address: optionalText(500).optional(),
+    locationId: z.uuid().nullish(),
     isActive: z.boolean().optional(),
   })
   .strict();

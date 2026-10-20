@@ -211,7 +211,8 @@
     "reviewWithAssistant": "Review with the assistant",
     "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
     "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
-    "openAssistant": "Open the assistant"
+    "openAssistant": "Open the assistant",
+    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it."
   },
   "Customers": {
     "title": "Customers",
@@ -977,7 +978,10 @@
     "photoRejected": "Only JPEG, PNG and WebP photos are accepted.",
     "useRemaining": "Use remaining: {remaining}",
     "remainingSuggested": "The packages still to receive. Count them and confirm.",
-    "weightHeldSuggested": "Suggested: the weight still held in this warehouse, for releasing all of it."
+    "weightHeldSuggested": "Suggested: the weight still held in this warehouse, for releasing all of it.",
+    "place": "Place",
+    "noPlace": "No place",
+    "placeHint": "A goods receipt that moves the shipment shows it at this place on the tracking page."
   },
   "Customs": {
     "section": "Customs",

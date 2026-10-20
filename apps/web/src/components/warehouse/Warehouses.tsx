@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
-import { useLocalName } from '@/lib/master-data';
+import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
@@ -24,6 +24,10 @@ export function Warehouses() {
   const tc = useTranslations('Common');
   const me = useMe();
   const localName = useLocalName();
+  const master = useMasterData();
+  const locationName = useLocationName(master);
+  // The place a warehouse is at: a receipt that moves the shipment records it there (review D9).
+  const places = master?.locations.filter((l) => l.isActive) ?? [];
   const branchCode = useBranchCode(me);
   const failure = useFailureText();
   const [warehouses, setWarehouses] = useState<WarehouseDto[] | null>(null);
@@ -66,6 +70,7 @@ export function Warehouses() {
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
       address: field(form, 'address').trim() || null,
+      locationId: field(form, 'locationId') || null,
     };
     const ok = await run(
       () => api<WarehouseDto>('/warehouses', { method: 'POST', body }),
@@ -146,6 +151,18 @@ export function Warehouses() {
             <span>{t('address')}</span>
             <input name="address" maxLength={500} />
           </label>
+          <label className="field">
+            <span>{t('place')}</span>
+            <select name="locationId" defaultValue="">
+              <option value="">{t('noPlace')}</option>
+              {places.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {localName(l)} ({l.code})
+                </option>
+              ))}
+            </select>
+            <small className="muted">{t('placeHint')}</small>
+          </label>
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {tc('save')}
@@ -171,12 +188,32 @@ export function Warehouses() {
                 <p className="muted">
                   {branchCode(w.branchId)}
                   {w.address ? ` · ${w.address}` : ''}
+                  {` · ${t('place')}: ${w.locationId ? locationName(w.locationId) : t('noPlace')}`}
                 </p>
               </div>
               <div className="actions">
                 <span className={w.isActive ? 'badge badge-ok' : 'badge'}>
                   {w.isActive ? tc('active') : tc('inactive')}
                 </span>
+                {canUpdate && (
+                  <select
+                    aria-label={t('place')}
+                    value={w.locationId ?? ''}
+                    disabled={busy}
+                    onChange={(e) => update(w, { locationId: e.target.value || null })}
+                  >
+                    <option value="">{t('noPlace')}</option>
+                    {places.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {localName(l)} ({l.code})
+                      </option>
+                    ))}
+                    {/* A place deactivated since stays shown until another is picked. */}
+                    {w.locationId && !places.some((l) => l.id === w.locationId) && (
+                      <option value={w.locationId}>{locationName(w.locationId)}</option>
+                    )}
+                  </select>
+                )}
                 {canUpdate && (
                   <button
                     type="button"

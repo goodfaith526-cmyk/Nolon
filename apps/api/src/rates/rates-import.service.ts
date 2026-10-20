@@ -34,7 +34,7 @@ import { buildTemplate } from '../imports/template.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { createRateBody } from './rate-schemas.js';
-import { RatesService, rateKey } from './rates.service.js';
+import { RatesService, rateKey, withLoadType } from './rates.service.js';
 
 type Column = RateImportColumn;
 type Row = CheckedRow<Column, CreateRateCardRequest>;
@@ -423,8 +423,9 @@ export class RatesImportService implements OnModuleInit {
       const parsed = createRateBody.safeParse(input);
       const checked: Row = { row, values, issues, input: null };
       if (parsed.success) {
-        checked.input = parsed.data;
-        const ruleIssues = await checkRules(parsed.data);
+        // An empty load type follows the mode and cargo type, as on screen (functional review B2).
+        checked.input = withLoadType(parsed.data);
+        const ruleIssues = await checkRules(checked.input);
         addIssues(
           issues,
           ruleIssues.map((r) => issue(row, columnOf(r.field), r.code, r.message)),

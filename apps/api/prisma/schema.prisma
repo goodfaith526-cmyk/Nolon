@@ -367,6 +367,7 @@ model Location {
   tripsTo            Trip[]                @relation("TripDestination")
   consolidationsFrom Consolidation[]       @relation("ConsolidationOrigin")
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
+  warehouses         Warehouse[]
 
   @@index([cityId])
   @@map("locations")
@@ -391,15 +392,15 @@ model ContainerType {
 
 /// Freight, THC, documentation, customs... The kinds of charge on a rate or quotation line.
 model ChargeType {
-  code      String   @id @db.VarChar(20)
-  nameEn    String   @map("name_en")
-  nameAr    String   @map("name_ar")
-  isActive  Boolean  @default(true) @map("is_active")
+  code      String          @id @db.VarChar(20)
+  nameEn    String          @map("name_en")
+  nameAr    String          @map("name_ar")
+  isActive  Boolean         @default(true) @map("is_active")
   /// The booking service this charge belongs to, when it belongs to one (FREIGHT to
   /// MAIN_FREIGHT). An invoice suggestion fills a rate-card line only for a charge whose service
   /// the shipment has; with no service, the line is only offered.
   service   BookingService?
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
   rates          RateCard[]
   quotationLines QuotationLine[]
@@ -1514,24 +1515,28 @@ model ReceiptAllocation {
  * locations are rows, not code). Deactivate instead of deleting: movements reference it.
  */
 model Warehouse {
-  id        String   @id @default(uuid()) @db.Uuid
-  branchId  String   @map("branch_id") @db.Uuid
+  id         String   @id @default(uuid()) @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
   /// Short code, unique across branches, e.g. PTS-MAIN.
-  code      String   @unique @db.VarChar(20)
-  nameEn    String   @map("name_en") @db.VarChar(200)
-  nameAr    String   @map("name_ar") @db.VarChar(200)
-  address   String?  @db.VarChar(500)
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  code       String   @unique @db.VarChar(20)
+  nameEn     String   @map("name_en") @db.VarChar(200)
+  nameAr     String   @map("name_ar") @db.VarChar(200)
+  address    String?  @db.VarChar(500)
+  /// The place the warehouse is at: a receipt that moves the shipment records it there (review D9).
+  locationId String?  @map("location_id") @db.Uuid
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch           Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  location         Location?           @relation(fields: [locationId], references: [id], onDelete: Restrict)
   storageLocations StorageLocation[]
   movements        WarehouseMovement[]
 
   releaseDrafts GoodsReleaseDraft[]
 
   @@index([branchId])
+  @@index([locationId])
   @@map("warehouses")
 }
 

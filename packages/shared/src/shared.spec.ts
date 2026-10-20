@@ -6,6 +6,7 @@ import {
   isBranchCode,
   isCurrencyCodeFormat,
   isLocale,
+  loadTypeOf,
   localeDirection,
   modeOfLegs,
 } from './index.js';
@@ -44,5 +45,17 @@ describe('shipping mode legs (sea, road, or both)', () => {
     for (const mode of SHIPPING_MODES) {
       expect(modeOfLegs(hasSeaLeg(mode), hasRoadLeg(mode))).toBe(mode);
     }
+  });
+});
+
+describe('load type left unchosen (functional review B2)', () => {
+  it('is FCL for a container and LCL otherwise, on a sea leg only', () => {
+    expect(loadTypeOf('SEA', 'CONTAINER')).toBe('FCL');
+    expect(loadTypeOf('SEA_ROAD', 'CONTAINER')).toBe('FCL');
+    expect(loadTypeOf('SEA', 'PALLET')).toBe('LCL');
+    expect(loadTypeOf('SEA', 'BARREL')).toBe('LCL');
+    expect(loadTypeOf('SEA', 'GENERAL')).toBe('LCL');
+    expect(loadTypeOf('ROAD', 'CONTAINER')).toBeNull();
+    expect(loadTypeOf('ROAD', 'PALLET')).toBeNull();
   });
 });

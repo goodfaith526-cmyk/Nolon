@@ -6,6 +6,9 @@ import {
   RATE_STATUSES,
   RATE_UNITS,
   hasSeaLeg,
+  loadTypeOf,
+  type CargoType,
+  type LoadType,
   type Page,
   type RateCardDto,
   type RateStatus,
@@ -190,7 +193,10 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
   const master = useMasterData();
   const failure = useFailureText();
   const [mode, setMode] = useState<ShippingMode>('SEA');
-  const [cargo, setCargo] = useState<string>('CONTAINER');
+  const [cargo, setCargo] = useState<CargoType>('CONTAINER');
+  // FCL/LCL follows the cargo type until the person picks one (functional review B2), as quotations.
+  const [loadTypeChoice, setLoadType] = useState<LoadType | null>(null);
+  const loadType = hasSeaLeg(mode) ? (loadTypeChoice ?? loadTypeOf(mode, cargo)) : null;
   // With one branch the user is not asked (functional review B7); the API checks it on save.
   const single = onlyBranch(me);
   const [branchId, setBranchId] = useState(single?.id ?? me.branches[0]?.id ?? '');
@@ -210,7 +216,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
       originLocationId: field(form, 'originLocationId'),
       destinationLocationId: field(form, 'destinationLocationId'),
       mode,
-      loadType: hasSeaLeg(mode) ? field(form, 'loadType') || null : null,
+      loadType,
       cargoType: cargo,
       containerTypeCode: cargo === 'CONTAINER' ? field(form, 'containerTypeCode') : null,
       chargeTypeCode: field(form, 'chargeTypeCode'),
@@ -284,18 +290,22 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
         {hasSeaLeg(mode) && (
           <label className="field">
             {t('loadType')}
-            <select name="loadType">
+            <select
+              value={loadType ?? ''}
+              onChange={(e) => setLoadType(e.target.value as LoadType)}
+            >
               {LOAD_TYPES.map((l) => (
                 <option key={l} value={l}>
                   {l}
                 </option>
               ))}
             </select>
+            {loadTypeChoice === null && <small className="muted">{tc('loadTypeFollows')}</small>}
           </label>
         )}
         <label className="field">
           {t('cargo')}
-          <select value={cargo} onChange={(e) => setCargo(e.target.value)}>
+          <select value={cargo} onChange={(e) => setCargo(e.target.value as CargoType)}>
             {OFFERED_CARGO_TYPES.map((c) => (
               <option key={c} value={c}>
                 {te(`cargo_${c}`)}

@@ -16,6 +16,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { Prisma, StorageLocation } from '../generated/prisma/client.js';
+import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -33,6 +34,8 @@ export interface MovementWarehouse {
   branchId: string;
   timezone: string;
   storageLocationId: string | null;
+  /** Where the warehouse is (functional review D9); null when not set. */
+  locationId: string | null;
 }
 
 /**
@@ -41,7 +44,10 @@ export interface MovementWarehouse {
  */
 @Injectable()
 export class WarehousesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly masterData: MasterDataService,
+  ) {}
 
   async list(user: AuthUser): Promise<WarehouseDto[]> {
     const warehouses = await this.prisma.warehouse.findMany({
@@ -56,15 +62,20 @@ export class WarehousesService {
     assertBranchAccess(user, input.branchId);
     try {
       return toDto(
-        await this.prisma.warehouse.create({
-          data: {
-            branchId: input.branchId,
-            code: input.code,
-            nameEn: input.nameEn,
-            nameAr: input.nameAr,
-            address: input.address ?? null,
-          },
-          include: withLocations,
+        await this.prisma.$transaction(async (tx) => {
+          const locationId = input.locationId ?? null;
+          if (locationId) await this.masterData.requireLocationInTx(tx, locationId);
+          return tx.warehouse.create({
+            data: {
+              branchId: input.branchId,
+              code: input.code,
+              nameEn: input.nameEn,
+              nameAr: input.nameAr,
+              address: input.address ?? null,
+              locationId,
+            },
+            include: withLocations,
+          });
         }),
       );
     } catch (error) {
@@ -76,15 +87,20 @@ export class WarehousesService {
   async update(user: AuthUser, id: string, input: WarehouseUpdateRequest): Promise<WarehouseDto> {
     await this.findScoped(user, id);
     return toDto(
-      await this.prisma.warehouse.update({
-        where: { id },
-        data: {
-          nameEn: input.nameEn,
-          nameAr: input.nameAr,
-          address: input.address,
-          isActive: input.isActive,
-        },
-        include: withLocations,
+      await this.prisma.$transaction(async (tx) => {
+        const locationId = input.locationId;
+        if (locationId) await this.masterData.requireLocationInTx(tx, locationId);
+        return tx.warehouse.update({
+          where: { id },
+          data: {
+            nameEn: input.nameEn,
+            nameAr: input.nameAr,
+            address: input.address,
+            locationId,
+            isActive: input.isActive,
+          },
+          include: withLocations,
+        });
       }),
     );
   }
@@ -169,6 +185,7 @@ export class WarehousesService {
       branchId: warehouse.branchId,
       timezone: warehouse.branch.timezone,
       storageLocationId: location?.id ?? null,
+      locationId: warehouse.locationId,
     };
   }
 
@@ -194,6 +211,7 @@ function toDto(w: WarehouseWithLocations): WarehouseDto {
     nameEn: w.nameEn,
     nameAr: w.nameAr,
     address: w.address,
+    locationId: w.locationId,
     isActive: w.isActive,
     storageLocations: w.storageLocations.map(toLocationDto),
   };

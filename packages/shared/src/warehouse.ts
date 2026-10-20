@@ -33,6 +33,8 @@ export interface WarehouseDto {
   nameEn: string;
   nameAr: string;
   address: string | null;
+  /** The place the warehouse is at (a port, city or yard of the locations master), if set. */
+  locationId: string | null;
   isActive: boolean;
   storageLocations: StorageLocationDto[];
 }
@@ -43,6 +45,8 @@ export interface WarehouseInput {
   nameEn: string;
   nameAr: string;
   address?: string | null;
+  /** A goods receipt that moves the shipment records it at this place (functional review D9). */
+  locationId?: string | null;
 }
 
 /** PATCH /warehouses/:id. Branch and code do not change. */
@@ -50,6 +54,7 @@ export interface WarehouseUpdateRequest {
   nameEn?: string;
   nameAr?: string;
   address?: string | null;
+  locationId?: string | null;
   isActive?: boolean;
 }
 
