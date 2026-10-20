@@ -144,6 +144,8 @@ export function completeQuotation(values: QuotationDraftValues): CreateQuotation
 export function completeQuotationInput(values: QuotationDraftQuotation): QuotationInput {
   return {
     ...values,
+    // A draft's missing FCL/LCL stays none, as the draft was checked and priced (not B2's default).
+    loadType: values.loadType ?? null,
     originLocationId: storedValue(values.originLocationId, 'origin'),
     destinationLocationId: storedValue(values.destinationLocationId, 'destination'),
     mode: storedValue(values.mode, 'mode'),

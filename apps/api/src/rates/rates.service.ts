@@ -22,6 +22,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
+import { followLoadType } from '../common/load-type.js';
 import { type Decimal, dec, toDecimalString } from '../common/money.js';
 import {
   type RuleIssue,
@@ -194,7 +195,8 @@ export class RatesService {
    * branch's rate lock (shared with update and the Excel import), so two writers cannot both pass
    * it. A duplicate is a 409.
    */
-  async create(user: AuthUser, input: CreateRateCardRequest): Promise<RateCardDto> {
+  async create(user: AuthUser, given: CreateRateCardRequest): Promise<RateCardDto> {
+    const input = withLoadType(given);
     await this.prepareCreate(user, input);
     return toDto(await this.prisma.$transaction((tx) => this.createInTx(tx, user, input)));
   }
@@ -335,9 +337,14 @@ export class RatesService {
   async update(user: AuthUser, id: string, input: Partial<RateCardInput>): Promise<RateCardDto> {
     const read = await this.findScoped(user, id);
     if (read.status !== 'DRAFT') throw new ConflictException('Only a draft rate can be edited');
+    // A load type left out follows a changed mode or cargo type, unless the person chose it (B2).
     const merge = (r: RateCard) => {
       const before = { ...fromRow(r), branchId: r.branchId };
-      return { before, after: { ...before, ...input } };
+      const after = { ...before, ...input };
+      return {
+        before,
+        after: { ...after, loadType: followLoadType(input.loadType, after, before) },
+      };
     };
     const stale = merge(read);
     await this.validate(stale.after);
@@ -354,7 +361,12 @@ export class RatesService {
         await lockBranchRule(tx, RATE_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [{ ...after, excludeId: current.id }]));
       }
-      const dto = await this.transition(tx, current.id, 'DRAFT', toData(input));
+      const dto = await this.transition(
+        tx,
+        current.id,
+        'DRAFT',
+        toData({ ...input, loadType: after.loadType }),
+      );
       const updated = await tx.rateCard.findUniqueOrThrow({ where: { id: current.id } });
       await this.log(tx, user, 'UPDATED', [updated], (r) =>
         changedFields(auditFields(current), auditFields(r), RATE_AUDIT_FIELDS),
@@ -673,6 +685,14 @@ export class RatesService {
       return issues;
     };
   }
+}
+
+/**
+ * A new rate as saved: FCL/LCL left out follows the mode and cargo type (functional review B2); a
+ * load type given, null included, is kept. Rate card drafts keep theirs as they were checked.
+ */
+export function withLoadType<T extends CreateRateCardRequest>(input: T): T {
+  return { ...input, loadType: followLoadType(input.loadType, input) };
 }
 
 type RateData<T> = Omit<T, 'price' | 'minimumCharge' | 'validFrom' | 'validTo'> & {

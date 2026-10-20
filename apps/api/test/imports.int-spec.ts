@@ -821,6 +821,46 @@ describe('Excel import of customers and rates', () => {
       expect(await myRates()).toBe(before + 2);
     });
 
+    it('fills an empty load type from the cargo type and keeps one given (functional review B2)', async () => {
+      const from = `2034-${String(randomInt(1, 13)).padStart(2, '0')}-${String(randomInt(1, 29)).padStart(2, '0')}`;
+      const file = await xlsx([
+        RATE_HEADER,
+        rateRow({ load: null, container: '20GP', from }),
+        rateRow({ load: 'LCL', container: '40GP', from }),
+        rateRow({
+          load: null,
+          cargo: 'PALLET',
+          container: null,
+          unit: 'PER_PALLET',
+          price: '40',
+          from,
+        }),
+        rateRow({
+          mode: 'ROAD',
+          load: null,
+          cargo: 'GENERAL',
+          container: null,
+          unit: 'PER_KG',
+          price: '2',
+          from,
+        }),
+      ]);
+      const preview = (await upload('/rates/import/preview', cookies.salesDxb, file).expect(200))
+        .body as ImportPreviewDto;
+      expect(preview.issues).toEqual([]);
+      const done = (await commit('/rates/import', cookies.salesDxb, file, randomUUID()).expect(201))
+        .body as ImportResultDto;
+      const saved = await t.prisma.rateCard.findMany({ where: { id: { in: done.ids } } });
+      const loadOf = (cargo: string, container: string | null, mode = 'SEA') =>
+        saved.find(
+          (r) => r.cargoType === cargo && r.containerTypeCode === container && r.mode === mode,
+        )?.loadType;
+      expect(loadOf('CONTAINER', '20GP')).toBe('FCL');
+      expect(loadOf('CONTAINER', '40GP')).toBe('LCL');
+      expect(loadOf('PALLET', null)).toBe('LCL');
+      expect(loadOf('GENERAL', null, 'ROAD')).toBeNull();
+    });
+
     it('commits nothing when a row names a branch the user does not hold', async () => {
       const before = await myRates();
       const file = await xlsx([RATE_HEADER, rateRow(), rateRow({ branch: 'JED' })]);

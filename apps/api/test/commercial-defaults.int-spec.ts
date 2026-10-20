@@ -409,4 +409,118 @@ describe('commercial defaults (functional review B1, B3, B4, B5)', () => {
       await get(`/bookings/from-quotation/${draft.id}`, cookies.ops).expect(409);
     });
   });
+
+  describe('FCL/LCL left out (functional review B2)', () => {
+    const patch = (path: string, cookie: string, body: object) =>
+      t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+    const manualLine = {
+      chargeTypeCode: 'FREIGHT',
+      unit: 'PER_SHIPMENT',
+      quantity: '1',
+      unitPrice: '100',
+    };
+    const quotation = (customerId: string, fields: object) => ({
+      customerId,
+      originLocationId: jebelAli,
+      destinationLocationId: portSudan,
+      mode: 'SEA',
+      cargoType: 'CONTAINER',
+      currency: 'USD',
+      validUntil: FAR_FUTURE,
+      lines: [manualLine],
+      ...fields,
+    });
+
+    it('takes FCL for a container and prices it from an FCL rate', async () => {
+      const c = await customer();
+      const rate = await approvedRate({ price: '1234' });
+      const q = (
+        await post(
+          '/quotations',
+          cookies.sales,
+          quotation(c.id, { lines: [{ rateCardId: rate.id, quantity: '1' }] }),
+        ).expect(201)
+      ).body as QuotationDto;
+      expect(q.loadType).toBe('FCL');
+      expect(q.total).toBe('1234');
+    });
+
+    it('takes LCL for other cargo, none without a sea leg, and keeps one given', async () => {
+      const c = await customer();
+      const created = async (fields: object) =>
+        (
+          (await post('/quotations', cookies.sales, quotation(c.id, fields)).expect(201))
+            .body as QuotationDto
+        ).loadType;
+      expect(await created({ cargoType: 'PALLET' })).toBe('LCL');
+      expect(await created({ mode: 'SEA_ROAD', cargoType: 'GENERAL' })).toBe('LCL');
+      expect(await created({ mode: 'ROAD' })).toBeNull();
+      expect(await created({ loadType: 'LCL' })).toBe('LCL');
+      expect(await created({ loadType: null })).toBeNull();
+    });
+
+    it('on a quotation edit, follows the cargo type unless the person chose', async () => {
+      const c = await customer();
+      // An edit sends the whole quotation without its customer.
+      const body: object = { ...quotation(c.id, {}), customerId: undefined };
+      const followed = (await post('/quotations', cookies.sales, quotation(c.id, {})).expect(201))
+        .body as QuotationDto;
+      const edited = (
+        await patch(`/quotations/${followed.id}`, cookies.sales, {
+          ...body,
+          cargoType: 'PALLET',
+        }).expect(200)
+      ).body as QuotationDto;
+      expect(edited.loadType).toBe('LCL');
+      const chosen = (
+        await post('/quotations', cookies.sales, quotation(c.id, { loadType: 'LCL' })).expect(201)
+      ).body as QuotationDto;
+      const kept = (await patch(`/quotations/${chosen.id}`, cookies.sales, body).expect(200))
+        .body as QuotationDto;
+      expect(kept.loadType).toBe('LCL');
+      const road = (
+        await patch(`/quotations/${chosen.id}`, cookies.sales, { ...body, mode: 'ROAD' }).expect(
+          200,
+        )
+      ).body as QuotationDto;
+      expect(road.loadType).toBeNull();
+    });
+
+    it('fills a new rate the same way and follows it on an edit unless chosen', async () => {
+      const rate = (fields: object) =>
+        post('/rates', cookies.pricing, {
+          branchId: dxb,
+          originLocationId: jebelAli,
+          destinationLocationId: portSudan,
+          mode: 'SEA',
+          cargoType: 'CONTAINER',
+          containerTypeCode: '20GP',
+          unit: 'PER_CONTAINER',
+          price: '500',
+          currency: 'USD',
+          validFrom: nextRateDay(),
+          ...fields,
+        }).expect(201);
+      const followed = (await rate({})).body as RateCardDto;
+      expect(followed.loadType).toBe('FCL');
+      const pallet = (
+        await patch(`/rates/${followed.id}`, cookies.pricing, {
+          cargoType: 'PALLET',
+          containerTypeCode: null,
+          unit: 'PER_PALLET',
+        }).expect(200)
+      ).body as RateCardDto;
+      expect(pallet.loadType).toBe('LCL');
+      const chosen = (await rate({ loadType: 'LCL' })).body as RateCardDto;
+      expect(chosen.loadType).toBe('LCL');
+      const priced = (
+        await patch(`/rates/${chosen.id}`, cookies.pricing, { price: '450' }).expect(200)
+      ).body as RateCardDto;
+      expect(priced.loadType).toBe('LCL');
+      const road = (
+        await patch(`/rates/${chosen.id}`, cookies.pricing, { mode: 'ROAD' }).expect(200)
+      ).body as RateCardDto;
+      expect(road.loadType).toBeNull();
+    });
+  });
 });

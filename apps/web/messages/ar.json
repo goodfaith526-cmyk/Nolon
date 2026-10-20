@@ -211,7 +211,8 @@
     "reviewWithAssistant": "راجع مع المساعد",
     "reviewWithAssistantHint": "المساعد يشرح لك سبب الرفض، ويقدر يجهّز الإدخال كمسودة لو حبيت.",
     "reviewWithAssistantFailed": "تعذّر فتح المساعد. حاول مرة أخرى.",
-    "openAssistant": "افتح المساعد"
+    "openAssistant": "افتح المساعد",
+    "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها."
   },
   "Customers": {
     "title": "العملاء",

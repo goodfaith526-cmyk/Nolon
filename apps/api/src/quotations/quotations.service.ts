@@ -20,6 +20,7 @@ import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { followLoadType } from '../common/load-type.js';
 import {
   localDayFilter,
   matchedLocations,
@@ -312,7 +313,7 @@ export class QuotationsService {
       throw new ConflictException('Only a draft quotation can be edited');
     }
     const today = await this.branchToday(existing.branchId);
-    const prepared = await this.prepare(existing.branchId, today, input);
+    const prepared = await this.prepare(existing.branchId, today, input, existing);
     await this.prisma.$transaction(async (tx) => {
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.quotationLine.deleteMany({ where: { quotationId: id } });
@@ -419,7 +420,16 @@ export class QuotationsService {
     }
   }
 
-  private async prepare(branchId: string, today: string, input: QuotationInput) {
+  /**
+   * Checks and prices a quotation. A load type left out follows the mode and cargo type, or on an
+   * edit (`stored`) keeps one the person chose (functional review B2).
+   */
+  private async prepare(
+    branchId: string,
+    today: string,
+    input: QuotationInput,
+    stored?: Quotation | null,
+  ) {
     const route = ['originLocationId', 'destinationLocationId'];
     if (input.originLocationId === input.destinationLocationId) {
       throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
@@ -432,6 +442,7 @@ export class QuotationsService {
         'loadType',
       ]);
     }
+    const loadType = followLoadType(input.loadType, input, stored);
     const currency = await onFields(
       ['currency'],
       () => this.currencies.requireActive(input.currency),
@@ -447,7 +458,7 @@ export class QuotationsService {
       originLocationId: input.originLocationId,
       destinationLocationId: input.destinationLocationId,
       mode: input.mode,
-      loadType: input.loadType ?? null,
+      loadType,
       cargoType: input.cargoType,
     };
     const resolved = [];
@@ -529,7 +540,7 @@ export class QuotationsService {
         originLocationId: input.originLocationId,
         destinationLocationId: input.destinationLocationId,
         mode: input.mode,
-        loadType: input.loadType ?? null,
+        loadType,
         cargoType: input.cargoType,
         cargoDescription: input.cargoDescription ?? null,
         currency: currency.code,

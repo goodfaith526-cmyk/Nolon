@@ -4,6 +4,7 @@ import {
   LOAD_TYPES,
   RATE_UNITS,
   hasSeaLeg,
+  loadTypeOf,
   type CargoType,
   type CreateFormReviewRequest,
   type CustomerSummaryDto,
@@ -84,8 +85,16 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const [originChoice, setOrigin] = useState(quotation?.originLocationId ?? '');
   const [destinationChoice, setDestination] = useState(quotation?.destinationLocationId ?? '');
   const [mode, setMode] = useState<ShippingMode>(quotation?.mode ?? 'SEA');
-  const [loadType, setLoadType] = useState<LoadType | ''>(quotation?.loadType ?? 'FCL');
   const [cargoType, setCargoType] = useState<CargoType>(quotation?.cargoType ?? 'CONTAINER');
+  // FCL/LCL follows the cargo type (FCL for a container, else LCL: functional review B2) until the
+  // person picks one, which is kept, LCL for a container included. An edit keeps a saved value
+  // that does not follow the rule as picked; one that does, or none, follows it again.
+  const [loadTypeChoice, setLoadType] = useState<LoadType | null>(
+    quotation?.loadType && quotation.loadType !== loadTypeOf(quotation.mode, quotation.cargoType)
+      ? quotation.loadType
+      : null,
+  );
+  const loadType = hasSeaLeg(mode) ? (loadTypeChoice ?? loadTypeOf(mode, cargoType)) : null;
   // A new quotation's currency and valid-until (functional review B3, B4): generated when the
   // customer is picked, from GET /quotations/defaults (the customer's preferred currency, else
   // its branch's; the branch's today plus the configured days). Picking another customer asks
@@ -168,10 +177,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
           // Rate cards of every branch price a quotation (owner, 2026-10-19). Only the cards the
           // API accepts for this quotation are offered: same currency, load type and cargo type.
           const offered = page.items.filter(
-            (r) =>
-              r.currency === currency &&
-              (r.loadType ?? '') === (hasSeaLeg(mode) ? loadType : '') &&
-              r.cargoType === cargoType,
+            (r) => r.currency === currency && r.loadType === loadType && r.cargoType === cargoType,
           );
           setRates(offered);
           // On a new quotation, a line priced from a rate no longer offered (another customer's
@@ -212,7 +218,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
       originLocationId: origin,
       destinationLocationId: destination,
       mode,
-      loadType: hasSeaLeg(mode) && loadType ? loadType : null,
+      loadType,
       cargoType,
       cargoDescription: text('cargoDescription'),
       currency,
@@ -347,7 +353,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               {t('loadType')}
               <select
                 {...mark('loadType')}
-                value={loadType}
+                value={loadType ?? ''}
                 onChange={(e) => setLoadType(e.target.value as LoadType)}
               >
                 {LOAD_TYPES.map((l) => (
@@ -356,6 +362,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   </option>
                 ))}
               </select>
+              {loadTypeChoice === null && <small className="muted">{tc('loadTypeFollows')}</small>}
               <FieldNote note={note} path="loadType" />
             </label>
           )}

@@ -211,7 +211,8 @@
     "reviewWithAssistant": "Review with the assistant",
     "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
     "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
-    "openAssistant": "Open the assistant"
+    "openAssistant": "Open the assistant",
+    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it."
   },
   "Customers": {
     "title": "Customers",
