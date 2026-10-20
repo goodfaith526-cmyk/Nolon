@@ -196,6 +196,35 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
       );
     });
 
+    it('returns the first bill on an exact retry after the supplier terms changed (F94-3)', async () => {
+      const body = billBody();
+      const first = (await post('/supplier-bills', cookies.financePts, body).expect(201))
+        .body as SupplierBillDto;
+      await t.prisma.supplier.update({
+        where: { id: supplier.id },
+        data: { paymentTermsDays: 60 },
+      });
+      try {
+        const again = (await post('/supplier-bills', cookies.financePts, body).expect(201))
+          .body as SupplierBillDto;
+        expect(again).toMatchObject({ id: first.id, dueDate: d('05-25') });
+        // The saved date sent explicitly is the same request; another one is not.
+        await post('/supplier-bills', cookies.financePts, {
+          ...body,
+          dueDate: d('05-25'),
+        }).expect(201);
+        await post('/supplier-bills', cookies.financePts, {
+          ...body,
+          dueDate: d('06-09'),
+        }).expect(409);
+      } finally {
+        await t.prisma.supplier.update({
+          where: { id: supplier.id },
+          data: { paymentTermsDays: 45 },
+        });
+      }
+    });
+
     it('moves a generated due date with the bill date on edit; an explicit one is kept', async () => {
       const draft = (await post('/supplier-bills', cookies.financePts, billBody()).expect(201))
         .body as SupplierBillDto;

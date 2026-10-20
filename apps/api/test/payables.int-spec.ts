@@ -729,6 +729,53 @@ describe('credit notes, payables, expenses and opening balances', () => {
         expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
         expect(await t.prisma.supplier.count({ where: { name: c.name } })).toBe(1);
       });
+
+      // Codex F95-1: two carriers of one company, at once. Supplier numbering is held until both
+      // requests wait, so both would have passed an unserialized duplicate check.
+      async function raceCarriers(a: CarrierDto, b: CarrierDto) {
+        let release = () => {};
+        const held = new Promise<void>((resolve) => (release = resolve));
+        let holding = () => {};
+        const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+        const holder = t.prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT 1 FROM "number_sequences"
+              WHERE "doc_type" = 'SUPPLIER' AND "period_key" = '' FOR UPDATE`;
+            holding();
+            await held;
+          },
+          { timeout: 20_000 },
+        );
+        await holdingNow;
+        const requests = Promise.all([
+          fromCarrier(a.id).then((r) => r),
+          fromCarrier(b.id).then((r) => r),
+        ]);
+        // Both wait: on the numbering, or (serialized) on the first one's identity lock.
+        await waitForLockWaiter(t.prisma, 2);
+        release();
+        await holder;
+        return (await requests).map((r) => r.status).sort();
+      }
+
+      it('two carriers sharing a phone, at once, make one supplier', async () => {
+        const phone = uniquePhone();
+        await fromCarrier((await newCarrier(`D3 Seq ${tag}`)).id).expect(201);
+        const a = await newCarrier(`D3 Phone A ${tag}`, phone);
+        const b = await newCarrier(`D3 Phone B ${tag}`, phone);
+        expect(await raceCarriers(a, b)).toEqual([201, 409]);
+        expect(await t.prisma.supplier.count({ where: { phone } })).toBe(1);
+      });
+
+      it('two carriers with one name in another case, at once, make one supplier', async () => {
+        const name = `D3 Same Name ${tag}`;
+        const a = await newCarrier(name, null);
+        const b = await newCarrier(`  ${name.toLowerCase()} `, null);
+        expect(await raceCarriers(a, b)).toEqual([201, 409]);
+        expect(
+          await t.prisma.supplier.count({ where: { name: { equals: name, mode: 'insensitive' } } }),
+        ).toBe(1);
+      });
     });
 
     it('a bill for shipment costs and expenses posts to their accounts and the payable', async () => {

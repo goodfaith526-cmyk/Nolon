@@ -778,6 +778,8 @@
     "openCancelJournal": "Cancellation entry",
     "chooseCurrency": "Choose the currency",
     "currencyFromInvoices": "The customer's open invoices are all in {currency}.",
+    "currencySuggestionNotApplied": "The customer's open invoices are all in {currency}. It was not applied because the amount was entered in another currency; change the currency yourself if needed.",
+    "invoicesChanged": "The customer's open invoices changed since this form was opened. Reload the page, then allocate the amount.",
     "mixedCurrencies": "The open invoices are in several currencies: choose the receipt's currency.",
     "payBalance": "Pay balance",
     "distribute": "Allocate the amount, oldest invoice first",

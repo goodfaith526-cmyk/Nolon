@@ -44,7 +44,7 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
   const categories = useApiList<ExpenseCategoryDto>('/accounting/expense-categories', true);
   const [branchId, setBranchId] = useState(expense?.branchId ?? me.branches[0]?.id ?? '');
   // A new expense's currency is its branch's (functional review C4), read from /auth/me and
-  // following the branch until the person picks one (null until then), which is kept. A saved
+  // following the branch until the person picks one or enters an amount (null until then). A saved
   // expense keeps its own.
   const [currencyChoice, setCurrency] = useState<string | null>(expense?.currency ?? null);
   const currency = currencyChoice ?? branchCurrency(me, branchId);
@@ -184,6 +184,11 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
             dir="ltr"
             pattern={AMOUNT_PATTERN}
             defaultValue={expense?.amount ?? ''}
+            // An amount entered is in the currency shown then: another branch no longer changes
+            // it (Codex F94-2).
+            onChange={() => {
+              if (currencyChoice === null) setCurrency(currency);
+            }}
           />
         </label>
         <label className="field">
