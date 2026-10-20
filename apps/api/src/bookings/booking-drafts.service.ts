@@ -135,7 +135,7 @@ function completeBooking(input: DraftInput): DirectRequest | FromQuotationReques
     originLocationId: storedValue(input.originLocationId, 'origin'),
     destinationLocationId: storedValue(input.destinationLocationId, 'destination'),
     mode: storedValue(input.mode, 'mode'),
-    cargoType: storedValue(input.cargoType, 'cargo type'),
+    cargoType: input.cargoType ?? null,
     services: input.services ?? [],
     items: completeItems(input.items),
   };

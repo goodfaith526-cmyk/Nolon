@@ -1041,6 +1041,145 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post('/bookings', cookies.salesDxb, directBooking({ mode: 'AIR' })).expect(400);
     });
 
+    it('takes cargo type, FCL/LCL and description from the lines when left out', async () => {
+      // The form asks them on the lines only (owner «نظّف», 2026-10-19).
+      const derived = async (body: object) =>
+        (
+          await post(
+            '/bookings',
+            cookies.salesDxb,
+            directBooking({
+              loadType: undefined,
+              cargoType: undefined,
+              cargoDescription: undefined,
+              ...body,
+            }),
+          ).expect(201)
+        ).body as BookingDto;
+      const pallet = { cargoType: 'PALLET', quantity: 2, description: 'Tyres' };
+      const container = { cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 };
+      expect(await derived({ items: [pallet, { ...pallet, description: 'Oil' }] })).toMatchObject({
+        cargoType: 'PALLET',
+        loadType: 'LCL',
+        cargoDescription: 'Tyres\nOil',
+      });
+      expect(
+        await derived({ mode: 'SEA_ROAD', items: [{ ...container, description: 'Cars' }, pallet] }),
+      ).toMatchObject({ cargoType: 'CONTAINER', loadType: 'FCL', cargoDescription: 'Cars\nTyres' });
+      expect(await derived({ mode: 'ROAD', items: [container] })).toMatchObject({
+        cargoType: 'CONTAINER',
+        loadType: null,
+        cargoDescription: null,
+      });
+      // What is given is kept, as before.
+      expect(
+        await derived({
+          loadType: 'LCL',
+          cargoType: 'BARREL',
+          cargoDescription: 'Chemicals',
+          items: [container],
+        }),
+      ).toMatchObject({ cargoType: 'BARREL', loadType: 'LCL', cargoDescription: 'Chemicals' });
+      // With no lines, the cargo type is asked for.
+      const refused = (
+        await post(
+          '/bookings',
+          cookies.salesDxb,
+          directBooking({ cargoType: undefined, loadType: undefined, items: [] }),
+        ).expect(400)
+      ).body as { fields?: string[] };
+      expect(refused.fields).toEqual(['cargoType']);
+    });
+
+    it('an edit that leaves the cargo header out keeps what was saved apart from the lines', async () => {
+      // Codex F91-1..4: the form sends no cargo header; an untouched edit changes none of it.
+      const create = async (body: object) =>
+        (await post('/bookings', cookies.salesDxb, directBooking(body)).expect(201))
+          .body as BookingDto;
+      const edit = async (b: BookingDto, body: object = {}) =>
+        (
+          await patch(`/bookings/${b.id}`, cookies.salesDxb, {
+            ...directBooking({
+              loadType: undefined,
+              cargoType: undefined,
+              cargoDescription: undefined,
+              items: b.items.map((i) => ({
+                cargoType: i.cargoType,
+                containerTypeCode: i.containerTypeCode,
+                description: i.description,
+                quantity: i.quantity,
+                volumeCbm: i.volumeCbm,
+              })),
+              specialInstructions: 'Handle with care',
+              ...body,
+            }),
+            customerId: undefined,
+          }).expect(200)
+        ).body as BookingDto;
+      const container = { cargoType: 'CONTAINER', containerTypeCode: '20GP', quantity: 1 };
+      const pallet = { cargoType: 'PALLET', quantity: 1 };
+
+      // An LCL booked with a container line stays LCL (F91-2).
+      const lcl = await create({ loadType: 'LCL', cargoType: 'CONTAINER', items: [container] });
+      expect(await edit(lcl)).toMatchObject({ loadType: 'LCL', cargoType: 'CONTAINER' });
+
+      // A general description beside described and undescribed lines stays whole (F91-1, F91-3).
+      const general = 'G'.repeat(600);
+      const mixed = await create({
+        cargoDescription: general,
+        items: [{ ...pallet, description: 'Line-level detail' }, pallet],
+      });
+      expect((await edit(mixed)).cargoDescription).toBe(general);
+      const undescribed = await create({ cargoDescription: general, items: [pallet] });
+      const kept = await edit(undescribed);
+      expect(kept.cargoDescription).toBe(general);
+      expect(kept.items.map((i) => i.description)).toEqual([null]);
+
+      // A booking with no lines keeps its cargo type and FCL/LCL (F91-4).
+      const headerOnly = await create({ loadType: 'FCL', cargoType: 'GENERAL', items: [] });
+      expect(await edit(headerOnly)).toMatchObject({ cargoType: 'GENERAL', loadType: 'FCL' });
+
+      // A header that followed its lines follows them on.
+      const derived = (
+        await post(
+          '/bookings',
+          cookies.salesDxb,
+          directBooking({
+            loadType: undefined,
+            cargoType: undefined,
+            cargoDescription: undefined,
+            items: [{ ...pallet, description: 'Tyres' }],
+          }),
+        ).expect(201)
+      ).body as BookingDto;
+      expect(derived).toMatchObject({ cargoType: 'PALLET', loadType: 'LCL' });
+      expect(await edit(derived, { items: [{ ...container, description: 'Cars' }] })).toMatchObject(
+        { cargoType: 'CONTAINER', loadType: 'FCL', cargoDescription: 'Cars' },
+      );
+      // Road has no FCL/LCL, whatever was saved.
+      expect(await edit(lcl, { mode: 'ROAD' })).toMatchObject({ loadType: null });
+
+      // Saved nulls the lines would fill stay null (F91-5).
+      const nulls = await create({
+        loadType: null,
+        cargoDescription: null,
+        items: [container, { ...pallet, description: 'Line detail' }],
+      });
+      expect(nulls).toMatchObject({ loadType: null, cargoDescription: null });
+      expect(await edit(nulls)).toMatchObject({ loadType: null, cargoDescription: null });
+
+      // Null or empty given clears; left out keeps (F91-6).
+      const clear = async (value: null | '') => {
+        const b = await create({ cargoDescription: 'Remove this description', items: [pallet] });
+        expect((await edit(b)).cargoDescription).toBe('Remove this description');
+        expect((await edit(b, { cargoDescription: value, loadType: null })).cargoDescription).toBe(
+          null,
+        );
+      };
+      await clear(null);
+      await clear('');
+    });
+
     it('rejects measurements that would overflow or be rounded by the database', async () => {
       const item = (fields: object) =>
         directBooking({ items: [{ cargoType: 'PALLET', quantity: 1, ...fields }] });

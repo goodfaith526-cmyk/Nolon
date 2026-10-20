@@ -484,7 +484,8 @@ describe('bookings for a new customer: the approval gate', () => {
     const booking = stored.request as Prisma.InputJsonObject;
     await t.prisma.newCustomerBookingDraft.update({
       where: { id: summary.id },
-      data: { request: { ...booking, cargoType: null } },
+      // A booking with lines takes its cargo type from them: with none, it is asked for.
+      data: { request: { ...booking, cargoType: null, items: [] } },
     });
     await t.prisma.customerDraft.update({
       where: { id: customer.id },

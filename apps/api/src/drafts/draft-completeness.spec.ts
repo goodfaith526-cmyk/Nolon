@@ -131,6 +131,14 @@ describe('booking', () => {
     expect(bookingCompleteness(direct)).toEqual(OK);
   });
 
+  it("takes a direct booking's cargo type from its first line", () => {
+    const lines = { ...direct, cargoType: undefined };
+    expect(bookingCompleteness(lines).missing).toEqual(['cargoType']);
+    expect(
+      bookingCompleteness({ ...lines, items: [{ cargoType: 'PALLET', quantity: 1 }] }),
+    ).toEqual(OK);
+  });
+
   it("names a line's type and quantity, a container line's container type, dimensions together", () => {
     expect(
       bookingCompleteness({
