@@ -90,4 +90,133 @@ describe('MissingFields', () => {
     });
     expect(onChanged).toHaveBeenCalledWith(answer);
   });
+
+  // Functional review هـ3/هـ4/هـ5: suggestions, text values, pick lists.
+  const setValue = (control: HTMLInputElement | HTMLSelectElement, value: string) => {
+    const proto = Object.getPrototypeOf(control) as object;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(control, value);
+    control.dispatchEvent(
+      new Event(control instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }),
+    );
+  };
+
+  function showWith(props: Record<string, unknown>, d: Draft = draft): HTMLElement {
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <MissingFields
+          draft={d}
+          apiPath="/release-drafts"
+          onChanged={() => undefined}
+          {...props}
+        />,
+      ),
+    );
+    return host;
+  }
+
+  it('opens with the suggested values, marked, and sends them only when saved', async () => {
+    api.mockResolvedValue(draft);
+    const el = showWith(
+      {
+        choices: { warehouseId: [{ value: 'w1', label: 'W1' }] },
+        suggested: { warehouseId: 'w1', packages: '4' },
+        dependents: { warehouseId: ['packages'] },
+      },
+      { ...draft, missingFields: ['warehouseId', 'packages'] },
+    );
+    expect(el.querySelector('select')?.value).toBe('w1');
+    expect(el.querySelector<HTMLInputElement>('input')?.value).toBe('4');
+    expect(el.textContent).toContain('missingSuggestedHint');
+    expect(el.querySelectorAll('small').length).toBe(2);
+    expect(api).not.toHaveBeenCalled();
+    await act(async () => {
+      el.querySelector('form')?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(api).toHaveBeenCalledWith('/release-drafts/d1', {
+      method: 'PATCH',
+      body: { warehouseId: 'w1', packages: 4, version: 3 },
+    });
+  });
+
+  it('drops a suggestion tied to a value the person changes, but keeps what they typed', () => {
+    const d = { ...draft, missingFields: ['warehouseId', 'packages'] };
+    const props = {
+      choices: {
+        warehouseId: [
+          { value: 'w1', label: 'W1' },
+          { value: 'w2', label: 'W2' },
+        ],
+      },
+      suggested: { warehouseId: 'w1', packages: '4' },
+      dependents: { warehouseId: ['packages'] },
+    };
+    const el = showWith(props, d);
+    const select = el.querySelector('select');
+    const input = el.querySelector<HTMLInputElement>('input');
+    if (!select || !input) throw new Error('form not shown');
+    act(() => setValue(select, 'w2'));
+    expect(input.value).toBe('');
+    host?.remove();
+    const again = showWith(props, d);
+    const select2 = again.querySelector('select');
+    const input2 = again.querySelector<HTMLInputElement>('input');
+    if (!select2 || !input2) throw new Error('form not shown');
+    act(() => setValue(input2, '2'));
+    act(() => setValue(select2, 'w2'));
+    expect(input2.value).toBe('2');
+  });
+
+  it('keeps a value the person chose even when it equals the suggestion (Codex F97-2)', () => {
+    const d = { ...draft, missingFields: ['warehouseId', 'packages'] };
+    const el = showWith(
+      {
+        choices: {
+          warehouseId: [
+            { value: 'w1', label: 'W1' },
+            { value: 'w2', label: 'W2' },
+          ],
+        },
+        suggested: { warehouseId: 'w1', packages: '4' },
+        dependents: { warehouseId: ['packages'] },
+      },
+      d,
+    );
+    const select = el.querySelector('select');
+    const input = el.querySelector<HTMLInputElement>('input');
+    if (!select || !input) throw new Error('form not shown');
+    act(() => setValue(input, '5'));
+    act(() => setValue(input, '4'));
+    act(() => setValue(select, 'w2'));
+    expect(input.value).toBe('4');
+    // Neither value is marked as a suggestion any more.
+    expect([...el.querySelectorAll('small')].map((x) => x.textContent)).not.toContain(
+      'missingSuggested',
+    );
+  });
+
+  it('takes a name as text and an invoice from the choices given', () => {
+    const el = showWith(
+      { choices: { invoiceId: [{ value: 'i1', label: 'INV-1 · 50 USD' }] } },
+      { ...draft, missingFields: ['name', 'allocations[0].invoiceId'] },
+    );
+    const input = el.querySelector<HTMLInputElement>('input');
+    expect(input?.type).toBe('text');
+    expect(input?.inputMode).toBe('');
+    if (input) act(() => setValue(input, 'آمنة ٣'));
+    expect(input?.value).toBe('آمنة ٣');
+    const options = [...(el.querySelector('select')?.options ?? [])].map((o) => o.value);
+    expect(options).toEqual(['', 'i1']);
+  });
+
+  it('says when a pick list has nothing to choose from', () => {
+    const el = showWith(
+      { choices: { cashAccountId: [] } },
+      { ...draft, missingFields: ['cashAccountId'] },
+    );
+    expect(el.textContent).toContain('missingNoChoices');
+  });
 });

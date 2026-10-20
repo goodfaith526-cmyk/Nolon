@@ -45,7 +45,8 @@ import {
   lockDraftRow,
   type LockedReplacement,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -383,6 +384,57 @@ export class CustomerDraftsService {
     );
   }
 
+  /**
+   * The checks before a person approves a customer draft together with the booking for a new
+   * customer it was proposed with (one step, from the booking's review screen), that need no
+   * lock: as `approve` would, at the customer draft's version they reviewed, with each of its
+   * values ticked against the staff member's words. The customer to create; nothing is written.
+   */
+  async prepareLinkedApproval(
+    user: AuthUser,
+    id: string,
+    version: number,
+    confirmed: readonly string[],
+  ): Promise<CreateCustomerRequest> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    requireOpen(current, version, LABEL);
+    requireApprovable(customerCompleteness(customerRequestOf(current)));
+    requireConfirmed(evidenceOf(current.evidence), confirmed);
+    const request = createRequestOf(current.branchId, customerRequestOf(current));
+    await this.customers.prepareCreate(user, request);
+    return request;
+  }
+
+  /**
+   * Approves a customer draft inside the approval of its booking for a new customer, after the
+   * caller locked the booking draft (the lock order of every path that locks both: the booking
+   * draft, then its customer draft). Locks the customer draft, which must still be open at the
+   * version reviewed, runs the gate again on the row as locked and creates the customer (a phone
+   * taken since is a 409 under the branch's customer lock); the customer's id. A customer draft
+   * approved meanwhile on its own screen is used as it is, as the two-step path would.
+   */
+  async approveLinkedInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    id: string,
+    version: number,
+    request: CreateCustomerRequest,
+  ): Promise<string> {
+    const locked = await lockDraftRow(tx, 'customer_drafts', id);
+    if (!locked) throw new NotFoundException('Customer draft not found');
+    const row = await tx.customerDraft.findUniqueOrThrow({ where: { id }, include: details });
+    if (locked.state === 'APPROVED' && row.customerId !== null) return row.customerId;
+    requireOpen(locked, version, LABEL);
+    requireApprovable(customerCompleteness(customerRequestOf(row)));
+    const customerId = (await this.customers.createInTx(tx, user, request)).id;
+    await tx.customerDraft.update({
+      where: { id },
+      data: { ...approvedFields(user), customerId },
+    });
+    return customerId;
+  }
+
   /** A new request's draft: the phone is free in the branch, the replaced draft is closed. */
   private async insertNewInTx(
     tx: Prisma.TransactionClient,
@@ -475,19 +527,36 @@ export class CustomerDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
+    hidePaired = false,
   ): Promise<CustomerDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.customerDraft.findMany({
       where: {
         ...branchScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
+        ...(hidePaired && reviewsWithBooking(user) ? notPairedWithOpenBooking(now) : {}),
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: 1, phone: d.phone }));
+  }
+
+  /**
+   * The "new customers" review list (and the reviewers' "everything waiting" list): as `list`,
+   * without the customer drafts this reviewer approves together with their booking for a new
+   * customer while that booking draft is open (approveLinkedInTx). Never used for "my drafts".
+   */
+  listForReview(
+    user: AuthUser,
+    status?: DraftStatus,
+    page?: ReviewPage,
+  ): Promise<CustomerDraftListItemDto[]> {
+    return this.list(user, status, undefined, page, true);
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
@@ -629,6 +698,29 @@ export class CustomerDraftsService {
     if (!draft) throw new NotFoundException('Customer draft not found');
     return draft;
   }
+}
+
+/**
+ * Whether this reviewer approves a customer draft proposed with a booking for a new customer from
+ * the booking's review screen, in one step: they see and decide the booking draft and may add the
+ * customer. A reviewer who cannot keeps the customer draft in their own list (the two-step path:
+ * the customer first, then someone who books approves the booking), so it never goes unreviewed.
+ */
+export function reviewsWithBooking(user: AuthUser): boolean {
+  return (
+    !user.agent &&
+    user.permissions.has('bookings:view') &&
+    user.permissions.has('bookings:create') &&
+    user.permissions.has('customers:create')
+  );
+}
+
+/**
+ * Customer drafts not waiting on an open booking draft for a new customer (pairedWithOpenBooking):
+ * one whose booking draft was rejected, approved or expired is listed again for its own review.
+ */
+export function notPairedWithOpenBooking(now: Date): Prisma.CustomerDraftWhereInput {
+  return { NOT: { newCustomerBookingDraft: { is: { state: 'DRAFT', expiresAt: { gt: now } } } } };
 }
 
 /**

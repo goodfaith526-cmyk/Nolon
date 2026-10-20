@@ -31,7 +31,7 @@ import {
 } from '../auth/decorators.js';
 import { parse, requiredText } from '../common/validation.js';
 import { customerDraftFields } from '../customers/customer-schemas.js';
-import { confirmedPaths, draftEvidencePaths } from '../drafts/draft-evidence.js';
+import { confirmedFields, confirmedPaths, draftEvidencePaths } from '../drafts/draft-evidence.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { bookingFields, itemBody } from './bookings.controller.js';
 import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.service.js';
@@ -123,7 +123,17 @@ const updateBody = z
   .extend({ version: z.number().int().min(1) })
   .strict();
 const approveBody = z
-  .object({ version: z.number().int().min(1), confirmed: confirmedPaths })
+  .object({
+    version: z.number().int().min(1),
+    confirmed: confirmedPaths,
+    // The customer draft approved in the same step: the version the person reviewed and their
+    // ticks of its words (as POST /customer-drafts/:id/approve takes them). Left out, the
+    // customer draft must be approved first, on its own screen.
+    customer: z
+      .object({ version: z.number().int().min(1), confirmed: confirmedFields })
+      .strict()
+      .optional(),
+  })
   .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
@@ -133,7 +143,7 @@ const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict
 /**
  * Bookings for a new customer (entry drafts). The staff assistant creates the customer draft and
  * the booking draft in one request, and recovers them under its key; a person approves the
- * customer, then the booking, on the review screens.
+ * customer, then the booking, on the review screens, or both at once from the booking's.
  */
 @Controller('new-customer-booking-drafts')
 export class NewCustomerBookingDraftsController {
@@ -210,8 +220,8 @@ export class NewCustomerBookingDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<NewCustomerBookingDraftDto> {
-    const { version, confirmed } = parse(approveBody, body);
-    return this.drafts.approve(user, id, version, confirmed);
+    const { version, confirmed, customer } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, confirmed, customer ?? null);
   }
 
   @Post(':id/reject')

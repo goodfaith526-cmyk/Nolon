@@ -101,7 +101,7 @@ export class CustomerDraftsController {
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
   ): Promise<CustomerDraftListItemDto[]> {
-    return this.drafts.list(user, parse(listQuery, query).status);
+    return this.drafts.listForReview(user, parse(listQuery, query).status);
   }
 
   @Get(':id')

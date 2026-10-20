@@ -79,7 +79,10 @@ const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
-const cashAccountsQuery = z.object({ customerId: z.uuid() }).strict();
+// `currency` (optional): only accounts in the receipt's currency (the review screen's choices).
+const cashAccountsQuery = z
+  .object({ customerId: z.uuid(), currency: currencyCode.optional() })
+  .strict();
 const openInvoicesQuery = z
   .object({ customerId: z.uuid(), currency: currencyCode.optional() })
   .strict();
@@ -130,8 +133,8 @@ export class ReceiptDraftsController {
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
   ): Promise<{ items: ReceiptCashAccountDto[] }> {
-    const { customerId } = parse(cashAccountsQuery, query);
-    return { items: await this.drafts.cashAccounts(user, customerId) };
+    const { customerId, currency } = parse(cashAccountsQuery, query);
+    return { items: await this.drafts.cashAccounts(user, customerId, currency) };
   }
 
   /** The customer's open invoices a receipt may settle (the assistant's pick list). */

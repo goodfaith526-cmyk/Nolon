@@ -18,6 +18,7 @@ import {
   type EntryDraftSummaryDto,
   type GoodsReleaseDraftDto,
   type GoodsReleaseDraftListItemDto,
+  type ReleaseDraftWarehouseOptionsDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -116,6 +117,20 @@ export class GoodsReleaseDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<GoodsReleaseDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /**
+   * The review screen's warehouse choices: the warehouses holding the shipment's goods in the
+   * reviewer's branches, and NOLON's suggestion for a missing warehouse and packages. A person's
+   * read (not @AgentReadable); nothing is written.
+   */
+  @Get(':id/warehouse-options')
+  @RequirePermission('warehouse:create')
+  warehouseOptions(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ReleaseDraftWarehouseOptionsDto> {
+    return this.drafts.warehouseOptions(user, id);
   }
 
   /** A person fills in or changes the draft's values (the review screen's form). */

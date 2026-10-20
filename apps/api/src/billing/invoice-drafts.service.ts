@@ -9,6 +9,7 @@ import type {
   EntryDraftSummaryDto,
   InvoiceDraftCreateRequest,
   InvoiceDraftDto,
+  InvoiceDraftSuggestedValuesDto,
   InvoiceDraftLineInput,
   InvoiceDraftListItemDto,
   InvoiceDraftRequest,
@@ -28,6 +29,7 @@ import {
   draftBranch,
   draftExpiry,
   draftStatus,
+  isRefusal,
   patched,
   preCheck,
   rejectedFields,
@@ -45,7 +47,8 @@ import {
   keyReused,
   lockDraftRow,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -275,6 +278,44 @@ export class InvoiceDraftsService {
   }
 
   /**
+   * NOLON's suggestion for the currency and dates an open draft for a shipment misses, for the
+   * review screen: worked out on each read by suggestForShipment from the shipment (its customer's
+   * currency, the branch's today, the customer's payment terms), with the draft's own currency and
+   * invoice date when it has them, so a due date follows the invoice date the draft holds. Only
+   * missing values are suggested, and none is saved here: the person applies them through the
+   * PATCH (a person's edit at the version shown, which moves the version on), so the request the
+   * assistant created under its idempotency key, and its payload hash, never change. Nothing to
+   * suggest when the shipment is gone from the reviewer's reach or NOLON cannot derive it.
+   */
+  async suggestedValues(user: AuthUser, id: string): Promise<InvoiceDraftSuggestedValuesDto> {
+    const draft = await this.findScoped(user, id);
+    const none = { version: draft.version, values: null, currencySource: null };
+    const open = draftStatus(draft.state, draft.expiresAt, new Date()) === 'DRAFT';
+    const missing = draft.currency === null || draft.invoiceDate === null || draft.dueDate === null;
+    if (!open || draft.shipmentId === null || !missing) return none;
+    let suggestion: InvoiceSuggestionDto;
+    try {
+      suggestion = await this.invoices.suggestForShipment(user, {
+        shipmentId: draft.shipmentId,
+        ...(draft.currency === null ? {} : { currency: draft.currency }),
+        ...(draft.invoiceDate === null ? {} : { invoiceDate: fromDbDate(draft.invoiceDate) }),
+      });
+    } catch (error) {
+      if (isRefusal(error)) return none;
+      throw error;
+    }
+    return {
+      version: draft.version,
+      values: {
+        currency: draft.currency === null ? suggestion.currency : null,
+        invoiceDate: draft.invoiceDate === null ? suggestion.invoiceDate : null,
+        dueDate: draft.dueDate === null ? suggestion.dueDate : null,
+      },
+      currencySource: draft.currency === null ? suggestion.currencySource : null,
+    };
+  }
+
+  /**
    * The checks a draft's values get on create and on a person's edit: once the draft can be
    * priced, a real draft invoice's in full (prepareForShipment), each line without a typed price
    * taking the system price; before, those of the values present. The draft's branch is the
@@ -437,17 +478,19 @@ export class InvoiceDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<InvoiceDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.invoiceDraft.findMany({
       where: {
         ...branchScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     return drafts.map((d) => ({ ...baseFields(d, user, now), lineCount: d.lines.length }));
   }

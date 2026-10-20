@@ -293,6 +293,20 @@ export class BookingsService {
     await this.prepare(null, input);
   }
 
+  /**
+   * prepareWithoutCustomer for a booking whose new customer is created in the same transaction
+   * (a booking for a new customer approved with its customer draft): the booking to insert, in
+   * `branchId` (the customer's), once that customer's id is known. A new customer is active, in
+   * the user's branch, and has no parties yet, so nothing of prepareCreate is left unchecked.
+   */
+  async prepareForNewCustomer(
+    input: NewCustomerBookingRequest,
+    branchId: string,
+  ): Promise<(customerId: string) => PreparedBooking> {
+    const prepared = await this.prepare(null, input);
+    return (customerId) => ({ branchId, customerId, quotationId: null, ...prepared });
+  }
+
   /** As prepareCreate, for a booking made from an approved quotation of the user's branches. */
   async prepareFromQuotation(
     user: AuthUser,

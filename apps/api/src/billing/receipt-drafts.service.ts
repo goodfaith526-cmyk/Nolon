@@ -48,7 +48,8 @@ import {
   keyReused,
   lockDraftRow,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -178,10 +179,18 @@ export class ReceiptDraftsService {
    * The cash and bank accounts a receipt for this customer may use (the customer visible to the
    * user; the receipt is the customer's branch's): active and postable, the branch's or shared.
    */
-  async cashAccounts(user: AuthUser, customerId: string): Promise<ReceiptCashAccountDto[]> {
+  async cashAccounts(
+    user: AuthUser,
+    customerId: string,
+    currency?: string,
+  ): Promise<ReceiptCashAccountDto[]> {
     const customer = await this.customers.requireCustomer(user, customerId);
     const accounts = await this.accounts.cashAccountsFor(customer.branchId);
-    return accounts.map((a) => ({ ...a, isActive: true }));
+    // With the receipt's currency (the review screen's), only accounts kept in it: a receipt
+    // is recorded in its cash account's currency.
+    return accounts
+      .filter((a) => currency === undefined || a.currency === currency)
+      .map((a) => ({ ...a, isActive: true }));
   }
 
   /** The customer's open invoices a receipt may settle, oldest due first. */
@@ -346,17 +355,19 @@ export class ReceiptDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<ReceiptDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.receiptDraft.findMany({
       where: {
         ...branchScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
