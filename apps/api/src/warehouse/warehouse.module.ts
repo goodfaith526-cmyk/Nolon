@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DocumentsModule } from '../documents/documents.module.js';
 import { DraftsModule } from '../drafts/drafts.module.js';
+import { MasterDataModule } from '../master-data/master-data.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { GoodsReleaseDraftsController } from './goods-release-drafts.controller.js';
 import { GoodsReleaseDraftsService } from './goods-release-drafts.service.js';
@@ -12,7 +13,7 @@ import { WarehousesService } from './warehouses.service.js';
 import { WarehouseReportsService } from './warehouse-reports.service.js';
 
 @Module({
-  imports: [ShipmentsModule, DocumentsModule, DraftsModule],
+  imports: [ShipmentsModule, DocumentsModule, DraftsModule, MasterDataModule],
   controllers: [
     WarehousesController,
     ShipmentWarehouseController,

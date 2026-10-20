@@ -277,6 +277,8 @@ export class WarehouseMovementsService {
       ? await this.shipments.advanceInTx(tx, user, shipmentId, input.shipmentStatus, {
           occurredAt,
           note: number,
+          // The tracking page shows where the goods are: at the warehouse's place, when set (D9).
+          locationId: warehouse.locationId,
         })
       : false;
     const movement = await tx.warehouseMovement.create({

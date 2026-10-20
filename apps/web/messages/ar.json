@@ -978,7 +978,10 @@
     "photoRejected": "تُقبل صور JPEG وPNG وWebP فقط.",
     "useRemaining": "استخدم المتبقي: {remaining}",
     "remainingSuggested": "الطرود المتبقية للاستلام. عُدّها وأكّد.",
-    "weightHeldSuggested": "مقترح: الوزن المتبقي في هذا المخزن، للإفراج عنه كله."
+    "weightHeldSuggested": "مقترح: الوزن المتبقي في هذا المخزن، للإفراج عنه كله.",
+    "place": "الموقع",
+    "noPlace": "بدون موقع",
+    "placeHint": "الاستلام الذي يحرّك حالة الشحنة يظهرها في هذا الموقع في صفحة التتبع."
   },
   "Customs": {
     "section": "الجمارك",

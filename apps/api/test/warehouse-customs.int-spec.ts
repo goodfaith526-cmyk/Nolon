@@ -591,6 +591,109 @@ describe('warehouse and customs', () => {
       expect(await t.prisma.shipmentEvent.count({ where: { shipmentId: s.id } })).toBe(2);
     });
 
+    it("a receipt that moves the shipment records it at the warehouse's place (D9)", async () => {
+      const placed = (
+        await post('/warehouses', cookies.warehouseDxb, {
+          branchId: dxb,
+          code: 'ZZ-DXB-D9',
+          nameEn: 'Placed store',
+          nameAr: 'مستودع بموقع',
+          locationId: portSudan,
+        }).expect(201)
+      ).body as WarehouseDto;
+      expect(placed.locationId).toBe(portSudan);
+
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      const before = await t.prisma.shipment.findUniqueOrThrow({ where: { id: s.id } });
+      expect(before.currentLocationId).not.toBe(portSudan);
+      // A receipt that moves nothing leaves the shipment where it was.
+      await receive(s.id, cookies.warehouseDxb, { warehouseId: placed.id, packages: 1 }).expect(
+        201,
+      );
+      expect(
+        (await t.prisma.shipment.findUniqueOrThrow({ where: { id: s.id } })).currentLocationId,
+      ).toBe(before.currentLocationId);
+      await receive(s.id, cookies.warehouseDxb, {
+        warehouseId: placed.id,
+        packages: 2,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(201);
+      const moved = await t.prisma.shipment.findUniqueOrThrow({
+        where: { id: s.id },
+        include: { events: { orderBy: { id: 'desc' }, take: 1 } },
+      });
+      expect(moved.currentLocationId).toBe(portSudan);
+      expect(moved.events[0]).toMatchObject({
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+        locationId: portSudan,
+      });
+
+      // A warehouse without a place moves the shipment and leaves its location as it was.
+      const other = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      const otherBefore = await t.prisma.shipment.findUniqueOrThrow({ where: { id: other.id } });
+      await receive(other.id, cookies.warehouseDxb, {
+        packages: 2,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(201);
+      const otherAfter = await t.prisma.shipment.findUniqueOrThrow({
+        where: { id: other.id },
+        include: { events: { orderBy: { id: 'desc' }, take: 1 } },
+      });
+      expect(otherAfter.status).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+      expect(otherAfter.currentLocationId).toBe(otherBefore.currentLocationId);
+      expect(otherAfter.events[0]?.locationId).toBeNull();
+    });
+
+    it("a warehouse's place is an active location; it can be changed and cleared (D9)", async () => {
+      const inactive = await t.prisma.location.create({
+        data: {
+          code: `ZQ${String(Date.now()).slice(-6)}`,
+          kind: 'OTHER',
+          nameEn: 'Closed yard',
+          nameAr: 'ساحة مغلقة',
+          countryCode: 'AE',
+          isActive: false,
+        },
+      });
+      try {
+        const body = { branchId: dxb, code: 'ZZ-DXB-D9B', nameEn: 'b', nameAr: 'ب' };
+        await post('/warehouses', cookies.warehouseDxb, {
+          ...body,
+          locationId: inactive.id,
+        }).expect(400);
+        await post('/warehouses', cookies.warehouseDxb, {
+          ...body,
+          locationId: '00000000-0000-4000-8000-000000000000',
+        }).expect(400);
+        const w = (await post('/warehouses', cookies.warehouseDxb, body).expect(201))
+          .body as WarehouseDto;
+        expect(w.locationId).toBeNull();
+        await patch(`/warehouses/${w.id}`, cookies.warehouseDxb, {
+          locationId: inactive.id,
+        }).expect(400);
+        const set = (
+          await patch(`/warehouses/${w.id}`, cookies.warehouseDxb, {
+            locationId: portSudan,
+          }).expect(200)
+        ).body as WarehouseDto;
+        expect(set.locationId).toBe(portSudan);
+        const renamed = (
+          await patch(`/warehouses/${w.id}`, cookies.warehouseDxb, { nameEn: 'bb' }).expect(200)
+        ).body as WarehouseDto;
+        expect(renamed.locationId).toBe(portSudan);
+        const cleared = (
+          await patch(`/warehouses/${w.id}`, cookies.warehouseDxb, { locationId: null }).expect(200)
+        ).body as WarehouseDto;
+        expect(cleared.locationId).toBeNull();
+        // Another branch's user cannot set it.
+        await patch(`/warehouses/${w.id}`, cookies.warehouseJed, {
+          locationId: portSudan,
+        }).expect(404);
+      } finally {
+        await t.prisma.location.delete({ where: { id: inactive.id } });
+      }
+    });
+
     it('without the warehouse service the receipt never moves the shipment', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT']);
       const r = (
