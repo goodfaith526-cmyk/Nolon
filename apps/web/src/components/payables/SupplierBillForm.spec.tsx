@@ -115,6 +115,9 @@ describe('SupplierBillForm defaults (functional review C1, C2, C4, C9, C10)', ()
       }
       if (path === '/suppliers/s1') return Promise.resolve({ id: 's1', paymentTermsDays: 30 });
       if (path.startsWith('/suppliers/s1/billable-trips')) return Promise.resolve(TRIPS);
+      if (path.startsWith('/supplier-bills/due-date')) {
+        return Promise.resolve({ dueDate: '2026-11-18', paymentTermsDays: 30 });
+      }
       if (path.startsWith('/shipments/pick')) {
         return Promise.resolve({ exact: SHIPMENT, items: [], total: 0, page: 1, pageSize: 10 });
       }
@@ -187,7 +190,7 @@ describe('SupplierBillForm defaults (functional review C1, C2, C4, C9, C10)', ()
     expect(amount().value).toBe('100');
   });
 
-  it('sends the picked shipment and no due date, for the API to generate', async () => {
+  it("sends the picked shipment and the API's suggested due date when none is typed", async () => {
     change(control('lineKind'), 'SHIPMENT_COST');
     const search = document.querySelector<HTMLInputElement>('input[type="search"]');
     change(search as HTMLInputElement, 'nol-shp-000001');
@@ -209,10 +212,11 @@ describe('SupplierBillForm defaults (functional review C1, C2, C4, C9, C10)', ()
       ([, init]) => (init as { method?: string })?.method === 'POST',
     );
     const body = (post?.[1] as { body: Record<string, unknown> }).body;
+    expect(api).toHaveBeenCalledWith('/supplier-bills/due-date?supplierId=s1&billDate=2026-10-19');
     expect(body).toMatchObject({
       currency: 'AED',
       billDate: '2026-10-19',
-      dueDate: null,
+      dueDate: '2026-11-18',
       lines: [
         { kind: 'SHIPMENT_COST', shipmentId: 'sh1', chargeTypeCode: 'FREIGHT', amount: '75' },
       ],
