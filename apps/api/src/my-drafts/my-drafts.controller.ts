@@ -13,10 +13,12 @@ import {
   DRAFT_STATUSES,
   MY_DRAFTS_MAX,
   MY_DRAFT_KINDS,
+  REVIEW_DRAFTS_MAX,
   SETTLE_DRAFT_KINDS,
   type DraftCapabilitiesDto,
   type DraftKeySettlementDto,
   type MyDraftItemDto,
+  type ReviewDraftsPageDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -40,6 +42,16 @@ const mineQuery = z
       .transform((v) => v.split(',').map((id) => id.trim().toLowerCase()))
       .pipe(z.array(z.uuid()).min(1).max(MY_DRAFTS_MAX))
       .optional(),
+  })
+  .strict();
+
+const reviewQuery = z
+  .object({
+    kind: z.enum(MY_DRAFT_KINDS).optional(),
+    // The cursor: the `next` of the page before (both or neither).
+    before: z.iso.datetime({ offset: true }).optional(),
+    beforeId: z.uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(REVIEW_DRAFTS_MAX).default(20),
   })
   .strict();
 
@@ -82,6 +94,25 @@ export class MyDraftsController {
         ...(since ? { since: new Date(since) } : {}),
         ...(before ? { before: new Date(before), ...(beforeId ? { beforeId } : {}) } : {}),
       },
+      kind,
+    );
+  }
+
+  /**
+   * The reviewers' list, "everything waiting": open drafts of every kind (GRN drafts included)
+   * this person may decide now, whoever they were made for, one page at a time. No route
+   * permission: each kind lists only if the user may view it now. A person's read only (not
+   * @AgentReadable).
+   */
+  @Get('review')
+  review(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ReviewDraftsPageDto> {
+    const { kind, before, beforeId, limit } = parse(reviewQuery, query);
+    if (Boolean(before) !== Boolean(beforeId)) {
+      throw new BadRequestException('before and beforeId go together');
+    }
+    return this.drafts.review(
+      user,
+      { limit, ...(before && beforeId ? { before: new Date(before), beforeId } : {}) },
       kind,
     );
   }

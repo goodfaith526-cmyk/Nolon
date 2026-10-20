@@ -98,6 +98,31 @@ export interface GoodsReleaseDraftDto extends EntryDraftReviewFields, MissingFie
   movementNumber: string | null;
 }
 
+/** A warehouse a goods release draft could release from, with what it holds of the shipment. */
+export interface ReleaseWarehouseOptionDto {
+  warehouseId: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  branchId: string;
+  /** Packages of the shipment it holds now (more than none). */
+  onHandPackages: number;
+  remainingWeightKg: DecimalString | null;
+}
+
+/**
+ * GET /release-drafts/:id/warehouse-options: the warehouses holding the shipment's goods in the
+ * reviewer's branches, and NOLON's suggestion for the values the draft misses: the one warehouse
+ * holding the goods (when only one does) and what it holds as the packages. A suggestion only:
+ * nothing is saved until the person saves the values (PATCH, which moves the version on).
+ */
+export interface ReleaseDraftWarehouseOptionsDto {
+  /** The draft's version these were worked out for. */
+  version: number;
+  options: ReleaseWarehouseOptionDto[];
+  suggested: { warehouseId: string | null; packages: number | null } | null;
+}
+
 export type GoodsReleaseDraftListItemDto = Omit<GoodsReleaseDraftDto, 'request' | 'check'> & {
   lineCount: number;
   packages: number | null;

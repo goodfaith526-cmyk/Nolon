@@ -337,6 +337,44 @@ export interface MyDraftItemDto {
   result: MyDraftResult | null;
 }
 
+/** Most drafts one page of the reviewers' list returns. */
+export const REVIEW_DRAFTS_MAX = 50;
+
+/**
+ * A draft waiting for this reviewer (GET /assistant-drafts/review): status DRAFT, of a kind they
+ * may view, in their branches, that they may decide now, whoever it was made for. A person's
+ * read only (never the assistant's).
+ */
+export interface ReviewDraftItemDto {
+  kind: MyDraftKind;
+  id: string;
+  /** What the draft is about (the customer, the shipment...), as its review list names it. */
+  subject: string;
+  branchId: string;
+  branchCode: string;
+  createdAt: string;
+  expiresAt: string;
+  /** The staff member the assistant acted for. */
+  createdByName: string;
+  /**
+   * How many values the draft still misses before it can be approved (its missingFields); null
+   * for a GRN draft, whose receipt details are entered on its shipment's page.
+   */
+  missingCount: number | null;
+  /** As MyDraftItemDto's: `/drafts/<page>/<id>`, or a GRN draft's shipment page. */
+  reviewPath: string;
+}
+
+/**
+ * A page of the reviewers' list, newest first. `next` is the cursor of the page after it (pass it
+ * as `before` and `beforeId`); null on the last page. A page may hold fewer items than asked
+ * (drafts this reviewer may see but not decide are left out), and still have a next page.
+ */
+export interface ReviewDraftsPageDto {
+  items: ReviewDraftItemDto[];
+  next: { before: string; beforeId: string } | null;
+}
+
 /** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */
 export const SETTLE_DRAFT_KINDS = MY_DRAFT_KINDS;
 export type SettleDraftKind = (typeof SETTLE_DRAFT_KINDS)[number];

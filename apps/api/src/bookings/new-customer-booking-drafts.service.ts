@@ -7,6 +7,7 @@ import {
 import {
   BOOKING_SERVICES,
   CARGO_TYPES,
+  type CreateCustomerRequest,
   type CustomerDraftRequest,
   type DraftEvidence,
   type DraftPreCheckDto,
@@ -61,7 +62,8 @@ import {
   lockDraftRow,
   type LockedReplacement,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -82,7 +84,7 @@ import {
   newCustomerBookingCompleteness,
   requireApprovable,
 } from '../drafts/draft-completeness.js';
-import { BookingsService } from './bookings.service.js';
+import { BookingsService, type PreparedBooking } from './bookings.service.js';
 import { ContainerBookingsRegistry } from './container-bookings.registry.js';
 
 const LABEL = 'new customer booking draft';
@@ -97,6 +99,20 @@ export const CUSTOMER_APPROVED_REFUSAL =
 /** Why a pair whose customer draft was rejected or expired is not replaced. */
 export const CUSTOMER_CLOSED_REFUSAL =
   'The new customer of this booking is already decided or expired: reject this booking for a new customer in NOLON and propose a new one';
+
+/** Why a one-step approval (the booking with its customer draft) is refused to this user. */
+export const CUSTOMER_PERMISSION_REFUSAL =
+  'Approving the new customer with the booking needs permission to add customers: have the customer draft approved first, then approve the booking';
+
+/** What an approval records (approvalPlan). */
+type ApprovalPlan =
+  | { kind: 'READY'; customerId: string }
+  | {
+      kind: 'WITH_CUSTOMER';
+      customer: CreateCustomerRequest;
+      customerVersion: number;
+      booking: (customerId: string) => PreparedBooking;
+    };
 
 interface DraftOpenness {
   state: DraftState;
@@ -494,17 +510,19 @@ export class NewCustomerBookingDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<NewCustomerBookingDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.newCustomerBookingDraft.findMany({
       where: {
         ...branchScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     const ids = drafts.map((d) => d.customerDraftId);
     const customers = await this.customerDrafts.linkedOf(ids);
@@ -563,15 +581,20 @@ export class NewCustomerBookingDraftsService {
   }
 
   /**
-   * A person approves the version they reviewed, once the new customer is approved: the DRAFT
-   * booking is created for that customer in the same transaction as the approval. Approving an
-   * approved draft returns it as it is, without a second booking.
+   * A person approves the version they reviewed: the DRAFT booking is created for the new
+   * customer in the same transaction as the approval. The customer draft is approved first on its
+   * own screen (two steps), or, when `withCustomer` names the customer draft's version the person
+   * reviewed and their ticks of its words, here in the same transaction (one step): that needs
+   * permission to add customers as well (403 otherwise, nothing approved), and both drafts must
+   * still be at the versions reviewed. A customer draft already approved is used as it is.
+   * Approving an approved draft returns it as it is, without a second booking.
    */
   async approve(
     user: AuthUser,
     id: string,
     version: number,
     confirmed: readonly string[] = [],
+    withCustomer: { version: number; confirmed: readonly string[] } | null = null,
   ): Promise<NewCustomerBookingDraftDto> {
     this.drafts.requireHuman(user, HUMAN_ONLY);
     const current = await this.findScoped(user, id);
@@ -585,16 +608,13 @@ export class NewCustomerBookingDraftsService {
     // An approved customer draft never changes again (a database trigger), so its customer
     // read here is the one the booking gets.
     const customer = await this.customerOf(current);
-    const notReady = customerNotReady(customer);
-    if (notReady !== null || customer.customerId === null) {
-      throw new ConflictException(notReady ?? 'Approve the new customer first');
-    }
     const { consolidationId, ...request } = completeBookingRequest(bookingRequestOf(current));
+    const plan = await this.approvalPlan(user, current, customer, request, withCustomer);
     await this.requireContainer(user, { ...request, consolidationId });
-    const prepared = await this.bookings.prepareCreate(user, {
-      ...request,
-      customerId: customer.customerId,
-    });
+    const ready =
+      plan.kind === 'READY'
+        ? await this.bookings.prepareCreate(user, { ...request, customerId: plan.customerId })
+        : null;
     await this.prisma.$transaction(async (tx) => {
       let bookingId = '';
       const decided = await decideInTx(tx, {
@@ -611,6 +631,20 @@ export class NewCustomerBookingDraftsService {
           requireApprovable(await this.completeness(row, tx));
         },
         record: async () => {
+          // One step: the customer draft is locked after this booking draft (the lock order of
+          // every path that locks both) and approved first; the booking is for its customer.
+          const prepared =
+            plan.kind === 'WITH_CUSTOMER'
+              ? plan.booking(
+                  await this.customerDrafts.approveLinkedInTx(
+                    tx,
+                    user,
+                    current.customerDraftId,
+                    plan.customerVersion,
+                    plan.customer,
+                  ),
+                )
+              : storedValue(ready, 'booking for the approved customer');
           bookingId = consolidationId
             ? await this.containers.get().bookInTx(tx, user, consolidationId, prepared)
             : await this.bookings.insertInTx(tx, user, prepared);
@@ -624,6 +658,43 @@ export class NewCustomerBookingDraftsService {
       }
     });
     return this.get(user, id);
+  }
+
+  /**
+   * What an approval records, checked before any lock: the booking for the customer already
+   * approved (READY), or, in one step, the customer draft's approval and then the booking for the
+   * customer it creates (WITH_CUSTOMER). Refused while the customer draft is open and the person
+   * did not review it here (409, the two-step path), lacks permission to add customers (403), or
+   * the customer draft was rejected or expired (409).
+   */
+  private async approvalPlan(
+    user: AuthUser,
+    current: DraftRow,
+    customer: NewCustomerBookingDraftCustomer,
+    request: Omit<NewCustomerBookingRequest, 'consolidationId'>,
+    withCustomer: { version: number; confirmed: readonly string[] } | null,
+  ): Promise<ApprovalPlan> {
+    if (customer.status === 'APPROVED' && customer.customerId !== null) {
+      return { kind: 'READY', customerId: customer.customerId };
+    }
+    if (customer.status !== 'DRAFT' || withCustomer === null) {
+      throw new ConflictException(customerNotReady(customer) ?? 'Approve the new customer first');
+    }
+    if (!user.permissions.has('customers:create')) {
+      throw new ForbiddenException(CUSTOMER_PERMISSION_REFUSAL);
+    }
+    const customerRequest = await this.customerDrafts.prepareLinkedApproval(
+      user,
+      current.customerDraftId,
+      withCustomer.version,
+      withCustomer.confirmed,
+    );
+    return {
+      kind: 'WITH_CUSTOMER',
+      customer: customerRequest,
+      customerVersion: withCustomer.version,
+      booking: await this.bookings.prepareForNewCustomer(request, current.branchId),
+    };
   }
 
   async reject(

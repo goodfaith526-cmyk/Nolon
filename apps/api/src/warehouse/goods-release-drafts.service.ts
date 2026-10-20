@@ -11,6 +11,7 @@ import type {
   GoodsReleaseDraftListItemDto,
   GoodsReleaseDraftRequest,
   GoodsReleaseDraftUpdateRequest,
+  ReleaseDraftWarehouseOptionsDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
@@ -41,7 +42,8 @@ import {
   lockDraftRow,
   requireSameParent,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -297,17 +299,19 @@ export class GoodsReleaseDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<GoodsReleaseDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.goodsReleaseDraft.findMany({
       where: {
         ...draftScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -349,6 +353,35 @@ export class GoodsReleaseDraftsService {
         ? await this.check(user, draft)
         : null;
     return { ...baseFields(draft, user, now), request: releaseRequestOf(draft), check };
+  }
+
+  /**
+   * The review screen's warehouse choices for an open draft that names its shipment: the
+   * warehouses holding the shipment's goods now in the reviewer's branches
+   * (WarehouseMovementsService.releasableBalances), and a suggestion for the values it misses.
+   * Worked out on each read, from the balances now and the draft as it is at `version`: the one
+   * warehouse holding the goods, when the draft names none and exactly one does; the packages
+   * that warehouse (the one the draft names, else the suggested one) holds, when the draft has
+   * none. A suggestion is never saved here: the person sees it in the form, may change it, and
+   * saves it (PATCH, which moves the version on); a value the draft holds is never replaced, and
+   * a later change of warehouse in the form drops the packages suggested for the earlier one.
+   */
+  async warehouseOptions(user: AuthUser, id: string): Promise<ReleaseDraftWarehouseOptionsDto> {
+    const draft = await this.findScoped(user, id);
+    const open = draftStatus(draft.state, draft.expiresAt, new Date()) === 'DRAFT';
+    if (!open || draft.shipmentId === null) {
+      return { version: draft.version, options: [], suggested: null };
+    }
+    const options = await this.movements.releasableBalances(user, draft.shipmentId);
+    const only = options.length === 1 ? options[0] : undefined;
+    const warehouseId = draft.warehouseId === null ? (only?.warehouseId ?? null) : null;
+    const from = options.find((o) => o.warehouseId === (draft.warehouseId ?? warehouseId));
+    const packages = draft.packages === null ? (from?.onHandPackages ?? null) : null;
+    return {
+      version: draft.version,
+      options,
+      suggested: warehouseId === null && packages === null ? null : { warehouseId, packages },
+    };
   }
 
   /**

@@ -10,6 +10,8 @@ import type {
   EntryDraftSummaryDto,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
+  InvoiceDraftSuggestedValuesDto,
+  InvoiceSuggestionDto,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
   ReceiptCashAccountDto,
@@ -716,7 +718,8 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
       await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
     }
     await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
-    await pick('cash-accounts', `customerId=${customer.id}&currency=USD`).expect(400);
+    // A currency (the review screen's filter, functional review هـ6) must be a code too.
+    await pick('cash-accounts', `customerId=${customer.id}&currency=usd`).expect(400);
   });
 
   it('refuses a bad cash account or allocation at its field, with a code', async () => {
@@ -967,5 +970,124 @@ describe('receipt drafts saved with missing values', () => {
     expect(approved.status).toBe('APPROVED');
     await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200);
     expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(1);
+  });
+});
+
+// Functional review هـ4: the review screen offers NOLON's suggestion (suggestForShipment) for the
+// currency and dates an invoice draft misses; the person applies it with the PATCH, and the
+// assistant's request under its key never changes.
+describe('invoice drafts: suggested values on the review screen', () => {
+  const suggested = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/invoice-drafts/${id}/suggested-values`, cookie).expect(200))
+      .body as InvoiceDraftSuggestedValuesDto;
+  const row = (id: string) => t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id } });
+
+  it('suggests the missing currency and dates without saving them; the PATCH applies them', async () => {
+    const shipmentId = await shipment();
+    const body = { idempotencyKey: draftKey(), shipmentId };
+    const { id } = (await createInvoiceDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    const stored = await row(id);
+    const derived = (
+      await r.agentPost('/invoice-drafts/suggest', tokens.finance, { shipmentId }).expect(200)
+    ).body as InvoiceSuggestionDto;
+    const offer = await suggested(id);
+    expect(offer).toEqual({
+      version: 1,
+      values: { currency: 'USD', invoiceDate: derived.invoiceDate, dueDate: derived.dueDate },
+      currencySource: derived.currencySource,
+    });
+    // Nothing saved by the read.
+    expect(await row(id)).toMatchObject({ version: 1, currency: null, invoiceDate: null });
+    const card = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+
+    // The person applies them as shown, at the version shown.
+    const values = offer.values ?? { currency: null, invoiceDate: null, dueDate: null };
+    const saved = (
+      await r
+        .patch(`/invoice-drafts/${id}`, cookies.financePts, { version: 1, ...values })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(saved).toMatchObject({ version: 2, request: values });
+    expect(saved.missingFields).toEqual(['lines']);
+    // The card the assistant showed is stale now: its content hash moved on.
+    const fresh = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+    expect(fresh.contentHash).not.toBe(card.contentHash);
+    expect(fresh.draft.version).toBe(2);
+    // Nothing is left to suggest; an old version is refused by the PATCH as before.
+    expect(await suggested(id)).toEqual({ version: 2, values: null, currencySource: null });
+    await r
+      .patch(`/invoice-drafts/${id}`, cookies.financePts, { version: 1, ...values })
+      .expect(409);
+
+    // The assistant's retry under the same key answers with the same draft, its request unchanged.
+    const replay = (await createInvoiceDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id, version: 2 });
+    const after = await row(id);
+    expect(after.payloadHash).toBe(stored.payloadHash);
+    expect(after.idempotencyKey).toBe(stored.idempotencyKey);
+    expect(
+      await t.prisma.invoiceDraft.count({ where: { idempotencyKey: body.idempotencyKey } }),
+    ).toBe(1);
+  });
+
+  it('suggests only what is missing: a due date after the invoice date the draft holds', async () => {
+    const shipmentId = await shipment();
+    const { id } = (
+      await createInvoiceDraft({
+        idempotencyKey: draftKey(),
+        shipmentId,
+        currency: 'SDG',
+        invoiceDate: d('06-01'),
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const derived = (
+      await r
+        .agentPost('/invoice-drafts/suggest', tokens.finance, {
+          shipmentId,
+          currency: 'SDG',
+          invoiceDate: d('06-01'),
+        })
+        .expect(200)
+    ).body as InvoiceSuggestionDto;
+    expect(await suggested(id)).toEqual({
+      version: 1,
+      values: { currency: null, invoiceDate: null, dueDate: derived.dueDate },
+      currencySource: null,
+    });
+  });
+
+  it('suggests nothing without a shipment, and only to a person who may edit the draft', async () => {
+    const { id } = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(await suggested(id)).toEqual({ version: 1, values: null, currencySource: null });
+    await r.agentGet(`/invoice-drafts/${id}/suggested-values`, tokens.finance).expect(403);
+    await r.get(`/invoice-drafts/${id}/suggested-values`, cookies.salesPts).expect(403);
+    await r.get(`/invoice-drafts/${id}/suggested-values`, cookies.financeJed).expect(404);
+  });
+});
+
+// Functional review هـ6: the review screen asks for the cash accounts in the receipt's currency.
+describe('receipt drafts: cash accounts in a currency', () => {
+  it('filters by the currency given; without it, as before', async () => {
+    const list = async (query: string, cookie = cookies.financePts) =>
+      (
+        (await r.get(`/receipt-drafts/cash-accounts?${query}`, cookie).expect(200)).body as {
+          items: ReceiptCashAccountDto[];
+        }
+      ).items.map((a) => a.id);
+    const all = await list(`customerId=${customer.id}`);
+    expect(all).toEqual(expect.arrayContaining([cashUsd.id, cashSdg.id]));
+    const usd = await list(`customerId=${customer.id}&currency=USD`);
+    expect(usd).toContain(cashUsd.id);
+    expect(usd).not.toContain(cashSdg.id);
+    await r
+      .get(
+        `/receipt-drafts/cash-accounts?customerId=${customer.id}&currency=usd`,
+        cookies.financePts,
+      )
+      .expect(400);
   });
 });

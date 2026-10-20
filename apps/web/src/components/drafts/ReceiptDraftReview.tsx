@@ -1,14 +1,14 @@
 'use client';
 
-import type { AccountDto, ReceiptDraftDto } from '@nolon/shared';
+import type { ReceiptCashAccountDto, ReceiptDraftDto, ReceiptOpenInvoiceDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { useLocalName } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
-import { useApiList } from '../finance/reports/ReportKit';
 import { DraftFrame } from './DraftFrame';
 import { MissingFields } from './MissingFields';
+import { useOptionalRead } from './use-optional-read';
 
 /** A receipt the assistant proposed: the amount, the cash account and the invoices it settles. */
 export function ReceiptDraftReview({ id }: { id: string }) {
@@ -17,23 +17,41 @@ export function ReceiptDraftReview({ id }: { id: string }) {
   const tc = useTranslations('Common');
   const name = useLocalName();
   const { record: draft, notice, setRecord } = useRecord<ReceiptDraftDto>(`/receipt-drafts/${id}`);
-  const needsCash = draft?.missingFields.includes('cashAccountId') ?? false;
-  const accounts = useApiList<AccountDto>('/accounting/accounts', needsCash);
+  const missing = draft?.missingFields ?? [];
+  const customerId = draft?.request.customerId ?? null;
+  const currency = draft?.request.currency ?? null;
+  // The pick lists NOLON gives for the receipt's customer (as the assistant's are): the cash
+  // accounts a receipt for them may use, in the receipt's currency once it has one, and their
+  // open invoices. Without a customer yet, there is nothing to choose from.
+  const query = (extra: string | null) =>
+    customerId === null
+      ? null
+      : `customerId=${encodeURIComponent(customerId)}${extra ? `&currency=${encodeURIComponent(extra)}` : ''}`;
+  const cashQuery = missing.includes('cashAccountId') ? query(currency) : null;
+  const invoiceQuery = missing.some((f) => f.endsWith('.invoiceId')) ? query(currency) : null;
+  const accounts = useOptionalRead<{ items: ReceiptCashAccountDto[] }>(
+    cashQuery === null ? null : `/receipt-drafts/cash-accounts?${cashQuery}`,
+  );
+  const invoices = useOptionalRead<{ items: ReceiptOpenInvoiceDto[] }>(
+    invoiceQuery === null ? null : `/receipt-drafts/open-invoices?${invoiceQuery}`,
+  );
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const rc = draft.request;
   // A value the draft still misses shows as a dash (MissingFields names it).
-  const currency = rc.currency ?? undefined;
-  const cashChoices = (accounts ?? [])
-    .filter(
-      (a) =>
-        a.isCash &&
-        a.isActive &&
-        a.isPostable &&
-        (a.branchId === null || a.branchId === draft.branchId) &&
-        (currency === undefined || a.currency === currency),
-    )
-    .map((a) => ({ value: a.id, label: `${a.code} · ${name(a)}` }));
+  const shown = currency ?? undefined;
+  const cashChoices = (accounts?.items ?? []).map((a) => ({
+    value: a.id,
+    label: `${a.code} · ${name(a)} · ${a.currency}`,
+  }));
+  const invoiceChoices = (invoices?.items ?? []).map((i) => ({
+    value: i.id,
+    label: t('openInvoiceChoice', {
+      number: i.number ?? '—',
+      outstanding: i.outstanding,
+      currency: i.currency,
+    }),
+  }));
 
   return (
     <DraftFrame
@@ -51,7 +69,7 @@ export function ReceiptDraftReview({ id }: { id: string }) {
       <MissingFields
         draft={draft}
         apiPath="/receipt-drafts"
-        choices={{ cashAccountId: cashChoices }}
+        choices={{ cashAccountId: cashChoices, invoiceId: invoiceChoices }}
         onChanged={setRecord}
       />
       <dl className="details">
@@ -60,7 +78,7 @@ export function ReceiptDraftReview({ id }: { id: string }) {
         <dt>{tr('receiptDate')}</dt>
         <dd dir="ltr">{rc.receiptDate ?? '—'}</dd>
         <dt>{tr('amount')}</dt>
-        <dd>{rc.amount ? <Money value={rc.amount} currency={currency} /> : '—'}</dd>
+        <dd>{rc.amount ? <Money value={rc.amount} currency={shown} /> : '—'}</dd>
         <dt>{tr('cashAccount')}</dt>
         <dd>
           {draft.cashAccountCode ? (
@@ -103,7 +121,7 @@ export function ReceiptDraftReview({ id }: { id: string }) {
                         <Link href={`/invoices/${a.invoiceId}`}>{number}</Link>
                       )}
                     </td>
-                    <td>{a.amount ? <Money value={a.amount} currency={currency} /> : '—'}</td>
+                    <td>{a.amount ? <Money value={a.amount} currency={shown} /> : '—'}</td>
                   </tr>
                 );
               })}

@@ -1,13 +1,14 @@
 'use client';
 
-import type { GoodsReleaseDraftDto, WarehouseDto } from '@nolon/shared';
+import type { GoodsReleaseDraftDto, ReleaseDraftWarehouseOptionsDto } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
-import { useApiList } from '../finance/reports/ReportKit';
 import { DraftFrame } from './DraftFrame';
 import { MissingFields } from './MissingFields';
+import type { Value } from './missing-fields';
+import { useOptionalRead } from './use-optional-read';
 
 /** A goods release the assistant proposed: what leaves which warehouse, and the decision. */
 export function ReleaseDraftReview({ id }: { id: string }) {
@@ -20,16 +21,36 @@ export function ReleaseDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<GoodsReleaseDraftDto>(`/release-drafts/${id}`);
-  const needsWarehouse = draft?.missingFields.includes('warehouseId') ?? false;
-  const warehouses = useApiList<WarehouseDto>('/warehouses', needsWarehouse);
+  const needsChoice =
+    draft !== null &&
+    draft.actions.canEdit &&
+    draft.shipmentId !== null &&
+    (draft.missingFields.includes('warehouseId') || draft.missingFields.includes('packages'));
+  // The warehouses holding the shipment's goods in the reviewer's branches, and NOLON's
+  // suggestion for a missing warehouse and packages (worked out by the API on each read).
+  const options = useOptionalRead<ReleaseDraftWarehouseOptionsDto>(
+    needsChoice ? `/release-drafts/${id}/warehouse-options` : null,
+    draft?.version,
+  );
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const release = draft.request;
   // A value the draft still misses shows as a dash (MissingFields names it).
   const shipmentNumber = draft.shipmentNumber ?? '—';
-  const warehouseChoices = (warehouses ?? [])
-    .filter((w) => w.isActive && w.branchId === draft.branchId)
-    .map((w) => ({ value: w.id, label: `${w.code} · ${locale === 'ar' ? w.nameAr : w.nameEn}` }));
+  const warehouseChoices = (options?.options ?? []).map((w) => ({
+    value: w.warehouseId,
+    label: tw('heldIn', {
+      warehouse: `${w.code} · ${locale === 'ar' ? w.nameAr : w.nameEn}`,
+      packages: w.onHandPackages,
+    }),
+  }));
+  // Only for the version the options were worked out for; the form opens with them filled in.
+  const current = options && options.version === draft.version ? options : null;
+  const suggested: Record<string, Value> = {};
+  if (current?.suggested?.warehouseId) suggested.warehouseId = current.suggested.warehouseId;
+  if (typeof current?.suggested?.packages === 'number') {
+    suggested.packages = String(current.suggested.packages);
+  }
 
   return (
     <DraftFrame
@@ -44,12 +65,18 @@ export function ReleaseDraftReview({ id }: { id: string }) {
       }
       onChanged={setRecord}
     >
-      <MissingFields
-        draft={draft}
-        apiPath="/release-drafts"
-        choices={{ warehouseId: warehouseChoices }}
-        onChanged={setRecord}
-      />
+      {options !== undefined && (
+        <MissingFields
+          // Opened again with the suggestion of each version read.
+          key={`${draft.version}:${current ? 'options' : 'none'}`}
+          draft={draft}
+          apiPath="/release-drafts"
+          choices={{ warehouseId: warehouseChoices }}
+          suggested={suggested}
+          dependents={{ warehouseId: ['packages'] }}
+          onChanged={setRecord}
+        />
+      )}
       <dl className="details">
         <dt>{t('shipment')}</dt>
         <dd dir="ltr">

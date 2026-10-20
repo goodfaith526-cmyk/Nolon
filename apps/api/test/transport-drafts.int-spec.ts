@@ -10,6 +10,7 @@ import type {
   EntryDraftSummaryDto,
   GoodsReleaseDraftDto,
   GoodsReleaseDraftListItemDto,
+  ReleaseDraftWarehouseOptionsDto,
   ShipmentDto,
   TripDraftDto,
   TripDraftListItemDto,
@@ -897,5 +898,105 @@ describe('goods release drafts for a shipment shared with another branch', () =>
     expect(
       await t.prisma.goodsReleaseDraft.findUniqueOrThrow({ where: { id: own.id } }),
     ).toMatchObject({ version: 1, packages: null });
+  });
+});
+
+// Functional review هـ3: the review screen's warehouse choices come from the shipment's balances
+// in the reviewer's branches, with a suggestion for a missing warehouse and packages.
+describe('goods release drafts: warehouse choices and suggestions', () => {
+  const options = async (id: string, cookie = cookies.whDxb) =>
+    (await r.get(`/release-drafts/${id}/warehouse-options`, cookie).expect(200))
+      .body as ReleaseDraftWarehouseOptionsDto;
+  const draftFor = async (shipmentId: string | null, extra: object = {}) =>
+    (
+      await createReleaseDraft({
+        idempotencyKey: draftKey(),
+        ...(shipmentId ? { shipmentId } : { branchId: dxb }),
+        ...extra,
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+
+  it('suggests the one warehouse holding the goods and what it holds; the draft is unchanged', async () => {
+    const shipment = await heldShipment(4);
+    const { id } = await draftFor(shipment.id);
+    const read = await options(id);
+    expect(read).toEqual({
+      version: 1,
+      options: [
+        {
+          warehouseId: warehouse.id,
+          code: warehouse.code,
+          nameEn: warehouse.nameEn,
+          nameAr: warehouse.nameAr,
+          branchId: dxb,
+          onHandPackages: 4,
+          remainingWeightKg: null,
+        },
+      ],
+      suggested: { warehouseId: warehouse.id, packages: 4 },
+    });
+    // A suggestion only: nothing saved, the version is the same.
+    expect(await t.prisma.goodsReleaseDraft.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      version: 1,
+      warehouseId: null,
+      packages: null,
+    });
+    // The person keeps the warehouse and types other packages: the version moves on, and a value
+    // the draft holds is never suggested again.
+    await r
+      .patch(`/release-drafts/${id}`, cookies.whDxb, { version: 1, warehouseId: warehouse.id })
+      .expect(200);
+    expect((await options(id)).suggested).toEqual({ warehouseId: null, packages: 4 });
+    await r.patch(`/release-drafts/${id}`, cookies.whDxb, { version: 2, packages: 1 }).expect(200);
+    expect(await options(id)).toMatchObject({ version: 3, suggested: null });
+  });
+
+  it("offers only the reviewer's branches' warehouses; two of them, no warehouse is suggested", async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipment = await heldShipment(2);
+    // The shipment shared with JED, where 2 more packages are received.
+    await t.prisma.shipmentBranch.create({ data: { shipmentId: shipment.id, branchId: jed } });
+    await r
+      .post(`/shipments/${shipment.id}/warehouse/receipts`, cookies.whJed, {
+        warehouseId: jedWarehouse.id,
+        packages: 2,
+        condition: 'GOOD',
+      })
+      .expect(201);
+    const { id } = await draftFor(shipment.id);
+    // The DXB reviewer: the JED warehouse is not theirs, so the DXB one is the only choice.
+    const dxbView = await options(id);
+    expect(dxbView.options.map((o) => o.warehouseId)).toEqual([warehouse.id]);
+    expect(dxbView.suggested).toEqual({ warehouseId: warehouse.id, packages: 2 });
+    // A reviewer of both branches sees both, and picks one: nothing is preselected.
+    const both = await createUser(t.prisma, ['WAREHOUSE'], ['DXB', 'JED']);
+    const bothCookie = await signIn(t, both.email);
+    const bothView = await options(id, bothCookie);
+    expect(bothView.options.map((o) => o.warehouseId).sort()).toEqual(
+      [warehouse.id, jedWarehouse.id].sort(),
+    );
+    expect(bothView.suggested).toBeNull();
+    // The JED reviewer (the shipment is shared with JED) sees only the JED warehouse.
+    const jedView = await options(id, cookies.whJed);
+    expect(jedView.options.map((o) => o.warehouseId)).toEqual([jedWarehouse.id]);
+    expect(jedView.suggested).toEqual({ warehouseId: jedWarehouse.id, packages: 2 });
+  });
+
+  it('is refused for a draft in a branch the reviewer does not hold', async () => {
+    const shipment = await heldShipment(4);
+    const { id } = await draftFor(shipment.id);
+    await r.get(`/release-drafts/${id}/warehouse-options`, cookies.whJed).expect(404);
+  });
+
+  it('suggests nothing without a shipment or once decided; a person read only', async () => {
+    const empty = await draftFor(null);
+    expect(await options(empty.id)).toEqual({ version: 1, options: [], suggested: null });
+    const shipment = await heldShipment(4);
+    const { id } = await draftFor(shipment.id, { warehouseId: warehouse.id, packages: 1 });
+    expect(await options(id)).toMatchObject({ suggested: null });
+    await r.post(`/release-drafts/${id}/approve`, cookies.whDxb, { version: 1 }).expect(200);
+    expect(await options(id)).toMatchObject({ options: [], suggested: null });
+    await r.agentGet(`/release-drafts/${id}/warehouse-options`, tokens.wh).expect(403);
+    await r.get(`/release-drafts/${id}/warehouse-options`, cookies.salesDxb).expect(403);
   });
 });

@@ -18,6 +18,7 @@ import {
   type EntryDraftSummaryDto,
   type InvoiceDraftDto,
   type InvoiceDraftListItemDto,
+  type InvoiceDraftSuggestedValuesDto,
   type InvoiceSuggestionDto,
 } from '@nolon/shared';
 import { z } from 'zod';
@@ -151,6 +152,19 @@ export class InvoiceDraftsController {
   @RequirePermission('customer_invoices:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<InvoiceDraftListItemDto[]> {
     return this.drafts.list(user, parse(listQuery, query).status);
+  }
+
+  /**
+   * NOLON's suggestion for the currency and dates the draft misses, for the review screen's form
+   * (applied, if the person keeps them, with the PATCH). A person's read (not @AgentReadable).
+   */
+  @Get(':id/suggested-values')
+  @RequirePermission('customer_invoices:create')
+  suggestedValues(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<InvoiceDraftSuggestedValuesDto> {
+    return this.drafts.suggestedValues(user, id);
   }
 
   @Get(':id')

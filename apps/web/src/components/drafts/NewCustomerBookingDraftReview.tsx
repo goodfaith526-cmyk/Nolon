@@ -1,6 +1,6 @@
 'use client';
 
-import type { NewCustomerBookingDraftDto } from '@nolon/shared';
+import type { CustomerDraftDto, NewCustomerBookingDraftDto } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
@@ -11,13 +11,16 @@ import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame, DraftStatusBadge } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
 import { MissingFields } from './MissingFields';
+import { useOptionalRead } from './use-optional-read';
 
 const LINE_FIELD = /^items\[(\d+)\]\.(quantity|weightKg|volumeCbm)$/;
 
 /**
  * A booking the assistant proposed for a new customer: the customer draft it waits for, the
- * booking as proposed, the staff member's words, and the decision. Approve stays off until the
- * customer draft is approved.
+ * booking as proposed, the staff member's words, and the decision. While the customer draft is
+ * open, a reviewer who may also approve it (NOLON says so on the customer draft) approves both
+ * here in one step, ticking the customer's words too; anyone else approves the customer draft
+ * first on its own screen (Approve stays off until then).
  */
 export function NewCustomerBookingDraftReview({ id }: { id: string }) {
   const t = useTranslations('Drafts');
@@ -34,12 +37,33 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
     setRecord,
   } = useRecord<NewCustomerBookingDraftDto>(`/new-customer-booking-drafts/${id}`);
   const [ticked, setTicked] = useState<string[]>([]);
+  const [customerTicked, setCustomerTicked] = useState<string[]>([]);
+  const customerOpen = draft?.status === 'DRAFT' && draft.customer.status === 'DRAFT';
+  // The customer draft as its own screen reads it (its version, words and whether this person may
+  // decide it); refused or not asked, the booking waits for it as before.
+  const customerDraft = useOptionalRead<CustomerDraftDto>(
+    customerOpen ? `/customer-drafts/${draft.customer.draftId}` : null,
+  );
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const b = draft.request;
   const customer = draft.customer;
   const customerReady = customer.status === 'APPROVED' && customer.customerId !== null;
+  const oneStep =
+    customerOpen &&
+    draft.actions.canDecide &&
+    customerDraft?.status === 'DRAFT' &&
+    customerDraft.actions.canDecide
+      ? customerDraft
+      : null;
   const words = confirmedBody(draft.evidence, ticked);
+  const customerWords = oneStep ? confirmedBody(oneStep.evidence, customerTicked) : null;
+  // One step: the customer draft's version on screen and its words ticked go with the approval.
+  const approveBody = customerReady
+    ? words
+    : oneStep && words && customerWords
+      ? { ...words, customer: { version: oneStep.version, ...customerWords } }
+      : null;
   // A value the draft still misses shows as a dash (MissingFields names it). The booking's are
   // filled in here; the customer's on its customer draft.
   const place = (id: string | null | undefined) => (id ? locationName(id) : '—');
@@ -73,16 +97,18 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
       apiPath="/new-customer-booking-drafts"
       title={t('newCustomerBookingTitle', { customer: customer.name ?? '—' })}
       approveHint={
-        b.consolidationId
-          ? t('newCustomerContainerBookingApproveHint')
-          : t('newCustomerBookingApproveHint')
+        oneStep
+          ? t('newCustomerBookingWithCustomerApproveHint')
+          : b.consolidationId
+            ? t('newCustomerContainerBookingApproveHint')
+            : t('newCustomerBookingApproveHint')
       }
       result={
         draft.bookingId
           ? { label: draft.bookingNumber ?? '', href: `/bookings/${draft.bookingId}` }
           : null
       }
-      approveBody={customerReady ? words : null}
+      approveBody={approveBody}
       onChanged={setRecord}
     >
       <MissingFields
@@ -114,9 +140,13 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
         <p>
           <Link href={`/drafts/customers/${customer.draftId}`}>{t('openCustomerDraft')}</Link>
         </p>
-        {draft.status === 'DRAFT' && customer.status === 'DRAFT' && (
-          <p className="notice">{t('approveCustomerFirst')}</p>
-        )}
+        {draft.status === 'DRAFT' &&
+          customer.status === 'DRAFT' &&
+          (oneStep ? (
+            <p className="notice">{t('approveWithCustomer')}</p>
+          ) : (
+            <p className="notice">{t('approveCustomerFirst')}</p>
+          ))}
         {draft.status === 'DRAFT' &&
           (customer.status === 'REJECTED' || customer.status === 'EXPIRED') && (
             <p className="error">{t('customerNotApproved')}</p>
@@ -171,6 +201,20 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      {oneStep && (
+        <EvidenceChecklist
+          evidence={oneStep.evidence}
+          values={{
+            branchId: { label: tcu('branch'), value: oneStep.branchCode },
+            name: { label: tcu('name'), value: oneStep.request.name ?? '—' },
+            phone: { label: tcu('phone'), value: oneStep.request.phone ?? '—' },
+            whatsapp: { label: tcu('whatsapp'), value: oneStep.request.whatsapp ?? '—' },
+          }}
+          ticked={customerTicked}
+          onChange={setCustomerTicked}
+          editable
+        />
+      )}
       <EvidenceChecklist
         evidence={draft.evidence}
         values={values}

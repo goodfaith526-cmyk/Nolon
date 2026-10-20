@@ -167,6 +167,24 @@ export interface InvoiceSuggestionDto {
   fingerprint: string;
 }
 
+/**
+ * GET /invoice-drafts/:id/suggested-values: NOLON's suggestion (suggestForShipment) for the
+ * currency and dates an open invoice draft for a shipment misses, for the review screen's form.
+ * Only the values the draft misses (null otherwise); `values` is null when there is nothing to
+ * suggest. Nothing is saved: the person sees the values, may change them, and saves them with the
+ * draft's PATCH at `version`, which moves the version (and what the assistant's card shows) on.
+ */
+export interface InvoiceDraftSuggestedValuesDto {
+  /** The draft's version these were worked out for. */
+  version: number;
+  values: {
+    currency: CurrencyCode | null;
+    invoiceDate: string | null;
+    dueDate: string | null;
+  } | null;
+  currencySource: InvoiceSuggestionCurrencySource | null;
+}
+
 export interface InvoiceDraftDto
   extends EntryDraftReviewFields, CustomerDraftFields, MissingFieldsReview {
   /** Null while the draft names no shipment yet. */

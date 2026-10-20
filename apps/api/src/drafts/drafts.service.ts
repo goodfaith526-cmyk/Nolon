@@ -14,6 +14,7 @@ import type {
   MyDraftItemDto,
   MyDraftKind,
   MyDraftResult,
+  ReviewDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -476,6 +477,43 @@ export function mineWhere(
 }
 
 /**
+ * A page of the reviewers' list ("everything waiting", GET /assistant-drafts/review): drafts
+ * whoever they were made for, in the order of MY_DRAFTS_ORDER, after the cursor (the last item's
+ * createdAt and id; both or neither). Never used for "my drafts": that list is mineWhere's.
+ */
+export interface ReviewPage {
+  before?: Date;
+  beforeId?: string;
+  limit: number;
+}
+
+/** The cursor part of a review page's filter (no creator filter: the reviewer is not the creator). */
+export function pageWhere(page: ReviewPage): {
+  AND?: { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }[];
+} {
+  const { before, beforeId } = page;
+  if (!before || !beforeId) return {};
+  // Under AND: a kind's own scope may be an OR (a draft with or without its shipment).
+  return {
+    AND: [{ OR: [{ createdAt: { lt: before } }, { createdAt: before, id: { lt: beforeId } }] }],
+  };
+}
+
+/**
+ * The filter and size of a kind's list: "my drafts" (mineWhere), a reviewer's page (pageWhere), or
+ * the review screen's whole list (200 newest).
+ */
+export function listScope(
+  user: AuthUser,
+  mine: MyDraftsQuery | undefined,
+  page: ReviewPage | undefined,
+): { where: ReturnType<typeof mineWhere> | ReturnType<typeof pageWhere>; take: number } {
+  if (mine) return { where: mineWhere(user, mine), take: mine.limit };
+  if (page) return { where: pageWhere(page), take: page.limit };
+  return { where: {}, take: 200 };
+}
+
+/**
  * Each kind's review page segment (/drafts/<page>/<id> on the web). A GRN draft has none: it is
  * reviewed with its document on the shipment's page.
  */
@@ -493,6 +531,31 @@ export const REVIEW_PAGES: Record<Exclude<MyDraftKind, 'grn'>, string> = {
   customer: 'customers',
   rate_card: 'rate-cards',
 };
+
+/**
+ * A reviewers' list item before the branch code is added, with whether this reviewer may decide
+ * it now (only those are listed).
+ */
+export type ReviewDraftRow = Omit<ReviewDraftItemDto, 'branchCode'> & { canDecide: boolean };
+
+/** A kind's review list item as the reviewers' list shows it. */
+export function reviewDraftItem(
+  kind: keyof typeof REVIEW_PAGES,
+  d: EntryDraftReviewFields & { missingFields?: string[] },
+): ReviewDraftRow {
+  return {
+    kind,
+    id: d.id,
+    subject: d.subject,
+    branchId: d.branchId,
+    createdAt: d.createdAt,
+    expiresAt: d.expiresAt,
+    createdByName: d.createdByName,
+    missingCount: d.missingFields?.length ?? 0,
+    reviewPath: `/drafts/${REVIEW_PAGES[kind]}/${d.id}`,
+    canDecide: d.actions.canDecide,
+  };
+}
 
 /** A "my drafts" item before the branch code is added. */
 export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;
