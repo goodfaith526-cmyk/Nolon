@@ -35,27 +35,26 @@ const values = {
   currency: { label: 'Currency', value: 'USD' },
 };
 
-/** What the approval would send, written where the test can read it. */
-let sent: { confirmed: string[] } | null = null;
-
 function Screen({ version, words = evidence }: { version: number; words?: DraftEvidence[] }) {
   const [ticked, setTicked] = useEvidenceTicks(version);
-  sent = confirmedBody(words, ticked);
   return (
-    <EvidenceChecklist
-      evidence={words}
-      values={values}
-      ticked={ticked}
-      onChange={setTicked}
-      editable
-    />
+    <>
+      {/* What the approval would send, where the test can read it. */}
+      <output>{JSON.stringify(confirmedBody(words, ticked))}</output>
+      <EvidenceChecklist
+        evidence={words}
+        values={values}
+        ticked={ticked}
+        onChange={setTicked}
+        editable
+      />
+    </>
   );
 }
 
 const roots: (() => void)[] = [];
 afterEach(() => {
   roots.splice(0).forEach((unmount) => unmount());
-  sent = null;
 });
 
 function show(version: number) {
@@ -68,6 +67,8 @@ function show(version: number) {
   return { el, render };
 }
 const box = (el: HTMLElement, id: string) => el.querySelector<HTMLInputElement>(`#${id}`);
+const sent = (el: HTMLElement): unknown =>
+  JSON.parse(el.querySelector('output')?.textContent ?? 'undefined');
 const tick = (el: HTMLElement, id: string) => act(() => box(el, id)?.click());
 
 describe('EvidenceChecklist', () => {
@@ -102,7 +103,7 @@ describe('EvidenceChecklist', () => {
     expect(box(el, 'evidence-price')?.checked).toBe(false);
     expect(box(el, 'evidence-currency')?.checked).toBe(false);
     expect(box(el, 'evidence-packagingNote')?.checked).toBe(false);
-    expect(sent).toBeNull();
+    expect(sent(el)).toBeNull();
   });
 
   it('approval waits for every sensitive value, then sends each field as before', () => {
@@ -110,12 +111,12 @@ describe('EvidenceChecklist', () => {
     tick(el, 'evidence-group');
     tick(el, 'evidence-price');
     tick(el, 'evidence-currency');
-    expect(sent).toBeNull();
+    expect(sent(el)).toBeNull();
     tick(el, 'evidence-packagingNote');
-    expect(sent).toEqual({ confirmed: evidence.map((e) => e.field) });
+    expect(sent(el)).toEqual({ confirmed: evidence.map((e) => e.field) });
     // Unticking the group takes back only its fields.
     tick(el, 'evidence-group');
-    expect(sent).toBeNull();
+    expect(sent(el)).toBeNull();
     expect(box(el, 'evidence-price')?.checked).toBe(true);
   });
 
@@ -125,11 +126,11 @@ describe('EvidenceChecklist', () => {
     tick(el, 'evidence-price');
     tick(el, 'evidence-currency');
     tick(el, 'evidence-packagingNote');
-    expect(sent).not.toBeNull();
+    expect(sent(el)).not.toBeNull();
     render(2);
     expect(box(el, 'evidence-group')?.checked).toBe(false);
     expect(box(el, 'evidence-price')?.checked).toBe(false);
-    expect(sent).toBeNull();
+    expect(sent(el)).toBeNull();
   });
 
   it('shows no group tick when no grouped field carries words', () => {
@@ -139,6 +140,6 @@ describe('EvidenceChecklist', () => {
     roots.push(() => act(() => root.unmount()));
     expect(box(el, 'evidence-group')).toBeNull();
     tick(el, 'evidence-price');
-    expect(sent).toEqual({ confirmed: ['price'] });
+    expect(sent(el)).toEqual({ confirmed: ['price'] });
   });
 });
