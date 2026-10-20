@@ -1,5 +1,12 @@
 import type { DecimalString } from './currencies.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftBranchChoice,
+  DraftUpdateRequest,
+  DraftValues,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  MissingFieldsReview,
+} from './drafts.js';
 import type { TripInput } from './transport.js';
 import type { GoodsReleaseRequest } from './warehouse.js';
 
@@ -9,17 +16,35 @@ import type { GoodsReleaseRequest } from './warehouse.js';
  * or a release draft, which issues a goods release note dated at the approval; or rejects it.
  */
 
-/** POST /trip-drafts: the assistant proposes a trip. */
-export interface TripDraftCreateRequest extends TripInput {
-  idempotencyKey: string;
-}
+/**
+ * A trip as a trip draft holds it: the branch is its security context, never missing; the kind
+ * and route may be missing, the shipments empty, and the fleet or carrier the kind needs absent.
+ */
+export type TripDraftValues = DraftValues<
+  TripInput,
+  'kind' | 'originLocationId' | 'destinationLocationId'
+>;
 
-export interface TripDraftDto extends EntryDraftReviewFields {
+/** POST /trip-drafts: the assistant proposes a trip (shipments may be left out). */
+export type TripDraftCreateRequest = Omit<TripDraftValues, 'shipmentIds'> & {
+  idempotencyKey: string;
+  shipmentIds?: string[];
+};
+
+/**
+ * PATCH /trip-drafts/:id: a person fills in or changes values of an open draft, at the version
+ * they read. Each value given replaces the draft's (null clears it; `shipmentIds` as a whole).
+ */
+export type TripDraftUpdateRequest = Partial<Omit<TripDraftValues, 'branchId'>> & {
+  version: number;
+};
+
+export interface TripDraftDto extends EntryDraftReviewFields, MissingFieldsReview {
   /**
    * The proposed request, as stored; the agreed cost and its currency are null for a reviewer who
    * does not see transport costs (seesTransportCosts).
    */
-  request: TripInput;
+  request: TripDraftValues;
   /** The shipments' numbers, in the request's order (only those the reviewer can see). */
   shipmentNumbers: string[];
   /** The fleet the draft names, when the reviewer can see it. */
@@ -38,27 +63,68 @@ export type TripDraftListItemDto = Omit<
   lineCount: number;
 };
 
-/** The request of a goods release draft, as stored: released at the approval. */
-export type GoodsReleaseDraftRequest = Omit<GoodsReleaseRequest, 'occurredAt'>;
+/**
+ * The request of a goods release draft, as stored: released at the approval. The warehouse and
+ * the packages may be missing until a person fills them in.
+ */
+export type GoodsReleaseDraftRequest = DraftValues<
+  Omit<GoodsReleaseRequest, 'occurredAt'>,
+  'warehouseId' | 'packages'
+>;
 
-/** POST /release-drafts: the assistant proposes a goods release from a shipment. */
-export interface GoodsReleaseDraftCreateRequest extends GoodsReleaseDraftRequest {
-  idempotencyKey: string;
-  shipmentId: string;
-}
+/**
+ * POST /release-drafts: the assistant proposes a goods release from a shipment. No value is
+ * required; with no shipment yet, the draft names its branch.
+ */
+export type GoodsReleaseDraftCreateRequest = GoodsReleaseDraftRequest &
+  DraftBranchChoice & {
+    idempotencyKey: string;
+    shipmentId?: string | null;
+  };
 
-export interface GoodsReleaseDraftDto extends EntryDraftReviewFields {
-  shipmentId: string;
-  shipmentNumber: string;
-  warehouseCode: string;
+/** PATCH /release-drafts/:id: a shipment named must be of the draft's branch. */
+export type GoodsReleaseDraftUpdateRequest = DraftUpdateRequest<
+  GoodsReleaseDraftRequest & { shipmentId: string | null }
+>;
+
+export interface GoodsReleaseDraftDto extends EntryDraftReviewFields, MissingFieldsReview {
+  /** Null while the draft names no shipment (or warehouse) yet. */
+  shipmentId: string | null;
+  shipmentNumber: string | null;
+  warehouseCode: string | null;
   request: GoodsReleaseDraftRequest;
   check: EntryDraftCheck | null;
   movementId: string | null;
   movementNumber: string | null;
 }
 
+/** A warehouse a goods release draft could release from, with what it holds of the shipment. */
+export interface ReleaseWarehouseOptionDto {
+  warehouseId: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  branchId: string;
+  /** Packages of the shipment it holds now (more than none). */
+  onHandPackages: number;
+  remainingWeightKg: DecimalString | null;
+}
+
+/**
+ * GET /release-drafts/:id/warehouse-options: the warehouses holding the shipment's goods in the
+ * reviewer's branches, and NOLON's suggestion for the values the draft misses: the one warehouse
+ * holding the goods (when only one does) and what it holds as the packages. A suggestion only:
+ * nothing is saved until the person saves the values (PATCH, which moves the version on).
+ */
+export interface ReleaseDraftWarehouseOptionsDto {
+  /** The draft's version these were worked out for. */
+  version: number;
+  options: ReleaseWarehouseOptionDto[];
+  suggested: { warehouseId: string | null; packages: number | null } | null;
+}
+
 export type GoodsReleaseDraftListItemDto = Omit<GoodsReleaseDraftDto, 'request' | 'check'> & {
   lineCount: number;
-  packages: number;
+  packages: number | null;
   weightKg: DecimalString | null;
 };

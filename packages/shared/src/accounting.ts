@@ -108,7 +108,11 @@ export interface AccountInput {
   code: string;
   nameEn: string;
   nameAr: string;
-  type: AccountType;
+  /**
+   * Required for a root account. Under a parent it may be left out and is then the parent's type
+   * (functional review C7); one sent must be the parent's type.
+   */
+  type?: AccountType;
   parentId?: string | null;
   isPostable: boolean;
   isCash?: boolean;
@@ -293,6 +297,11 @@ export interface InvoicePaymentDto {
 
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   fxRate: FxRateString;
+  /**
+   * The rate the user entered on the document, which it keeps; null when the rate is the FX
+   * table's for the document's date (an edit then sends none, and the table's rate applies).
+   */
+  enteredFxRate: FxRateString | null;
   totalUsd: DecimalString;
   notes: string | null;
   lines: CustomerInvoiceLineDto[];
@@ -327,6 +336,15 @@ export interface CustomerInvoiceInput {
   dueDate: string;
   notes?: string | null;
   lines: CustomerInvoiceLineInput[];
+}
+
+/** PATCH /customer-invoices/:id: a draft invoice's values, replaced as a whole. */
+export interface UpdateCustomerInvoiceRequest extends CustomerInvoiceInput {
+  /**
+   * Required (true) to change the currency: every line price was entered in the new currency.
+   * A currency change without it is refused (INVOICE_CURRENCY_REPRICE).
+   */
+  repriced?: boolean;
 }
 
 /** A draft for the shipment, prefilled from its quotation when it has one. */
@@ -385,6 +403,28 @@ export interface CreateReceiptRequest {
   notes?: string | null;
   /** Each in the receipt currency, to an approved invoice of the same customer and currency. */
   allocations: { invoiceId: string; amount: DecimalString }[];
+}
+
+/**
+ * A suggested split of a receipt's amount over the customer's open invoices in its currency
+ * (GET /receipts/allocation-suggestion; functional review C3): oldest invoice first (invoice
+ * date, then number), each up to its balance, until the amount runs out. A suggestion only: the
+ * receipt is checked again when saved, against the balances then.
+ */
+export interface ReceiptAllocationSuggestionDto {
+  customerId: string;
+  currency: CurrencyCode;
+  amount: DecimalString;
+  allocations: {
+    invoiceId: string;
+    invoiceNumber: string | null;
+    invoiceDate: string;
+    /** The invoice's balance when suggested. */
+    balance: DecimalString;
+    amount: DecimalString;
+  }[];
+  /** What no open invoice takes; held as the customer's advance if the receipt is saved so. */
+  unallocated: DecimalString;
 }
 
 export interface TrialBalanceRowDto {

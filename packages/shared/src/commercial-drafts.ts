@@ -1,12 +1,21 @@
 import type {
   BookingFromQuotationRequest,
+  BookingItemInput,
+  BookingService,
   CreateBookingRequest,
   CreateQuotationRequest,
   DateString,
+  QuotationLineInput,
 } from './commercial.js';
 import type { ConsolidationStatus } from './consolidation.js';
 import type { DecimalString } from './currencies.js';
-import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
+import type {
+  DraftBranchChoice,
+  DraftValues,
+  EntryDraftCheck,
+  EntryDraftReviewFields,
+  MissingFieldsReview,
+} from './drafts.js';
 
 /**
  * Quotation and booking drafts proposed by the staff AI assistant (entry drafts, drafts.ts). The
@@ -19,16 +28,51 @@ import type { EntryDraftCheck, EntryDraftReviewFields } from './drafts.js';
 // Quotations
 // ---------------------------------------------------------------------------------------------
 
-/** POST /quotation-drafts: the assistant proposes a quotation. */
-export interface QuotationDraftCreateRequest extends CreateQuotationRequest {
-  /** Scoped to the assistant client and the user it acts for. */
-  idempotencyKey: string;
-}
+/** A quotation line as a draft holds it: its quantity may be missing. */
+export type QuotationDraftLine = DraftValues<QuotationLineInput, 'quantity'>;
 
-/** Drafts made for a customer: the customer is in the reviewer's branches. */
+/**
+ * A quotation as a quotation draft holds it (no required business fields): the customer, route,
+ * cargo, currency, validity and lines may all be missing until a person fills them in.
+ */
+export type QuotationDraftValues = DraftValues<
+  Omit<CreateQuotationRequest, 'lines'>,
+  | 'customerId'
+  | 'originLocationId'
+  | 'destinationLocationId'
+  | 'mode'
+  | 'cargoType'
+  | 'currency'
+  | 'validUntil'
+> & { lines: QuotationDraftLine[] };
+
+/** A quotation draft's values without its customer (the quotation part of a new customer's). */
+export type QuotationDraftQuotation = Omit<QuotationDraftValues, 'customerId'>;
+
+/** POST /quotation-drafts: the assistant proposes a quotation (lines may be left out). */
+export type QuotationDraftCreateRequest = Omit<QuotationDraftValues, 'lines'> &
+  DraftBranchChoice & {
+    /** Scoped to the assistant client and the user it acts for. */
+    idempotencyKey: string;
+    lines?: QuotationDraftLine[];
+  };
+
+/**
+ * PATCH /quotation-drafts/:id: a person fills in or changes values of an open draft (null clears
+ * a value, `lines` replace the draft's lines as a whole). A customer named must be of the
+ * draft's branch; the branch stays.
+ */
+export type QuotationDraftUpdateRequest = Partial<QuotationDraftValues> & {
+  version: number;
+};
+
+/**
+ * Drafts made for a customer: the customer is in the reviewer's branches. Null while the draft
+ * names no customer yet.
+ */
 export interface CustomerDraftFields {
-  customerId: string;
-  customerName: string;
+  customerId: string | null;
+  customerName: string | null;
 }
 
 /** Where a draft line's unit price comes from. */
@@ -72,9 +116,10 @@ export interface QuotationDraftApproveRequest {
   pricingKey: string;
 }
 
-export interface QuotationDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
-  /** The proposed request, as stored. */
-  request: CreateQuotationRequest;
+export interface QuotationDraftDto
+  extends EntryDraftReviewFields, CustomerDraftFields, MissingFieldsReview {
+  /** The proposed request, as stored (a missing value is null). */
+  request: QuotationDraftValues;
   check: EntryDraftCheck | null;
   /** While open and accepted by NOLON: the prices an approval would record. */
   pricing: QuotationDraftPricing | null;
@@ -96,13 +141,42 @@ export type QuotationDraftListItemDto = Omit<
 // Bookings
 // ---------------------------------------------------------------------------------------------
 
+/** A cargo line as a booking draft holds it: its cargo type and quantity may be missing. */
+export type BookingDraftItem = DraftValues<BookingItemInput, 'cargoType' | 'quantity'>;
+
+/** A booking made from an approved quotation, as its draft holds it. */
+export type BookingDraftFromQuotation = Omit<BookingFromQuotationRequest, 'items'> & {
+  items?: BookingDraftItem[];
+};
+
+/**
+ * A direct booking as its draft holds it (no required business fields): the customer, route,
+ * cargo, services and lines may all be missing.
+ */
+export type BookingDraftDirect = DraftValues<
+  Omit<CreateBookingRequest, 'items' | 'services'>,
+  'customerId' | 'originLocationId' | 'destinationLocationId' | 'mode' | 'cargoType'
+> &
+  ContainerChoice & { services?: BookingService[]; items?: BookingDraftItem[] };
+
 /**
  * POST /booking-drafts: the assistant proposes a booking, either from an approved quotation
  * (quotationId; route and cargo come from it) or directly for a customer.
  */
 export type BookingDraftCreateRequest =
-  | (BookingFromQuotationRequest & { idempotencyKey: string; quotationId: string })
-  | (CreateBookingRequest & ContainerChoice & { idempotencyKey: string });
+  | (BookingDraftFromQuotation &
+      DraftBranchChoice & { idempotencyKey: string; quotationId: string })
+  | (BookingDraftDirect & DraftBranchChoice & { idempotencyKey: string });
+
+/**
+ * PATCH /booking-drafts/:id: a person fills in or changes values of an open draft (null clears a
+ * value, `items` and `services` as a whole). The quotation and the branch stay; a direct draft's
+ * customer may be named, of the draft's branch; a draft made from a quotation takes no customer,
+ * route or cargo (they come from the quotation).
+ */
+export type BookingDraftUpdateRequest = Partial<BookingDraftDirect> & {
+  version: number;
+};
 
 /**
  * An open LCL container a direct booking draft goes in (consolidation.ts). Approving such a draft
@@ -126,10 +200,11 @@ export interface DraftContainer {
 
 /** A booking draft's proposed request, as stored (`consolidationId` only when it names one). */
 export type BookingDraftRequest =
-  | (BookingFromQuotationRequest & { quotationId: string; quotationNumber: string })
-  | (CreateBookingRequest & ContainerChoice & { quotationId?: undefined });
+  | (BookingDraftFromQuotation & { quotationId: string; quotationNumber: string })
+  | (BookingDraftDirect & { quotationId?: undefined });
 
-export interface BookingDraftDto extends EntryDraftReviewFields, CustomerDraftFields {
+export interface BookingDraftDto
+  extends EntryDraftReviewFields, CustomerDraftFields, MissingFieldsReview {
   request: BookingDraftRequest;
   check: EntryDraftCheck | null;
   /** The container the booking goes in on approval (null when none, or when it no longer exists). */

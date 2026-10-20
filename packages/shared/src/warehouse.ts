@@ -100,6 +100,12 @@ export interface WarehouseBalanceDto {
   onHandPackages: number;
   receivedWeightKg: DecimalString;
   releasedWeightKg: DecimalString;
+  /**
+   * The weight still held here when it is known (every receipt and release here was weighed):
+   * suggested for a release of everything held here, never for a part of it (functional review
+   * D5). Null when unknown or when nothing is held.
+   */
+  remainingWeightKg: DecimalString | null;
 }
 
 export interface ShipmentWarehouseActionsDto {

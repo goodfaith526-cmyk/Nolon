@@ -13,6 +13,8 @@ export const ROLES = [
   'WAREHOUSE',
   'CUSTOMS',
   'DRIVER',
+  // Added after the annex (owner, 2026-10-19): makes and edits the rate cards every branch uses.
+  'SALES_MARKETING_MANAGER',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -86,47 +88,50 @@ const LEVEL_ACTIONS: Record<Level, readonly PermissionAction[]> = {
 
 /**
  * One string per module, one letter per role in ROLES order:
- * Admin, Management, Branch Mgr, Sales, Operations, Finance, Warehouse, Customs, Driver.
+ * Admin, Management, Branch Mgr, Sales, Operations, Finance, Warehouse, Customs, Driver,
+ * Sales & Marketing Mgr (added after the annex: Sales' access, and the rates in full).
  * "(own branch)" and "(own trips)" cells are view/edit here; branch scoping and the Driver's
  * own-trips filter (DRIVER_OWN_TRIPS_ONLY) narrow the rows.
  */
 export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
-  customers: 'FVFFVVVVN',
-  rates: 'FVAEVVNNN',
-  quotations: 'FVAFVVNNN',
-  bookings: 'FVAFFVVVN',
-  shipments: 'FVFVFVVVV',
-  consolidation: 'FVFNFVVNN',
+  customers: 'FVFFVVVVNF',
+  // Owner, 2026-10-19: only the Sales & Marketing Manager (and the Administrator) make, edit,
+  // approve and cancel rate cards; every other role reads them, for every branch.
+  rates: 'FVVVVVNNNF',
+  quotations: 'FVAFVVNNNF',
+  bookings: 'FVAFFVVVNF',
+  shipments: 'FVFVFVVVVV',
+  consolidation: 'FVFNFVVNNN',
   // Not in annex A (owner, 2026-10-14): adding a booking to an open container of any branch, and
   // nothing else about containers (`container_booking:create`, with bookings:create and
   // bookings:approve). Sales got it so they can ship on an open container; editing, moving or
   // cancelling a container stays consolidation:update, and its costs stay hidden from them.
-  container_booking: 'FNNEENNNN',
-  warehouse: 'FVFVVVFVN',
-  customs: 'FVFVVVNFN',
-  transport_fleet: 'FVFNFVNNN',
-  transport_trips: 'FVFVFVVNE',
-  pod: 'FVFVFVFNE',
-  documents: 'FVFEEEEEE',
-  customer_invoices: 'FVAVVFNNN',
-  credit_notes: 'FVANNENNN',
-  receipts: 'FVVVNFNNN',
-  suppliers: 'FVANEFNNN',
-  supplier_payments: 'FVANNFNNN',
-  expenses: 'FVANEFEEE',
-  manual_journals: 'FVNNNFNNN',
-  chart_of_accounts: 'FVNNNANNN',
-  fx_rates: 'FVNNNFNNN',
-  shipment_profitability: 'FVVNNVNNN',
-  financial_reports: 'FVVNNVNNN',
-  operational_reports: 'FVVVVVVVN',
-  dashboards: 'FVVVVVNNN',
-  alert_settings: 'FNNNNNNNN',
+  container_booking: 'FNNEENNNNE',
+  warehouse: 'FVFVVVFVNV',
+  customs: 'FVFVVVNFNV',
+  transport_fleet: 'FVFNFVNNNN',
+  transport_trips: 'FVFVFVVNEV',
+  pod: 'FVFVFVFNEV',
+  documents: 'FVFEEEEEEE',
+  customer_invoices: 'FVAVVFNNNV',
+  credit_notes: 'FVANNENNNN',
+  receipts: 'FVVVNFNNNV',
+  suppliers: 'FVANEFNNNN',
+  supplier_payments: 'FVANNFNNNN',
+  expenses: 'FVANEFEEEN',
+  manual_journals: 'FVNNNFNNNN',
+  chart_of_accounts: 'FVNNNANNNN',
+  fx_rates: 'FVNNNFNNNN',
+  shipment_profitability: 'FVVNNVNNNN',
+  financial_reports: 'FVVNNVNNNN',
+  operational_reports: 'FVVVVVVVNV',
+  dashboards: 'FVVVVVNNNV',
+  alert_settings: 'FNNNNNNNNN',
   // Not in annex A (proposed with the commercial cycle): ports, container types, charge types and
   // currencies. Everyone reads them for dropdowns; only the Administrator changes them.
-  master_data: 'FVVVVVVVV',
-  users: 'FNNNNNNNN',
-  audit_log: 'VVVNNNNNN',
+  master_data: 'FVVVVVVVVV',
+  users: 'FNNNNNNNNN',
+  audit_log: 'VVVNNNNNNN',
 };
 
 /** Modules where the Driver sees and edits only the trips assigned to them. */
@@ -207,6 +212,8 @@ export interface AuthMeResponse {
     nameAr: string;
     timezone: string;
     today: string;
+    /** The branch's default currency (ISO 4217), from the currencies master. */
+    defaultCurrency: string;
   }[];
   /**
    * The staff AI assistant's address, or null when none is configured. The assistant reads only

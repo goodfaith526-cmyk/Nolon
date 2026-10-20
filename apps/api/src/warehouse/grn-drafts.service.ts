@@ -31,6 +31,9 @@ import {
   lockDraftRow,
   lockKeyInTx,
   mineWhere,
+  pageWhere,
+  type ReviewDraftRow,
+  type ReviewPage,
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -179,6 +182,42 @@ export class GrnDraftsService {
               number: d.movement?.number ?? null,
               path: `/shipments/${d.shipmentId}`,
             },
+    }));
+  }
+
+  /**
+   * The reviewers' list ("everything waiting"): open GRN drafts on shipments this person sees now,
+   * whoever they were made for, when they may record a receipt (warehouse:create); each is
+   * reviewed on its shipment's page. None for the assistant.
+   */
+  async reviewList(user: AuthUser, page: ReviewPage): Promise<ReviewDraftRow[]> {
+    const p = user.permissions;
+    if (user.agent || !p.has('warehouse:view') || !p.has('warehouse:create')) return [];
+    const now = new Date();
+    const drafts = await this.prisma.grnDraft.findMany({
+      where: {
+        shipment: shipmentScope(user),
+        ...stateFilter('DRAFT', now),
+        ...pageWhere(page),
+      },
+      include: {
+        createdBy: { select: { fullName: true } },
+        shipment: { select: { number: true } },
+      },
+      orderBy: MY_DRAFTS_ORDER,
+      take: page.limit,
+    });
+    return drafts.map((d) => ({
+      kind: 'grn',
+      id: d.id,
+      subject: d.shipment.number,
+      branchId: d.branchId,
+      createdAt: d.createdAt.toISOString(),
+      expiresAt: d.expiresAt.toISOString(),
+      createdByName: d.createdBy.fullName,
+      missingCount: null,
+      reviewPath: `/shipments/${d.shipmentId}`,
+      canDecide: true,
     }));
   }
 

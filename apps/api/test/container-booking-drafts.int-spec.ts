@@ -47,7 +47,6 @@ const cookies = { admin: '', opsDxb: '', opsJed: '', salesJed: '', adminJed: '',
 const tokens = { opsJed: '', salesJed: '', adminJed: '', whJed: '' };
 
 const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
-
 /** A DXB container from Jebel Ali to Port Sudan, open, empty. */
 async function openContainer(): Promise<ConsolidationDto> {
   return (
@@ -196,6 +195,25 @@ describe('booking drafts into an open container', () => {
     expect(await bookingsOfCustomer()).toBe(1);
   });
 
+  it('books into a container with the services left out: the main freight is implied', async () => {
+    // Every booking carries the main freight (owner, 2026-10-19; Codex N90-2).
+    const container = await openContainer();
+    const body = lclBooking(container.id, { services: undefined });
+    const checked = (await r.agentPost('/booking-drafts/check', tokens.opsJed, body).expect(200))
+      .body as { ok: boolean };
+    expect(checked.ok).toBe(true);
+    const summary = (await createDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    const approved = (
+      await r
+        .post(`/booking-drafts/${summary.id}/approve`, cookies.opsJed, { version: 1 })
+        .expect(200)
+    ).body as BookingDraftDto;
+    const booking = (await r.get(`/bookings/${approved.bookingId}`, cookies.opsJed).expect(200))
+      .body as BookingDto;
+    expect(booking.services).toEqual(['MAIN_FREIGHT']);
+    expect(booking.status).toBe('CONFIRMED');
+  });
+
   it('refuses a booking that does not fit the container, naming why, and stores nothing', async () => {
     const container = await openContainer();
     const before = await t.prisma.bookingDraft.count({ where: { consolidationId: container.id } });
@@ -214,9 +232,6 @@ describe('booking drafts into an open container', () => {
         400,
       ),
     ).toBe('CONTAINER_BOOKING_OTHER_PORT');
-    expect(await refused(lclBooking(container.id, { services: ['LAST_MILE'] }), 400)).toBe(
-      'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
-    );
     // Warehouse sees bookings but books nothing, into a container or not.
     await createDraft(lclBooking(container.id), tokens.whJed).expect(403);
     // A container that does not exist, and a bad id.
@@ -243,13 +258,16 @@ describe('booking drafts into an open container', () => {
       .post(`/consolidations/${container.id}/cancel`, cookies.opsDxb, { reason: 'Vessel missed' })
       .expect(200);
 
+    // Cancelled, another branch's container is no longer one the JED approver reads directly: the
+    // draft refuses it as not found and shows nothing of it (Codex on 98f9727).
     const draft = await readDraft(summary.id);
     expect(draft.check).toMatchObject({ ok: false });
-    expect(draft.check?.ok === false && draft.check.message).toMatch(/no longer open/);
-    const res = await r
+    expect(draft.check?.ok === false && draft.check.message).toBe('Container not found');
+    expect(draft.container).toBeNull();
+    expect(JSON.stringify(draft)).not.toContain(container.number);
+    await r
       .post(`/booking-drafts/${summary.id}/approve`, cookies.opsJed, { version: 1 })
-      .expect(409);
-    expect(code(res)).toBe('CONTAINER_NOT_OPEN');
+      .expect(404);
     expect((await readDraft(summary.id)).status).toBe('DRAFT');
     expect(await bookingsOfCustomer()).toBe(before);
   });

@@ -15,6 +15,7 @@ import type {
   WarehouseMovementKind,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { branchScope } from '../auth/branch-scope.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
@@ -31,6 +32,7 @@ import {
   heldPackages,
   receiptStatusOptions,
   releasableAt,
+  remainingWeightKg,
   totalsByWarehouse,
 } from './warehouse-rules.js';
 import { type MovementWarehouse, WarehousesService } from './warehouses.service.js';
@@ -118,6 +120,7 @@ export class WarehouseMovementsService {
         onHandPackages: t.onHandPackages,
         receivedWeightKg: toDecimalString(t.receivedWeightKg),
         releasedWeightKg: toDecimalString(t.releasedWeightKg),
+        remainingWeightKg: toDecimalStringOrNull(remainingWeightKg(movements, warehouseId)),
       });
     }
     const has = (permission: Permission) => user.permissions.has(permission);
@@ -144,6 +147,49 @@ export class WarehouseMovementsService {
         defaultReceiptStatus: defaultReceiptStatus(receiptStatuses),
       },
     };
+  }
+
+  /**
+   * The warehouses a release of the shipment could leave from now, for this user: those holding
+   * its goods (received there minus released from there, more than none) that are in one of the
+   * user's branches (a release from a warehouse elsewhere is refused, requireForMovement), active
+   * or not (a release may empty an inactive one). Code order. Nothing is written.
+   */
+  async releasableBalances(
+    user: AuthUser,
+    shipmentId: string,
+  ): Promise<
+    {
+      warehouseId: string;
+      code: string;
+      nameEn: string;
+      nameAr: string;
+      branchId: string;
+      onHandPackages: number;
+      remainingWeightKg: string | null;
+    }[]
+  > {
+    await this.shipments.requireAccessible(user, shipmentId);
+    const movements = await this.prisma.warehouseMovement.findMany({
+      where: { shipmentId, shipment: shipmentScope(user) },
+      select: { kind: true, warehouseId: true, packages: true, weightKg: true },
+    });
+    const totals = totalsByWarehouse(movements);
+    const held = [...totals].filter(([, t]) => t.onHandPackages > 0).map(([id]) => id);
+    const warehouses = await this.prisma.warehouse.findMany({
+      where: { id: { in: held }, ...branchScope(user) },
+      select: { id: true, code: true, nameEn: true, nameAr: true, branchId: true },
+      orderBy: { code: 'asc' },
+    });
+    return warehouses.map((w) => ({
+      warehouseId: w.id,
+      code: w.code,
+      nameEn: w.nameEn,
+      nameAr: w.nameAr,
+      branchId: w.branchId,
+      onHandPackages: totals.get(w.id)?.onHandPackages ?? 0,
+      remainingWeightKg: toDecimalStringOrNull(remainingWeightKg(movements, w.id)),
+    }));
   }
 
   /**
@@ -274,7 +320,7 @@ export class WarehouseMovementsService {
   async prepareRelease(
     user: AuthUser,
     shipmentId: string,
-    input: GoodsReleaseRequest,
+    input: Pick<GoodsReleaseRequest, 'occurredAt'>,
   ): Promise<PreparedRelease> {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     if (shipment.status === 'CLOSED') {

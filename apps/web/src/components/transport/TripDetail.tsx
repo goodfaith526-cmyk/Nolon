@@ -92,6 +92,32 @@ export function TripDetail({ id }: { id: string }) {
     );
   }
 
+  /**
+   * Own trips only (functional review D7): "arrived and completed" in one click, still as the
+   * API's two steps. When the arrival is recorded but the completion is refused, the trip shows as
+   * arrived with the reason, and its "complete" button finishes it: nothing is recorded twice.
+   */
+  async function arriveAndComplete(form: HTMLFormElement | null) {
+    const occurredAt = form ? toIso(field(new FormData(form), 'occurredAt')) : undefined;
+    const step = (status: TripMove) =>
+      api<TripDto>(`/trips/${id}/status`, { method: 'POST', body: { status, occurredAt } });
+    const arrived = await run(
+      () => step('ARRIVED'),
+      t('movedNotice', { status: te('trip_ARRIVED') }),
+      t('moveRefused'),
+    );
+    if (!arrived) return;
+    setBusy(true);
+    try {
+      setRecord(await step('COMPLETED'));
+      setNotice({ ok: true, text: t('arrivedAndCompletedNotice') });
+    } catch (e) {
+      setNotice({ ok: false, text: t('arrivedNotCompleted', { reason: failure(e) }) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCancel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const reason = field(new FormData(event.currentTarget), 'reason').trim();
@@ -246,6 +272,16 @@ export function TripDetail({ id }: { id: string }) {
               <button type="submit" className="primary big" disabled={busy}>
                 {t(`move_${move}`)}
               </button>
+              {move === 'ARRIVED' && trip.kind === 'OWN' && a.moves.length === 1 && (
+                <button
+                  type="button"
+                  className="big"
+                  disabled={busy}
+                  onClick={(e) => void arriveAndComplete(e.currentTarget.form)}
+                >
+                  {t('arriveAndComplete')}
+                </button>
+              )}
             </form>
           ))}
           {a.moves.some((m) => m !== 'COMPLETED') && <p className="muted">{t('moveHint')}</p>}

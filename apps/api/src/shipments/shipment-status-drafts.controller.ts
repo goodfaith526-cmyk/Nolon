@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -37,18 +38,30 @@ import { preCheckBody } from '../drafts/draft-rules.js';
 const excluded: readonly string[] = SHIPMENT_STATUS_DRAFT_EXCLUDED;
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 // Dated at the approval: the assistant gives no time. Closing, holding and cancelling stay a
-// person's own actions.
+// person's own actions. No value is required (owner decision, 2026-10-17): the draft belongs to
+// the shipment's branch, or to the branch it names while it has no shipment.
+const draftValues = {
+  shipmentId: z.uuid().nullish(),
+  status: z
+    .enum(SHIPMENT_STATUSES)
+    .refine((s) => !excluded.includes(s), 'This status cannot be proposed by the assistant')
+    .nullish(),
+  locationId: z.uuid().nullish(),
+  note: optionalText(1000),
+};
 const createBody = z
   .object({
+    ...draftValues,
     idempotencyKey,
-    shipmentId: z.uuid(),
-    status: z
-      .enum(SHIPMENT_STATUSES)
-      .refine((s) => !excluded.includes(s), 'This status cannot be proposed by the assistant'),
-    locationId: z.uuid().nullish(),
-    note: optionalText(1000),
+    branchId: z.uuid().nullish(),
     evidence: draftEvidence(['shipmentId', 'status', 'locationId']),
   })
+  .strict();
+/** A person's edit: any value (a shipment of the draft's branch), at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
   .strict();
 const approveBody = z
   .object({ version: z.number().int().min(1), confirmed: confirmedFields })
@@ -114,6 +127,17 @@ export class ShipmentStatusDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ShipmentStatusDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('shipments:view')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ShipmentStatusDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

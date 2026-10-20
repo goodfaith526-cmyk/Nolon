@@ -60,7 +60,7 @@ const accountBody = z
       .regex(/^[0-9A-Z][0-9A-Z.-]{0,19}$/),
     nameEn: requiredText(200),
     nameAr: requiredText(200),
-    type: z.enum(ACCOUNT_TYPES),
+    type: z.enum(ACCOUNT_TYPES).optional(),
     parentId: z.uuid().nullish(),
     isPostable: z.boolean(),
     isCash: z.boolean().optional(),

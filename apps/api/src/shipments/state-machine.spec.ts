@@ -58,6 +58,34 @@ describe('shipment state machine: annex B section 5 paths', () => {
     );
   });
 
+  it('sea and road (SEA_ROAD): the sea leg, then a road leg, without inland transport booked', () => {
+    const shape: ShipmentShape = { mode: 'SEA_ROAD', loadType: 'FCL', services: ['MAIN_FREIGHT'] };
+    walk(shape, [
+      'CREATED',
+      'LOADED',
+      'DEPARTED',
+      'IN_TRANSIT',
+      'ARRIVED_PORT',
+      'TRIP_SCHEDULED',
+      'ROAD_DEPARTED',
+      'ROAD_IN_TRANSIT',
+      'ROAD_ARRIVED',
+      'DELIVERED',
+      'CLOSED',
+    ]);
+    // The road leg follows the sea leg, and delivery waits for both.
+    expect(nextStatuses('CREATED', shape, passed())).not.toContain('TRIP_SCHEDULED');
+    expect(nextStatuses('ARRIVED_PORT', shape, passed('CREATED', 'LOADED'))).not.toContain(
+      'DELIVERED',
+    );
+  });
+
+  it('sea and road LCL is consolidated before loading', () => {
+    const shape: ShipmentShape = { mode: 'SEA_ROAD', loadType: 'LCL', services: ['MAIN_FREIGHT'] };
+    expect(nextStatuses('CREATED', shape, passed())).toContain('CONSOLIDATED');
+    expect(nextStatuses('CREATED', shape, passed())).not.toContain('LOADED');
+  });
+
   it('B: sea LCL with consolidation, collected from the warehouse', () => {
     walk({ mode: 'SEA', loadType: 'LCL', services: ['MAIN_FREIGHT', 'WAREHOUSE', 'CUSTOMS'] }, [
       'CREATED',

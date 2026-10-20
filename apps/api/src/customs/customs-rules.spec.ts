@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import {
   clearanceDays,
+  clearanceMoment,
   clearanceProblem,
+  shipmentStepsForFile,
   daysOpen,
   feeTotals,
   isValidFeeAmount,
@@ -67,5 +69,27 @@ describe('clearance time', () => {
     expect(daysOpen(null, '2026-10-01', '2026-09-20', '2026-10-05')).toBe(4);
     expect(daysOpen(null, null, '2026-09-20', '2026-10-05')).toBe(15);
     expect(daysOpen('2026-10-03', '2026-10-01', '2026-09-20', '2026-10-05')).toBeNull();
+  });
+});
+
+describe('shipmentStepsForFile', () => {
+  it('maps the file status to the shipment steps it implies', () => {
+    expect(shipmentStepsForFile('PENDING')).toEqual([]);
+    for (const status of ['SUBMITTED', 'INSPECTION', 'HELD'] as const) {
+      expect(shipmentStepsForFile(status)).toEqual(['CUSTOMS_IN_PROGRESS']);
+    }
+    expect(shipmentStepsForFile('CLEARED')).toEqual(['CUSTOMS_IN_PROGRESS', 'CUSTOMS_CLEARED']);
+  });
+});
+
+describe('clearanceMoment', () => {
+  const now = new Date('2026-10-19T08:30:00Z');
+  it('is now for today, the end of the local day for an earlier day, null for a later day', () => {
+    expect(clearanceMoment('2026-10-19', 'Asia/Dubai', '2026-10-19', now)).toBe(now);
+    // 2026-10-17 ends at 2026-10-17T20:00:00Z in Dubai (UTC+4).
+    expect(clearanceMoment('2026-10-17', 'Asia/Dubai', '2026-10-19', now)?.toISOString()).toBe(
+      '2026-10-17T19:59:59.999Z',
+    );
+    expect(clearanceMoment('2026-10-20', 'Asia/Dubai', '2026-10-19', now)).toBeNull();
   });
 });

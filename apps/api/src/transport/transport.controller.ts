@@ -24,6 +24,7 @@ import {
   TRIP_STATUSES,
   type CarrierDto,
   type DriverDto,
+  type DriverLastVehicleDto,
   type DriverUserOptionDto,
   type Page,
   type PodDto,
@@ -223,6 +224,16 @@ export class FleetController {
   @RequirePermission('transport_fleet:view')
   drivers(@CurrentUser() user: AuthUser): Promise<DriverDto[]> {
     return this.fleet.listDrivers(user);
+  }
+
+  /** Not opened to the assistant: a planning hint for the trip form (functional review D8). */
+  @Get('drivers/:id/last-vehicle')
+  @RequirePermission('transport_trips:create')
+  driverLastVehicle(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<DriverLastVehicleDto> {
+    return this.fleet.lastVehicle(user, id);
   }
 
   @Get('driver-users')

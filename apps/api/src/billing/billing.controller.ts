@@ -21,6 +21,7 @@ import {
   type CustomerInvoiceSummaryDto,
   type CustomerStatementDto,
   type Page,
+  type ReceiptAllocationSuggestionDto,
   type ReceiptDto,
   type ReceiptSummaryDto,
 } from '@nolon/shared';
@@ -61,6 +62,7 @@ const updateInvoiceBody = z
     dueDate: dateString,
     notes: optionalText(2000),
     lines: z.array(invoiceLine).min(1).max(100),
+    repriced: z.boolean().optional(),
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
@@ -90,6 +92,11 @@ export const createReceiptBody = z
     allocations: z.array(z.object({ invoiceId: z.uuid(), amount }).strict()).max(100),
   })
   .strict();
+const allocationSuggestionQuery = z.strictObject({
+  customerId: z.uuid(),
+  currency: currencyCode,
+  amount,
+});
 const statementQuery = z
   .object({ from: dateString, to: dateString, branchId: z.uuid().optional() })
   .strict();
@@ -213,6 +220,16 @@ export class ReceiptsController {
   @RequirePermission('receipts:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<ReceiptSummaryDto>> {
     return this.receipts.list(user, parse(receiptListQuery, query));
+  }
+
+  /** A suggested split of an amount over the customer's open invoices, oldest first (read only). */
+  @Get('allocation-suggestion')
+  @RequirePermission('receipts:create')
+  allocationSuggestion(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<ReceiptAllocationSuggestionDto> {
+    return this.receipts.suggestAllocations(user, parse(allocationSuggestionQuery, query));
   }
 
   @AgentReadable()

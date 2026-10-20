@@ -8,6 +8,7 @@ import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame } from './DraftFrame';
+import { MissingFields } from './MissingFields';
 
 /** A booking the assistant proposed: its values as proposed, and the decision. */
 export function BookingDraftReview({ id }: { id: string }) {
@@ -22,12 +23,14 @@ export function BookingDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const b = draft.request;
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const place = (id: string | null | undefined) => (id ? locationName(id) : '—');
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/booking-drafts"
-      title={t('bookingTitle', { customer: draft.customerName })}
+      title={t('bookingTitle', { customer: draft.customerName ?? '—' })}
       approveHint={
         b.quotationId === undefined && b.consolidationId
           ? t('containerBookingApproveHint')
@@ -40,6 +43,7 @@ export function BookingDraftReview({ id }: { id: string }) {
       }
       onChanged={setRecord}
     >
+      <MissingFields draft={draft} apiPath="/booking-drafts" onChanged={setRecord} />
       <dl className="details">
         {b.quotationId !== undefined ? (
           <>
@@ -53,14 +57,15 @@ export function BookingDraftReview({ id }: { id: string }) {
             <dt>{tb('route')}</dt>
             <dd>
               {tc('route', {
-                from: locationName(b.originLocationId),
-                to: locationName(b.destinationLocationId),
+                from: place(b.originLocationId),
+                to: place(b.destinationLocationId),
               })}
             </dd>
             <dt>{tb('mode')}</dt>
             <dd>
-              {te(`mode_${b.mode}`)}
-              {b.loadType ? ` · ${b.loadType}` : ''} · {te(`cargo_${b.cargoType}`)}
+              {b.mode ? te(`mode_${b.mode}`) : '—'}
+              {b.loadType ? ` · ${b.loadType}` : ''} ·{' '}
+              {b.cargoType ? te(`cargo_${b.cargoType}`) : '—'}
             </dd>
             <dt>{tb('cargoDescription')}</dt>
             <dd>{b.cargoDescription ?? '—'}</dd>
@@ -94,11 +99,11 @@ export function BookingDraftReview({ id }: { id: string }) {
               {(b.items ?? []).map((item, i) => (
                 <tr key={i}>
                   <td>
-                    {te(`cargo_${item.cargoType}`)}
+                    {item.cargoType ? te(`cargo_${item.cargoType}`) : '—'}
                     {item.containerTypeCode ? ` ${item.containerTypeCode}` : ''}
                   </td>
                   <td>{item.description ?? '—'}</td>
-                  <td dir="ltr">{item.quantity}</td>
+                  <td dir="ltr">{item.quantity ?? '—'}</td>
                   <td dir="ltr">{item.weightKg ?? '—'}</td>
                   <td dir="ltr">{item.volumeCbm ?? '—'}</td>
                 </tr>

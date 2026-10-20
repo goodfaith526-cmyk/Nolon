@@ -5,10 +5,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  BookingDraftDirect,
+  BookingDraftFromQuotation,
+  BookingDraftItem,
   BookingDto,
+  BookingFromQuotationPreviewDto,
   BookingFromQuotationRequest,
   BookingInput,
   BookingItemInput,
+  BookingPartySuggestionDto,
   BookingService,
   BookingStatus,
   BookingSummaryDto,
@@ -16,6 +21,7 @@ import type {
   NewCustomerBookingRequest,
   Page,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
@@ -30,12 +36,15 @@ import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
+import { draftBranch } from '../drafts/draft-rules.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
+import { bookingItemMissingFields } from './booking-draft-missing.js';
 import { cbmFromDimensions } from './cbm.js';
 
 export interface BookingFilters extends PageQuery, RouteFilters {
@@ -58,6 +67,9 @@ type Tx = Prisma.TransactionClient;
 
 /** Largest value `booking_items.volume_cbm` (Decimal(12, 4)) holds. */
 const MAX_VOLUME_CBM = dec('99999999.9999');
+
+/** Largest quantity a cargo line takes (the request schema's limit). */
+const MAX_ITEM_QUANTITY = 100_000;
 
 const details = {
   items: { orderBy: { lineNo: 'asc' } },
@@ -134,6 +146,134 @@ export class BookingsService {
   }
 
   /**
+   * The parties a new booking of this customer may start from (functional review B5). Generated
+   * when the person picks the customer on a new booking: the shipper, consignee and notify party
+   * of the customer's latest booking (not cancelled, in the user's branches) that names any, else
+   * the customer's only party as consignee when it has exactly one. Each suggested party is
+   * checked to be the customer's still. Picking another customer asks again and drops the old
+   * suggestion; the form shows where it comes from and keeps a party the person chose; the save
+   * checks each party again. The customer must be active and in the user's branches (404).
+   */
+  async partySuggestion(user: AuthUser, customerId: string): Promise<BookingPartySuggestionDto> {
+    const customer = await this.customers.requireActiveCustomer(user, customerId);
+    return this.suggestParties(user, customer.id);
+  }
+
+  /**
+   * What a booking made from this approved quotation starts from (functional review B1), for the
+   * person to review and then save with createFromQuotation; nothing is written here. Generated
+   * when the person opens "To booking": route, mode, load type and cargo are the quotation's (a
+   * booking from a quotation keeps them); the container lines come from the quotation lines priced
+   * per container whose rate card names an active container type, one line per container type
+   * with the largest whole quantity of its lines (two charges on the same containers, freight and
+   * handling say, are the same containers, not twice as many). Other charges are never turned
+   * into cargo lines. The parties are partySuggestion's. Whatever the person changes before saving
+   * is what is saved.
+   */
+  async previewFromQuotation(
+    user: AuthUser,
+    quotationId: string,
+  ): Promise<BookingFromQuotationPreviewDto> {
+    const quotation = await this.quotations.requireApproved(user, quotationId);
+    const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
+    const existing = await this.prisma.booking.findFirst({
+      where: { quotationId: quotation.id },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException('This quotation already has a booking');
+    const items: BookingItemInput[] = [];
+    if (quotation.cargoType === 'CONTAINER') {
+      const lines = await this.quotations.perContainerLines(quotation.id);
+      const active = await this.masterData.activeContainerTypeCodes(
+        lines.map((l) => l.containerTypeCode),
+      );
+      const containers = new Map<string, number>();
+      for (const line of lines) {
+        // A booking counts whole containers (1 to 100000, as a cargo line takes).
+        if (!active.has(line.containerTypeCode) || !line.quantity.isInteger()) continue;
+        if (line.quantity.lt(1) || line.quantity.gt(MAX_ITEM_QUANTITY)) continue;
+        // A count of containers (whole, checked above), not an amount.
+        const quantity = line.quantity.toNumber();
+        containers.set(
+          line.containerTypeCode,
+          Math.max(quantity, containers.get(line.containerTypeCode) ?? 0),
+        );
+      }
+      for (const [containerTypeCode, quantity] of containers) {
+        items.push({ cargoType: 'CONTAINER', containerTypeCode, quantity });
+      }
+    }
+    return {
+      quotationId: quotation.id,
+      quotationNumber: quotation.number,
+      branchId: quotation.branchId,
+      customerId: customer.id,
+      customerName: customer.name,
+      originLocationId: quotation.originLocationId,
+      destinationLocationId: quotation.destinationLocationId,
+      mode: quotation.mode,
+      loadType: quotation.loadType,
+      cargoType: quotation.cargoType,
+      cargoDescription: quotation.cargoDescription,
+      items,
+      parties: await this.suggestParties(user, customer.id),
+    };
+  }
+
+  private async suggestParties(
+    user: AuthUser,
+    customerId: string,
+  ): Promise<BookingPartySuggestionDto> {
+    const own = new Set(await this.customers.partyIds(customerId));
+    const none = {
+      customerId,
+      source: null,
+      bookingId: null,
+      bookingNumber: null,
+      shipperId: null,
+      consigneeId: null,
+      notifyPartyId: null,
+    };
+    const last = await this.prisma.booking.findFirst({
+      where: {
+        customerId,
+        ...branchScope(user),
+        status: { not: 'CANCELLED' },
+        OR: [
+          { shipperId: { not: null } },
+          { consigneeId: { not: null } },
+          { notifyPartyId: { not: null } },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, number: true, shipperId: true, consigneeId: true, notifyPartyId: true },
+    });
+    const kept = (id: string | null) => (id !== null && own.has(id) ? id : null);
+    if (last) {
+      const parties = {
+        shipperId: kept(last.shipperId),
+        consigneeId: kept(last.consigneeId),
+        notifyPartyId: kept(last.notifyPartyId),
+      };
+      if (parties.shipperId || parties.consigneeId || parties.notifyPartyId) {
+        return {
+          ...none,
+          source: 'LAST_BOOKING',
+          bookingId: last.id,
+          bookingNumber: last.number,
+          ...parties,
+        };
+      }
+    }
+    const [only, ...more] = own;
+    if (only !== undefined && more.length === 0) {
+      return { ...none, source: 'ONLY_PARTY', consigneeId: only };
+    }
+    return none;
+  }
+
+  /**
    * Checks a create request for this user without writing (customer in the user's branches and
    * active, route, parties, cargo lines). insertInTx then records it, so a caller (an approved
    * assistant draft) can do so inside its own transaction.
@@ -153,6 +293,20 @@ export class BookingsService {
     await this.prepare(null, input);
   }
 
+  /**
+   * prepareWithoutCustomer for a booking whose new customer is created in the same transaction
+   * (a booking for a new customer approved with its customer draft): the booking to insert, in
+   * `branchId` (the customer's), once that customer's id is known. A new customer is active, in
+   * the user's branch, and has no parties yet, so nothing of prepareCreate is left unchecked.
+   */
+  async prepareForNewCustomer(
+    input: NewCustomerBookingRequest,
+    branchId: string,
+  ): Promise<(customerId: string) => PreparedBooking> {
+    const prepared = await this.prepare(null, input);
+    return (customerId) => ({ branchId, customerId, quotationId: null, ...prepared });
+  }
+
   /** As prepareCreate, for a booking made from an approved quotation of the user's branches. */
   async prepareFromQuotation(
     user: AuthUser,
@@ -161,6 +315,7 @@ export class BookingsService {
   ): Promise<PreparedBooking> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
     const prepared = await this.prepare(customer.id, {
       originLocationId: quotation.originLocationId,
       destinationLocationId: quotation.destinationLocationId,
@@ -182,6 +337,106 @@ export class BookingsService {
       quotationId: quotation.id,
       ...prepared,
     };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a direct booking draft holds so far (a draft is
+   * saved with missing values): the customer (active, in the user's branches), and each value
+   * present checked as a booking checks it; what is missing is left for the person to fill in.
+   * prepareCreate runs in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    input: BookingDraftDirect,
+    givenBranchId: string | null,
+  ): Promise<{ branchId: string; customerId: string | null }> {
+    const customer = input.customerId
+      ? await this.customers.requireActiveCustomer(user, input.customerId)
+      : null;
+    // The customer's branch, or with none yet the branch the draft names (one of the user's).
+    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
+    const from = input.originLocationId ?? null;
+    const to = input.destinationLocationId ?? null;
+    if (from !== null && to !== null) {
+      const route = ['originLocationId', 'destinationLocationId'];
+      if (from === to)
+        throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+      await onFields(route, () => this.masterData.requireRoute(from, to));
+    } else if (from !== null) {
+      await onFields(['originLocationId'], () => this.masterData.requireLocation(from));
+    } else if (to !== null) {
+      await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
+    }
+    if (input.mode && !hasSeaLeg(input.mode) && input.loadType) {
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
+    }
+    await this.checkPresentLines(customer?.id ?? null, input);
+    return { branchId, customerId: customer?.id ?? null };
+  }
+
+  /** As checkPresent, for a booking draft made from an approved quotation of the user's branches. */
+  async checkPresentFromQuotation(
+    user: AuthUser,
+    quotationId: string,
+    input: BookingDraftFromQuotation,
+  ): Promise<{ branchId: string; customerId: string; quotationId: string }> {
+    const quotation = await this.quotations.requireApproved(user, quotationId);
+    const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
+    requireSameBranch(quotation.branchId, customer.branchId);
+    await this.checkPresentLines(customer.id, input);
+    return { branchId: quotation.branchId, customerId: customer.id, quotationId: quotation.id };
+  }
+
+  /** The parties and cargo lines of a draft: a complete line in full, others on what they hold. */
+  private async checkPresentLines(
+    customerId: string | null,
+    input: {
+      shipperId?: string | null;
+      consigneeId?: string | null;
+      notifyPartyId?: string | null;
+      items?: BookingDraftItem[];
+    },
+  ): Promise<void> {
+    if (customerId === null) {
+      // A party is one of the customer's: it is named once the customer is.
+      const named = (['shipperId', 'consigneeId', 'notifyPartyId'] as const).filter(
+        (field) => input[field],
+      );
+      if (named.length > 0) {
+        throw fieldRefusal(null, "Name the customer before the customer's parties", named);
+      }
+    } else {
+      await this.customers.requireOwnParties(customerId, [
+        input.shipperId,
+        input.consigneeId,
+        input.notifyPartyId,
+      ]);
+    }
+    for (const [index, item] of (input.items ?? []).entries()) {
+      const path = `items.${index}`;
+      const { cargoType, quantity } = item;
+      if (cargoType && quantity && bookingItemMissingFields(item).length === 0) {
+        await this.prepareItem({ ...item, cargoType, quantity }, path);
+        continue;
+      }
+      const code = item.containerTypeCode;
+      if (!code) continue;
+      const containerType = [`${path}.containerTypeCode`];
+      if (cargoType && cargoType !== 'CONTAINER') {
+        throw fieldRefusal(
+          'CONTAINER_TYPE_NOT_APPLICABLE',
+          'Container type applies to container lines only',
+          containerType,
+        );
+      }
+      await onFields(
+        containerType,
+        () => this.masterData.requireContainerType(code),
+        'UNKNOWN_CONTAINER_TYPE',
+      );
+    }
   }
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
@@ -214,7 +469,23 @@ export class BookingsService {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT')
       throw new ConflictException('Only a draft booking can be edited');
-    const prepared = await this.prepare(existing.customerId, input);
+    if (existing.quotationId) {
+      // The quotation priced this route and mode, and the invoice is priced from the quotation.
+      const changed = [
+        input.originLocationId.toLowerCase() !== existing.originLocationId && 'originLocationId',
+        input.destinationLocationId.toLowerCase() !== existing.destinationLocationId &&
+          'destinationLocationId',
+        input.mode !== existing.mode && 'mode',
+      ].filter((f): f is string => typeof f === 'string');
+      if (changed.length > 0) {
+        throw fieldRefusal(
+          'QUOTED_ROUTE_FIXED',
+          'A booking made from a quotation keeps the quotation route and mode',
+          changed,
+        );
+      }
+    }
+    const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
@@ -294,8 +565,16 @@ export class BookingsService {
     return booking;
   }
 
-  /** `customerId` null: a booking for a customer not in NOLON yet, which names no parties. */
-  private async prepare(customerId: string | null, input: BookingInput) {
+  /**
+   * `customerId` null: a booking for a customer not in NOLON yet, which names no parties.
+   * `stored`: the booking an edit changes, whose cargo header a value left out keeps
+   * (bookingCargoHeader).
+   */
+  private async prepare(
+    customerId: string | null,
+    input: BookingInput,
+    stored?: BookingCargo | null,
+  ) {
     const route = ['originLocationId', 'destinationLocationId'];
     if (input.originLocationId === input.destinationLocationId) {
       throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
@@ -303,19 +582,26 @@ export class BookingsService {
     await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
-    if (input.mode !== 'SEA' && input.loadType) {
+    if (!hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);
     }
-    const services: BookingService[] = [...new Set(input.services)];
-    if (services.length === 0)
-      throw fieldRefusal('SERVICE_REQUIRED', 'Choose at least one service', ['services']);
+    // Every booking carries the main freight (owner, 2026-10-19): it is not a choice on the form.
+    const services: BookingService[] = [
+      ...new Set<BookingService>(['MAIN_FREIGHT', ...input.services]),
+    ];
     const parties = [input.shipperId, input.consigneeId, input.notifyPartyId];
     if (customerId !== null) {
       await this.customers.requireOwnParties(customerId, parties);
     } else if (parties.some((p) => p !== null && p !== undefined)) {
       throw new BadRequestException('A booking for a new customer names no parties yet');
+    }
+    // Asked on each line only; a booking with no lines names its cargo type.
+    const cargo = bookingCargoHeader(input, stored);
+    const cargoType = cargo.cargoType;
+    if (cargoType === null) {
+      throw fieldRefusal(null, 'Give the cargo type or a cargo line', ['cargoType']);
     }
     const items = [];
     for (const [index, item] of input.items.entries()) {
@@ -326,9 +612,9 @@ export class BookingsService {
         originLocationId: input.originLocationId,
         destinationLocationId: input.destinationLocationId,
         mode: input.mode,
-        loadType: input.loadType ?? null,
-        cargoType: input.cargoType,
-        cargoDescription: input.cargoDescription ?? null,
+        loadType: cargo.loadType,
+        cargoType,
+        cargoDescription: cargo.cargoDescription,
         services,
         shipperId: input.shipperId ?? null,
         consigneeId: input.consigneeId ?? null,
@@ -471,4 +757,15 @@ function toDto(b: BookingWithDetails): BookingDto {
       volumeCbm: toDecimalStringOrNull(i.volumeCbm),
     })),
   };
+}
+
+/**
+ * A booking made from a quotation is filed in the quotation's branch, which is its customer's: a
+ * quotation is priced in its customer's branch and a customer never changes branch. Checked anyway,
+ * so a booking can never land in a branch other than its customer's (409).
+ */
+function requireSameBranch(quotationBranchId: string, customerBranchId: string): void {
+  if (quotationBranchId !== customerBranchId) {
+    throw new ConflictException("This quotation is not in its customer's branch");
+  }
 }

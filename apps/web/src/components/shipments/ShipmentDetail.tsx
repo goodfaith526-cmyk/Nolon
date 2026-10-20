@@ -20,8 +20,7 @@ import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Tabs } from '../Tabs';
 import { MoreMenu } from '../MoreMenu';
-import { ShipmentContainers } from './ShipmentContainers';
-import { ShipmentConsolidations } from '../consolidations/ShipmentConsolidations';
+import { ShipmentContainersTab } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
@@ -509,12 +508,7 @@ export function ShipmentDetail({ id }: { id: string }) {
           {
             key: 'containers',
             label: t('tabContainers'),
-            content: (
-              <>
-                {s.loadType === 'LCL' && <ShipmentConsolidations shipmentId={s.id} />}
-                <ShipmentContainers shipment={s} onChange={setShipment} />
-              </>
-            ),
+            content: <ShipmentContainersTab shipment={s} onChange={setShipment} />,
           },
           ...(can(me, 'transport_trips:view') || can(me, 'pod:view')
             ? [
@@ -523,7 +517,16 @@ export function ShipmentDetail({ id }: { id: string }) {
                   label: t('tabTransport'),
                   content: (
                     <>
-                      {can(me, 'transport_trips:view') && <ShipmentTrips shipmentId={s.id} />}
+                      {can(me, 'transport_trips:view') && (
+                        <ShipmentTrips
+                          shipmentId={s.id}
+                          canPlanTrip={
+                            can(me, 'transport_trips:create') &&
+                            s.status !== 'CLOSED' &&
+                            s.status !== 'CANCELLED'
+                          }
+                        />
+                      )}
                       {can(me, 'pod:view') && (
                         <ShipmentPods shipment={s} onShipmentChanged={load} />
                       )}

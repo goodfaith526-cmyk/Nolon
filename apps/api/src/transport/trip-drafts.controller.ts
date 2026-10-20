@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -32,10 +33,32 @@ import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
 import { TripDraftsService } from './trip-drafts.service.js';
 import { tripBody } from './transport.controller.js';
+import { MAX_TRIP_SHIPMENTS } from './trips.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-const createBody = tripBody.extend({ idempotencyKey }).strict();
+/**
+ * A trip draft's values: a trip's (tripBody), each checked the same way when given, none of them
+ * required (owner decision, 2026-10-17). The branch is security context, always named (one of the
+ * user's). The rest, the kind included, is filled in on review.
+ */
+const draftValues = {
+  ...tripBody.shape,
+  kind: tripBody.shape.kind.nullish(),
+  originLocationId: z.uuid().nullish(),
+  destinationLocationId: z.uuid().nullish(),
+  shipmentIds: z.array(z.uuid()).max(MAX_TRIP_SHIPMENTS),
+};
+const createBody = z
+  .object({ ...draftValues, shipmentIds: draftValues.shipmentIds.optional(), idempotencyKey })
+  .strict();
+/** A person's edit: any value but the branch, at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .omit({ branchId: true })
+  .partial()
+  .extend({ version: z.number().int().min(1) })
+  .strict();
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
   .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
@@ -96,6 +119,17 @@ export class TripDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<TripDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('transport_trips:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<TripDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

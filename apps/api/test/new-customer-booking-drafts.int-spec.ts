@@ -19,11 +19,13 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
 } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
+import type { Prisma } from '../src/generated/prisma/client.js';
 
 // Bookings for a new customer, proposed by the staff assistant in one request with the customer
 // (entry drafts). The assistant's users (agent-it-) create drafts; it- users approve them, so the
@@ -153,7 +155,16 @@ describe('bookings for a new customer: the assistant proposes', () => {
     const body = request({ evidence });
     const summary = await created(body);
     expect(Object.keys(summary).sort()).toEqual(
-      ['createdAt', 'customerDraftId', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      [
+        'createdAt',
+        'customerDraftId',
+        'expiresAt',
+        'id',
+        'lineCount',
+        'missingFields',
+        'status',
+        'version',
+      ].sort(),
     );
     expect(summary).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     const draft = await read(summary.id);
@@ -225,7 +236,8 @@ describe('bookings for a new customer: the assistant proposes', () => {
   it('refuses bad fields: parties, no lines, a number for a weight, words for a missing line', async () => {
     const before = await t.prisma.newCustomerBookingDraft.count();
     await createDraft(request({}, { shipperId: jebelAli })).expect(400);
-    await createDraft(request({}, { items: [] })).expect(400);
+    // A draft may be saved without lines (filled in on review), never with a malformed one.
+    await createDraft(request({}, { items: [{ quantity: 1.5 }] })).expect(400);
     await createDraft(
       request({}, { items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: 12.5 }] }),
     ).expect(400);
@@ -458,6 +470,58 @@ describe('bookings for a new customer: a person reviews', () => {
   });
 });
 
+// The approval gate (no-required-fields plan, 3.3), on both parts: the customer draft's details
+// and the booking's values, before the customer's own status or any live check; nothing booked.
+describe('bookings for a new customer: the approval gate', () => {
+  it('refuses a booking without a cargo type and a customer with a bad phone; then books once', async () => {
+    const summary = await created();
+    const stored = await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({
+      where: { id: summary.id },
+    });
+    const customer = await t.prisma.customerDraft.findUniqueOrThrow({
+      where: { id: summary.customerDraftId },
+    });
+    const booking = stored.request as Prisma.InputJsonObject;
+    await t.prisma.newCustomerBookingDraft.update({
+      where: { id: summary.id },
+      // A booking with lines takes its cargo type from them: with none, it is asked for.
+      data: { request: { ...booking, cargoType: null, items: [] } },
+    });
+    await t.prisma.customerDraft.update({
+      where: { id: customer.id },
+      data: { phone: '0912345678' },
+    });
+    // The gate comes before "approve the new customer first".
+    expectGateRefusal(await approve(summary.id), ['booking.cargoType'], ['customer.phone']);
+    await approve(summary.id, cookies.salesJed).expect(404);
+    await approve(summary.id, cookies.financeDxb).expect(403);
+    await approve(summary.id, cookies.salesDxb, { version: 2 }).expect(409);
+
+    await t.prisma.customerDraft.update({
+      where: { id: customer.id },
+      data: { phone: customer.phone },
+    });
+    await approveCustomer(summary.customerDraftId).expect(200);
+    expectGateRefusal(await approve(summary.id), ['booking.cargoType']);
+    const { customerId } = (await read(summary.id)).customer;
+    if (customerId === null) throw new Error('The customer was not created');
+    expect(await t.prisma.booking.count({ where: { customerId } })).toBe(0);
+    expect(
+      await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id: summary.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, bookingId: null });
+
+    // Services are optional: every booking carries the main freight (owner, 2026-10-19).
+    await t.prisma.newCustomerBookingDraft.update({
+      where: { id: summary.id },
+      data: { request: { ...booking, services: [] } },
+    });
+    await approve(summary.id).expect(200);
+    await approve(summary.id).expect(200);
+    const booked = await t.prisma.booking.findMany({ where: { customerId } });
+    expect(booked.map((b) => b.services)).toEqual([['MAIN_FREIGHT']]);
+  });
+});
+
 describe("bookings for a new customer: replacing a pair at the person's request", () => {
   const readCustomer = async (id: string) =>
     (await r.get(`/customer-drafts/${id}`, cookies.salesDxb).expect(200)).body as CustomerDraftDto;
@@ -648,5 +712,306 @@ describe("bookings for a new customer: replacing a pair at the person's request"
     await r
       .agentPost('/customer-drafts', tokens.sales, customerBody(pair.customerDraftId))
       .expect(201);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): a booking for a new
+// customer may name only its branch (security context). A person fills in the booking (PATCH) and
+// the customer on its own customer draft, and approving is refused (422) while anything is
+// missing, creating no customer and no booking.
+describe('bookings for a new customer saved with missing values', () => {
+  const CUSTOMER_MISSING = ['customer.kind', 'customer.name', 'customer.phone'];
+  const BOOKING_MISSING = [
+    'booking.originLocationId',
+    'booking.destinationLocationId',
+    'booking.mode',
+    'booking.cargoType',
+  ];
+
+  it('saves an empty draft and a partly filled one, and reads them back', async () => {
+    const empty = await created({ idempotencyKey: draftKey(), branchId: dxb });
+    expect(empty.missingFields).toEqual([...CUSTOMER_MISSING, ...BOOKING_MISSING]);
+    expect(await read(empty.id)).toMatchObject({
+      missingFields: [...CUSTOMER_MISSING, ...BOOKING_MISSING],
+      check: null,
+      actions: { canEdit: true },
+      customer: { draftId: empty.customerDraftId, name: null, phone: null },
+      request: { mode: null, services: [], items: [] },
+    });
+    const list = (await r.get(`${API}?status=DRAFT`, cookies.salesDxb).expect(200))
+      .body as NewCustomerBookingDraftListItemDto[];
+    expect(list.find((d) => d.id === empty.id)).toMatchObject({
+      missingFields: [...CUSTOMER_MISSING, ...BOOKING_MISSING],
+    });
+    await r.get(`${API}/${empty.id}`, cookies.salesJed).expect(404);
+    await r.get(`/customer-drafts/${empty.customerDraftId}`, cookies.salesJed).expect(404);
+
+    const partial = await created({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      customer: { name: 'Partly Filled' },
+      booking: { mode: 'SEA', items: [{ weightKg: '100' }] },
+    });
+    expect(partial.missingFields).toEqual([
+      'customer.kind',
+      'customer.phone',
+      'booking.originLocationId',
+      'booking.destinationLocationId',
+      'booking.cargoType',
+      'booking.items[0].cargoType',
+      'booking.items[0].quantity',
+    ]);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const before = await t.prisma.newCustomerBookingDraft.count();
+    // A new customer has no branch yet: the draft always names its own (a malformed request).
+    await createDraft({ idempotencyKey: draftKey(), customer: { name: 'No branch' } }).expect(400);
+    await createDraft({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
+    await createDraft({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      customer: { phone: '0912' },
+    }).expect(400);
+    await createDraft({
+      idempotencyKey: draftKey(),
+      branchId: dxb,
+      booking: { mode: 'TELEPORT' },
+    }).expect(400);
+    expect(await t.prisma.newCustomerBookingDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval while values are missing, then approves once both are filled in', async () => {
+    const summary = await created({ idempotencyKey: draftKey(), branchId: dxb });
+    const { id } = summary;
+    expectGateRefusal(await approve(id, cookies.salesDxb, { version: 1, confirmed: [] }), [
+      ...CUSTOMER_MISSING,
+      ...BOOKING_MISSING,
+    ]);
+    expect(
+      await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, bookingId: null });
+
+    const edit = (cookie: string, body: object) => r.patch(`${API}/${id}`, cookie, body);
+    await edit(cookies.salesJed, { version: 1, mode: 'SEA' }).expect(404);
+    await edit(cookies.financeDxb, { version: 1, mode: 'SEA' }).expect(403);
+    await r.agentPatch(`${API}/${id}`, tokens.sales, { version: 1, mode: 'SEA' }).expect(403);
+    await edit(cookies.salesDxb, { version: 2, mode: 'SEA' }).expect(409);
+    await edit(cookies.salesDxb, { version: 1, mode: 'TELEPORT' }).expect(400);
+    // The customer is completed on its own customer draft.
+    await edit(cookies.salesDxb, { version: 1, customer: { name: 'x' } }).expect(400);
+
+    const booked = (
+      await edit(cookies.salesDxb, {
+        version: 1,
+        originLocationId: jebelAli,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'CONTAINER',
+        services: ['MAIN_FREIGHT'],
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
+      }).expect(200)
+    ).body as NewCustomerBookingDraftDto;
+    expect(booked).toMatchObject({ version: 2, missingFields: CUSTOMER_MISSING });
+    expectGateRefusal(
+      await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }),
+      CUSTOMER_MISSING,
+    );
+
+    const phone = uniquePhone();
+    await r
+      .patch(`/customer-drafts/${summary.customerDraftId}`, cookies.salesDxb, {
+        version: 1,
+        kind: 'INDIVIDUAL',
+        name: 'Filled In Later',
+        phone,
+      })
+      .expect(200);
+    await approveCustomer(summary.customerDraftId, { version: 2, confirmed: [] }).expect(200);
+    const ready = await read(id);
+    expect(ready).toMatchObject({ missingFields: [], check: { ok: true } });
+    const approved = (
+      await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }).expect(200)
+    ).body as NewCustomerBookingDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await approve(id, cookies.salesDxb, { version: 2, confirmed: [] }).expect(200);
+    expect(
+      await t.prisma.booking.count({ where: { customerId: ready.customer.customerId ?? '' } }),
+    ).toBe(1);
+  });
+});
+
+// Functional review هـ1: the booking approves its new customer in the same transaction, for a
+// reviewer who may add customers too; the two-step path (customer first) stays.
+describe('bookings for a new customer: approved with the customer in one step', () => {
+  let managerDxb = '';
+  const customerWords = [
+    { field: 'name', quote: 'العميلة آمنة' },
+    { field: 'phone', quote: 'رقمها' },
+  ];
+  const bookingWords = [{ field: 'originLocationId', quote: 'من جبل علي' }];
+  const withWords = () => request({ evidence: [...customerWords, ...bookingWords] });
+  const both = (customerVersion = 1, extra: object = {}) => ({
+    version: 1,
+    confirmed: ['originLocationId'],
+    customer: { version: customerVersion, confirmed: ['name', 'phone'] },
+    ...extra,
+  });
+  const states = async (summary: NewCustomerBookingDraftSummaryDto) => [
+    (await t.prisma.newCustomerBookingDraft.findUniqueOrThrow({ where: { id: summary.id } })).state,
+    (await t.prisma.customerDraft.findUniqueOrThrow({ where: { id: summary.customerDraftId } }))
+      .state,
+  ];
+  const customerList = async (cookie: string) =>
+    (
+      (await r.get('/customer-drafts?status=DRAFT', cookie).expect(200)).body as { id: string }[]
+    ).map((d) => d.id);
+
+  beforeAll(async () => {
+    // A branch manager may add customers but not create bookings: the two-step reviewer.
+    const manager = await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']);
+    managerDxb = await signIn(t, manager.email);
+  });
+
+  it('approves the customer draft and the booking together, the booking for that customer', async () => {
+    const body = withWords();
+    const summary = await created(body);
+    const approved = (await approve(summary.id, cookies.salesDxb, both()).expect(200))
+      .body as NewCustomerBookingDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    expect(approved.customer.status).toBe('APPROVED');
+    expect(approved.customer.customerId).not.toBeNull();
+    const booking = (await r.get(`/bookings/${approved.bookingId}`, cookies.salesDxb).expect(200))
+      .body as BookingDto;
+    expect(booking).toMatchObject({
+      status: 'DRAFT',
+      customerId: approved.customer.customerId,
+      customerName: 'Amna Osman',
+    });
+    const customerDraft = (
+      await r.get(`/customer-drafts/${summary.customerDraftId}`, cookies.salesDxb).expect(200)
+    ).body as CustomerDraftDto;
+    expect(customerDraft).toMatchObject({
+      status: 'APPROVED',
+      customerId: approved.customer.customerId,
+      decidedByName: expect.any(String) as string,
+    });
+    expect(await t.prisma.customer.count({ where: { phone: body.customer.phone } })).toBe(1);
+    // Again: as it is, no second customer or booking.
+    await approve(summary.id, cookies.salesDxb, both()).expect(200);
+    expect(await t.prisma.customer.count({ where: { phone: body.customer.phone } })).toBe(1);
+    expect(
+      await t.prisma.booking.count({ where: { customerId: approved.customer.customerId ?? '' } }),
+    ).toBe(1);
+    // A replay of the assistant's request under its key answers with the same drafts.
+    expect(await created(body)).toMatchObject({ id: summary.id, status: 'APPROVED' });
+  });
+
+  it('refuses a reviewer who may not add customers, and approves nothing', async () => {
+    const body = withWords();
+    const summary = await created(body);
+    const res = await approve(summary.id, cookies.opsDxb, both()).expect(403);
+    expect((res.body as { message: string }).message).toMatch(/permission to add customers/);
+    expect(await states(summary)).toEqual(['DRAFT', 'DRAFT']);
+    expect(await t.prisma.customer.count({ where: { phone: body.customer.phone } })).toBe(0);
+    // Without the customer part, the same refusal as before: approve the customer first.
+    const early = await approve(summary.id, cookies.opsDxb, {
+      version: 1,
+      confirmed: ['originLocationId'],
+    }).expect(409);
+    expect((early.body as { message: string }).message).toMatch(/Approve the new customer first/);
+  });
+
+  it('refuses stale versions and unticked words of either draft, and approves nothing', async () => {
+    const body = withWords();
+    const summary = await created(body);
+    await approve(summary.id, cookies.salesDxb, both(2)).expect(409);
+    await approve(summary.id, cookies.salesDxb, both(1, { version: 2 })).expect(409);
+    await approve(summary.id, cookies.salesDxb, {
+      ...both(),
+      customer: { version: 1, confirmed: ['name'] },
+    }).expect(400);
+    await approve(summary.id, cookies.salesDxb, both(1, { confirmed: [] })).expect(400);
+    await approve(summary.id, cookies.salesDxb, {
+      ...both(),
+      customer: { version: 1, confirmed: [], kind: 'x' },
+    }).expect(400);
+    // The customer draft edited since it was shown: its version moved on.
+    await r
+      .patch(`/customer-drafts/${summary.customerDraftId}`, cookies.salesDxb, {
+        version: 1,
+        city: 'Khartoum',
+      })
+      .expect(200);
+    await approve(summary.id, cookies.salesDxb, both(1)).expect(409);
+    expect(await states(summary)).toEqual(['DRAFT', 'DRAFT']);
+    expect(await t.prisma.customer.count({ where: { phone: body.customer.phone } })).toBe(0);
+    // At the version now on screen it goes through.
+    await approve(summary.id, cookies.salesDxb, both(2)).expect(200);
+    expect(await states(summary)).toEqual(['APPROVED', 'APPROVED']);
+  });
+
+  it('a phone taken since rolls both back', async () => {
+    const body = withWords();
+    const summary = await created(body);
+    await r
+      .post('/customers', cookies.salesDxb, {
+        branchId: dxb,
+        kind: 'INDIVIDUAL',
+        name: 'Someone else',
+        phone: body.customer.phone,
+      })
+      .expect(201);
+    await approve(summary.id, cookies.salesDxb, both()).expect(409);
+    expect(await states(summary)).toEqual(['DRAFT', 'DRAFT']);
+  });
+
+  it('a customer approved already on its own screen is used as it is (the two-step path)', async () => {
+    const summary = await created(withWords());
+    await approveCustomer(summary.customerDraftId, {
+      version: 1,
+      confirmed: ['name', 'phone'],
+    }).expect(200);
+    // The screen still sent the customer part: the approved customer is used, once.
+    const approved = (await approve(summary.id, cookies.salesDxb, both()).expect(200))
+      .body as NewCustomerBookingDraftDto;
+    expect(approved).toMatchObject({ status: 'APPROVED', customer: { status: 'APPROVED' } });
+    expect(
+      await t.prisma.customer.count({ where: { id: approved.customer.customerId ?? '' } }),
+    ).toBe(1);
+  });
+
+  it('a customer draft waiting on its open booking is listed for its own review only to who cannot approve both', async () => {
+    const summary = await created(withWords());
+    expect(await customerList(cookies.salesDxb)).not.toContain(summary.customerDraftId);
+    // Who may add customers but not book keeps it in their list (the two-step path).
+    expect(await customerList(managerDxb)).toContain(summary.customerDraftId);
+    // The "my drafts" list of the assistant's user is unchanged.
+    const mine = (
+      await r.agentGet('/assistant-drafts/mine?kind=customer', tokens.sales).expect(200)
+    ).body as { id: string }[];
+    expect(mine.map((d) => d.id)).toContain(summary.customerDraftId);
+  });
+
+  it('lists the customer draft again once its booking draft is rejected or has expired', async () => {
+    const rejected = await created(withWords());
+    await r
+      .post(`${API}/${rejected.id}/reject`, cookies.salesDxb, { version: 1, reason: 'Not now' })
+      .expect(200);
+    expect(await customerList(cookies.salesDxb)).toContain(rejected.customerDraftId);
+
+    const expired = await created(withWords());
+    expect(await customerList(cookies.salesDxb)).not.toContain(expired.customerDraftId);
+    await t.prisma.newCustomerBookingDraft.update({
+      where: { id: expired.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await customerList(cookies.salesDxb)).toContain(expired.customerDraftId);
+    // It is still reviewed on its own: approving it adds the customer.
+    await approveCustomer(expired.customerDraftId, {
+      version: 1,
+      confirmed: ['name', 'phone'],
+    }).expect(200);
   });
 });

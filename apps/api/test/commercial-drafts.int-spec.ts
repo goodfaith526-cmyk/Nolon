@@ -5,6 +5,7 @@ import type {
   BookingDto,
   CustomerDto,
   EntryDraftSummaryDto,
+  DraftPreCheckDto,
   QuotationDraftDto,
   QuotationDraftListItemDto,
   QuotationDto,
@@ -172,7 +173,8 @@ describe('quotation drafts: the assistant proposes', () => {
     const body = res.body as EntryDraftSummaryDto;
     expect(body).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(Object.keys(body).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      // missingFields: paths of values still to fill in, never values.
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(JSON.stringify(body)).not.toContain('Ocean freight');
     // Nothing reached the quotations yet.
@@ -235,9 +237,6 @@ describe('quotation drafts: the assistant proposes', () => {
     const before = await t.prisma.quotationDraft.count();
     await createQuotationDraft(quotationRequest({ validUntil: '2020-01-01' })).expect(400);
     await createQuotationDraft(
-      quotationRequest({ lines: [{ quantity: '1', unitPrice: '10' }] }),
-    ).expect(400);
-    await createQuotationDraft(
       quotationRequest({ lines: [{ ...quotationRequest().lines[0], discount: '999999' }] }),
     ).expect(400);
     await createQuotationDraft({ ...quotationRequest(), idempotencyKey: 'short' }).expect(400);
@@ -272,7 +271,8 @@ describe('quotation drafts: a person reviews', () => {
     expect(draft.request.lines[0]).toMatchObject({ unitPrice: '1500.5', quantity: '2' });
     // 2 x 1500.50 - 1.50 discount.
     expect(draft.check).toEqual({ ok: true, total: '2999.5', currency: 'USD' });
-    expect(draft.actions).toEqual({ canEdit: false, canDecide: true });
+    // An open draft is editable on the review screen (PATCH) by those who may decide it.
+    expect(draft.actions).toEqual({ canEdit: true, canDecide: true });
     const list = (await r.get('/quotation-drafts?status=DRAFT', cookies.salesDxb).expect(200))
       .body as QuotationDraftListItemDto[];
     expect(list.map((d) => d.id)).toContain(draft.id);
@@ -722,5 +722,76 @@ describe("replacing a quotation draft at the person's request", () => {
     // A booking draft id is not a quotation draft: nothing to replace.
     const booking = await bookingDraft();
     await createQuotationDraft({ ...quotationRequest(), replacesDraftId: booking.id }).expect(404);
+  });
+});
+
+// A booking draft made from a quotation is filed in the quotation's branch, its customer's: a
+// branch given with it must be that one (400 BRANCH_MISMATCH), on a save and on its pre-check,
+// complete or not. A quotation whose branch is not its customer's is refused (409).
+describe("booking drafts from a quotation: the quotation's branch", () => {
+  async function approvedQuotation(): Promise<string> {
+    const qDraft = await quotationDraft();
+    const approved = (
+      await r
+        .post(`/quotation-drafts/${qDraft.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: qDraft.pricing?.key,
+        })
+        .expect(200)
+    ).body as QuotationDraftDto;
+    const quotationId = approved.quotationId!;
+    await r.post(`/quotations/${quotationId}/send`, cookies.salesDxb).expect(200);
+    await r.post(`/quotations/${quotationId}/approve`, cookies.branchMgrDxb).expect(200);
+    return quotationId;
+  }
+
+  it('takes the branch only when it is the quotation’s', async () => {
+    const quotationId = await approvedQuotation();
+    const dxb = await branchId(t.prisma, 'DXB');
+    const jed = await branchId(t.prisma, 'JED');
+    const items = [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }];
+    const before = await t.prisma.bookingDraft.count();
+    for (const body of [{ items }, {}]) {
+      const res = await createBookingDraft({
+        idempotencyKey: draftKey(),
+        quotationId,
+        branchId: jed,
+        ...body,
+      }).expect(400);
+      expect((res.body as { code?: string }).code).toBe('BRANCH_MISMATCH');
+      const check = (
+        await r
+          .agentPost('/booking-drafts/check', tokens.ops, {
+            idempotencyKey: draftKey(),
+            quotationId,
+            branchId: jed,
+            ...body,
+          })
+          .expect(200)
+      ).body as DraftPreCheckDto;
+      expect(check).toMatchObject({ ok: false, refusals: [{ code: 'BRANCH_MISMATCH' }] });
+    }
+    expect(await t.prisma.bookingDraft.count()).toBe(before);
+    const draft = await bookingDraft({
+      idempotencyKey: draftKey(),
+      quotationId,
+      branchId: dxb,
+      items,
+    });
+    expect(draft.branchId).toBe(dxb);
+  });
+
+  it("refuses a quotation whose branch is not its customer's", async () => {
+    const quotationId = await approvedQuotation();
+    const jed = await branchId(t.prisma, 'JED');
+    // Never made by NOLON (a quotation is priced in its customer's branch): forced here.
+    await t.prisma.quotation.update({ where: { id: quotationId }, data: { branchId: jed } });
+    const bookings = await t.prisma.booking.count({ where: { quotationId } });
+    await r
+      .post(`/bookings/from-quotation/${quotationId}`, cookies.admin, {
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
+      })
+      .expect(409);
+    expect(await t.prisma.booking.count({ where: { quotationId } })).toBe(bookings);
   });
 });

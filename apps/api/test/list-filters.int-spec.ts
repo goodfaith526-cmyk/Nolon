@@ -913,7 +913,11 @@ describe('list filters', () => {
         sorted('rateH1', 'rateOpen'),
       );
       expect(await listIds(`${route}&branchId=${jed}`, managerBoth)).toEqual([]);
-      await get(`${route}&branchId=${jed}`, managerDxb).expect(403);
+      // Rate cards are read by every branch: another branch's filter is not refused.
+      expect(await listIds(`${route}&branchId=${jed}`, managerDxb)).toEqual([]);
+      expect(await listIds(`${route}&branchId=${dxb}`, managerDxb)).toEqual(
+        sorted('rateH1', 'rateOpen'),
+      );
     });
   });
 });

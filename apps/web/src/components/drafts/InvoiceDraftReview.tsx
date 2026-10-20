@@ -1,12 +1,15 @@
 'use client';
 
-import type { InvoiceDraftDto } from '@nolon/shared';
+import type { InvoiceDraftDto, InvoiceDraftSuggestedValuesDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
+import { MissingFields } from './MissingFields';
+import { NEW_INVOICE_LINE_FIELDS, type Value } from './missing-fields';
+import { useOptionalRead } from './use-optional-read';
 
 /** An invoice the assistant proposed for a shipment: its lines as proposed, and the decision. */
 export function InvoiceDraftReview({ id }: { id: string }) {
@@ -14,16 +17,36 @@ export function InvoiceDraftReview({ id }: { id: string }) {
   const ti = useTranslations('Invoices');
   const tc = useTranslations('Common');
   const { record: draft, notice, setRecord } = useRecord<InvoiceDraftDto>(`/invoice-drafts/${id}`);
+  const missingHeader =
+    draft !== null &&
+    draft.actions.canEdit &&
+    draft.request.shipmentId !== null &&
+    ['currency', 'invoiceDate', 'dueDate'].some((f) => draft.missingFields.includes(f));
+  // NOLON's suggestion for the currency and dates the draft misses (the shipment's customer's
+  // currency, today in the branch, the customer's payment terms), worked out by the API for this
+  // version. The form opens with them filled in; nothing is saved until the person saves it.
+  const suggestion = useOptionalRead<InvoiceDraftSuggestedValuesDto>(
+    missingHeader ? `/invoice-drafts/${id}/suggested-values` : null,
+    draft?.version,
+  );
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const inv = draft.request;
   const systemPriced = draft.priceSources.some((p) => p.source !== 'TYPED');
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const shipmentNumber = draft.shipmentNumber ?? '—';
+  const currency = inv.currency ?? undefined;
+  const suggested: Record<string, Value> = {};
+  const values = suggestion && suggestion.version === draft.version ? suggestion.values : null;
+  if (values?.currency) suggested.currency = values.currency;
+  if (values?.invoiceDate) suggested.invoiceDate = values.invoiceDate;
+  if (values?.dueDate) suggested.dueDate = values.dueDate;
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/invoice-drafts"
-      title={t('invoiceTitle', { shipment: draft.shipmentNumber, customer: draft.customerName })}
+      title={t('invoiceTitle', { shipment: shipmentNumber, customer: draft.customerName ?? '—' })}
       approveHint={
         systemPriced
           ? `${t('invoiceApproveHint')} ${t('systemPriceHint')}`
@@ -39,19 +62,36 @@ export function InvoiceDraftReview({ id }: { id: string }) {
       }
       onChanged={setRecord}
     >
+      {suggestion !== undefined && (
+        <MissingFields
+          // Opened again with the suggestion of each version read.
+          key={`${draft.version}:${values ? 'suggested' : 'none'}`}
+          draft={draft}
+          apiPath="/invoice-drafts"
+          newLineFields={NEW_INVOICE_LINE_FIELDS}
+          suggested={suggested}
+          // A due date follows the invoice date: a suggested one goes when the date is changed.
+          dependents={{ invoiceDate: ['dueDate'] }}
+          onChanged={setRecord}
+        />
+      )}
       <dl className="details">
         <dt>{ti('shipment')}</dt>
         <dd dir="ltr">
-          <Link href={`/shipments/${inv.shipmentId}`}>{draft.shipmentNumber}</Link>
+          {inv.shipmentId ? (
+            <Link href={`/shipments/${inv.shipmentId}`}>{shipmentNumber}</Link>
+          ) : (
+            '—'
+          )}
         </dd>
         <dt>{ti('customer')}</dt>
-        <dd>{draft.customerName}</dd>
+        <dd>{draft.customerName ?? '—'}</dd>
         <dt>{ti('currency')}</dt>
-        <dd dir="ltr">{inv.currency}</dd>
+        <dd dir="ltr">{inv.currency ?? '—'}</dd>
         <dt>{ti('invoiceDate')}</dt>
-        <dd dir="ltr">{inv.invoiceDate}</dd>
+        <dd dir="ltr">{inv.invoiceDate ?? '—'}</dd>
         <dt>{ti('dueDate')}</dt>
-        <dd dir="ltr">{inv.dueDate}</dd>
+        <dd dir="ltr">{inv.dueDate ?? '—'}</dd>
         <dt>{tc('notes')}</dt>
         <dd>{inv.notes ?? '—'}</dd>
       </dl>
@@ -68,11 +108,11 @@ export function InvoiceDraftReview({ id }: { id: string }) {
           <tbody>
             {inv.lines.map((line, i) => (
               <tr key={i}>
-                <td dir="ltr">{line.chargeTypeCode}</td>
+                <td dir="ltr">{line.chargeTypeCode ?? '—'}</td>
                 <td>{line.description ?? '—'}</td>
-                <td dir="ltr">{line.quantity}</td>
+                <td dir="ltr">{line.quantity ?? '—'}</td>
                 <td>
-                  <Money value={line.unitPrice} currency={inv.currency} />
+                  {line.unitPrice ? <Money value={line.unitPrice} currency={currency} /> : '—'}
                   <DraftPriceSourceNote source={draft.priceSources[i]} />
                 </td>
               </tr>

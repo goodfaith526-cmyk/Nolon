@@ -1,17 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import type { DashboardDto, Permission } from '@nolon/shared';
+import { AlertsService } from '../alerts/alerts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import { CustomsReportsService } from '../customs/customs-reports.service.js';
+import { MyDraftsService } from '../my-drafts/my-drafts.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { RatesService } from '../rates/rates.service.js';
+import { TripReportsService } from '../transport/trip-reports.service.js';
+import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
 
 const COUNT = { page: 1, pageSize: 1 } as const;
 const RECENT = { page: 1, pageSize: 5 } as const;
 
 /**
- * Home page figures. Each figure comes from the owning module's own (branch-scoped) list, so the
- * dashboard shows exactly what the user could open, and only for modules they may view.
+ * Home page figures. Each figure comes from the owning module's own (branch-scoped) list or
+ * report, so the dashboard shows exactly what the user could open, and only for modules they may
+ * view: the sales figures, then each role's own (warehouse, customs, trips), the assistant drafts
+ * they may decide, and their alerts.
  */
 @Injectable()
 export class DashboardService {
@@ -20,17 +27,41 @@ export class DashboardService {
     private readonly rates: RatesService,
     private readonly quotations: QuotationsService,
     private readonly bookings: BookingsService,
+    private readonly warehouse: WarehouseReportsService,
+    private readonly customs: CustomsReportsService,
+    private readonly trips: TripReportsService,
+    private readonly drafts: MyDraftsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   async summary(user: AuthUser): Promise<DashboardDto> {
     const can = (permission: Permission) => user.permissions.has(permission);
-    const [customers, rates, quotations, bookings] = await Promise.all([
-      can('customers:view') ? this.customerFigures(user) : null,
-      can('rates:view') ? this.rateFigures(user) : null,
-      can('quotations:view') ? this.quotationFigures(user) : null,
-      can('bookings:view') ? this.bookingFigures(user) : null,
-    ]);
-    return { customers, rates, quotations, bookings };
+    const [customers, rates, quotations, bookings, warehouse, customs, trips, drafts, alerts] =
+      await Promise.all([
+        can('customers:view') ? this.customerFigures(user) : null,
+        can('rates:view') ? this.rateFigures() : null,
+        can('quotations:view') ? this.quotationFigures(user) : null,
+        can('bookings:view') ? this.bookingFigures(user) : null,
+        can('warehouse:view') ? this.warehouse.dashboard(user) : null,
+        can('customs:view') ? this.customs.open(user) : null,
+        can('transport_trips:view') ? this.trips.home(user) : null,
+        this.drafts.awaitingReview(user),
+        this.alerts.counts(user),
+      ]);
+    return {
+      customers,
+      rates,
+      quotations,
+      bookings,
+      warehouse: warehouse && { ...warehouse, weightKg: warehouse.weightKg.toFixed() },
+      customs: customs && { open: customs.reduce((n, s) => n + s.count, 0), byStatus: customs },
+      trips,
+      drafts: drafts === null ? null : { awaitingReview: drafts },
+      alerts:
+        alerts.length === 0
+          ? null
+          : { total: alerts.reduce((n, a) => n + a.count, 0), byKind: alerts },
+    };
   }
 
   private async customerFigures(user: AuthUser) {
@@ -38,10 +69,11 @@ export class DashboardService {
     return { total: page.total };
   }
 
-  private async rateFigures(user: AuthUser) {
+  /** Rate cards are shared by every branch: the figures are the company's. */
+  private async rateFigures() {
     const [draft, approved] = await Promise.all([
-      this.rates.list(user, { ...COUNT, status: 'DRAFT' }),
-      this.rates.list(user, { ...COUNT, status: 'APPROVED' }),
+      this.rates.list({ ...COUNT, status: 'DRAFT' }),
+      this.rates.list({ ...COUNT, status: 'APPROVED' }),
     ]);
     return { draft: draft.total, approved: approved.total };
   }

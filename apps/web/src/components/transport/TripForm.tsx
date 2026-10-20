@@ -3,7 +3,9 @@
 import type {
   CarrierDto,
   DriverDto,
+  DriverLastVehicleDto,
   Page,
+  ShipmentDto,
   ShipmentSummaryDto,
   TripDto,
   TripInput,
@@ -14,6 +16,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchCurrency } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { AMOUNT_PATTERN } from '@/lib/money';
@@ -28,8 +31,12 @@ interface Fleet {
   carriers: CarrierDto[];
 }
 
-/** New trip: route, own vehicle and driver or a hired carrier, and the shipments it carries. */
-export function TripForm() {
+/**
+ * New trip: route, own vehicle and driver or a hired carrier, and the shipments it carries.
+ * Opened from a shipment (`shipmentId`, functional review D2), it starts with that shipment
+ * picked and suggests the trip from it (see below); every value stays editable.
+ */
+export function TripForm({ shipmentId }: { shipmentId?: string } = {}) {
   const t = useTranslations('Transport');
   const tc = useTranslations('Common');
   const me = useMe();
@@ -38,14 +45,83 @@ export function TripForm() {
   const locationName = useLocationName(master);
   const failure = useFailureText();
   const router = useRouter();
-  const [branchId, setBranchId] = useState(me.branches[0]?.id ?? '');
+  // The shipment the form was opened from (D2), loaded once when the form opens.
+  const [fromShipment, setFromShipment] = useState<ShipmentDto | null>(null);
+  // Branch: the person's pick, else the shipment's branch (or a branch sharing it) when it is one
+  // of theirs, else their first branch. A pick is kept; the API checks the branch on save.
+  const [branchChoice, setBranchChoice] = useState<string | null>(null);
+  const shipmentBranch = fromShipment
+    ? [fromShipment.branchId, ...fromShipment.sharedBranchIds].find((id) =>
+        me.branches.some((b) => b.id === id),
+      )
+    : undefined;
+  const branchId = branchChoice ?? shipmentBranch ?? me.branches[0]?.id ?? '';
   const [kind, setKind] = useState<TripKind>('OWN');
+  // Route: the person's pick, else a suggestion from the shipment the form was opened from while
+  // it is still picked: origin from where the shipment is now (not always where the trip starts,
+  // so it is shown as a suggestion), destination from the shipment's destination. Removing the
+  // shipment drops the suggestions; a pick is kept.
+  const [originChoice, setOriginChoice] = useState<string | null>(null);
+  const [destinationChoice, setDestinationChoice] = useState<string | null>(null);
+  // Own trip: driver and vehicle as picked, else the branch's first driver, and the vehicle of
+  // that driver's latest trip (D8, from the API) as a suggestion, else the first vehicle. The
+  // suggestion follows the driver until the person picks a vehicle, which is kept; changing the
+  // branch clears both picks.
+  const [driverChoice, setDriverChoice] = useState<string | null>(null);
+  const [vehicleChoice, setVehicleChoice] = useState<string | null>(null);
+  const [lastVehicle, setLastVehicle] = useState<{
+    driverId: string;
+    found: DriverLastVehicleDto['lastVehicle'];
+  } | null>(null);
+  // An external trip's agreed currency starts as the branch's (functional review C5), read from
+  // /auth/me and following the branch until the person picks the agreed one (null until then),
+  // which is kept.
+  const [currencyChoice, setCurrency] = useState<string | null>(null);
+  const currency = currencyChoice ?? branchCurrency(me, branchId);
   const [fleet, setFleet] = useState<Fleet | null>(null);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<ShipmentSummaryDto[] | null>(null);
   const [picked, setPicked] = useState<ShipmentSummaryDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+
+  useEffect(() => {
+    if (!shipmentId) return;
+    let cancelled = false;
+    api<ShipmentDto>(`/shipments/${shipmentId}`)
+      .then((shipment) => {
+        if (cancelled) return;
+        setFromShipment(shipment);
+        setPicked((list) => (list.some((p) => p.id === shipment.id) ? list : [...list, shipment]));
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setNotice({ ok: false, text: failure(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [shipmentId, failure]);
+
+  // Dropdown narrowing only: the API checks branch, activity and the shipments again.
+  const vehicles = (fleet?.vehicles ?? []).filter((v) => v.isActive && v.branchId === branchId);
+  const drivers = (fleet?.drivers ?? []).filter((d) => d.isActive && d.branchId === branchId);
+  const driverId = driverChoice ?? drivers[0]?.id ?? '';
+
+  useEffect(() => {
+    if (!driverId || kind !== 'OWN') return;
+    let cancelled = false;
+    api<DriverLastVehicleDto>(`/transport/drivers/${driverId}/last-vehicle`)
+      .then((r) => {
+        if (!cancelled) setLastVehicle({ driverId, found: r.lastVehicle });
+      })
+      .catch(() => {
+        // Only a suggestion: without it the person picks the vehicle.
+        if (!cancelled) setLastVehicle({ driverId, found: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [driverId, kind]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +176,7 @@ export function TripForm() {
         : {
             carrierId: field(f, 'carrierId'),
             agreedCost: field(f, 'agreedCost').trim(),
-            currency: field(f, 'currency'),
+            currency,
             externalVehicle: text('externalVehicle'),
             externalDriver: text('externalDriver'),
           }),
@@ -116,13 +192,25 @@ export function TripForm() {
     }
   }
 
-  // Dropdown narrowing only: the API checks branch, activity and the shipments again.
-  const vehicles = (fleet?.vehicles ?? []).filter((v) => v.isActive && v.branchId === branchId);
-  const drivers = (fleet?.drivers ?? []).filter((d) => d.isActive && d.branchId === branchId);
   const carriers = (fleet?.carriers ?? []).filter((c) => c.isActive);
   const locations = (master?.locations ?? []).filter((l) => l.isActive);
   const currencies = (master?.currencies ?? []).filter((c) => c.isActive);
   const fleetMissing = fleet !== null && kind === 'OWN' && (!vehicles.length || !drivers.length);
+  const isLocation = (id: string | null | undefined): id is string =>
+    !!id && locations.some((l) => l.id === id);
+  const suggesting = fromShipment && picked.some((p) => p.id === fromShipment.id);
+  const suggestedOrigin =
+    suggesting && isLocation(fromShipment.currentLocationId) ? fromShipment.currentLocationId : '';
+  const suggestedDestination =
+    suggesting && isLocation(fromShipment.destinationLocationId)
+      ? fromShipment.destinationLocationId
+      : '';
+  const origin = originChoice ?? suggestedOrigin;
+  const destination = destinationChoice ?? suggestedDestination;
+  const lastFound = lastVehicle?.driverId === driverId ? lastVehicle.found : null;
+  const suggestedVehicle =
+    lastFound && vehicles.some((v) => v.id === lastFound.vehicleId) ? lastFound : null;
+  const vehicleId = vehicleChoice ?? suggestedVehicle?.vehicleId ?? vehicles[0]?.id ?? '';
 
   return (
     <section className="stack">
@@ -140,7 +228,15 @@ export function TripForm() {
         <div className="grid">
           <label className="field">
             <span>{t('branch')}</span>
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
+            <select
+              value={branchId}
+              onChange={(e) => {
+                setBranchChoice(e.target.value);
+                setDriverChoice(null);
+                setVehicleChoice(null);
+              }}
+              required
+            >
               {me.branches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.code} · {localName(b)}
@@ -150,7 +246,12 @@ export function TripForm() {
           </label>
           <label className="field">
             <span>{t('origin')}</span>
-            <select name="originLocationId" required defaultValue="">
+            <select
+              name="originLocationId"
+              required
+              value={origin}
+              onChange={(e) => setOriginChoice(e.target.value)}
+            >
               <option value="" disabled>
                 —
               </option>
@@ -160,10 +261,18 @@ export function TripForm() {
                 </option>
               ))}
             </select>
+            {originChoice === null && suggestedOrigin && (
+              <small className="muted">{t('originFromShipment')}</small>
+            )}
           </label>
           <label className="field">
             <span>{t('destination')}</span>
-            <select name="destinationLocationId" required defaultValue="">
+            <select
+              name="destinationLocationId"
+              required
+              value={destination}
+              onChange={(e) => setDestinationChoice(e.target.value)}
+            >
               <option value="" disabled>
                 —
               </option>
@@ -173,6 +282,9 @@ export function TripForm() {
                 </option>
               ))}
             </select>
+            {destinationChoice === null && suggestedDestination && (
+              <small className="muted">{t('destinationFromShipment')}</small>
+            )}
           </label>
           <label className="field">
             <span>{t('plannedDeparture')}</span>
@@ -204,17 +316,32 @@ export function TripForm() {
             <div className="grid">
               <label className="field">
                 <span>{t('vehicle')}</span>
-                <select name="vehicleId" required key={`v-${branchId}`}>
+                <select
+                  name="vehicleId"
+                  required
+                  value={vehicleId}
+                  onChange={(e) => setVehicleChoice(e.target.value)}
+                >
                   {vehicles.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.plateNumber} · {v.vehicleType}
                     </option>
                   ))}
                 </select>
+                {vehicleChoice === null && suggestedVehicle && (
+                  <small className="muted">
+                    {t('vehicleFromLastTrip', { trip: suggestedVehicle.tripNumber })}
+                  </small>
+                )}
               </label>
               <label className="field">
                 <span>{t('driver')}</span>
-                <select name="driverId" required key={`d-${branchId}`}>
+                <select
+                  name="driverId"
+                  required
+                  value={driverId}
+                  onChange={(e) => setDriverChoice(e.target.value)}
+                >
                   {drivers.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
@@ -243,11 +370,21 @@ export function TripForm() {
                   inputMode="decimal"
                   dir="ltr"
                   pattern={AMOUNT_PATTERN}
+                  // A cost entered is in the currency shown then: another branch no longer
+                  // changes it (Codex F94-2).
+                  onChange={() => {
+                    if (currencyChoice === null) setCurrency(currency);
+                  }}
                 />
               </label>
               <label className="field">
                 <span>{t('currency')}</span>
-                <select name="currency" required defaultValue="USD">
+                <select
+                  name="currency"
+                  required
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
                   {currencies.map((c) => (
                     <option key={c.code} value={c.code}>
                       {c.code}

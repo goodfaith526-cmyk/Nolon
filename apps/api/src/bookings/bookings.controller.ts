@@ -17,6 +17,8 @@ import {
   LOAD_TYPES,
   SHIPPING_MODES,
   type BookingDto,
+  type BookingFromQuotationPreviewDto,
+  type BookingPartySuggestionDto,
   type BookingSummaryDto,
   type Page,
 } from '@nolon/shared';
@@ -24,7 +26,14 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
 import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
-import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
+import {
+  clearableText,
+  dateString,
+  optionalText,
+  pageQuery,
+  parse,
+  requiredText,
+} from '../common/validation.js';
 import { BookingsService } from './bookings.service.js';
 
 /**
@@ -54,13 +63,14 @@ export const itemBody = z
   })
   .strict();
 
-const partyRefs = {
+export const partyRefs = {
   shipperId: z.uuid().nullish(),
   consigneeId: z.uuid().nullish(),
   notifyPartyId: z.uuid().nullish(),
 };
 
-const services = z.array(z.enum(BOOKING_SERVICES)).min(1).max(BOOKING_SERVICES.length);
+/** The services besides the main freight, which every booking carries (it may be listed too). */
+export const services = z.array(z.enum(BOOKING_SERVICES)).max(BOOKING_SERVICES.length);
 const items = z.array(itemBody).max(100);
 
 export const bookingFields = {
@@ -68,8 +78,8 @@ export const bookingFields = {
   destinationLocationId: z.uuid(),
   mode: z.enum(SHIPPING_MODES),
   loadType: z.enum(LOAD_TYPES).nullish(),
-  cargoType: z.enum(CARGO_TYPES),
-  cargoDescription: optionalText(2000),
+  cargoType: z.enum(CARGO_TYPES).nullish(),
+  cargoDescription: clearableText(2000),
   services,
   ...partyRefs,
   requestedDeparture: dateString.nullish(),
@@ -89,6 +99,7 @@ export const bookingFromQuotationBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+const partySuggestionQuery = z.object({ customerId: z.uuid() }).strict();
 const listQuery = pageQuery
   .extend({
     status: z.enum(BOOKING_STATUSES).optional(),
@@ -107,6 +118,26 @@ export class BookingsController {
   @RequirePermission('bookings:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<BookingSummaryDto>> {
     return this.bookings.list(user, parse(listQuery, query));
+  }
+
+  /** Parties a new booking of the customer may start from (declared before `:id`). */
+  @Get('party-suggestion')
+  @RequirePermission('bookings:create')
+  partySuggestion(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<BookingPartySuggestionDto> {
+    return this.bookings.partySuggestion(user, parse(partySuggestionQuery, query).customerId);
+  }
+
+  /** What a booking from this approved quotation starts from; nothing is created. */
+  @Get('from-quotation/:quotationId')
+  @RequirePermission('bookings:create')
+  previewFromQuotation(
+    @CurrentUser() user: AuthUser,
+    @Param('quotationId', ParseUUIDPipe) quotationId: string,
+  ): Promise<BookingFromQuotationPreviewDto> {
+    return this.bookings.previewFromQuotation(user, quotationId);
   }
 
   @AgentReadable()

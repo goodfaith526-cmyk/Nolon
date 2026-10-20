@@ -9,6 +9,9 @@ import type {
   WarehouseMovementDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AuthUser } from '../src/auth/auth-user.js';
+import { todayIn } from '../src/common/dates.js';
+import { CustomsService } from '../src/customs/customs.service.js';
 import {
   APP_ORIGIN,
   type TestApp,
@@ -33,6 +36,7 @@ describe('warehouse and customs', () => {
   let dxbWarehouse: WarehouseDto;
   let ptsWarehouse: WarehouseDto;
   let warehouseUserId: string;
+  let customsUserId: string;
   const cookies = {
     admin: '',
     opsDxb: '',
@@ -114,6 +118,7 @@ describe('warehouse and customs', () => {
       driver: await createUser(t.prisma, ['DRIVER'], ['DXB']),
     };
     warehouseUserId = users.warehouseDxb.id;
+    customsUserId = users.customsDxb.id;
     for (const key of Object.keys(users) as (keyof typeof users)[]) {
       cookies[key] = await signIn(t, users[key].email);
     }
@@ -268,6 +273,8 @@ describe('warehouse and customs', () => {
           onHandPackages: 7,
           receivedWeightKg: '600.5',
           releasedWeightKg: '0',
+          // The second receipt was not weighed: what is left is not known.
+          remainingWeightKg: null,
         },
       ]);
       expect(after.movements.map((m) => m.number)).toEqual([
@@ -308,6 +315,35 @@ describe('warehouse and customs', () => {
         warehouseId: ptsWarehouse.id,
         packages: 10,
       }).expect(201);
+    });
+
+    it("suggests a full release's weight from what each warehouse weighed in and out (D5)", async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const remaining = async () =>
+        Object.fromEntries(
+          (await view(s.id)).balances.map((b) => [b.warehouseCode, b.remainingWeightKg]),
+        );
+      // Two warehouses, both weighed in: each keeps its own weight, not the booking's 1000 kg.
+      await receive(s.id, cookies.warehouseDxbPts, { packages: 6, weightKg: '620' }).expect(201);
+      await receive(s.id, cookies.warehouseDxbPts, {
+        warehouseId: ptsWarehouse.id,
+        packages: 4,
+        weightKg: '390.5',
+      }).expect(201);
+      expect(await remaining()).toEqual({ 'ZZ-DXB-1': '620', 'ZZ-PTS-1': '390.5' });
+      // Two partial releases with their weights: the rest is what was weighed out.
+      await release(s.id, cookies.warehouseDxbPts, { packages: 1, weightKg: '100' }).expect(201);
+      await release(s.id, cookies.warehouseDxbPts, { packages: 2, weightKg: '200.25' }).expect(201);
+      expect(await remaining()).toEqual({ 'ZZ-DXB-1': '319.75', 'ZZ-PTS-1': '390.5' });
+      // A partial release without a weight makes that warehouse's rest unknown, not the other's.
+      await release(s.id, cookies.warehouseDxbPts, {
+        warehouseId: ptsWarehouse.id,
+        packages: 1,
+      }).expect(201);
+      expect(await remaining()).toEqual({ 'ZZ-DXB-1': '319.75', 'ZZ-PTS-1': null });
+      // Everything released: nothing left to suggest.
+      await release(s.id, cookies.warehouseDxbPts, { packages: 3, weightKg: '319.75' }).expect(201);
+      expect((await remaining())['ZZ-DXB-1']).toBeNull();
     });
 
     it('checks a backdated receipt against what the warehouses held from its date on', async () => {
@@ -568,7 +604,11 @@ describe('warehouse and customs', () => {
     });
 
     it('storage only: both sides are allowed, none is preselected, the receipt says which', async () => {
+      // Every new booking carries the main freight (owner, 2026-10-19); a storage-only shipment
+      // is one booked before that.
       const s = await confirmedShipment(['WAREHOUSE']);
+      expect([...s.services].sort()).toEqual(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await t.prisma.shipment.update({ where: { id: s.id }, data: { services: ['WAREHOUSE'] } });
       const v = await view(s.id);
       expect(v.actions.receiptStatuses).toEqual([
         'RECEIVED_ORIGIN_WAREHOUSE',
@@ -785,6 +825,141 @@ describe('warehouse and customs', () => {
       await put(`/shipments/${s.id}/customs`, cookies.managerDxb, { status: 'PENDING' }).expect(
         200,
       );
+    });
+
+    describe('saving the file moves the shipment (functional review D1)', () => {
+      const today = () => todayIn('Asia/Dubai');
+      const events = (id: string) =>
+        t.prisma.shipmentEvent.findMany({ where: { shipmentId: id }, orderBy: { id: 'asc' } });
+      const move = (id: string, to: string) =>
+        post(`/shipments/${id}/status`, cookies.opsDxb, { status: to }).expect(200);
+      /** A sea shipment with customs booked, arrived at the port. */
+      async function atPort(): Promise<ShipmentDto> {
+        const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);
+        for (const to of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) await move(s.id, to);
+        return s;
+      }
+      const save = (id: string, body: object, cookie = cookies.customsDxb) =>
+        put(`/shipments/${id}/customs`, cookie, body);
+
+      it('a file in progress moves it once; a cleared file moves it to cleared once', async () => {
+        const s = await atPort();
+        await save(s.id, { status: 'PENDING' }).expect(200);
+        expect(await status(s.id)).toBe('ARRIVED_PORT');
+        await save(s.id, { status: 'SUBMITTED', declarationNumber: 'D-1' }).expect(200);
+        expect(await status(s.id)).toBe('CUSTOMS_IN_PROGRESS');
+        const inProgress = await events(s.id);
+        expect(inProgress.at(-1)).toMatchObject({
+          status: 'CUSTOMS_IN_PROGRESS',
+          fromStatus: 'ARRIVED_PORT',
+          userId: customsUserId,
+          note: 'D-1',
+        });
+        // Inspection and held keep it in customs: no new event.
+        await save(s.id, { status: 'INSPECTION' }).expect(200);
+        await save(s.id, { status: 'HELD' }).expect(200);
+        expect(await events(s.id)).toHaveLength(inProgress.length);
+
+        await save(s.id, { status: 'CLEARED', clearedOn: today() }).expect(200);
+        expect(await status(s.id)).toBe('CUSTOMS_CLEARED');
+        const cleared = await events(s.id);
+        expect(cleared).toHaveLength(inProgress.length + 1);
+        // An already cleared file saved again (a note fixed) records no second event.
+        await save(s.id, { status: 'CLEARED', clearedOn: today(), note: 'fixed' }).expect(200);
+        expect(await events(s.id)).toHaveLength(cleared.length);
+        // A file set back to in progress never moves the shipment backwards.
+        await save(s.id, { status: 'SUBMITTED' }).expect(200);
+        expect(await status(s.id)).toBe('CUSTOMS_CLEARED');
+        expect(await events(s.id)).toHaveLength(cleared.length);
+      });
+
+      it('a cleared file moves a shipment at the port through customs to cleared', async () => {
+        const s = await atPort();
+        const before = (await events(s.id)).length;
+        await save(s.id, { status: 'CLEARED', clearedOn: today() }).expect(200);
+        const after = await events(s.id);
+        expect(after.slice(before).map((e) => e.status)).toEqual([
+          'CUSTOMS_IN_PROGRESS',
+          'CUSTOMS_CLEARED',
+        ]);
+        expect(await status(s.id)).toBe('CUSTOMS_CLEARED');
+      });
+
+      it('a past clearance date dates the event that day, never before the latest event', async () => {
+        const s = await atPort();
+        // Arrived today: a clearance dated yesterday would rewrite the timeline (409, nothing saved).
+        const yesterday = new Date(Date.now() - 86_400_000);
+        await save(s.id, { status: 'CLEARED', clearedOn: todayIn('Asia/Dubai', yesterday) }).expect(
+          409,
+        );
+        expect(await t.prisma.customsClearance.count({ where: { shipmentId: s.id } })).toBe(0);
+        expect(await status(s.id)).toBe('ARRIVED_PORT');
+        // Backdate the port events: the clearance is then dated the end of yesterday (Dubai).
+        await t.prisma.shipmentEvent.updateMany({
+          where: { shipmentId: s.id },
+          data: { occurredAt: new Date(Date.now() - 3 * 86_400_000) },
+        });
+        const day = todayIn('Asia/Dubai', yesterday);
+        await save(s.id, { status: 'CLEARED', clearedOn: day }).expect(200);
+        const last = (await events(s.id)).at(-1);
+        expect(last?.status).toBe('CUSTOMS_CLEARED');
+        expect(todayIn('Asia/Dubai', last?.occurredAt)).toBe(day);
+        expect(last && todayIn('Asia/Dubai', new Date(last.occurredAt.getTime() + 1))).not.toBe(
+          day,
+        );
+      });
+
+      it('refuses a clearance date in the future (400)', async () => {
+        const s = await atPort();
+        const tomorrow = todayIn('Asia/Dubai', new Date(Date.now() + 86_400_000));
+        await save(s.id, { status: 'CLEARED', clearedOn: tomorrow }).expect(400);
+        expect(await status(s.id)).toBe('ARRIVED_PORT');
+      });
+
+      it('after a later stage the file is saved and the shipment stays where it is', async () => {
+        const s = await atPort();
+        await move(s.id, 'CUSTOMS_IN_PROGRESS');
+        await move(s.id, 'CUSTOMS_CLEARED');
+        await move(s.id, 'DELIVERED');
+        const before = (await events(s.id)).length;
+        await save(s.id, { status: 'SUBMITTED' }).expect(200);
+        await save(s.id, { status: 'CLEARED', clearedOn: today() }).expect(200);
+        expect(await status(s.id)).toBe('DELIVERED');
+        expect(await events(s.id)).toHaveLength(before);
+      });
+
+      it('a shipment not yet at the port keeps its status; the file is saved', async () => {
+        const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);
+        const before = (await events(s.id)).length;
+        await save(s.id, { status: 'SUBMITTED' }).expect(200);
+        expect(await status(s.id)).toBe('CREATED');
+        expect(await events(s.id)).toHaveLength(before);
+        expect((await get(`/shipments/${s.id}/customs`, cookies.customsDxb)).body).toMatchObject({
+          clearance: { status: 'SUBMITTED' },
+        });
+      });
+
+      it('without the permission for the move, nothing is saved (403)', async () => {
+        const s = await atPort();
+        const customs = t.app.get(CustomsService);
+        const withoutMove: AuthUser = {
+          id: customsUserId,
+          email: 'x@test',
+          fullName: 'x',
+          preferredLocale: 'en',
+          sessionId: 's',
+          credentialStamp: 'c',
+          roles: ['CUSTOMS'],
+          permissions: new Set(['customs:view']),
+          allBranches: false,
+          allowedBranchIds: [dxb],
+        };
+        await expect(
+          customs.save(withoutMove, s.id, { status: 'SUBMITTED' }),
+        ).rejects.toMatchObject({ status: 403 });
+        expect(await t.prisma.customsClearance.count({ where: { shipmentId: s.id } })).toBe(0);
+        expect(await status(s.id)).toBe('ARRIVED_PORT');
+      });
     });
 
     it('a cancelled shipment keeps its customs file read-only (409)', async () => {

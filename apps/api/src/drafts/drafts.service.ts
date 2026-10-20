@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -13,6 +14,7 @@ import type {
   MyDraftItemDto,
   MyDraftKind,
   MyDraftResult,
+  ReviewDraftItemDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -211,7 +213,8 @@ export class DraftsService {
  * The decision skeleton every draft type shares, inside one transaction: `lockParents` takes the
  * type's parent locks first (e.g. the shipment), then the draft row is locked. An approval of an
  * approved draft does nothing (returns false); otherwise the draft must be open at `version`,
- * `record` writes the entry through its own service and `mark` stores the decision.
+ * `gate` (an approval's completeness and validity gate, draft-completeness.ts) runs first on the
+ * row as locked, then `record` writes the entry through its own service.
  */
 export async function decideInTx(
   tx: Prisma.TransactionClient,
@@ -222,6 +225,7 @@ export async function decideInTx(
     label: string;
     approving: boolean;
     lockParents?: () => Promise<void>;
+    gate?: () => Promise<void>;
     record?: () => Promise<void>;
   },
 ): Promise<boolean> {
@@ -230,6 +234,7 @@ export async function decideInTx(
   if (!locked) throw new NotFoundException(`${capitalise(spec.label)} not found`);
   if (spec.approving && locked.state === 'APPROVED') return false;
   requireOpen(locked, spec.version, spec.label);
+  await spec.gate?.();
   await spec.record?.();
   return true;
 }
@@ -332,21 +337,38 @@ const PARENT_COLUMNS = {
  * For kinds whose approval locks the draft's parent (a shipment, a customer) before the draft:
  * the parents a replacement locks before it locks the old draft, so a replacement and an approval
  * take their locks in the same order and cannot wait on each other. The old draft's parent and
- * the new one's, deduplicated, in id order. A draft's parent never changes, so it is read without
- * a lock; a missing old draft is answered by lockReplacedInTx.
+ * the new one's, deduplicated, in id order (a draft that names no parent yet has none to lock). A
+ * draft's parent, once named, never changes (requireSameParent), so it is read without a lock; a
+ * missing old draft is answered by lockReplacedInTx.
  */
 export async function replacementParentIds(
   tx: Prisma.TransactionClient,
   table: keyof typeof PARENT_COLUMNS,
   replacesDraftId: string,
-  parentId: string,
+  parentId: string | null,
 ): Promise<string[]> {
   requireDraftTable(table);
   const column = PARENT_COLUMNS[table];
-  const rows = await tx.$queryRaw<{ parent_id: string }[]>`
+  const rows = await tx.$queryRaw<{ parent_id: string | null }[]>`
     SELECT ${Prisma.raw(`"${column}"`)} AS "parent_id" FROM ${Prisma.raw(`"${table}"`)}
     WHERE "id" = ${replacesDraftId}::uuid`;
-  return [...new Set([parentId, ...rows.map((r) => r.parent_id)])].sort();
+  const ids = [parentId, ...rows.map((r) => r.parent_id)].filter((v): v is string => v !== null);
+  return [...new Set(ids)].sort();
+}
+
+/**
+ * A person's edit of a draft whose approval locks its parent (a customer, a shipment) first: a
+ * parent the draft does not name yet may be filled in; one it names stays (400 otherwise), so the
+ * lock order of replacementParentIds holds.
+ */
+export function requireSameParent(
+  current: string | null,
+  next: string | null | undefined,
+  what: string,
+): void {
+  if (current !== null && next !== undefined && next !== current) {
+    throw new BadRequestException(`The draft's ${what}, once named, stays`);
+  }
 }
 
 /** The draft that replaced this one, if any. */
@@ -455,6 +477,43 @@ export function mineWhere(
 }
 
 /**
+ * A page of the reviewers' list ("everything waiting", GET /assistant-drafts/review): drafts
+ * whoever they were made for, in the order of MY_DRAFTS_ORDER, after the cursor (the last item's
+ * createdAt and id; both or neither). Never used for "my drafts": that list is mineWhere's.
+ */
+export interface ReviewPage {
+  before?: Date;
+  beforeId?: string;
+  limit: number;
+}
+
+/** The cursor part of a review page's filter (no creator filter: the reviewer is not the creator). */
+export function pageWhere(page: ReviewPage): {
+  AND?: { OR: ({ createdAt: { lt: Date } } | { createdAt: Date; id: { lt: string } })[] }[];
+} {
+  const { before, beforeId } = page;
+  if (!before || !beforeId) return {};
+  // Under AND: a kind's own scope may be an OR (a draft with or without its shipment).
+  return {
+    AND: [{ OR: [{ createdAt: { lt: before } }, { createdAt: before, id: { lt: beforeId } }] }],
+  };
+}
+
+/**
+ * The filter and size of a kind's list: "my drafts" (mineWhere), a reviewer's page (pageWhere), or
+ * the review screen's whole list (200 newest).
+ */
+export function listScope(
+  user: AuthUser,
+  mine: MyDraftsQuery | undefined,
+  page: ReviewPage | undefined,
+): { where: ReturnType<typeof mineWhere> | ReturnType<typeof pageWhere>; take: number } {
+  if (mine) return { where: mineWhere(user, mine), take: mine.limit };
+  if (page) return { where: pageWhere(page), take: page.limit };
+  return { where: {}, take: 200 };
+}
+
+/**
  * Each kind's review page segment (/drafts/<page>/<id> on the web). A GRN draft has none: it is
  * reviewed with its document on the shipment's page.
  */
@@ -472,6 +531,31 @@ export const REVIEW_PAGES: Record<Exclude<MyDraftKind, 'grn'>, string> = {
   customer: 'customers',
   rate_card: 'rate-cards',
 };
+
+/**
+ * A reviewers' list item before the branch code is added, with whether this reviewer may decide
+ * it now (only those are listed).
+ */
+export type ReviewDraftRow = Omit<ReviewDraftItemDto, 'branchCode'> & { canDecide: boolean };
+
+/** A kind's review list item as the reviewers' list shows it. */
+export function reviewDraftItem(
+  kind: keyof typeof REVIEW_PAGES,
+  d: EntryDraftReviewFields & { missingFields?: string[] },
+): ReviewDraftRow {
+  return {
+    kind,
+    id: d.id,
+    subject: d.subject,
+    branchId: d.branchId,
+    createdAt: d.createdAt,
+    expiresAt: d.expiresAt,
+    createdByName: d.createdByName,
+    missingCount: d.missingFields?.length ?? 0,
+    reviewPath: `/drafts/${REVIEW_PAGES[kind]}/${d.id}`,
+    canDecide: d.actions.canDecide,
+  };
+}
 
 /** A "my drafts" item before the branch code is added. */
 export type MyDraftRow = Omit<MyDraftItemDto, 'branchCode'>;

@@ -4,9 +4,10 @@ import type { FxRateDto, FxRateInput } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { commonToday } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useMasterData } from '@/lib/master-data';
-import { FX_RATE_PATTERN, todayString } from '@/lib/money';
+import { FX_RATE_PATTERN } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 
@@ -21,6 +22,8 @@ export function FxRates() {
   const [rates, setRates] = useState<FxRateDto[] | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [currencyChoice, setCurrency] = useState<string | null>(null);
+  const [dateChoice, setDate] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api<FxRateDto[]>(`/accounting/fx-rates${query}`)
@@ -49,8 +52,8 @@ export function FxRates() {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const body: FxRateInput = {
-      currency: field(form, 'currency'),
-      rateDate: field(form, 'rateDate'),
+      currency,
+      rateDate,
       rate: field(form, 'rate').trim(),
     };
     setBusy(true);
@@ -67,6 +70,14 @@ export function FxRates() {
   }
 
   const currencies = (master?.currencies ?? []).filter((c) => c.code !== 'USD');
+  const active = currencies.filter((c) => c.isActive);
+  const currency = currencyChoice ?? active[0]?.code ?? '';
+  // A rate belongs to no branch (functional review C9). Its date starts as today in the user's
+  // branches that work in the currency (else all their branches) when they agree on the day, from
+  // /auth/me, not the browser's clock; when they do not, the person types it. It follows the
+  // currency until a date is typed (null until then), which is kept.
+  const inCurrency = me.branches.filter((b) => b.defaultCurrency === currency);
+  const rateDate = dateChoice ?? commonToday(inCurrency.length > 0 ? inCurrency : me.branches);
 
   return (
     <section className="stack">
@@ -81,19 +92,28 @@ export function FxRates() {
           <div className="grid">
             <label className="field">
               {t('currency')}
-              <select name="currency" required>
-                {currencies
-                  .filter((c) => c.isActive)
-                  .map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code}
-                    </option>
-                  ))}
+              <select
+                name="currency"
+                required
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              >
+                {active.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">
               {t('rateDate')}
-              <input type="date" name="rateDate" required defaultValue={todayString()} />
+              <input
+                type="date"
+                name="rateDate"
+                required
+                value={rateDate}
+                onChange={(e) => setDate(e.target.value)}
+              />
             </label>
             <label className="field">
               {t('rateLabel')}

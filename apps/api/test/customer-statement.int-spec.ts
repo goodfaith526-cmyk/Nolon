@@ -107,6 +107,7 @@ describe('customer statement', () => {
     ).body as CustomerInvoiceDto;
     await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
       ...fields,
+      repriced: true,
       dueDate: fields.invoiceDate,
       lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice }],
     }).expect(200);

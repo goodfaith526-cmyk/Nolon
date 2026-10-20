@@ -5,16 +5,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  BookingService,
   CustomerInvoiceDto,
   CustomerInvoiceInput,
-  InvoiceDraftLineInput,
+  DecimalString,
+  InvoiceSuggestRequest,
+  InvoiceSuggestionCurrencySource,
+  InvoiceSuggestionDto,
+  InvoiceSuggestionLineUse,
+  InvoiceSuggestionUnresolved,
   PriceSource,
+  RateUnit,
   CustomerInvoiceSummaryDto,
   InvoiceStatus,
   OpeningCustomerItemRequest,
   Page,
   PaymentStatus,
   ReceiptOpenInvoiceDto,
+  UpdateCustomerInvoiceRequest,
 } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
@@ -31,9 +39,10 @@ import {
   roundMoney,
   sameRequestedRate,
   toDecimalString,
+  toDecimalStringOrNull,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import { fieldRefusal, type PageQuery } from '../common/validation.js';
+import { fieldRefusal, fieldRefusals, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -44,6 +53,16 @@ import { QuotationsService } from '../quotations/quotations.service.js';
 import { RatesService } from '../rates/rates.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
+import {
+  type SuggestionSource,
+  invoiceCurrency,
+  quotedLine,
+  ratedLine,
+  ratedPrice,
+  suggestionFingerprint,
+  systemPriceGives,
+  unitQuantity,
+} from './invoice-suggestion.js';
 
 export interface InvoiceFilters extends PageQuery {
   status?: InvoiceStatus;
@@ -87,10 +106,47 @@ export interface PreparedInvoice {
   total: Decimal;
 }
 
+/** A line of an invoice draft ready to be priced: without a unit price, the system price. */
+export interface PriceableInvoiceLine {
+  chargeTypeCode: string;
+  description?: string | null;
+  quantity: DecimalString;
+  unitPrice?: DecimalString;
+}
+
 /** An invoice draft's values: a line without a unit price takes the system price. */
 export type InvoiceDraftValues = Omit<CustomerInvoiceInput, 'fxRate' | 'lines'> & {
-  lines: InvoiceDraftLineInput[];
+  lines: PriceableInvoiceLine[];
 };
+
+/** A line of an invoice NOLON derives for a shipment (deriveForShipment). */
+export interface DerivedInvoiceLine {
+  chargeTypeCode: string;
+  description: string | null;
+  unit: RateUnit;
+  quantity: Decimal | null;
+  unitPrice: Decimal | null;
+  priceSource: PriceSource;
+  rateCardId: string | null;
+  service: BookingService | null;
+  use: InvoiceSuggestionLineUse;
+  /** The unit price is part of the line: created without it, the line is priced otherwise. */
+  fillPrice: boolean;
+}
+
+/** The invoice NOLON derives for a shipment: the suggestion, and createForShipment's lines. */
+export interface InvoiceDerivation {
+  shipmentId: string;
+  branchId: string;
+  customerId: string;
+  currency: { code: string; decimalPlaces: number };
+  currencySource: InvoiceSuggestionCurrencySource;
+  invoiceDate: string;
+  dueDate: string;
+  lines: DerivedInvoiceLine[];
+  unresolved: InvoiceSuggestionUnresolved[];
+  fingerprint: string;
+}
 
 type BillingSource = Awaited<ReturnType<ShipmentsService['billingSource']>>;
 type QuotedPrices = Awaited<ReturnType<QuotationsService['invoiceSource']>>;
@@ -359,52 +415,62 @@ export class InvoicesService {
   }
 
   /**
-   * A draft invoice for a shipment, prefilled from the quotation it was booked from: its currency
-   * and charge lines. Dated today in the branch; due after the customer's payment terms.
+   * What NOLON would put on an invoice for a shipment (POST /invoice-drafts/suggest), read-only:
+   * deriveForShipment for the currency and invoice date asked for, else NOLON's defaults.
+   */
+  async suggestForShipment(
+    user: AuthUser,
+    input: InvoiceSuggestRequest,
+  ): Promise<InvoiceSuggestionDto> {
+    const derived = await this.deriveForShipment(user, input.shipmentId, input);
+    return {
+      shipmentId: derived.shipmentId,
+      branchId: derived.branchId,
+      currency: derived.currency.code,
+      currencySource: derived.currencySource,
+      invoiceDate: derived.invoiceDate,
+      dueDate: derived.dueDate,
+      lines: derived.lines.map((l) => ({
+        chargeTypeCode: l.chargeTypeCode,
+        description: l.description,
+        unit: l.unit,
+        quantity: toDecimalStringOrNull(l.quantity),
+        unitPrice: toDecimalStringOrNull(l.unitPrice),
+        priceSource: l.priceSource,
+        rateCardId: l.rateCardId,
+        service: l.service,
+        use: l.use,
+        fillPrice: l.fillPrice,
+      })),
+      unresolved: derived.unresolved,
+      fingerprint: derived.fingerprint,
+    };
+  }
+
+  /**
+   * A draft invoice for a shipment, prefilled as deriveForShipment derives it with NOLON's
+   * defaults: dated today in the branch, due after the customer's payment terms, with the lines
+   * it fills (the quotation's; a rate card's only for a charge of a service the shipment has).
    */
   async createForShipment(user: AuthUser, shipmentId: string): Promise<CustomerInvoiceDto> {
-    const shipment = await this.shipments.billingSource(user, shipmentId);
-    if (shipment.status === 'CANCELLED') {
-      throw new ConflictException('A cancelled shipment is not invoiced');
-    }
-    const customer = await this.customers.requireCustomer(user, shipment.customerId);
-    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: shipment.branchId } });
-    const quotation = shipment.quotationId
-      ? await this.quotations.invoiceSource(shipment.quotationId)
-      : null;
-    const currencyCode =
-      quotation?.currency ?? customer.preferredCurrency ?? branch.defaultCurrency;
-    const currency = await this.currencies.requireActive(currencyCode);
-    const invoiceDate = todayIn(branch.timezone);
+    const derived = await this.deriveForShipment(user, shipmentId, {});
+    const { currency, invoiceDate } = derived;
     const fxRate = await this.fxRates.resolve(currency.code, invoiceDate);
-    const lines = (quotation?.lines ?? []).map((l) => {
-      const exact = roundMoney(l.quantity.times(l.unitPrice), currency.decimalPlaces);
-      // Minimum charges and discounts make the quoted total differ from quantity × price; the
-      // line then carries the agreed amount as one unit.
-      return exact.eq(l.lineTotal)
-        ? {
-            chargeTypeCode: l.chargeTypeCode,
-            description: l.description,
-            quantity: l.quantity,
-            unitPrice: l.unitPrice,
-          }
-        : {
-            chargeTypeCode: l.chargeTypeCode,
-            description: l.description,
-            quantity: dec(1),
-            unitPrice: l.lineTotal,
-          };
-    });
+    const lines = derived.lines.flatMap((l) =>
+      l.use === 'FILL' && l.quantity !== null && l.unitPrice !== null
+        ? [{ ...l, quantity: l.quantity, unitPrice: l.unitPrice }]
+        : [],
+    );
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     const created = await this.prisma.customerInvoice.create({
       data: {
-        branchId: shipment.branchId,
-        customerId: shipment.customerId,
-        shipmentId: shipment.id,
+        branchId: derived.branchId,
+        customerId: derived.customerId,
+        shipmentId: derived.shipmentId,
         currency: currency.code,
         fxRate,
         invoiceDate: toDbDate(invoiceDate),
-        dueDate: toDbDate(addDays(invoiceDate, customer.paymentTermsDays)),
+        dueDate: toDbDate(derived.dueDate),
         total,
         totalUsd: toUsd(total, fxRate, currency.code),
         createdById: user.id,
@@ -425,15 +491,200 @@ export class InvoicesService {
   }
 
   /**
+   * The invoice NOLON derives for a shipment (fix D), one set of rules for the suggestion and for
+   * createForShipment; nothing is written. The shipment as it is billed (the owning branch's,
+   * not cancelled, its customer visible). The currency: the one asked for, else the quotation's,
+   * the customer's preferred, the branch default. Dated `invoiceDate` (default today in the
+   * branch), due after the customer's payment terms. The lines: the quotation's, priced as
+   * agreed (in the quotation's currency only); with no quotation, one per charge type with
+   * exactly one approved rate card matching the shipment in that currency, its quantity from the
+   * unit where exact. A rate card line is filled only for a charge whose service the shipment
+   * has: a matching tariff is not proof the charge happened; otherwise it is offered.
+   */
+  async deriveForShipment(
+    user: AuthUser,
+    shipmentId: string,
+    asked: { currency?: string; invoiceDate?: string },
+  ): Promise<InvoiceDerivation> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    if (shipment.status === 'CANCELLED') {
+      throw new ConflictException('A cancelled shipment is not invoiced');
+    }
+    const customer = await this.customers.requireCustomer(user, shipment.customerId);
+    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: shipment.branchId } });
+    const quotation = shipment.quotationId
+      ? await this.quotations.invoiceSource(shipment.quotationId)
+      : null;
+    const chosen = invoiceCurrency({
+      requested: asked.currency ?? null,
+      quotation: quotation?.currency ?? null,
+      customer: customer.preferredCurrency,
+      branch: branch.defaultCurrency,
+    });
+    const currency = await this.currencies.requireActive(chosen.code);
+    const invoiceDate = asked.invoiceDate ?? todayIn(branch.timezone);
+    const unresolved: InvoiceSuggestionUnresolved[] = [];
+    const lines: DerivedInvoiceLine[] = [];
+    let source: SuggestionSource;
+    if (quotation !== null) {
+      source = { quotation: { id: quotation.id, updatedAt: quotation.updatedAt } };
+      const charges = await this.masterData.activeChargeTypes(
+        quotation.lines.map((l) => l.chargeTypeCode),
+      );
+      for (const l of quotation.lines) {
+        const path = `lines.${lines.length}`;
+        const line = {
+          chargeTypeCode: l.chargeTypeCode,
+          description: l.description,
+          unit: l.unit,
+          priceSource: 'QUOTATION' as const,
+          rateCardId: null,
+          service: charges.get(l.chargeTypeCode)?.service ?? null,
+        };
+        if (quotation.currency !== currency.code) {
+          unresolved.push({
+            path: `${path}.unitPrice`,
+            code: 'QUOTED_PRICE_OTHER_CURRENCY',
+            message:
+              `The shipment's quotation prices ${l.chargeTypeCode} in ${quotation.currency}: ` +
+              `invoice in ${quotation.currency}, or enter the price`,
+          });
+          lines.push({
+            ...line,
+            quantity: l.quantity,
+            unitPrice: null,
+            use: 'OFFER',
+            fillPrice: false,
+          });
+        } else {
+          lines.push({
+            ...line,
+            ...quotedLine(l, currency.decimalPlaces),
+            use: 'FILL',
+            fillPrice: false,
+          });
+        }
+      }
+    } else {
+      const rates = await this.rates.systemRates({
+        branchId: shipment.branchId,
+        onDate: invoiceDate,
+        currency: currency.code,
+        originLocationId: shipment.originLocationId,
+        destinationLocationId: shipment.destinationLocationId,
+        mode: shipment.mode,
+        loadType: shipment.loadType,
+        cargoType: shipment.cargoType,
+      });
+      source = { rateCards: rates.map((r) => ({ id: r.id, updatedAt: r.updatedAt })) };
+      const charges = await this.masterData.activeChargeTypes(rates.map((r) => r.chargeTypeCode));
+      const codes = [...new Set(rates.map((r) => r.chargeTypeCode))].sort();
+      for (const chargeTypeCode of codes) {
+        const charge = charges.get(chargeTypeCode);
+        if (!charge) continue;
+        const [rate, ...more] = rates.filter((r) => r.chargeTypeCode === chargeTypeCode);
+        if (!rate) continue;
+        if (more.length > 0) {
+          unresolved.push({
+            path: 'lines',
+            code: 'RATE_SEVERAL',
+            message:
+              `${more.length + 1} approved rate cards match ${chargeTypeCode} ` +
+              '(container type or unit differ): no line is suggested for it',
+          });
+          continue;
+        }
+        const path = `lines.${lines.length}`;
+        const quantity = unitQuantity(
+          rate.unit,
+          shipment.items,
+          rate.containerTypeCode,
+          shipment.cargoType,
+        );
+        if (quantity === null) {
+          unresolved.push({
+            path: `${path}.quantity`,
+            code: 'QUANTITY_UNKNOWN',
+            message:
+              `The shipment's cargo does not give an exact ${rate.unit} quantity for ` +
+              `${chargeTypeCode} (a measure is missing or ambiguous): enter the quantity`,
+          });
+        }
+        const service = charge.service;
+        const covered = service !== null && shipment.services.includes(service);
+        if (service === null) {
+          unresolved.push({
+            path,
+            code: 'SERVICE_NOT_MAPPED',
+            message:
+              `${chargeTypeCode} belongs to no service, so a rate card does not show it was ` +
+              'charged: add it only if it applies',
+          });
+        } else if (!covered) {
+          unresolved.push({
+            path,
+            code: 'SERVICE_NOT_ON_SHIPMENT',
+            message:
+              `${chargeTypeCode} belongs to ${service}, which the shipment does not have: add ` +
+              'it only if it applies',
+          });
+        }
+        const rated = ratedLine(rate, quantity, currency.decimalPlaces);
+        // A minimum the system price would not give (0.25 kg at 100/kg, minimum 60: 1 × 60, while
+        // 1 unit with no price is 1 × 100) is filled with its price, marked so a caller sends
+        // the price with the line (owner 2026-10-18; Codex N89-1, N89-3).
+        const fillPrice = !systemPriceGives(rate, rated, currency.decimalPlaces);
+        lines.push({
+          chargeTypeCode,
+          description: null,
+          unit: rate.unit,
+          ...rated,
+          priceSource: 'RATE_CARD',
+          rateCardId: rate.id,
+          service,
+          use: covered && quantity !== null ? 'FILL' : 'OFFER',
+          fillPrice,
+        });
+      }
+    }
+    const dueDate = addDays(invoiceDate, customer.paymentTermsDays);
+    return {
+      shipmentId: shipment.id,
+      branchId: shipment.branchId,
+      customerId: shipment.customerId,
+      currency,
+      currencySource: chosen.source,
+      invoiceDate,
+      dueDate,
+      lines,
+      unresolved,
+      fingerprint: suggestionFingerprint({
+        shipmentId: shipment.id,
+        branchId: shipment.branchId,
+        currency: currency.code,
+        currencySource: chosen.source,
+        pricingDate: invoiceDate,
+        dueDate,
+        source,
+        lines,
+        unresolved,
+      }),
+    };
+  }
+
+  /**
    * The checks of a draft invoice for a shipment with the given values (an assistant's invoice
    * draft), as update() checks them, without writing; insertInTx then records it. The fx rate is
    * the rate table's for the invoice date. A line without a unit price takes the system price
-   * (systemPrice), so the result says where each price came from.
+   * (systemPrice), so the result says where each price came from. With `everyLine` (the
+   * pre-check), every line's refusal is collected and refused together (fieldRefusals), not only
+   * the first.
    */
   async prepareForShipment(
     user: AuthUser,
     shipmentId: string,
     input: InvoiceDraftValues,
+    options: { everyLine?: boolean } = {},
   ): Promise<PreparedInvoice> {
     const shipment = await this.shipments.billingSource(user, shipmentId);
     if (shipment.status === 'CANCELLED') {
@@ -444,7 +695,20 @@ export class InvoicesService {
       throw new BadRequestException('The due date is before the invoice date');
     }
     const currency = await this.currencies.requireActive(input.currency);
-    for (const line of input.lines) await this.masterData.requireChargeType(line.chargeTypeCode);
+    const refused: BadRequestException[] = [];
+    const collect = (error: unknown): void => {
+      if (!options.everyLine || !(error instanceof BadRequestException)) throw error;
+      refused.push(error);
+    };
+    const unknownCharge = new Set<number>();
+    for (const [index, line] of input.lines.entries()) {
+      try {
+        await this.masterData.requireChargeType(line.chargeTypeCode);
+      } catch (error) {
+        collect(error);
+        unknownCharge.add(index);
+      }
+    }
     const fxRate = await this.fxRates.resolve(currency.code, input.invoiceDate);
     const quoted =
       shipment.quotationId !== null && input.lines.some((l) => l.unitPrice === undefined)
@@ -452,18 +716,25 @@ export class InvoicesService {
         : null;
     const lines = [];
     for (const [index, l] of input.lines.entries()) {
+      if (unknownCharge.has(index)) continue;
       const quantity = dec(l.quantity);
-      const price =
-        l.unitPrice === undefined
-          ? await this.systemPrice(shipment, quoted, {
-              path: `lines.${index}`,
-              chargeTypeCode: l.chargeTypeCode,
-              quantity,
-              currency: currency.code,
-              decimalPlaces: currency.decimalPlaces,
-              invoiceDate: input.invoiceDate,
-            })
-          : { unitPrice: dec(l.unitPrice), priceSource: 'TYPED' as const, rateCardId: null };
+      let price: { unitPrice: Decimal; priceSource: PriceSource; rateCardId: string | null };
+      try {
+        price =
+          l.unitPrice === undefined
+            ? await this.systemPrice(shipment, quoted, {
+                path: `lines.${index}`,
+                chargeTypeCode: l.chargeTypeCode,
+                quantity,
+                currency: currency.code,
+                decimalPlaces: currency.decimalPlaces,
+                invoiceDate: input.invoiceDate,
+              })
+            : { unitPrice: dec(l.unitPrice), priceSource: 'TYPED', rateCardId: null };
+      } catch (error) {
+        collect(error);
+        continue;
+      }
       lines.push({
         chargeTypeCode: l.chargeTypeCode,
         description: l.description ?? null,
@@ -471,6 +742,7 @@ export class InvoicesService {
         ...price,
       });
     }
+    if (refused.length > 0) throw fieldRefusals(refused);
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     return {
       branchId: shipment.branchId,
@@ -483,6 +755,45 @@ export class InvoicesService {
       notes: input.notes ?? null,
       lines: lines.map((l, i) => ({ ...l, lineTotal: lineTotals[i] ?? dec(0) })),
       total,
+    };
+  }
+
+  /**
+   * The checks of prepareForShipment on the values an invoice draft holds so far (a draft is
+   * saved with missing values): the shipment as it is billed (the owning branch's, not
+   * cancelled, its customer visible) when named, the dates in order when both are given, the
+   * currency when given, each line's charge when given. Prices wait for prepareForShipment. The
+   * shipment's branch and customer, or null with no shipment. Nothing is written.
+   */
+  async checkPresentForShipment(
+    user: AuthUser,
+    shipmentId: string | null,
+    input: {
+      currency?: string | null;
+      invoiceDate?: string | null;
+      dueDate?: string | null;
+      lines: readonly { chargeTypeCode?: string | null }[];
+    },
+  ): Promise<{ branchId: string | null; customerId: string | null; currency: string | null }> {
+    let shipment: BillingSource | null = null;
+    if (shipmentId !== null) {
+      shipment = await this.shipments.billingSource(user, shipmentId);
+      if (shipment.status === 'CANCELLED') {
+        throw new ConflictException('A cancelled shipment is not invoiced');
+      }
+      await this.customers.requireCustomer(user, shipment.customerId);
+    }
+    if (input.dueDate && input.invoiceDate && input.dueDate < input.invoiceDate) {
+      throw new BadRequestException('The due date is before the invoice date');
+    }
+    const currency = input.currency ? await this.currencies.requireActive(input.currency) : null;
+    for (const line of input.lines) {
+      if (line.chargeTypeCode) await this.masterData.requireChargeType(line.chargeTypeCode);
+    }
+    return {
+      branchId: shipment?.branchId ?? null,
+      customerId: shipment?.customerId ?? null,
+      currency: currency?.code ?? null,
     };
   }
 
@@ -558,11 +869,12 @@ export class InvoicesService {
       },
       { noMatch: [`${path}.unitPrice`], several: [`${path}.unitPrice`] },
     );
-    const amount = roundMoney(quantity.times(rate.price), decimalPlaces);
+    const priced = ratedPrice(rate, quantity, decimalPlaces);
     return {
-      unitPrice: amount.lt(rate.minimumCharge)
-        ? asOneUnit(rate.minimumCharge, "the rate card's minimum charge")
-        : rate.price,
+      unitPrice:
+        'oneUnit' in priced
+          ? asOneUnit(priced.oneUnit, "the rate card's minimum charge")
+          : priced.unitPrice,
       priceSource: 'RATE_CARD',
       rateCardId: rate.id,
     };
@@ -603,7 +915,7 @@ export class InvoicesService {
   async update(
     user: AuthUser,
     id: string,
-    input: CustomerInvoiceInput,
+    input: UpdateCustomerInvoiceRequest,
   ): Promise<CustomerInvoiceDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft invoice is edited');
@@ -621,12 +933,27 @@ export class InvoicesService {
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     await this.prisma.$transaction(async (tx) => {
       await lockStatus(tx, id, 'DRAFT');
+      // The line prices are amounts in the invoice's currency: a new currency keeps none of them
+      // as they stand (3,670 AED is not 3,670 USD). The request says it priced the lines anew.
+      const { currency: current } = await tx.customerInvoice.findUniqueOrThrow({
+        where: { id },
+        select: { currency: true },
+      });
+      if (current !== currency.code && input.repriced !== true) {
+        throw fieldRefusal(
+          'INVOICE_CURRENCY_REPRICE',
+          `The invoice is in ${current}: to invoice in ${currency.code}, enter every price in ${currency.code} (repriced)`,
+          ['currency'],
+          { from: current, to: currency.code },
+        );
+      }
       await tx.customerInvoiceLine.deleteMany({ where: { invoiceId: id } });
       await tx.customerInvoice.update({
         where: { id },
         data: {
           currency: currency.code,
           fxRate,
+          requestedFxRate: requestedRate(input.fxRate),
           invoiceDate: toDbDate(input.invoiceDate),
           dueDate: toDbDate(input.dueDate),
           notes: input.notes ?? null,
@@ -782,6 +1109,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
   return {
     ...toSummary(i),
     fxRate: i.fxRate.toFixed(),
+    enteredFxRate: toDecimalStringOrNull(i.requestedFxRate),
     totalUsd: i.totalUsd.toFixed(),
     notes: i.notes,
     lines: i.lines.map((l) => ({

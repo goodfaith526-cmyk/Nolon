@@ -19,9 +19,12 @@ export function DraftStatusBadge({ status }: { status: DraftStatus }) {
  * it now, the decision, and the entry an approval created. `children` shows the proposed values.
  * Approving sends the version the person is looking at (and `approveBody`, what else they were
  * shown, such as a quotation's prices); NOLON records the entry with its own checks and that
- * person's permissions, or refuses it if anything changed since.
+ * person's permissions, or refuses it if anything changed since. A draft that still misses values
+ * (`missingFields`, filled in with MissingFields) cannot be approved until NOLON says none is left.
  */
-export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraftCheck | null }>({
+export function DraftFrame<
+  D extends EntryDraftReviewFields & { check: EntryDraftCheck | null; missingFields?: string[] },
+>({
   draft,
   apiPath,
   title,
@@ -141,7 +144,12 @@ export function DraftFrame<D extends EntryDraftReviewFields & { check: EntryDraf
               <button
                 type="button"
                 className="primary"
-                disabled={busy || draft.check?.ok === false || approveBody === null}
+                disabled={
+                  busy ||
+                  draft.check?.ok === false ||
+                  approveBody === null ||
+                  (draft.missingFields ?? []).length > 0
+                }
                 onClick={() => void decide('approve')}
               >
                 {t('approve')}

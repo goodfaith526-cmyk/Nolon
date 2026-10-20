@@ -11,6 +11,7 @@ import type {
   GrnDraftSummaryDto,
   MyDraftItemDto,
   PackingListContentDto,
+  ReviewDraftsPageDto,
   ShipmentDocumentDto,
   SheetPreviewDto,
   ShipmentDto,
@@ -1041,5 +1042,39 @@ describe('the pre-check and "my drafts" for the live card', () => {
       result: { type: 'warehouse_movement', path: `/shipments/${s.id}` },
     });
     expect(approved?.result?.number).toMatch(/^NOL-GRN-\d{4}-\d{6}$/);
+  });
+});
+
+// Functional review هـ2: GRN drafts are in the reviewers' list ("everything waiting"), whoever
+// they were made for, for those who may record the receipt in the shipment's branches.
+describe("GRN drafts in the reviewers' list", () => {
+  const review = async (cookie: string, query = '?limit=50') =>
+    (await get(`/assistant-drafts/review${query}`, cookie).expect(200)).body as ReviewDraftsPageDto;
+
+  it('lists an open GRN draft to who may record it, reviewed on its shipment', async () => {
+    const s = await confirmedShipment();
+    const doc = await packingList(s.id);
+    const draft = (await createDraft(s.id, draftBody(doc)).expect(201)).body as GrnDraftSummaryDto;
+    // Made for whDxb; whDxb2 reviews it: the list is not "my drafts".
+    const page = await review(cookies.whDxb2, '?kind=grn&limit=50');
+    expect(page.items.find((i) => i.id === draft.id)).toMatchObject({
+      kind: 'grn',
+      subject: s.number,
+      branchCode: 'DXB',
+      missingCount: null,
+      reviewPath: `/shipments/${s.id}`,
+    });
+    expect((await review(cookies.whDxb2)).items.map((i) => i.id)).toContain(draft.id);
+    // Another branch, and who may only view the warehouse: not listed.
+    expect((await review(cookies.whJed)).items.map((i) => i.id)).not.toContain(draft.id);
+    expect((await review(cookies.opsDxb)).items.map((i) => i.id)).not.toContain(draft.id);
+    expect((await review(cookies.salesDxb)).items.map((i) => i.id)).not.toContain(draft.id);
+    // Decided, it waits no more.
+    await post(
+      `/shipments/${s.id}/grn-drafts/${draft.id}/approve`,
+      cookies.whDxb2,
+      receipt(1),
+    ).expect(201);
+    expect((await review(cookies.whDxb2)).items.map((i) => i.id)).not.toContain(draft.id);
   });
 });

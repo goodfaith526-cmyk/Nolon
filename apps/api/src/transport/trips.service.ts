@@ -10,6 +10,7 @@ import type {
   ShipmentStatus,
   ShipmentTripDto,
   TripDto,
+  TripDraftValues,
   TripInput,
   TripMoveRequest,
   TripShipmentDto,
@@ -296,6 +297,35 @@ export class TripsService {
       numbers,
       timezone: branch.timezone,
     };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a trip draft holds so far (a draft is saved with
+   * missing values, TripDraftValues): every value present is checked as a trip checks it, and a
+   * value the kind rules out is refused; what is missing is left for the person to fill in.
+   * prepareCreate runs in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(user: AuthUser, input: TripDraftValues): Promise<void> {
+    forbidDriverOnly(user, 'plan trips');
+    assertBranchAccess(user, input.branchId);
+    const from = input.originLocationId ?? null;
+    const to = input.destinationLocationId ?? null;
+    if (from !== null && to !== null) await this.masterData.requireRoute(from, to);
+    else if (from !== null) await this.masterData.requireLocation(from);
+    else if (to !== null) await this.masterData.requireLocation(to);
+    const plannedDeparture = input.plannedDeparture ? new Date(input.plannedDeparture) : null;
+    const plannedArrival = input.plannedArrival ? new Date(input.plannedArrival) : null;
+    if (plannedDeparture && plannedArrival && plannedArrival < plannedDeparture) {
+      throw new BadRequestException('The planned arrival cannot be before the departure');
+    }
+    // What the kind rules out, once the kind is given.
+    const kind = input.kind;
+    if (kind) checkKindConflicts({ ...input, kind });
+    const shipmentIds = [...new Set(input.shipmentIds)];
+    if (shipmentIds.length !== input.shipmentIds.length) {
+      throw new BadRequestException('Each shipment appears once');
+    }
+    if (shipmentIds.length > 0) await this.requireVisibleShipments(user, shipmentIds);
   }
 
   /** Records a prepared trip (PLANNED) and schedules its shipments in the caller's transaction. */
@@ -756,6 +786,20 @@ function checkKindShape(input: TripInput): void {
   }
   if (!input.carrierId || !input.agreedCost || !input.currency) {
     throw new BadRequestException('An external trip needs a carrier, agreed cost and currency');
+  }
+}
+
+/** The values a trip's kind rules out (what it needs and lacks is a missing value, not this). */
+function checkKindConflicts(input: Omit<TripInput, 'originLocationId' | 'destinationLocationId'>) {
+  if (input.kind === 'OWN') {
+    if (input.carrierId || input.agreedCost || input.currency) {
+      throw new BadRequestException('An own trip has no carrier or agreed cost');
+    }
+    if (input.externalVehicle || input.externalDriver) {
+      throw new BadRequestException('An own trip takes its vehicle and driver from the fleet');
+    }
+  } else if (input.vehicleId || input.driverId) {
+    throw new BadRequestException('An external trip has no fleet vehicle or driver');
   }
 }
 

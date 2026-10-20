@@ -6,15 +6,21 @@ import { draftEvidencePaths } from '../drafts/draft-evidence.js';
 import { decimalKey, requestHash } from '../drafts/draft-rules.js';
 import { withReplaced } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
+import { customerRequestHash } from '../customers/customer-drafts.service.js';
 import { evidenceLine } from './new-customer-quotation-drafts.controller.js';
 import {
   customerOf,
   newCustomerQuotationHash,
+  newCustomerQuotationMissingFields,
   splitEvidence,
   storedCustomer,
   underQuotation,
 } from './new-customer-quotation-drafts.service.js';
-import { quotationRequestHash, storedLines } from './quotation-drafts.service.js';
+import {
+  normalisedQuotation,
+  quotationRequestHash,
+  storedLines,
+} from './quotation-drafts.service.js';
 
 const BRANCH = '0b6f6c1e-5f0e-4a43-9a51-6c3c6b0f0a01';
 const customer: CustomerDraftRequest = { kind: 'INDIVIDUAL', name: 'Amna', phone: '+249912345678' };
@@ -66,28 +72,85 @@ describe('quotations for a new customer: the stored customer and the hash', () =
     expect(() => customerOf({ id: 'x', customer: { name: 3 } })).toThrow();
   });
 
+  it('stores and reads back a customer missing values, and none at all', () => {
+    const stored = storedCustomer({ name: 'Amna' });
+    expect(stored).toMatchObject({ kind: null, name: 'Amna', phone: null, email: null });
+    const json = JSON.parse(JSON.stringify(stored)) as Prisma.JsonValue;
+    expect(customerOf({ id: 'x', customer: json })).toEqual(stored);
+    expect(customerOf({ id: 'x', customer: null })).toEqual(storedCustomer({}));
+  });
+
+  it('names the values either part still misses, by its request path', () => {
+    expect(newCustomerQuotationMissingFields({ customer, quotation })).toEqual([]);
+    const missing = newCustomerQuotationMissingFields({
+      customer: { name: 'Amna' },
+      quotation: { currency: 'USD', lines: [] },
+    });
+    expect(missing).toEqual(
+      expect.arrayContaining([
+        'customer.kind',
+        'customer.phone',
+        'quotation.originLocationId',
+        'quotation.validUntil',
+        'quotation.lines',
+      ]),
+    );
+    expect(missing).not.toContain('customer.name');
+    expect(missing).not.toContain('quotation.currency');
+  });
+
+  it('hashes a complete request exactly as before drafts could miss values', () => {
+    const before = requestHash({
+      kind: 'NEW_CUSTOMER_QUOTATION',
+      branchId: BRANCH.toLowerCase(),
+      customer: customerRequestHash(BRANCH, customer, []),
+      quotation: normalisedQuotation(quotation),
+    });
+    expect(newCustomerQuotationHash(BRANCH, { customer, quotation })).toBe(before);
+  });
+
+  it('hashes a request missing values apart from any complete one', () => {
+    const partial = { customer, quotation: { ...quotation, validUntil: null } };
+    const hash = newCustomerQuotationHash(BRANCH, partial);
+    expect(hash).not.toBe(newCustomerQuotationHash(BRANCH, { customer, quotation }));
+    expect(
+      newCustomerQuotationHash(BRANCH, {
+        customer,
+        quotation: { ...quotation, validUntil: undefined },
+      }),
+    ).toBe(hash);
+    expect(newCustomerQuotationHash(BRANCH, { customer: {}, quotation: { lines: [] } })).not.toBe(
+      hash,
+    );
+  });
+
   it('hashes equal requests equally and any change otherwise', () => {
-    const hash = newCustomerQuotationHash(BRANCH, customer, quotation);
+    const hash = newCustomerQuotationHash(BRANCH, { customer, quotation });
     const sameValue: QuotationInput = {
       ...quotation,
       originLocationId: quotation.originLocationId.toLowerCase(),
       loadType: null,
       lines: [{ ...quotation.lines[0]!, quantity: '1.5' }, quotation.lines[1]!],
     };
-    expect(newCustomerQuotationHash(BRANCH.toUpperCase(), customer, sameValue)).toBe(hash);
+    expect(newCustomerQuotationHash(BRANCH.toUpperCase(), { customer, quotation: sameValue })).toBe(
+      hash,
+    );
     const changed: QuotationInput = {
       ...quotation,
       lines: [quotation.lines[0]!, { ...quotation.lines[1]!, unitPrice: '2.51' }],
     };
-    expect(newCustomerQuotationHash(BRANCH, customer, changed)).not.toBe(hash);
+    expect(newCustomerQuotationHash(BRANCH, { customer, quotation: changed })).not.toBe(hash);
     expect(
-      newCustomerQuotationHash(BRANCH, { ...customer, phone: '+249912345679' }, quotation),
+      newCustomerQuotationHash(BRANCH, {
+        customer: { ...customer, phone: '+249912345679' },
+        quotation,
+      }),
     ).not.toBe(hash);
     expect(
-      newCustomerQuotationHash(BRANCH, customer, quotation, [{ field: 'name', quote: 'Amna' }]),
+      newCustomerQuotationHash(BRANCH, { customer, quotation }, [{ field: 'name', quote: 'Amna' }]),
     ).not.toBe(hash);
     expect(
-      newCustomerQuotationHash(BRANCH, customer, quotation, [
+      newCustomerQuotationHash(BRANCH, { customer, quotation }, [
         { field: 'lines[0].quantity', quote: '1.5' },
       ]),
     ).not.toBe(hash);

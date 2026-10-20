@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { type DraftPreCheckDto, seesTransportCosts } from '@nolon/shared';
 import type {
   AssistantDraftApproveRequest,
@@ -9,9 +9,12 @@ import type {
   TripDraftCreateRequest,
   TripDraftDto,
   TripDraftListItemDto,
+  TripDraftUpdateRequest,
+  TripDraftValues,
   TripInput,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
@@ -20,7 +23,9 @@ import {
   decimalKey,
   draftExpiry,
   draftStatus,
+  patched,
   preCheck,
+  storedValue,
   rejectedFields,
   requestHash,
   requireOpen,
@@ -32,14 +37,17 @@ import {
   type DecisionVia,
   DraftsService,
   keyReused,
+  lockDraftRow,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
   replaceInTx,
   storedDraftUnderKey,
   valuesOf,
+  type ValuesOf,
   withReplaced,
   withReplacedBy,
   MY_DRAFTS_ORDER,
@@ -50,6 +58,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 import { forbidDriverOnly } from './trip-scope.js';
 import { TripsService } from './trips.service.js';
+import { requireApprovable, tripCompleteness } from '../drafts/draft-completeness.js';
 
 const LABEL = 'trip draft';
 
@@ -78,8 +87,8 @@ type TripDraftReviewFields = Omit<
   'request' | 'check' | 'shipmentNumbers' | 'vehiclePlate' | 'driverName' | 'carrierName'
 >;
 
-/** The trip request a stored draft proposes, in the shape TripsService takes. */
-export function requestOf(d: DraftRow): TripInput {
+/** The trip a stored draft proposes, as stored: a missing value is null. */
+export function requestOf(d: DraftRow): TripDraftValues {
   return {
     branchId: d.branchId,
     kind: d.kind,
@@ -95,19 +104,50 @@ export function requestOf(d: DraftRow): TripInput {
     externalVehicle: d.externalVehicle,
     externalDriver: d.externalDriver,
     notes: d.notes,
-    shipmentIds: d.shipments.map((s) => s.shipmentId),
+    shipmentIds: shipmentIdsOf(d),
   };
 }
 
-/** sha256 of the normalised request: ids lower case, times and decimals canonical, keys sorted. */
-export function tripRequestHash(input: TripInput): string {
+/** The shipments a draft names, in order (a line without its shipment yet names none). */
+function shipmentIdsOf(d: DraftRow): string[] {
+  return d.shipments.flatMap((s) => (s.shipmentId === null ? [] : [s.shipmentId]));
+}
+
+/**
+ * What a trip draft still misses before it can be approved: the approval gate's missing values
+ * (draft-completeness.ts), from a trip's own rules.
+ */
+export function tripMissingFields(values: TripDraftValues): string[] {
+  return tripCompleteness(values).missing;
+}
+
+/** The trip a complete draft proposes, in the shape TripsService takes. */
+export function completeTrip(values: TripDraftValues): TripInput {
+  return {
+    ...values,
+    kind: storedValue(values.kind, 'kind'),
+    originLocationId: storedValue(values.originLocationId, 'origin'),
+    destinationLocationId: storedValue(values.destinationLocationId, 'destination'),
+  };
+}
+
+/** A trip draft's values from a create body (absent shipments are none yet). */
+function valuesOfCreate(input: ValuesOf<TripDraftCreateRequest>): TripDraftValues {
+  return { ...input, shipmentIds: input.shipmentIds ?? [] };
+}
+
+/**
+ * sha256 of the normalised request: ids lower case, times and decimals canonical, keys sorted, a
+ * missing value null (a complete request hashes as it always has).
+ */
+export function tripRequestHash(input: TripDraftValues): string {
   const lower = (v: string | null | undefined) => v?.toLowerCase() ?? null;
   const time = (v: string | null | undefined) => (v ? new Date(v).toISOString() : null);
   return requestHash({
     branchId: input.branchId.toLowerCase(),
-    kind: input.kind,
-    originLocationId: input.originLocationId.toLowerCase(),
-    destinationLocationId: input.destinationLocationId.toLowerCase(),
+    kind: input.kind ?? null,
+    originLocationId: lower(input.originLocationId),
+    destinationLocationId: lower(input.destinationLocationId),
     plannedDeparture: time(input.plannedDeparture),
     plannedArrival: time(input.plannedArrival),
     vehicleId: lower(input.vehicleId),
@@ -139,10 +179,37 @@ export class TripDraftsService {
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: TripDraftCreateRequest): Promise<DraftPreCheckDto> {
     draftScope(user);
-    const input = valuesOf(body);
-    return preCheck(tripRequestHash(input), async () => {
-      await this.trips.prepareCreate(user, input);
+    const values = valuesOfCreate(valuesOf(body));
+    return preCheck(tripRequestHash(values), async () => {
+      const missingFields = (await this.validate(user, values)).missingFields;
+      return { total: null, currency: null, missingFields };
     });
+  }
+
+  /**
+   * The checks a draft's values get on create and on a person's edit: a complete trip's in full
+   * (prepareCreate); a trip still missing values, those of the values present (checkPresent).
+   */
+  private async validate(
+    user: AuthUser,
+    values: TripDraftValues,
+  ): Promise<{
+    missingFields: string[];
+    plannedDeparture: Date | null;
+    plannedArrival: Date | null;
+  }> {
+    const missingFields = tripMissingFields(values);
+    if (missingFields.length === 0) {
+      const prepared = await this.trips.prepareCreate(user, completeTrip(values));
+      return { missingFields, ...prepared };
+    }
+    await this.trips.checkPresent(user, values);
+    const time = (v: string | null | undefined) => (v ? new Date(v) : null);
+    return {
+      missingFields,
+      plannedDeparture: time(values.plannedDeparture),
+      plannedArrival: time(values.plannedArrival),
+    };
   }
 
   async create(
@@ -152,15 +219,16 @@ export class TripDraftsService {
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     draftScope(user);
-    const { idempotencyKey, ...input } = body;
+    const { idempotencyKey, ...rest } = body;
+    const input = valuesOfCreate(rest);
     const hash = withReplaced(tripRequestHash(input), replacesDraftId);
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'trip_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real trip that need no lock; nothing is written.
-    const prepared = await this.trips.prepareCreate(user, input);
+    // The checks of a real trip that need no lock, on the values present; nothing is written.
+    const prepared = await this.validate(user, input);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         // Locked before the key lookup: an identical retry waits here, then finds the winner.
@@ -179,6 +247,8 @@ export class TripDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, input.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.tripDraft.create({
           data: {
@@ -187,7 +257,7 @@ export class TripDraftsService {
             branchId: input.branchId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            kind: input.kind,
+            kind: input.kind ?? null,
             originLocationId: input.originLocationId,
             destinationLocationId: input.destinationLocationId,
             plannedDeparture: prepared.plannedDeparture,
@@ -204,7 +274,7 @@ export class TripDraftsService {
           select: { id: true },
         });
         await tx.tripDraftShipment.createMany({
-          data: prepared.shipmentIds.map((shipmentId, i) => ({
+          data: input.shipmentIds.map((shipmentId, i) => ({
             draftId: draft.id,
             lineNo: i + 1,
             shipmentId,
@@ -214,6 +284,61 @@ export class TripDraftsService {
       }),
     );
     return toSummary(await this.findScoped(user, id), new Date());
+  }
+
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create, and the version moves on. The request the assistant sent (its
+   * payload hash) stays the draft's, so a replay of that create still finds this draft.
+   */
+  async update(user: AuthUser, id: string, input: TripDraftUpdateRequest): Promise<TripDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    const costs = patch.agreedCost !== undefined || patch.currency !== undefined;
+    if (costs && !seesTransportCosts((p) => user.permissions.has(p))) {
+      throw new ForbiddenException('You may not see or change transport costs');
+    }
+    const values = patched(requestOf(current), patch);
+    const prepared = await this.validate(user, values);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'trip_drafts', id);
+      if (!locked) throw new NotFoundException('Trip draft not found');
+      requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
+      await tx.tripDraft.update({
+        where: { id },
+        data: {
+          kind: values.kind ?? null,
+          originLocationId: values.originLocationId ?? null,
+          destinationLocationId: values.destinationLocationId ?? null,
+          plannedDeparture: prepared.plannedDeparture,
+          plannedArrival: prepared.plannedArrival,
+          vehicleId: values.vehicleId ?? null,
+          driverId: values.driverId ?? null,
+          carrierId: values.carrierId ?? null,
+          agreedCost: values.agreedCost ? dec(values.agreedCost) : null,
+          currency: values.currency ?? null,
+          externalVehicle: values.externalVehicle ?? null,
+          externalDriver: values.externalDriver ?? null,
+          notes: values.notes ?? null,
+          version: { increment: 1 },
+        },
+      });
+      if (patch.shipmentIds !== undefined) {
+        await tx.tripDraftShipment.deleteMany({ where: { draftId: id } });
+        await tx.tripDraftShipment.createMany({
+          data: values.shipmentIds.map((shipmentId, i) => ({
+            draftId: id,
+            lineNo: i + 1,
+            shipmentId,
+          })),
+        });
+      }
+    });
+    return this.get(user, id);
   }
 
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
@@ -230,17 +355,19 @@ export class TripDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<TripDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.tripDraft.findMany({
       where: {
         ...draftScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     const routes = await this.routeNames(drafts);
     return drafts.map((d) => ({
@@ -277,14 +404,14 @@ export class TripDraftsService {
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
         : null;
-    const request = requestOf(draft);
+    const request: TripDraftValues = requestOf(draft);
     if (!showsCost) {
       request.agreedCost = null;
       request.currency = null;
       if (check?.ok) check = { ok: true, total: null, currency: null };
     }
     // Only the names and numbers the reviewer can see.
-    const shipmentIds = draft.shipments.map((s) => s.shipmentId);
+    const shipmentIds = shipmentIdsOf(draft);
     const [visible, vehicle, driverRow, carrier] = await Promise.all([
       this.prisma.shipment.findMany({
         where: { id: { in: shipmentIds }, ...shipmentScope(user) },
@@ -335,7 +462,9 @@ export class TripDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
-    const prepared = await this.trips.prepareCreate(user, requestOf(current));
+    // Nothing is recorded while the draft misses a value (422, naming each one).
+    requireApprovable(tripCompleteness(requestOf(current)));
+    const prepared = await this.trips.prepareCreate(user, completeTrip(requestOf(current)));
     await this.prisma.$transaction(async (tx) => {
       let tripId = '';
       const decided = await decideInTx(tx, {
@@ -344,6 +473,10 @@ export class TripDraftsService {
         version,
         label: LABEL,
         approving: true,
+        gate: async () => {
+          const row = await tx.tripDraft.findUniqueOrThrow({ where: { id }, include: details });
+          requireApprovable(tripCompleteness(requestOf(row)));
+        },
         record: async () => {
           tripId = await this.trips.insertInTx(tx, user, prepared);
         },
@@ -424,10 +557,21 @@ export class TripDraftsService {
     return this.get(user, id);
   }
 
-  /** NOLON's checks of a new trip that need no lock (fleet and currency are checked on approval). */
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
+  /**
+   * NOLON's checks of a new trip that need no lock (fleet and currency are checked on approval).
+   * Null while the draft misses values and those present pass: it waits for them (missingFields).
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const values = requestOf(draft);
+    if (tripMissingFields(values).length > 0) {
+      const present = await checkDraft(async () => {
+        await this.trips.checkPresent(user, values);
+        return { total: null, currency: null };
+      });
+      return present.ok ? null : present;
+    }
     return checkDraft(async () => {
-      await this.trips.prepareCreate(user, requestOf(draft));
+      await this.trips.prepareCreate(user, completeTrip(values));
       return {
         total: toDecimalStringOrNull(draft.agreedCost),
         currency: draft.currency,
@@ -437,7 +581,13 @@ export class TripDraftsService {
 
   /** "AEJEA → SDPZU" for each draft's route, from the locations master. */
   private async routeNames(drafts: readonly DraftRow[]): Promise<Map<string, string>> {
-    const ids = [...new Set(drafts.flatMap((d) => [d.originLocationId, d.destinationLocationId]))];
+    const ids = [
+      ...new Set(
+        drafts
+          .flatMap((d) => [d.originLocationId, d.destinationLocationId])
+          .filter((v): v is string => v !== null),
+      ),
+    ];
     const locations = await this.prisma.location.findMany({
       where: { id: { in: ids } },
       select: { id: true, code: true },
@@ -446,7 +596,7 @@ export class TripDraftsService {
     return new Map(
       drafts.map((d) => [
         d.id,
-        `${code.get(d.originLocationId) ?? '?'} → ${code.get(d.destinationLocationId) ?? '?'}`,
+        `${codeOf(code, d.originLocationId)} → ${codeOf(code, d.destinationLocationId)}`,
       ]),
     );
   }
@@ -469,6 +619,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: d.shipments.length,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: tripMissingFields(requestOf(d)),
   };
 }
 
@@ -494,8 +645,13 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: tripMissingFields(requestOf(d)),
     tripId: d.tripId,
     tripNumber: d.trip?.number ?? null,
   };
+}
+
+function codeOf(codes: ReadonlyMap<string, string>, id: string | null): string {
+  return (id === null ? undefined : codes.get(id)) ?? '?';
 }

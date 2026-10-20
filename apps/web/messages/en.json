@@ -52,7 +52,6 @@
     "invoices": "Invoices",
     "receipts": "Receipts",
     "journals": "Journal entries",
-    "trialBalance": "Trial balance",
     "chartOfAccounts": "Chart of accounts",
     "fxRates": "Exchange rates",
     "periods": "Periods",
@@ -94,7 +93,16 @@
     "recentBookings": "Recent bookings",
     "viewAll": "View all",
     "noQuotations": "No quotations yet.",
-    "noBookings": "No bookings yet."
+    "noBookings": "No bookings yet.",
+    "myWork": "My work",
+    "draftsAwaitingReview": "Assistant drafts to review",
+    "alerts": "Alerts",
+    "warehouseShipments": "Shipments in warehouses",
+    "warehouseToday": "Today: {received} received · {released} released",
+    "openCustomsFiles": "Open customs files",
+    "tripsOnTheRoad": "Trips on the road",
+    "myTripsOnTheRoad": "My trips on the road",
+    "plannedTrips": "{count, plural, =0 {none planned} one {# planned} other {# planned}}"
   },
   "Account": {
     "title": "Change password",
@@ -163,7 +171,8 @@
     "FINANCE": "Finance",
     "WAREHOUSE": "Warehouse",
     "CUSTOMS": "Customs",
-    "DRIVER": "Driver / Transport"
+    "DRIVER": "Driver / Transport",
+    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager"
   },
   "Common": {
     "invalidInput": "Check the fields and try again.",
@@ -279,6 +288,7 @@
     "rate_CANCELLED": "Cancelled",
     "mode_SEA": "Sea",
     "mode_ROAD": "Road",
+    "mode_SEA_ROAD": "Sea and road",
     "cargo_CONTAINER": "Container",
     "cargo_PALLET": "Pallets",
     "cargo_BARREL": "Barrels",
@@ -469,7 +479,11 @@
     "minimum": "Minimum",
     "lineTotal": "Amount",
     "subtotal": "Subtotal",
-    "discountTotal": "Discounts"
+    "discountTotal": "Discounts",
+    "currencyFromCustomer": "Suggested: the customer's preferred currency.",
+    "currencyFromBranch": "Suggested: the branch's currency.",
+    "validUntilFromDays": "Suggested: {days} days from today.",
+    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed."
   },
   "Bookings": {
     "title": "Bookings",
@@ -500,7 +514,7 @@
     "sectionPartiesHint": "Shipper, consignee and notify party, from the customer's list.",
     "servicesHint": "What NOLON handles on this booking.",
     "sectionNotes": "Notes",
-    "sectionNotesHint": "Cargo description and special instructions.",
+    "sectionNotesHint": "Special instructions.",
     "containerType": "Container type",
     "quantity": "Quantity",
     "lengthCm": "Length (cm)",
@@ -523,7 +537,13 @@
     "openShipment": "Open shipment",
     "addToContainer": "New LCL booking in container {number}",
     "addToContainerHint": "The booking leaves from the container's port of loading, sea LCL. Saving confirms it, creates its shipment and puts it in the container.",
-    "pickCustomerToSave": "Choose the customer at the top of the form to save."
+    "pickCustomerToSave": "Choose the customer at the top of the form to save.",
+    "fromQuotationTitle": "New booking from quotation {number}",
+    "notSet": "Not set",
+    "fromQuotationHint": "Filled in from the quotation. Review it and save: nothing is created until you save. The route, mode and cargo stay the quotation's.",
+    "itemsFromQuotation": "Container lines come from the quotation's per-container charges. Check them before saving.",
+    "partiesFromLastBooking": "Suggested from the customer's last booking, {number}. Change them if needed.",
+    "partiesFromOnlyParty": "Suggested: the customer's only party, as consignee. Change it if needed."
   },
   "Shipments": {
     "title": "Shipments",
@@ -606,7 +626,9 @@
     "fileTooLarge": "The file is larger than 10 MB.",
     "fileRejected": "Only PDF, JPEG, PNG and WebP files are accepted.",
     "sharedBranches": "Shared with branches",
-    "sharedBranchesHint": "Users of these branches see the shipment and record its receipt, customs, trips and delivery. Invoicing stays with this branch."
+    "sharedBranchesHint": "Users of these branches see the shipment and record its receipt, customs, trips and delivery. Invoicing stays with this branch.",
+    "inConsolidation": "This shipment travels in consolidated container {number}: its container is the consolidation’s, shown here read-only.",
+    "containerTypeFromBooking": "From the booking lines, which have this one container type."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -679,6 +701,7 @@
     "fxRate": "Exchange rate (per 1 USD)",
     "fxRateOptional": "Exchange rate (optional)",
     "fxRateHint": "The rate is units of {currency} per 1 USD. Leave it empty to use the rate table's rate for the invoice date.",
+    "repriceHint": "The prices were in {from}, so they were cleared: enter every price in {to}.",
     "lines": "Invoice lines",
     "noLines": "No lines.",
     "chargeType": "Charge",
@@ -752,7 +775,15 @@
     "cancelReason": "Cancellation reason",
     "cancelledNotice": "Receipt cancelled.",
     "openJournal": "Journal entry",
-    "openCancelJournal": "Cancellation entry"
+    "openCancelJournal": "Cancellation entry",
+    "chooseCurrency": "Choose the currency",
+    "currencyFromInvoices": "The customer's open invoices are all in {currency}.",
+    "currencySuggestionNotApplied": "The customer's open invoices are all in {currency}. It was not applied because the amount was entered in another currency; change the currency yourself if needed.",
+    "invoicesChanged": "The customer's open invoices changed since this form was opened. Reload the page, then allocate the amount.",
+    "mixedCurrencies": "The open invoices are in several currencies: choose the receipt's currency.",
+    "payBalance": "Pay balance",
+    "distribute": "Allocate the amount, oldest invoice first",
+    "distributedRest": "{amount} {currency} is left over and will be held as an advance."
   },
   "Journals": {
     "title": "Journal entries",
@@ -859,7 +890,8 @@
     "expenseCategoriesHint": "Each category posts general expenses and expense lines of supplier bills to its account.",
     "categoryCode": "Code",
     "chooseAccount": "Choose an account",
-    "addCategory": "Add"
+    "addCategory": "Add",
+    "typeFromParent": "The parent account's type."
   },
   "FxRates": {
     "title": "Exchange rates",
@@ -942,7 +974,10 @@
     "releasedNotice": "Goods released: {number}.",
     "photoAdded": "Photo added.",
     "photoTooLarge": "Photos are limited to 10 MB.",
-    "photoRejected": "Only JPEG, PNG and WebP photos are accepted."
+    "photoRejected": "Only JPEG, PNG and WebP photos are accepted.",
+    "useRemaining": "Use remaining: {remaining}",
+    "remainingSuggested": "The packages still to receive. Count them and confirm.",
+    "weightHeldSuggested": "Suggested: the weight still held in this warehouse, for releasing all of it."
   },
   "Customs": {
     "section": "Customs",
@@ -956,9 +991,11 @@
     "note": "Notes",
     "updated": "Last updated",
     "clearedHint": "A cleared file needs its clearance date, which cannot be before the submission date.",
+    "movesShipmentHint": "Saving a file in progress moves the shipment to customs in progress; saving a cleared file moves it to cleared on the clearance date, when the shipment can take that step.",
     "documentsHint": "Customs papers go in the shipment documents below.",
     "moveShipment": "Shipment: {status}",
     "shipmentMoved": "The shipment is now: {status}.",
+    "savedAndMoved": "Saved. The shipment is now: {status}.",
     "fees": "Customs fees",
     "feeDescription": "Description",
     "amount": "Amount",
@@ -1098,7 +1135,23 @@
     "podSaved": "POD {number} saved.",
     "podSavedMoved": "POD {number} saved; the shipment is now: {status}.",
     "noPods": "No proof of delivery yet.",
-    "files": "Signature and photos"
+    "files": "Signature and photos",
+    "arriveAndComplete": "Arrived and completed",
+    "arrivedAndCompletedNotice": "The trip arrived and is completed.",
+    "arrivedNotCompleted": "The arrival is recorded, but the trip could not be completed: {reason} Use “Complete trip” to finish it.",
+    "tripForShipment": "Trip for this shipment",
+    "originFromShipment": "Suggested: where the shipment is now. Check where the trip starts.",
+    "destinationFromShipment": "Suggested: the shipment's destination.",
+    "vehicleFromLastTrip": "Suggested: the vehicle of this driver's last trip ({trip}).",
+    "supplier": "Supplier",
+    "noSupplier": "No supplier",
+    "notLinked": "Not linked",
+    "createSupplier": "Create supplier",
+    "supplierCreated": "Supplier created from the carrier and linked.",
+    "supplierExists": "A supplier with the same name or phone already exists. Link the carrier to it instead of creating another:",
+    "linkTo": "Link to {supplier}",
+    "carrierNotLinked": "The carrier is added but not linked to the supplier: {reason}",
+    "nameFromUser": "Filled from the linked user's name. You can change it."
   },
   "Consolidations": {
     "title": "Consolidated containers",
@@ -1232,9 +1285,13 @@
     "since_STORAGE_EXCEEDED": "In since",
     "since_TRIP_LATE": "Planned arrival"
   },
+  "ApiAccess": {
+    "title": "API access",
+    "hint": "Two separate kinds of access, each in its own section: keys for the Customer Service API, and the assistant platforms that sign staff in. A key does not sign anyone in, and an assistant uses no key."
+  },
   "ApiKeys": {
     "title": "Customer Service API keys",
-    "hint": "A key lets a customer-service client (the WhatsApp agent later) read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
+    "hint": "In use now: a key lets a customer-service client (such as a WhatsApp agent) call the Customer Service API (/cs/…) and read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
     "name": "Name",
     "namePlaceholder": "e.g. WhatsApp agent",
     "branches": "Branches",
@@ -1735,7 +1792,8 @@
     "cancelReason": "Cancellation reason",
     "cancelledNotice": "Credit note cancelled.",
     "openInvoice": "Invoice",
-    "openJournal": "Journal entry"
+    "openJournal": "Journal entry",
+    "fullBalance": "Full balance ({amount} {currency})"
   },
   "Suppliers": {
     "title": "Suppliers",
@@ -1784,7 +1842,6 @@
     "lineFor": "For",
     "lineAmount": "Amount",
     "shipmentNumber": "Shipment number",
-    "shipmentNotFound": "Line {line}: no shipment you can see has this number.",
     "chargeType": "Charge",
     "chooseChargeType": "Choose a charge",
     "trip": "Trip",
@@ -1810,7 +1867,17 @@
     "payment": "Payment",
     "paymentDate": "Payment date",
     "consolidation": "Container",
-    "chooseConsolidation": "Choose a container"
+    "chooseConsolidation": "Choose a container",
+    "dueDateOptional": "Due date (optional)",
+    "dueDateFromTerms": "Left empty, it is the bill date plus the supplier's {days} days of payment terms.",
+    "dueDateFromTermsUnknown": "Left empty, it is the bill date plus the supplier's payment terms.",
+    "tripsInOtherCurrencies": "This supplier's trips to bill are also in:",
+    "useTripCurrency": "{currency} ({count, plural, one {# trip} other {# trips}})",
+    "shipmentSearch": "Shipment number or customer",
+    "exactMatch": "Exact match:",
+    "moreShipments": "More shipments",
+    "noShipments": "No shipment of this branch matches.",
+    "chooseShipmentFirst": "Line {line}: choose the shipment."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
@@ -2014,7 +2081,7 @@
     "failed": "The assistant could not be connected."
   },
   "AgentClients": {
-    "title": "Staff assistant",
+    "title": "Staff assistant sign-in (delegated)",
     "hint": "A registered assistant platform can sign staff in with NOLON. It then reads, as that staff member, only the screens opened to it, with their own permissions and branches, for 10 minutes at a time. It cannot change anything. Revoking it ends every assistant sign-in at once.",
     "redirectUri": "Return address (https)",
     "audience": "Audience",
@@ -2110,6 +2177,7 @@
     "replacedBy": "Replaced at your request to the assistant by a newer draft:",
     "newerDraft": "Open the newer draft",
     "customerTitle": "New customer draft: {name}",
+    "customerToCreate": "The customer this approval creates",
     "customerApproveHint": "Approving adds this customer to the branch now, if no customer of the branch has this phone. Terms, credit and tax details are set on the customer afterwards.",
     "partyTitle": "Party draft for {customer}: {name}",
     "partyApproveHint": "Approving adds this party to the customer now. A booking can then name it as shipper, consignee or notify party.",
@@ -2185,7 +2253,31 @@
     "priceTyped": "Typed",
     "priceQuotation": "System price: the shipment's quotation",
     "priceRateCard": "System price: rate card",
-    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving."
+    "systemPriceHint": "Prices marked “system price” were found by NOLON, not typed: check them before approving.",
+    "missingTitle": "Missing before approval",
+    "missingHint": "The assistant saved this draft without these values. Fill them in and save; NOLON checks each value, and the draft can be approved once nothing is missing.",
+    "missingReadOnly": "This draft cannot be approved until these values are filled in.",
+    "missingChoose": "Choose…",
+    "missingSave": "Save values",
+    "missingSaved": "Values saved.",
+    "missingNewLine": "New line",
+    "missingNoShipments": "No shipment found.",
+    "missingNoCustomers": "No customer found.",
+    "incompleteRefused": "The draft still misses values.",
+    "waitingTab": "Everything waiting",
+    "waitingHint": "Open drafts of every type, including goods received drafts, that you can approve or reject now, in your branches. Newest first.",
+    "waitingEmpty": "Nothing is waiting for you.",
+    "branch": "Branch",
+    "missingColumn": "Missing values",
+    "missingCount": "Missing values: {n}",
+    "loadMore": "Show more",
+    "kind_grn": "Goods received (GRN)",
+    "missingSuggestedHint": "NOLON filled in the values it suggests. Check or change them, then save; nothing is saved until you do.",
+    "missingSuggested": "Suggested by NOLON",
+    "missingNoChoices": "Nothing to choose from now.",
+    "openInvoiceChoice": "{number} · {outstanding} {currency} outstanding",
+    "approveWithCustomer": "The customer is not approved yet. You can approve the customer and the booking together here: tick the customer’s words and the booking’s, then approve. Or approve the customer draft first on its own screen.",
+    "newCustomerBookingWithCustomerApproveHint": "Approving adds this customer to the branch and creates a draft booking for them, together: if either is refused (for example, a customer of the branch has this phone by then), nothing is created. The booking is not confirmed and has no shipment until you confirm it. Add the shipper, consignee and notify party on the booking."
   },
   "Fields": {
     "customerId": "Customer",
@@ -2233,7 +2325,24 @@
     "reason": "Reason",
     "note": "Note",
     "etd": "ETD",
-    "eta": "ETA"
+    "eta": "ETA",
+    "vehicleId": "Vehicle",
+    "driverId": "Driver",
+    "carrierId": "Carrier",
+    "agreedCost": "Agreed cost",
+    "shipmentIds": "Shipments",
+    "validFrom": "Valid from",
+    "kind": "Kind",
+    "shipmentId": "Shipment",
+    "warehouseId": "Warehouse",
+    "packages": "Packages",
+    "status": "Status",
+    "invoiceDate": "Invoice date",
+    "dueDate": "Due date",
+    "receiptDate": "Receipt date",
+    "cashAccountId": "Cash or bank account",
+    "invoiceId": "Invoice",
+    "allocations": "Allocations"
   },
   "Refusals": {
     "SAME_ROUTE": "From and To must be different places.",
@@ -2246,6 +2355,7 @@
     "VOLUME_TOO_LARGE": "The volume is too large: check the dimensions and the quantity.",
     "VALID_UNTIL_PAST": "The valid-until date is in the past.",
     "CURRENCY_NOT_ACTIVE": "This currency is unknown or no longer in use.",
+    "QUOTED_ROUTE_FIXED": "This booking was made from a quotation: its route and mode are the quotation's and cannot change.",
     "RATE_NOT_USABLE": "This rate does not apply to this quotation (route, mode, load, cargo, currency or date).",
     "MANUAL_LINE_INCOMPLETE": "A line without a rate needs a charge, a unit and a price.",
     "UNKNOWN_CHARGE_TYPE": "This charge is unknown or no longer in use.",
@@ -2256,6 +2366,7 @@
     "SAME_CONTAINER": "The shipment is already in this container: pick another one.",
     "SHIPMENT_OTHER_BRANCH": "Shipment {shipment} belongs to a branch you do not work in, so you cannot put it in this container.",
     "SHIPMENT_NOT_LCL_SEA": "Shipment {shipment} is not an LCL sea shipment NOLON carries.",
+    "SHIPMENT_OTHER_PORT": "Container {container} loads at another port than shipment {shipment} leaves from.",
     "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
     "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
@@ -2263,6 +2374,7 @@
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",
     "RATE_NO_MATCH": "No approved rate card matches this line (route, mode, load, cargo, currency, charge, date): enter the price.",
     "RATE_SEVERAL": "Several approved rate cards match this line: choose the rate card, or enter the price.",
+    "INVOICE_CURRENCY_REPRICE": "The invoice is in {from}: to invoice in {to}, enter every price in {to}.",
     "QUOTED_PRICE_OTHER_CURRENCY": "The shipment's quotation prices this charge in another currency: invoice in that currency, or enter the price.",
     "QUOTED_PRICE_SEVERAL": "The shipment's quotation has several lines for this charge: enter the price.",
     "PRICE_AS_ONE_UNIT": "A minimum or a discount applies to this charge: invoice it as quantity 1, or enter the price.",
@@ -2270,7 +2382,10 @@
     "ALLOCATION_OTHER_CUSTOMER": "This invoice is not one of this customer's invoices.",
     "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
     "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
-    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that."
+    "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that.",
+    "BRANCH_REQUIRED": "Choose the branch of this draft.",
+    "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs.",
+    "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2289,6 +2404,7 @@
     "kind_PORT": "Port",
     "kind_CITY": "City",
     "kind_BORDER": "Border point",
-    "kind_OTHER": "Other"
+    "kind_OTHER": "Other",
+    "countryFromCity": "The city's country: a place is in the country of its city."
   }
 }

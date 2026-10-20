@@ -7,15 +7,44 @@ import type { Locale } from './locales.js';
  * data: ports, container types and charge types are tables the client extends.
  */
 
-export const SHIPPING_MODES = ['SEA', 'ROAD'] as const;
+/** SEA_ROAD: a sea leg, then a road leg from the port of discharge (owner, 2026-10-19). */
+export const SHIPPING_MODES = ['SEA', 'ROAD', 'SEA_ROAD'] as const;
 export type ShippingMode = (typeof SHIPPING_MODES)[number];
 
-/** Sea only. */
+/** The mode has a sea leg: FCL/LCL apply, and sea statuses and consolidation. */
+export function hasSeaLeg(mode: ShippingMode): boolean {
+  return mode === 'SEA' || mode === 'SEA_ROAD';
+}
+
+/** The mode has a road leg of its own (main freight by road). */
+export function hasRoadLeg(mode: ShippingMode): boolean {
+  return mode === 'ROAD' || mode === 'SEA_ROAD';
+}
+
+/** The mode of a sea leg and a road leg chosen as two ticks; null when neither is ticked. */
+export function modeOfLegs(sea: boolean, road: boolean): ShippingMode | null {
+  if (sea && road) return 'SEA_ROAD';
+  if (sea) return 'SEA';
+  if (road) return 'ROAD';
+  return null;
+}
+
+/** Modes with a sea leg only. */
 export const LOAD_TYPES = ['FCL', 'LCL'] as const;
 export type LoadType = (typeof LOAD_TYPES)[number];
 
 export const CARGO_TYPES = ['CONTAINER', 'PALLET', 'BARREL', 'GENERAL'] as const;
 export type CargoType = (typeof CARGO_TYPES)[number];
+
+/**
+ * The cargo types offered on a new booking, quotation or rate (owner, 2026-10-19): container,
+ * pallet or barrel. GENERAL stays readable on records made before.
+ */
+export const OFFERED_CARGO_TYPES = [
+  'CONTAINER',
+  'PALLET',
+  'BARREL',
+] as const satisfies readonly CargoType[];
 
 export const RATE_UNITS = [
   'PER_CONTAINER',
@@ -106,8 +135,18 @@ export interface CurrencyDto extends CodeNameDto {
   decimalPlaces: number;
 }
 
+/** A branch by name, for showing which branch a record belongs to (e.g. a shared rate card). */
+export interface BranchNameDto {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+}
+
 /** GET /master-data: everything the commercial and shipment screens need for their dropdowns. */
 export interface MasterDataDto {
+  /** Every branch, by name only. */
+  branches: BranchNameDto[];
   locations: LocationDto[];
   containerTypes: CodeNameDto[];
   chargeTypes: CodeNameDto[];
@@ -442,8 +481,11 @@ export interface BookingInput {
   originLocationId: string;
   destinationLocationId: string;
   mode: ShippingMode;
+  /** Omitted: FCL when a line is a container, else LCL (a mode with a sea leg only). */
   loadType?: LoadType | null;
-  cargoType: CargoType;
+  /** Omitted: the first line's. Required when the booking has no lines. */
+  cargoType?: CargoType | null;
+  /** Omitted: the lines' descriptions. */
   cargoDescription?: string | null;
   services: BookingService[];
   shipperId?: string | null;
@@ -469,6 +511,71 @@ export interface BookingFromQuotationRequest {
   items?: BookingItemInput[];
 }
 
+/**
+ * Where a suggested set of booking parties comes from: the parties of the customer's last booking
+ * that named any, or the customer's only party (as consignee) when it has exactly one.
+ */
+export const BOOKING_PARTY_SOURCES = ['LAST_BOOKING', 'ONLY_PARTY'] as const;
+export type BookingPartySource = (typeof BOOKING_PARTY_SOURCES)[number];
+
+/**
+ * GET /bookings/party-suggestion?customerId=: parties a new booking of this customer may start
+ * from. A suggestion only: the form shows its source, the person may change it, and the API checks
+ * on save that each party is the customer's. `source` null: nothing to suggest.
+ */
+export interface BookingPartySuggestionDto {
+  customerId: string;
+  source: BookingPartySource | null;
+  /** With LAST_BOOKING: the booking the parties come from. */
+  bookingId: string | null;
+  bookingNumber: string | null;
+  shipperId: string | null;
+  consigneeId: string | null;
+  notifyPartyId: string | null;
+}
+
+/**
+ * GET /bookings/from-quotation/:quotationId: what a booking made from this approved quotation
+ * starts from, for the person to review and save (POST /bookings/from-quotation/:quotationId).
+ * Nothing is created by reading it. Route, mode, load type and cargo come from the quotation and
+ * stay as they are; `items` holds the container lines the quotation prices per container (its
+ * rate card's container type and the line's whole quantity), never its other charges.
+ */
+export interface BookingFromQuotationPreviewDto {
+  quotationId: string;
+  quotationNumber: string;
+  branchId: string;
+  customerId: string;
+  customerName: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  cargoType: CargoType;
+  cargoDescription: string | null;
+  items: BookingItemInput[];
+  parties: BookingPartySuggestionDto;
+}
+
+/** Where a new quotation's default currency comes from. */
+export const QUOTATION_CURRENCY_SOURCES = ['CUSTOMER', 'BRANCH'] as const;
+export type QuotationCurrencySource = (typeof QUOTATION_CURRENCY_SOURCES)[number];
+
+/**
+ * GET /quotations/defaults?customerId=: values a new quotation for this customer starts from. The
+ * currency is the customer's preferred one when it is active, else its branch's; valid-until is
+ * the branch's today plus `validityDays` (configuration). Suggestions for a new form only: the
+ * API still takes whatever currency and date are sent.
+ */
+export interface QuotationDefaultsDto {
+  customerId: string;
+  currency: CurrencyCode;
+  currencySource: QuotationCurrencySource;
+  today: DateString;
+  validUntil: DateString;
+  validityDays: number;
+}
+
 export interface ReasonRequest {
   reason: string;
 }
@@ -487,6 +594,8 @@ export const FORM_REFUSALS = [
   'DIMENSIONS_TOGETHER',
   'VOLUME_TOO_LARGE',
   'VALID_UNTIL_PAST',
+  // A booking made from a quotation: its route and mode are the quotation's.
+  'QUOTED_ROUTE_FIXED',
   'CURRENCY_NOT_ACTIVE',
   'RATE_NOT_USABLE',
   // The system price (no rate card and no price given): none or several rate cards match.
@@ -502,6 +611,7 @@ export const FORM_REFUSALS = [
   'SAME_CONTAINER',
   'SHIPMENT_OTHER_BRANCH',
   'SHIPMENT_NOT_LCL_SEA',
+  'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
   // A booking that names an open container (booking drafts): it must fit the container.
@@ -510,6 +620,8 @@ export const FORM_REFUSALS = [
   'CONTAINER_BOOKING_NO_MAIN_FREIGHT',
   // An invoice draft line priced by NOLON (no unit price given), from the shipment's quotation.
   'QUOTED_PRICE_OTHER_CURRENCY',
+  // A draft invoice moved to another currency without its prices entered anew: `from`, `to`.
+  'INVOICE_CURRENCY_REPRICE',
   'QUOTED_PRICE_SEVERAL',
   'PRICE_AS_ONE_UNIT',
   // A receipt (receipt drafts): the cash or bank account, and each allocation to an invoice.
@@ -519,5 +631,42 @@ export const FORM_REFUSALS = [
   'ALLOCATION_NOT_APPROVED',
   'ALLOCATION_OTHER_CURRENCY',
   'ALLOCATION_EXCEEDS_BALANCE',
+  // An entry draft's branch (drafts saved with missing values): a draft with no customer or
+  // shipment yet names its branch; one with them belongs to their branch.
+  'BRANCH_REQUIRED',
+  'BRANCH_MISMATCH',
+  // A location (master data) with a city is in the city's country: params `city` and `country`.
+  'CITY_OTHER_COUNTRY',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
+
+/** A non-negative decimal as text, scaled to `scale` places; null when it is not one or has more. */
+function scaledDecimal(value: string, scale: number): bigint | null {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return null;
+  const [, whole = '', fraction = ''] = match;
+  if (fraction.length > scale) return null;
+  return BigInt(whole + fraction.padEnd(scale, '0'));
+}
+
+/**
+ * CBM of `quantity` pieces of L × W × H centimetres, rounded half up to 4 places: the same value
+ * the API stores (bookings/cbm.ts), for showing while the form is filled in. Null until the three
+ * dimensions (up to 2 decimals each) and a whole quantity are given.
+ */
+export function cbmOf(
+  lengthCm: string,
+  widthCm: string,
+  heightCm: string,
+  quantity: string,
+): DecimalString | null {
+  const dims = [lengthCm, widthCm, heightCm].map((v) => scaledDecimal(v, 2));
+  const pieces = scaledDecimal(quantity, 0);
+  if (pieces === null || dims.some((d) => d === null)) return null;
+  // Each dimension is in hundredths: the product is in 1e-6 cm³; a CBM is 1e6 cm³.
+  const product = dims.reduce<bigint>((a, d) => a * (d ?? 0n), pieces);
+  // 1e-6 cm³ to 1e-4 CBM: divide by 1e8, half up.
+  const tenThousandths = (product + 50_000_000n) / 100_000_000n;
+  const text = tenThousandths.toString().padStart(5, '0');
+  return `${text.slice(0, -4)}.${text.slice(-4)}`;
+}

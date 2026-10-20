@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -17,6 +18,8 @@ import {
   type EntryDraftSummaryDto,
   type InvoiceDraftDto,
   type InvoiceDraftListItemDto,
+  type InvoiceDraftSuggestedValuesDto,
+  type InvoiceSuggestionDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -42,20 +45,42 @@ import { InvoiceDraftsService } from './invoice-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
+/**
+ * An invoice draft's values: an invoice's, each checked the same way when given, none of them
+ * required (owner decision, 2026-10-17). The draft belongs to the shipment's owning branch, or to
+ * the branch it names while it has no shipment.
+ */
+const draftValues = {
+  shipmentId: z.uuid().nullish(),
+  currency: currencyCode.nullish(),
+  invoiceDate: dateString.nullish(),
+  dueDate: dateString.nullish(),
+  notes: optionalText(2000),
+  // No unit price: NOLON prices the line (the shipment's quotation, else its rate card), once
+  // the draft can be priced.
+  lines: z
+    .array(
+      invoiceLine.extend({
+        chargeTypeCode: invoiceLine.shape.chargeTypeCode.nullish(),
+        quantity: invoiceLine.shape.quantity.nullish(),
+        unitPrice: amount.nullish(),
+      }),
+    )
+    .max(100),
+};
 const createBody = z
   .object({
-    shipmentId: z.uuid(),
-    currency: currencyCode,
-    invoiceDate: dateString,
-    dueDate: dateString,
-    notes: optionalText(2000),
-    // No unit price: NOLON prices the line (the shipment's quotation, else its rate card).
-    lines: z
-      .array(invoiceLine.extend({ unitPrice: amount.optional() }))
-      .min(1)
-      .max(100),
+    ...draftValues,
+    lines: draftValues.lines.optional(),
+    branchId: z.uuid().nullish(),
     idempotencyKey,
   })
+  .strict();
+/** A person's edit: any value (a shipment of the draft's branch), at the version they read. */
+const updateBody = z
+  .object(draftValues)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
   .strict();
 const approveBody = z.object({ version: z.number().int().min(1) }).strict();
 const assistantApproveBody = z
@@ -63,6 +88,13 @@ const assistantApproveBody = z
   .strict();
 const rejectBody = z
   .object({ version: z.number().int().min(1), reason: requiredText(500) })
+  .strict();
+const suggestBody = z
+  .object({
+    shipmentId: z.uuid(),
+    currency: currencyCode.optional(),
+    invoiceDate: dateString.optional(),
+  })
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
 
@@ -94,6 +126,18 @@ export class InvoiceDraftsController {
     );
   }
 
+  /**
+   * What NOLON would put on an invoice for the shipment (its quotation, else its rate cards), for
+   * the currency and invoice date given or NOLON's defaults; nothing is written.
+   */
+  @AgentDraftCheckable()
+  @Post('suggest')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('customer_invoices:create')
+  suggest(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<InvoiceSuggestionDto> {
+    return this.drafts.suggest(user, parse(suggestBody, body));
+  }
+
   @AgentReadable()
   @Get('by-key/:key')
   @RequirePermission('customer_invoices:create')
@@ -110,6 +154,19 @@ export class InvoiceDraftsController {
     return this.drafts.list(user, parse(listQuery, query).status);
   }
 
+  /**
+   * NOLON's suggestion for the currency and dates the draft misses, for the review screen's form
+   * (applied, if the person keeps them, with the PATCH). A person's read (not @AgentReadable).
+   */
+  @Get(':id/suggested-values')
+  @RequirePermission('customer_invoices:create')
+  suggestedValues(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<InvoiceDraftSuggestedValuesDto> {
+    return this.drafts.suggestedValues(user, id);
+  }
+
   @Get(':id')
   @RequirePermission('customer_invoices:view')
   get(
@@ -117,6 +174,17 @@ export class InvoiceDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<InvoiceDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('customer_invoices:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<InvoiceDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

@@ -26,12 +26,20 @@ export function CreditNoteFields({
   currency,
   note,
   defaultDate,
+  fullBalance,
 }: {
   currency: string;
   note?: CreditNoteDto;
   defaultDate: string;
+  /**
+   * The invoice's balance as the API returned it. When given, a "full balance" button puts it in
+   * the amount (functional review C8); the amount is never filled without that press, and stays
+   * editable.
+   */
+  fullBalance?: string;
 }) {
   const t = useTranslations('CreditNotes');
+  const [amount, setAmount] = useState(note?.amount ?? '');
   return (
     <>
       <div className="grid">
@@ -52,9 +60,17 @@ export function CreditNoteFields({
             inputMode="decimal"
             dir="ltr"
             pattern={AMOUNT_PATTERN}
-            defaultValue={note?.amount ?? ''}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
           />
         </label>
+        {fullBalance !== undefined && (
+          <div className="actions">
+            <button type="button" onClick={() => setAmount(fullBalance)}>
+              {t('fullBalance', { amount: fullBalance, currency })}
+            </button>
+          </div>
+        )}
       </div>
       <label className="field">
         {t('reason')}

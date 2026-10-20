@@ -6,6 +6,7 @@ import type {
   EntryDraftSummaryDto,
   MyDraftItemDto,
   QuotationDraftDto,
+  ReviewDraftsPageDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -280,6 +281,115 @@ describe('my drafts', () => {
     await r.agentGet(`/assistant-drafts/mine?ids=${tooMany}`, tokens.agent).expect(400);
     await r.agentGet('/assistant-drafts/mine?ids=nope', tokens.agent).expect(400);
     await r.agentGet('/assistant-drafts/mine?ids=', tokens.agent).expect(400);
+  });
+});
+
+// Functional review هـ2: the reviewers' list, "everything waiting" (GET /assistant-drafts/review):
+// open drafts of every kind the reviewer may decide, whoever they were made for, by their
+// permissions and branches, a page at a time.
+describe("the reviewers' list", () => {
+  const review = async (cookie: string, query = '') =>
+    (await r.get(`/assistant-drafts/review${query}`, cookie).expect(200))
+      .body as ReviewDraftsPageDto;
+  const reviewIds = async (cookie: string, query = '?limit=50') =>
+    (await review(cookie, query)).items.map((i) => i.id);
+  let warehouseDxb = '';
+  let financeDxb = '';
+
+  beforeAll(async () => {
+    warehouseDxb = await signIn(t, (await createUser(t.prisma, ['WAREHOUSE'], ['DXB'])).email);
+    financeDxb = await signIn(t, (await createUser(t.prisma, ['FINANCE'], ['DXB'])).email);
+  });
+
+  it("lists another person's open drafts in the reviewer's branches, with what they miss", async () => {
+    const dxbDraft = await proposeQuotation(dxbCustomer.id);
+    const jedDraft = await proposeQuotation(jedCustomer.id);
+    const partial = (
+      await r
+        .agentPost('/quotation-drafts', tokens.agent, {
+          ...quotationRequest(dxbCustomer.id),
+          validUntil: null,
+        })
+        .expect(201)
+    ).body as EntryDraftSummaryDto;
+    const page = await review(cookies.salesDxb, '?limit=50');
+    const item = page.items.find((i) => i.id === dxbDraft.id);
+    expect(item).toEqual({
+      kind: 'quotation',
+      id: dxbDraft.id,
+      subject: dxbCustomer.name,
+      branchId: dxbCustomer.branchId,
+      branchCode: 'DXB',
+      createdAt: dxbDraft.createdAt,
+      expiresAt: dxbDraft.expiresAt,
+      createdByName: expect.any(String) as string,
+      missingCount: 0,
+      reviewPath: `/drafts/quotations/${dxbDraft.id}`,
+    });
+    expect(page.items.find((i) => i.id === partial.id)?.missingCount).toBe(1);
+    // Another branch's draft is not this reviewer's; the JED reviewer sees it.
+    expect(page.items.map((i) => i.id)).not.toContain(jedDraft.id);
+    expect(await reviewIds(cookies.salesJed)).toContain(jedDraft.id);
+    expect(await reviewIds(cookies.salesJed)).not.toContain(dxbDraft.id);
+  });
+
+  it('lists only kinds the reviewer may view and decide, and only open drafts', async () => {
+    const draft = await proposeQuotation(dxbCustomer.id);
+    // Warehouse staff do not see quotations; Finance sees them but may not decide them.
+    expect(await reviewIds(warehouseDxb)).not.toContain(draft.id);
+    expect(await reviewIds(financeDxb)).not.toContain(draft.id);
+    expect(await reviewIds(cookies.salesDxb)).toContain(draft.id);
+    await r
+      .post(`/quotation-drafts/${draft.id}/reject`, cookies.salesDxb, { version: 1, reason: 'No' })
+      .expect(200);
+    expect(await reviewIds(cookies.salesDxb)).not.toContain(draft.id);
+  });
+
+  it("filters by kind, and is a person's read only", async () => {
+    const draft = await proposeQuotation(dxbCustomer.id);
+    expect(await reviewIds(cookies.salesDxb, '?kind=quotation&limit=50')).toContain(draft.id);
+    expect(await reviewIds(cookies.salesDxb, '?kind=booking&limit=50')).not.toContain(draft.id);
+    await r.agentGet('/assistant-drafts/review', tokens.agent).expect(403);
+    await r.get('/assistant-drafts/review?kind=journal', cookies.salesDxb).expect(400);
+    await r.get('/assistant-drafts/review?limit=51', cookies.salesDxb).expect(400);
+    await r.get('/assistant-drafts/review?status=DRAFT', cookies.salesDxb).expect(400);
+    const at = encodeURIComponent(new Date().toISOString());
+    await r.get(`/assistant-drafts/review?before=${at}`, cookies.salesDxb).expect(400);
+    await r.get(`/assistant-drafts/review?beforeId=${draft.id}`, cookies.salesDxb).expect(400);
+  });
+
+  it('pages newest first without skipping drafts that share a creation time', async () => {
+    const a = await proposeQuotation(dxbCustomer.id);
+    const b = await proposeQuotation(dxbCustomer.id);
+    const c = await proposeQuotation(dxbCustomer.id);
+    // Ahead of every other draft: c newest, then a and b tied.
+    const tied = new Date(Date.now() + 2 * 86_400_000);
+    await t.prisma.quotationDraft.update({
+      where: { id: c.id },
+      data: { createdAt: new Date(tied.getTime() + 1000) },
+    });
+    await t.prisma.quotationDraft.updateMany({
+      where: { id: { in: [a.id, b.id] } },
+      data: { createdAt: tied },
+    });
+    const first = await review(cookies.salesDxb, '?limit=1');
+    expect(first.items.map((i) => i.id)).toEqual([c.id]);
+    expect(first.next).toEqual({ before: first.items[0]?.createdAt, beforeId: c.id });
+    const seen: string[] = [];
+    let next = first.next;
+    for (let i = 0; i < 2 && next; i += 1) {
+      const page = await review(
+        cookies.salesDxb,
+        `?limit=1&before=${encodeURIComponent(next.before)}&beforeId=${next.beforeId}`,
+      );
+      seen.push(...page.items.map((x) => x.id));
+      next = page.next;
+    }
+    expect(seen.sort()).toEqual([a.id, b.id].sort());
+    expect(next).not.toBeNull();
+    // A page per kind: the same order through the kind filter.
+    const kindPage = await review(cookies.salesDxb, '?kind=quotation&limit=2');
+    expect(kindPage.items.map((i) => i.id)[0]).toBe(c.id);
   });
 });
 

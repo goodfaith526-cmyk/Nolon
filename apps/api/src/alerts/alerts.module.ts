@@ -12,5 +12,6 @@ import { AlertsService } from './alerts.service.js';
   imports: [ShipmentsModule, BillingModule, CustomsModule, WarehouseModule, TransportModule],
   controllers: [AlertsController],
   providers: [AlertsService],
+  exports: [AlertsService],
 })
 export class AlertsModule {}

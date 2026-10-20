@@ -8,6 +8,7 @@ import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { MissingFields } from './MissingFields';
 
 /** A party (shipper, consignee, notify party) the assistant proposed for a customer. */
 export function PartyDraftReview({ id }: { id: string }) {
@@ -19,29 +20,38 @@ export function PartyDraftReview({ id }: { id: string }) {
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const party = draft.request;
+  // A value the draft still misses shows as a dash (MissingFields names it).
+  const customerName = draft.customerName ?? '—';
 
   return (
     <DraftFrame
       draft={draft}
       apiPath="/party-drafts"
-      title={t('partyTitle', { name: party.name, customer: draft.customerName })}
+      title={t('partyTitle', { name: party.name ?? '—', customer: customerName })}
       approveHint={t('partyApproveHint')}
       result={
-        draft.partyId
-          ? { label: draft.customerNumber, href: `/customers/${draft.customerId}` }
+        draft.partyId && draft.customerId
+          ? { label: draft.customerNumber ?? '', href: `/customers/${draft.customerId}` }
           : null
       }
       approveBody={confirmedBody(draft.evidence, ticked)}
       onChanged={setRecord}
     >
+      <MissingFields draft={draft} apiPath="/party-drafts" onChanged={setRecord} />
       <dl className="details">
         <dt>{t('customer')}</dt>
         <dd>
-          <Link href={`/customers/${draft.customerId}`}>{draft.customerName}</Link>{' '}
-          <span dir="ltr">{draft.customerNumber}</span>
+          {draft.customerId ? (
+            <>
+              <Link href={`/customers/${draft.customerId}`}>{customerName}</Link>{' '}
+              <span dir="ltr">{draft.customerNumber}</span>
+            </>
+          ) : (
+            '—'
+          )}
         </dd>
         <dt>{tcu('name')}</dt>
-        <dd>{party.name}</dd>
+        <dd>{party.name ?? '—'}</dd>
         <dt>{tcu('companyName')}</dt>
         <dd>{party.companyName ?? '—'}</dd>
         <dt>{t('phone')}</dt>
@@ -58,8 +68,8 @@ export function PartyDraftReview({ id }: { id: string }) {
       <EvidenceChecklist
         evidence={draft.evidence}
         values={{
-          customerId: { label: t('customer'), value: draft.customerName },
-          name: { label: tcu('name'), value: party.name },
+          customerId: { label: t('customer'), value: customerName },
+          name: { label: tcu('name'), value: party.name ?? '—' },
           phone: { label: t('phone'), value: party.phone ?? '—' },
         }}
         ticked={ticked}

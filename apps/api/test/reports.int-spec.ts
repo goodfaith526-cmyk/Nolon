@@ -118,9 +118,11 @@ describe('financial reports', () => {
   ): Promise<CustomerInvoiceDto> {
     const draft = (await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201))
       .body as CustomerInvoiceDto;
-    await patch(`/customer-invoices/${draft.id}`, cookies.financePts, { ...fields, lines }).expect(
-      200,
-    );
+    await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
+      ...fields,
+      repriced: true,
+      lines,
+    }).expect(200);
     if (!approve) return draft;
     return (await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200))
       .body as CustomerInvoiceDto;

@@ -192,6 +192,8 @@ export interface ShipmentConsolidationDto {
   number: string;
   status: ConsolidationStatus;
   containerNumber: string | null;
+  sealNumber: string | null;
+  containerTypeCode: string;
   /** False when the container is of a branch the user does not work in. */
   canOpen: boolean;
 }

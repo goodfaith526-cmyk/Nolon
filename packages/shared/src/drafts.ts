@@ -70,6 +70,63 @@ export interface EntryDraftSummaryDto {
   lineCount: number;
   expiresAt: string;
   createdAt: string;
+  /**
+   * For kinds saved with missing values (trip, rate card, quotation, booking): the values the
+   * draft still misses before it can be approved (MissingFieldsReview), so the assistant can say
+   * so. Paths only, never values.
+   */
+  missingFields?: string[];
+}
+
+/**
+ * A record's request as an entry draft holds it (owner decision, 2026-10-17): a draft is saved
+ * with only its key fields, so each value the record requires (`K`) may be missing (null) until a
+ * person fills it in on the review screen. Every value present is checked as the record checks it.
+ */
+export type DraftValues<T, K extends keyof T> = Omit<T, K> & { [P in K]?: T[P] | null };
+
+/**
+ * The branch of a draft whose customer or shipment may be missing: the draft belongs to its
+ * customer's or shipment's branch; with neither, it names one of the user's branches (400
+ * BRANCH_REQUIRED otherwise, 403 outside them). A branch given with them must be theirs (400
+ * BRANCH_MISMATCH). The branch is security context, never a business field.
+ */
+export interface DraftBranchChoice {
+  branchId?: string | null;
+}
+
+/**
+ * PATCH /<kind>-drafts/:id: a person fills in or changes values of an open draft, at the version
+ * they read. Each value given replaces the draft's (null clears it; a list as a whole); the
+ * branch stays. The words of a value the person changes are dropped: it is theirs now.
+ */
+export type DraftUpdateRequest<T> = Partial<T> & { version: number };
+
+/**
+ * The values a draft still misses before it can be approved, as request paths (`originLocationId`,
+ * `lines[0].quantity`), worked out from the record's own required rules. Empty when complete.
+ */
+export interface MissingFieldsReview {
+  missingFields: string[];
+}
+
+/**
+ * The code of an approval refused (422) while the draft misses values, or holds values the record
+ * would refuse. Every kind's approval runs its completeness and validity gate first, before
+ * anything is checked against live data or recorded.
+ */
+export const DRAFT_INCOMPLETE = 'DRAFT_INCOMPLETE';
+
+/** 422 body of an approval refused by the gate; nothing was recorded. */
+export interface DraftIncompleteRefusal {
+  statusCode: 422;
+  code: typeof DRAFT_INCOMPLETE;
+  message: string;
+  missingFields: string[];
+  /** Values the draft holds that the record would refuse as malformed (usually none). */
+  invalidFields: string[];
+  /** Both lists' paths, where the web reads a refusal's fields. */
+  fields: string[];
 }
 
 /**
@@ -205,6 +262,11 @@ export type DraftPreCheckDto =
       priceSources: DraftPriceSource[] | null;
       /** The values NOLON would fill in (each system-priced line's unit price). */
       computed: DraftComputedValue[];
+      /**
+       * For kinds saved with missing values: what the draft would still miss (a create saves it,
+       * an approval waits for them). Absent for other kinds.
+       */
+      missingFields?: string[];
     }
   | { ok: false; valuesHash: string | null; refusals: DraftCheckRefusal[] };
 
@@ -273,6 +335,44 @@ export interface MyDraftItemDto {
   reviewPath: string;
   /** Set once approved. */
   result: MyDraftResult | null;
+}
+
+/** Most drafts one page of the reviewers' list returns. */
+export const REVIEW_DRAFTS_MAX = 50;
+
+/**
+ * A draft waiting for this reviewer (GET /assistant-drafts/review): status DRAFT, of a kind they
+ * may view, in their branches, that they may decide now, whoever it was made for. A person's
+ * read only (never the assistant's).
+ */
+export interface ReviewDraftItemDto {
+  kind: MyDraftKind;
+  id: string;
+  /** What the draft is about (the customer, the shipment...), as its review list names it. */
+  subject: string;
+  branchId: string;
+  branchCode: string;
+  createdAt: string;
+  expiresAt: string;
+  /** The staff member the assistant acted for. */
+  createdByName: string;
+  /**
+   * How many values the draft still misses before it can be approved (its missingFields); null
+   * for a GRN draft, whose receipt details are entered on its shipment's page.
+   */
+  missingCount: number | null;
+  /** As MyDraftItemDto's: `/drafts/<page>/<id>`, or a GRN draft's shipment page. */
+  reviewPath: string;
+}
+
+/**
+ * A page of the reviewers' list, newest first. `next` is the cursor of the page after it (pass it
+ * as `before` and `beforeId`); null on the last page. A page may hold fewer items than asked
+ * (drafts this reviewer may see but not decide are left out), and still have a next page.
+ */
+export interface ReviewDraftsPageDto {
+  items: ReviewDraftItemDto[];
+  next: { before: string; beforeId: string } | null;
 }
 
 /** Draft kinds whose idempotency key the assistant can settle: every kind it creates. */

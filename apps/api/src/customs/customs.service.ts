@@ -12,22 +12,29 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
-import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
+import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
-import { clearanceProblem, feeTotals, isValidFeeAmount } from './customs-rules.js';
+import {
+  clearanceMoment,
+  clearanceProblem,
+  feeTotals,
+  isValidFeeAmount,
+  shipmentStepsForFile,
+} from './customs-rules.js';
 
 type Tx = Prisma.TransactionClient;
 
 /**
  * The customs file of a shipment (scope 11): clearance status, declaration number, broker,
  * dates, notes and fees. Access follows the shipment. Fees are recorded with their currency
- * only: no journal entry is posted (supplier bills, group 4b, will carry the cost). Moving the
- * shipment to CUSTOMS_IN_PROGRESS / CUSTOMS_CLEARED stays with the shipment state machine.
+ * only: no journal entry is posted (supplier bills, group 4b, will carry the cost). Saving the
+ * file moves the shipment to CUSTOMS_IN_PROGRESS / CUSTOMS_CLEARED through the shipment state
+ * machine in the same transaction (functional review D1); the manual status buttons stay.
  */
 @Injectable()
 export class CustomsService {
@@ -84,7 +91,17 @@ export class CustomsService {
     };
   }
 
-  /** Creates or replaces the customs file. 409 once the shipment is closed or cancelled. */
+  /**
+   * Creates or replaces the customs file, and moves the shipment along with it in the same
+   * transaction (functional review D1): a file in progress moves it to customs in progress, a
+   * cleared file to cleared, dated by the clearance date (shipmentStepsForFile). Each step goes
+   * through the state machine with the user's permissions, as a warehouse receipt does: a step the
+   * shipment has passed or cannot take now is skipped (an already cleared shipment, one gone on
+   * to a later stage, a re-save), so the status never goes back and no event repeats; a step it
+   * can take but the user may not is refused (403) and nothing is saved. A clearance dated before
+   * the shipment's latest event is refused (409) rather than rewriting its timeline. 409 once the
+   * shipment is closed or cancelled.
+   */
   async save(
     user: AuthUser,
     shipmentId: string,
@@ -93,6 +110,22 @@ export class CustomsService {
     const shipment = await this.requireActive(user, shipmentId);
     const problem = clearanceProblem(input);
     if (problem) throw new BadRequestException(problem);
+    const now = new Date();
+    let occurredAt = now;
+    if (input.status === 'CLEARED' && input.clearedOn) {
+      const branch = await this.prisma.branch.findUniqueOrThrow({
+        where: { id: shipment.branchId },
+        select: { timezone: true },
+      });
+      const moment = clearanceMoment(
+        input.clearedOn,
+        branch.timezone,
+        todayIn(branch.timezone, now),
+        now,
+      );
+      if (!moment) throw new BadRequestException('The clearance date cannot be in the future');
+      occurredAt = moment;
+    }
     const fields = {
       status: input.status,
       declarationNumber: input.declarationNumber ?? null,
@@ -103,12 +136,20 @@ export class CustomsService {
       updatedById: user.id,
     };
     await this.prisma.$transaction(async (tx) => {
-      await this.lockActive(tx, shipmentId);
+      // Exclusive: this write may change the shipment's status (as a warehouse receipt does).
+      await this.lockActive(tx, shipmentId, true);
       await tx.customsClearance.upsert({
         where: { shipmentId },
         create: { ...fields, shipmentId, branchId: shipment.branchId },
         update: fields,
       });
+      for (const step of shipmentStepsForFile(input.status)) {
+        await this.shipments.advanceInTx(tx, user, shipmentId, step, {
+          occurredAt,
+          note: input.declarationNumber ?? null,
+          beforeLatestEvent: "The clearance date cannot be before the shipment's latest event",
+        });
+      }
     });
     return this.get(user, shipmentId);
   }
@@ -168,8 +209,8 @@ export class CustomsService {
   }
 
   /** Under the shipment lock: a close or cancel that commits meanwhile is seen here. */
-  private async lockActive(tx: Tx, shipmentId: string): Promise<void> {
-    if (!isActive(await this.shipments.lockForChildWrite(tx, shipmentId))) {
+  private async lockActive(tx: Tx, shipmentId: string, exclusive = false): Promise<void> {
+    if (!isActive(await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive }))) {
       throw new ConflictException('A closed or cancelled shipment cannot be edited');
     }
   }

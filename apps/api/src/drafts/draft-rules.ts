@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import {
+  DRAFT_INCOMPLETE,
   DRAFT_PROPOSAL_RETENTION_DAYS,
   DRAFT_TTL_DAYS,
   type DraftFieldMatch,
@@ -15,6 +16,9 @@ import {
   type FormRefusal,
 } from '@nolon/shared';
 import type { z } from 'zod';
+import type { AuthUser } from '../auth/auth-user.js';
+import { assertBranchAccess } from '../auth/branch-scope.js';
+import { fieldRefusal } from '../common/validation.js';
 import { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -60,6 +64,105 @@ export function requireOpen(
   if (draft.version !== version) {
     throw new ConflictException(`This ${label} changed since you opened it: reload it`);
   }
+}
+
+/**
+ * A value of a draft that its missing fields said is there (a draft is saved with missing values,
+ * MissingFieldsReview): absent here is a bug, not a refusal.
+ */
+export function storedValue<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) throw new Error(`Entry draft has no ${what}`);
+  return value;
+}
+
+/**
+ * The branch a draft is saved in (no-required-fields plan, section 1). The branch is security
+ * context, never a business field, so it is never missing:
+ * - a draft whose parent is given (its customer, its shipment, its quotation) belongs to the
+ *   parent's branch; a branch given with it must be that one (400 BRANCH_MISMATCH), and it must be
+ *   one of the user's branches (403). A parent's lookup may see more than the user's branches (a
+ *   shipment shared with one of them), so a draft is never filed in a branch the user lacks;
+ * - a draft with no parent yet names its branch (400 BRANCH_REQUIRED otherwise), and that branch
+ *   must be one of the user's branches now, as NOLON loads them for this request (403).
+ */
+export function draftBranch(
+  user: AuthUser,
+  given: string | null | undefined,
+  parentBranchId: string | null,
+): string {
+  const named = given ? given.toLowerCase() : null;
+  if (parentBranchId !== null) {
+    if (named !== null && named !== parentBranchId.toLowerCase()) {
+      throw fieldRefusal('BRANCH_MISMATCH', 'This branch is not the branch of the record', [
+        'branchId',
+      ]);
+    }
+    assertBranchAccess(user, parentBranchId);
+    return parentBranchId;
+  }
+  if (named === null) {
+    throw fieldRefusal('BRANCH_REQUIRED', 'Choose the branch of this draft', ['branchId']);
+  }
+  assertBranchAccess(user, named);
+  return named;
+}
+
+/**
+ * A create request's hash with the branch it named, when it named one: a request that names no
+ * branch (every complete request an older client sends) hashes exactly as before.
+ */
+export function withBranch(hash: string, branchId: string | null | undefined): string {
+  return branchId ? requestHash({ hash, branchId: branchId.toLowerCase() }) : hash;
+}
+
+/** The path of a line's field in a request, as missing fields name it: `lines[0].quantity`. */
+export function linePath(list: string, index: number, field: string): string {
+  return `${list}[${index}].${field}`;
+}
+
+/** Each of `fields` that `values` does not hold (null or absent), in order. */
+export function missingOf<T extends object>(values: T, fields: readonly (keyof T & string)[]) {
+  return fields.filter((field) => values[field] === null || values[field] === undefined);
+}
+
+/**
+ * An approval refused while the draft misses values, or holds values the record would refuse
+ * (422): nothing is recorded, and the body names each one (`missingFields`, `invalidFields`, and
+ * both in `fields` where the web reads a refusal's fields).
+ */
+export function draftIncomplete(
+  missingFields: readonly string[],
+  invalidFields: readonly string[] = [],
+): HttpException {
+  const reasons = [
+    ...(missingFields.length > 0 ? [`missing required values: ${missingFields.join(', ')}`] : []),
+    ...(invalidFields.length > 0 ? [`holding invalid values: ${invalidFields.join(', ')}`] : []),
+  ];
+  return new HttpException(
+    {
+      message: `This draft is ${reasons.join('; ')}`,
+      code: DRAFT_INCOMPLETE,
+      missingFields: [...missingFields],
+      invalidFields: [...invalidFields],
+      fields: [...new Set([...missingFields, ...invalidFields])],
+      params: {},
+      error: 'Unprocessable Entity',
+      statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+    },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+}
+
+/**
+ * A draft's values after a person's edit: each value the edit gives replaces the draft's (null
+ * clears it); a value it leaves out stays as it was.
+ */
+export function patched<T extends object>(current: T, patch: Partial<T>): T {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(patch) as [keyof T, T[keyof T]][]) {
+    if (value !== undefined) next[key] = value;
+  }
+  return next;
 }
 
 /** JSON with object keys sorted at every level, so equal requests hash equally. */
@@ -187,6 +290,8 @@ export interface PreCheckResult {
   currency: string | null;
   priceSources?: DraftPriceSource[] | null;
   computed?: DraftComputedValue[];
+  /** For kinds saved with missing values: what a draft of these values would still miss. */
+  missingFields?: string[];
 }
 
 const NO_TOTAL: PreCheckResult = { total: null, currency: null };
@@ -209,6 +314,7 @@ export async function preCheck(
       currency: result.currency,
       priceSources: result.priceSources ?? null,
       computed: result.computed ?? [],
+      ...(result.missingFields ? { missingFields: result.missingFields } : {}),
     };
   } catch (error) {
     if (isRefusal(error)) return { ok: false, valuesHash, refusals: refusalsOf(error) };
@@ -243,7 +349,21 @@ export async function preCheckBody<T>(
 function refusalsOf(error: HttpException): DraftCheckRefusal[] {
   const response = error.getResponse();
   const body = typeof response === 'object' && response !== null ? response : {};
-  const raw = body as { message?: unknown; code?: unknown; fields?: unknown; params?: unknown };
+  // Several refusals (fieldRefusals): each one as its own.
+  const several = (body as { refusals?: unknown }).refusals;
+  if (Array.isArray(several)) {
+    return several.flatMap((b: unknown) => refusalsOfBody(b, error.message));
+  }
+  return refusalsOfBody(body, error.message);
+}
+
+function refusalsOfBody(body: unknown, fallback: string): DraftCheckRefusal[] {
+  const raw = (typeof body === 'object' && body !== null ? body : {}) as {
+    message?: unknown;
+    code?: unknown;
+    fields?: unknown;
+    params?: unknown;
+  };
   // `parse` inside a service: the message is the list of invalid paths.
   if (Array.isArray(raw.message)) {
     return raw.message.map((path) => ({
@@ -253,7 +373,7 @@ function refusalsOf(error: HttpException): DraftCheckRefusal[] {
       params: {},
     }));
   }
-  const message = typeof raw.message === 'string' ? raw.message : error.message;
+  const message = typeof raw.message === 'string' ? raw.message : fallback;
   const code = FORM_REFUSALS.includes(raw.code as FormRefusal) ? (raw.code as FormRefusal) : null;
   const params: Record<string, string> = {};
   if (typeof raw.params === 'object' && raw.params !== null) {

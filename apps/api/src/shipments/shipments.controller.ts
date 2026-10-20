@@ -21,6 +21,7 @@ import {
   SHIPPING_MODES,
   type Page,
   type ShipmentDto,
+  type ShipmentPickPage,
   type ShipmentSummaryDto,
 } from '@nolon/shared';
 import { z } from 'zod';
@@ -95,6 +96,8 @@ const listQuery = pageQuery
   })
   .superRefine(periodsInOrder(['from', 'to'], ['etaFrom', 'etaTo']));
 
+const pickQuery = pageQuery.extend({ branchId: z.uuid() });
+
 const tokenParam = z.string().regex(/^[A-Za-z0-9_-]{32,64}$/);
 
 /**
@@ -110,6 +113,14 @@ export class ShipmentsController {
   @RequirePermission('shipments:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<ShipmentSummaryDto>> {
     return this.shipments.list(user, parse(listQuery, query));
+  }
+
+  /** Shipments to pick for a document of one branch (a supplier bill's shipment line). */
+  @Get('pick')
+  @RequirePermission('shipments:view')
+  pick(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<ShipmentPickPage> {
+    const { branchId, ...filters } = parse(pickQuery, query);
+    return this.shipments.pick(user, branchId, filters);
   }
 
   @Get('by-token/:token')

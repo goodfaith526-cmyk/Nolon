@@ -130,7 +130,14 @@ export class CustomersService {
    * createInTx then records it, so a caller (an approved assistant draft) can do so inside its own
    * transaction.
    */
-  async prepareCreate(user: AuthUser, input: CreateCustomerRequest): Promise<void> {
+  /**
+   * The checks of a create that need no lock: the branch is the user's, the references exist.
+   * A customer draft still missing values passes only the values it holds.
+   */
+  async prepareCreate(
+    user: AuthUser,
+    input: Pick<CreateCustomerRequest, 'branchId'> & Partial<CustomerInput>,
+  ): Promise<void> {
     assertBranchAccess(user, input.branchId);
     await this.checkReferences(input);
   }
@@ -526,6 +533,16 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Customer not found');
     if (!customer.isActive) throw new BadRequestException('Customer is inactive');
     return customer;
+  }
+
+  /** The ids of the customer's parties, oldest first (the caller checked the customer). */
+  async partyIds(customerId: string): Promise<string[]> {
+    const parties = await this.prisma.party.findMany({
+      where: { customerId },
+      select: { id: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return parties.map((p) => p.id);
   }
 
   /** 400 unless every given party belongs to this customer. */

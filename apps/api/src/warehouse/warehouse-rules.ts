@@ -53,6 +53,25 @@ export function totalsByWarehouse(
   return totals;
 }
 
+/**
+ * The weight still held in one warehouse (functional review D5), for suggesting the weight of a
+ * release that takes everything it holds: received minus released weight, when every receipt and
+ * release there recorded a weight. Null when a weight is missing (the remainder is not known),
+ * when nothing is held, or when the recorded weights leave nothing (or less than nothing).
+ * Never the booking's weight: only what was weighed in and out of this warehouse.
+ */
+export function remainingWeightKg(
+  movements: readonly MovementAmounts[],
+  warehouseId: string,
+): Decimal | null {
+  const here = movements.filter((m) => m.warehouseId === warehouseId);
+  if (here.some((m) => m.weightKg === null)) return null;
+  const t = totalsByWarehouse(here).get(warehouseId);
+  if (!t || t.onHandPackages <= 0) return null;
+  const left = t.receivedWeightKg.minus(t.releasedWeightKg);
+  return left.gt(0) ? left : null;
+}
+
 /** Packages held now in all warehouses: what each holds, added up. */
 export function heldPackages(movements: readonly MovementAmounts[]): number {
   let held = 0;

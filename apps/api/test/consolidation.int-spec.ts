@@ -392,6 +392,13 @@ describe('consolidated LCL containers', () => {
     const noVolume = await lclShipment(customers[2], null);
     // Not an LCL sea shipment: 400.
     await newContainer([fcl]).expect(400);
+    // Loaded at the container's port only, as a booking made for the container.
+    const fromPortSudan = await lclShipment(customers[1], '4', {
+      originLocationId: portSudan,
+      destinationLocationId: jeddahPort,
+    });
+    const otherPort = await newContainer([fromPortSudan]).expect(400);
+    expect(otherPort.body).toMatchObject({ code: 'SHIPMENT_OTHER_PORT' });
     // Between ports only.
     await newContainer([lcl], { destinationLocationId: khartoum }).expect(400);
     // Sales has no access to containers; Warehouse only views them.
@@ -454,6 +461,49 @@ describe('consolidated LCL containers', () => {
     await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
       status: 'CLOSED',
     }).expect(409);
+  });
+
+  it("finds an LCL shipment by its container's number, in the user's scope only (review D4)", async () => {
+    // A container number of its own (ISO 6346 with its check digit), so the search finds only it.
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const value = (ch: string) => {
+      const n = letters.indexOf(ch);
+      if (n < 0) return Number(ch);
+      const v = 10 + n;
+      return v + Math.floor((v - 1) / 10);
+    };
+    const serial = String(randomInt(100000, 999999));
+    const body = `ZQTU${serial}`;
+    const check = ([...body].reduce((sum, ch, i) => sum + value(ch) * 2 ** i, 0) % 11) % 10;
+    const number = `${body}${check}`;
+    const id = await lclShipment(customers[0], '2');
+    const created = (
+      await newContainer([id], { containerNumber: number, sealNumber: 'SEAL-D4' }).expect(201)
+    ).body as ConsolidationDto;
+    expect(created.containerNumber).toBe(number);
+    const search = async (cookie: string, q: string) =>
+      ((await get(`/shipments?q=${q}`, cookie).expect(200)).body as Page<ShipmentDto>).items.map(
+        (s) => s.id,
+      );
+    expect(await search(cookies.opsJed, number)).toEqual([id]);
+    expect(await search(cookies.opsJed, serial.toLowerCase())).toContain(id);
+    // Another branch's user does not see the shipment, by its container either.
+    await get(`/shipments/${id}`, cookies.opsPts).expect(404);
+    expect(await search(cookies.opsPts, number)).toEqual([]);
+    // The shipment page shows the container read-only, with its seal and type.
+    const listed = (await get(`/shipments/${id}/consolidations`, cookies.opsJed).expect(200))
+      .body as ShipmentConsolidationDto[];
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        containerNumber: number,
+        sealNumber: 'SEAL-D4',
+        containerTypeCode: '40HC',
+      }),
+    ]);
+    // A cancelled container no longer holds the shipment: the search stops finding it by it.
+    await post(`/consolidations/${created.id}/cancel`, cookies.opsJed, { reason: 'x' }).expect(200);
+    expect(await search(cookies.opsJed, number)).toEqual([]);
   });
 
   it('cancels an open container only while no approved bill charges it', async () => {

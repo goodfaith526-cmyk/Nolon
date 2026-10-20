@@ -1,9 +1,13 @@
 import type { PartyInput } from './commercial.js';
 import type {
+  DraftBranchChoice,
   DraftEvidence,
+  DraftUpdateRequest,
+  DraftValues,
   EntryDraftCheck,
   EntryDraftReviewFields,
   EvidenceReviewFields,
+  MissingFieldsReview,
 } from './drafts.js';
 
 /**
@@ -11,20 +15,31 @@ import type {
  * (entry drafts, drafts.ts). A person approves it on the review screen, which adds the party to
  * the customer with their permissions; or rejects it. A booking can then name the party.
  */
-export type PartyDraftRequest = PartyInput;
+export type PartyDraftRequest = DraftValues<PartyInput, 'name'>;
 
-/** POST /party-drafts. */
-export interface PartyDraftCreateRequest extends PartyDraftRequest {
-  idempotencyKey: string;
-  customerId: string;
-  /** The staff member's words for the values, shown beside them on the review screen. */
-  evidence?: DraftEvidence[];
-}
+/**
+ * POST /party-drafts: no value required (a draft is saved with what the user gave). With no
+ * customer yet, the draft names its branch.
+ */
+export type PartyDraftCreateRequest = PartyDraftRequest &
+  DraftBranchChoice & {
+    idempotencyKey: string;
+    customerId?: string | null;
+    /** The staff member's words for the values, shown beside them on the review screen. */
+    evidence?: DraftEvidence[];
+  };
 
-export interface PartyDraftDto extends EntryDraftReviewFields, EvidenceReviewFields {
-  customerId: string;
-  customerNumber: string;
-  customerName: string;
+/** PATCH /party-drafts/:id: a customer named must be of the draft's branch. */
+export type PartyDraftUpdateRequest = DraftUpdateRequest<
+  PartyDraftRequest & { customerId: string | null }
+>;
+
+export interface PartyDraftDto
+  extends EntryDraftReviewFields, EvidenceReviewFields, MissingFieldsReview {
+  /** Null while the draft names no customer yet. */
+  customerId: string | null;
+  customerNumber: string | null;
+  customerName: string | null;
   request: PartyDraftRequest;
   check: EntryDraftCheck | null;
   /** The party the approval added. */

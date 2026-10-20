@@ -17,7 +17,8 @@ const place = (id: string, kind: LocationDto['kind'], cityId: string | null = nu
     isActive: true,
     cityId,
   }) satisfies LocationDto;
-const locations = [place('dxb', 'CITY'), place('jea', 'PORT')];
+const locations = [place('dxb', 'CITY'), place('jea', 'PORT'), place('ruh', 'CITY')];
+locations[2] = { ...locations[2]!, countryCode: 'SA' };
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
 vi.mock('@/lib/master-data', () => ({ useLocalName: () => (l: { nameEn: string }) => l.nameEn }));
@@ -66,6 +67,45 @@ describe('Locations', () => {
     expect(calls).toContainEqual({
       path: '/master-data/locations/jea',
       init: { method: 'PATCH', body: { cityId: 'dxb' } },
+    });
+  });
+
+  it('fills the country from the city chosen for a new place, and locks it', async () => {
+    permissions = ['master_data:view', 'master_data:create'];
+    const shown = await show();
+    const form = shown.querySelector('form')!;
+    const country = form.querySelector<HTMLInputElement>('input[name="countryCode"]')!;
+    const city = form.querySelector<HTMLSelectElement>('select[name="cityId"]')!;
+    const pick = (value: string) =>
+      act(() => {
+        city.value = value;
+        city.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    expect(country.readOnly).toBe(false);
+    pick('ruh');
+    expect(country.value).toBe('SA');
+    expect(country.readOnly).toBe(true);
+    // Without a city the place names its own country, still required.
+    pick('');
+    expect(country.readOnly).toBe(false);
+    expect(country.required).toBe(true);
+    pick('dxb');
+    expect(country.value).toBe('AE');
+    for (const [name, value] of [
+      ['code', 'jxa'],
+      ['nameAr', 'x'],
+      ['nameEn', 'x'],
+    ] as const) {
+      form.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value = value;
+    }
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    expect(calls.find((c) => c.init?.method === 'POST')?.init?.body).toMatchObject({
+      kind: 'PORT',
+      countryCode: 'AE',
+      cityId: 'dxb',
     });
   });
 

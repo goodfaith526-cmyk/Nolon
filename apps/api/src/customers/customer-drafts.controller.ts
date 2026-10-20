@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -29,27 +30,24 @@ import {
 import { confirmedFields, draftEvidence } from '../drafts/draft-evidence.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { parse, requiredText } from '../common/validation.js';
-import { customerFields } from './customer-schemas.js';
+import { customerDraftFields } from './customer-schemas.js';
 import { CustomerDraftsService } from './customer-drafts.service.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
-// The contact details a person gives in a chat; terms, credit and tax details are set later.
 const createBody = z
   .object({
     idempotencyKey,
     branchId: z.uuid(),
-    kind: customerFields.kind,
-    name: customerFields.name,
-    companyName: customerFields.companyName,
-    phone: customerFields.phone,
-    whatsapp: customerFields.whatsapp,
-    email: customerFields.email,
-    city: customerFields.city,
-    address: customerFields.address,
-    notes: customerFields.notes,
+    ...customerDraftFields,
     evidence: draftEvidence(['branchId', 'name', 'phone', 'whatsapp']),
   })
+  .strict();
+/** A person's edit: any value but the branch, at the version they read. */
+const updateBody = z
+  .object(customerDraftFields)
+  .partial()
+  .extend({ version: z.number().int().min(1) })
   .strict();
 const approveBody = z
   .object({ version: z.number().int().min(1), confirmed: confirmedFields })
@@ -103,7 +101,7 @@ export class CustomerDraftsController {
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
   ): Promise<CustomerDraftListItemDto[]> {
-    return this.drafts.list(user, parse(listQuery, query).status);
+    return this.drafts.listForReview(user, parse(listQuery, query).status);
   }
 
   @Get(':id')
@@ -113,6 +111,17 @@ export class CustomerDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<CustomerDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('customers:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CustomerDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

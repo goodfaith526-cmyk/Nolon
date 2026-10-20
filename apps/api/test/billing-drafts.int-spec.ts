@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
   AccountDto,
+  AssistantDraftDto,
   AgentClientCreatedDto,
   BookingDto,
   CustomerDto,
@@ -9,6 +10,8 @@ import type {
   EntryDraftSummaryDto,
   InvoiceDraftDto,
   InvoiceDraftListItemDto,
+  InvoiceDraftSuggestedValuesDto,
+  InvoiceSuggestionDto,
   ReceiptDraftDto,
   ReceiptDraftListItemDto,
   ReceiptCashAccountDto,
@@ -27,6 +30,7 @@ import {
 import {
   AGENT_PREFIX,
   draftKey,
+  expectGateRefusal,
   registerClient,
   requests,
   tokenFor,
@@ -53,6 +57,7 @@ const d = (monthDay: string) => `${year}-${monthDay}`;
 const cookies = { admin: '', financePts: '', financeJed: '', salesPts: '', opsPts: '' };
 const agentCookies = { financeAgent: '', salesAgent: '', financeJedAgent: '' };
 const tokens = { finance: '', sales: '', financeJed: '' };
+const agentIds = { financeAgent: '' };
 
 async function shipment(customerId = customer.id): Promise<string> {
   const loc = async (code: string) =>
@@ -167,6 +172,7 @@ beforeAll(async () => {
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
   }
+  agentIds.financeAgent = assistantUsers.financeAgent.id;
   client = await registerClient(t, cookies.admin, 'Billing draft platform');
   tokens.finance = await tokenFor(t, agentCookies.financeAgent, client);
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
@@ -210,6 +216,124 @@ afterAll(async () => {
   await t.close();
 });
 
+// The approval gate (no-required-fields plan, 3.3): an incomplete or invalid draft is refused on
+// the review screen and in the assistant's chat, before anything is checked against the ledger,
+// and nothing live or financial is written; complete again, it approves once.
+describe('invoice and receipt drafts: the approval gate', () => {
+  const grant = (kinds: string[]) =>
+    r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, { kinds })
+      .expect(200);
+
+  it('refuses an invoice draft without lines on both paths, writing no invoice; then approves', async () => {
+    await grant(['invoice', 'receipt']);
+    const shipmentId = await shipment();
+    const draft = await invoiceDraft(invoiceRequest(shipmentId));
+    const lines = await t.prisma.invoiceDraftLine.findMany({ where: { draftId: draft.id } });
+    await t.prisma.invoiceDraftLine.deleteMany({ where: { draftId: draft.id } });
+
+    expectGateRefusal(
+      await r.post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 }),
+      ['lines'],
+    );
+    const card = (
+      await r.agentGet(`/invoice-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
+    ).body as AssistantDraftDto<InvoiceDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/invoice-drafts/${draft.id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      ['lines'],
+    );
+    // The usual refusals come first: another branch, no permission, an old version.
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.financeJed, { version: 1 })
+      .expect(404);
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.salesPts, { version: 1 })
+      .expect(403);
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 2 })
+      .expect(409);
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
+    expect(
+      await t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, invoiceId: null });
+
+    await t.prisma.invoiceDraftLine.createMany({ data: lines });
+    const approved = (
+      await r
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    const again = (
+      await r
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(again).toMatchObject({ status: 'APPROVED', invoiceId: approved.invoiceId });
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+  });
+
+  it('refuses a receipt draft holding an invalid currency on both paths, posting nothing', async () => {
+    await grant(['invoice', 'receipt']);
+    const invoice = await approvedInvoice('300');
+    const draft = await receiptDraft(
+      receiptRequest(invoice.id, {
+        amount: '100',
+        allocations: [{ invoiceId: invoice.id, amount: '100' }],
+      }),
+    );
+    await t.prisma.receiptDraft.update({ where: { id: draft.id }, data: { currency: 'usd' } });
+    const entries = await t.prisma.journalEntry.count();
+
+    expectGateRefusal(
+      await r.post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 }),
+      [],
+      ['currency'],
+    );
+    const card = (
+      await r.agentGet(`/receipt-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
+    ).body as AssistantDraftDto<ReceiptDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/receipt-drafts/${draft.id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      [],
+      ['currency'],
+    );
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financeJed, { version: 1 })
+      .expect(404);
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.salesPts, { version: 1 })
+      .expect(403);
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 2 })
+      .expect(409);
+    expect(await t.prisma.journalEntry.count()).toBe(entries);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(0);
+    expect(
+      await t.prisma.receiptDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, receiptId: null });
+
+    await t.prisma.receiptDraft.update({ where: { id: draft.id }, data: { currency: 'USD' } });
+    const approved = (
+      await r
+        .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+        .expect(200)
+    ).body as ReceiptDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r
+      .post(`/receipt-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+      .expect(200);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(1);
+  });
+});
+
 describe('invoice drafts: the assistant proposes', () => {
   it('creates a draft, gets back ids and counts only, and creates no invoice yet', async () => {
     const shipmentId = await shipment();
@@ -217,7 +341,7 @@ describe('invoice drafts: the assistant proposes', () => {
     const body = res.body as EntryDraftSummaryDto;
     expect(body).toMatchObject({ status: 'DRAFT', version: 1, lineCount: 1 });
     expect(Object.keys(body).sort()).toEqual(
-      ['createdAt', 'expiresAt', 'id', 'lineCount', 'status', 'version'].sort(),
+      ['createdAt', 'expiresAt', 'id', 'lineCount', 'missingFields', 'status', 'version'].sort(),
     );
     expect(JSON.stringify(body)).not.toContain('Freight Port Sudan');
     expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
@@ -258,7 +382,10 @@ describe('invoice drafts: the assistant proposes', () => {
     // The assistant gives no fx rate (the table's is used), and no status.
     await createInvoiceDraft(invoiceRequest(shipmentId, { fxRate: '1' })).expect(400);
     await createInvoiceDraft({ ...invoiceRequest(shipmentId), status: 'APPROVED' }).expect(400);
-    await createInvoiceDraft(invoiceRequest(shipmentId, { lines: [] })).expect(400);
+    // A draft may be saved without lines (filled in on review), never with a malformed one.
+    await createInvoiceDraft(
+      invoiceRequest(shipmentId, { lines: [{ chargeTypeCode: 'FREIGHT', quantity: 'two' }] }),
+    ).expect(400);
     expect(await t.prisma.invoiceDraft.count()).toBe(before);
   });
 
@@ -286,7 +413,7 @@ describe('invoice drafts: a person reviews', () => {
     expect(draft.check).toEqual({ ok: true, total: '201.01', currency: 'USD' });
     expect(draft).toMatchObject({
       customerId: customer.id,
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
     });
     expect(draft.request.lines[0]).toMatchObject({ quantity: '2', unitPrice: '100.505' });
     const list = (await r.get('/invoice-drafts?status=DRAFT', cookies.financePts).expect(200))
@@ -444,7 +571,7 @@ describe('receipt drafts', () => {
       cashAccountCode: cashUsd.code,
       invoiceNumbers: [invoice.number],
       check: { ok: true, total: '200', currency: 'USD' },
-      actions: { canEdit: false, canDecide: true },
+      actions: { canEdit: true, canDecide: true },
     });
     const list = (await r.get('/receipt-drafts?status=DRAFT', cookies.financePts).expect(200))
       .body as ReceiptDraftListItemDto[];
@@ -591,7 +718,8 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
       await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
     }
     await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
-    await pick('cash-accounts', `customerId=${customer.id}&currency=USD`).expect(400);
+    // A currency (the review screen's filter, functional review هـ6) must be a code too.
+    await pick('cash-accounts', `customerId=${customer.id}&currency=usd`).expect(400);
   });
 
   it('refuses a bad cash account or allocation at its field, with a code', async () => {
@@ -638,5 +766,328 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
       receiptRequest(second.id, { allocations: [{ invoiceId: second.id, amount: '300.01' }] }),
     ).expect(400);
     expect(await t.prisma.receiptDraft.count()).toBe(before);
+  });
+});
+
+// Drafts saved with missing values (no-required-fields plan, 3.2 and 3.3): an invoice or receipt
+// draft may name only its branch (security context); a person fills in the rest (PATCH), and
+// approving is refused (422) on both paths while anything is missing, writing no invoice and
+// posting no entry.
+describe('invoice drafts saved with missing values', () => {
+  const read = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/invoice-drafts/${id}`, cookie).expect(200)).body as InvoiceDraftDto;
+
+  it('saves a draft naming only its branch, and reads it back with nulls', async () => {
+    const empty = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual([
+      'shipmentId',
+      'customerId',
+      'currency',
+      'invoiceDate',
+      'dueDate',
+      'lines',
+    ]);
+    expect(await read(empty.id)).toMatchObject({
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { shipmentId: null, currency: null, invoiceDate: null, dueDate: null, lines: [] },
+    });
+    const list = (await r.get('/invoice-drafts?status=DRAFT', cookies.financePts).expect(200))
+      .body as InvoiceDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(empty.id);
+    await r.get(`/invoice-drafts/${empty.id}`, cookies.financeJed).expect(404);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const shipmentId = await shipment();
+    const before = await t.prisma.invoiceDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createInvoiceDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ shipmentId, branchId: jed }, 400)).code).toBe('BRANCH_MISMATCH');
+    await refused({ branchId: pts, invoiceDate: 'soon' }, 400);
+    expect(await t.prisma.invoiceDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval on both paths while values are missing, then approves once filled in', async () => {
+    await r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
+        kinds: ['invoice', 'receipt'],
+      })
+      .expect(200);
+    const shipmentId = await shipment();
+    const { id } = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), shipmentId }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const missing = ['currency', 'invoiceDate', 'dueDate', 'lines'];
+    expectGateRefusal(
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 1 }),
+      missing,
+    );
+    const card = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+    expect(card.draft.missingFields).toEqual(missing);
+    expectGateRefusal(
+      await r.agentPost(`/invoice-drafts/${id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      missing,
+    );
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
+
+    const edit = (cookie: string, body: object) => r.patch(`/invoice-drafts/${id}`, cookie, body);
+    await edit(cookies.financeJed, { version: 1, currency: 'USD' }).expect(404);
+    await edit(cookies.salesPts, { version: 1, currency: 'USD' }).expect(403);
+    await r
+      .agentPatch(`/invoice-drafts/${id}`, tokens.finance, { version: 1, currency: 'USD' })
+      .expect(403);
+    await edit(cookies.financePts, { version: 2, currency: 'USD' }).expect(409);
+    await edit(cookies.financePts, { version: 1, dueDate: 'later' }).expect(400);
+    const filled = (
+      await edit(cookies.financePts, {
+        version: 1,
+        currency: 'USD',
+        invoiceDate: d('05-01'),
+        dueDate: d('05-31'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '250' }],
+      }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    const again = (
+      await r.post(`/invoice-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as InvoiceDraftDto;
+    expect(again.invoiceId).toBe(approved.invoiceId);
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+  });
+});
+
+describe('receipt drafts saved with missing values', () => {
+  const MISSING = ['customerId', 'receiptDate', 'currency', 'amount', 'cashAccountId'];
+  const read = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/receipt-drafts/${id}`, cookie).expect(200)).body as ReceiptDraftDto;
+
+  it('saves a draft naming only its branch, and reads it back with nulls', async () => {
+    const empty = (
+      await createReceiptDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(empty.missingFields).toEqual(MISSING);
+    expect(await read(empty.id)).toMatchObject({
+      check: null,
+      actions: { canEdit: true, canDecide: true },
+      request: { customerId: null, amount: null, cashAccountId: null, allocations: [] },
+    });
+    const list = (await r.get('/receipt-drafts?status=DRAFT', cookies.financePts).expect(200))
+      .body as ReceiptDraftListItemDto[];
+    expect(list.map((d) => d.id)).toContain(empty.id);
+    await r.get(`/receipt-drafts/${empty.id}`, cookies.financeJed).expect(404);
+
+    const partial = (
+      await createReceiptDraft({
+        idempotencyKey: draftKey(),
+        customerId: customer.id,
+        amount: '50',
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(partial.missingFields).toEqual(['receiptDate', 'currency', 'cashAccountId']);
+  });
+
+  it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const before = await t.prisma.receiptDraft.count();
+    const refused = async (body: object, status: number) =>
+      (await createReceiptDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
+        code?: string;
+      };
+    expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    await refused({ branchId: jed }, 403);
+    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
+      'BRANCH_MISMATCH',
+    );
+    await refused({ branchId: pts, amount: 'lots' }, 400);
+    expect(await t.prisma.receiptDraft.count()).toBe(before);
+  });
+
+  it('refuses the approval on both paths while values are missing, then approves once filled in', async () => {
+    await r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
+        kinds: ['invoice', 'receipt'],
+      })
+      .expect(200);
+    const invoice = await approvedInvoice('300');
+    const { id } = (
+      await createReceiptDraft({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const missing = MISSING.slice(1);
+    const entries = await t.prisma.journalEntry.count();
+    expectGateRefusal(
+      await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 1 }),
+      missing,
+    );
+    const card = (await r.agentGet(`/receipt-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<ReceiptDraftDto>;
+    expectGateRefusal(
+      await r.agentPost(`/receipt-drafts/${id}/assistant-approve`, tokens.finance, {
+        version: 1,
+        contentHash: card.contentHash,
+      }),
+      missing,
+    );
+    expect(await t.prisma.journalEntry.count()).toBe(entries);
+
+    const edit = (cookie: string, body: object) => r.patch(`/receipt-drafts/${id}`, cookie, body);
+    await edit(cookies.financeJed, { version: 1, amount: '100' }).expect(404);
+    await edit(cookies.opsPts, { version: 1, amount: '100' }).expect(403);
+    await r
+      .agentPatch(`/receipt-drafts/${id}`, tokens.finance, { version: 1, amount: '100' })
+      .expect(403);
+    await edit(cookies.financePts, { version: 2, amount: '100' }).expect(409);
+    await edit(cookies.financePts, { version: 1, amount: 'lots' }).expect(400);
+    const filled = (
+      await edit(cookies.financePts, {
+        version: 1,
+        receiptDate: d('04-02'),
+        currency: 'USD',
+        amount: '100',
+        cashAccountId: cashUsd.id,
+        allocations: [{ invoiceId: invoice.id, amount: '100' }],
+      }).expect(200)
+    ).body as ReceiptDraftDto;
+    expect(filled).toMatchObject({ version: 2, missingFields: [], check: { ok: true } });
+    const approved = (
+      await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200)
+    ).body as ReceiptDraftDto;
+    expect(approved.status).toBe('APPROVED');
+    await r.post(`/receipt-drafts/${id}/approve`, cookies.financePts, { version: 2 }).expect(200);
+    expect(await t.prisma.receiptAllocation.count({ where: { invoiceId: invoice.id } })).toBe(1);
+  });
+});
+
+// Functional review هـ4: the review screen offers NOLON's suggestion (suggestForShipment) for the
+// currency and dates an invoice draft misses; the person applies it with the PATCH, and the
+// assistant's request under its key never changes.
+describe('invoice drafts: suggested values on the review screen', () => {
+  const suggested = async (id: string, cookie = cookies.financePts) =>
+    (await r.get(`/invoice-drafts/${id}/suggested-values`, cookie).expect(200))
+      .body as InvoiceDraftSuggestedValuesDto;
+  const row = (id: string) => t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id } });
+
+  it('suggests the missing currency and dates without saving them; the PATCH applies them', async () => {
+    const shipmentId = await shipment();
+    const body = { idempotencyKey: draftKey(), shipmentId };
+    const { id } = (await createInvoiceDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    const stored = await row(id);
+    const derived = (
+      await r.agentPost('/invoice-drafts/suggest', tokens.finance, { shipmentId }).expect(200)
+    ).body as InvoiceSuggestionDto;
+    const offer = await suggested(id);
+    expect(offer).toEqual({
+      version: 1,
+      values: { currency: 'USD', invoiceDate: derived.invoiceDate, dueDate: derived.dueDate },
+      currencySource: derived.currencySource,
+    });
+    // Nothing saved by the read.
+    expect(await row(id)).toMatchObject({ version: 1, currency: null, invoiceDate: null });
+    const card = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+
+    // The person applies them as shown, at the version shown.
+    const values = offer.values ?? { currency: null, invoiceDate: null, dueDate: null };
+    const saved = (
+      await r
+        .patch(`/invoice-drafts/${id}`, cookies.financePts, { version: 1, ...values })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(saved).toMatchObject({ version: 2, request: values });
+    expect(saved.missingFields).toEqual(['lines']);
+    // The card the assistant showed is stale now: its content hash moved on.
+    const fresh = (await r.agentGet(`/invoice-drafts/${id}/assistant`, tokens.finance).expect(200))
+      .body as AssistantDraftDto<InvoiceDraftDto>;
+    expect(fresh.contentHash).not.toBe(card.contentHash);
+    expect(fresh.draft.version).toBe(2);
+    // Nothing is left to suggest; an old version is refused by the PATCH as before.
+    expect(await suggested(id)).toEqual({ version: 2, values: null, currencySource: null });
+    await r
+      .patch(`/invoice-drafts/${id}`, cookies.financePts, { version: 1, ...values })
+      .expect(409);
+
+    // The assistant's retry under the same key answers with the same draft, its request unchanged.
+    const replay = (await createInvoiceDraft(body).expect(201)).body as EntryDraftSummaryDto;
+    expect(replay).toMatchObject({ id, version: 2 });
+    const after = await row(id);
+    expect(after.payloadHash).toBe(stored.payloadHash);
+    expect(after.idempotencyKey).toBe(stored.idempotencyKey);
+    expect(
+      await t.prisma.invoiceDraft.count({ where: { idempotencyKey: body.idempotencyKey } }),
+    ).toBe(1);
+  });
+
+  it('suggests only what is missing: a due date after the invoice date the draft holds', async () => {
+    const shipmentId = await shipment();
+    const { id } = (
+      await createInvoiceDraft({
+        idempotencyKey: draftKey(),
+        shipmentId,
+        currency: 'SDG',
+        invoiceDate: d('06-01'),
+      }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    const derived = (
+      await r
+        .agentPost('/invoice-drafts/suggest', tokens.finance, {
+          shipmentId,
+          currency: 'SDG',
+          invoiceDate: d('06-01'),
+        })
+        .expect(200)
+    ).body as InvoiceSuggestionDto;
+    expect(await suggested(id)).toEqual({
+      version: 1,
+      values: { currency: null, invoiceDate: null, dueDate: derived.dueDate },
+      currencySource: null,
+    });
+  });
+
+  it('suggests nothing without a shipment, and only to a person who may edit the draft', async () => {
+    const { id } = (
+      await createInvoiceDraft({ idempotencyKey: draftKey(), branchId: pts }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect(await suggested(id)).toEqual({ version: 1, values: null, currencySource: null });
+    await r.agentGet(`/invoice-drafts/${id}/suggested-values`, tokens.finance).expect(403);
+    await r.get(`/invoice-drafts/${id}/suggested-values`, cookies.salesPts).expect(403);
+    await r.get(`/invoice-drafts/${id}/suggested-values`, cookies.financeJed).expect(404);
+  });
+});
+
+// Functional review هـ6: the review screen asks for the cash accounts in the receipt's currency.
+describe('receipt drafts: cash accounts in a currency', () => {
+  it('filters by the currency given; without it, as before', async () => {
+    const list = async (query: string, cookie = cookies.financePts) =>
+      (
+        (await r.get(`/receipt-drafts/cash-accounts?${query}`, cookie).expect(200)).body as {
+          items: ReceiptCashAccountDto[];
+        }
+      ).items.map((a) => a.id);
+    const all = await list(`customerId=${customer.id}`);
+    expect(all).toEqual(expect.arrayContaining([cashUsd.id, cashSdg.id]));
+    const usd = await list(`customerId=${customer.id}&currency=USD`);
+    expect(usd).toContain(cashUsd.id);
+    expect(usd).not.toContain(cashSdg.id);
+    await r
+      .get(
+        `/receipt-drafts/cash-accounts?customerId=${customer.id}&currency=usd`,
+        cookies.financePts,
+      )
+      .expect(400);
   });
 });

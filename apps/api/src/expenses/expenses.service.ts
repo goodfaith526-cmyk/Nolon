@@ -22,7 +22,13 @@ import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
-import { dec, requestedRate, roundMoney, sameRequestedRate } from '../common/money.js';
+import {
+  dec,
+  requestedRate,
+  roundMoney,
+  sameRequestedRate,
+  toDecimalStringOrNull,
+} from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
@@ -342,6 +348,7 @@ function toDto(e: ExpenseWithDetails, user: AuthUser): ExpenseDto {
   return {
     ...toSummary(e),
     fxRate: e.fxRate.toFixed(),
+    enteredFxRate: toDecimalStringOrNull(e.requestedFxRate),
     cashAccountId: e.cashAccountId,
     cashAccountCode: e.cashAccount.code,
     cashAccountNameEn: e.cashAccount.nameEn,

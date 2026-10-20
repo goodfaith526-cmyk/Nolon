@@ -19,6 +19,7 @@ import type {
   ShipmentEventKind,
   ShipmentStatus,
   ShipmentStatusRequest,
+  ShipmentPickPage,
   ShipmentSummaryDto,
   ShipmentUpdateRequest,
   ShippingMode,
@@ -158,6 +159,18 @@ export class ShipmentsService {
               { blNumber: { contains: filters.q, mode: 'insensitive' } },
               { customer: { name: { contains: filters.q, mode: 'insensitive' } } },
               { containers: { some: { containerNumber: { contains: filters.q.toUpperCase() } } } },
+              // An LCL shipment's container is its consolidation's (functional review D4); a
+              // cancelled consolidation no longer holds it. Inside the scope above, as every term.
+              {
+                consolidationLinks: {
+                  some: {
+                    consolidation: {
+                      status: { not: 'CANCELLED' },
+                      containerNumber: { contains: filters.q.toUpperCase() },
+                    },
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -178,6 +191,65 @@ export class ShipmentsService {
       page: filters.page,
       pageSize: filters.pageSize,
       ...matchedLocations(route),
+    };
+  }
+
+  /**
+   * Shipments to pick for a document of `branchId` (functional review C10): visible to the user
+   * and in that branch (its own or sharing it), not cancelled, whose number or customer name
+   * contains `q`. The shipment numbered exactly `q` (any case) comes apart as `exact`, so a typed
+   * number is found however many shipments contain it; the others page by number.
+   */
+  async pick(
+    user: AuthUser,
+    branchId: string,
+    filters: { q?: string; page: number; pageSize: number },
+  ): Promise<ShipmentPickPage> {
+    assertBranchAccess(user, branchId);
+    const q = filters.q ?? '';
+    const base: Prisma.ShipmentWhereInput[] = [
+      this.scope(user),
+      { OR: [{ branchId }, { sharedBranches: { some: { branchId } } }] },
+      { status: { not: 'CANCELLED' } },
+    ];
+    const exact = q
+      ? await this.prisma.shipment.findFirst({
+          where: { AND: [...base, { number: { equals: q, mode: 'insensitive' } }] },
+          include: summary,
+        })
+      : null;
+    const where: Prisma.ShipmentWhereInput = {
+      AND: [
+        ...base,
+        ...(exact ? [{ id: { not: exact.id } }] : []),
+        ...(q
+          ? [
+              {
+                OR: [
+                  { number: { contains: q, mode: 'insensitive' as const } },
+                  { customer: { name: { contains: q, mode: 'insensitive' as const } } },
+                ],
+              },
+            ]
+          : []),
+      ],
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.shipment.findMany({
+        where,
+        include: summary,
+        orderBy: { number: 'asc' },
+        skip: (filters.page - 1) * filters.pageSize,
+        take: filters.pageSize,
+      }),
+      this.prisma.shipment.count({ where }),
+    ]);
+    return {
+      exact: exact ? toSummary(exact) : null,
+      items: items.map(toSummary),
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
     };
   }
 
@@ -223,6 +295,14 @@ export class ShipmentsService {
     mode: ShippingMode;
     loadType: LoadType | null;
     cargoType: CargoType;
+    services: BookingService[];
+    items: {
+      cargoType: CargoType;
+      containerTypeCode: string | null;
+      quantity: number;
+      weightKg: Prisma.Decimal | null;
+      volumeCbm: Prisma.Decimal | null;
+    }[];
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -238,6 +318,17 @@ export class ShipmentsService {
         mode: true,
         loadType: true,
         cargoType: true,
+        services: true,
+        items: {
+          select: {
+            cargoType: true,
+            containerTypeCode: true,
+            quantity: true,
+            weightKg: true,
+            volumeCbm: true,
+          },
+          orderBy: { lineNo: 'asc' },
+        },
         booking: { select: { quotationId: true } },
       },
     });
@@ -486,6 +577,22 @@ export class ShipmentsService {
   }
 
   /**
+   * The checks of prepareStatusChange on what a status draft holds so far (a draft is saved with
+   * missing values): the shipment as the user sees it, when named, and the location, when given;
+   * the move itself waits for both the shipment and the status (prepareStatusChange). The
+   * shipment's branch, or null with no shipment. Nothing is written.
+   */
+  async checkStatusPresent(
+    user: AuthUser,
+    id: string | null,
+    input: { locationId?: string | null },
+  ): Promise<{ branchId: string | null }> {
+    const shipment = id === null ? null : await this.findScoped(user, id);
+    if (input.locationId) await this.masterData.requireLocation(input.locationId);
+    return { branchId: shipment?.branchId ?? null };
+  }
+
+  /**
    * A status change dated now, in the caller's transaction (an approved entry draft). The caller
    * checked access; the move and its permission are checked here under the shipment lock.
    */
@@ -625,13 +732,31 @@ export class ShipmentsService {
     user: AuthUser,
     id: string,
     status: ShipmentStatus,
-    options: { occurredAt: Date; note: string | null; locationId?: string | null },
+    options: {
+      occurredAt: Date;
+      note: string | null;
+      locationId?: string | null;
+      /**
+       * When set, a move dated before the shipment's latest event is refused (409) with this
+       * message instead of rewriting its timeline. Only checked when the move happens.
+       */
+      beforeLatestEvent?: string;
+    },
   ): Promise<boolean> {
     return this.applyEventInTx(tx, user, id, (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
         return null;
       }
       requireAny(user, permissionForTransition(status));
+      if (options.beforeLatestEvent) {
+        const latest = shipment.events.reduce<Date | null>(
+          (max, e) => (max && max >= e.occurredAt ? max : e.occurredAt),
+          null,
+        );
+        if (latest && options.occurredAt < latest) {
+          throw new ConflictException(options.beforeLatestEvent);
+        }
+      }
       return {
         kind: 'STATUS',
         status,
@@ -658,10 +783,15 @@ export class ShipmentsService {
   async shapeInTx(
     tx: Tx,
     id: string,
-  ): Promise<{ mode: ShippingMode; loadType: LoadType | null; services: BookingService[] }> {
+  ): Promise<{
+    mode: ShippingMode;
+    loadType: LoadType | null;
+    services: BookingService[];
+    originLocationId: string;
+  }> {
     return tx.shipment.findUniqueOrThrow({
       where: { id },
-      select: { mode: true, loadType: true, services: true },
+      select: { mode: true, loadType: true, services: true, originLocationId: true },
     });
   }
 

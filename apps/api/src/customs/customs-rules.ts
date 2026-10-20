@@ -1,5 +1,11 @@
-import type { CustomsClearanceRequest, CurrencyCode } from '@nolon/shared';
-import { daysBetween } from '../common/dates.js';
+import type {
+  CustomsClearanceRequest,
+  CustomsStatus,
+  CurrencyCode,
+  ShipmentStatus,
+} from '@nolon/shared';
+import { addDays, daysBetween } from '../common/dates.js';
+import { startOfDayIn } from '../common/list-filters.js';
 import { type Decimal, ZERO, roundMoney } from '../common/money.js';
 
 /** Customs rules (scope 11), as pure functions. */
@@ -16,6 +22,40 @@ export function clearanceProblem(input: CustomsClearanceRequest): string | null 
     return 'Only a cleared file has a clearance date';
   }
   return null;
+}
+
+/**
+ * The shipment statuses a saved customs file moves the shipment through (functional review D1),
+ * in order: a file in progress (submitted, under inspection or held) means customs in progress; a
+ * cleared file means cleared, through customs in progress when the shipment has not got there. A
+ * pending file moves nothing. Each step goes through the state machine, which skips a step the
+ * shipment has already passed or cannot take now, so nothing moves backwards or repeats.
+ */
+export function shipmentStepsForFile(status: CustomsStatus): ShipmentStatus[] {
+  switch (status) {
+    case 'PENDING':
+      return [];
+    case 'CLEARED':
+      return ['CUSTOMS_IN_PROGRESS', 'CUSTOMS_CLEARED'];
+    default:
+      return ['CUSTOMS_IN_PROGRESS'];
+  }
+}
+
+/**
+ * When the shipment's clearance happened, from the file's clearance date (a branch-local day):
+ * now when it is today; the last instant of that day when it is earlier, so it never lands
+ * before the day's other events; null when it is after today (the caller refuses it).
+ */
+export function clearanceMoment(
+  clearedOn: string,
+  timeZone: string,
+  today: string,
+  now: Date,
+): Date | null {
+  if (clearedOn > today) return null;
+  if (clearedOn === today) return now;
+  return new Date(startOfDayIn(addDays(clearedOn, 1), timeZone).getTime() - 1);
 }
 
 /** A fee is positive and has no more decimals than its currency's minor units. */

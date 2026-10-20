@@ -34,6 +34,27 @@ export function fieldRefusal(
 }
 
 /**
+ * Several refusals as one 400 (a pre-check that reports every line): the first one's message,
+ * code and fields at the top for clients that read one, and every refusal under `refusals`.
+ */
+export function fieldRefusals(refusals: readonly BadRequestException[]): BadRequestException {
+  const bodies = refusals.map((r) => {
+    const response = r.getResponse();
+    return typeof response === 'object' && response !== null
+      ? (response as Record<string, unknown>)
+      : { message: r.message };
+  });
+  const [first] = bodies;
+  return new BadRequestException({
+    ...first,
+    fields: bodies.flatMap((b) => (Array.isArray(b.fields) ? (b.fields as unknown[]) : [])),
+    refusals: bodies,
+    error: 'Bad Request',
+    statusCode: 400,
+  });
+}
+
+/**
  * A refusal that names no field (403, 404, 409, or a 400 on the whole request), with a `code` so
  * the page can say why in its language (with `params` such as the shipment's number); `message`
  * stays the English reason for other clients.
@@ -76,6 +97,19 @@ export function optionalText(max: number) {
     .max(max)
     .nullish()
     .transform((v) => (v ? v : null));
+}
+
+/**
+ * As optionalText, but a value left out stays undefined: null or empty clears it, for a field an
+ * edit that leaves it out keeps (the booking's cargo description).
+ */
+export function clearableText(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .nullish()
+    .transform((v) => (v === undefined ? undefined : v || null));
 }
 
 export function requiredText(max: number) {

@@ -9,9 +9,10 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchToday } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
-import { AMOUNT_PATTERN, FX_RATE_PATTERN, todayString } from '@/lib/money';
+import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
 import { icons } from '../Icons';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
@@ -91,6 +92,10 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const branchId = branchChoice || (me.branches[0]?.id ?? '');
+  // A new entry is dated today in its branch (functional review C9), following the branch until
+  // a date is typed (null until then), which is kept. A saved draft keeps its date.
+  const [dateChoice, setDate] = useState<string | null>(entry?.entryDate ?? null);
+  const entryDate = dateChoice ?? branchToday(me, branchId);
   const permission = entry ? 'manual_journals:update' : 'manual_journals:create';
   if (!can(me, permission)) return <p className="error">{tc('noAccess')}</p>;
 
@@ -98,11 +103,27 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
+  /**
+   * A cash or bank account holds one currency, and the API refuses a line in another (functional
+   * review C6): picking one sets the line's currency to it when the account is picked, dropping a
+   * rate of another currency. Other accounts have no fixed currency and leave the line's as it
+   * is; the person may still change the currency afterwards.
+   */
+  function pickAccount(line: LineState, accountId: string) {
+    const account = (accounts ?? []).find((a) => a.id === accountId);
+    const cashCurrency = account?.isCash ? account.currency : null;
+    if (cashCurrency && cashCurrency !== line.currency) {
+      updateLine(line.key, { accountId, currency: cashCurrency, fxRate: '' });
+    } else {
+      updateLine(line.key, { accountId });
+    }
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const input: ManualJournalInput = {
-      entryDate: field(form, 'entryDate'),
+      entryDate,
       description: field(form, 'description').trim(),
       lines: lines.map((l) => ({
         accountId: l.accountId,
@@ -172,7 +193,8 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
               name="entryDate"
               type="date"
               required
-              defaultValue={entry?.entryDate ?? todayString()}
+              value={entryDate}
+              onChange={(e) => setDate(e.target.value)}
             />
           </label>
           <label className="field span-all">
@@ -203,7 +225,7 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
                 <select
                   required
                   value={l.accountId}
-                  onChange={(e) => updateLine(l.key, { accountId: e.target.value })}
+                  onChange={(e) => pickAccount(l, e.target.value)}
                 >
                   <option value="">{t('chooseAccount')}</option>
                   {postable.map((a) => (
@@ -218,7 +240,8 @@ export function JournalForm({ entry }: { entry?: JournalEntryDto }) {
                 {t('currency')}
                 <select
                   value={l.currency}
-                  onChange={(e) => updateLine(l.key, { currency: e.target.value })}
+                  // Another currency's rate never carries over to the line.
+                  onChange={(e) => updateLine(l.key, { currency: e.target.value, fxRate: '' })}
                 >
                   {master.currencies
                     .filter((c) => c.isActive || c.code === l.currency)

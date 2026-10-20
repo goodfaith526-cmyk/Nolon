@@ -1,4 +1,9 @@
-import { ConflictException, ForbiddenException, HttpStatus } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpStatus,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
@@ -15,7 +20,7 @@ import {
   sameStoredValue,
 } from './draft-rules.js';
 import { checkRequest, lockDraftRow, valuesOf } from './drafts.service.js';
-import { codedRefusal, fieldRefusal, parse } from '../common/validation.js';
+import { codedRefusal, fieldRefusal, fieldRefusals, parse } from '../common/validation.js';
 
 const FIELDS = ['customerId', 'amount', 'note'] as const;
 
@@ -173,6 +178,38 @@ describe('pre-checks', () => {
       return Promise.resolve();
     });
     expect(parsed).toMatchObject({ ok: false, refusals: [{ field: 'x', code: 'INVALID' }] });
+  });
+
+  it('report each of several refusals (every line of an invoice), each under its fields', async () => {
+    const result = await preCheck(HASH, () =>
+      Promise.reject(
+        fieldRefusals([
+          fieldRefusal('RATE_NO_MATCH', 'No rate for FREIGHT', ['lines.0.unitPrice']),
+          new BadRequestException('Unknown or inactive charge type: NOPE'),
+          fieldRefusal('QUOTED_PRICE_OTHER_CURRENCY', 'In SDG', ['currency', 'lines.2.unitPrice']),
+        ]),
+      ),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      refusals: [
+        { field: 'lines.0.unitPrice', code: 'RATE_NO_MATCH', message: 'No rate for FREIGHT' },
+        { field: null, code: null, message: 'Unknown or inactive charge type: NOPE' },
+        { field: 'currency', code: 'QUOTED_PRICE_OTHER_CURRENCY', message: 'In SDG' },
+        { field: 'lines.2.unitPrice', code: 'QUOTED_PRICE_OTHER_CURRENCY', message: 'In SDG' },
+      ],
+    });
+    // A client reading one refusal sees the first, with every field named.
+    const error = fieldRefusals([
+      fieldRefusal('RATE_NO_MATCH', 'No rate', ['lines.0.unitPrice']),
+      fieldRefusal('RATE_SEVERAL', 'Several', ['lines.1.unitPrice']),
+    ]);
+    expect(error.getResponse()).toMatchObject({
+      message: 'No rate',
+      code: 'RATE_NO_MATCH',
+      fields: ['lines.0.unitPrice', 'lines.1.unitPrice'],
+      statusCode: 400,
+    });
   });
 
   it('let any other failure through', async () => {

@@ -19,6 +19,7 @@ import type {
   ReceiptDto,
   SupplierBillDto,
   SupplierDto,
+  SupplierSummaryDto,
   SupplierPaymentDto,
   TripDto,
 } from '@nolon/shared';
@@ -144,8 +145,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
         { chargeTypeCode: 'DUTIES', quantity: '1', unitPrice: '100000.50' },
       ],
     }).expect(200);
-    return (await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200))
-      .body as CustomerInvoiceDto;
+    const approved = (
+      await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200)
+    ).body as CustomerInvoiceDto;
+    // The rate entered is the one an edit form offers again.
+    expect([approved.fxRate, approved.enteredFxRate]).toEqual(['600', '600']);
+    return approved;
   }
 
   /** A completed external trip of `carrier` (600,000 SDG at 600), split 750/250 by weight. */
@@ -196,6 +201,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
         ...body,
       }).expect(201)
     ).body as SupplierBillDto;
+    expect(draft.enteredFxRate).toBe('fxRate' in body ? body.fxRate : '600');
     return (await post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).expect(200))
       .body as SupplierBillDto;
   }
@@ -515,6 +521,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
       ).body as CustomerInvoiceDto;
       await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
         currency: 'SAR',
+        repriced: true,
         fxRate: '3.75',
         invoiceDate: d('03-10'),
         dueDate: d('03-10'),
@@ -647,6 +654,128 @@ describe('credit notes, payables, expenses and opening balances', () => {
         supplierName: supplier.name,
       });
       expect(supplier.number).toMatch(/^NOL-SUP-\d{6}$/);
+    });
+
+    describe('a supplier made from a carrier (functional review D3)', () => {
+      const tag = randomUUID().slice(0, 6).toUpperCase();
+      const newCarrier = async (name: string, phone: string | null = uniquePhone()) =>
+        (await post('/transport/carriers', cookies.opsPts, { name, phone }).expect(201))
+          .body as CarrierDto;
+      const carrierOf = async (id: string) =>
+        ((await get('/transport/carriers', cookies.opsPts).expect(200)).body as CarrierDto[]).find(
+          (c) => c.id === id,
+        );
+      const fromCarrier = (id: string, cookie = cookies.financePts) =>
+        post(`/suppliers/from-carrier/${id}`, cookie);
+
+      it('creates the supplier from the carrier and links them, once', async () => {
+        const c = await newCarrier(`D3 Trucks ${tag}`);
+        expect(
+          (await get(`/suppliers/matching-carrier/${c.id}`, cookies.financePts).expect(200)).body,
+        ).toEqual([]);
+        const made = (await fromCarrier(c.id).expect(201)).body as SupplierDto;
+        expect(made).toMatchObject({ name: c.name, phone: c.phone, isActive: true });
+        expect(made.carriers).toEqual([{ id: c.id, name: c.name }]);
+        expect(await carrierOf(c.id)).toMatchObject({ supplierId: made.id, supplierName: c.name });
+        // Linked already: a second request makes nothing.
+        await fromCarrier(c.id).expect(409);
+        expect(await t.prisma.supplier.count({ where: { name: c.name } })).toBe(1);
+      });
+
+      it('refuses a duplicate by name or phone and offers the existing supplier', async () => {
+        const phone = uniquePhone();
+        const existing = (
+          await post('/suppliers', cookies.financePts, {
+            name: `D3 Haulage ${tag}`,
+            phone,
+          }).expect(201)
+        ).body as SupplierDto;
+        // Same name in another case, no phone.
+        const byName = await newCarrier(`d3 haulage ${tag}`.toUpperCase(), null);
+        const matches = (
+          await get(`/suppliers/matching-carrier/${byName.id}`, cookies.financePts).expect(200)
+        ).body as SupplierSummaryDto[];
+        expect(matches.map((m) => m.id)).toEqual([existing.id]);
+        await fromCarrier(byName.id).expect(409);
+        // Same phone, another name.
+        const byPhone = await newCarrier(`D3 Other ${tag}`, phone);
+        await fromCarrier(byPhone.id).expect(409);
+        expect(await t.prisma.supplier.count({ where: { phone } })).toBe(1);
+        expect((await carrierOf(byName.id))?.supplierId).toBeNull();
+        expect((await carrierOf(byPhone.id))?.supplierId).toBeNull();
+        // Linking the existing supplier instead goes through the carrier link.
+        await put(
+          `/suppliers/${existing.id}/carriers/${byPhone.id}`,
+          cookies.financePts,
+          {},
+        ).expect(200);
+        expect((await carrierOf(byPhone.id))?.supplierId).toBe(existing.id);
+      });
+
+      it("needs both entities' permissions; an unknown carrier is 404", async () => {
+        const c = await newCarrier(`D3 Perm ${tag}`);
+        // Sales: no suppliers; Branch Manager: suppliers without create; Driver: neither.
+        await fromCarrier(c.id, cookies.salesPts).expect(403);
+        await fromCarrier(c.id, cookies.managerPts).expect(403);
+        await fromCarrier(c.id, cookies.driverPts).expect(403);
+        await get(`/suppliers/matching-carrier/${c.id}`, cookies.salesPts).expect(403);
+        await fromCarrier(randomUUID()).expect(404);
+        expect((await carrierOf(c.id))?.supplierId).toBeNull();
+      });
+
+      it('two requests at once for one carrier make one supplier', async () => {
+        const c = await newCarrier(`D3 Race ${tag}`);
+        const results = await Promise.all([fromCarrier(c.id), fromCarrier(c.id)]);
+        expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+        expect(await t.prisma.supplier.count({ where: { name: c.name } })).toBe(1);
+      });
+
+      // Codex F95-1: two carriers of one company, at once. Supplier numbering is held until both
+      // requests wait, so both would have passed an unserialized duplicate check.
+      async function raceCarriers(a: CarrierDto, b: CarrierDto) {
+        let release = () => {};
+        const held = new Promise<void>((resolve) => (release = resolve));
+        let holding = () => {};
+        const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+        const holder = t.prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT 1 FROM "number_sequences"
+              WHERE "doc_type" = 'SUPPLIER' AND "period_key" = '' FOR UPDATE`;
+            holding();
+            await held;
+          },
+          { timeout: 20_000 },
+        );
+        await holdingNow;
+        const requests = Promise.all([
+          fromCarrier(a.id).then((r) => r),
+          fromCarrier(b.id).then((r) => r),
+        ]);
+        // Both wait: on the numbering, or (serialized) on the first one's identity lock.
+        await waitForLockWaiter(t.prisma, 2);
+        release();
+        await holder;
+        return (await requests).map((r) => r.status).sort();
+      }
+
+      it('two carriers sharing a phone, at once, make one supplier', async () => {
+        const phone = uniquePhone();
+        await fromCarrier((await newCarrier(`D3 Seq ${tag}`)).id).expect(201);
+        const a = await newCarrier(`D3 Phone A ${tag}`, phone);
+        const b = await newCarrier(`D3 Phone B ${tag}`, phone);
+        expect(await raceCarriers(a, b)).toEqual([201, 409]);
+        expect(await t.prisma.supplier.count({ where: { phone } })).toBe(1);
+      });
+
+      it('two carriers with one name in another case, at once, make one supplier', async () => {
+        const name = `D3 Same Name ${tag}`;
+        const a = await newCarrier(name, null);
+        const b = await newCarrier(`  ${name.toLowerCase()} `, null);
+        expect(await raceCarriers(a, b)).toEqual([201, 409]);
+        expect(
+          await t.prisma.supplier.count({ where: { name: { equals: name, mode: 'insensitive' } } }),
+        ).toBe(1);
+      });
     });
 
     it('a bill for shipment costs and expenses posts to their accounts and the payable', async () => {

@@ -52,7 +52,6 @@
     "invoices": "الفواتير",
     "receipts": "سندات القبض",
     "journals": "القيود اليومية",
-    "trialBalance": "ميزان المراجعة",
     "chartOfAccounts": "دليل الحسابات",
     "fxRates": "أسعار الصرف",
     "periods": "الفترات المحاسبية",
@@ -94,7 +93,16 @@
     "recentBookings": "آخر الحجوزات",
     "viewAll": "عرض الكل",
     "noQuotations": "لا توجد عروض أسعار بعد.",
-    "noBookings": "لا توجد حجوزات بعد."
+    "noBookings": "لا توجد حجوزات بعد.",
+    "myWork": "مهامي",
+    "draftsAwaitingReview": "مسودات المساعد للمراجعة",
+    "alerts": "التنبيهات",
+    "warehouseShipments": "شحنات في المخازن",
+    "warehouseToday": "اليوم: {received} استلام · {released} إفراج",
+    "openCustomsFiles": "ملفات جمارك مفتوحة",
+    "tripsOnTheRoad": "رحلات في الطريق",
+    "myTripsOnTheRoad": "رحلاتي في الطريق",
+    "plannedTrips": "{count, plural, =0 {لا رحلات مخططة} one {رحلة مخططة واحدة} two {رحلتان مخططتان} few {# رحلات مخططة} many {# رحلة مخططة} other {# رحلة مخططة}}"
   },
   "Account": {
     "title": "تغيير كلمة المرور",
@@ -163,7 +171,8 @@
     "FINANCE": "المالية",
     "WAREHOUSE": "المستودع",
     "CUSTOMS": "الجمارك",
-    "DRIVER": "سائق / نقل"
+    "DRIVER": "سائق / نقل",
+    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق"
   },
   "Common": {
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
@@ -279,6 +288,7 @@
     "rate_CANCELLED": "ملغى",
     "mode_SEA": "بحري",
     "mode_ROAD": "بري",
+    "mode_SEA_ROAD": "بحري وبري",
     "cargo_CONTAINER": "حاويات",
     "cargo_PALLET": "طبالي",
     "cargo_BARREL": "براميل",
@@ -469,7 +479,11 @@
     "minimum": "الحد الأدنى",
     "lineTotal": "المبلغ",
     "subtotal": "المجموع",
-    "discountTotal": "الخصومات"
+    "discountTotal": "الخصومات",
+    "currencyFromCustomer": "مقترح: العملة المفضلة للعميل.",
+    "currencyFromBranch": "مقترح: عملة الفرع.",
+    "validUntilFromDays": "مقترح: {days} يوم من اليوم.",
+    "currencySuggestionNotApplied": "العملة المقترحة لهذا العميل {currency}. ما اتطبقت لأن البنود فيها أسعار؛ غيّر العملة بنفسك لو محتاج."
   },
   "Bookings": {
     "title": "الحجوزات",
@@ -500,7 +514,7 @@
     "sectionPartiesHint": "المرسل والمستلم والجهة المُخطرة من قائمة العميل.",
     "servicesHint": "ما تتولاه نولون في هذا الحجز.",
     "sectionNotes": "ملاحظات",
-    "sectionNotesHint": "وصف البضاعة والتعليمات الخاصة.",
+    "sectionNotesHint": "التعليمات الخاصة.",
     "containerType": "نوع الحاوية",
     "quantity": "العدد",
     "lengthCm": "الطول (سم)",
@@ -523,7 +537,13 @@
     "openShipment": "فتح الشحنة",
     "addToContainer": "حجز LCL جديد في الحاوية {number}",
     "addToContainerHint": "ينطلق الحجز من ميناء التحميل الخاص بالحاوية، شحن بحري LCL. الحفظ يؤكد الحجز وينشئ شحنته ويضيفها إلى الحاوية مباشرة.",
-    "pickCustomerToSave": "اختر العميل في أعلى النموذج لتتمكن من الحفظ."
+    "pickCustomerToSave": "اختر العميل في أعلى النموذج لتتمكن من الحفظ.",
+    "fromQuotationTitle": "حجز جديد من عرض السعر {number}",
+    "notSet": "غير محدد",
+    "fromQuotationHint": "معبّى من عرض السعر. راجعه واحفظه: ما بيتعمل حجز قبل الحفظ. المسار والنمط والبضاعة بتفضل زي العرض.",
+    "itemsFromQuotation": "بنود الحاويات جات من رسوم العرض المسعّرة بالحاوية. راجعها قبل الحفظ.",
+    "partiesFromLastBooking": "مقترحة من آخر حجز للعميل، {number}. غيّرها لو محتاج.",
+    "partiesFromOnlyParty": "مقترح: الطرف الوحيد للعميل، كمستلم. غيّرو لو محتاج."
   },
   "Shipments": {
     "title": "الشحنات",
@@ -606,7 +626,9 @@
     "fileTooLarge": "الملف أكبر من 10 ميجابايت.",
     "fileRejected": "يُقبل PDF أو صور JPEG وPNG وWebP فقط.",
     "sharedBranches": "فروع مشاركة",
-    "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة."
+    "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة.",
+    "inConsolidation": "تُشحن هذه الشحنة في الحاوية المجمّعة {number}: حاويتها هي حاوية التجميع، وتظهر هنا للقراءة فقط.",
+    "containerTypeFromBooking": "من بنود الحجز، وفيها نوع الحاوية هذا وحده."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -679,6 +701,7 @@
     "fxRate": "سعر الصرف (مقابل 1 دولار)",
     "fxRateOptional": "سعر الصرف (اختياري)",
     "fxRateHint": "سعر الصرف هو عدد وحدات {currency} مقابل 1 دولار أمريكي. اتركه فارغاً لاستخدام سعر الجدول في تاريخ الفاتورة.",
+    "repriceHint": "كانت الأسعار بعملة {from} فمُسحت: أدخل كل الأسعار بعملة {to}.",
     "lines": "بنود الفاتورة",
     "noLines": "لا توجد بنود.",
     "chargeType": "البند",
@@ -752,7 +775,15 @@
     "cancelReason": "سبب الإلغاء",
     "cancelledNotice": "تم إلغاء السند.",
     "openJournal": "القيد المحاسبي",
-    "openCancelJournal": "قيد الإلغاء"
+    "openCancelJournal": "قيد الإلغاء",
+    "chooseCurrency": "اختر العملة",
+    "currencyFromInvoices": "كل فواتير العميل المفتوحة بعملة {currency}.",
+    "currencySuggestionNotApplied": "كل فواتير العميل المفتوحة بعملة {currency}. لم تُطبَّق لأن المبلغ أُدخل بعملة أخرى؛ غيّر العملة بنفسك إن لزم.",
+    "invoicesChanged": "تغيّرت فواتير العميل المفتوحة منذ فتح النموذج. أعد تحميل الصفحة ثم وزّع المبلغ.",
+    "mixedCurrencies": "الفواتير المفتوحة بأكثر من عملة: اختر عملة السند.",
+    "payBalance": "سداد الرصيد",
+    "distribute": "توزيع المبلغ على الفواتير، الأقدم أولاً",
+    "distributedRest": "يتبقى {amount} {currency} ويُحتفظ به كدفعة مقدمة."
   },
   "Journals": {
     "title": "القيود اليومية",
@@ -859,7 +890,8 @@
     "expenseCategoriesHint": "كل فئة تُرحّل المصروفات العامة وبنود المصروفات في فواتير الموردين إلى حسابها.",
     "categoryCode": "الرمز",
     "chooseAccount": "اختر حساباً",
-    "addCategory": "إضافة"
+    "addCategory": "إضافة",
+    "typeFromParent": "نوع الحساب الأب."
   },
   "FxRates": {
     "title": "أسعار الصرف",
@@ -942,7 +974,10 @@
     "releasedNotice": "أُخرجت البضاعة: {number}.",
     "photoAdded": "أُضيفت الصورة.",
     "photoTooLarge": "حجم الصورة لا يتجاوز 10 ميجابايت.",
-    "photoRejected": "تُقبل صور JPEG وPNG وWebP فقط."
+    "photoRejected": "تُقبل صور JPEG وPNG وWebP فقط.",
+    "useRemaining": "استخدم المتبقي: {remaining}",
+    "remainingSuggested": "الطرود المتبقية للاستلام. عُدّها وأكّد.",
+    "weightHeldSuggested": "مقترح: الوزن المتبقي في هذا المخزن، للإفراج عنه كله."
   },
   "Customs": {
     "section": "الجمارك",
@@ -956,9 +991,11 @@
     "note": "ملاحظات",
     "updated": "آخر تحديث",
     "clearedHint": "الملف المخلَّص يحتاج تاريخ التخليص، ولا يكون قبل تاريخ التقديم.",
+    "movesShipmentHint": "حفظ ملف قيد الإجراء ينقل الشحنة إلى «جمارك جارية»، وحفظ ملف مخلَّص ينقلها إلى «تم التخليص» بتاريخ التخليص، متى أمكن للشحنة أخذ هذه الخطوة.",
     "documentsHint": "تُرفع المستندات الجمركية في مستندات الشحنة أدناه.",
     "moveShipment": "الشحنة: {status}",
     "shipmentMoved": "حالة الشحنة الآن: {status}.",
+    "savedAndMoved": "حُفظ الملف. حالة الشحنة الآن: {status}.",
     "fees": "الرسوم الجمركية",
     "feeDescription": "البيان",
     "amount": "المبلغ",
@@ -1098,7 +1135,23 @@
     "podSaved": "حُفظ إثبات التسليم {number}.",
     "podSavedMoved": "حُفظ إثبات التسليم {number}، وأصبحت الشحنة: {status}.",
     "noPods": "لا يوجد إثبات تسليم بعد.",
-    "files": "التوقيع والصور"
+    "files": "التوقيع والصور",
+    "arriveAndComplete": "وصلت وأُكملت",
+    "arrivedAndCompletedNotice": "سُجّل وصول الرحلة وإكمالها.",
+    "arrivedNotCompleted": "سُجّل الوصول، لكن تعذّر إكمال الرحلة: {reason} استخدم «إكمال الرحلة» لإنهائها.",
+    "tripForShipment": "رحلة لهذه الشحنة",
+    "originFromShipment": "مقترح: موقع الشحنة الحالي. تأكد من نقطة بداية الرحلة.",
+    "destinationFromShipment": "مقترح: وجهة الشحنة.",
+    "vehicleFromLastTrip": "مقترح: عربة آخر رحلة لهذا السائق ({trip}).",
+    "supplier": "المورد",
+    "noSupplier": "بدون مورد",
+    "notLinked": "غير مربوط",
+    "createSupplier": "إنشاء مورد",
+    "supplierCreated": "أُنشئ مورد من الناقل ورُبط به.",
+    "supplierExists": "يوجد مورد بنفس الاسم أو الهاتف. اربط الناقل به بدل إنشاء مورد آخر:",
+    "linkTo": "ربط بـ {supplier}",
+    "carrierNotLinked": "أُضيف الناقل لكنه لم يُربط بالمورد: {reason}",
+    "nameFromUser": "عُبّئ من اسم المستخدم المربوط، ويمكنك تعديله."
   },
   "Consolidations": {
     "title": "الحاويات المجمعة",
@@ -1232,9 +1285,13 @@
     "since_STORAGE_EXCEEDED": "في المستودع منذ",
     "since_TRIP_LATE": "الوصول المخطط"
   },
+  "ApiAccess": {
+    "title": "الوصول عبر الـ API",
+    "hint": "نوعان منفصلان من الوصول، لكل منهما قسمه: مفاتيح Customer Service API، ومنصات المساعد التي تسجّل دخول الموظفين. المفتاح لا يسجّل دخول أحد، والمساعد لا يستخدم مفتاحاً."
+  },
   "ApiKeys": {
     "title": "مفاتيح Customer Service API",
-    "hint": "المفتاح يتيح لعميل خدمة العملاء (وكيل واتساب لاحقاً) قراءة شحنات عملاء فروعه ومراحلها وفواتيرها، بالحقول الآمنة للعميل فقط. لا يستطيع تعديل أي شيء.",
+    "hint": "مستخدمة حالياً: المفتاح يتيح لعميل خدمة العملاء (مثل وكيل واتساب) استدعاء Customer Service API (‎/cs/…) وقراءة شحنات عملاء فروعه ومراحلها وفواتيرها، بالحقول الآمنة للعميل فقط. لا يستطيع تعديل أي شيء.",
     "name": "الاسم",
     "namePlaceholder": "مثلاً: وكيل واتساب",
     "branches": "الفروع",
@@ -1735,7 +1792,8 @@
     "cancelReason": "سبب الإلغاء",
     "cancelledNotice": "تم إلغاء الإشعار الدائن.",
     "openInvoice": "الفاتورة",
-    "openJournal": "القيد"
+    "openJournal": "القيد",
+    "fullBalance": "كامل الرصيد ({amount} {currency})"
   },
   "Suppliers": {
     "title": "الموردون",
@@ -1784,7 +1842,6 @@
     "lineFor": "عن",
     "lineAmount": "المبلغ",
     "shipmentNumber": "رقم الشحنة",
-    "shipmentNotFound": "البند {line}: لا توجد شحنة متاحة لك بهذا الرقم.",
     "chargeType": "البند",
     "chooseChargeType": "اختر البند",
     "trip": "الرحلة",
@@ -1810,7 +1867,17 @@
     "payment": "الدفعة",
     "paymentDate": "تاريخ الدفع",
     "consolidation": "الحاوية",
-    "chooseConsolidation": "اختر حاوية"
+    "chooseConsolidation": "اختر حاوية",
+    "dueDateOptional": "تاريخ الاستحقاق (اختياري)",
+    "dueDateFromTerms": "إذا تُرك فارغاً، يكون تاريخ الفاتورة مضافاً إليه مدة سداد المورد ({days} يوماً).",
+    "dueDateFromTermsUnknown": "إذا تُرك فارغاً، يكون تاريخ الفاتورة مضافاً إليه مدة سداد المورد.",
+    "tripsInOtherCurrencies": "رحلات هذا المورد غير المفوترة موجودة أيضاً بعملة:",
+    "useTripCurrency": "{currency} ({count, plural, one {رحلة واحدة} two {رحلتان} few {# رحلات} other {# رحلة}})",
+    "shipmentSearch": "رقم الشحنة أو العميل",
+    "exactMatch": "مطابق تماماً:",
+    "moreShipments": "شحنات أخرى",
+    "noShipments": "لا توجد شحنة مطابقة في هذا الفرع.",
+    "chooseShipmentFirst": "البند {line}: اختر الشحنة."
   },
   "SupplierPayments": {
     "title": "مدفوعات الموردين",
@@ -2014,7 +2081,7 @@
     "failed": "تعذّر ربط المساعد."
   },
   "AgentClients": {
-    "title": "مساعد الموظفين",
+    "title": "دخول مساعد الموظفين (تفويض)",
     "hint": "منصة المساعد المسجّلة تستطيع تسجيل دخول الموظفين عبر نولون. بعدها تقرأ، باسم ذلك الموظف، الشاشات المفتوحة لها فقط، بصلاحياته وفروعه نفسها، لمدة 10 دقائق في كل مرة. لا تستطيع تغيير أي شيء. إلغاؤها يُنهي كل دخول عبر المساعد فوراً.",
     "redirectUri": "عنوان العودة (https)",
     "audience": "الجهة المستهدفة (audience)",
@@ -2110,6 +2177,7 @@
     "replacedBy": "استُبدلت بطلبك من المساعد بمسودة أحدث:",
     "newerDraft": "افتح المسودة الأحدث",
     "customerTitle": "مسودة عميل جديد: {name}",
+    "customerToCreate": "العميل الذي سيُنشأ مع الحجز",
     "customerApproveHint": "الاعتماد يضيف هذا العميل للفرع الآن، إذا لم يكن رقم الهاتف لعميل آخر في الفرع. الشروط والائتمان والرقم الضريبي تُضبط في صفحة العميل بعد ذلك.",
     "partyTitle": "مسودة طرف للعميل {customer}: {name}",
     "partyApproveHint": "الاعتماد يضيف هذا الطرف للعميل الآن. بعدها يمكن اختياره في الحجز شاحناً أو مستلماً أو جهة إخطار.",
@@ -2185,7 +2253,31 @@
     "priceTyped": "أدخله الموظف",
     "priceQuotation": "سعر النظام: من عرض سعر الشحنة",
     "priceRateCard": "سعر النظام: من جدول الأسعار",
-    "systemPriceHint": "الأسعار المكتوب عندها «سعر النظام» وجدها نولون ولم يكتبها أحد: راجعها قبل الاعتماد."
+    "systemPriceHint": "الأسعار المكتوب عندها «سعر النظام» وجدها نولون ولم يكتبها أحد: راجعها قبل الاعتماد.",
+    "missingTitle": "ناقص قبل الاعتماد",
+    "missingHint": "المساعد حفظ المسودة دي من غير القيم دي. املاها واحفظ؛ نولون بيتحقق من كل قيمة، والمسودة بتتعتمد لمن ما يكون في حاجة ناقصة.",
+    "missingReadOnly": "المسودة دي ما بتتعتمد لحدي ما القيم دي تتملا.",
+    "missingChoose": "اختر…",
+    "missingSave": "حفظ القيم",
+    "missingSaved": "تم حفظ القيم.",
+    "missingNewLine": "سطر جديد",
+    "missingNoShipments": "ما في شحنة.",
+    "missingNoCustomers": "ما في عميل.",
+    "incompleteRefused": "المسودة لسه ناقصة قيم.",
+    "waitingTab": "كل اللي منتظرني",
+    "waitingHint": "المسودات المفتوحة من كل الأنواع، ومعاها مسودات استلام البضاعة، اللي بتقدر تعتمدها أو ترفضها هسي في فروعك. الأحدث أولاً.",
+    "waitingEmpty": "ما في حاجة منتظراك.",
+    "branch": "الفرع",
+    "missingColumn": "القيم الناقصة",
+    "missingCount": "قيم ناقصة: {n}",
+    "loadMore": "اعرض أكتر",
+    "kind_grn": "استلام بضاعة (GRN)",
+    "missingSuggestedHint": "نولون عبّى القيم البيقترحها. راجعها أو غيّرها واحفظ؛ ما في حاجة بتتحفظ قبل ما تحفظ إنت.",
+    "missingSuggested": "مقترحة من نولون",
+    "missingNoChoices": "ما في خيارات هسي.",
+    "openInvoiceChoice": "{number} · متبقي {outstanding} {currency}",
+    "approveWithCustomer": "العميل لسه ما اتعمد. بتقدر تعتمد العميل والحجز مع بعض هنا: علّم على كلام العميل وكلام الحجز، وبعدها اعتمد. أو اعتمد مسودة العميل أولاً في شاشتها.",
+    "newCustomerBookingWithCustomerApproveHint": "الاعتماد بيضيف العميل ده للفرع وبيعمل ليهو حجز مسودة، الاتنين مع بعض: لو واحد فيهم اترفض (مثلاً لو بقى في عميل في الفرع عندو نفس الهاتف)، ما بيتعمل أي حاجة. الحجز ما مؤكد وما عندو شحنة لحدي ما تأكده إنت. أضف الشاحن والمستلم وجهة الإخطار في الحجز."
   },
   "Fields": {
     "customerId": "العميل",
@@ -2233,7 +2325,24 @@
     "reason": "السبب",
     "note": "ملاحظة",
     "etd": "تاريخ المغادرة المتوقع",
-    "eta": "تاريخ الوصول المتوقع"
+    "eta": "تاريخ الوصول المتوقع",
+    "vehicleId": "المركبة",
+    "driverId": "السائق",
+    "carrierId": "الناقل",
+    "agreedCost": "التكلفة المتفق عليها",
+    "shipmentIds": "الشحنات",
+    "validFrom": "ساري من",
+    "kind": "النوع",
+    "shipmentId": "الشحنة",
+    "warehouseId": "المخزن",
+    "packages": "عدد الطرود",
+    "status": "الحالة",
+    "invoiceDate": "تاريخ الفاتورة",
+    "dueDate": "تاريخ الاستحقاق",
+    "receiptDate": "تاريخ السند",
+    "cashAccountId": "حساب النقدية أو البنك",
+    "invoiceId": "الفاتورة",
+    "allocations": "التخصيصات"
   },
   "Refusals": {
     "SAME_ROUTE": "يجب أن يختلف «من» عن «إلى».",
@@ -2245,6 +2354,7 @@
     "DIMENSIONS_TOGETHER": "اكتب الطول والعرض والارتفاع معًا، أو اتركها كلها واكتب الحجم (CBM).",
     "VOLUME_TOO_LARGE": "الحجم كبير جدًا: راجع الأبعاد والعدد.",
     "VALID_UNTIL_PAST": "تاريخ «صالح حتى» في الماضي.",
+    "QUOTED_ROUTE_FIXED": "هذا الحجز مأخوذ من عرض سعر: المسار ونوع الشحن هما ما في العرض ولا يتغيران.",
     "CURRENCY_NOT_ACTIVE": "هذه العملة غير معروفة أو موقوفة.",
     "RATE_NOT_USABLE": "هذا السعر لا ينطبق على عرض السعر هذا (المسار أو نمط الشحن أو التحميل أو البضاعة أو العملة أو التاريخ).",
     "MANUAL_LINE_INCOMPLETE": "البند بدون سعر محفوظ يحتاج البند والوحدة والسعر.",
@@ -2256,6 +2366,7 @@
     "SAME_CONTAINER": "الشحنة في هذه الحاوية أصلًا: اختر حاوية أخرى.",
     "SHIPMENT_OTHER_BRANCH": "الشحنة {shipment} تتبع فرعًا لا تعمل فيه، فلا يمكنك وضعها في هذه الحاوية.",
     "SHIPMENT_NOT_LCL_SEA": "الشحنة {shipment} ليست شحنة بحرية LCL تنقلها نولون.",
+    "SHIPMENT_OTHER_PORT": "الحاوية {container} تُحمَّل في ميناء غير الذي تغادر منه الشحنة {shipment}.",
     "SHIPMENT_PAST_LOADING": "الشحنة {shipment} تجاوزت مرحلة التجميع أو موقوفة أو ملغاة.",
     "SHIPMENT_IN_OTHER_CONTAINER": "الشحنة {shipment} موجودة في الحاوية {container}: أخرجها منها أو انقلها أولًا.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "الحاوية {container} تقبل حجوزات الشحن البحري المجمّع LCL فقط: اجعل الحجز بحريًا مجمّعًا.",
@@ -2263,6 +2374,7 @@
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "الحجز في الحاوية {container} يشمل الشحن الرئيسي: أضفه إلى الخدمات.",
     "RATE_NO_MATCH": "لا يوجد سعر معتمد في جدول الأسعار يطابق هذا البند (المسار، نمط الشحن، التحميل، البضاعة، العملة، البند، التاريخ): أدخل السعر.",
     "RATE_SEVERAL": "أكثر من سعر معتمد في جدول الأسعار يطابق هذا البند: اختر السعر، أو أدخل السعر يدوياً.",
+    "INVOICE_CURRENCY_REPRICE": "الفاتورة بعملة {from}: لتحويلها إلى {to} أدخل كل الأسعار بعملة {to}.",
     "QUOTED_PRICE_OTHER_CURRENCY": "عرض سعر الشحنة يسعّر هذا البند بعملة أخرى: افتح الفاتورة بتلك العملة، أو أدخل السعر.",
     "QUOTED_PRICE_SEVERAL": "عرض سعر الشحنة فيه أكثر من سطر لهذا البند: أدخل السعر.",
     "PRICE_AS_ONE_UNIT": "على هذا البند حد أدنى أو خصم: افتحه بكمية 1، أو أدخل السعر.",
@@ -2270,7 +2382,10 @@
     "ALLOCATION_OTHER_CUSTOMER": "هذه الفاتورة ليست من فواتير هذا العميل.",
     "ALLOCATION_NOT_APPROVED": "الفاتورة {invoice} غير معتمدة: الدفع يكون على الفواتير المعتمدة فقط.",
     "ALLOCATION_OTHER_CURRENCY": "الفاتورة {invoice} بعملة {currency}: استلمها بتلك العملة.",
-    "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك."
+    "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك.",
+    "BRANCH_REQUIRED": "اختر فرع هذه المسودة.",
+    "BRANCH_MISMATCH": "هذا الفرع ليس فرع العميل أو الشحنة: المسودة تتبع فرعهما.",
+    "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2289,6 +2404,7 @@
     "kind_PORT": "ميناء",
     "kind_CITY": "مدينة",
     "kind_BORDER": "نقطة حدود",
-    "kind_OTHER": "أخرى"
+    "kind_OTHER": "أخرى",
+    "countryFromCity": "دولة المدينة: الموقع في دولة مدينته."
   }
 }

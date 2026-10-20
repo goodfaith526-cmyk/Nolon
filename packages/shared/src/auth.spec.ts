@@ -27,9 +27,9 @@ function can(role: Role, permission: Permission): boolean {
 describe('permission matrix (annex A)', () => {
   it('has one cell per role for every module, each a known level', () => {
     for (const module of PERMISSION_MODULES) {
-      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{9}$/);
+      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{10}$/);
     }
-    expect(ROLES).toHaveLength(9);
+    expect(ROLES).toHaveLength(10);
   });
 
   it('expands every cell to exactly the actions of its level', () => {
@@ -47,37 +47,39 @@ describe('permission matrix (annex A)', () => {
 
   // Spot checks against the annex table, row by row in its own words.
   const rows: [PermissionModule, string][] = [
-    ['customers', 'ك ع ك ك ع ع ع ع —'],
-    ['rates', 'ك ع م إ ع ع — — —'],
-    ['quotations', 'ك ع م ك ع ع — — —'],
-    ['bookings', 'ك ع م ك ك ع ع ع —'],
-    ['shipments', 'ك ع ك ع ك ع ع ع ع'],
-    ['consolidation', 'ك ع ك — ك ع ع — —'],
+    ['customers', 'ك ع ك ك ع ع ع ع — ك'],
+    // Changed after the annex (owner, 2026-10-19): rate cards belong to the Sales & Marketing
+    // Manager, the tenth column (Sales' cells elsewhere).
+    ['rates', 'ك ع ع ع ع ع — — — ك'],
+    ['quotations', 'ك ع م ك ع ع — — — ك'],
+    ['bookings', 'ك ع م ك ك ع ع ع — ك'],
+    ['shipments', 'ك ع ك ع ك ع ع ع ع ع'],
+    ['consolidation', 'ك ع ك — ك ع ع — — —'],
     // Added after the annex (owner, 2026-10-14): booking into an open container.
-    ['container_booking', 'ك — — إ إ — — — —'],
-    ['warehouse', 'ك ع ك ع ع ع ك ع —'],
-    ['customs', 'ك ع ك ع ع ع — ك —'],
-    ['transport_fleet', 'ك ع ك — ك ع — — —'],
-    ['transport_trips', 'ك ع ك ع ك ع ع — إ'],
-    ['pod', 'ك ع ك ع ك ع ك — إ'],
-    ['documents', 'ك ع ك إ إ إ إ إ إ'],
-    ['customer_invoices', 'ك ع م ع ع ك — — —'],
-    ['credit_notes', 'ك ع م — — إ — — —'],
-    ['receipts', 'ك ع ع ع — ك — — —'],
-    ['suppliers', 'ك ع م — إ ك — — —'],
-    ['supplier_payments', 'ك ع م — — ك — — —'],
-    ['expenses', 'ك ع م — إ ك إ إ إ'],
-    ['manual_journals', 'ك ع — — — ك — — —'],
-    ['chart_of_accounts', 'ك ع — — — م — — —'],
-    ['fx_rates', 'ك ع — — — ك — — —'],
-    ['shipment_profitability', 'ك ع ع — — ع — — —'],
-    ['financial_reports', 'ك ع ع — — ع — — —'],
-    ['operational_reports', 'ك ع ع ع ع ع ع ع —'],
-    ['dashboards', 'ك ع ع ع ع ع — — —'],
-    ['alert_settings', 'ك — — — — — — — —'],
-    ['master_data', 'ك ع ع ع ع ع ع ع ع'],
-    ['users', 'ك — — — — — — — —'],
-    ['audit_log', 'ع ع ع — — — — — —'],
+    ['container_booking', 'ك — — إ إ — — — — إ'],
+    ['warehouse', 'ك ع ك ع ع ع ك ع — ع'],
+    ['customs', 'ك ع ك ع ع ع — ك — ع'],
+    ['transport_fleet', 'ك ع ك — ك ع — — — —'],
+    ['transport_trips', 'ك ع ك ع ك ع ع — إ ع'],
+    ['pod', 'ك ع ك ع ك ع ك — إ ع'],
+    ['documents', 'ك ع ك إ إ إ إ إ إ إ'],
+    ['customer_invoices', 'ك ع م ع ع ك — — — ع'],
+    ['credit_notes', 'ك ع م — — إ — — — —'],
+    ['receipts', 'ك ع ع ع — ك — — — ع'],
+    ['suppliers', 'ك ع م — إ ك — — — —'],
+    ['supplier_payments', 'ك ع م — — ك — — — —'],
+    ['expenses', 'ك ع م — إ ك إ إ إ —'],
+    ['manual_journals', 'ك ع — — — ك — — — —'],
+    ['chart_of_accounts', 'ك ع — — — م — — — —'],
+    ['fx_rates', 'ك ع — — — ك — — — —'],
+    ['shipment_profitability', 'ك ع ع — — ع — — — —'],
+    ['financial_reports', 'ك ع ع — — ع — — — —'],
+    ['operational_reports', 'ك ع ع ع ع ع ع ع — ع'],
+    ['dashboards', 'ك ع ع ع ع ع — — — ع'],
+    ['alert_settings', 'ك — — — — — — — — —'],
+    ['master_data', 'ك ع ع ع ع ع ع ع ع ع'],
+    ['users', 'ك — — — — — — — — —'],
+    ['audit_log', 'ع ع ع — — — — — — —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 
@@ -102,7 +104,14 @@ describe('permission matrix (annex A)', () => {
     expect(can('FINANCE', 'chart_of_accounts:create')).toBe(false);
     expect(can('FINANCE', 'chart_of_accounts:approve')).toBe(true);
     expect(can('SALES', 'rates:approve')).toBe(false);
-    expect(can('SALES', 'rates:update')).toBe(true);
+    expect(can('SALES', 'rates:create')).toBe(false);
+    expect(can('SALES', 'rates:update')).toBe(false);
+    expect(can('BRANCH_MANAGER', 'rates:approve')).toBe(false);
+    expect(can('SALES_MARKETING_MANAGER', 'rates:create')).toBe(true);
+    expect(can('SALES_MARKETING_MANAGER', 'rates:update')).toBe(true);
+    expect(can('SALES_MARKETING_MANAGER', 'rates:approve')).toBe(true);
+    expect(can('SALES_MARKETING_MANAGER', 'rates:cancel')).toBe(true);
+    expect(can('SALES_MARKETING_MANAGER', 'customer_invoices:create')).toBe(false);
     // Sales book into open containers, and nothing more about containers.
     expect(can('SALES', 'container_booking:create')).toBe(true);
     expect(can('SALES', 'consolidation:view')).toBe(false);

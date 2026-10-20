@@ -1,20 +1,25 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
   CreateQuotationRequest,
   Page,
+  QuotationDefaultsDto,
+  QuotationDraftValues,
   QuotationDto,
   QuotationInput,
   QuotationStatus,
   QuotationSummaryDto,
+  RateUnit,
 } from '@nolon/shared';
+import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import {
   localDayFilter,
   matchedLocations,
@@ -25,6 +30,8 @@ import { ZERO, dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
+import { draftBranch } from '../drafts/draft-rules.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
@@ -73,6 +80,7 @@ export class QuotationsService {
     private readonly rates: RatesService,
     private readonly masterData: MasterDataService,
     private readonly currencies: CurrenciesService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   async list(user: AuthUser, filters: QuotationFilters): Promise<Page<QuotationSummaryDto>> {
@@ -121,6 +129,8 @@ export class QuotationsService {
    * caller has already checked access to the shipment.
    */
   async invoiceSource(id: string): Promise<{
+    id: string;
+    updatedAt: Date;
     currency: string;
     lines: {
       chargeTypeCode: string;
@@ -128,7 +138,7 @@ export class QuotationsService {
       quantity: Prisma.Decimal;
       unitPrice: Prisma.Decimal;
       lineTotal: Prisma.Decimal;
-      unit: string;
+      unit: RateUnit;
     }[];
   } | null> {
     const quotation = await this.prisma.quotation.findUnique({
@@ -137,6 +147,8 @@ export class QuotationsService {
     });
     if (!quotation) return null;
     return {
+      id: quotation.id,
+      updatedAt: quotation.updatedAt,
       currency: quotation.currency,
       lines: quotation.lines.map((l) => ({
         chargeTypeCode: l.chargeTypeCode,
@@ -146,6 +158,33 @@ export class QuotationsService {
         lineTotal: l.lineTotal,
         unit: l.unit,
       })),
+    };
+  }
+
+  /**
+   * What a new quotation for this customer starts from (functional review B3, B4). Generated when
+   * the person picks the customer on a new quotation: the currency is the customer's preferred one
+   * when it is set and active, else the customer's branch's default currency; valid-until is that
+   * branch's today plus QUOTATION_VALIDITY_DAYS. Picking another customer asks again. These are
+   * suggestions: the form keeps a currency or date the person chose, and create/update still take
+   * whatever is sent. The customer must be active and in the user's branches (404 otherwise).
+   */
+  async defaults(user: AuthUser, customerId: string): Promise<QuotationDefaultsDto> {
+    const customer = await this.customers.requireActiveCustomer(user, customerId);
+    const branch = await this.prisma.branch.findUniqueOrThrow({
+      where: { id: customer.branchId },
+    });
+    const today = todayIn(branch.timezone);
+    const preferred = customer.preferredCurrency;
+    const fromCustomer = preferred !== null && (await this.currencies.isActive(preferred));
+    const validityDays = this.env.QUOTATION_VALIDITY_DAYS;
+    return {
+      customerId: customer.id,
+      currency: fromCustomer ? preferred : branch.defaultCurrency,
+      currencySource: fromCustomer ? 'CUSTOMER' : 'BRANCH',
+      today,
+      validUntil: addDays(today, validityDays),
+      validityDays,
     };
   }
 
@@ -166,6 +205,73 @@ export class QuotationsService {
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return { customerId: customer.id, branchId, ...prepared };
+  }
+
+  /**
+   * The checks of prepareCreate on the values a quotation draft holds so far (a draft is saved
+   * with missing values): the customer (active, in the user's branches), and each value present
+   * checked as a quotation checks it (route, sea-only load type, currency, validity, each line's
+   * rate card and charge type). Prices and totals wait for the missing values; prepareCreate runs
+   * in full once nothing is missing. Nothing is written.
+   */
+  async checkPresent(
+    user: AuthUser,
+    input: QuotationDraftValues,
+    givenBranchId: string | null,
+  ): Promise<{ customerId: string | null; branchId: string }> {
+    const customer = input.customerId
+      ? await this.customers.requireActiveCustomer(user, input.customerId)
+      : null;
+    // The customer's branch, or with none yet the branch the draft names (one of the user's).
+    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
+    const from = input.originLocationId ?? null;
+    const to = input.destinationLocationId ?? null;
+    if (from !== null && to !== null) {
+      const route = ['originLocationId', 'destinationLocationId'];
+      if (from === to)
+        throw fieldRefusal('SAME_ROUTE', 'Origin and destination must differ', route);
+      await onFields(route, () => this.masterData.requireRoute(from, to));
+    } else if (from !== null) {
+      await onFields(['originLocationId'], () => this.masterData.requireLocation(from));
+    } else if (to !== null) {
+      await onFields(['destinationLocationId'], () => this.masterData.requireLocation(to));
+    }
+    if (input.mode && !hasSeaLeg(input.mode) && input.loadType) {
+      throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
+        'loadType',
+      ]);
+    }
+    const currency = input.currency;
+    if (currency) {
+      await onFields(
+        ['currency'],
+        () => this.currencies.requireActive(currency),
+        'CURRENCY_NOT_ACTIVE',
+      );
+    }
+    if (input.validUntil && input.validUntil < (await this.branchToday(branchId))) {
+      throw fieldRefusal('VALID_UNTIL_PAST', 'Valid-until is in the past', ['validUntil']);
+    }
+    for (const [index, line] of input.lines.entries()) {
+      const path = `lines.${index}`;
+      const rateCardId = line.rateCardId;
+      if (rateCardId) {
+        await onFields(
+          [`${path}.rateCardId`],
+          () => this.rates.requireApprovedRate(rateCardId),
+          'RATE_NOT_USABLE',
+        );
+      }
+      const chargeTypeCode = line.chargeTypeCode;
+      if (chargeTypeCode) {
+        await onFields(
+          [`${path}.chargeTypeCode`],
+          () => this.masterData.requireChargeType(chargeTypeCode),
+          'UNKNOWN_CHARGE_TYPE',
+        );
+      }
+    }
+    return { customerId: customer?.id ?? null, branchId };
   }
 
   /**
@@ -270,6 +376,26 @@ export class QuotationsService {
     return quotation;
   }
 
+  /**
+   * For bookings: the lines of a quotation (the caller checked it is the user's) priced per
+   * container whose rate card names the container type, in line order. A manual line names no
+   * container type, so it is not among them.
+   */
+  async perContainerLines(
+    quotationId: string,
+  ): Promise<{ containerTypeCode: string; quantity: Prisma.Decimal }[]> {
+    const lines = await this.prisma.quotationLine.findMany({
+      where: { quotationId, unit: 'PER_CONTAINER', rateCard: { containerTypeCode: { not: null } } },
+      select: { quantity: true, rateCard: { select: { containerTypeCode: true } } },
+      orderBy: { lineNo: 'asc' },
+    });
+    return lines.flatMap((l) =>
+      l.rateCard?.containerTypeCode
+        ? [{ containerTypeCode: l.rateCard.containerTypeCode, quantity: l.quantity }]
+        : [],
+    );
+  }
+
   private async findScoped(user: AuthUser, id: string): Promise<QuotationWithDetails> {
     const quotation = await this.prisma.quotation.findFirst({
       where: { id, ...branchScope(user) },
@@ -301,7 +427,7 @@ export class QuotationsService {
     await onFields(route, () =>
       this.masterData.requireRoute(input.originLocationId, input.destinationLocationId),
     );
-    if (input.mode !== 'SEA' && input.loadType) {
+    if (!hasSeaLeg(input.mode) && input.loadType) {
       throw fieldRefusal('LOAD_TYPE_SEA_ONLY', 'FCL/LCL applies to sea shipments only', [
         'loadType',
       ]);

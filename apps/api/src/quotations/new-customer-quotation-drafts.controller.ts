@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -28,29 +29,22 @@ import {
   RequirePermission,
 } from '../auth/decorators.js';
 import { parse, requiredText } from '../common/validation.js';
-import { customerFields } from '../customers/customer-schemas.js';
+import { customerDraftFields } from '../customers/customer-schemas.js';
 import { confirmedPaths, draftEvidencePaths } from '../drafts/draft-evidence.js';
 import { preCheckBody } from '../drafts/draft-rules.js';
 import { checkRequest, splitReplaced } from '../drafts/drafts.service.js';
 import { NewCustomerQuotationDraftsService } from './new-customer-quotation-drafts.service.js';
-import { quotationInputBody } from './quotations.controller.js';
+import { quotationDraftFields } from './quotation-drafts.controller.js';
 
 const MAX_LINES = 50;
 const idempotencyKey = z.string().regex(DRAFT_IDEMPOTENCY_KEY_PATTERN, 'Invalid idempotency key');
 
-// The contact details a person gives in a chat; terms, credit and tax details are set later.
-const customerBody = z
-  .object({
-    kind: customerFields.kind,
-    name: customerFields.name,
-    companyName: customerFields.companyName,
-    phone: customerFields.phone,
-    whatsapp: customerFields.whatsapp,
-    email: customerFields.email,
-    city: customerFields.city,
-    address: customerFields.address,
-    notes: customerFields.notes,
-  })
+// The contact details a person gives in a chat (terms, credit and tax details are set later) and
+// the quotation: each value checked as a customer's or a quotation's when given, none required
+// (owner decision, 2026-10-17). The branch is security context, always named (one of the user's).
+const customerBody = z.object(customerDraftFields).strict();
+const quotationBody = z
+  .object({ ...quotationDraftFields, lines: quotationDraftFields.lines.optional() })
   .strict();
 
 // The values the assistant binds to the staff member's words: the customer's and the
@@ -69,8 +63,8 @@ const createBody = z
   .object({
     idempotencyKey,
     branchId: z.uuid(),
-    customer: customerBody,
-    quotation: quotationInputBody,
+    customer: customerBody.optional(),
+    quotation: quotationBody.optional(),
     evidence: draftEvidencePaths(
       (f) => CUSTOMER_WORDS.includes(f) || QUOTATION_WORDS.includes(f) || evidenceLine(f) !== null,
       CUSTOMER_WORDS.length + QUOTATION_WORDS.length + 3 * MAX_LINES,
@@ -79,9 +73,20 @@ const createBody = z
   .strict()
   .refine(
     (body) =>
-      body.evidence.every((e) => (evidenceLine(e.field) ?? 0) < body.quotation.lines.length),
+      body.evidence.every((e) => {
+        const line = evidenceLine(e.field);
+        return line === null || line < (body.quotation?.lines?.length ?? 0);
+      }),
     { message: 'Words for a line the quotation does not have', path: ['evidence'] },
   );
+/** A person's edit: any value of either part, at the version they read; the branch stays. */
+const updateBody = z
+  .object({
+    version: z.number().int().min(1),
+    customer: customerBody.partial().optional(),
+    quotation: z.object(quotationDraftFields).partial().strict().optional(),
+  })
+  .strict();
 const approveBody = z
   .object({
     version: z.number().int().min(1),
@@ -152,6 +157,17 @@ export class NewCustomerQuotationDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<NewCustomerQuotationDraftDto> {
     return this.drafts.get(user, id);
+  }
+
+  /** A person fills in or changes the draft's values (the review screen's form). */
+  @Patch(':id')
+  @RequirePermission('quotations:create', 'customers:create')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<NewCustomerQuotationDraftDto> {
+    return this.drafts.update(user, id, parse(updateBody, body));
   }
 
   @Post(':id/approve')

@@ -7,6 +7,7 @@ import type {
   ShipmentStatus,
   ShippingMode,
 } from '@nolon/shared';
+import { hasRoadLeg, hasSeaLeg } from '@nolon/shared';
 
 /**
  * The shipment state machine (annex B section 4). Pure functions only: ShipmentsService applies
@@ -150,16 +151,16 @@ export function stageApplies(status: ShipmentStatus, shipment: ShipmentShape): b
       return has('WAREHOUSE');
     case 'CONSOLIDATED':
       // Groupage into a container NOLON ships: LCL sea freight only.
-      return shipment.loadType === 'LCL' && shipment.mode === 'SEA' && has('MAIN_FREIGHT');
+      return shipment.loadType === 'LCL' && hasSeaLeg(shipment.mode) && has('MAIN_FREIGHT');
     case 'CUSTOMS_IN_PROGRESS':
     case 'CUSTOMS_CLEARED':
       return has('CUSTOMS');
     case 'OUT_FOR_DELIVERY':
       return has('LAST_MILE');
     default:
-      if (SEA_STATUSES.includes(status)) return shipment.mode === 'SEA' && has('MAIN_FREIGHT');
+      if (SEA_STATUSES.includes(status)) return hasSeaLeg(shipment.mode) && has('MAIN_FREIGHT');
       if (ROAD_STATUSES.includes(status)) {
-        return has('INLAND_TRANSPORT') || (shipment.mode === 'ROAD' && has('MAIN_FREIGHT'));
+        return has('INLAND_TRANSPORT') || (hasRoadLeg(shipment.mode) && has('MAIN_FREIGHT'));
       }
       return true;
   }
@@ -184,7 +185,7 @@ function prerequisitesMet(
   visited: ReadonlySet<ShipmentStatus>,
 ): boolean {
   const has = (service: BookingService) => shipment.services.includes(service);
-  const seaLeg = shipment.mode === 'SEA' && has('MAIN_FREIGHT');
+  const seaLeg = hasSeaLeg(shipment.mode) && has('MAIN_FREIGHT');
   const roadLeg = stageApplies('TRIP_SCHEDULED', shipment);
   if (has('PICKUP') && next !== 'PICKUP_SCHEDULED' && !visited.has('PICKUP_SCHEDULED')) {
     return false;

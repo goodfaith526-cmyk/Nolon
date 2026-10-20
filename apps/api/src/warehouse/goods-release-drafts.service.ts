@@ -10,21 +10,28 @@ import type {
   GoodsReleaseDraftDto,
   GoodsReleaseDraftListItemDto,
   GoodsReleaseDraftRequest,
+  GoodsReleaseDraftUpdateRequest,
+  ReleaseDraftWarehouseOptionsDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
   approvedFields,
   checkDraft,
   decimalKey,
+  draftBranch,
   draftExpiry,
   draftStatus,
+  patched,
   preCheck,
   rejectedFields,
   requestHash,
   requireOpen,
   stateFilter,
+  storedValue,
+  withBranch,
 } from '../drafts/draft-rules.js';
 import {
   decidedVia,
@@ -32,8 +39,11 @@ import {
   type DecisionVia,
   DraftsService,
   keyReused,
+  lockDraftRow,
+  requireSameParent,
   lockReplacedInTx,
-  mineWhere,
+  listScope,
+  type ReviewPage,
   myDraftItem,
   type MyDraftRow,
   type MyDraftsQuery,
@@ -48,6 +58,11 @@ import {
 } from '../drafts/drafts.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  type Completeness,
+  goodsReleaseCompleteness,
+  requireApprovable,
+} from '../drafts/draft-completeness.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
@@ -66,6 +81,39 @@ const details = {
 
 type DraftRow = Prisma.GoodsReleaseDraftGetPayload<{ include: typeof details }>;
 
+/** A release draft's shipment and release, as stored (a missing value is null). */
+type ReleaseValues = GoodsReleaseDraftRequest & { shipmentId: string | null };
+
+/**
+ * The drafts a user sees: those of a shipment in their branches (access follows the shipment, as
+ * for its own warehouse movements), and those naming no shipment yet, by the draft's own branch.
+ */
+function draftScope(user: AuthUser): Prisma.GoodsReleaseDraftWhereInput {
+  return { OR: [{ shipment: shipmentScope(user) }, { shipmentId: null, ...branchScope(user) }] };
+}
+
+/** The value columns of a draft, a missing value as NULL. */
+function columnsOf(values: ReleaseValues) {
+  return {
+    shipmentId: values.shipmentId ?? null,
+    warehouseId: values.warehouseId ?? null,
+    packages: values.packages ?? null,
+    weightKg: values.weightKg ? dec(values.weightKg) : null,
+    partyName: values.partyName ?? null,
+    note: values.note ?? null,
+  };
+}
+
+/** What a release draft still misses before it can be approved (the gate's missing values). */
+export function releaseMissingFields(d: DraftRow): string[] {
+  return releaseDraftCompleteness(d).missing;
+}
+
+/** A goods release draft's approval gate (draft-completeness.ts): its shipment and release. */
+export function releaseDraftCompleteness(d: DraftRow): Completeness {
+  return goodsReleaseCompleteness({ shipmentId: d.shipmentId, ...releaseRequestOf(d) });
+}
+
 /** The release a stored draft proposes, in the shape WarehouseMovementsService takes. */
 export function releaseRequestOf(d: DraftRow): GoodsReleaseDraftRequest {
   return {
@@ -78,11 +126,14 @@ export function releaseRequestOf(d: DraftRow): GoodsReleaseDraftRequest {
 }
 
 /** sha256 of the normalised request (shipment included): ids lower case, decimals canonical. */
-export function releaseRequestHash(shipmentId: string, input: GoodsReleaseDraftRequest): string {
+export function releaseRequestHash(
+  shipmentId: string | null | undefined,
+  input: GoodsReleaseDraftRequest,
+): string {
   return requestHash({
-    shipmentId: shipmentId.toLowerCase(),
-    warehouseId: input.warehouseId.toLowerCase(),
-    packages: input.packages,
+    shipmentId: shipmentId?.toLowerCase() ?? null,
+    warehouseId: input.warehouseId?.toLowerCase() ?? null,
+    packages: input.packages ?? null,
     weightKg: input.weightKg ? decimalKey(dec(input.weightKg)) : null,
     partyName: input.partyName ?? null,
     note: input.note ?? null,
@@ -107,11 +158,29 @@ export class GoodsReleaseDraftsService {
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
   checkValues(user: AuthUser, body: GoodsReleaseDraftCreateRequest): Promise<DraftPreCheckDto> {
-    const { shipmentId, ...input } = valuesOf(body);
-    return preCheck(releaseRequestHash(shipmentId, input), async () => {
-      await this.movements.prepareRelease(user, shipmentId, input);
-      await this.requireWarehouse(user, input.warehouseId);
+    const { shipmentId = null, branchId, ...input } = valuesOf(body);
+    return preCheck(withBranch(releaseRequestHash(shipmentId, input), branchId), async () => {
+      await this.validate(user, { shipmentId, ...input }, branchId);
+      const missingFields = goodsReleaseCompleteness({ shipmentId, ...input }).missing;
+      return { total: null, currency: null, missingFields };
     });
+  }
+
+  /**
+   * The checks of a real release that need no lock, on the values present: the shipment when
+   * named, the warehouse when named. The draft's branch is the shipment's (which a branch given
+   * must be); with no shipment yet, the branch given, one of the user's.
+   */
+  private async validate(
+    user: AuthUser,
+    values: ReleaseValues,
+    branchId: string | null | undefined,
+  ): Promise<{ branchId: string }> {
+    const prepared = values.shipmentId
+      ? await this.movements.prepareRelease(user, values.shipmentId, {})
+      : null;
+    if (values.warehouseId) await this.requireWarehouse(user, values.warehouseId);
+    return { branchId: draftBranch(user, branchId, prepared?.branchId ?? null) };
   }
 
   async create(
@@ -120,16 +189,18 @@ export class GoodsReleaseDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    const { idempotencyKey, shipmentId, ...input } = body;
-    const hash = withReplaced(releaseRequestHash(shipmentId, input), replacesDraftId);
+    const { idempotencyKey, shipmentId = null, branchId, ...input } = body;
+    const hash = withReplaced(
+      withBranch(releaseRequestHash(shipmentId, input), branchId),
+      replacesDraftId,
+    );
     const scope = { agentClientId, createdById: user.id, idempotencyKey };
     // A stored request under this key is answered first, before any check on live data: a replay
     // after the approval, or after the records moved on, finds its draft instead of a refusal.
     const stored = await storedDraftUnderKey(this.prisma, 'goods_release_drafts', scope, hash);
     if (stored !== null) return toSummary(await this.findScoped(user, stored), new Date());
-    // The checks of a real release that need no lock; nothing is written.
-    const prepared = await this.movements.prepareRelease(user, shipmentId, input);
-    await this.requireWarehouse(user, input.warehouseId);
+    // The checks of a real release that need no lock, on the values present; nothing is written.
+    const prepared = await this.validate(user, { shipmentId, ...input }, branchId);
     const id = await this.drafts.createIdempotently(() =>
       this.prisma.$transaction(async (tx) => {
         if (replacesDraftId !== null) {
@@ -159,20 +230,17 @@ export class GoodsReleaseDraftsService {
           if (existing.payloadHash !== hash) throw keyReused();
           return existing.id;
         }
+        // The user holds the branch now, as stored (not only as their request loaded it).
+        await requireBranchMemberInTx(tx, user, prepared.branchId);
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.goodsReleaseDraft.create({
           data: {
             ...scope,
             replacesDraftId,
             branchId: prepared.branchId,
-            shipmentId,
             expiresAt: draftExpiry(),
             payloadHash: hash,
-            warehouseId: input.warehouseId,
-            packages: input.packages,
-            weightKg: input.weightKg ? dec(input.weightKg) : null,
-            partyName: input.partyName ?? null,
-            note: input.note ?? null,
+            ...columnsOf({ shipmentId, ...input }),
           },
           select: { id: true },
         });
@@ -182,10 +250,45 @@ export class GoodsReleaseDraftsService {
     return toSummary(await this.findScoped(user, id), new Date());
   }
 
+  /**
+   * A person fills in or changes values of an open draft, at the version they read: the values
+   * are checked as on create (a shipment named must be of the draft's branch, and once named it
+   * stays: an approval locks it before the draft), and the version moves on. The assistant's
+   * request (its payload hash) stays the draft's, so a replay of that create still finds it.
+   */
+  async update(
+    user: AuthUser,
+    id: string,
+    input: GoodsReleaseDraftUpdateRequest,
+  ): Promise<GoodsReleaseDraftDto> {
+    this.drafts.requireHuman(user, HUMAN_ONLY);
+    const current = await this.findScoped(user, id);
+    const { version, ...patch } = input;
+    requireOpen(current, version, LABEL);
+    requireSameParent(current.shipmentId, patch.shipmentId, 'shipment');
+    const values = patched<ReleaseValues>(
+      { shipmentId: current.shipmentId, ...releaseRequestOf(current) },
+      patch,
+    );
+    await this.validate(user, values, current.branchId);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await lockDraftRow(tx, 'goods_release_drafts', id);
+      if (!locked) throw new NotFoundException('Goods release draft not found');
+      requireOpen(locked, version, LABEL);
+      // The user still holds the draft's branch now, as stored.
+      await requireBranchMemberInTx(tx, user, current.branchId);
+      await tx.goodsReleaseDraft.update({
+        where: { id },
+        data: { ...columnsOf(values), version: { increment: 1 } },
+      });
+    });
+    return this.get(user, id);
+  }
+
   async findByKey(user: AuthUser, idempotencyKey: string): Promise<EntryDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
     const draft = await this.prisma.goodsReleaseDraft.findFirst({
-      where: { agentClientId, createdById: user.id, idempotencyKey, shipment: shipmentScope(user) },
+      where: { agentClientId, createdById: user.id, idempotencyKey, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Goods release draft not found');
@@ -196,17 +299,19 @@ export class GoodsReleaseDraftsService {
     user: AuthUser,
     status?: DraftStatus,
     mine?: MyDraftsQuery,
+    page?: ReviewPage,
   ): Promise<GoodsReleaseDraftListItemDto[]> {
     const now = new Date();
+    const scope = listScope(user, mine, page);
     const drafts = await this.prisma.goodsReleaseDraft.findMany({
       where: {
-        shipment: shipmentScope(user),
+        ...draftScope(user),
         ...stateFilter(status, now),
-        ...(mine ? mineWhere(user, mine) : {}),
+        ...scope.where,
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
-      take: mine?.limit ?? 200,
+      take: scope.take,
     });
     return drafts.map((d) => ({
       ...baseFields(d, user, now),
@@ -224,7 +329,7 @@ export class GoodsReleaseDraftsService {
       myDraftItem(
         'goods_release',
         d,
-        d.movementId === null
+        d.movementId === null || d.shipmentId === null
           ? null
           : {
               type: 'warehouse_movement',
@@ -251,6 +356,35 @@ export class GoodsReleaseDraftsService {
   }
 
   /**
+   * The review screen's warehouse choices for an open draft that names its shipment: the
+   * warehouses holding the shipment's goods now in the reviewer's branches
+   * (WarehouseMovementsService.releasableBalances), and a suggestion for the values it misses.
+   * Worked out on each read, from the balances now and the draft as it is at `version`: the one
+   * warehouse holding the goods, when the draft names none and exactly one does; the packages
+   * that warehouse (the one the draft names, else the suggested one) holds, when the draft has
+   * none. A suggestion is never saved here: the person sees it in the form, may change it, and
+   * saves it (PATCH, which moves the version on); a value the draft holds is never replaced, and
+   * a later change of warehouse in the form drops the packages suggested for the earlier one.
+   */
+  async warehouseOptions(user: AuthUser, id: string): Promise<ReleaseDraftWarehouseOptionsDto> {
+    const draft = await this.findScoped(user, id);
+    const open = draftStatus(draft.state, draft.expiresAt, new Date()) === 'DRAFT';
+    if (!open || draft.shipmentId === null) {
+      return { version: draft.version, options: [], suggested: null };
+    }
+    const options = await this.movements.releasableBalances(user, draft.shipmentId);
+    const only = options.length === 1 ? options[0] : undefined;
+    const warehouseId = draft.warehouseId === null ? (only?.warehouseId ?? null) : null;
+    const from = options.find((o) => o.warehouseId === (draft.warehouseId ?? warehouseId));
+    const packages = draft.packages === null ? (from?.onHandPackages ?? null) : null;
+    return {
+      version: draft.version,
+      options,
+      suggested: warehouseId === null && packages === null ? null : { warehouseId, packages },
+    };
+  }
+
+  /**
    * A person approves the version they reviewed: the release note is issued in the same
    * transaction as the approval, dated now. Locks the shipment first, then the draft row, as every
    * shipment child write does. Approving an approved draft returns it as it is.
@@ -265,8 +399,15 @@ export class GoodsReleaseDraftsService {
     const current = await this.findScoped(user, id);
     if (current.state === 'APPROVED') return this.get(user, id);
     requireOpen(current, version, LABEL);
-    const request = releaseRequestOf(current);
-    const prepared = await this.movements.prepareRelease(user, current.shipmentId, request);
+    // Nothing is checked or released while the draft misses or holds an invalid value (422).
+    requireApprovable(releaseDraftCompleteness(current));
+    const shipmentId = storedValue(current.shipmentId, 'shipment');
+    const request = {
+      ...releaseRequestOf(current),
+      warehouseId: storedValue(current.warehouseId, 'warehouse'),
+      packages: storedValue(current.packages, 'packages'),
+    };
+    const prepared = await this.movements.prepareRelease(user, shipmentId, {});
     await this.prisma.$transaction(async (tx) => {
       let movementId = '';
       const decided = await decideInTx(tx, {
@@ -276,7 +417,14 @@ export class GoodsReleaseDraftsService {
         label: LABEL,
         approving: true,
         lockParents: async () => {
-          await this.shipments.lockForChildWrite(tx, current.shipmentId, { exclusive: true });
+          await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+        },
+        gate: async () => {
+          const row = await tx.goodsReleaseDraft.findUniqueOrThrow({
+            where: { id },
+            include: details,
+          });
+          requireApprovable(releaseDraftCompleteness(row));
         },
         record: async () => {
           movementId = await this.movements.releaseInTx(tx, user, prepared, request);
@@ -358,13 +506,21 @@ export class GoodsReleaseDraftsService {
     return this.get(user, id);
   }
 
-  /** NOLON's checks of a release that need no lock (the releasable packages are checked on approval). */
-  private check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck> {
-    return checkDraft(async () => {
-      await this.movements.prepareRelease(user, draft.shipmentId, releaseRequestOf(draft));
-      await this.requireWarehouse(user, draft.warehouseId);
+  /**
+   * NOLON's checks of a release that need no lock (the releasable packages are checked on
+   * approval), on the values present. Null while the draft misses values and those present pass:
+   * it waits for them (missingFields).
+   */
+  private async check(user: AuthUser, draft: DraftRow): Promise<EntryDraftCheck | null> {
+    const result = await checkDraft(async () => {
+      await this.validate(
+        user,
+        { shipmentId: draft.shipmentId, ...releaseRequestOf(draft) },
+        draft.branchId,
+      );
       return { total: null, currency: null };
     });
+    return result.ok && releaseMissingFields(draft).length > 0 ? null : result;
   }
 
   /** The warehouse must be one of the user's branches, as a release requires. */
@@ -378,7 +534,7 @@ export class GoodsReleaseDraftsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<DraftRow> {
     const draft = await this.prisma.goodsReleaseDraft.findFirst({
-      where: { id, shipment: shipmentScope(user) },
+      where: { id, ...draftScope(user) },
       include: details,
     });
     if (!draft) throw new NotFoundException('Goods release draft not found');
@@ -394,6 +550,7 @@ function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
     lineCount: 1,
     expiresAt: d.expiresAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
+    missingFields: releaseMissingFields(d),
   };
 }
 
@@ -408,7 +565,7 @@ function baseFields(
     id: d.id,
     replacesDraftId: d.replacesDraftId,
     branchId: d.branchId,
-    subject: d.shipment.number,
+    subject: d.shipment?.number ?? '',
     status,
     version: d.version,
     expiresAt: d.expiresAt.toISOString(),
@@ -418,10 +575,11 @@ function baseFields(
     decidedFromAssistant: d.decidedVia === 'ASSISTANT',
     decidedAt: d.decidedAt?.toISOString() ?? null,
     rejectReason: d.rejectReason,
-    actions: { canEdit: false, canDecide: open },
+    actions: { canEdit: open, canDecide: open },
+    missingFields: releaseMissingFields(d),
     shipmentId: d.shipmentId,
-    shipmentNumber: d.shipment.number,
-    warehouseCode: d.warehouse.code,
+    shipmentNumber: d.shipment?.number ?? null,
+    warehouseCode: d.warehouse?.code ?? null,
     movementId: d.movementId,
     movementNumber: d.movement?.number ?? null,
   };

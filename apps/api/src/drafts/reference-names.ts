@@ -66,8 +66,9 @@ export async function referenceNames(
       where: { id, customer: branchScope(user) },
       select: { id: true, name: true, city: true },
     }),
+    // Rate cards are read by every branch.
     prisma.rateCard.findMany({
-      where: scoped,
+      where: { id },
       select: { id: true, chargeTypeCode: true, unit: true, price: true, currency: true },
     }),
     prisma.quotation.findMany({ where: scoped, select: { id: true, number: true } }),
