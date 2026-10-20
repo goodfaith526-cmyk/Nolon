@@ -4,6 +4,7 @@ import type {
   CarrierDto,
   CustomerDto,
   DriverDto,
+  DriverLastVehicleDto,
   JournalEntryDto,
   Page,
   PodDto,
@@ -322,6 +323,76 @@ describe('inland transport: fleet, trips, POD', () => {
         ...ownTrip([a.id]),
         destinationLocationId: portSudan,
       }).expect(400);
+    });
+
+    it("suggests the vehicle of the driver's last own trip, in the user's branches (D8)", async () => {
+      const tag = randomUUID().slice(0, 6).toUpperCase();
+      const driver = (
+        await post('/transport/drivers', cookies.opsDxb, {
+          branchId: dxb,
+          name: `ZZ D8 ${tag}`,
+        }).expect(201)
+      ).body as DriverDto;
+      const truck = (
+        await post('/transport/vehicles', cookies.opsDxb, {
+          branchId: dxb,
+          plateNumber: `ZZ D8 ${tag}`,
+          vehicleType: 'Box truck',
+        }).expect(201)
+      ).body as VehicleDto;
+      const last = async (cookie = cookies.opsDxb) =>
+        (
+          (await get(`/transport/drivers/${driver.id}/last-vehicle`, cookie).expect(200))
+            .body as DriverLastVehicleDto
+        ).lastVehicle;
+      expect(await last()).toBeNull();
+
+      const first = (
+        await post('/trips', cookies.opsDxb, {
+          ...ownTrip([(await roadShipment()).id], driver.id),
+          vehicleId: truck.id,
+        }).expect(201)
+      ).body as TripDto;
+      expect(await last()).toEqual({
+        vehicleId: truck.id,
+        plateNumber: truck.plateNumber,
+        tripId: first.id,
+        tripNumber: first.number,
+      });
+      // A later trip that was cancelled does not count.
+      const cancelled = (
+        await post(
+          '/trips',
+          cookies.opsDxb,
+          ownTrip([(await roadShipment()).id], driver.id),
+        ).expect(201)
+      ).body as TripDto;
+      await post(`/trips/${cancelled.id}/cancel`, cookies.opsDxb, { reason: 'x' }).expect(200);
+      expect((await last())?.tripId).toBe(first.id);
+      // A later own trip with another vehicle becomes the suggestion.
+      const second = (
+        await post(
+          '/trips',
+          cookies.opsDxb,
+          ownTrip([(await roadShipment()).id], driver.id),
+        ).expect(201)
+      ).body as TripDto;
+      expect(await last()).toMatchObject({ vehicleId: vehicle.id, tripId: second.id });
+      // A vehicle no longer active is not suggested.
+      await patch(`/transport/vehicles/${vehicle.id}`, cookies.opsDxb, { isActive: false }).expect(
+        200,
+      );
+      try {
+        expect(await last()).toBeNull();
+      } finally {
+        await patch(`/transport/vehicles/${vehicle.id}`, cookies.opsDxb, { isActive: true }).expect(
+          200,
+        );
+      }
+      // Another branch's user does not see the driver; without planning trips, no read.
+      await get(`/transport/drivers/${driver.id}/last-vehicle`, cookies.opsJed).expect(404);
+      await get(`/transport/drivers/${driver.id}/last-vehicle`, cookies.salesDxb).expect(403);
+      await get(`/transport/drivers/${driver.id}/last-vehicle`, cookies.customsDxb).expect(403);
     });
 
     it('a cancelled shipment cannot be added to a trip', async () => {

@@ -6,6 +6,8 @@ import type {
   DriverDto,
   DriverInput,
   DriverUserOptionDto,
+  Page as PageOf,
+  SupplierSummaryDto,
   VehicleDto,
   VehicleInput,
 } from '@nolon/shared';
@@ -234,6 +236,11 @@ export function Drivers() {
   const { items, notice, busy, run } = useList<DriverDto>('/transport/drivers');
   const canUpdate = can(me, 'transport_fleet:update');
   const [users, setUsers] = useState<DriverUserOptionDto[]>([]);
+  // New driver's name (functional review D6): linking a user account fills it with the user's
+  // name while the person has not typed one of their own; a typed name is kept, and another user
+  // replaces only a name that came from a user. The API takes whatever name is sent.
+  const [name, setName] = useState('');
+  const [nameFromUser, setNameFromUser] = useState(false);
 
   useEffect(() => {
     if (!canUpdate) return;
@@ -263,6 +270,16 @@ export function Drivers() {
     };
     if (await run(() => api('/transport/drivers', { method: 'POST', body }), t('added'))) {
       element.reset();
+      setName('');
+      setNameFromUser(false);
+    }
+  }
+
+  function onUserPicked(userId: string) {
+    const picked = users.find((u) => u.id === userId);
+    if (picked && (name.trim() === '' || nameFromUser)) {
+      setName(picked.fullName);
+      setNameFromUser(true);
     }
   }
 
@@ -286,7 +303,17 @@ export function Drivers() {
             </label>
             <label className="field">
               <span>{t('name')}</span>
-              <input name="name" required maxLength={200} />
+              <input
+                name="name"
+                required
+                maxLength={200}
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameFromUser(false);
+                }}
+              />
+              {nameFromUser && <small className="muted">{t('nameFromUser')}</small>}
             </label>
             <label className="field">
               <span>{t('phone')}</span>
@@ -304,7 +331,7 @@ export function Drivers() {
             </label>
             <label className="field">
               <span>{t('linkedUser')}</span>
-              <select name="userId" defaultValue="">
+              <select name="userId" defaultValue="" onChange={(e) => onUserPicked(e.target.value)}>
                 <option value="">{t('noUser')}</option>
                 {users
                   .filter((u) => !linked.has(u.id))
@@ -408,15 +435,50 @@ export function Drivers() {
   );
 }
 
-/** External carriers, shared by every branch. */
+/**
+ * External carriers, shared by every branch. A carrier and the supplier whose bills settle its
+ * trips stay two records, linked (functional review D3): the form and the table link a supplier
+ * through the supplier's carrier link, and "create supplier" makes one from the carrier unless a
+ * supplier with the same name or phone exists, which it offers to link instead.
+ */
 export function Carriers() {
   const t = useTranslations('Transport');
   const tc = useTranslations('Common');
   const me = useMe();
+  const failure = useFailureText();
   const { items, notice, busy, run } = useList<CarrierDto>('/transport/carriers');
+  const canLink = can(me, 'suppliers:view') && can(me, 'suppliers:update');
+  const canCreateSupplier = canLink && can(me, 'suppliers:create');
+  const [suppliers, setSuppliers] = useState<SupplierSummaryDto[]>([]);
+  // Suppliers that look like the carrier's company, found before making one from it.
+  const [matches, setMatches] = useState<{
+    carrierId: string;
+    suppliers: SupplierSummaryDto[];
+  } | null>(null);
+  const [extra, setExtra] = useState<NoticeState | null>(null);
+
+  useEffect(() => {
+    if (!canLink) return;
+    let cancelled = false;
+    api<PageOf<SupplierSummaryDto>>('/suppliers?activeOnly=true&pageSize=100')
+      .then((page) => {
+        if (!cancelled) setSuppliers(page.items);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [canLink]);
 
   if (!can(me, 'transport_fleet:view')) return <p className="error">{tc('noAccess')}</p>;
   const canUpdate = can(me, 'transport_fleet:update');
+
+  const link = (carrier: CarrierDto, supplierId: string) =>
+    supplierId
+      ? api(`/suppliers/${supplierId}/carriers/${carrier.id}`, { method: 'PUT' })
+      : api(`/suppliers/${carrier.supplierId ?? ''}/carriers/${carrier.id}`, {
+          method: 'DELETE',
+        });
 
   async function onCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -426,13 +488,46 @@ export function Carriers() {
       name: field(f, 'name').trim(),
       phone: field(f, 'phone').trim() || null,
     };
-    if (await run(() => api('/transport/carriers', { method: 'POST', body }), t('added'))) {
-      element.reset();
+    const supplierId = field(f, 'supplierId');
+    setExtra(null);
+    let linkRefused: string | null = null;
+    const ok = await run(async () => {
+      const carrier = await api<CarrierDto>('/transport/carriers', { method: 'POST', body });
+      if (!supplierId) return;
+      // Two steps: a carrier is valid without a supplier. A refused link leaves it "not linked",
+      // said here and in the table, where it can be linked again.
+      try {
+        await link(carrier, supplierId);
+      } catch (e) {
+        linkRefused = failure(e);
+      }
+    }, t('added'));
+    if (!ok) return;
+    element.reset();
+    if (linkRefused) setExtra({ ok: false, text: t('carrierNotLinked', { reason: linkRefused }) });
+  }
+
+  async function createSupplier(carrier: CarrierDto) {
+    setExtra(null);
+    setMatches(null);
+    try {
+      const found = await api<SupplierSummaryDto[]>(`/suppliers/matching-carrier/${carrier.id}`);
+      if (found.length > 0) {
+        setMatches({ carrierId: carrier.id, suppliers: found });
+        return;
+      }
+    } catch (e) {
+      setExtra({ ok: false, text: failure(e) });
+      return;
     }
+    await run(
+      () => api(`/suppliers/from-carrier/${carrier.id}`, { method: 'POST' }),
+      t('supplierCreated'),
+    );
   }
 
   return (
-    <Page title={t('carriersTitle')} hint={t('carriersHint')} notice={notice}>
+    <Page title={t('carriersTitle')} hint={t('carriersHint')} notice={extra ?? notice}>
       {can(me, 'transport_fleet:create') && (
         <form className="card line" onSubmit={(e) => void onCreate(e)}>
           <label className="field grow">
@@ -443,6 +538,19 @@ export function Carriers() {
             <span>{t('phone')}</span>
             <input name="phone" type="tel" dir="ltr" pattern={PHONE_PATTERN} placeholder="+249…" />
           </label>
+          {canLink && (
+            <label className="field">
+              <span>{t('supplier')}</span>
+              <select name="supplierId" defaultValue="">
+                <option value="">{t('noSupplier')}</option>
+                {suppliers.map((sup) => (
+                  <option key={sup.id} value={sup.id}>
+                    {sup.name} ({sup.number})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button type="submit" className="primary" disabled={busy}>
             {t('addCarrier')}
           </button>
@@ -459,6 +567,7 @@ export function Carriers() {
               <tr>
                 <th>{t('name')}</th>
                 <th>{t('phone')}</th>
+                <th>{t('supplier')}</th>
                 <th>{tc('status')}</th>
               </tr>
             </thead>
@@ -467,6 +576,71 @@ export function Carriers() {
                 <tr key={c.id} className={c.isActive ? '' : 'inactive'}>
                   <td>{c.name}</td>
                   <td dir="ltr">{c.phone ?? '—'}</td>
+                  <td>
+                    <div className="actions">
+                      {c.supplierId ? (
+                        !canLink && <span>{c.supplierName}</span>
+                      ) : (
+                        <span className="badge badge-warn">{t('notLinked')}</span>
+                      )}
+                      {canLink && (
+                        <select
+                          value={c.supplierId ?? ''}
+                          disabled={busy}
+                          aria-label={t('supplier')}
+                          onChange={(e) => {
+                            setExtra(null);
+                            void run(() => link(c, e.target.value));
+                          }}
+                        >
+                          <option value="">{t('noSupplier')}</option>
+                          {c.supplierId && !suppliers.some((sup) => sup.id === c.supplierId) && (
+                            <option value={c.supplierId}>{c.supplierName}</option>
+                          )}
+                          {suppliers.map((sup) => (
+                            <option key={sup.id} value={sup.id}>
+                              {sup.name} ({sup.number})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {canCreateSupplier && !c.supplierId && (
+                        <button
+                          type="button"
+                          className="button small"
+                          disabled={busy}
+                          onClick={() => void createSupplier(c)}
+                        >
+                          {t('createSupplier')}
+                        </button>
+                      )}
+                    </div>
+                    {matches?.carrierId === c.id && (
+                      <div className="stack">
+                        <p className="muted">{t('supplierExists')}</p>
+                        <div className="actions">
+                          {matches.suppliers.map((sup) => (
+                            <button
+                              key={sup.id}
+                              type="button"
+                              className="button small"
+                              disabled={busy || !sup.isActive}
+                              onClick={() => {
+                                setMatches(null);
+                                void run(() => link(c, sup.id));
+                              }}
+                            >
+                              {t('linkTo', { supplier: `${sup.name} (${sup.number})` })}
+                              {!sup.isActive && ` · ${tc('inactive')}`}
+                            </button>
+                          ))}
+                          <button type="button" onClick={() => setMatches(null)}>
+                            {tc('back')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </td>
                   <td>
                     {canUpdate ? (
                       <ActiveToggle

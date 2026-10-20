@@ -218,6 +218,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       number: c.number,
       status: c.status,
       containerNumber: c.containerNumber,
+      sealNumber: c.sealNumber,
+      containerTypeCode: c.containerTypeCode,
       canOpen: true,
     }));
   }

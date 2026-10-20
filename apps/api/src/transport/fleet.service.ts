@@ -10,6 +10,7 @@ import type {
   CarrierUpdateRequest,
   DriverDto,
   DriverInput,
+  DriverLastVehicleDto,
   DriverUpdateRequest,
   DriverUserOptionDto,
   VehicleDto,
@@ -23,6 +24,7 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import { Prisma, type Carrier, type Vehicle } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersService } from '../users/users.service.js';
+import { tripScope } from './trip-scope.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -191,6 +193,43 @@ export class FleetService {
     }
   }
 
+  /**
+   * The vehicle of the driver's latest own trip the user can see (functional review D8), for the
+   * trip form to suggest: the driver must be one of the user's branches (404 otherwise), only trips
+   * of the user's branches count, a cancelled trip does not, and a vehicle that is no longer
+   * active or not of the driver's branch is not suggested (lastVehicle null). A hint, not a fixed assignment.
+   */
+  async lastVehicle(user: AuthUser, driverId: string): Promise<DriverLastVehicleDto> {
+    const driver = await this.findDriver(user, driverId);
+    const trip = await this.prisma.trip.findFirst({
+      where: {
+        ...tripScope(user),
+        driverId,
+        kind: 'OWN',
+        status: { not: 'CANCELLED' },
+        vehicleId: { not: null },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        number: true,
+        vehicle: { select: { id: true, plateNumber: true, isActive: true, branchId: true } },
+      },
+    });
+    const vehicle = trip?.vehicle;
+    if (!trip || !vehicle?.isActive || vehicle.branchId !== driver.branchId) {
+      return { lastVehicle: null };
+    }
+    return {
+      lastVehicle: {
+        vehicleId: vehicle.id,
+        plateNumber: vehicle.plateNumber,
+        tripId: trip.id,
+        tripNumber: trip.number,
+      },
+    };
+  }
+
   /** Users that may be linked to a driver of the user's branches. */
   driverUsers(user: AuthUser): Promise<DriverUserOptionDto[]> {
     return this.users.driverUsers(user.allowedBranchIds);
@@ -278,6 +317,34 @@ export class FleetService {
       ORDER BY "id"
       FOR SHARE`;
     return new Map(rows.map((r) => [r.id, r.supplierId]));
+  }
+
+  /**
+   * For payables, inside its transaction: the carrier, locked for update (the same lock
+   * setCarrierSupplier takes), so a supplier made from it (functional review D3) sees its link as
+   * it is and two such requests run one after the other. 404 when it does not exist.
+   */
+  async lockCarrierInTx(
+    tx: Tx,
+    carrierId: string,
+  ): Promise<{ id: string; name: string; phone: string | null; supplierId: string | null }> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "carriers" WHERE "id" = ${carrierId}::uuid FOR UPDATE`;
+    if (rows.length === 0) throw new NotFoundException('Carrier not found');
+    return tx.carrier.findUniqueOrThrow({
+      where: { id: carrierId },
+      select: { id: true, name: true, phone: true, supplierId: true },
+    });
+  }
+
+  /** For payables: the carrier's name and phone (functional review D3); 404 when missing. */
+  async carrierContact(carrierId: string): Promise<{ name: string; phone: string | null }> {
+    const carrier = await this.prisma.carrier.findUnique({
+      where: { id: carrierId },
+      select: { name: true, phone: true },
+    });
+    if (!carrier) throw new NotFoundException('Carrier not found');
+    return carrier;
   }
 
   /**

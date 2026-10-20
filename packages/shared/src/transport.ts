@@ -48,6 +48,20 @@ export interface DriverDto {
   isActive: boolean;
 }
 
+/**
+ * The vehicle of a driver's latest own trip (functional review D8), offered as a suggestion when
+ * planning a new trip: a driver has no fixed vehicle, so this is a hint, not a fact. lastVehicle is
+ * null when the driver has no such trip, or its vehicle is no longer active in the driver's branch.
+ */
+export interface DriverLastVehicleDto {
+  lastVehicle: {
+    vehicleId: string;
+    plateNumber: string;
+    tripId: string;
+    tripNumber: string;
+  } | null;
+}
+
 export interface DriverInput {
   branchId: string;
   name: string;

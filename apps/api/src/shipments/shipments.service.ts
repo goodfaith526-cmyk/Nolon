@@ -159,6 +159,18 @@ export class ShipmentsService {
               { blNumber: { contains: filters.q, mode: 'insensitive' } },
               { customer: { name: { contains: filters.q, mode: 'insensitive' } } },
               { containers: { some: { containerNumber: { contains: filters.q.toUpperCase() } } } },
+              // An LCL shipment's container is its consolidation's (functional review D4); a
+              // cancelled consolidation no longer holds it. Inside the scope above, as every term.
+              {
+                consolidationLinks: {
+                  some: {
+                    consolidation: {
+                      status: { not: 'CANCELLED' },
+                      containerNumber: { contains: filters.q.toUpperCase() },
+                    },
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -720,13 +732,31 @@ export class ShipmentsService {
     user: AuthUser,
     id: string,
     status: ShipmentStatus,
-    options: { occurredAt: Date; note: string | null; locationId?: string | null },
+    options: {
+      occurredAt: Date;
+      note: string | null;
+      locationId?: string | null;
+      /**
+       * When set, a move dated before the shipment's latest event is refused (409) with this
+       * message instead of rewriting its timeline. Only checked when the move happens.
+       */
+      beforeLatestEvent?: string;
+    },
   ): Promise<boolean> {
     return this.applyEventInTx(tx, user, id, (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
         return null;
       }
       requireAny(user, permissionForTransition(status));
+      if (options.beforeLatestEvent) {
+        const latest = shipment.events.reduce<Date | null>(
+          (max, e) => (max && max >= e.occurredAt ? max : e.occurredAt),
+          null,
+        );
+        if (latest && options.occurredAt < latest) {
+          throw new ConflictException(options.beforeLatestEvent);
+        }
+      }
       return {
         kind: 'STATUS',
         status,

@@ -79,6 +79,17 @@ export function ShipmentWarehouse({
   const [form, setForm] = useState<Form>(null);
   const [receiptWarehouse, setReceiptWarehouse] = useState('');
   const [releasePackages, setReleasePackages] = useState('');
+  // Suggestions (functional review D5), made when the forms render from the warehouse view the
+  // API computed; a typed value is kept:
+  // - receipt packages start empty; "use remaining" fills the packages still to receive, which
+  //   the person counts and confirms (a suggestion, not a receipt);
+  // - a release's weight stays empty for part of what a warehouse holds (the person weighs it);
+  //   for all of it, the weight still held there is suggested when the API knows it (every
+  //   receipt and release there weighed), never the booking's weight. Changing the packages or
+  //   the warehouse drops that suggestion; a weight the person typed stays.
+  const [receiptPackages, setReceiptPackages] = useState('');
+  const [releaseWarehouse, setReleaseWarehouse] = useState('');
+  const [releaseWeight, setReleaseWeight] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const shipmentId = shipment.id;
@@ -124,6 +135,11 @@ export function ShipmentWarehouse({
   const selectedWarehouse =
     activeWarehouses.find((w) => w.id === receiptWarehouse) ?? activeWarehouses[0];
   const held = data.balances.filter((b) => b.onHandPackages > 0);
+  const releaseFrom = held.find((b) => b.warehouseId === releaseWarehouse) ?? held[0];
+  const fullRelease =
+    releaseFrom !== undefined && releasePackages === String(releaseFrom.onHandPackages);
+  const suggestedWeight = fullRelease ? (releaseFrom.remainingWeightKg ?? '') : '';
+  const weightValue = releaseWeight ?? suggestedWeight;
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
 
   async function submit(path: string, body: unknown, success: (m: WarehouseMovementDto) => string) {
@@ -136,6 +152,8 @@ export function ShipmentWarehouse({
       );
       setForm(null);
       setReleasePackages('');
+      setReleaseWeight(null);
+      setReceiptPackages('');
       setNotice({ ok: true, text: success(movement) });
       load();
       if (movement.statusApplied) onShipmentChanged();
@@ -299,7 +317,29 @@ export function ShipmentWarehouse({
               </label>
               <label className="field">
                 <span>{t('packages')}</span>
-                <input name="packages" type="number" required min={1} step={1} dir="ltr" />
+                <input
+                  name="packages"
+                  type="number"
+                  required
+                  min={1}
+                  step={1}
+                  dir="ltr"
+                  value={receiptPackages}
+                  onChange={(e) => setReceiptPackages(e.target.value)}
+                />
+                {data.remainingPackages > 0 &&
+                  receiptPackages !== String(data.remainingPackages) && (
+                    <button
+                      type="button"
+                      className="button small"
+                      onClick={() => setReceiptPackages(String(data.remainingPackages))}
+                    >
+                      {t('useRemaining', { remaining: data.remainingPackages })}
+                    </button>
+                  )}
+                {receiptPackages !== '' && receiptPackages === String(data.remainingPackages) && (
+                  <small className="muted">{t('remainingSuggested')}</small>
+                )}
               </label>
               <label className="field">
                 <span>{t('weightKg')}</span>
@@ -363,7 +403,12 @@ export function ShipmentWarehouse({
             <div className="grid">
               <label className="field">
                 <span>{t('warehouse')}</span>
-                <select name="warehouseId" required>
+                <select
+                  name="warehouseId"
+                  required
+                  value={releaseFrom?.warehouseId ?? ''}
+                  onChange={(e) => setReleaseWarehouse(e.target.value)}
+                >
                   {held.map((b) => (
                     <option key={b.warehouseId} value={b.warehouseId}>
                       {t('heldIn', {
@@ -389,7 +434,17 @@ export function ShipmentWarehouse({
               </label>
               <label className="field">
                 <span>{t('weightKg')}</span>
-                <input name="weightKg" inputMode="decimal" dir="ltr" pattern={WEIGHT_PATTERN} />
+                <input
+                  name="weightKg"
+                  inputMode="decimal"
+                  dir="ltr"
+                  pattern={WEIGHT_PATTERN}
+                  value={weightValue}
+                  onChange={(e) => setReleaseWeight(e.target.value)}
+                />
+                {releaseWeight === null && suggestedWeight && (
+                  <small className="muted">{t('weightHeldSuggested')}</small>
+                )}
               </label>
               <label className="field">
                 <span>{t('collectedBy')}</span>
@@ -409,10 +464,10 @@ export function ShipmentWarehouse({
               <button type="submit" className="primary" disabled={busy}>
                 {t('issueRelease')}
               </button>
-              {held.length === 1 && held[0] && (
+              {releaseFrom && (
                 <button
                   type="button"
-                  onClick={() => setReleasePackages(String(held[0]?.onHandPackages ?? ''))}
+                  onClick={() => setReleasePackages(String(releaseFrom.onHandPackages))}
                 >
                   {t('releaseAll')}
                 </button>

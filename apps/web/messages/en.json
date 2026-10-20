@@ -618,7 +618,9 @@
     "fileTooLarge": "The file is larger than 10 MB.",
     "fileRejected": "Only PDF, JPEG, PNG and WebP files are accepted.",
     "sharedBranches": "Shared with branches",
-    "sharedBranchesHint": "Users of these branches see the shipment and record its receipt, customs, trips and delivery. Invoicing stays with this branch."
+    "sharedBranchesHint": "Users of these branches see the shipment and record its receipt, customs, trips and delivery. Invoicing stays with this branch.",
+    "inConsolidation": "This shipment travels in consolidated container {number}: its container is the consolidation’s, shown here read-only.",
+    "containerTypeFromBooking": "From the booking lines, which have this one container type."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -964,7 +966,10 @@
     "releasedNotice": "Goods released: {number}.",
     "photoAdded": "Photo added.",
     "photoTooLarge": "Photos are limited to 10 MB.",
-    "photoRejected": "Only JPEG, PNG and WebP photos are accepted."
+    "photoRejected": "Only JPEG, PNG and WebP photos are accepted.",
+    "useRemaining": "Use remaining: {remaining}",
+    "remainingSuggested": "The packages still to receive. Count them and confirm.",
+    "weightHeldSuggested": "Suggested: the weight still held in this warehouse, for releasing all of it."
   },
   "Customs": {
     "section": "Customs",
@@ -978,9 +983,11 @@
     "note": "Notes",
     "updated": "Last updated",
     "clearedHint": "A cleared file needs its clearance date, which cannot be before the submission date.",
+    "movesShipmentHint": "Saving a file in progress moves the shipment to customs in progress; saving a cleared file moves it to cleared on the clearance date, when the shipment can take that step.",
     "documentsHint": "Customs papers go in the shipment documents below.",
     "moveShipment": "Shipment: {status}",
     "shipmentMoved": "The shipment is now: {status}.",
+    "savedAndMoved": "Saved. The shipment is now: {status}.",
     "fees": "Customs fees",
     "feeDescription": "Description",
     "amount": "Amount",
@@ -1120,7 +1127,23 @@
     "podSaved": "POD {number} saved.",
     "podSavedMoved": "POD {number} saved; the shipment is now: {status}.",
     "noPods": "No proof of delivery yet.",
-    "files": "Signature and photos"
+    "files": "Signature and photos",
+    "arriveAndComplete": "Arrived and completed",
+    "arrivedAndCompletedNotice": "The trip arrived and is completed.",
+    "arrivedNotCompleted": "The arrival is recorded, but the trip could not be completed: {reason} Use “Complete trip” to finish it.",
+    "tripForShipment": "Trip for this shipment",
+    "originFromShipment": "Suggested: where the shipment is now. Check where the trip starts.",
+    "destinationFromShipment": "Suggested: the shipment's destination.",
+    "vehicleFromLastTrip": "Suggested: the vehicle of this driver's last trip ({trip}).",
+    "supplier": "Supplier",
+    "noSupplier": "No supplier",
+    "notLinked": "Not linked",
+    "createSupplier": "Create supplier",
+    "supplierCreated": "Supplier created from the carrier and linked.",
+    "supplierExists": "A supplier with the same name or phone already exists. Link the carrier to it instead of creating another:",
+    "linkTo": "Link to {supplier}",
+    "carrierNotLinked": "The carrier is added but not linked to the supplier: {reason}",
+    "nameFromUser": "Filled from the linked user's name. You can change it."
   },
   "Consolidations": {
     "title": "Consolidated containers",
