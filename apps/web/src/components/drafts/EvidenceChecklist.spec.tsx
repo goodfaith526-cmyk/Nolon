@@ -66,7 +66,8 @@ function show(version: number) {
   roots.push(() => act(() => root.unmount()));
   return { el, render };
 }
-const box = (el: HTMLElement, id: string) => el.querySelector<HTMLInputElement>(`#${id}`);
+// Ids carry a per-checklist prefix (useId), so tests match their end.
+const box = (el: HTMLElement, id: string) => el.querySelector<HTMLInputElement>(`[id$="-${id}"]`);
 const sent = (el: HTMLElement): unknown =>
   JSON.parse(el.querySelector('output')?.textContent ?? 'undefined');
 const tick = (el: HTMLElement, id: string) => act(() => box(el, id)?.click());
@@ -89,7 +90,7 @@ describe('EvidenceChecklist', () => {
 
   it('one tick confirms the grouped fields only, and names each one it covers', () => {
     const { el } = show(1);
-    const group = el.querySelector('label[for="evidence-group"]');
+    const group = el.querySelector('label[for$="-evidence-group"]');
     expect(group?.textContent).toBe('wordsGroup:Origin, Destination, and Transit days');
     // Grouped values have no tick of their own; the others each have one.
     expect(box(el, 'evidence-originLocationId')).toBeNull();
@@ -141,5 +142,31 @@ describe('EvidenceChecklist', () => {
     expect(box(el, 'evidence-group')).toBeNull();
     tick(el, 'evidence-price');
     expect(sent(el)).toEqual({ confirmed: ['price'] });
+  });
+
+  it("two checklists on one screen: a label ticks its own checklist's box only", () => {
+    const el = document.createElement('div');
+    document.body.append(el);
+    const root = createRoot(el);
+    act(() =>
+      root.render(
+        <>
+          <Screen version={1} words={[{ field: 'branchId', quote: 'Dubai' }]} />
+          <Screen version={1} words={[{ field: 'originLocationId', quote: 'from Jeddah' }]} />
+        </>,
+      ),
+    );
+    roots.push(() => act(() => root.unmount()));
+    const labels = el.querySelectorAll<HTMLLabelElement>('label[for$="-evidence-group"]');
+    expect(labels).toHaveLength(2);
+    expect(labels[0]?.htmlFor).not.toBe(labels[1]?.htmlFor);
+    act(() => labels[1]?.click());
+    const [first, second] = el.querySelectorAll<HTMLInputElement>('[id$="-evidence-group"]');
+    expect(first?.checked).toBe(false);
+    expect(second?.checked).toBe(true);
+    const outputs = [...el.querySelectorAll('output')].map((o): unknown =>
+      JSON.parse(o.textContent ?? ''),
+    );
+    expect(outputs).toEqual([null, { confirmed: ['originLocationId'] }]);
   });
 });

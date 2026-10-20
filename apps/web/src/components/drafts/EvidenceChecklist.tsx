@@ -2,7 +2,7 @@
 
 import type { DraftEvidence } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 /**
  * The fields of a draft that one tick confirms together: where the work sits and how long the
@@ -62,6 +62,9 @@ export function EvidenceChecklist({
 }) {
   const t = useTranslations('Drafts');
   const locale = useLocale();
+  // One screen can show two checklists (a new customer's and its booking's): ids per instance, so
+  // a label never ticks the other checklist's box.
+  const prefix = useId();
   if (evidence.length === 0) return null;
   const grouped = evidence.filter((e) => isGroupedField(e.field));
   const single = evidence.filter((e) => !isGroupedField(e.field));
@@ -71,7 +74,7 @@ export function EvidenceChecklist({
 
   const row = (e: DraftEvidence, tick: boolean) => {
     const shown = values[e.field];
-    const id = `evidence-${e.field}`;
+    const id = `${prefix}-evidence-${e.field}`;
     return (
       <tr key={e.field}>
         {editable && (
@@ -128,7 +131,7 @@ export function EvidenceChecklist({
               <tr>
                 <td>
                   <input
-                    id="evidence-group"
+                    id={`${prefix}-evidence-group`}
                     type="checkbox"
                     checked={groupTicked}
                     onChange={(event) =>
@@ -141,7 +144,7 @@ export function EvidenceChecklist({
                   />
                 </td>
                 <td colSpan={2}>
-                  <label htmlFor="evidence-group">
+                  <label htmlFor={`${prefix}-evidence-group`}>
                     {t('wordsGroup', {
                       fields: new Intl.ListFormat(locale).format(groupFields.map(labelOf)),
                     })}
