@@ -73,6 +73,7 @@ export const JOURNAL_SOURCES = [
   'EXPENSE',
   'OPENING_BALANCE',
   'CONSOLIDATION_ALLOCATION',
+  'RECEIPT_APPLICATION',
 ] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
@@ -84,6 +85,9 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const RECEIPT_STATUSES = ['POSTED', 'CANCELLED'] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
+
+export const RECEIPT_APPLICATION_STATUSES = ['ACTIVE', 'REVERSED'] as const;
+export type ReceiptApplicationStatus = (typeof RECEIPT_APPLICATION_STATUSES)[number];
 
 /** Units of a currency per 1 USD, e.g. "600" for SDG. Up to 8 decimal places. */
 export type FxRateString = string;
@@ -290,9 +294,13 @@ export interface CustomerInvoiceSummaryDto {
 export interface InvoicePaymentDto {
   receiptId: string;
   receiptNumber: string;
+  /** The receipt's date, or for an advance applied later, the day it was applied. */
   receiptDate: string;
   amount: DecimalString;
+  /** The receipt was cancelled, or the advance's application reversed. */
   cancelled: boolean;
+  /** Set when the payment is part of the receipt's advance, applied to the invoice later. */
+  applicationId: string | null;
 }
 
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
@@ -369,9 +377,54 @@ export interface ReceiptSummaryDto {
   currency: CurrencyCode;
   amount: DecimalString;
   allocated: DecimalString;
-  /** Held as a customer advance. */
+  /** Of the advance, applied later to invoices (active applications only). */
+  applied: DecimalString;
+  /** Still held as a customer advance: the amount less what was allocated and applied. */
   unallocated: DecimalString;
   status: ReceiptStatus;
+}
+
+/**
+ * Part of a receipt's advance applied to a later invoice of the same customer, branch and
+ * currency. Reversing it posts the reversing entry and gives the amount back to the advance.
+ */
+export interface ReceiptApplicationDto {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  applicationDate: string;
+  /** In the receipt currency. */
+  amount: DecimalString;
+  /** The advance's USD value cleared, at the receipt's rate. */
+  advanceUsd: DecimalString;
+  /** The receivable's USD value cleared, at the invoice's rate. */
+  relievedUsd: DecimalString;
+  status: ReceiptApplicationStatus;
+  journalEntryId: string;
+  journalEntryNumber: string;
+  reverseJournalEntryId: string | null;
+  reverseJournalEntryNumber: string | null;
+  reverseReason: string | null;
+  reversedAt: string | null;
+  createdAt: string;
+}
+
+/** POST /receipts/:id/applications. `requestId` becomes the application's id (retry-safe). */
+export interface ApplyReceiptRequest {
+  requestId: string;
+  invoiceId: string;
+  amount: DecimalString;
+  applicationDate: string;
+}
+
+/** An approved invoice a receipt's advance can be applied to (GET /receipts/:id/applicable-invoices). */
+export interface ReceiptApplicableInvoiceDto {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  /** What is left to pay, in the receipt currency. */
+  balance: DecimalString;
 }
 
 export interface ReceiptDto extends ReceiptSummaryDto {
@@ -383,13 +436,22 @@ export interface ReceiptDto extends ReceiptSummaryDto {
   reference: string | null;
   notes: string | null;
   allocations: ReceiptAllocationDto[];
+  /** Applications of the advance to later invoices, active and reversed, oldest first. */
+  applications: ReceiptApplicationDto[];
   journalEntryId: string;
   journalEntryNumber: string;
   cancelJournalEntryId: string | null;
   cancelJournalEntryNumber: string | null;
   cancelReason: string | null;
   cancelledAt: string | null;
-  actions: { canCancel: boolean };
+  actions: {
+    /** False while an application is active: reverse those first. */
+    canCancel: boolean;
+    /** Posted with advance left, and the user may record receipts. */
+    canApply: boolean;
+    /** The user may reverse an active application (the receipt cancel permission). */
+    canReverseApplication: boolean;
+  };
 }
 
 export interface CreateReceiptRequest {
@@ -453,13 +515,16 @@ export interface TrialBalanceDto {
 
 /**
  * What a statement line is: an approved invoice, a receipt, a receipt's cancellation (its
- * reversing entry), a credit note, an open invoice brought in at go-live, another reversal, or any
- * other posted entry on the customer's accounts.
+ * reversing entry), an advance applied to a later invoice and its reversal, a credit note, an
+ * open invoice brought in at go-live, another reversal, or any other posted entry on the
+ * customer's accounts.
  */
 export const STATEMENT_LINE_KINDS = [
   'INVOICE',
   'RECEIPT',
   'RECEIPT_CANCELLATION',
+  'ADVANCE_APPLICATION',
+  'ADVANCE_APPLICATION_REVERSAL',
   'CREDIT_NOTE',
   'OPENING_BALANCE',
   'REVERSAL',
