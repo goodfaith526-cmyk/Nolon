@@ -6,6 +6,9 @@ import {
   cbmOf,
   hasSeaLeg,
   type BookingDto,
+  type BookingFromQuotationPreviewDto,
+  type BookingItemInput,
+  type BookingPartySuggestionDto,
   type BookingService,
   type CargoType,
   type ConsolidationBookingDto,
@@ -58,6 +61,18 @@ interface ItemState {
 }
 
 let nextKey = 1;
+const itemState = (i: BookingItemInput): ItemState => ({
+  key: nextKey++,
+  cargoType: i.cargoType,
+  containerTypeCode: i.containerTypeCode ?? '',
+  description: i.description ?? '',
+  quantity: String(i.quantity),
+  lengthCm: i.lengthCm ?? '',
+  widthCm: i.widthCm ?? '',
+  heightCm: i.heightCm ?? '',
+  weightKg: i.weightKg ?? '',
+  volumeCbm: i.lengthCm ? '' : (i.volumeCbm ?? ''),
+});
 const emptyItem = (cargoType: CargoType): ItemState => ({
   key: nextKey++,
   cargoType,
@@ -80,19 +95,24 @@ const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
 const CHOSEN_SERVICES = BOOKING_SERVICES.filter((s) => s !== 'MAIN_FREIGHT');
 
 type PartyField = 'shipperId' | 'consigneeId' | 'notifyPartyId';
+const PARTY_FIELDS: readonly PartyField[] = ['shipperId', 'consigneeId', 'notifyPartyId'];
 
 /**
  * New direct booking, or edit of a draft. CBM is computed by the API from the dimensions, and
  * shown as they are typed (the same rounding, from @nolon/shared). With
  * `consolidation`, an LCL sea booking from that container's port of loading: saving confirms it
- * and puts its shipment in the container.
+ * and puts its shipment in the container. With `fromQuotation`, a booking from an approved
+ * quotation (functional review B1): the form opens filled from the quotation's preview, nothing is
+ * created until the person saves, and route, mode, load type and cargo stay the quotation's.
  */
 export function BookingForm({
   booking,
   consolidation,
+  fromQuotation,
 }: {
   booking?: BookingDto;
   consolidation?: ConsolidationDto;
+  fromQuotation?: BookingFromQuotationPreviewDto;
 }) {
   const t = useTranslations('Bookings');
   const tc = useTranslations('Common');
@@ -105,47 +125,53 @@ export function BookingForm({
 
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
-  const [originChoice, setOrigin] = useState(booking?.originLocationId ?? '');
+  // What the form starts from: the booking edited, or the quotation's preview.
+  const initial = booking ?? fromQuotation;
+  const [originChoice, setOrigin] = useState(initial?.originLocationId ?? '');
   const [destinationChoice, setDestination] = useState(
-    booking?.destinationLocationId ?? consolidation?.destinationLocationId ?? '',
+    initial?.destinationLocationId ?? consolidation?.destinationLocationId ?? '',
   );
-  const [mode, setMode] = useState<ShippingMode>(booking?.mode ?? 'SEA');
-  const [loadType, setLoadType] = useState<LoadType>(
-    booking?.loadType ?? (consolidation ? 'LCL' : 'FCL'),
+  const [mode, setMode] = useState<ShippingMode>(initial?.mode ?? 'SEA');
+  // A quotation without a load type shows it as not set ('') rather than a default (Codex
+  // F93-4): defaults are for a new direct booking only.
+  const [loadType, setLoadType] = useState<LoadType | ''>(
+    fromQuotation
+      ? (fromQuotation.loadType ?? '')
+      : (booking?.loadType ?? (consolidation ? 'LCL' : 'FCL')),
   );
   const [cargoType, setCargoType] = useState<CargoType>(
-    booking?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'),
+    initial?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'),
   );
   const [services, setServices] = useState<BookingService[]>(
     booking?.services.filter((s) => s !== 'MAIN_FREIGHT') ?? [],
   );
-  const [items, setItems] = useState<ItemState[]>(
-    booking?.items.map((i) => ({
-      key: nextKey++,
-      cargoType: i.cargoType,
-      containerTypeCode: i.containerTypeCode ?? '',
-      description: i.description ?? '',
-      quantity: String(i.quantity),
-      lengthCm: i.lengthCm ?? '',
-      widthCm: i.widthCm ?? '',
-      heightCm: i.heightCm ?? '',
-      weightKg: i.weightKg ?? '',
-      volumeCbm: i.lengthCm ? '' : (i.volumeCbm ?? ''),
-    })) ?? [emptyItem(consolidation ? 'PALLET' : 'CONTAINER')],
-  );
+  // From a quotation: the container lines its per-container charges name (the API's preview).
+  const [items, setItems] = useState<ItemState[]>(() => {
+    if (booking) return booking.items.map(itemState);
+    if (fromQuotation && fromQuotation.items.length > 0) return fromQuotation.items.map(itemState);
+    return [emptyItem(fromQuotation?.cargoType ?? (consolidation ? 'PALLET' : 'CONTAINER'))];
+  });
   const [busy, setBusy] = useState(false);
+  // A new booking's parties (functional review B5): suggested by GET /bookings/party-suggestion
+  // when the customer is picked (or with a quotation's preview): the parties of the customer's
+  // last booking, or its only party. Shown with where they come from; a party the person picked
+  // is kept; picking another customer drops the suggestion; the API checks each party on save.
+  const [suggestion, setSuggestion] = useState<BookingPartySuggestionDto | null>(
+    fromQuotation?.parties ?? null,
+  );
   const [partyIds, setPartyIds] = useState<Record<PartyField, string>>({
-    shipperId: booking?.shipperId ?? '',
-    consigneeId: booking?.consigneeId ?? '',
-    notifyPartyId: booking?.notifyPartyId ?? '',
+    shipperId: booking?.shipperId ?? fromQuotation?.parties.shipperId ?? '',
+    consigneeId: booking?.consigneeId ?? fromQuotation?.parties.consigneeId ?? '',
+    notifyPartyId: booking?.notifyPartyId ?? fromQuotation?.parties.notifyPartyId ?? '',
   });
   const [addingParty, setAddingParty] = useState<PartyField | null>(null);
+  // The party fields the person set or cleared since the customer was picked: a suggestion that
+  // arrives later fills only the others (Codex F93-3). Reset when the customer changes.
+  const touchedParties = useRef(new Set<PartyField>());
 
-  // Until the user picks, the route defaults to the first two active locations.
-  const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
-  const origin =
-    consolidation?.originLocationId ?? (originChoice || (activeLocations[0]?.id ?? ''));
-  const destination = destinationChoice || (activeLocations[1]?.id ?? '');
+  // The route starts empty on a new booking: the person picks it (functional review B6).
+  const origin = consolidation?.originLocationId ?? originChoice;
+  const destination = destinationChoice;
   const [notice, setNotice] = useState<NoticeState | null>(null);
   // What the last refused save sent, for "Review with the assistant".
   const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
@@ -161,9 +187,9 @@ export function BookingForm({
     if (notice && !notice.ok) revealFailure(formRef.current);
   }, [notice, invalid]);
 
-  const customerId = booking?.customerId ?? customer?.id;
+  const customerId = booking?.customerId ?? fromQuotation?.customerId ?? customer?.id;
   // A booking from a quotation keeps the quotation's route and mode (the API refuses a change).
-  const quoted = Boolean(booking?.quotationId);
+  const quoted = Boolean(booking?.quotationId) || fromQuotation !== undefined;
   // The customer the form is on now: a party saved for an earlier one is not applied.
   const currentCustomer = useRef(customerId);
   useEffect(() => {
@@ -182,6 +208,31 @@ export function BookingForm({
       cancelled = true;
     };
   }, [customerId]);
+
+  // Only a customer picked on this form asks for a suggestion (an edit has its parties).
+  const pickedCustomerId = customer?.id;
+  useEffect(() => {
+    if (!pickedCustomerId) return;
+    let cancelled = false;
+    api<BookingPartySuggestionDto>(`/bookings/party-suggestion?customerId=${pickedCustomerId}`)
+      .then((s) => {
+        if (cancelled || s.customerId !== pickedCustomerId) return;
+        setSuggestion(s);
+        const touched = touchedParties.current;
+        const fill = (all: Record<PartyField, string>, f: PartyField) =>
+          touched.has(f) ? all[f] : all[f] || (s[f] ?? '');
+        setPartyIds((all) => ({
+          shipperId: fill(all, 'shipperId'),
+          consigneeId: fill(all, 'consigneeId'),
+          notifyPartyId: fill(all, 'notifyPartyId'),
+        }));
+      })
+      // No suggestion (no permission to create bookings, say): the parties start empty.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pickedCustomerId]);
 
   function updateItem(key: number, patch: Partial<ItemState>) {
     setItems((all) => all.map((i) => (i.key === key ? { ...i, ...patch } : i)));
@@ -227,13 +278,38 @@ export function BookingForm({
       ...fields,
       originLocationId: origin,
       mode,
-      loadType: hasSeaLeg(mode) ? loadType : null,
+      loadType: hasSeaLeg(mode) && loadType ? loadType : null,
     };
     setBusy(true);
     setNotice(null);
     setInvalid(new Set());
     setNote(null);
     setRefused(null);
+    if (fromQuotation) {
+      // The quotation gives the customer, route, mode, load type and cargo.
+      const fromBody = {
+        services,
+        shipperId: fields.shipperId,
+        consigneeId: fields.consigneeId,
+        notifyPartyId: fields.notifyPartyId,
+        requestedDeparture: fields.requestedDeparture,
+        specialInstructions: fields.specialInstructions,
+        items: fields.items,
+      };
+      try {
+        const saved = await api<BookingDto>(
+          `/bookings/from-quotation/${fromQuotation.quotationId}`,
+          { method: 'POST', body: fromBody },
+        );
+        router.push(`/bookings/${saved.id}`);
+      } catch (err) {
+        setNotice({ ok: false, text: failure(err) });
+        setInvalid(invalidFields(err));
+        setNote(fieldNote(err, refusalReason(err)));
+        setBusy(false);
+      }
+      return;
+    }
     const sent = consolidation
       ? { ...fields, customerId: customer?.id ?? '' }
       : booking
@@ -271,6 +347,17 @@ export function BookingForm({
   if (!master) return <p className="muted">{tc('loading')}</p>;
   const locations = master.locations.filter((l) => l.isActive);
   const parties = (details?.id === customerId ? details?.parties : undefined) ?? [];
+  // The suggestion's source, said while a suggested party is still selected.
+  const suggestedNote = (() => {
+    if (!suggestion || suggestion.customerId !== customerId || suggestion.source === null) {
+      return null;
+    }
+    const kept = PARTY_FIELDS.some((f) => suggestion[f] !== null && partyIds[f] === suggestion[f]);
+    if (!kept) return null;
+    return suggestion.source === 'LAST_BOOKING'
+      ? t('partiesFromLastBooking', { number: suggestion.bookingNumber ?? '' })
+      : t('partiesFromOnlyParty');
+  })();
   const mayAddParty = !!customerId && details?.id === customerId && can(me, 'customers:update');
   const partySelect = (field: PartyField) => (
     <label className="field">
@@ -280,7 +367,10 @@ export function BookingForm({
           name={field}
           {...mark(field)}
           value={partyIds[field]}
-          onChange={(e) => setPartyIds((all) => ({ ...all, [field]: e.target.value }))}
+          onChange={(e) => {
+            touchedParties.current.add(field);
+            setPartyIds((all) => ({ ...all, [field]: e.target.value }));
+          }}
         >
           <option value="">—</option>
           {parties.map((p) => (
@@ -304,14 +394,27 @@ export function BookingForm({
       <h1>
         {booking
           ? t('editTitle', { number: booking.number })
-          : consolidation
-            ? t('addToContainer', { number: consolidation.number })
-            : t('add')}
+          : fromQuotation
+            ? t('fromQuotationTitle', { number: fromQuotation.quotationNumber })
+            : consolidation
+              ? t('addToContainer', { number: consolidation.number })
+              : t('add')}
       </h1>
       {consolidation && <p className="muted">{t('addToContainerHint')}</p>}
+      {fromQuotation && <p className="muted">{t('fromQuotationHint')}</p>}
       <Notice notice={notice} />
       <ReviewWithAssistant refused={refused} />
-      {!booking && (
+      {fromQuotation && (
+        <section className="form-section">
+          <header>
+            <h2>{t('customer')}</h2>
+          </header>
+          <div className="form-section-body">
+            <strong>{fromQuotation.customerName}</strong>
+          </div>
+        </section>
+      )}
+      {!booking && !fromQuotation && (
         <section className="form-section">
           <header>
             <h2>{t('customer')}</h2>
@@ -323,6 +426,8 @@ export function BookingForm({
               onChange={(c) => {
                 setCustomer(c);
                 setAddingParty(null);
+                setSuggestion(null);
+                touchedParties.current = new Set();
                 setPartyIds({ shipperId: '', consigneeId: '', notifyPartyId: '' });
               }}
               allowCreate
@@ -341,9 +446,13 @@ export function BookingForm({
             <select
               {...mark('originLocationId')}
               value={origin}
+              required
               disabled={consolidation !== undefined || quoted}
               onChange={(e) => setOrigin(e.target.value)}
             >
+              <option value="" disabled>
+                —
+              </option>
               {locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {name(l)} ({l.code})
@@ -357,9 +466,13 @@ export function BookingForm({
             <select
               {...mark('destinationLocationId')}
               value={destination}
+              required
               disabled={quoted}
               onChange={(e) => setDestination(e.target.value)}
             >
+              <option value="" disabled>
+                —
+              </option>
               {locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {name(l)} ({l.code})
@@ -382,9 +495,10 @@ export function BookingForm({
               <select
                 {...mark('loadType')}
                 value={loadType}
-                disabled={consolidation !== undefined}
+                disabled={consolidation !== undefined || fromQuotation !== undefined}
                 onChange={(e) => setLoadType(e.target.value as LoadType)}
               >
+                {loadType === '' && <option value="">{t('notSet')}</option>}
                 {LOAD_TYPES.map((l) => (
                   <option key={l} value={l}>
                     {l}
@@ -399,6 +513,7 @@ export function BookingForm({
             <select
               {...mark('cargoType')}
               value={cargoType}
+              disabled={fromQuotation !== undefined}
               onChange={(e) => setCargoType(e.target.value as CargoType)}
             >
               {cargoChoices(cargoType).map((c) => (
@@ -425,6 +540,7 @@ export function BookingForm({
         <header>
           <h2>{t('sectionParties')}</h2>
           <p>{t('sectionPartiesHint')}</p>
+          {suggestedNote && <p className="muted">{suggestedNote}</p>}
         </header>
         <div className="form-section-body form-grid">
           {partySelect('shipperId')}
@@ -456,6 +572,9 @@ export function BookingForm({
         <header>
           <h2>{t('items')}</h2>
           <p>{t('cbmHint')}</p>
+          {fromQuotation && fromQuotation.items.length > 0 && (
+            <p className="muted">{t('itemsFromQuotation')}</p>
+          )}
         </header>
         <fieldset className="form-section-body stack bare" {...markGroup('items')}>
           <legend className="visually-hidden">{t('items')}</legend>
@@ -580,7 +699,9 @@ export function BookingForm({
               name="cargoDescription"
               rows={2}
               {...mark('cargoDescription')}
-              defaultValue={booking?.cargoDescription ?? ''}
+              disabled={fromQuotation !== undefined}
+              placeholder={fromQuotation ? t('notSet') : undefined}
+              defaultValue={initial?.cargoDescription ?? ''}
             />
             <FieldNote note={note} path="cargoDescription" />
           </label>
@@ -598,14 +719,16 @@ export function BookingForm({
       </section>
 
       <div className="actions form-footer">
-        {!booking && customer === null && <p className="muted">{t('pickCustomerToSave')}</p>}
+        {!booking && !fromQuotation && customer === null && (
+          <p className="muted">{t('pickCustomerToSave')}</p>
+        )}
         <button type="button" onClick={() => router.back()}>
           {tc('cancel')}
         </button>
         <button
           type="submit"
           className="primary"
-          disabled={busy || (!booking && customer === null)}
+          disabled={busy || (!booking && !fromQuotation && customer === null)}
         >
           {tc('save')}
         </button>
@@ -618,6 +741,7 @@ export function BookingForm({
             onCancel={() => setAddingParty(null)}
             onSaved={(c) => {
               if (c.id !== currentCustomer.current) return;
+              touchedParties.current.add(addingParty);
               setDetails(c);
               setPartyIds((all) => ({ ...all, [addingParty]: c.addedPartyId }));
               setAddingParty(null);

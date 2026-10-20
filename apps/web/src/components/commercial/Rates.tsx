@@ -15,6 +15,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { onlyBranch } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -190,6 +191,13 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
   const failure = useFailureText();
   const [mode, setMode] = useState<ShippingMode>('SEA');
   const [cargo, setCargo] = useState<string>('CONTAINER');
+  // With one branch the user is not asked (functional review B7); the API checks it on save.
+  const single = onlyBranch(me);
+  const [branchId, setBranchId] = useState(single?.id ?? me.branches[0]?.id ?? '');
+  // Valid-from starts at the chosen branch's today (functional review B4), from /auth/me, and
+  // follows the branch until the person types a date (null until then), which is kept.
+  const [validFromChoice, setValidFrom] = useState<string | null>(null);
+  const validFrom = validFromChoice ?? me.branches.find((b) => b.id === branchId)?.today ?? '';
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
@@ -198,7 +206,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
     const form = new FormData(e.currentTarget);
     const transitDays = field(form, 'transitDays');
     const body = {
-      branchId: field(form, 'branchId'),
+      branchId,
       originLocationId: field(form, 'originLocationId'),
       destinationLocationId: field(form, 'destinationLocationId'),
       mode,
@@ -235,16 +243,23 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
       <h2>{t('add')}</h2>
       <Notice notice={notice} />
       <div className="grid">
-        <label className="field">
-          {t('branch')}
-          <select name="branchId" required>
-            {me.branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {name(b)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!single && (
+          <label className="field">
+            {t('branch')}
+            <select
+              name="branchId"
+              required
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+            >
+              {me.branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {name(b)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="field">
           {t('origin')}
           <select name="originLocationId" required>
@@ -357,7 +372,13 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
         </label>
         <label className="field">
           {t('validFrom')}
-          <input name="validFrom" type="date" required />
+          <input
+            name="validFrom"
+            type="date"
+            required
+            value={validFrom}
+            onChange={(e) => setValidFrom(e.target.value)}
+          />
         </label>
         <label className="field">
           {t('validTo')}

@@ -12,6 +12,19 @@ describe('loadEnv', () => {
     expect(env.LOGIN_IP_LIMIT_ENABLED).toBe(true);
   });
 
+  it('reads the quotation validity days, 30 by default, and rejects one out of range', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    expect(loadEnv(base).QUOTATION_VALIDITY_DAYS).toBe(30);
+    expect(loadEnv({ ...base, QUOTATION_VALIDITY_DAYS: '' }).QUOTATION_VALIDITY_DAYS).toBe(30);
+    expect(loadEnv({ ...base, QUOTATION_VALIDITY_DAYS: '14' }).QUOTATION_VALIDITY_DAYS).toBe(14);
+    expect(() => loadEnv({ ...base, QUOTATION_VALIDITY_DAYS: '0' })).toThrow(
+      /QUOTATION_VALIDITY_DAYS/,
+    );
+    expect(() => loadEnv({ ...base, QUOTATION_VALIDITY_DAYS: '1.5' })).toThrow(
+      /QUOTATION_VALIDITY_DAYS/,
+    );
+  });
+
   it('parses the auth settings', () => {
     const env = loadEnv({
       DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
