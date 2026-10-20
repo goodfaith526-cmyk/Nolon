@@ -226,6 +226,15 @@ describe('consolidated LCL containers', () => {
     expect(view.costs).toHaveLength(1);
     expect(view.costs[0]?.allocationEntryId).toBeNull();
 
+    // Only closing the container consolidates its shipments (Z1): not by hand.
+    const byHand = await post(`/shipments/${ids[0]}/status`, cookies.opsJed, {
+      status: 'CONSOLIDATED',
+    }).expect(409);
+    expect(byHand.body).toMatchObject({
+      code: 'STATUS_SET_BY_RECORD',
+      params: { status: 'CONSOLIDATED', record: 'CONSOLIDATION' },
+    });
+
     // Closing needs the container number.
     await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
       status: 'CLOSED',

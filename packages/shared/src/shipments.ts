@@ -37,6 +37,69 @@ export const SHIPMENT_STATUSES = [
 ] as const;
 export type ShipmentStatus = (typeof SHIPMENT_STATUSES)[number];
 
+/**
+ * Statuses that an operational record of their own produces (functional review Z1, with E7): a
+ * goods receipt, the consolidated container, a trip, the customs file or a proof of delivery
+ * moves the shipment there. Nobody sets them through the generic status change, except as a
+ * correction: a user with shipments:approve, with a reason recorded on the event.
+ */
+export const EVENT_BOUND_SHIPMENT_STATUSES = [
+  'RECEIVED_ORIGIN_WAREHOUSE',
+  'CONSOLIDATED',
+  'TRIP_SCHEDULED',
+  'ROAD_DEPARTED',
+  'ROAD_ARRIVED',
+  'CUSTOMS_IN_PROGRESS',
+  'CUSTOMS_CLEARED',
+  'RECEIVED_DESTINATION_WAREHOUSE',
+  'PARTIALLY_DELIVERED',
+  'DELIVERED',
+] as const satisfies readonly ShipmentStatus[];
+export type EventBoundShipmentStatus = (typeof EVENT_BOUND_SHIPMENT_STATUSES)[number];
+
+/** The record that produces each event-bound status (sent as `record` with a refusal). */
+export const SHIPMENT_STATUS_RECORDS = [
+  'GOODS_RECEIPT',
+  'CONSOLIDATION',
+  'TRIP',
+  'CUSTOMS_FILE',
+  'PROOF_OF_DELIVERY',
+] as const;
+export type ShipmentStatusRecord = (typeof SHIPMENT_STATUS_RECORDS)[number];
+
+export const SHIPMENT_STATUS_RECORD: Record<EventBoundShipmentStatus, ShipmentStatusRecord> = {
+  RECEIVED_ORIGIN_WAREHOUSE: 'GOODS_RECEIPT',
+  RECEIVED_DESTINATION_WAREHOUSE: 'GOODS_RECEIPT',
+  CONSOLIDATED: 'CONSOLIDATION',
+  TRIP_SCHEDULED: 'TRIP',
+  ROAD_DEPARTED: 'TRIP',
+  ROAD_ARRIVED: 'TRIP',
+  CUSTOMS_IN_PROGRESS: 'CUSTOMS_FILE',
+  CUSTOMS_CLEARED: 'CUSTOMS_FILE',
+  PARTIALLY_DELIVERED: 'PROOF_OF_DELIVERY',
+  DELIVERED: 'PROOF_OF_DELIVERY',
+};
+
+export function isEventBoundShipmentStatus(
+  status: ShipmentStatus,
+): status is EventBoundShipmentStatus {
+  return (EVENT_BOUND_SHIPMENT_STATUSES as readonly ShipmentStatus[]).includes(status);
+}
+
+/**
+ * Whether a person may set `status` by hand through the generic status change. The road statuses
+ * a trip produces stay manual for a shipment on no open trip (planned or departed): a road leg an
+ * external carrier drives, or the next leg after a trip has arrived. ROAD_IN_TRANSIT and every
+ * status no record produces are always manual.
+ */
+export function isManualShipmentStatus(
+  status: ShipmentStatus,
+  shipment: { onOpenTrip: boolean },
+): boolean {
+  if (!isEventBoundShipmentStatus(status)) return true;
+  return SHIPMENT_STATUS_RECORD[status] === 'TRIP' && !shipment.onOpenTrip;
+}
+
 export const SHIPMENT_EVENT_KINDS = [
   'CREATED',
   'STATUS',
@@ -146,6 +209,11 @@ export interface ShipmentEventDto {
   source: EventSource;
   note: string | null;
   reason: string | null;
+  /**
+   * A manual correction to a status its own record normally sets (a STATUS event with a reason,
+   * recorded by a user with shipments:approve).
+   */
+  correction: boolean;
 }
 
 /**
@@ -153,7 +221,15 @@ export interface ShipmentEventDto {
  * shipment, and the user's permissions). The web shows only these actions.
  */
 export interface ShipmentActionsDto {
+  /** Every status the user may move the shipment to, by hand or through its record. */
   transitions: ShipmentStatus[];
+  /** Of those, the ones the user may set by hand through POST /shipments/:id/status. */
+  manualTransitions: ShipmentStatus[];
+  /**
+   * Statuses a record normally sets, which this user (shipments:approve) may set by hand as a
+   * correction only: `correction: true` with a reason.
+   */
+  correctionTransitions: ShipmentStatus[];
   canHold: boolean;
   canResume: boolean;
   /** The status a revert would return to, when the user may revert. */
@@ -228,6 +304,13 @@ export interface ShipmentStatusRequest {
   occurredAt?: string;
   locationId?: string | null;
   note?: string | null;
+  /**
+   * A correction to a status its own record normally sets (actions.correctionTransitions): needs
+   * shipments:approve and a reason, which the event keeps.
+   */
+  correction?: boolean;
+  /** Required with `correction`, and only allowed with it. */
+  reason?: string | null;
 }
 
 export interface ShipmentHoldRequest {

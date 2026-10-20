@@ -647,6 +647,11 @@ export const FORM_REFUSALS = [
   'BRANCH_MISMATCH',
   // A location (master data) with a city is in the city's country: params `city` and `country`.
   'CITY_OTHER_COUNTRY',
+  // A shipment status its own record sets (Z1): params `status` and `record`
+  // (ShipmentStatusRecord). A correction needs shipments:approve and a reason.
+  'STATUS_SET_BY_RECORD',
+  'STATUS_CORRECTION_FORBIDDEN',
+  'STATUS_CORRECTION_REASON_REQUIRED',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

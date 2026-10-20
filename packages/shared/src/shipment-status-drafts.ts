@@ -13,9 +13,23 @@ import type { ShipmentStatus } from './shipments.js';
  * A shipment status change the staff assistant proposes (entry drafts, drafts.ts). A person
  * approves it on the review screen, which applies it through the shipment state machine, dated at
  * the approval, with their own permissions; or rejects it. Closing, holding and cancelling a
- * shipment stay a person's own actions.
+ * shipment stay a person's own actions. The statuses a record of their own sets (goods receipt,
+ * consolidation, customs file, proof of delivery: EVENT_BOUND_SHIPMENT_STATUSES) are never
+ * proposed (functional review Z1, E7); the road statuses a trip sets may be, and are refused for a
+ * shipment on an open trip when the draft is checked and approved (isManualShipmentStatus).
  */
-export const SHIPMENT_STATUS_DRAFT_EXCLUDED = ['CLOSED', 'ON_HOLD', 'CANCELLED'] as const;
+export const SHIPMENT_STATUS_DRAFT_EXCLUDED = [
+  'CLOSED',
+  'ON_HOLD',
+  'CANCELLED',
+  'RECEIVED_ORIGIN_WAREHOUSE',
+  'CONSOLIDATED',
+  'CUSTOMS_IN_PROGRESS',
+  'CUSTOMS_CLEARED',
+  'RECEIVED_DESTINATION_WAREHOUSE',
+  'PARTIALLY_DELIVERED',
+  'DELIVERED',
+] as const satisfies readonly ShipmentStatus[];
 
 /** A status change as its draft holds it: the status may be missing until a person fills it in. */
 export interface ShipmentStatusDraftRequest {

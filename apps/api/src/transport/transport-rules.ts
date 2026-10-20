@@ -67,8 +67,8 @@ const AFTER_LEG: readonly ShipmentStatus[] = [
 ];
 
 /**
- * True when a shipment on a trip already is at `target` or beyond it on this leg (moved by hand
- * on the shipment page, or delivered): the trip move leaves it as it is instead of waiting for it.
+ * True when a shipment on a trip already is at `target` or beyond it on this leg (corrected by
+ * hand on the shipment page, or delivered): the trip move leaves it as it is instead of waiting for it.
  * A shipment behind the target (reverted, on hold, cancelled) is not.
  */
 export function atOrPastOnLeg(status: ShipmentStatus, target: ShipmentStatus): boolean {

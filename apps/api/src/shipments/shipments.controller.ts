@@ -50,14 +50,22 @@ const updateBody = z
   })
   .strict();
 
+// A correction (a status its own record sets, Z1) carries its reason; the service checks the
+// permission and that the reason is there, with a code the page can show.
 const statusBody = z
   .object({
     status: z.enum(SHIPMENT_STATUSES),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     locationId: z.uuid().nullish(),
     note: optionalText(1000),
+    correction: z.boolean().optional(),
+    reason: optionalText(1000),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.correction === true || !b.reason, {
+    message: 'A reason is given with a correction only',
+    path: ['reason'],
+  });
 
 const holdBody = z.object({ reason: requiredText(1000), note: optionalText(1000) }).strict();
 const noteBody = z.object({ note: optionalText(1000) }).strict();

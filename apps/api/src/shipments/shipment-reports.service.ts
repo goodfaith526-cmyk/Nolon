@@ -533,7 +533,8 @@ export class ShipmentReportsService {
       userId: r.userId,
       userName: r.userName,
       entity: 'SHIPMENT',
-      action: AUDIT_ACTION[r.kind],
+      // A status event with a reason is a correction by hand (Z1): plain changes carry none.
+      action: r.kind === 'STATUS' && r.reason !== null ? 'STATUS_CORRECTED' : AUDIT_ACTION[r.kind],
       reference: r.reference,
       status: r.status,
       detail: r.reason ?? r.note,

@@ -1,4 +1,5 @@
 import type {
+  AuditLogDto,
   BookingDto,
   CustomerDto,
   Page,
@@ -17,6 +18,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { shipmentRecords } from './shipment-records.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 const PDF = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
@@ -93,6 +95,8 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
   const move = (id: string, cookie: string, status: string, extra: object = {}) =>
     post(`/shipments/${id}/status`, cookie, { status, ...extra });
+  // Customs and delivery statuses come from their records (Z1).
+  const records = () => shipmentRecords(t);
 
   beforeAll(async () => {
     t = await createTestApp();
@@ -216,8 +220,10 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
-      const customs = (await move(s.id, cookies.customsDxb, 'CUSTOMS_IN_PROGRESS').expect(200))
+      await records().customs(s.id, cookies.customsDxb, false);
+      const customs = (await get(`/shipments/${s.id}`, cookies.customsDxb).expect(200))
         .body as ShipmentDto;
+      expect(customs.status).toBe('CUSTOMS_IN_PROGRESS');
       expect(customs.actions.transitions).toEqual(['CUSTOMS_CLEARED']);
       const sales = (await get(`/shipments/${s.id}`, cookies.salesDxb).expect(200))
         .body as ShipmentDto;
@@ -248,13 +254,13 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       const atPort = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
         .body as ShipmentDto;
       expect(atPort.actions.transitions).toEqual(['CUSTOMS_IN_PROGRESS']);
+      // Not a move yet: the state machine refuses it before anything else.
       await move(s.id, cookies.opsDxb, 'DELIVERED').expect(409);
       await move(s.id, cookies.opsDxb, 'OUT_FOR_DELIVERY').expect(409);
-      await move(s.id, cookies.opsDxb, 'CUSTOMS_IN_PROGRESS').expect(200);
-      await move(s.id, cookies.opsDxb, 'CUSTOMS_CLEARED').expect(200);
+      await records().customs(s.id, cookies.customsDxb, true);
       await move(s.id, cookies.opsDxb, 'DELIVERED').expect(409);
       await move(s.id, cookies.opsDxb, 'OUT_FOR_DELIVERY').expect(200);
-      await move(s.id, cookies.opsDxb, 'DELIVERED').expect(200);
+      await records().pod(s.id, cookies.opsDxb, 'DELIVERED').expect(201);
     });
 
     it('services are fixed once the shipment moves, so no stage can be removed', async () => {
@@ -337,16 +343,11 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
     it('reverting repeated partial deliveries undoes one at a time', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT', 'LAST_MILE']);
-      for (const status of [
-        'LOADED',
-        'DEPARTED',
-        'ARRIVED_PORT',
-        'OUT_FOR_DELIVERY',
-        'PARTIALLY_DELIVERED',
-        'PARTIALLY_DELIVERED',
-      ]) {
+      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'OUT_FOR_DELIVERY']) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
+      await records().pod(s.id, cookies.opsDxb, 'PARTIALLY_DELIVERED').expect(201);
+      await records().pod(s.id, cookies.opsDxb, 'PARTIALLY_DELIVERED').expect(201);
       const first = (
         await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
           reason: 'Double entry',
@@ -451,9 +452,10 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
     it('closing a delivered shipment completes its booking and freezes the shipment', async () => {
       const s = await confirmedShipment();
-      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
+      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
+      await records().pod(s.id, cookies.opsDxb, 'DELIVERED').expect(201);
       await move(s.id, cookies.salesDxb, 'CLOSED').expect(403);
       const closed = (await move(s.id, cookies.opsDxb, 'CLOSED').expect(200)).body as ShipmentDto;
       expect(closed.status).toBe('CLOSED');
@@ -504,6 +506,121 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
     });
   });
 
+  describe('statuses set by their own record (functional review Z1)', () => {
+    /** A sea shipment with customs, at the port: its next status is the customs file's. */
+    async function atPort(): Promise<ShipmentDto> {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);
+      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) {
+        await move(s.id, cookies.opsDxb, status).expect(200);
+      }
+      return s;
+    }
+
+    it('refuses a record’s status by hand, even to its own team, and says which record', async () => {
+      const s = await atPort();
+      for (const cookie of [cookies.opsDxb, cookies.customsDxb, cookies.managerDxb]) {
+        const refused = await move(s.id, cookie, 'CUSTOMS_IN_PROGRESS').expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'STATUS_SET_BY_RECORD',
+          params: { status: 'CUSTOMS_IN_PROGRESS', record: 'CUSTOMS_FILE' },
+        });
+      }
+      const row = await t.prisma.shipment.findUniqueOrThrow({ where: { id: s.id } });
+      expect(row.status).toBe('ARRIVED_PORT');
+      // The agent's list stays as it was; the page offers the move by hand or as a correction.
+      const ops = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200)).body as ShipmentDto;
+      expect(ops.actions).toMatchObject({
+        transitions: ['CUSTOMS_IN_PROGRESS'],
+        manualTransitions: [],
+        correctionTransitions: ['CUSTOMS_IN_PROGRESS'],
+      });
+      const customs = (await get(`/shipments/${s.id}`, cookies.customsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(customs.actions).toMatchObject({
+        transitions: ['CUSTOMS_IN_PROGRESS'],
+        manualTransitions: [],
+        correctionTransitions: [],
+      });
+      // A status no record sets stays manual.
+      const loaded = await confirmedShipment();
+      const before = (await get(`/shipments/${loaded.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(before.actions.manualTransitions).toEqual(before.actions.transitions);
+      expect(before.actions.manualTransitions).toContain('LOADED');
+      expect(before.actions.correctionTransitions).toEqual([]);
+    });
+
+    it('a correction needs shipments:approve and a reason, which the event and audit keep', async () => {
+      const s = await atPort();
+      const correction = { correction: true, reason: 'Cleared before the file existed' };
+      // Without the permission: refused, whatever the reason.
+      const forbidden = await move(
+        s.id,
+        cookies.customsDxb,
+        'CUSTOMS_IN_PROGRESS',
+        correction,
+      ).expect(403);
+      expect(forbidden.body).toMatchObject({ code: 'STATUS_CORRECTION_FORBIDDEN' });
+      await move(s.id, cookies.salesDxb, 'CUSTOMS_IN_PROGRESS', correction).expect(403);
+      // Without a reason (missing, empty or blank): refused at the reason.
+      for (const reason of [undefined, '', '   ']) {
+        const missing = await move(s.id, cookies.managerDxb, 'CUSTOMS_IN_PROGRESS', {
+          correction: true,
+          reason,
+        }).expect(400);
+        expect(missing.body).toMatchObject({
+          code: 'STATUS_CORRECTION_REASON_REQUIRED',
+          fields: ['reason'],
+        });
+      }
+      // A reason belongs to a correction only.
+      await move(s.id, cookies.managerDxb, 'CUSTOMS_IN_PROGRESS', {
+        reason: 'No correction flag',
+      }).expect(400);
+      // The state machine still decides: a correction cannot jump the customs stage.
+      await move(s.id, cookies.managerDxb, 'DELIVERED', correction).expect(409);
+      expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id: s.id } })).status).toBe(
+        'ARRIVED_PORT',
+      );
+
+      const manager = await createUser(t.prisma, ['BRANCH_MANAGER'], ['DXB']);
+      const managerCookie = await signIn(t, manager.email);
+      const corrected = (
+        await move(s.id, managerCookie, 'CUSTOMS_IN_PROGRESS', {
+          ...correction,
+          note: 'Paper file',
+        }).expect(200)
+      ).body as ShipmentDto;
+      expect(corrected.status).toBe('CUSTOMS_IN_PROGRESS');
+      expect(corrected.events.at(-1)).toMatchObject({
+        kind: 'STATUS',
+        status: 'CUSTOMS_IN_PROGRESS',
+        fromStatus: 'ARRIVED_PORT',
+        reason: 'Cleared before the file existed',
+        note: 'Paper file',
+        correction: true,
+      });
+      // Plain changes are not corrections.
+      expect(corrected.events.slice(0, -1).every((e) => !e.correction)).toBe(true);
+      const day = (offset: number) =>
+        new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+      const audit = (
+        await get(
+          `/reports/audit-log?from=${day(-1)}&to=${day(1)}&entity=SHIPMENT&userId=${manager.id}`,
+          managerCookie,
+        ).expect(200)
+      ).body as AuditLogDto;
+      expect(audit.entries).toHaveLength(1);
+      expect(audit.entries[0]).toMatchObject({
+        action: 'STATUS_CORRECTED',
+        reference: s.number,
+        status: 'CUSTOMS_IN_PROGRESS',
+        detail: 'Cleared before the file existed',
+        userId: manager.id,
+      });
+    });
+  });
+
   describe('cancellation', () => {
     it('before loading, Operations cancels and the booking is cancelled too', async () => {
       const s = await confirmedShipment();
@@ -546,9 +663,10 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
     it('a delivered shipment cannot be cancelled', async () => {
       const s = await confirmedShipment();
-      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
+      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
+      await records().pod(s.id, cookies.opsDxb, 'DELIVERED').expect(201);
       await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'x' }).expect(409);
     });
   });

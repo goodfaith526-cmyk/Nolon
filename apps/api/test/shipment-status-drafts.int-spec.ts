@@ -228,7 +228,7 @@ describe('shipment status drafts: the assistant proposes', () => {
 });
 
 /** A road shipment on a planned trip driven by the Driver user (now TRIP_SCHEDULED). */
-async function driversShipment(): Promise<ShipmentDto> {
+async function driversShipment(existing?: ShipmentDto): Promise<ShipmentDto> {
   const suffix = String(randomInt(100_000, 999_999));
   const vehicle = (
     await r
@@ -239,16 +239,19 @@ async function driversShipment(): Promise<ShipmentDto> {
       })
       .expect(201)
   ).body as VehicleDto;
-  const driver = (
-    await r
-      .post('/transport/drivers', cookies.opsDxb, {
-        branchId: dxb,
-        name: `ZZ Driver ${suffix}`,
-        userId: driverUserId,
-      })
-      .expect(201)
-  ).body as DriverDto;
-  const shipment = await roadShipment();
+  // The driver user has one driver record: made by the first call, reused after.
+  const driver =
+    (await t.prisma.driver.findFirst({ where: { userId: driverUserId }, select: { id: true } })) ??
+    ((
+      await r
+        .post('/transport/drivers', cookies.opsDxb, {
+          branchId: dxb,
+          name: `ZZ Driver ${suffix}`,
+          userId: driverUserId,
+        })
+        .expect(201)
+    ).body as DriverDto);
+  const shipment = existing ?? (await roadShipment());
   await r
     .post('/trips', cookies.opsDxb, {
       branchId: dxb,
@@ -263,10 +266,20 @@ async function driversShipment(): Promise<ShipmentDto> {
   return shipment;
 }
 
+/**
+ * The trip carrying the shipment departs: the trip sets the road statuses (Z1), and the
+ * in-transit update stays a status a draft may propose.
+ */
+async function departTripOf(shipmentId: string): Promise<void> {
+  const { tripId } = await t.prisma.tripShipment.findFirstOrThrow({ where: { shipmentId } });
+  await r.post(`/trips/${tripId}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+}
+
 describe('shipment status drafts: a Driver', () => {
   it('reaches the drafts of their own trips only; another role lifts the limit', async () => {
     const own = await driversShipment();
-    const ownDraft = await statusDraft(statusRequest(own.id, { status: 'ROAD_DEPARTED' }));
+    await departTripOf(own.id);
+    const ownDraft = await statusDraft(statusRequest(own.id, { status: 'ROAD_IN_TRANSIT' }));
     const other = await roadShipment();
     const otherDraft = await statusDraft(statusRequest(other.id));
     const list = (await r.get('/shipment-status-drafts', cookies.driverDxb).expect(200))
@@ -340,17 +353,22 @@ describe('shipment status drafts: a person reviews', () => {
   });
 
   it('the staff of a stage decide the move of their stage', async () => {
-    const shipment = await roadShipment();
-    const draft = await statusDraft(
-      statusRequest(shipment.id, { status: 'RECEIVED_ORIGIN_WAREHOUSE' }),
-    );
-    const seen = (await r.get(`/shipment-status-drafts/${draft.id}`, cookies.whDxb).expect(200))
+    // The road stage: a driver (transport_trips:update, no shipments:update) decides the
+    // in-transit update of their departed trip; the warehouse team does not.
+    const shipment = await driversShipment();
+    await departTripOf(shipment.id);
+    const draft = await statusDraft(statusRequest(shipment.id, { status: 'ROAD_IN_TRANSIT' }));
+    const warehouse = (
+      await r.get(`/shipment-status-drafts/${draft.id}`, cookies.whDxb).expect(200)
+    ).body as ShipmentStatusDraftDto;
+    expect(warehouse.actions.canDecide).toBe(false);
+    const seen = (await r.get(`/shipment-status-drafts/${draft.id}`, cookies.driverDxb).expect(200))
       .body as ShipmentStatusDraftDto;
     expect(seen.actions.canDecide).toBe(true);
     await r
-      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.whDxb, { version: 1 })
+      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.driverDxb, { version: 1 })
       .expect(200);
-    expect(await shipmentStatus(shipment.id)).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+    expect(await shipmentStatus(shipment.id)).toBe('ROAD_IN_TRANSIT');
   });
 
   it('approves into an ordinary status change through the state machine, once', async () => {
@@ -455,7 +473,7 @@ describe('shipment status drafts: replacing a draft', () => {
     const old = await statusDraft(statusRequest(shipment.id));
     const created = (
       await createDraft({
-        ...statusRequest(shipment.id, { status: 'RECEIVED_ORIGIN_WAREHOUSE', note: null }),
+        ...statusRequest(shipment.id, { note: null }),
         replacesDraftId: old.id,
       }).expect(201)
     ).body as EntryDraftSummaryDto;
@@ -466,7 +484,7 @@ describe('shipment status drafts: replacing a draft', () => {
       .body as ShipmentStatusDraftDto;
     expect(newer).toMatchObject({
       replacesDraftId: old.id,
-      request: { status: 'RECEIVED_ORIGIN_WAREHOUSE' },
+      request: { status: 'TRIP_SCHEDULED', note: null },
     });
     // Another branch's assistant cannot replace it.
     const other = await statusDraft(statusRequest(shipment.id));
@@ -511,7 +529,7 @@ describe('shipment status drafts: replacing a draft', () => {
         .then((x) => x);
       await waiters(1);
       const replacing = createDraft({
-        ...statusRequest(shipment.id, { status: 'RECEIVED_ORIGIN_WAREHOUSE' }),
+        ...statusRequest(shipment.id, { note: 'Truck moved to Monday' }),
         replacesDraftId: draft.id,
       }).then((x) => x);
       await waiters(2);
@@ -730,5 +748,88 @@ describe('shipment status drafts for a shipment shared with another branch', () 
     expect(
       await t.prisma.shipmentStatusDraft.findUniqueOrThrow({ where: { id: own.id } }),
     ).toMatchObject({ version: 1, status: null });
+  });
+});
+
+describe('shipment status drafts and the statuses records set (functional review Z1, E7)', () => {
+  it('never proposes a status its own record sets, on create or on a person’s edit', async () => {
+    const shipment = await roadShipment();
+    const open = await statusDraft(statusRequest(shipment.id));
+    for (const status of [
+      'RECEIVED_ORIGIN_WAREHOUSE',
+      'CONSOLIDATED',
+      'CUSTOMS_IN_PROGRESS',
+      'CUSTOMS_CLEARED',
+      'RECEIVED_DESTINATION_WAREHOUSE',
+      'PARTIALLY_DELIVERED',
+      'DELIVERED',
+    ]) {
+      await createDraft(statusRequest(shipment.id, { status })).expect(400);
+      await r
+        .patch(`/shipment-status-drafts/${open.id}`, cookies.opsDxb, { version: 1, status })
+        .expect(400);
+    }
+    expect(await t.prisma.shipmentStatusDraft.count({ where: { shipmentId: shipment.id } })).toBe(
+      1,
+    );
+  });
+
+  it('a road status is proposed for a shipment on no open trip only', async () => {
+    // On a planned trip: departing is the trip's.
+    const carried = await driversShipment();
+    const refused = await createDraft(
+      statusRequest(carried.id, { status: 'ROAD_DEPARTED' }),
+    ).expect(409);
+    expect(refused.body).toMatchObject({
+      code: 'STATUS_SET_BY_RECORD',
+      params: { status: 'ROAD_DEPARTED', record: 'TRIP' },
+    });
+    // With no trip (an external carrier): proposed and approved.
+    const external = await roadShipment();
+    await r
+      .post(`/shipments/${external.id}/status`, cookies.opsDxb, { status: 'TRIP_SCHEDULED' })
+      .expect(200);
+    const draft = await statusDraft(statusRequest(external.id, { status: 'ROAD_DEPARTED' }));
+    expect(draft.check).toMatchObject({ ok: true });
+    await r
+      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(200);
+    expect(await shipmentStatus(external.id)).toBe('ROAD_DEPARTED');
+  });
+
+  it('a draft approved after its status became the record’s is refused and stays open', async () => {
+    // Proposed while the shipment had no trip; a trip takes it before the approval.
+    const shipment = await roadShipment();
+    await r
+      .post(`/shipments/${shipment.id}/status`, cookies.opsDxb, { status: 'TRIP_SCHEDULED' })
+      .expect(200);
+    const draft = await statusDraft(statusRequest(shipment.id, { status: 'ROAD_DEPARTED' }));
+    await driversShipment(shipment);
+    const shown = (await r.get(`/shipment-status-drafts/${draft.id}`, cookies.opsDxb).expect(200))
+      .body as ShipmentStatusDraftDto;
+    expect(shown.check).toMatchObject({ ok: false });
+    const refused = await r
+      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(409);
+    expect(refused.body).toMatchObject({ code: 'STATUS_SET_BY_RECORD' });
+    expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
+    const after = (await r.get(`/shipment-status-drafts/${draft.id}`, cookies.opsDxb).expect(200))
+      .body as ShipmentStatusDraftDto;
+    expect(after.status).toBe('DRAFT');
+
+    // A draft saved before its status was excluded (here: delivered) is refused at the gate.
+    const old = await roadShipment();
+    const stale = await statusDraft(statusRequest(old.id));
+    await t.prisma.shipmentStatusDraft.update({
+      where: { id: stale.id },
+      data: { status: 'DELIVERED' },
+    });
+    await r
+      .post(`/shipment-status-drafts/${stale.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(422);
+    expect(await shipmentStatus(old.id)).toBe('CREATED');
+    const kept = (await r.get(`/shipment-status-drafts/${stale.id}`, cookies.opsDxb).expect(200))
+      .body as ShipmentStatusDraftDto;
+    expect(kept.status).toBe('DRAFT');
   });
 });

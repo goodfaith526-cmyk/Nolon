@@ -410,6 +410,8 @@ export const AUDIT_ACTIONS = [
   'CREATED',
   'UPDATED',
   'STATUS',
+  // A status its own record normally sets, corrected by hand with a reason (Z1).
+  'STATUS_CORRECTED',
   'HOLD',
   'RESUME',
   'REVERT',
