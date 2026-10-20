@@ -69,7 +69,8 @@ export class BillingReportsService {
   /**
    * Open approved invoices as of a date: the total less the receipts allocated to it that were
    * dated on or before the date and not cancelled by then (a cancellation counts from its
-   * reversing entry's date), and less the credit notes approved against it dated on or before the
+   * reversing entry's date), less the receipt advances applied to it on or before the date and
+   * not reversed by then (likewise), and less the credit notes approved against it dated on or before the
    * date. Opening items count from their opening entry's date. Buckets are on the USD carrying
    * value still open.
    */
@@ -103,16 +104,28 @@ export class BillingReportsService {
             }[]
           >`
             WITH paid AS (
-              SELECT a."invoice_id", sum(a."amount") AS "amount", sum(a."relieved_usd") AS "usd"
-              FROM "receipt_allocations" a
-              JOIN "receipts" r ON r."id" = a."receipt_id"
-              JOIN "journal_entries" re ON re."id" = r."journal_entry_id" AND re."status" = 'POSTED'
-              WHERE r."receipt_date" <= ${at}
-                AND NOT EXISTS (
-                  SELECT 1 FROM "journal_entries" ce
-                  WHERE ce."id" = r."cancel_journal_entry_id" AND ce."status" = 'POSTED'
-                    AND ce."entry_date" <= ${at})
-              GROUP BY a."invoice_id"
+              SELECT p."invoice_id", sum(p."amount") AS "amount", sum(p."usd") AS "usd"
+              FROM (
+                SELECT a."invoice_id", a."amount", a."relieved_usd" AS "usd"
+                FROM "receipt_allocations" a
+                JOIN "receipts" r ON r."id" = a."receipt_id"
+                JOIN "journal_entries" re ON re."id" = r."journal_entry_id" AND re."status" = 'POSTED'
+                WHERE r."receipt_date" <= ${at}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM "journal_entries" ce
+                    WHERE ce."id" = r."cancel_journal_entry_id" AND ce."status" = 'POSTED'
+                      AND ce."entry_date" <= ${at})
+                UNION ALL
+                SELECT ap."invoice_id", ap."amount", ap."relieved_usd"
+                FROM "receipt_applications" ap
+                JOIN "journal_entries" ae ON ae."id" = ap."journal_entry_id" AND ae."status" = 'POSTED'
+                WHERE ae."entry_date" <= ${at}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM "journal_entries" xe
+                    WHERE xe."id" = ap."reverse_journal_entry_id" AND xe."status" = 'POSTED'
+                      AND xe."entry_date" <= ${at})
+              ) p
+              GROUP BY p."invoice_id"
             ), credited AS (
               SELECT n."invoice_id", sum(n."amount") AS "amount", sum(n."amount_usd") AS "usd"
               FROM "credit_notes" n

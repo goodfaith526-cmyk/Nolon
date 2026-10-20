@@ -66,7 +66,8 @@ export class CustomerStatementService {
       ),
     ];
     // An opening item (rule 15) is an invoice: its entry's source id is the invoice's id.
-    const [invoices, openingItems, receipts, creditNotes] = await Promise.all([
+    // An advance application (and its reversal) shows the number of the receipt it applied.
+    const [invoices, openingItems, receipts, creditNotes, applications] = await Promise.all([
       this.prisma.customerInvoice.findMany({
         where: { ...inBranches, id: { in: idsOf('CUSTOMER_INVOICE') }, customerId: customer.id },
         select: { id: true, number: true },
@@ -88,30 +89,46 @@ export class CustomerStatementService {
         where: { ...inBranches, id: { in: idsOf('CREDIT_NOTE') }, customerId: customer.id },
         select: { id: true, number: true },
       }),
+      this.prisma.receiptApplication.findMany({
+        where: {
+          ...inBranches,
+          id: { in: idsOf('RECEIPT_APPLICATION') },
+          receipt: { customerId: customer.id },
+        },
+        select: { id: true, receipt: { select: { id: true, number: true } } },
+      }),
     ]);
     const numbers = new Map<string, string | null>(
       [...invoices, ...openingItems, ...receipts, ...creditNotes].map(
         (d): [string, string | null] => [d.id, d.number],
       ),
     );
+    const appliedReceipt = new Map(applications.map((a) => [a.id, a.receipt]));
+    const shownDocument = (d: {
+      source: JournalSource | null;
+      id: string | null;
+    }): { id: string; number: string | null } | null => {
+      if (d.id === null) return null;
+      if (d.source === 'RECEIPT_APPLICATION') return appliedReceipt.get(d.id) ?? null;
+      return numbers.has(d.id) ? { id: d.id, number: numbers.get(d.id) ?? null } : null;
+    };
 
-    // An entry with no invoice, receipt, credit note or opening item behind it (a manual entry, or
-    // its reversal) is only shown in full to users who may view journal entries: its text and
+    // An entry with no invoice, receipt (or its applied advance), credit note or opening item
+    // behind it (a manual entry, or its reversal) is only shown in full to users who may view journal entries: its text and
     // number are theirs.
     const seesJournals = user.permissions.has('manual_journals:view');
     const sections = buildStatementSections(
       opening,
       movements.map((m) => {
-        const document = documentOf(m);
-        const known = document.id !== null && numbers.has(document.id);
-        const hidden = !known && !seesJournals;
+        const shown = shownDocument(documentOf(m));
+        const hidden = shown === null && !seesJournals;
         return {
           entryId: hidden ? null : m.entryId,
           number: hidden ? null : m.number,
           entryDate: m.entryDate,
           kind: statementKind(m.source, m.reversedSource),
-          documentId: known ? document.id : null,
-          documentNumber: known && document.id !== null ? (numbers.get(document.id) ?? null) : null,
+          documentId: shown?.id ?? null,
+          documentNumber: shown?.number ?? null,
           description: hidden ? HIDDEN_ENTRY_DESCRIPTION : m.description,
           detailsHidden: hidden,
           currency: m.currency,

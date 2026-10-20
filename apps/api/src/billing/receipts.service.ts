@@ -63,6 +63,14 @@ const details = {
     include: { invoice: { select: { number: true } } },
     orderBy: { invoice: { number: 'asc' } },
   },
+  applications: {
+    include: {
+      invoice: { select: { number: true } },
+      journalEntry: { select: { number: true } },
+      reverseJournal: { select: { number: true } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  },
 } satisfies Prisma.ReceiptInclude;
 
 type ReceiptWithDetails = Prisma.ReceiptGetPayload<{ include: typeof details }>;
@@ -398,6 +406,16 @@ export class ReceiptsService {
         SELECT "status"::text AS "status" FROM "receipts" WHERE "id" = ${id}::uuid FOR UPDATE`;
       if (rows[0]?.status !== 'POSTED')
         throw new ConflictException('The receipt is already cancelled');
+      // An advance applied to a later invoice has its own entry: each is reversed on its own
+      // first (with its reason), so cancelling never reopens those invoices unseen.
+      const active = await tx.receiptApplication.count({
+        where: { receiptId: id, status: 'ACTIVE' },
+      });
+      if (active > 0) {
+        throw new ConflictException(
+          'Part of this receipt was applied to later invoices: reverse those applications first',
+        );
+      }
       const allocations = await tx.receiptAllocation.findMany({ where: { receiptId: id } });
       await lockInvoices(tx, allocations.map((a) => a.invoiceId).sort());
       const reversal = await this.autoJournal.reverseDocumentEntry(
@@ -440,11 +458,13 @@ export class ReceiptsService {
   }
 }
 
-interface LockedInvoice {
+export interface LockedInvoice {
   id: string;
   number: string | null;
+  branchId: string;
   customerId: string;
   shipmentId: string;
+  invoiceDate: Date;
   status: string;
   receivableAccountId: string | null;
   currency: string;
@@ -458,7 +478,7 @@ interface LockedInvoice {
 }
 
 /** Payments and credit notes both settle an invoice: what is left is cleared by either. */
-function settledSoFar(invoice: LockedInvoice) {
+export function settledSoFar(invoice: LockedInvoice) {
   return {
     total: invoice.total,
     totalUsd: invoice.totalUsd,
@@ -467,10 +487,14 @@ function settledSoFar(invoice: LockedInvoice) {
   };
 }
 
-async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string, LockedInvoice>> {
+export async function lockInvoices(
+  tx: Tx,
+  ids: readonly string[],
+): Promise<Map<string, LockedInvoice>> {
   if (ids.length === 0) return new Map();
   const rows = await tx.$queryRaw<LockedInvoice[]>`
-    SELECT "id", "number", "customer_id" AS "customerId", "shipment_id" AS "shipmentId",
+    SELECT "id", "number", "branch_id" AS "branchId", "customer_id" AS "customerId",
+           "shipment_id" AS "shipmentId", "invoice_date" AS "invoiceDate",
            "status"::text AS "status", "currency", "fx_rate" AS "fxRate", "total",
            "receivable_account_id" AS "receivableAccountId",
            "total_usd" AS "totalUsd", "paid_amount" AS "paidAmount", "paid_usd" AS "paidUsd",
@@ -498,6 +522,9 @@ async function lockInvoices(tx: Tx, ids: readonly string[]): Promise<Map<string,
 
 function toSummary(r: ReceiptWithDetails): ReceiptSummaryDto {
   const allocated = r.allocations.reduce((sum, a) => sum.plus(a.amount), ZERO);
+  const applied = r.applications
+    .filter((a) => a.status === 'ACTIVE')
+    .reduce((sum, a) => sum.plus(a.amount), ZERO);
   return {
     id: r.id,
     number: r.number,
@@ -508,14 +535,17 @@ function toSummary(r: ReceiptWithDetails): ReceiptSummaryDto {
     currency: r.currency,
     amount: r.amount.toFixed(),
     allocated: allocated.toFixed(),
-    unallocated: r.amount.minus(allocated).toFixed(),
+    applied: applied.toFixed(),
+    unallocated: r.amount.minus(allocated).minus(applied).toFixed(),
     status: r.status,
   };
 }
 
 function toDto(r: ReceiptWithDetails, user: AuthUser): ReceiptDto {
+  const summary = toSummary(r);
+  const posted = r.status === 'POSTED';
   return {
-    ...toSummary(r),
+    ...summary,
     fxRate: r.fxRate.toFixed(),
     cashAccountId: r.cashAccountId,
     cashAccountCode: r.cashAccount.code,
@@ -529,18 +559,42 @@ function toDto(r: ReceiptWithDetails, user: AuthUser): ReceiptDto {
       amount: a.amount.toFixed(),
       relievedUsd: a.relievedUsd.toFixed(),
     })),
+    applications: r.applications.map((a) => ({
+      id: a.id,
+      invoiceId: a.invoiceId,
+      invoiceNumber: a.invoice.number ?? '',
+      applicationDate: fromDbDate(a.applicationDate),
+      amount: a.amount.toFixed(),
+      advanceUsd: a.advanceUsd.toFixed(),
+      relievedUsd: a.relievedUsd.toFixed(),
+      status: a.status,
+      journalEntryId: a.journalEntryId,
+      journalEntryNumber: a.journalEntry.number,
+      reverseJournalEntryId: a.reverseJournalEntryId,
+      reverseJournalEntryNumber: a.reverseJournal?.number ?? null,
+      reverseReason: a.reverseReason,
+      reversedAt: a.reversedAt?.toISOString() ?? null,
+      createdAt: a.createdAt.toISOString(),
+    })),
     journalEntryId: r.journalEntryId,
     journalEntryNumber: r.journalEntry.number,
     cancelJournalEntryId: r.cancelJournalEntryId,
     cancelJournalEntryNumber: r.cancelJournal?.number ?? null,
     cancelReason: r.cancelReason,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
-    actions: { canCancel: r.status === 'POSTED' && user.permissions.has('receipts:cancel') },
+    actions: {
+      canCancel:
+        posted && !r.applications.some(isActive) && user.permissions.has('receipts:cancel'),
+      canApply: posted && dec(summary.unallocated).gt(0) && user.permissions.has('receipts:create'),
+      canReverseApplication: user.permissions.has('receipts:cancel'),
+    },
   };
 }
 
+const isActive = (a: { status: string }) => a.status === 'ACTIVE';
+
 /** Every approved invoice keeps the receivable account it was posted to (a database check). */
-function requireReceivable(invoice: LockedInvoice): string {
+export function requireReceivable(invoice: LockedInvoice): string {
   if (!invoice.receivableAccountId) {
     throw new Error(`Invoice ${invoice.number ?? invoice.id} has no receivable account`);
   }

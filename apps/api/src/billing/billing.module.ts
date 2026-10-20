@@ -21,6 +21,7 @@ import { InvoiceDraftsService } from './invoice-drafts.service.js';
 import { InvoicesService } from './invoices.service.js';
 import { ReceiptDraftsController } from './receipt-drafts.controller.js';
 import { ReceiptDraftsService } from './receipt-drafts.service.js';
+import { ReceiptApplicationsService } from './receipt-applications.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
 @Module({
@@ -45,6 +46,7 @@ import { ReceiptsService } from './receipts.service.js';
   providers: [
     InvoicesService,
     ReceiptsService,
+    ReceiptApplicationsService,
     CreditNotesService,
     BillingReportsService,
     CustomerStatementService,

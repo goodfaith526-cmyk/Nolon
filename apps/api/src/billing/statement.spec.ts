@@ -36,6 +36,11 @@ describe('statementKind', () => {
     expect(statementKind('REVERSAL', 'MANUAL')).toBe('REVERSAL');
     expect(statementKind('MANUAL', null)).toBe('OTHER');
   });
+
+  it('names an advance applied to a later invoice, and its reversal', () => {
+    expect(statementKind('RECEIPT_APPLICATION', null)).toBe('ADVANCE_APPLICATION');
+    expect(statementKind('REVERSAL', 'RECEIPT_APPLICATION')).toBe('ADVANCE_APPLICATION_REVERSAL');
+  });
 });
 
 describe('buildStatementSections', () => {
