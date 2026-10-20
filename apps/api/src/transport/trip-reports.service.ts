@@ -20,7 +20,7 @@ import {
 } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { isDriverOnly } from './trip-scope.js';
+import { isDriverOnly, tripScope } from './trip-scope.js';
 
 export interface TripReportQuery {
   from: string;
@@ -231,6 +231,19 @@ export class TripReportsService {
         ORDER BY "days" DESC, "number"
         LIMIT ${limit}`,
     );
+  }
+
+  /**
+   * Home page: the trips the user may see (tripScope: their branches; a Driver, their own trips)
+   * that are planned, and on the road (departed or arrived, not yet completed).
+   */
+  async home(user: AuthUser): Promise<{ planned: number; onTheRoad: number; ownOnly: boolean }> {
+    const scope = tripScope(user);
+    const [planned, onTheRoad] = await Promise.all([
+      this.prisma.trip.count({ where: { ...scope, status: 'PLANNED' } }),
+      this.prisma.trip.count({ where: { ...scope, status: { in: ['DEPARTED', 'ARRIVED'] } } }),
+    ]);
+    return { planned, onTheRoad, ownOnly: isDriverOnly(user) };
   }
 
   /** Branch dashboard: trips on the road (departed or arrived) and how many are planned. */

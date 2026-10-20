@@ -19,7 +19,7 @@ import {
   signIn,
 } from './auth-test-app.js';
 import { AGENT_PREFIX, registerClient, requests, tokenFor } from './agent-drafts-helpers.js';
-import { uniquePhone } from './test-data.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 // A city and the places that serve it (owner, 2026-10-14: a lookup by Dubai includes Jebel Ali).
 // The relation is data: a place names its city. Lists filtered by a city also find its places
@@ -139,6 +139,94 @@ describe('a place and its city', () => {
     await r
       .post('/master-data/locations', cookies.sales, location('Z', 'PORT', { cityId: city.id }))
       .expect(403);
+  });
+});
+
+describe('a place and its city: one country', () => {
+  it('refuses a place in another country than its city, in the service', async () => {
+    const refused = (
+      await r
+        .post(
+          '/master-data/locations',
+          cookies.admin,
+          location('S', 'PORT', { cityId: city.id, countryCode: 'SA' }),
+        )
+        .expect(400)
+    ).body as { code: string; fields: string[]; params: Record<string, string> };
+    expect(refused).toMatchObject({
+      code: 'CITY_OTHER_COUNTRY',
+      fields: ['countryCode', 'cityId'],
+      params: { city: city.code, country: 'AE' },
+    });
+
+    // Without a city the place names its own country, which stays required.
+    const noCountry: Record<string, unknown> = location('N', 'PORT');
+    delete noCountry.countryCode;
+    await r.post('/master-data/locations', cookies.admin, noCountry).expect(400);
+    const saudi = await createLocation(location('S', 'PORT', { countryCode: 'SA' }));
+    expect(saudi).toMatchObject({ countryCode: 'SA', cityId: null });
+
+    // Picking a city of another country, or moving a place away from its city's country.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.admin, { cityId: city.id })
+      .expect(400)
+      .expect((res) => expect((res.body as { code: string }).code).toBe('CITY_OTHER_COUNTRY'));
+    await patch(`/master-data/locations/${port.id}`, cookies.admin, { countryCode: 'SA' })
+      .expect(400)
+      .expect((res) => expect((res.body as { code: string }).code).toBe('CITY_OTHER_COUNTRY'));
+    // A city whose places are in its country keeps that country.
+    await patch(`/master-data/locations/${city.id}`, cookies.admin, { countryCode: 'SA' }).expect(
+      400,
+    );
+    // The city and its country together.
+    const moved = (
+      await patch(`/master-data/locations/${saudi.id}`, cookies.admin, {
+        cityId: city.id,
+        countryCode: 'AE',
+      }).expect(200)
+    ).body as LocationDto;
+    expect(moved).toMatchObject({ cityId: city.id, countryCode: 'AE' });
+    // Who may only view master data changes nothing.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.sales, { cityId: null }).expect(403);
+    // Not one of the city's places for the lists below.
+    await patch(`/master-data/locations/${saudi.id}`, cookies.admin, { cityId: null }).expect(200);
+  });
+});
+
+describe('a place and its city, at once (Codex F96-1)', () => {
+  it("never leaves a new place in another country than its city's", async () => {
+    const lone = await createLocation(location('R', 'CITY'));
+    // Another session holds the city row, so both requests below are under way before either
+    // one writes.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let holding = () => {};
+    const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+    const holder = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "locations" WHERE "id" = ${lone.id}::uuid FOR NO KEY UPDATE`;
+        holding();
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await holdingNow;
+    const toSaudi = patch(`/master-data/locations/${lone.id}`, cookies.admin, {
+      countryCode: 'SA',
+    }).then((res) => res);
+    await waitForLockWaiter(t.prisma, 1);
+    const newPort = r
+      .post('/master-data/locations', cookies.admin, location('RP', 'PORT', { cityId: lone.id }))
+      .then((res) => res);
+    await waitForLockWaiter(t.prisma, 2);
+    release();
+    await holder;
+    const statuses = [(await toSaudi).status, (await newPort).status];
+    // One of them is refused, whichever ran second.
+    expect(statuses.filter((s) => s >= 200 && s < 300)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 400)).toHaveLength(1);
+    const saved = await t.prisma.location.findUniqueOrThrow({ where: { id: lone.id } });
+    const places = await t.prisma.location.findMany({ where: { cityId: lone.id } });
+    for (const place of places) expect(place.countryCode).toBe(saved.countryCode);
   });
 });
 

@@ -276,11 +276,15 @@ export class WarehouseReportsService {
     };
   }
 
-  /** Branch dashboard: what the branch's shipments have in warehouses, and today's movements. */
+  /**
+   * Dashboards: what the shipments have in warehouses, and today's movements. The branch dashboard
+   * passes one branch and its day; the home page passes neither: every branch of the user, each
+   * movement counted on its own branch's day.
+   */
   async dashboard(
     user: AuthUser,
-    branchId: string,
-    today: string,
+    branchId?: string,
+    today?: string,
   ): Promise<{
     shipments: number;
     packages: number;
@@ -289,6 +293,10 @@ export class WarehouseReportsService {
     releasedToday: number;
   }> {
     const branchIds = reportBranchIds(user, branchId);
+    if (branchIds.length === 0) {
+      return { shipments: 0, packages: 0, weightKg: ZERO, receivedToday: 0, releasedToday: 0 };
+    }
+    const day = today ? sqlDate(today) : Prisma.sql`(now() AT TIME ZONE b."timezone")::date`;
     const [held, moved] = await Promise.all([
       this.prisma.$queryRaw<{ shipments: number; packages: number; weight: Decimal | null }[]>`
         ${this.holdings(branchIds)}
@@ -301,7 +309,7 @@ export class WarehouseReportsService {
         FROM "warehouse_movements" m
         JOIN "branches" b ON b."id" = m."branch_id"
         WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
-          AND (m."occurred_at" AT TIME ZONE b."timezone")::date = ${sqlDate(today)}`,
+          AND (m."occurred_at" AT TIME ZONE b."timezone")::date = ${day}`,
     ]);
     const h = held[0];
     return {

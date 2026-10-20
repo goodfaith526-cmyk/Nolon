@@ -16,7 +16,8 @@ import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
-export function Customers() {
+/** `startCreating`: open with the new-customer form showing (the home page's "New customer"). */
+export function Customers({ startCreating = false }: { startCreating?: boolean } = {}) {
   const t = useTranslations('Customers');
   const tc = useTranslations('Common');
   const me = useMe();
@@ -25,7 +26,7 @@ export function Customers() {
   const router = useRouter();
   const [q, setQ] = useState('');
   const [page, setPage] = useState<Page<CustomerSummaryDto> | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(startCreating && can(me, 'customers:create'));
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const load = useCallback(

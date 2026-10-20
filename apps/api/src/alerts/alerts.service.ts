@@ -61,6 +61,19 @@ export class AlertsService {
     return { groups, total: groups.reduce((n, g) => n + g.count, 0) };
   }
 
+  /** Home page: how many rows each alert of this user has (forUser without the rows). */
+  async counts(user: AuthUser): Promise<{ kind: AlertKind; count: number }[]> {
+    const kinds = ALERT_KINDS.filter((kind) => concerns(user, kind));
+    if (kinds.length === 0) return [];
+    const waits = await this.waits();
+    return Promise.all(
+      kinds.map(async (kind) => {
+        const found = await this.rows(user, kind, waits.get(kind) ?? 0);
+        return { kind, count: found.count };
+      }),
+    );
+  }
+
   async settings(): Promise<AlertSettingDto[]> {
     const rows = await this.prisma.alertSetting.findMany({
       include: { updatedBy: { select: { fullName: true } } },

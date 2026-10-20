@@ -19,21 +19,29 @@ function Stat({
   value,
   hint,
 }: {
-  href: string;
+  /** The page the figure opens; none when the user has no page listing it. */
+  href?: string;
   icon: ReactNode;
   label: string;
   value: number;
   hint?: string;
 }) {
-  return (
-    <Link href={href} className="stat">
+  const body = (
+    <>
       <span className="stat-icon">{icon}</span>
       <span className="stat-body">
         <span className="stat-label">{label}</span>
         <span className="stat-value">{value}</span>
         {hint && <span className="stat-hint">{hint}</span>}
       </span>
+    </>
+  );
+  return href ? (
+    <Link href={href} className="stat">
+      {body}
     </Link>
+  ) : (
+    <div className="stat">{body}</div>
   );
 }
 
@@ -41,6 +49,8 @@ export function Dashboard() {
   const t = useTranslations('Dashboard');
   const tc = useTranslations('Common');
   const tRoles = useTranslations('Roles');
+  const te = useTranslations('Enums');
+  const tAlerts = useTranslations('Alerts');
   const locale = useLocale();
   const me = useMe();
   const master = useMasterData();
@@ -64,7 +74,7 @@ export function Dashboard() {
   }, []);
 
   const quick = [
-    { href: '/customers', label: t('newCustomer'), show: can(me, 'customers:create') },
+    { href: '/customers?new=1', label: t('newCustomer'), show: can(me, 'customers:create') },
     { href: '/quotations/new', label: t('newQuotation'), show: can(me, 'quotations:create') },
     { href: '/bookings/new', label: t('newBooking'), show: can(me, 'bookings:create') },
   ].filter((q) => q.show);
@@ -137,6 +147,67 @@ export function Dashboard() {
               />
             )}
           </div>
+
+          {(data.warehouse || data.customs || data.trips || data.drafts || data.alerts) && (
+            <div className="stats" role="group" aria-label={t('myWork')}>
+              {data.drafts && (
+                <Stat
+                  href="/drafts"
+                  icon={icons.assistant}
+                  label={t('draftsAwaitingReview')}
+                  value={data.drafts.awaitingReview}
+                />
+              )}
+              {data.alerts && (
+                <Stat
+                  href="/alerts"
+                  icon={icons.bell}
+                  label={t('alerts')}
+                  value={data.alerts.total}
+                  hint={data.alerts.byKind
+                    .filter((a) => a.count > 0)
+                    .map((a) => `${tAlerts(`kind_${a.kind}`)}: ${a.count}`)
+                    .join(' · ')}
+                />
+              )}
+              {data.warehouse && (
+                <Stat
+                  href="/warehouses"
+                  icon={icons.warehouse}
+                  label={t('warehouseShipments')}
+                  value={data.warehouse.shipments}
+                  hint={t('warehouseToday', {
+                    received: data.warehouse.receivedToday,
+                    released: data.warehouse.releasedToday,
+                  })}
+                />
+              )}
+              {data.customs && (
+                <Stat
+                  href={
+                    can(me, 'operational_reports:view')
+                      ? '/operational-reports/customs-files'
+                      : undefined
+                  }
+                  icon={icons.report}
+                  label={t('openCustomsFiles')}
+                  value={data.customs.open}
+                  hint={data.customs.byStatus
+                    .map((c) => `${te(`customs_${c.status}`)}: ${c.count}`)
+                    .join(' · ')}
+                />
+              )}
+              {data.trips && (
+                <Stat
+                  href="/trips"
+                  icon={data.trips.ownOnly ? icons.driver : icons.truck}
+                  label={data.trips.ownOnly ? t('myTripsOnTheRoad') : t('tripsOnTheRoad')}
+                  value={data.trips.onTheRoad}
+                  hint={t('plannedTrips', { count: data.trips.planned })}
+                />
+              )}
+            </div>
+          )}
 
           <div className="panels">
             {data.quotations && (

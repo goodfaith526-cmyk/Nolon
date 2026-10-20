@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type {
+  DraftActions,
   DraftKeySettlementDto,
+  DraftStatus,
   MyDraftItemDto,
   MyDraftKind,
+  Permission,
   SettleDraftKind,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { InvoiceDraftsService } from '../billing/invoice-drafts.service.js';
 import { ReceiptDraftsService } from '../billing/receipt-drafts.service.js';
 import { BookingDraftsService } from '../bookings/booking-drafts.service.js';
@@ -112,6 +116,46 @@ export class MyDraftsService {
     });
     const codes = new Map(branches.map((b) => [b.id, b.code]));
     return rows.map((r) => ({ ...r, branchCode: codes.get(r.branchId) ?? '' }));
+  }
+
+  /**
+   * Home page: the drafts waiting for a decision (status DRAFT) that this user may approve or
+   * reject now, through each kind's own review list (its branch scope, and its `canDecide`), of
+   * the kinds they may view; null when they may view none. The kinds of the review screens: a GRN
+   * draft is reviewed on its shipment, not listed there. Each kind counts at most what its review
+   * list shows (200).
+   */
+  async awaitingReview(user: AuthUser): Promise<number | null> {
+    const lists: [
+      Permission,
+      (u: AuthUser, s: DraftStatus) => Promise<{ actions: DraftActions }[]>,
+    ][] = [
+      ['quotations:view', (u, s) => this.quotations.list(u, s)],
+      ['quotations:view', (u, s) => this.newCustomerQuotations.list(u, s)],
+      ['bookings:view', (u, s) => this.bookings.list(u, s)],
+      ['bookings:view', (u, s) => this.newCustomerBookings.list(u, s)],
+      ['transport_trips:view', (u, s) => this.trips.list(u, s)],
+      ['warehouse:view', (u, s) => this.releases.list(u, s)],
+      ['shipments:view', (u, s) => this.statuses.list(u, s)],
+      ['customer_invoices:view', (u, s) => this.invoices.list(u, s)],
+      ['receipts:view', (u, s) => this.receipts.list(u, s)],
+      ['customers:view', (u, s) => this.customers.list(u, s)],
+      ['customers:view', (u, s) => this.parties.list(u, s)],
+      ['rates:view', (u, s) => this.rates.list(u, s)],
+    ];
+    const visible = lists.filter(
+      ([permission]) =>
+        user.permissions.has(permission) &&
+        // A Driver neither sees nor decides trip drafts (TripDraftsService refuses them).
+        !(permission === 'transport_trips:view' && limitedToOwnTrips(user, 'transport_trips')),
+    );
+    if (visible.length === 0) return null;
+    const counts = await Promise.all(
+      visible.map(async ([, list]) =>
+        (await list(user, 'DRAFT')).reduce((n, d) => (d.actions.canDecide ? n + 1 : n), 0),
+      ),
+    );
+    return counts.reduce((a, b) => a + b, 0);
   }
 
   /**

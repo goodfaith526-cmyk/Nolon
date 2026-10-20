@@ -11,7 +11,7 @@ import { useRecord } from './finance/common';
 import { can, useMe } from './StaffShell';
 import { useDateTime } from './transport/common';
 
-/** Customer Service API keys (for the AI agent later): made, listed and revoked here. */
+/** Customer Service API keys (the /cs/* routes, a key per client): made, listed and revoked here. */
 export function ApiKeys() {
   const t = useTranslations('ApiKeys');
   const tc = useTranslations('Common');
@@ -71,10 +71,10 @@ export function ApiKeys() {
   }
 
   return (
-    <section className="stack">
+    <section className="stack" aria-labelledby="api-keys-title">
       <div className="page-head">
         <div>
-          <h1>{t('title')}</h1>
+          <h2 id="api-keys-title">{t('title')}</h2>
           <p className="muted">{t('hint')}</p>
         </div>
       </div>

@@ -179,6 +179,26 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
   },
 ];
 
+/**
+ * The template's columns for this user. A user with one branch may leave the branch code empty
+ * (or leave the column out): the row is for that branch (`check`). Everyone else names it.
+ */
+function columnsFor(user: AuthUser): readonly ImportColumn<Column>[] {
+  if (user.allowedBranchIds.length !== 1) return CUSTOMER_COLUMNS;
+  return CUSTOMER_COLUMNS.map((c) =>
+    c.key === 'branchCode'
+      ? {
+          ...c,
+          required: false,
+          hint: {
+            en: 'Your branch (Lists sheet); empty means your branch',
+            ar: 'فرعك (ورقة القوائم)؛ إذا تُرك فارغاً فهو فرعك',
+          },
+        }
+      : c,
+  );
+}
+
 const KIND_LABELS = {
   COMPANY: { en: 'Company', ar: 'شركة' },
   INDIVIDUAL: { en: 'Individual', ar: 'فرد' },
@@ -232,7 +252,7 @@ export class CustomersImportService implements OnModuleInit {
     const data = await buildTemplate({
       locale,
       sheetName: { en: 'Customers', ar: 'العملاء' },
-      columns: CUSTOMER_COLUMNS,
+      columns: columnsFor(user),
       notes: [
         {
           en: 'Each row creates a new customer with the next customer number. Existing customers are never changed.',
@@ -269,7 +289,7 @@ export class CustomersImportService implements OnModuleInit {
   }
 
   async preview(user: AuthUser, file: UploadedWorkbook | undefined): Promise<ImportPreviewDto> {
-    return buildPreview('customers', CUSTOMER_COLUMNS, await this.check(user, file));
+    return buildPreview('customers', columnsFor(user), await this.check(user, file));
   }
 
   /**
@@ -291,7 +311,7 @@ export class CustomersImportService implements OnModuleInit {
     const done = await previousImport(this.importRecords.lookups(), this.prisma, user, request);
     if (done) return done;
     const rows = await this.check(user, file);
-    const invalid = () => rowsInvalid(buildPreview('customers', CUSTOMER_COLUMNS, rows));
+    const invalid = () => rowsInvalid(buildPreview('customers', columnsFor(user), rows));
     const ready = rows.flatMap((r) =>
       r.input && r.issues.length === 0 ? [{ row: r, input: r.input }] : [],
     );
@@ -321,13 +341,18 @@ export class CustomersImportService implements OnModuleInit {
   }
 
   private async check(user: AuthUser, file: UploadedWorkbook | undefined): Promise<Row[]> {
-    const sheet = await readImportSheet(file, CUSTOMER_COLUMNS);
-    const branchIds = new Map((await this.userBranches(user)).map((b) => [b.code, b.id]));
+    const columns = columnsFor(user);
+    const sheet = await readImportSheet(file, columns);
+    const branches = await this.userBranches(user);
+    const branchIds = new Map(branches.map((b) => [b.code, b.id]));
+    // A user with one branch (taken from the session on every preview and commit, so a branch
+    // removed from them meanwhile is not used): an empty branch code is that branch.
+    const [only] = user.allowedBranchIds.length === 1 ? user.allowedBranchIds : [];
     const checkReferences = this.customers.referenceChecker();
     const rows: Row[] = [];
     for (const { row, values, issues } of sheet) {
       const input: Record<string, unknown> = {};
-      for (const column of CUSTOMER_COLUMNS) {
+      for (const column of columns) {
         const value = values[column.key];
         if (value !== null) input[fieldOf(column.key)] = value;
       }
@@ -337,6 +362,19 @@ export class CustomersImportService implements OnModuleInit {
           input.branchId = id;
         } else {
           delete input.branchId;
+          addIssues(issues, [
+            issue(row, 'branchCode', 'BRANCH_NOT_ALLOWED', 'Not one of your active branches'),
+          ]);
+        }
+      } else if (
+        values.branchCode === null &&
+        only !== undefined &&
+        // A code that could not be read is reported as it is, not replaced.
+        !issues.some((i) => i.column === 'branchCode')
+      ) {
+        if (branches.some((b) => b.id === only)) {
+          input.branchId = only;
+        } else {
           addIssues(issues, [
             issue(row, 'branchCode', 'BRANCH_NOT_ALLOWED', 'Not one of your active branches'),
           ]);

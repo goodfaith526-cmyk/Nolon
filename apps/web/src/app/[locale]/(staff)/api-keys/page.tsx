@@ -1,11 +1,5 @@
-import { AgentClients } from '@/components/AgentClients';
-import { ApiKeys } from '@/components/ApiKeys';
+import { ApiAccess } from '@/components/ApiAccess';
 
 export default function ApiKeysPage() {
-  return (
-    <>
-      <ApiKeys />
-      <AgentClients />
-    </>
-  );
+  return <ApiAccess />;
 }

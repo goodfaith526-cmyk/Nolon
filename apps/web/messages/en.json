@@ -52,7 +52,6 @@
     "invoices": "Invoices",
     "receipts": "Receipts",
     "journals": "Journal entries",
-    "trialBalance": "Trial balance",
     "chartOfAccounts": "Chart of accounts",
     "fxRates": "Exchange rates",
     "periods": "Periods",
@@ -94,7 +93,16 @@
     "recentBookings": "Recent bookings",
     "viewAll": "View all",
     "noQuotations": "No quotations yet.",
-    "noBookings": "No bookings yet."
+    "noBookings": "No bookings yet.",
+    "myWork": "My work",
+    "draftsAwaitingReview": "Assistant drafts to review",
+    "alerts": "Alerts",
+    "warehouseShipments": "Shipments in warehouses",
+    "warehouseToday": "Today: {received} received · {released} released",
+    "openCustomsFiles": "Open customs files",
+    "tripsOnTheRoad": "Trips on the road",
+    "myTripsOnTheRoad": "My trips on the road",
+    "plannedTrips": "{count, plural, =0 {none planned} one {# planned} other {# planned}}"
   },
   "Account": {
     "title": "Change password",
@@ -1277,9 +1285,13 @@
     "since_STORAGE_EXCEEDED": "In since",
     "since_TRIP_LATE": "Planned arrival"
   },
+  "ApiAccess": {
+    "title": "API access",
+    "hint": "Two separate kinds of access, each in its own section: keys for the Customer Service API, and the assistant platforms that sign staff in. A key does not sign anyone in, and an assistant uses no key."
+  },
   "ApiKeys": {
     "title": "Customer Service API keys",
-    "hint": "A key lets a customer-service client (the WhatsApp agent later) read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
+    "hint": "In use now: a key lets a customer-service client (such as a WhatsApp agent) call the Customer Service API (/cs/…) and read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
     "name": "Name",
     "namePlaceholder": "e.g. WhatsApp agent",
     "branches": "Branches",
@@ -2069,7 +2081,7 @@
     "failed": "The assistant could not be connected."
   },
   "AgentClients": {
-    "title": "Staff assistant",
+    "title": "Staff assistant sign-in (delegated)",
     "hint": "A registered assistant platform can sign staff in with NOLON. It then reads, as that staff member, only the screens opened to it, with their own permissions and branches, for 10 minutes at a time. It cannot change anything. Revoking it ends every assistant sign-in at once.",
     "redirectUri": "Return address (https)",
     "audience": "Audience",
@@ -2357,7 +2369,8 @@
     "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
     "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that.",
     "BRANCH_REQUIRED": "Choose the branch of this draft.",
-    "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs."
+    "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs.",
+    "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2376,6 +2389,7 @@
     "kind_PORT": "Port",
     "kind_CITY": "City",
     "kind_BORDER": "Border point",
-    "kind_OTHER": "Other"
+    "kind_OTHER": "Other",
+    "countryFromCity": "The city's country: a place is in the country of its city."
   }
 }

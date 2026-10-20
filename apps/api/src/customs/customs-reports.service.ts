@@ -69,6 +69,24 @@ export class CustomsReportsService {
     );
   }
 
+  /**
+   * Home page: the customs files not cleared, of shipments not cancelled, visible in the user's
+   * branches (owned or shared), by status.
+   */
+  async open(user: AuthUser): Promise<{ status: CustomsStatus; count: number }[]> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return [];
+    return this.prisma.$queryRaw<{ status: CustomsStatus; count: number }[]>`
+      SELECT x."status"::text AS "status", count(*)::int AS "count"
+      FROM "customs_clearances" x
+      WHERE ${shipmentIdVisibleIn(Prisma.sql`x."shipment_id"`, branchIds)}
+        AND x."status" <> 'CLEARED'
+        AND NOT EXISTS (SELECT 1 FROM "shipments" cs
+                        WHERE cs."id" = x."shipment_id" AND cs."status" = 'CANCELLED')
+      GROUP BY x."status"
+      ORDER BY x."status"`;
+  }
+
   async files(
     user: AuthUser,
     q: { from: string; to: string; branchId?: string; status?: CustomsStatus },
