@@ -427,7 +427,8 @@
     "consolidation_DECONSOLIDATED": "Unpacked",
     "consolidation_CANCELLED": "Cancelled",
     "billLineKind_CONSOLIDATION": "Consolidated container",
-    "journalSource_CONSOLIDATION_ALLOCATION": "Container cost sharing"
+    "journalSource_CONSOLIDATION_ALLOCATION": "Container cost sharing",
+    "journalSource_RECEIPT_APPLICATION": "Advance applied to invoice"
   },
   "Quotations": {
     "title": "Quotations",
@@ -732,7 +733,8 @@
     "creditNotes": "Credit notes",
     "noCreditNotes": "No credit notes.",
     "creditNote": "Credit note",
-    "creditDate": "Credit date"
+    "creditDate": "Credit date",
+    "fromAdvance": "From advance"
   },
   "Receipts": {
     "title": "Receipts",
@@ -784,7 +786,27 @@
     "mixedCurrencies": "The open invoices are in several currencies: choose the receipt's currency.",
     "payBalance": "Pay balance",
     "distribute": "Allocate the amount, oldest invoice first",
-    "distributedRest": "{amount} {currency} is left over and will be held as an advance."
+    "distributedRest": "{amount} {currency} is left over and will be held as an advance.",
+    "applied": "Applied to later invoices",
+    "applyAdvance": "Apply advance to an invoice",
+    "applyHint": "{amount} {currency} of this receipt is held as an advance. Choose an open invoice of the same customer, branch and currency, and the amount to apply. A journal entry moves it from the advance to the invoice.",
+    "noApplicableInvoices": "The customer has no open invoice in this currency and branch.",
+    "chooseInvoice": "Choose an invoice",
+    "applicableInvoice": "{number} ({date}), balance {balance} {currency}",
+    "applyAmount": "Amount to apply ({currency})",
+    "applicationDate": "Application date",
+    "appliedNotice": "Advance applied to the invoice.",
+    "applications": "Advance applied to later invoices",
+    "noApplications": "The advance has not been applied to any invoice.",
+    "appliedAmount": "Applied amount",
+    "advanceUsd": "Advance cleared (USD)",
+    "applicationStatus_ACTIVE": "Applied",
+    "applicationStatus_REVERSED": "Reversed",
+    "reverseApplication": "Reverse application",
+    "reverseApplicationHint": "Reversing posts a reversing journal entry, returns the amount to the advance and reopens the invoice by it. The original entry is kept.",
+    "reverseReason": "Reason for the reversal",
+    "applicationReversedNotice": "Application reversed.",
+    "cancelNeedsReversal": "Part of this receipt's advance is applied to later invoices. To cancel the receipt, reverse those applications first."
   },
   "Journals": {
     "title": "Journal entries",
@@ -1771,7 +1793,9 @@
     "printNote": "Print note",
     "reportFilters": "Filters",
     "labelsNext": "Next labels, from package {from}",
-    "hiddenEntry": "Accounting entry"
+    "hiddenEntry": "Accounting entry",
+    "kind_ADVANCE_APPLICATION": "Advance applied",
+    "kind_ADVANCE_APPLICATION_REVERSAL": "Advance application reversed"
   },
   "CreditNotes": {
     "title": "Credit notes",
