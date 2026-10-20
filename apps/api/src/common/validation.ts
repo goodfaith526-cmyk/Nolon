@@ -99,6 +99,19 @@ export function optionalText(max: number) {
     .transform((v) => (v ? v : null));
 }
 
+/**
+ * As optionalText, but a value left out stays undefined: null or empty clears it, for a field an
+ * edit that leaves it out keeps (the booking's cargo description).
+ */
+export function clearableText(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .nullish()
+    .transform((v) => (v === undefined ? undefined : v || null));
+}
+
 export function requiredText(max: number) {
   return z.string().trim().min(1).max(max);
 }
