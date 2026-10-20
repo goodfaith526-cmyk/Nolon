@@ -134,8 +134,10 @@ export class SuppliersService {
    * Creates a supplier from a carrier's name and phone and links the carrier to it, in one
    * transaction (functional review D3): the carrier and the supplier stay two records, linked as
    * setCarrier links them. The carrier row is locked first, so two requests for the same carrier
-   * run one after the other and the second finds it linked. 409 when the carrier is already
-   * linked, or when a supplier with the same name or phone exists (link that one instead).
+   * run one after the other and the second finds it linked; then its name and phone are locked,
+   * so two carriers of one company (same name or phone) do too and the second finds the first's
+   * supplier (Codex F95-1). 409 when the carrier is already linked, or when a supplier with the
+   * same name or phone exists (link that one instead).
    */
   async createFromCarrier(user: AuthUser, carrierId: string): Promise<SupplierDto> {
     const created = await this.prisma.$transaction(async (tx) => {
@@ -143,6 +145,7 @@ export class SuppliersService {
       if (carrier.supplierId) {
         throw new ConflictException('The carrier is already linked to a supplier');
       }
+      await lockCarrierIdentity(tx, carrier);
       const same = await tx.supplier.findFirst({
         where: matchingCarrier(carrier),
         orderBy: { name: 'asc' },
@@ -189,6 +192,23 @@ async function lockSupplier(tx: Tx, id: string, mode: 'UPDATE' | 'SHARE'): Promi
           SELECT "id" FROM "suppliers" WHERE "id" = ${id}::uuid FOR SHARE`;
   if (rows.length === 0) throw new NotFoundException('Supplier not found');
   return tx.supplier.findUniqueOrThrow({ where: { id } });
+}
+
+/**
+ * Transaction locks on the keys `matchingCarrier` compares (the trimmed name in lower case, and
+ * the phone), taken in one order so that two transactions sharing a key never deadlock.
+ */
+async function lockCarrierIdentity(
+  tx: Tx,
+  carrier: { name: string; phone: string | null },
+): Promise<void> {
+  const keys = [
+    `supplier-identity:name:${carrier.name.trim().toLowerCase()}`,
+    ...(carrier.phone ? [`supplier-identity:phone:${carrier.phone}`] : []),
+  ].sort();
+  for (const key of keys) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  }
 }
 
 /** Suppliers with a carrier's name (any case, trimmed) or, when it has one, its phone. */
