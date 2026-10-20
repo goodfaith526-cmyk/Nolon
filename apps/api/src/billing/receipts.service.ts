@@ -8,6 +8,7 @@ import type {
   CreateReceiptRequest,
   DecimalString,
   Page,
+  ReceiptAllocationSuggestionDto,
   ReceiptDto,
   ReceiptStatus,
   ReceiptSummaryDto,
@@ -122,6 +123,69 @@ export class ReceiptsService {
       this.createInTx(tx, user, prepared, input),
     );
     return this.get(user, receiptId);
+  }
+
+  /**
+   * How a receipt of `amount` would pay the customer's open invoices in `currency` (functional
+   * review C3), computed here in Decimal so no client splits money: approved invoices of the
+   * customer in the user's branches with a balance left, oldest first (invoice date, then
+   * number), each taking up to its balance until the amount runs out; any rest is unallocated.
+   * Read only: generated each time it is asked for, from the balances then; the receipt's save
+   * locks the invoices and checks each share against its balance again, and the person may change
+   * any share before saving.
+   */
+  async suggestAllocations(
+    user: AuthUser,
+    input: { customerId: string; currency: string; amount: DecimalString },
+  ): Promise<ReceiptAllocationSuggestionDto> {
+    const customer = await this.customers.requireCustomer(user, input.customerId);
+    const currency = await this.currencies.requireActive(input.currency);
+    const amount = dec(input.amount);
+    if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
+      throw new BadRequestException(
+        `Amount must be positive with ${currency.decimalPlaces} decimal places`,
+      );
+    }
+    const invoices = await this.prisma.customerInvoice.findMany({
+      where: {
+        ...branchScope(user),
+        customerId: customer.id,
+        currency: currency.code,
+        status: 'APPROVED',
+      },
+      select: {
+        id: true,
+        number: true,
+        invoiceDate: true,
+        total: true,
+        paidAmount: true,
+        creditedAmount: true,
+      },
+      orderBy: [{ invoiceDate: 'asc' }, { number: 'asc' }, { id: 'asc' }],
+    });
+    let left = amount;
+    const allocations: ReceiptAllocationSuggestionDto['allocations'] = [];
+    for (const invoice of invoices) {
+      if (!left.gt(0)) break;
+      const balance = invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount);
+      if (!balance.gt(0)) continue;
+      const share = Prisma.Decimal.min(balance, left);
+      allocations.push({
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.number,
+        invoiceDate: fromDbDate(invoice.invoiceDate),
+        balance: balance.toFixed(),
+        amount: share.toFixed(),
+      });
+      left = left.minus(share);
+    }
+    return {
+      customerId: customer.id,
+      currency: currency.code,
+      amount: amount.toFixed(),
+      allocations,
+      unallocated: left.toFixed(),
+    };
   }
 
   /** The checks of a receipt that need no lock; createInTx then records and posts it. */

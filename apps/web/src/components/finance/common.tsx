@@ -126,3 +126,14 @@ export function cashAccountsFor(
       (a.branchId === null || a.branchId === branchId),
   );
 }
+
+/**
+ * The cash account a form uses (functional review C3, C4): the one the person chose while it is
+ * still offered; else, when exactly one account is offered, that one; else none. Derived on each
+ * render from the offered list, so a change of branch or currency drops an account that no longer
+ * matches, and a choice that still matches is kept.
+ */
+export function chosenCashAccount(offered: readonly AccountDto[], chosen: string): string {
+  if (offered.some((a) => a.id === chosen)) return chosen;
+  return offered.length === 1 ? (offered[0]?.id ?? '') : '';
+}

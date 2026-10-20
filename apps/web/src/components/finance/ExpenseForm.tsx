@@ -10,13 +10,14 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchCurrency, branchToday } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
-import { AMOUNT_PATTERN, FX_RATE_PATTERN, todayString } from '@/lib/money';
+import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useApiList } from './reports/ReportKit';
 import { can, useMe } from '../StaffShell';
-import { cashAccountsFor, useAccounts, useRecord } from './common';
+import { cashAccountsFor, chosenCashAccount, useAccounts, useRecord } from './common';
 
 /** New expense (no id) or a draft's edit page. The API checks every field again. */
 export function ExpenseForm({ id }: { id?: string }) {
@@ -42,8 +43,15 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
   const { accounts, status: accountsStatus } = useAccounts();
   const categories = useApiList<ExpenseCategoryDto>('/accounting/expense-categories', true);
   const [branchId, setBranchId] = useState(expense?.branchId ?? me.branches[0]?.id ?? '');
-  const [currency, setCurrency] = useState(expense?.currency ?? 'USD');
+  // A new expense's currency is its branch's (functional review C4), read from /auth/me and
+  // following the branch until the person picks one or enters an amount (null until then). A saved
+  // expense keeps its own.
+  const [currencyChoice, setCurrency] = useState<string | null>(expense?.currency ?? null);
+  const currency = currencyChoice ?? branchCurrency(me, branchId);
   const [cashAccountId, setCashAccountId] = useState(expense?.cashAccountId ?? '');
+  // A new expense is dated today in its branch (C9), following the branch until a date is typed.
+  const [dateChoice, setDate] = useState<string | null>(expense?.expenseDate ?? null);
+  const expenseDate = dateChoice ?? branchToday(me, branchId);
   const [requestId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -54,14 +62,16 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
   if (!master) return <p className="muted">{tc('loading')}</p>;
 
   const cashAccounts = cashAccountsFor(accounts, branchId, currency);
-  const selectedCash = cashAccounts.some((a) => a.id === cashAccountId) ? cashAccountId : '';
+  // The only matching account is taken; another branch or currency drops one that no longer
+  // matches (C4).
+  const selectedCash = chosenCashAccount(cashAccounts, cashAccountId);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const fxRate = field(form, 'fxRate').trim();
     const input: ExpenseInput = {
-      expenseDate: field(form, 'expenseDate'),
+      expenseDate,
       categoryCode: field(form, 'categoryCode'),
       description: field(form, 'description').trim(),
       currency,
@@ -113,7 +123,8 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
             name="expenseDate"
             type="date"
             required
-            defaultValue={expense?.expenseDate ?? todayString()}
+            value={expenseDate}
+            onChange={(e) => setDate(e.target.value)}
           />
         </label>
         <label className="field">
@@ -140,7 +151,7 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
         </label>
         <label className="field">
           {t('currency')}
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <select value={currency} required onChange={(e) => setCurrency(e.target.value)}>
             {master.currencies
               .filter((c) => c.isActive)
               .map((c) => (
@@ -173,6 +184,11 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
             dir="ltr"
             pattern={AMOUNT_PATTERN}
             defaultValue={expense?.amount ?? ''}
+            // An amount entered is in the currency shown then: another branch no longer changes
+            // it (Codex F94-2).
+            onChange={() => {
+              if (currencyChoice === null) setCurrency(currency);
+            }}
           />
         </label>
         <label className="field">

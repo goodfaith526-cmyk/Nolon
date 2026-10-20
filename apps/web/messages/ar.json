@@ -765,7 +765,15 @@
     "cancelReason": "سبب الإلغاء",
     "cancelledNotice": "تم إلغاء السند.",
     "openJournal": "القيد المحاسبي",
-    "openCancelJournal": "قيد الإلغاء"
+    "openCancelJournal": "قيد الإلغاء",
+    "chooseCurrency": "اختر العملة",
+    "currencyFromInvoices": "كل فواتير العميل المفتوحة بعملة {currency}.",
+    "currencySuggestionNotApplied": "كل فواتير العميل المفتوحة بعملة {currency}. لم تُطبَّق لأن المبلغ أُدخل بعملة أخرى؛ غيّر العملة بنفسك إن لزم.",
+    "invoicesChanged": "تغيّرت فواتير العميل المفتوحة منذ فتح النموذج. أعد تحميل الصفحة ثم وزّع المبلغ.",
+    "mixedCurrencies": "الفواتير المفتوحة بأكثر من عملة: اختر عملة السند.",
+    "payBalance": "سداد الرصيد",
+    "distribute": "توزيع المبلغ على الفواتير، الأقدم أولاً",
+    "distributedRest": "يتبقى {amount} {currency} ويُحتفظ به كدفعة مقدمة."
   },
   "Journals": {
     "title": "القيود اليومية",
@@ -872,7 +880,8 @@
     "expenseCategoriesHint": "كل فئة تُرحّل المصروفات العامة وبنود المصروفات في فواتير الموردين إلى حسابها.",
     "categoryCode": "الرمز",
     "chooseAccount": "اختر حساباً",
-    "addCategory": "إضافة"
+    "addCategory": "إضافة",
+    "typeFromParent": "نوع الحساب الأب."
   },
   "FxRates": {
     "title": "أسعار الصرف",
@@ -1748,7 +1757,8 @@
     "cancelReason": "سبب الإلغاء",
     "cancelledNotice": "تم إلغاء الإشعار الدائن.",
     "openInvoice": "الفاتورة",
-    "openJournal": "القيد"
+    "openJournal": "القيد",
+    "fullBalance": "كامل الرصيد ({amount} {currency})"
   },
   "Suppliers": {
     "title": "الموردون",
@@ -1797,7 +1807,6 @@
     "lineFor": "عن",
     "lineAmount": "المبلغ",
     "shipmentNumber": "رقم الشحنة",
-    "shipmentNotFound": "البند {line}: لا توجد شحنة متاحة لك بهذا الرقم.",
     "chargeType": "البند",
     "chooseChargeType": "اختر البند",
     "trip": "الرحلة",
@@ -1823,7 +1832,17 @@
     "payment": "الدفعة",
     "paymentDate": "تاريخ الدفع",
     "consolidation": "الحاوية",
-    "chooseConsolidation": "اختر حاوية"
+    "chooseConsolidation": "اختر حاوية",
+    "dueDateOptional": "تاريخ الاستحقاق (اختياري)",
+    "dueDateFromTerms": "إذا تُرك فارغاً، يكون تاريخ الفاتورة مضافاً إليه مدة سداد المورد ({days} يوماً).",
+    "dueDateFromTermsUnknown": "إذا تُرك فارغاً، يكون تاريخ الفاتورة مضافاً إليه مدة سداد المورد.",
+    "tripsInOtherCurrencies": "رحلات هذا المورد غير المفوترة موجودة أيضاً بعملة:",
+    "useTripCurrency": "{currency} ({count, plural, one {رحلة واحدة} two {رحلتان} few {# رحلات} other {# رحلة}})",
+    "shipmentSearch": "رقم الشحنة أو العميل",
+    "exactMatch": "مطابق تماماً:",
+    "moreShipments": "شحنات أخرى",
+    "noShipments": "لا توجد شحنة مطابقة في هذا الفرع.",
+    "chooseShipmentFirst": "البند {line}: اختر الشحنة."
   },
   "SupplierPayments": {
     "title": "مدفوعات الموردين",

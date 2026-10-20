@@ -20,6 +20,7 @@ import {
   type BillableTripDto,
   type Page,
   type SupplierBillDto,
+  type SupplierBillDueDateDto,
   type SupplierBillSummaryDto,
   type SupplierDto,
   type SupplierPaymentDto,
@@ -84,13 +85,14 @@ const billFields = {
   currency: currencyCode,
   fxRate: fxRate.nullish(),
   billDate: dateString,
-  dueDate: dateString,
+  dueDate: dateString.nullish(),
   notes: optionalText(2000),
   lines: z.array(billLine).min(1).max(100),
 };
 const createBillBody = z
-  .object({ requestId: z.uuid(), supplierId: z.uuid(), ...billFields })
+  .object({ requestId: z.uuid(), supplierId: z.uuid(), ...billFields, dueDate: dateString })
   .strict();
+const billDueDateQuery = z.object({ supplierId: z.uuid(), billDate: dateString }).strict();
 const updateBillBody = z.object(billFields).strict();
 const billListQuery = pageQuery
   .extend({
@@ -228,6 +230,13 @@ export class SupplierBillsController {
     @Query() query: unknown,
   ): Promise<Page<SupplierBillSummaryDto>> {
     return this.bills.list(user, parse(billListQuery, query));
+  }
+
+  /** The due date a new bill is suggested (C1): the bill date plus the supplier's terms. */
+  @Get('due-date')
+  @RequirePermission('suppliers:create')
+  dueDate(@Query() query: unknown): Promise<SupplierBillDueDateDto> {
+    return this.bills.suggestDueDate(parse(billDueDateQuery, query));
   }
 
   @AgentReadable()

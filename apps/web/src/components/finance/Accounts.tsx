@@ -171,6 +171,13 @@ function AccountForm({
   const failure = useFailureText();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [parentId, setParentId] = useState(account?.parentId ?? '');
+  const [typeChoice, setType] = useState<AccountType>(account?.type ?? 'ASSET');
+  // Functional review C7: under a parent the type is the parent's, shown locked and left out of
+  // the request, so the API takes it from the parent when the account is saved; choosing another
+  // parent shows that one's. A top-level account chooses its own type, kept across parent changes.
+  const parent = accounts.find((a) => a.id === parentId);
+  const type = parent?.type ?? typeChoice;
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -179,8 +186,8 @@ function AccountForm({
       code: field(form, 'code').trim(),
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
-      type: field(form, 'type') as AccountType,
-      parentId: field(form, 'parentId') || null,
+      ...(parent ? {} : { type }),
+      parentId: parentId || null,
       isPostable: form.get('isPostable') === 'on',
       isCash: form.get('isCash') === 'on',
       currency: field(form, 'currency') || null,
@@ -224,13 +231,19 @@ function AccountForm({
         </label>
         <label className="field">
           {t('type')}
-          <select name="type" defaultValue={account?.type ?? 'ASSET'}>
-            {ACCOUNT_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {te(`accountType_${type}`)}
+          <select
+            name="type"
+            value={type}
+            disabled={parent !== undefined}
+            onChange={(e) => setType(e.target.value as AccountType)}
+          >
+            {ACCOUNT_TYPES.map((option) => (
+              <option key={option} value={option}>
+                {te(`accountType_${option}`)}
               </option>
             ))}
           </select>
+          {parent && <span className="muted">{t('typeFromParent')}</span>}
         </label>
         <label className="field">
           {t('nameAr')}
@@ -242,7 +255,7 @@ function AccountForm({
         </label>
         <label className="field">
           {t('parent')}
-          <select name="parentId" defaultValue={account?.parentId ?? ''}>
+          <select name="parentId" value={parentId} onChange={(e) => setParentId(e.target.value)}>
             <option value="">{t('noParent')}</option>
             {parents.map((a) => (
               <option key={a.id} value={a.id}>

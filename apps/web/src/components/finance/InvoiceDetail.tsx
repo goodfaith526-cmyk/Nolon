@@ -177,7 +177,11 @@ export function InvoiceDetail({ id }: { id: string }) {
       {panel === 'credit' && (
         <form className="card stack" onSubmit={(e) => void createCreditNote(e)}>
           <p>{t('creditNoteHint')}</p>
-          <CreditNoteFields currency={inv.currency} defaultDate={inv.invoiceDate} />
+          <CreditNoteFields
+            currency={inv.currency}
+            defaultDate={inv.invoiceDate}
+            fullBalance={inv.balance}
+          />
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {t('saveCreditNote')}

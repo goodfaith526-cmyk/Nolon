@@ -296,8 +296,25 @@ export class AccountsService {
 
   private async validate(tx: Tx, input: AccountInput, existing: Account | null) {
     const isCash = input.isCash ?? false;
+    const parentId = input.parentId ?? null;
+    const parent = parentId ? await tx.account.findUnique({ where: { id: parentId } }) : null;
+    if (parentId) {
+      if (!parent) throw new BadRequestException('Unknown parent account');
+      if (parent.isPostable) throw new BadRequestException('The parent must be a header account');
+      if (input.type && parent.type !== input.type) {
+        throw new BadRequestException('An account has the same type as its parent');
+      }
+      if (existing && (await this.isDescendant(tx, parentId, existing.id))) {
+        throw new BadRequestException('An account cannot sit under itself');
+      }
+    }
+    // Functional review C7: under a parent the type may be left out and is the parent's, read
+    // when the account is saved; a root account names its own type. The cash rules below apply
+    // to the type either way.
+    const type = input.type ?? parent?.type;
+    if (!type) throw new BadRequestException('A root account needs a type');
     if (isCash) {
-      if (input.type !== 'ASSET') throw new BadRequestException('A cash account is an asset');
+      if (type !== 'ASSET') throw new BadRequestException('A cash account is an asset');
       if (!input.isPostable) throw new BadRequestException('A cash account is postable');
       if (!input.currency) throw new BadRequestException('A cash account needs a currency');
       await this.currencies.requireActive(input.currency);
@@ -308,26 +325,14 @@ export class AccountsService {
     } else if (input.currency || input.branchId) {
       throw new BadRequestException('Only cash and bank accounts have a currency or branch');
     }
-    const parentId = input.parentId ?? null;
-    if (parentId) {
-      const parent = await tx.account.findUnique({ where: { id: parentId } });
-      if (!parent) throw new BadRequestException('Unknown parent account');
-      if (parent.isPostable) throw new BadRequestException('The parent must be a header account');
-      if (parent.type !== input.type) {
-        throw new BadRequestException('An account has the same type as its parent');
-      }
-      if (existing && (await this.isDescendant(tx, parentId, existing.id))) {
-        throw new BadRequestException('An account cannot sit under itself');
-      }
-    }
     if (existing) {
-      await this.checkChange(tx, existing, input, isCash);
+      await this.checkChange(tx, existing, { ...input, type }, isCash);
     }
     return {
       code: input.code,
       nameEn: input.nameEn,
       nameAr: input.nameAr,
-      type: input.type,
+      type,
       parentId,
       isPostable: input.isPostable,
       isCash,
@@ -341,7 +346,12 @@ export class AccountsService {
    * Changes that would rewrite what posted entries mean are refused once an account is used, and
    * an account a posting rule or an approved invoice depends on stays active, postable and of its type.
    */
-  private async checkChange(tx: Tx, existing: Account, input: AccountInput, isCash: boolean) {
+  private async checkChange(
+    tx: Tx,
+    existing: Account,
+    input: AccountInput & { type: Account['type'] },
+    isCash: boolean,
+  ) {
     const [lines, children, mapped, charged, approvedInvoices, approvedBills, categories] =
       await Promise.all([
         tx.journalLine.count({ where: { accountId: existing.id } }),

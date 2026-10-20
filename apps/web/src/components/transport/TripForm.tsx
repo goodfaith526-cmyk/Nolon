@@ -14,6 +14,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { branchCurrency } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { AMOUNT_PATTERN } from '@/lib/money';
@@ -40,6 +41,11 @@ export function TripForm() {
   const router = useRouter();
   const [branchId, setBranchId] = useState(me.branches[0]?.id ?? '');
   const [kind, setKind] = useState<TripKind>('OWN');
+  // An external trip's agreed currency starts as the branch's (functional review C5), read from
+  // /auth/me and following the branch until the person picks the agreed one (null until then),
+  // which is kept.
+  const [currencyChoice, setCurrency] = useState<string | null>(null);
+  const currency = currencyChoice ?? branchCurrency(me, branchId);
   const [fleet, setFleet] = useState<Fleet | null>(null);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<ShipmentSummaryDto[] | null>(null);
@@ -100,7 +106,7 @@ export function TripForm() {
         : {
             carrierId: field(f, 'carrierId'),
             agreedCost: field(f, 'agreedCost').trim(),
-            currency: field(f, 'currency'),
+            currency,
             externalVehicle: text('externalVehicle'),
             externalDriver: text('externalDriver'),
           }),
@@ -243,11 +249,21 @@ export function TripForm() {
                   inputMode="decimal"
                   dir="ltr"
                   pattern={AMOUNT_PATTERN}
+                  // A cost entered is in the currency shown then: another branch no longer
+                  // changes it (Codex F94-2).
+                  onChange={() => {
+                    if (currencyChoice === null) setCurrency(currency);
+                  }}
                 />
               </label>
               <label className="field">
                 <span>{t('currency')}</span>
-                <select name="currency" required defaultValue="USD">
+                <select
+                  name="currency"
+                  required
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
                   {currencies.map((c) => (
                     <option key={c.code} value={c.code}>
                       {c.code}
