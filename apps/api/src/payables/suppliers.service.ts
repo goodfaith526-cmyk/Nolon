@@ -165,6 +165,18 @@ export class SuppliersService {
     return this.get(user, created.id);
   }
 
+  /**
+   * Active suppliers by name, id and name only: the broker choices of a customs file (group Z2),
+   * for users who may edit the file but not see the suppliers list.
+   */
+  async activeOptions(): Promise<{ id: string; name: string }[]> {
+    return this.prisma.supplier.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   /** 404 unless the supplier exists (active or not): for reads and settling existing bills. */
   async requireSupplier(id: string): Promise<Supplier> {
     const supplier = await this.prisma.supplier.findUnique({ where: { id } });
