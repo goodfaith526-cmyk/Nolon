@@ -88,6 +88,9 @@ export function MissingFields<D extends EditableDraft>({
   const tc = useTranslations('Common');
   const failure = useFailureText();
   const [values, setValues] = useState<Record<string, Value>>(() => ({ ...suggested }));
+  // The paths the person changed: a value is theirs once they touch it, even when it ends up
+  // equal to the suggestion (Codex F97-2).
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const missing = missingFields ?? draft.missingFields;
@@ -99,19 +102,19 @@ export function MissingFields<D extends EditableDraft>({
     const name = tf.has(p.field) ? tf(p.field) : p.field;
     return p.index === undefined ? name : `${name} (${tc('lineNo', { n: p.index + 1 })})`;
   };
-  const set = (path: string, value: Value) =>
+  const set = (path: string, value: Value) => {
+    setTouched((all) => new Set(all).add(path));
     setValues((v) => {
       const next = { ...v, [path]: value };
-      // A suggestion tied to the value just changed goes, unless the person typed it themselves.
+      // A suggestion tied to the value just changed goes, unless the person changed it themselves.
       for (const dependent of dependents[path] ?? []) {
-        if (dependent in suggested && next[dependent] === suggested[dependent]) {
-          delete next[dependent];
-        }
+        if (dependent in suggested && !touched.has(dependent)) delete next[dependent];
       }
       return next;
     });
+  };
   const isSuggested = (path: string) =>
-    path in suggested && values[path] !== undefined && values[path] === suggested[path];
+    path in suggested && !touched.has(path) && values[path] !== undefined;
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -126,6 +129,7 @@ export function MissingFields<D extends EditableDraft>({
         },
       });
       setValues({});
+      setTouched(new Set());
       setNotice({ ok: true, text: t('missingSaved') });
       onChanged(saved);
     } catch (err) {

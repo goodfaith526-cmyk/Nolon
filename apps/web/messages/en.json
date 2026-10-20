@@ -2177,6 +2177,7 @@
     "replacedBy": "Replaced at your request to the assistant by a newer draft:",
     "newerDraft": "Open the newer draft",
     "customerTitle": "New customer draft: {name}",
+    "customerToCreate": "The customer this approval creates",
     "customerApproveHint": "Approving adds this customer to the branch now, if no customer of the branch has this phone. Terms, credit and tax details are set on the customer afterwards.",
     "partyTitle": "Party draft for {customer}: {name}",
     "partyApproveHint": "Approving adds this party to the customer now. A booking can then name it as shipper, consignee or notify party.",

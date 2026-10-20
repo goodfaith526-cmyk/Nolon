@@ -55,28 +55,7 @@ export function CustomerDraftReview({ id }: { id: string }) {
           </Link>
         </p>
       )}
-      <dl className="details">
-        <dt>{tcu('branch')}</dt>
-        <dd dir="ltr">{draft.branchCode}</dd>
-        <dt>{tcu('kind')}</dt>
-        <dd>{customer.kind ? tcu(`kind_${customer.kind}`) : '—'}</dd>
-        <dt>{tcu('name')}</dt>
-        <dd>{customer.name ?? '—'}</dd>
-        <dt>{tcu('companyName')}</dt>
-        <dd>{customer.companyName ?? '—'}</dd>
-        <dt>{tcu('phone')}</dt>
-        <dd dir="ltr">{customer.phone ?? '—'}</dd>
-        <dt>{tcu('whatsapp')}</dt>
-        <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
-        <dt>{tcu('email')}</dt>
-        <dd dir="ltr">{customer.email ?? '—'}</dd>
-        <dt>{tcu('city')}</dt>
-        <dd>{customer.city ?? '—'}</dd>
-        <dt>{tcu('address')}</dt>
-        <dd>{customer.address ?? '—'}</dd>
-        <dt>{tcu('notes')}</dt>
-        <dd>{customer.notes ?? '—'}</dd>
-      </dl>
+      <CustomerRequestDetails branchCode={draft.branchCode} customer={customer} />
       <EvidenceChecklist
         evidence={draft.evidence}
         values={{
@@ -90,5 +69,43 @@ export function CustomerDraftReview({ id }: { id: string }) {
         editable={draft.actions.canDecide}
       />
     </DraftFrame>
+  );
+}
+
+/**
+ * Every value a customer draft asks for, as its approval would create it. Shown wherever the
+ * customer is approved, so nothing it creates is off screen (Codex F97-1).
+ */
+export function CustomerRequestDetails({
+  branchCode,
+  customer,
+}: {
+  branchCode: string;
+  customer: CustomerDraftDto['request'];
+}) {
+  const tcu = useTranslations('Customers');
+  return (
+    <dl className="details">
+      <dt>{tcu('branch')}</dt>
+      <dd dir="ltr">{branchCode}</dd>
+      <dt>{tcu('kind')}</dt>
+      <dd>{customer.kind ? tcu(`kind_${customer.kind}`) : '—'}</dd>
+      <dt>{tcu('name')}</dt>
+      <dd>{customer.name ?? '—'}</dd>
+      <dt>{tcu('companyName')}</dt>
+      <dd>{customer.companyName ?? '—'}</dd>
+      <dt>{tcu('phone')}</dt>
+      <dd dir="ltr">{customer.phone ?? '—'}</dd>
+      <dt>{tcu('whatsapp')}</dt>
+      <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
+      <dt>{tcu('email')}</dt>
+      <dd dir="ltr">{customer.email ?? '—'}</dd>
+      <dt>{tcu('city')}</dt>
+      <dd>{customer.city ?? '—'}</dd>
+      <dt>{tcu('address')}</dt>
+      <dd>{customer.address ?? '—'}</dd>
+      <dt>{tcu('notes')}</dt>
+      <dd>{customer.notes ?? '—'}</dd>
+    </dl>
   );
 }

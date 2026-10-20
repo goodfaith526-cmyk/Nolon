@@ -7,6 +7,7 @@ import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
+import { CustomerRequestDetails } from './CustomerDraftReview';
 import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame, DraftStatusBadge } from './DraftFrame';
 import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
@@ -201,6 +202,12 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      {oneStep && (
+        <div className="card stack">
+          <h2>{t('customerToCreate')}</h2>
+          <CustomerRequestDetails branchCode={oneStep.branchCode} customer={oneStep.request} />
+        </div>
+      )}
       {oneStep && (
         <EvidenceChecklist
           evidence={oneStep.evidence}

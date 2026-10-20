@@ -170,6 +170,34 @@ describe('MissingFields', () => {
     expect(input2.value).toBe('2');
   });
 
+  it('keeps a value the person chose even when it equals the suggestion (Codex F97-2)', () => {
+    const d = { ...draft, missingFields: ['warehouseId', 'packages'] };
+    const el = showWith(
+      {
+        choices: {
+          warehouseId: [
+            { value: 'w1', label: 'W1' },
+            { value: 'w2', label: 'W2' },
+          ],
+        },
+        suggested: { warehouseId: 'w1', packages: '4' },
+        dependents: { warehouseId: ['packages'] },
+      },
+      d,
+    );
+    const select = el.querySelector('select');
+    const input = el.querySelector<HTMLInputElement>('input');
+    if (!select || !input) throw new Error('form not shown');
+    act(() => setValue(input, '5'));
+    act(() => setValue(input, '4'));
+    act(() => setValue(select, 'w2'));
+    expect(input.value).toBe('4');
+    // Neither value is marked as a suggestion any more.
+    expect([...el.querySelectorAll('small')].map((x) => x.textContent)).not.toContain(
+      'missingSuggested',
+    );
+  });
+
   it('takes a name as text and an invoice from the choices given', () => {
     const el = showWith(
       { choices: { invoiceId: [{ value: 'i1', label: 'INV-1 · 50 USD' }] } },

@@ -231,6 +231,33 @@ describe('a booking for a new customer, approved with its customer', () => {
     });
   });
 
+  it('shows every customer value the approval creates (Codex F97-1)', async () => {
+    const full = customerDraft(true);
+    answer({
+      '/customer-drafts/c1': {
+        ...full,
+        request: {
+          ...full.request,
+          companyName: 'Amna Trading',
+          email: 'amna@example.com',
+          city: 'Khartoum',
+          address: 'Street 15',
+          notes: 'Pays in SDG',
+        },
+      },
+    });
+    const el = await show(booking, <NewCustomerBookingDraftReview id="d1" />);
+    for (const value of [
+      'Amna Trading',
+      'amna@example.com',
+      'Khartoum',
+      'Street 15',
+      'Pays in SDG',
+    ]) {
+      expect(el.textContent).toContain(value);
+    }
+  });
+
   it('keeps the two-step path for who may not decide the customer draft', async () => {
     answer({ '/customer-drafts/c1': customerDraft(false) });
     const el = await show(booking, <NewCustomerBookingDraftReview id="d1" />);
