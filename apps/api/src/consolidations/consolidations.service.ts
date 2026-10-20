@@ -842,6 +842,15 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
           { shipment: label },
         );
       }
+      // The same port rule as a booking made for the container (requireBookable).
+      if (shape.originLocationId !== container.originLocationId) {
+        throw codedRefusal(
+          HttpStatus.BAD_REQUEST,
+          'SHIPMENT_OTHER_PORT',
+          `Container ${container.number} loads at another port than shipment ${label} leaves from`,
+          { shipment: label, container: container.number },
+        );
+      }
       const shipment = await this.shipments.branchAndLastEventInTx(tx, shipmentId);
       const ownsShipment = canAccessBranch(user, shipment.branchId);
       const ownsContainer = canAccessBranch(user, container.branchId);

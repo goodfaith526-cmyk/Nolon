@@ -153,6 +153,8 @@ export function BookingForm({
   }, [notice, invalid]);
 
   const customerId = booking?.customerId ?? customer?.id;
+  // A booking from a quotation keeps the quotation's route and mode (the API refuses a change).
+  const quoted = Boolean(booking?.quotationId);
   // The customer the form is on now: a party saved for an earlier one is not applied.
   const currentCustomer = useRef(customerId);
   useEffect(() => {
@@ -327,7 +329,7 @@ export function BookingForm({
             <select
               {...mark('originLocationId')}
               value={origin}
-              disabled={consolidation !== undefined}
+              disabled={consolidation !== undefined || quoted}
               onChange={(e) => setOrigin(e.target.value)}
             >
               {locations.map((l) => (
@@ -343,6 +345,7 @@ export function BookingForm({
             <select
               {...mark('destinationLocationId')}
               value={destination}
+              disabled={quoted}
               onChange={(e) => setDestination(e.target.value)}
             >
               {locations.map((l) => (
@@ -357,7 +360,7 @@ export function BookingForm({
             label={t('mode')}
             value={mode}
             onChange={setMode}
-            disabled={consolidation !== undefined}
+            disabled={consolidation !== undefined || quoted}
             invalid={markGroup('mode')}
             note={<FieldNote note={note} path="mode" />}
           />

@@ -61,6 +61,7 @@ const updateInvoiceBody = z
     dueDate: dateString,
     notes: optionalText(2000),
     lines: z.array(invoiceLine).min(1).max(100),
+    repriced: z.boolean().optional(),
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();

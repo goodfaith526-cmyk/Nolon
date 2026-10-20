@@ -455,6 +455,7 @@ export function ConsolidationDetail({ id }: { id: string }) {
           <div className="panel-body">
             <LclShipmentPicker
               exclude={c.shipments.map((s) => s.shipmentId)}
+              originLocationId={c.originLocationId}
               disabled={busy}
               onError={(e) => setNotice({ ok: false, text: failure(e) })}
               onPick={(s) =>

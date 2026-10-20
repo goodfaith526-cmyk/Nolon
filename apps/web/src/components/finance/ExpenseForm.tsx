@@ -153,12 +153,15 @@ function Form({ expense }: { expense: ExpenseDto | null }) {
         <label className="field">
           {t('fxRateOptional')}
           <input
+            // Only a rate the user entered is sent back: otherwise the FX table's rate for the
+            // date applies again. A changed currency starts empty.
+            key={currency}
             name="fxRate"
             inputMode="decimal"
             dir="ltr"
             pattern={FX_RATE_PATTERN}
             disabled={currency === 'USD'}
-            defaultValue={expense && expense.currency !== 'USD' ? expense.fxRate : ''}
+            defaultValue={currency === expense?.currency ? (expense.enteredFxRate ?? '') : ''}
           />
         </label>
         <label className="field">

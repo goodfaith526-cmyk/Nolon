@@ -693,10 +693,15 @@ export class ShipmentsService {
   async shapeInTx(
     tx: Tx,
     id: string,
-  ): Promise<{ mode: ShippingMode; loadType: LoadType | null; services: BookingService[] }> {
+  ): Promise<{
+    mode: ShippingMode;
+    loadType: LoadType | null;
+    services: BookingService[];
+    originLocationId: string;
+  }> {
     return tx.shipment.findUniqueOrThrow({
       where: { id },
-      select: { mode: true, loadType: true, services: true },
+      select: { mode: true, loadType: true, services: true, originLocationId: true },
     });
   }
 

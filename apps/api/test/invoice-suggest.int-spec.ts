@@ -518,6 +518,45 @@ describe('invoice suggestion: a shipment with a quotation', () => {
     ]);
     expect(other.fingerprint).not.toBe(own.fingerprint);
   });
+
+  it('changes currency only with every price entered anew, whatever the numbers (Codex F92-1)', async () => {
+    const shipmentId = await quotedShipment([
+      { chargeTypeCode: charge.freight, unit: 'PER_SHIPMENT', quantity: '1', unitPrice: '100' },
+    ]);
+    const invoice = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    // The table's rate: none was entered.
+    expect(invoice.enteredFxRate).toBeNull();
+    const path = `/customer-invoices/${invoice.id}`;
+    const edit = (currency: string, price: string, extra: object = {}) =>
+      r.patch(path, cookies.financePts, {
+        currency,
+        fxRate: currency === 'USD' ? null : '1.1',
+        invoiceDate: invoice.invoiceDate,
+        dueDate: invoice.dueDate,
+        lines: [{ chargeTypeCode: charge.freight, quantity: '1', unitPrice: price }],
+        ...extra,
+      });
+    // USD → EUR: refused unless the prices were entered in EUR, even a different number.
+    const refused = await edit('EUR', '92').expect(400);
+    expect(refused.body).toMatchObject({
+      code: 'INVOICE_CURRENCY_REPRICE',
+      fields: ['currency'],
+      params: { from: 'USD', to: 'EUR' },
+    });
+    const eur = (await edit('EUR', '92', { repriced: true }).expect(200))
+      .body as CustomerInvoiceDto;
+    expect([eur.currency, eur.total, eur.enteredFxRate]).toEqual(['EUR', '92', '1.1']);
+    // EUR → AED with the EUR prices as they stand: refused (not compared with the quotation).
+    await edit('AED', '92').expect(400);
+    // A price equal to the quoted number is fine when entered in the invoice's own currency.
+    const same = (await edit('EUR', '100').expect(200)).body as CustomerInvoiceDto;
+    expect([same.currency, same.total]).toEqual(['EUR', '100']);
+    expect((await r.get(path, cookies.financePts).expect(200)).body).toMatchObject({
+      currency: 'EUR',
+    });
+  });
 });
 
 describe('invoice suggestion: access', () => {

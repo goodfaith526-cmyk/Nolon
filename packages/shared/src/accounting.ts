@@ -293,6 +293,11 @@ export interface InvoicePaymentDto {
 
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   fxRate: FxRateString;
+  /**
+   * The rate the user entered on the document, which it keeps; null when the rate is the FX
+   * table's for the document's date (an edit then sends none, and the table's rate applies).
+   */
+  enteredFxRate: FxRateString | null;
   totalUsd: DecimalString;
   notes: string | null;
   lines: CustomerInvoiceLineDto[];
@@ -327,6 +332,15 @@ export interface CustomerInvoiceInput {
   dueDate: string;
   notes?: string | null;
   lines: CustomerInvoiceLineInput[];
+}
+
+/** PATCH /customer-invoices/:id: a draft invoice's values, replaced as a whole. */
+export interface UpdateCustomerInvoiceRequest extends CustomerInvoiceInput {
+  /**
+   * Required (true) to change the currency: every line price was entered in the new currency.
+   * A currency change without it is refused (INVOICE_CURRENCY_REPRICE).
+   */
+  repriced?: boolean;
 }
 
 /** A draft for the shipment, prefilled from its quotation when it has one. */
