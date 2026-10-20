@@ -2,12 +2,11 @@
 
 import type { RateCardDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { MissingFields } from './MissingFields';
-import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { EvidenceChecklist, confirmedBody, useEvidenceTicks } from './EvidenceChecklist';
 
 /** A selling rate the assistant proposed: the route, the price, its validity, and the decision. */
 export function RateCardDraftReview({ id }: { id: string }) {
@@ -20,7 +19,7 @@ export function RateCardDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<RateCardDraftDto>(`/rate-card-drafts/${id}`);
-  const [ticked, setTicked] = useState<string[]>([]);
+  const [ticked, setTicked] = useEvidenceTicks(draft?.version);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const rate = draft.request;
