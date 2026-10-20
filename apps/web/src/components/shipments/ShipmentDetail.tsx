@@ -26,7 +26,7 @@ import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
 import { PrintLink } from '../print/PrintLink';
 
-type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
+type Panel = 'status' | 'correction' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
 /** datetime-local value (local time, no zone) to an ISO timestamp with offset. */
 function toIso(local: string): string | undefined {
@@ -85,7 +85,8 @@ export function ShipmentDetail({ id }: { id: string }) {
     }
   }
 
-  function onStatus(event: FormEvent<HTMLFormElement>) {
+  /** A status change by hand, or a correction of a status its own record sets (with a reason). */
+  function onStatus(event: FormEvent<HTMLFormElement>, correction: boolean) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     void send(
@@ -95,8 +96,9 @@ export function ShipmentDetail({ id }: { id: string }) {
         occurredAt: toIso(field(form, 'occurredAt')),
         locationId: field(form, 'locationId') || null,
         note: field(form, 'note') || null,
+        ...(correction ? { correction: true, reason: field(form, 'reason') } : {}),
       },
-      t('statusChanged'),
+      correction ? t('statusCorrected') : t('statusChanged'),
     );
   }
 
@@ -167,6 +169,64 @@ export function ShipmentDetail({ id }: { id: string }) {
     </form>
   );
 
+  const statusForm = (correction: boolean) => (
+    <form
+      key={correction ? 'correction' : 'status'}
+      className="card stack"
+      onSubmit={(e) => onStatus(e, correction)}
+    >
+      <div className="grid">
+        <label className="field">
+          <span>{t('newStatus')}</span>
+          <select name="status" required>
+            {(correction ? actions.correctionTransitions : actions.manualTransitions).map(
+              (next) => (
+                <option key={next} value={next}>
+                  {te(`shipment_${next}`)}
+                </option>
+              ),
+            )}
+          </select>
+        </label>
+        <label className="field">
+          <span>{t('occurredAt')}</span>
+          <input name="occurredAt" type="datetime-local" />
+        </label>
+        <label className="field">
+          <span>{t('location')}</span>
+          <select name="locationId" defaultValue="">
+            <option value="">—</option>
+            {activeLocations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {localName(l)} ({l.code})
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="field">
+        <span>{t('note')}</span>
+        <textarea name="note" maxLength={1000} />
+      </label>
+      {correction && (
+        <label className="field">
+          <span>{t('correctionReason')}</span>
+          <textarea name="reason" required maxLength={1000} />
+        </label>
+      )}
+      {correction && <p className="muted">{t('correctionHint')}</p>}
+      <p className="muted">{t('occurredAtHint')}</p>
+      <div className="actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {tc('save')}
+        </button>
+        <button type="button" onClick={() => setPanel(null)}>
+          {tc('back')}
+        </button>
+      </div>
+    </form>
+  );
+
   return (
     <section className="stack">
       <div className="page-head">
@@ -189,7 +249,15 @@ export function ShipmentDetail({ id }: { id: string }) {
           <MoreMenu>
             <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
-            {(actions.canHold || actions.revertTo || actions.canCancel) && <hr />}
+            {(actions.canHold ||
+              actions.revertTo ||
+              actions.canCancel ||
+              actions.correctionTransitions.length > 0) && <hr />}
+            {actions.correctionTransitions.length > 0 && (
+              <button type="button" onClick={() => setPanel('correction')}>
+                {t('correctStatus')}
+              </button>
+            )}
             {actions.canHold && (
               <button type="button" onClick={() => setPanel('hold')}>
                 {t('hold')}
@@ -212,7 +280,7 @@ export function ShipmentDetail({ id }: { id: string }) {
             </button>
           )}
           <PrintLink href={`/shipments/${s.id}`} label={tp('printShipmentSheet')} />
-          {actions.transitions.length > 0 && (
+          {actions.manualTransitions.length > 0 && (
             <button type="button" className="primary" onClick={() => setPanel('status')}>
               {t('changeStatus')}
             </button>
@@ -231,50 +299,8 @@ export function ShipmentDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
 
-      {panel === 'status' && (
-        <form className="card stack" onSubmit={onStatus}>
-          <div className="grid">
-            <label className="field">
-              <span>{t('newStatus')}</span>
-              <select name="status" required>
-                {actions.transitions.map((next) => (
-                  <option key={next} value={next}>
-                    {te(`shipment_${next}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>{t('occurredAt')}</span>
-              <input name="occurredAt" type="datetime-local" />
-            </label>
-            <label className="field">
-              <span>{t('location')}</span>
-              <select name="locationId" defaultValue="">
-                <option value="">—</option>
-                {activeLocations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {localName(l)} ({l.code})
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>{t('note')}</span>
-            <textarea name="note" maxLength={1000} />
-          </label>
-          <p className="muted">{t('occurredAtHint')}</p>
-          <div className="actions">
-            <button type="submit" className="primary" disabled={busy}>
-              {tc('save')}
-            </button>
-            <button type="button" onClick={() => setPanel(null)}>
-              {tc('back')}
-            </button>
-          </div>
-        </form>
-      )}
+      {panel === 'status' && statusForm(false)}
+      {panel === 'correction' && statusForm(true)}
       {panel === 'hold' && reasonForm('hold', t('holdReason'), t('hold'))}
       {panel === 'revert' && reasonForm('revert', t('revertReason'), t('revert'))}
       {panel === 'cancel' && reasonForm('cancel', t('cancelReason'), t('cancel'))}
@@ -451,7 +477,9 @@ export function ShipmentDetail({ id }: { id: string }) {
                       <li key={e.id} className={`timeline-item kind-${e.kind}`}>
                         <div className="timeline-head">
                           <StatusBadge kind="shipment" status={e.status} />
-                          <span className="muted">{te(`eventKind_${e.kind}`)}</span>
+                          <span className="muted">
+                            {e.correction ? t('correctionEvent') : te(`eventKind_${e.kind}`)}
+                          </span>
                         </div>
                         <div className="muted">
                           {dateTime.format(new Date(e.occurredAt))}
