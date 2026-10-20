@@ -1010,7 +1010,18 @@
     "total": "Total",
     "feeAdded": "Fee recorded.",
     "feeRemoved": "Fee removed.",
-    "feesHint": "Fees are recorded with their currency only. They reach the accounts with the supplier bills."
+    "feesHint": "Fees are recorded with their currency only. They reach the accounts with the supplier bills.",
+    "brokerSupplier": "Broker (supplier)",
+    "noBrokerSupplier": "Not a supplier",
+    "brokerHint": "Choose the broker from the suppliers to show its bills here. Leave the broker name empty to use the supplier's name.",
+    "supplierCosts": "Supplier costs",
+    "noSupplierCosts": "No supplier bills for this shipment's customs.",
+    "bill": "Bill",
+    "supplier": "Supplier",
+    "charge": "Charge",
+    "fromBroker": "The file's broker",
+    "approvedTotal": "Approved total",
+    "supplierCostsHint": "Lines of supplier bills for this shipment that are customs charges or from the file's broker. They are the bills' own costs, shown here only: they are not added to the fees above, and nothing is posted from this page. Totals count approved bills; cancelled bills are left out."
   },
   "Transport": {
     "tripsTitle": "Trips",

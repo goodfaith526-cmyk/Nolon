@@ -74,6 +74,16 @@ export function feeTotals(
   return [...totals].map(([currency, amount]) => ({ currency, amount }));
 }
 
+/**
+ * Supplier cost totals per currency for the customs file (group Z2): approved bills only, since a
+ * draft may still change or be dropped. Kept apart from the fee totals: never added to them.
+ */
+export function costTotals(
+  lines: readonly { billStatus: 'DRAFT' | 'APPROVED'; currency: CurrencyCode; amount: Decimal }[],
+): { currency: CurrencyCode; amount: Decimal }[] {
+  return feeTotals(lines.filter((l) => l.billStatus === 'APPROVED'));
+}
+
 /** Days from submission to clearance of a cleared file; null until both dates are known. */
 export function clearanceDays(submittedOn: string | null, clearedOn: string | null): number | null {
   if (!submittedOn || !clearedOn) return null;

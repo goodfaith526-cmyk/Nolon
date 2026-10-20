@@ -4,6 +4,7 @@ import {
   clearanceDays,
   clearanceMoment,
   clearanceProblem,
+  costTotals,
   shipmentStepsForFile,
   daysOpen,
   feeTotals,
@@ -50,6 +51,26 @@ describe('fees', () => {
       ['SDG', '1000.3'],
       ['USD', '50'],
     ]);
+  });
+});
+
+describe('costTotals (group Z2)', () => {
+  it('adds up approved bill lines per currency; drafts are left out of the totals', () => {
+    const totals = costTotals([
+      { billStatus: 'APPROVED', currency: 'USD', amount: dec('120.50') },
+      { billStatus: 'DRAFT', currency: 'USD', amount: dec('999') },
+      { billStatus: 'APPROVED', currency: 'SDG', amount: dec('3000') },
+      { billStatus: 'APPROVED', currency: 'USD', amount: dec('0.50') },
+    ]);
+    expect(totals.map((t) => [t.currency, t.amount.toFixed()])).toEqual([
+      ['USD', '121'],
+      ['SDG', '3000'],
+    ]);
+  });
+
+  it('has no totals with only drafts or no lines', () => {
+    expect(costTotals([{ billStatus: 'DRAFT', currency: 'USD', amount: dec('5') }])).toEqual([]);
+    expect(costTotals([])).toEqual([]);
   });
 });
 

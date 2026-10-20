@@ -34,6 +34,6 @@ import { SuppliersService } from './suppliers.service.js';
     SupplierPaymentsService,
     PayablesReportsService,
   ],
-  exports: [PayablesReportsService, SuppliersService],
+  exports: [PayablesReportsService, SupplierBillsService, SuppliersService],
 })
 export class PayablesModule {}
