@@ -11,6 +11,7 @@ import {
   type PermissionModule,
   type Role,
 } from './auth.js';
+import { seesCustomsCosts } from './customs.js';
 
 const ACTIONS_BY_LEVEL = {
   F: ['view', 'create', 'update', 'approve', 'cancel'],
@@ -117,6 +118,16 @@ describe('permission matrix (annex A)', () => {
     expect(can('SALES', 'consolidation:view')).toBe(false);
     expect(can('SALES', 'consolidation:update')).toBe(false);
     expect(can('BRANCH_MANAGER', 'container_booking:create')).toBe(false);
+  });
+});
+
+describe('customs costs (group Z2)', () => {
+  it('only roles that see shipment profitability see supplier costs on the customs file', () => {
+    const sees = (role: Role) => seesCustomsCosts((p) => can(role, p));
+    expect(ROLES.filter(sees)).toEqual(ROLES.filter((r) => can(r, 'shipment_profitability:view')));
+    expect(sees('CUSTOMS')).toBe(false);
+    expect(sees('SALES')).toBe(false);
+    expect(sees('FINANCE')).toBe(true);
   });
 });
 

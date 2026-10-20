@@ -505,6 +505,7 @@ describe('customs file moves the shipment (D1)', () => {
     const changed = vi.fn();
     api.mockImplementation((path: string, init?: { method: string }) => {
       if (path === '/shipments/s1') return Promise.resolve(shipment({ status: 'CUSTOMS_CLEARED' }));
+      if (path === '/shipments/s1/customs/brokers') return Promise.resolve([]);
       if (init?.method === 'PUT') {
         return Promise.resolve({
           clearance: {
@@ -539,5 +540,93 @@ describe('customs file moves the shipment (D1)', () => {
     );
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ status: 'CUSTOMS_CLEARED' }));
     expect(shows('savedAndMoved')).toBe(true);
+  });
+});
+
+describe('customs broker and supplier costs (group Z2)', () => {
+  const file = (overrides: object = {}) => ({
+    clearance: {
+      status: 'PENDING',
+      declarationNumber: null,
+      brokerName: 'Old Broker Co',
+      brokerSupplierId: 'sup-old',
+      brokerSupplierName: 'Old Broker Co',
+      submittedOn: null,
+      clearedOn: null,
+      note: null,
+      updatedByName: 'x',
+      updatedAt: '2026-10-19T08:00:00Z',
+    },
+    fees: [],
+    totals: [],
+    showsCost: false,
+    costLines: null,
+    costTotals: null,
+    actions: { canEdit: true, canAddFee: false, canRemoveFee: false },
+    ...overrides,
+  });
+
+  it('picks the broker from the suppliers and keeps a deactivated one selectable', async () => {
+    api.mockImplementation((path: string) => {
+      if (path === '/shipments/s1/customs/brokers') {
+        return Promise.resolve([{ id: 'sup-1', name: 'Port Brokers' }]);
+      }
+      if (path === '/shipments/s1') return Promise.resolve(shipment());
+      return Promise.resolve(file());
+    });
+    await render(<ShipmentCustoms shipment={shipment()} onShipmentChange={() => {}} />);
+    await click(button('edit'));
+    const picker = control<HTMLSelectElement>('brokerSupplier');
+    // The linked broker is no longer active (not in the list), so it is added and stays selected.
+    expect([...picker.options].map((o) => o.value)).toEqual(['', 'sup-old', 'sup-1']);
+    expect(picker.value).toBe('sup-old');
+    change(picker, 'sup-1');
+    act(() => {
+      document.querySelector('form')?.requestSubmit();
+    });
+    await flush();
+    expect(api).toHaveBeenCalledWith(
+      '/shipments/s1/customs',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.objectContaining({ brokerSupplierId: 'sup-1' }) as unknown,
+      }),
+    );
+  });
+
+  it('shows supplier costs apart from the fees only when the user sees costs', async () => {
+    api.mockResolvedValue(file());
+    await render(<ShipmentCustoms shipment={shipment()} onShipmentChange={() => {}} />);
+    expect(shows('supplierCosts')).toBe(false);
+    act(() => root.unmount());
+
+    api.mockResolvedValue(
+      file({
+        showsCost: true,
+        costLines: [
+          {
+            billId: 'b1',
+            billNumber: 'NOL-SB-2026-000001',
+            billStatus: 'APPROVED',
+            billDate: '2026-10-10',
+            supplierName: 'Port Brokers',
+            supplierReference: 'PB-77',
+            fromBroker: true,
+            lineNo: 1,
+            chargeTypeCode: 'CUSTOMS',
+            description: null,
+            amount: '250.5',
+            currency: 'USD',
+          },
+        ],
+        costTotals: [{ currency: 'USD', amount: '250.5' }],
+      }),
+    );
+    await render(<ShipmentCustoms shipment={shipment()} onShipmentChange={() => {}} />);
+    expect(shows('supplierCosts')).toBe(true);
+    expect(shows('NOL-SB-2026-000001')).toBe(true);
+    expect(shows('fromBroker')).toBe(true);
+    expect(shows('approvedTotal')).toBe(true);
+    expect(shows('noFees')).toBe(true);
   });
 });

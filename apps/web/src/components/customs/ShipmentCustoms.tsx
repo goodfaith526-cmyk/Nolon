@@ -2,6 +2,7 @@
 
 import {
   CUSTOMS_STATUSES,
+  type CustomsBrokerOptionDto,
   type CustomsClearanceRequest,
   type CustomsFeeRequest,
   type CustomsStatus,
@@ -22,7 +23,9 @@ import { StatusBadge } from '../StatusBadge';
  * The shipment's customs file: clearance status, declaration number, broker, dates, notes and
  * fees. Fees are recorded only (no journal entry). Saving the file moves the shipment to
  * customs in progress or cleared when the state machine allows it (the API does this). Only the
- * file sets those statuses (functional review Z1): there are no manual buttons for them.
+ * file sets those statuses (functional review Z1): there are no manual buttons for them. The
+ * broker can be linked to a supplier; those who see costs also see the supplier bill lines that
+ * are the shipment's customs costs, listed apart from the fees (group Z2).
  */
 export function ShipmentCustoms({
   shipment,
@@ -39,6 +42,7 @@ export function ShipmentCustoms({
   const failure = useFailureText();
   const [data, setData] = useState<ShipmentCustomsDto | null>(null);
   const [editing, setEditing] = useState(false);
+  const [brokers, setBrokers] = useState<CustomsBrokerOptionDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const shipmentId = shipment.id;
@@ -50,6 +54,14 @@ export function ShipmentCustoms({
   }, [shipmentId, failure]);
 
   useEffect(load, [load]);
+
+  // The broker choices, fetched when the form opens (only those who edit the file may list them).
+  useEffect(() => {
+    if (!editing) return;
+    api<CustomsBrokerOptionDto[]>(`/shipments/${shipmentId}/customs/brokers`)
+      .then(setBrokers)
+      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+  }, [editing, shipmentId, failure]);
 
   async function run<T>(action: () => Promise<T>, success: string): Promise<T | null> {
     setBusy(true);
@@ -74,6 +86,7 @@ export function ShipmentCustoms({
       status: field(f, 'status') as CustomsStatus,
       declarationNumber: text('declarationNumber'),
       brokerName: text('brokerName'),
+      brokerSupplierId: text('brokerSupplierId'),
       submittedOn: text('submittedOn'),
       clearedOn: text('clearedOn'),
       note: text('note'),
@@ -139,6 +152,13 @@ export function ShipmentCustoms({
   const clearance = data?.clearance ?? null;
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
   const currencies = (master?.currencies ?? []).filter((c) => c.isActive);
+  // A linked broker deactivated since stays selectable, so saving the file keeps it.
+  const brokerChoices =
+    clearance?.brokerSupplierId &&
+    clearance.brokerSupplierName &&
+    !brokers.some((b) => b.id === clearance.brokerSupplierId)
+      ? [{ id: clearance.brokerSupplierId, name: clearance.brokerSupplierName }, ...brokers]
+      : brokers;
 
   return (
     <div className="panel">
@@ -185,6 +205,21 @@ export function ShipmentCustoms({
               />
             </label>
             <label className="field">
+              <span>{t('brokerSupplier')}</span>
+              <select
+                key={brokerChoices.length}
+                name="brokerSupplierId"
+                defaultValue={clearance?.brokerSupplierId ?? ''}
+              >
+                <option value="">{t('noBrokerSupplier')}</option>
+                {brokerChoices.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
               <span>{t('brokerName')}</span>
               <input name="brokerName" maxLength={200} defaultValue={clearance?.brokerName ?? ''} />
             </label>
@@ -201,6 +236,7 @@ export function ShipmentCustoms({
             <span>{t('note')}</span>
             <textarea name="note" maxLength={2000} defaultValue={clearance?.note ?? ''} />
           </label>
+          <p className="muted">{t('brokerHint')}</p>
           <p className="muted">{t('clearedHint')}</p>
           <p className="muted">{t('movesShipmentHint')}</p>
           <div className="actions">
@@ -220,6 +256,12 @@ export function ShipmentCustoms({
           <dd dir="ltr">{clearance.declarationNumber ?? '—'}</dd>
           <dt>{t('brokerName')}</dt>
           <dd>{clearance.brokerName ?? '—'}</dd>
+          {clearance.brokerSupplierName && (
+            <>
+              <dt>{t('brokerSupplier')}</dt>
+              <dd>{clearance.brokerSupplierName}</dd>
+            </>
+          )}
           <dt>{t('submittedOn')}</dt>
           <dd dir="ltr">{clearance.submittedOn ?? '—'}</dd>
           <dt>{t('clearedOn')}</dt>
@@ -331,6 +373,67 @@ export function ShipmentCustoms({
             </table>
           )}
           <p className="muted panel-body">{t('feesHint')}</p>
+          {data.showsCost && data.costLines && (
+            <>
+              <h3 className="panel-body">{t('supplierCosts')}</h3>
+              {data.costLines.length === 0 ? (
+                <p className="empty">{t('noSupplierCosts')}</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t('bill')}</th>
+                      <th>{t('supplier')}</th>
+                      <th>{t('charge')}</th>
+                      <th>{t('amount')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.costLines.map((l) => (
+                      <tr key={`${l.billId}-${l.lineNo}`}>
+                        <td>
+                          <bdi dir="ltr">{l.billNumber ?? '—'}</bdi>{' '}
+                          <StatusBadge kind="supplierBill" status={l.billStatus} />
+                          <div className="muted" dir="ltr">
+                            {l.billDate}
+                          </div>
+                        </td>
+                        <td>
+                          {l.supplierName}
+                          {l.fromBroker && <div className="muted">{t('fromBroker')}</div>}
+                          {l.supplierReference && (
+                            <div className="muted" dir="ltr">
+                              {l.supplierReference}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <bdi dir="ltr">{l.chargeTypeCode ?? '—'}</bdi>
+                          {l.description && <div className="muted">{l.description}</div>}
+                        </td>
+                        <td dir="ltr">
+                          <Money value={l.amount} currency={l.currency} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    {(data.costTotals ?? []).map((total) => (
+                      <tr key={total.currency}>
+                        <th>{t('approvedTotal')}</th>
+                        <th />
+                        <th />
+                        <th dir="ltr">
+                          <Money value={total.amount} currency={total.currency} />
+                        </th>
+                      </tr>
+                    ))}
+                  </tfoot>
+                </table>
+              )}
+              <p className="muted panel-body">{t('supplierCostsHint')}</p>
+            </>
+          )}
         </>
       )}
     </div>

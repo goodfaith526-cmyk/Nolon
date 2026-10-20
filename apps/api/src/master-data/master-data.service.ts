@@ -1,12 +1,14 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
   CodeNameDto,
   CodeNameInput,
+  CodeNameUpdate,
   CurrencyDto,
   LocationDto,
   LocationInput,
@@ -14,19 +16,35 @@ import type {
   MasterDataDto,
   RouteMatch,
 } from '@nolon/shared';
-import type {
-  ChargeType,
-  ContainerType,
-  DocumentType,
-  Location,
+import { AuditService, changedFields, codeEntityId } from '../audit/audit.service.js';
+import type { AuthUser } from '../auth/auth-user.js';
+import {
   Prisma,
+  type ChargeType,
+  type ContainerType,
+  type DocumentType,
+  type Location,
 } from '../generated/prisma/client.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RouteFilters } from '../common/list-filters.js';
-import { fieldRefusal } from '../common/validation.js';
+import { codedRefusal, fieldRefusal } from '../common/validation.js';
 
 type Tx = Prisma.TransactionClient;
+
+/** The master data kept by code that the master data screen edits here (currencies have theirs). */
+export type CodeType = 'CONTAINER_TYPE' | 'CHARGE_TYPE' | 'DOCUMENT_TYPE';
+
+type CodeRow = ContainerType | ChargeType | DocumentType;
+
+/** The fields the audit log shows for a code type, in this order. */
+const AUDITED_FIELDS = ['code', 'nameEn', 'nameAr', 'isActive'] as const;
+
+const CODE_TYPE_NAMES: Record<CodeType, string> = {
+  CONTAINER_TYPE: 'Container type',
+  CHARGE_TYPE: 'Charge type',
+  DOCUMENT_TYPE: 'Document type',
+};
 
 /**
  * Ports and cities, container types, charge types and document types (plus the currency master, read through
@@ -35,7 +53,10 @@ type Tx = Prisma.TransactionClient;
  */
 @Injectable()
 export class MasterDataService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async all(): Promise<MasterDataDto> {
     const [branches, locations, containerTypes, chargeTypes, documentTypes, currencies] =
@@ -133,29 +154,81 @@ export class MasterDataService {
     }
   }
 
-  async upsertContainerType(input: CodeNameInput): Promise<CodeNameDto> {
-    const { code, ...fields } = input;
-    return toCodeNameDto(
-      await this.prisma.containerType.upsert({
-        where: { code },
-        create: input,
-        update: fields,
-      }),
-    );
+  /**
+   * A new, active container, charge or document type, in the audit log. Its code never changes
+   * afterwards (other records name it).
+   */
+  async createCodeType(user: AuthUser, type: CodeType, input: CodeNameInput): Promise<CodeNameDto> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = await codeTable(tx, type).create(input);
+        await this.logCodeType(tx, user, type, 'CREATED', null, created);
+        return toCodeNameDto(created);
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'MASTER_CODE_TAKEN',
+          `${CODE_TYPE_NAMES[type]} ${input.code} already exists`,
+          { code: input.code },
+        );
+      }
+      throw error;
+    }
   }
 
-  async upsertChargeType(input: CodeNameInput): Promise<CodeNameDto> {
-    const { code, ...fields } = input;
-    return toCodeNameDto(
-      await this.prisma.chargeType.upsert({ where: { code }, create: input, update: fields }),
-    );
+  /** Renames a container, charge or document type (the code stays). */
+  async updateCodeType(
+    user: AuthUser,
+    type: CodeType,
+    code: string,
+    input: CodeNameUpdate,
+  ): Promise<CodeNameDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await lockCodeType(tx, type, code);
+      const after = await codeTable(tx, type).update(code, input);
+      await this.logCodeType(tx, user, type, 'UPDATED', before, after);
+      return toCodeNameDto(after);
+    });
   }
 
-  async upsertDocumentType(input: CodeNameInput): Promise<CodeNameDto> {
-    const { code, ...fields } = input;
-    return toCodeNameDto(
-      await this.prisma.documentType.upsert({ where: { code }, create: input, update: fields }),
-    );
+  /**
+   * Deactivates or reactivates a container, charge or document type. Records that already name it
+   * keep it and still read; new ones are refused while it is inactive (requireContainerType,
+   * requireChargeType, requireDocumentType and the like).
+   */
+  async setCodeTypeActive(
+    user: AuthUser,
+    type: CodeType,
+    code: string,
+    isActive: boolean,
+  ): Promise<CodeNameDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await lockCodeType(tx, type, code);
+      if (before.isActive === isActive) return toCodeNameDto(before);
+      const after = await codeTable(tx, type).update(code, { isActive });
+      await this.logCodeType(tx, user, type, 'UPDATED', before, after);
+      return toCodeNameDto(after);
+    });
+  }
+
+  private async logCodeType(
+    tx: Tx,
+    user: AuthUser,
+    type: CodeType,
+    action: 'CREATED' | 'UPDATED',
+    before: CodeRow | null,
+    after: CodeRow,
+  ): Promise<void> {
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: type,
+      entityId: codeEntityId(type, after.code),
+      reference: `${after.code} ${after.nameEn}`,
+      action,
+      changes: changedFields(before, after, AUDITED_FIELDS),
+    });
   }
 
   /**
@@ -243,6 +316,57 @@ export class MasterDataService {
       throw new BadRequestException(`Unknown or inactive document type: ${code}`);
     return type;
   }
+}
+
+/** The same few writes on each of the three code tables (their rows have the same fields). */
+interface CodeTable {
+  create(data: CodeNameInput): Promise<CodeRow>;
+  update(code: string, data: CodeNameUpdate & { isActive?: boolean }): Promise<CodeRow>;
+  find(code: string): Promise<CodeRow | null>;
+}
+
+function codeTable(tx: Tx, type: CodeType): CodeTable {
+  switch (type) {
+    case 'CONTAINER_TYPE':
+      return {
+        create: (data) => tx.containerType.create({ data }),
+        update: (code, data) => tx.containerType.update({ where: { code }, data }),
+        find: (code) => tx.containerType.findUnique({ where: { code } }),
+      };
+    case 'CHARGE_TYPE':
+      return {
+        create: (data) => tx.chargeType.create({ data }),
+        update: (code, data) => tx.chargeType.update({ where: { code }, data }),
+        find: (code) => tx.chargeType.findUnique({ where: { code } }),
+      };
+    case 'DOCUMENT_TYPE':
+      return {
+        create: (data) => tx.documentType.create({ data }),
+        update: (code, data) => tx.documentType.update({ where: { code }, data }),
+        find: (code) => tx.documentType.findUnique({ where: { code } }),
+      };
+  }
+}
+
+/** Table names for the row lock below: fixed values, never request input. */
+const CODE_TABLE_NAMES: Record<CodeType, string> = {
+  CONTAINER_TYPE: 'container_types',
+  CHARGE_TYPE: 'charge_types',
+  DOCUMENT_TYPE: 'document_types',
+};
+
+/**
+ * The code type's row locked for update until the caller commits, read after the lock, so two
+ * edits run one after the other and each logs the values it really changed. 404 when missing.
+ */
+async function lockCodeType(tx: Tx, type: CodeType, code: string): Promise<CodeRow> {
+  const table = Prisma.raw(`"${CODE_TABLE_NAMES[type]}"`);
+  const rows = await tx.$queryRaw<{ code: string }[]>(
+    Prisma.sql`SELECT "code" FROM ${table} WHERE "code" = ${code} FOR UPDATE`,
+  );
+  const row = rows.length > 0 ? await codeTable(tx, type).find(code) : null;
+  if (!row) throw new NotFoundException(`${CODE_TYPE_NAMES[type]} not found`);
+  return row;
 }
 
 /**

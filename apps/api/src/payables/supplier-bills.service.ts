@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type {
   BillableTripDto,
+  BookingService,
   CreateSupplierBillRequest,
   OpeningSupplierItemRequest,
   Page,
@@ -65,6 +66,22 @@ export interface SupplierBillFilters extends PageQuery {
 }
 
 type Tx = Prisma.TransactionClient;
+
+/** A line of a draft or approved bill charging a shipment, as shipmentCostLines returns it. */
+export interface ShipmentCostLine {
+  billId: string;
+  billNumber: string | null;
+  billStatus: 'DRAFT' | 'APPROVED';
+  billDate: string;
+  supplierId: string;
+  supplierName: string;
+  supplierReference: string | null;
+  lineNo: number;
+  chargeTypeCode: string | null;
+  description: string | null;
+  amount: Decimal;
+  currency: string;
+}
 
 const details = {
   supplier: { select: { name: true } },
@@ -170,6 +187,59 @@ export class SupplierBillsService {
 
   async get(user: AuthUser, id: string): Promise<SupplierBillDto> {
     return toDto(await this.findScoped(user, id), user);
+  }
+
+  /**
+   * The lines of the user's draft and approved bills (never cancelled; bills of the user's
+   * branches only) that charge `shipmentId` with a charge of `service`, or come from `supplierId`
+   * (the customs file's broker, group Z2). Read only: the caller shows them as they are, and adds
+   * them to nothing else.
+   */
+  async shipmentCostLines(
+    user: AuthUser,
+    shipmentId: string,
+    match: { service: BookingService; supplierId: string | null },
+  ): Promise<ShipmentCostLine[]> {
+    const lines = await this.prisma.supplierBillLine.findMany({
+      where: {
+        shipmentId,
+        bill: { ...branchScope(user), status: { in: ['DRAFT', 'APPROVED'] } },
+        OR: [
+          { chargeType: { service: match.service } },
+          ...(match.supplierId ? [{ bill: { supplierId: match.supplierId } }] : []),
+        ],
+      },
+      include: {
+        bill: {
+          select: {
+            id: true,
+            number: true,
+            status: true,
+            billDate: true,
+            supplierId: true,
+            supplierReference: true,
+            currency: true,
+            supplier: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ bill: { billDate: 'asc' } }, { bill: { createdAt: 'asc' } }, { lineNo: 'asc' }],
+    });
+    return lines.map((l) => ({
+      billId: l.bill.id,
+      billNumber: l.bill.number,
+      // Narrowed by the query: cancelled bills are left out.
+      billStatus: l.bill.status === 'APPROVED' ? ('APPROVED' as const) : ('DRAFT' as const),
+      billDate: fromDbDate(l.bill.billDate),
+      supplierId: l.bill.supplierId,
+      supplierName: l.bill.supplier.name,
+      supplierReference: l.bill.supplierReference,
+      lineNo: l.lineNo,
+      chargeTypeCode: l.chargeTypeCode,
+      description: l.description,
+      amount: l.amount,
+      currency: l.bill.currency,
+    }));
   }
 
   /** Trips a bill of the supplier can settle (rule 11a), for the bill form. */

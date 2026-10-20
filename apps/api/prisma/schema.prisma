@@ -1777,6 +1777,9 @@ model CustomsClearance {
   /// Declaration or file number at customs.
   declarationNumber String?       @map("declaration_number") @db.VarChar(50)
   brokerName        String?       @map("broker_name") @db.VarChar(200)
+  /// The broker as a supplier, when it is one (group Z2): the file shows that supplier's bills
+  /// for the shipment next to its fees. brokerName stays for brokers who are not suppliers.
+  brokerSupplierId  String?       @map("broker_supplier_id") @db.Uuid
   submittedOn       DateTime?     @map("submitted_on") @db.Date
   clearedOn         DateTime?     @map("cleared_on") @db.Date
   note              String?
@@ -1784,11 +1787,13 @@ model CustomsClearance {
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment  Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  updatedBy User     @relation("CustomsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  branch         Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment       Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  updatedBy      User      @relation("CustomsUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  brokerSupplier Supplier? @relation(fields: [brokerSupplierId], references: [id], onDelete: Restrict)
 
   @@index([branchId])
+  @@index([brokerSupplierId])
   @@map("customs_clearances")
 }
 
@@ -2231,11 +2236,12 @@ model Supplier {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  createdBy    User              @relation("SupplierCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy    User               @relation("SupplierCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   carriers     Carrier[]
   bills        SupplierBill[]
   payments     SupplierPayment[]
   journalLines JournalLine[]
+  customsFiles CustomsClearance[]
 
   @@map("suppliers")
 }
@@ -2500,10 +2506,14 @@ model AuditEvent {
   branchId   String?     @map("branch_id") @db.Uuid
   userId     String?     @map("user_id") @db.Uuid
   source     EventSource
-  /// RATE, CUSTOMER or USER (AuditEntity).
+  /// RATE, CUSTOMER, USER, or a master data entry: CONTAINER_TYPE, CHARGE_TYPE, DOCUMENT_TYPE,
+  /// CURRENCY (AuditEntity).
   entity     String      @db.VarChar(30)
+  /// A master data entry, keyed by code, has a uuid derived from its entity and code
+  /// (codeEntityId).
   entityId   String      @map("entity_id") @db.Uuid
-  /// What the record is called in the log (a customer's name, a rate's route and charge).
+  /// What the record is called in the log (a customer's name, a rate's route and charge, a
+  /// master data entry's code).
   reference  String      @db.VarChar(300)
   /// CREATED, UPDATED, APPROVED, CANCELLED (AuditAction).
   action     String      @db.VarChar(20)

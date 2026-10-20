@@ -1,14 +1,33 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import {
   LOCATION_KINDS,
   type CodeNameDto,
+  type CurrencyDto,
   type LocationDto,
   type MasterDataDto,
 } from '@nolon/shared';
 import { z } from 'zod';
-import { RequirePermission, AgentReadable } from '../auth/decorators.js';
-import { countryCode, parse, requiredText } from '../common/validation.js';
-import { MasterDataService } from './master-data.service.js';
+import type { AuthUser } from '../auth/auth-user.js';
+import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import {
+  clearableText,
+  countryCode,
+  optionalText,
+  parse,
+  requiredText,
+} from '../common/validation.js';
+import { CurrenciesService } from '../currencies/currencies.service.js';
+import { MasterDataService, type CodeType } from './master-data.service.js';
 
 const code = (max: number) =>
   z
@@ -31,34 +50,61 @@ const locationBody = z
   })
   .strict();
 
-const codeNameBody = (max: number) =>
-  z
-    .object({
-      code: code(max),
-      nameEn: requiredText(200),
-      nameAr: requiredText(200),
-      isActive: z.boolean().optional(),
-    })
-    .strict();
-
 /** Document type codes are words joined by underscores, e.g. COMMERCIAL_INVOICE. */
-const documentTypeBody = z
+const documentTypeCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9]+(_[A-Z0-9]+)*$/)
+  .max(30);
+
+const CODES: Record<CodeType, z.ZodType<string>> = {
+  CONTAINER_TYPE: code(10),
+  CHARGE_TYPE: code(20),
+  DOCUMENT_TYPE: documentTypeCode,
+};
+
+const names = {
+  nameEn: requiredText(200),
+  nameAr: requiredText(200),
+};
+
+/** A new entry: it starts active (deactivate it afterwards). */
+const codeNameBody = (type: CodeType) => z.object({ code: CODES[type], ...names }).strict();
+
+/** An edit names only what may change: the code is fixed (strict, so `code` is a 400). */
+const codeNameUpdate = z.object(names).partial().strict();
+
+const currencyBody = z
   .object({
     code: z
       .string()
       .trim()
       .toUpperCase()
-      .regex(/^[A-Z0-9]+(_[A-Z0-9]+)*$/)
-      .max(30),
-    nameEn: requiredText(200),
-    nameAr: requiredText(200),
-    isActive: z.boolean().optional(),
+      .regex(/^[A-Z]{3}$/),
+    ...names,
+    symbol: optionalText(8),
+    decimalPlaces: z.number().int().min(0).max(4),
   })
   .strict();
 
+/** Code and decimal places are fixed once created: amounts were rounded with them. */
+const currencyUpdate = z
+  .object({ ...names, symbol: clearableText(8) })
+  .partial()
+  .strict();
+
+/** The code in a route, as stored (upper case). */
+function codeParam(value: string): string {
+  return value.trim().toUpperCase();
+}
+
 @Controller('master-data')
 export class MasterDataController {
-  constructor(private readonly masterData: MasterDataService) {}
+  constructor(
+    private readonly masterData: MasterDataService,
+    private readonly currencies: CurrenciesService,
+  ) {}
 
   @AgentReadable()
   @Get()
@@ -82,21 +128,163 @@ export class MasterDataController {
     return this.masterData.updateLocation(id, parse(locationBody.partial(), body));
   }
 
-  @Put('container-types')
-  @RequirePermission('master_data:create', 'master_data:update')
-  upsertContainerType(@Body() body: unknown): Promise<CodeNameDto> {
-    return this.masterData.upsertContainerType(parse(codeNameBody(10), body));
+  // Container, charge and document types, and currencies: add, rename, deactivate, reactivate.
+  // Only the Administrator holds master_data:create and :update; every change is in the audit log.
+
+  @Post('container-types')
+  @RequirePermission('master_data:create')
+  createContainerType(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CodeNameDto> {
+    return this.createCodeType(user, 'CONTAINER_TYPE', body);
   }
 
-  @Put('document-types')
-  @RequirePermission('master_data:create', 'master_data:update')
-  upsertDocumentType(@Body() body: unknown): Promise<CodeNameDto> {
-    return this.masterData.upsertDocumentType(parse(documentTypeBody, body));
+  @Patch('container-types/:code')
+  @RequirePermission('master_data:update')
+  updateContainerType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.updateCodeType(user, 'CONTAINER_TYPE', code, body);
   }
 
-  @Put('charge-types')
-  @RequirePermission('master_data:create', 'master_data:update')
-  upsertChargeType(@Body() body: unknown): Promise<CodeNameDto> {
-    return this.masterData.upsertChargeType(parse(codeNameBody(20), body));
+  @Post('container-types/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivateContainerType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CONTAINER_TYPE', codeParam(code), false);
+  }
+
+  @Post('container-types/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivateContainerType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CONTAINER_TYPE', codeParam(code), true);
+  }
+
+  @Post('charge-types')
+  @RequirePermission('master_data:create')
+  createChargeType(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CodeNameDto> {
+    return this.createCodeType(user, 'CHARGE_TYPE', body);
+  }
+
+  @Patch('charge-types/:code')
+  @RequirePermission('master_data:update')
+  updateChargeType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.updateCodeType(user, 'CHARGE_TYPE', code, body);
+  }
+
+  @Post('charge-types/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivateChargeType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CHARGE_TYPE', codeParam(code), false);
+  }
+
+  @Post('charge-types/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivateChargeType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CHARGE_TYPE', codeParam(code), true);
+  }
+
+  @Post('document-types')
+  @RequirePermission('master_data:create')
+  createDocumentType(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CodeNameDto> {
+    return this.createCodeType(user, 'DOCUMENT_TYPE', body);
+  }
+
+  @Patch('document-types/:code')
+  @RequirePermission('master_data:update')
+  updateDocumentType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.updateCodeType(user, 'DOCUMENT_TYPE', code, body);
+  }
+
+  @Post('document-types/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivateDocumentType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'DOCUMENT_TYPE', codeParam(code), false);
+  }
+
+  @Post('document-types/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivateDocumentType(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'DOCUMENT_TYPE', codeParam(code), true);
+  }
+
+  @Post('currencies')
+  @RequirePermission('master_data:create')
+  createCurrency(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CurrencyDto> {
+    return this.currencies.create(user, parse(currencyBody, body));
+  }
+
+  @Patch('currencies/:code')
+  @RequirePermission('master_data:update')
+  updateCurrency(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<CurrencyDto> {
+    return this.currencies.update(user, codeParam(code), parse(currencyUpdate, body));
+  }
+
+  @Post('currencies/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivateCurrency(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CurrencyDto> {
+    return this.currencies.setActive(user, codeParam(code), false);
+  }
+
+  @Post('currencies/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivateCurrency(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CurrencyDto> {
+    return this.currencies.setActive(user, codeParam(code), true);
+  }
+
+  private createCodeType(user: AuthUser, type: CodeType, body: unknown): Promise<CodeNameDto> {
+    return this.masterData.createCodeType(user, type, parse(codeNameBody(type), body));
+  }
+
+  private updateCodeType(
+    user: AuthUser,
+    type: CodeType,
+    code: string,
+    body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.masterData.updateCodeType(user, type, codeParam(code), parse(codeNameUpdate, body));
   }
 }

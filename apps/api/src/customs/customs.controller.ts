@@ -1,5 +1,9 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
-import { CUSTOMS_STATUSES, type ShipmentCustomsDto } from '@nolon/shared';
+import {
+  CUSTOMS_STATUSES,
+  type CustomsBrokerOptionDto,
+  type ShipmentCustomsDto,
+} from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
@@ -18,6 +22,7 @@ const clearanceBody = z
     status: z.enum(CUSTOMS_STATUSES),
     declarationNumber: optionalText(50),
     brokerName: optionalText(200),
+    brokerSupplierId: z.uuid().nullish(),
     submittedOn: dateString.nullish(),
     clearedOn: dateString.nullish(),
     note: optionalText(2000),
@@ -56,6 +61,16 @@ export class CustomsController {
     @Body() body: unknown,
   ): Promise<ShipmentCustomsDto> {
     return this.customs.save(user, shipmentId, parse(clearanceBody, body));
+  }
+
+  /** The brokers the file can be linked to, for those who edit it (group Z2). */
+  @Get('brokers')
+  @RequirePermission('customs:update')
+  brokerOptions(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+  ): Promise<CustomsBrokerOptionDto[]> {
+    return this.customs.brokerOptions(user, shipmentId);
   }
 
   @Post('fees')

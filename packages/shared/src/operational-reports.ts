@@ -379,11 +379,12 @@ export interface TripsReportDto {
 // ---- 10. Audit log -----------------------------------------------------------------------------
 
 /**
- * There is no general audit table: the log is read from the records that already say who did
- * what and when (shipment events, warehouse movements, customs fees and files, journal entries,
- * invoices, receipts, credit notes, supplier bills and payments, general expenses, trips, trip
- * expenses, proofs of delivery and documents). Edits that leave no
- * such record (a customer's address, a draft's lines, a user's roles) are not in it.
+ * The log is read from the records that already say who did what and when (shipment events,
+ * warehouse movements, customs fees and files, journal entries, invoices, receipts, credit notes,
+ * supplier bills and payments, general expenses, trips, trip expenses, proofs of delivery and
+ * documents), plus the audit table for records that keep no history of their own (rates,
+ * customers, user accounts, and container, charge and document types and currencies). Edits that
+ * leave no such record (a draft's lines) are not in it.
  */
 export const AUDIT_ENTITIES = [
   'SHIPMENT',
@@ -403,6 +404,10 @@ export const AUDIT_ENTITIES = [
   'RATE',
   'CUSTOMER',
   'USER',
+  'CONTAINER_TYPE',
+  'CHARGE_TYPE',
+  'DOCUMENT_TYPE',
+  'CURRENCY',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -446,7 +451,8 @@ export interface AuditLogEntryDto {
   detail: string | null;
   /**
    * What changed, field by field, as text (codes, decimal strings, YYYY-MM-DD), when the record
-   * keeps it: a shipment's status, or the fields of a rate, customer or user. Absent otherwise.
+   * keeps it: a shipment's status, or the fields of a rate, customer, user or master data entry
+   * (container, charge and document types, currencies). Absent otherwise.
    */
   changes?: AuditChangeDto[];
   /** Through which channel the change came, when the record keeps it. */

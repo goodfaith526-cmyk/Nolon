@@ -74,7 +74,8 @@
     "alertSettings": "Alert days",
     "apiKeys": "API keys",
     "assistantDrafts": "Drafts from the assistant",
-    "locations": "Ports and cities"
+    "locations": "Ports and cities",
+    "masterData": "Master data"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -1013,7 +1014,18 @@
     "total": "Total",
     "feeAdded": "Fee recorded.",
     "feeRemoved": "Fee removed.",
-    "feesHint": "Fees are recorded with their currency only. They reach the accounts with the supplier bills."
+    "feesHint": "Fees are recorded with their currency only. They reach the accounts with the supplier bills.",
+    "brokerSupplier": "Broker (supplier)",
+    "noBrokerSupplier": "Not a supplier",
+    "brokerHint": "Choose the broker from the suppliers to show its bills here. Leave the broker name empty to use the supplier's name.",
+    "supplierCosts": "Supplier costs",
+    "noSupplierCosts": "No supplier bills for this shipment's customs.",
+    "bill": "Bill",
+    "supplier": "Supplier",
+    "charge": "Charge",
+    "fromBroker": "The file's broker",
+    "approvedTotal": "Approved total",
+    "supplierCostsHint": "Lines of supplier bills for this shipment that are customs charges or from the file's broker. They are the bills' own costs, shown here only: they are not added to the fees above, and nothing is posted from this page. Totals count approved bills; cancelled bills are left out."
   },
   "Transport": {
     "tripsTitle": "Trips",
@@ -1575,6 +1587,10 @@
     "entity_RATE": "Rate",
     "entity_CUSTOMER": "Customer",
     "entity_USER": "User account",
+    "entity_CONTAINER_TYPE": "Container type",
+    "entity_CHARGE_TYPE": "Charge type",
+    "entity_DOCUMENT_TYPE": "Document type",
+    "entity_CURRENCY": "Currency",
     "action_CREATED": "Created",
     "action_UPDATED": "Updated",
     "action_STATUS": "Status change",
@@ -2396,7 +2412,9 @@
     "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country.",
     "STATUS_SET_BY_RECORD": "This status is set by its own record (goods receipt, container, trip, customs file or proof of delivery), not by hand. A manager can record a correction with a reason.",
     "STATUS_CORRECTION_FORBIDDEN": "Only a user who can approve shipments may correct this status.",
-    "STATUS_CORRECTION_REASON_REQUIRED": "A correction needs a reason."
+    "STATUS_CORRECTION_REASON_REQUIRED": "A correction needs a reason.",
+    "MASTER_CODE_TAKEN": "The code {code} is already in use: choose another code.",
+    "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2417,5 +2435,28 @@
     "kind_BORDER": "Border point",
     "kind_OTHER": "Other",
     "countryFromCity": "The city's country: a place is in the country of its city."
+  },
+  "MasterData": {
+    "title": "Master data",
+    "hint": "Container types, charge types, document types and currencies. Deactivate an entry instead of deleting it: records that already use it keep it, and new ones cannot choose it until it is reactivated.",
+    "containerTypes": "Container types",
+    "chargeTypes": "Charge types",
+    "documentTypes": "Document types",
+    "currencies": "Currencies",
+    "add_containerTypes": "Add container type",
+    "add_chargeTypes": "Add charge type",
+    "add_documentTypes": "Add document type",
+    "add_currencies": "Add currency",
+    "code": "Code",
+    "codeFixed": "The code cannot be changed after it is saved.",
+    "name": "Name",
+    "nameAr": "Name (Arabic)",
+    "nameEn": "Name (English)",
+    "symbol": "Symbol",
+    "decimalPlaces": "Decimal places",
+    "decimalPlacesFixed": "Amounts are rounded to these places; they cannot be changed after the currency is saved.",
+    "none": "Nothing here yet.",
+    "createdNotice": "Added.",
+    "editTitle": "Edit {code}"
   }
 }

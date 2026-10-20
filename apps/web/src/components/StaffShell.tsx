@@ -46,6 +46,7 @@ interface NavLink {
     | 'fxRates'
     | 'periods'
     | 'locations'
+    | 'masterData'
     | 'users'
     | 'alertSettings'
     | 'apiKeys'
@@ -236,6 +237,12 @@ const NAV_SECTIONS: readonly {
         href: '/locations',
         label: 'locations',
         icon: 'globe',
+        permission: 'master_data:view',
+      },
+      {
+        href: '/master-data',
+        label: 'masterData',
+        icon: 'accounts',
         permission: 'master_data:view',
       },
       {

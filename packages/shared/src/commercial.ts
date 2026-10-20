@@ -175,11 +175,38 @@ export interface LocationInput {
   cityId?: string | null;
 }
 
+/**
+ * A new container, charge or document type (master data screen). It starts active; its code
+ * never changes after it is created.
+ */
 export interface CodeNameInput {
   code: string;
   nameEn: string;
   nameAr: string;
-  isActive?: boolean;
+}
+
+/** An edit of a container, charge or document type: its names only (the code is fixed). */
+export interface CodeNameUpdate {
+  nameEn?: string;
+  nameAr?: string;
+}
+
+/** A new currency. Its code and decimal places are fixed once it is created. */
+export interface CurrencyInput {
+  /** ISO 4217, three letters. */
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  symbol?: string | null;
+  /** Minor units (0 to 4). */
+  decimalPlaces: number;
+}
+
+/** An edit of a currency: its names and symbol only. */
+export interface CurrencyUpdate {
+  nameEn?: string;
+  nameAr?: string;
+  symbol?: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -652,6 +679,10 @@ export const FORM_REFUSALS = [
   'STATUS_SET_BY_RECORD',
   'STATUS_CORRECTION_FORBIDDEN',
   'STATUS_CORRECTION_REASON_REQUIRED',
+  // Master data screens: a code already in use (409, param `code`), and the base currency, which
+  // every journal entry balances in, stays active (param `code`).
+  'MASTER_CODE_TAKEN',
+  'BASE_CURRENCY_STAYS_ACTIVE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 
