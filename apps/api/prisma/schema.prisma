@@ -2506,10 +2506,14 @@ model AuditEvent {
   branchId   String?     @map("branch_id") @db.Uuid
   userId     String?     @map("user_id") @db.Uuid
   source     EventSource
-  /// RATE, CUSTOMER or USER (AuditEntity).
+  /// RATE, CUSTOMER, USER, or a master data entry: CONTAINER_TYPE, CHARGE_TYPE, DOCUMENT_TYPE,
+  /// CURRENCY (AuditEntity).
   entity     String      @db.VarChar(30)
+  /// A master data entry, keyed by code, has a uuid derived from its entity and code
+  /// (codeEntityId).
   entityId   String      @map("entity_id") @db.Uuid
-  /// What the record is called in the log (a customer's name, a rate's route and charge).
+  /// What the record is called in the log (a customer's name, a rate's route and charge, a
+  /// master data entry's code).
   reference  String      @db.VarChar(300)
   /// CREATED, UPDATED, APPROVED, CANCELLED (AuditAction).
   action     String      @db.VarChar(20)

@@ -32,7 +32,7 @@ import {
   seesTransportCosts,
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
-import { AuditService } from '../audit/audit.service.js';
+import { AUDITED_MASTER_DATA, AuditService } from '../audit/audit.service.js';
 import { sum } from '../accounting/report-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
@@ -540,7 +540,9 @@ export class OperationalReportsService {
       wants('EXPENSE') ? this.expenses.auditEntries(user, aq) : none,
       wants('TRIP', 'TRIP_EXPENSE', 'POD') ? this.trips.auditEntries(user, aq) : none,
       wants('DOCUMENT') ? this.documents.auditEntries(user, aq) : none,
-      wants('RATE', 'CUSTOMER', 'USER') ? this.audit.auditEntries(user, aq) : none,
+      wants('RATE', 'CUSTOMER', 'USER', ...AUDITED_MASTER_DATA)
+        ? this.audit.auditEntries(user, aq)
+        : none,
     ]);
     const merged = sources.flat().sort((a, b) => b.at.localeCompare(a.at));
     const users = new Map<string, string>();

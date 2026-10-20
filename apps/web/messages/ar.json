@@ -74,7 +74,8 @@
     "alertSettings": "مدد التنبيهات",
     "apiKeys": "مفاتيح API",
     "assistantDrafts": "مسودات المساعد",
-    "locations": "الموانئ والمدن"
+    "locations": "الموانئ والمدن",
+    "masterData": "البيانات الأساسية"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -1583,6 +1584,10 @@
     "entity_RATE": "سعر",
     "entity_CUSTOMER": "عميل",
     "entity_USER": "حساب مستخدم",
+    "entity_CONTAINER_TYPE": "نوع حاوية",
+    "entity_CHARGE_TYPE": "نوع رسم",
+    "entity_DOCUMENT_TYPE": "نوع مستند",
+    "entity_CURRENCY": "عملة",
     "action_CREATED": "إنشاء",
     "action_UPDATED": "تعديل",
     "action_STATUS": "تغيير حالة",
@@ -2400,7 +2405,9 @@
     "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك.",
     "BRANCH_REQUIRED": "اختر فرع هذه المسودة.",
     "BRANCH_MISMATCH": "هذا الفرع ليس فرع العميل أو الشحنة: المسودة تتبع فرعهما.",
-    "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها."
+    "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها.",
+    "MASTER_CODE_TAKEN": "الرمز {code} مستخدم من قبل: اختر رمزًا آخر.",
+    "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2421,5 +2428,28 @@
     "kind_BORDER": "نقطة حدود",
     "kind_OTHER": "أخرى",
     "countryFromCity": "دولة المدينة: الموقع في دولة مدينته."
+  },
+  "MasterData": {
+    "title": "البيانات الأساسية",
+    "hint": "أنواع الحاويات وأنواع الرسوم وأنواع المستندات والعملات. عطّل البند بدل حذفه: السجلات التي تستخدمه تحتفظ به، ولا يمكن اختياره في سجلات جديدة حتى يُعاد تفعيله.",
+    "containerTypes": "أنواع الحاويات",
+    "chargeTypes": "أنواع الرسوم",
+    "documentTypes": "أنواع المستندات",
+    "currencies": "العملات",
+    "add_containerTypes": "إضافة نوع حاوية",
+    "add_chargeTypes": "إضافة نوع رسم",
+    "add_documentTypes": "إضافة نوع مستند",
+    "add_currencies": "إضافة عملة",
+    "code": "الرمز",
+    "codeFixed": "لا يمكن تغيير الرمز بعد الحفظ.",
+    "name": "الاسم",
+    "nameAr": "الاسم (عربي)",
+    "nameEn": "الاسم (إنجليزي)",
+    "symbol": "الرمز المختصر",
+    "decimalPlaces": "الخانات العشرية",
+    "decimalPlacesFixed": "تُقرّب المبالغ إلى هذه الخانات، ولا يمكن تغييرها بعد حفظ العملة.",
+    "none": "لا يوجد شيء بعد.",
+    "createdNotice": "تمت الإضافة.",
+    "editTitle": "تعديل {code}"
   }
 }

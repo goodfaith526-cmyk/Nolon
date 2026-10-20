@@ -74,7 +74,8 @@
     "alertSettings": "Alert days",
     "apiKeys": "API keys",
     "assistantDrafts": "Drafts from the assistant",
-    "locations": "Ports and cities"
+    "locations": "Ports and cities",
+    "masterData": "Master data"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -1583,6 +1584,10 @@
     "entity_RATE": "Rate",
     "entity_CUSTOMER": "Customer",
     "entity_USER": "User account",
+    "entity_CONTAINER_TYPE": "Container type",
+    "entity_CHARGE_TYPE": "Charge type",
+    "entity_DOCUMENT_TYPE": "Document type",
+    "entity_CURRENCY": "Currency",
     "action_CREATED": "Created",
     "action_UPDATED": "Updated",
     "action_STATUS": "Status change",
@@ -2400,7 +2405,9 @@
     "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that.",
     "BRANCH_REQUIRED": "Choose the branch of this draft.",
     "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs.",
-    "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country."
+    "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country.",
+    "MASTER_CODE_TAKEN": "The code {code} is already in use: choose another code.",
+    "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2421,5 +2428,28 @@
     "kind_BORDER": "Border point",
     "kind_OTHER": "Other",
     "countryFromCity": "The city's country: a place is in the country of its city."
+  },
+  "MasterData": {
+    "title": "Master data",
+    "hint": "Container types, charge types, document types and currencies. Deactivate an entry instead of deleting it: records that already use it keep it, and new ones cannot choose it until it is reactivated.",
+    "containerTypes": "Container types",
+    "chargeTypes": "Charge types",
+    "documentTypes": "Document types",
+    "currencies": "Currencies",
+    "add_containerTypes": "Add container type",
+    "add_chargeTypes": "Add charge type",
+    "add_documentTypes": "Add document type",
+    "add_currencies": "Add currency",
+    "code": "Code",
+    "codeFixed": "The code cannot be changed after it is saved.",
+    "name": "Name",
+    "nameAr": "Name (Arabic)",
+    "nameEn": "Name (English)",
+    "symbol": "Symbol",
+    "decimalPlaces": "Decimal places",
+    "decimalPlacesFixed": "Amounts are rounded to these places; they cannot be changed after the currency is saved.",
+    "none": "Nothing here yet.",
+    "createdNotice": "Added.",
+    "editTitle": "Edit {code}"
   }
 }
