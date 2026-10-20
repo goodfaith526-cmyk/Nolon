@@ -249,6 +249,11 @@ export function TripForm() {
                   inputMode="decimal"
                   dir="ltr"
                   pattern={AMOUNT_PATTERN}
+                  // A cost entered is in the currency shown then: another branch no longer
+                  // changes it (Codex F94-2).
+                  onChange={() => {
+                    if (currencyChoice === null) setCurrency(currency);
+                  }}
                 />
               </label>
               <label className="field">

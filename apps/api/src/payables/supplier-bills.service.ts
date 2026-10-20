@@ -219,8 +219,9 @@ export class SupplierBillsService {
     existing: Prisma.SupplierBillGetPayload<{ include: { lines: true } }>,
     input: CreateSupplierBillRequest,
   ): Promise<SupplierBillDto> {
-    // A retry that left the due date out matches the date generated from the terms (C1).
-    const { paymentTermsDays } = await this.suppliers.requireSupplier(existing.supplierId);
+    // A retry that leaves the due date out asks for the date the first request got, whatever the
+    // supplier's terms are now: they may have changed since (C1, Codex F94-3). A due date that is
+    // sent must be the saved one.
     const same =
       !existing.isOpening &&
       existing.supplierId === input.supplierId &&
@@ -229,7 +230,9 @@ export class SupplierBillsService {
       existing.currency === input.currency &&
       sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(existing.billDate) === input.billDate &&
-      fromDbDate(existing.dueDate) === billDueDate(input, paymentTermsDays) &&
+      (input.dueDate === undefined ||
+        input.dueDate === null ||
+        fromDbDate(existing.dueDate) === input.dueDate) &&
       existing.supplierReference === (input.supplierReference ?? null) &&
       existing.notes === (input.notes ?? null) &&
       existing.lines.length === input.lines.length &&

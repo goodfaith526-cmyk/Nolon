@@ -96,8 +96,8 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
   const [supplierId, setSupplierId] = useState(bill?.supplierId ?? '');
   const [branchId, setBranchId] = useState(bill?.branchId ?? me.branches[0]?.id ?? '');
   // A new bill's currency is its branch's (functional review C2, C4), read from /auth/me and
-  // following the branch until the person picks one (null until then), which is kept. A carrier's
-  // trips may be in several currencies, so none of them is taken: the form offers each.
+  // following the branch until the person picks one or types an amount (null until then). A
+  // carrier's trips may be in several currencies, so none of them is taken: the form offers each.
   const [currencyChoice, setCurrencyChoice] = useState<string | null>(bill?.currency ?? null);
   const currency = currencyChoice ?? branchCurrency(me, branchId);
   // A new bill is dated today in its branch (C9), following the branch until a date is typed.
@@ -550,7 +550,12 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
                 dir="ltr"
                 pattern={AMOUNT_PATTERN}
                 value={l.amount}
-                onChange={(e) => update(l.key, { amount: e.target.value, copied: null })}
+                onChange={(e) => {
+                  update(l.key, { amount: e.target.value, copied: null });
+                  // A typed amount is in the currency shown then: another branch no longer
+                  // changes it (Codex F94-2).
+                  if (currencyChoice === null) setCurrencyChoice(currency);
+                }}
               />
             </label>
             {lines.length > 1 && (

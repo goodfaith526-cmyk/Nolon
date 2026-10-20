@@ -93,6 +93,10 @@ const rent = account({ id: 'rent', code: '5100', type: 'EXPENSE' });
 const expenses = account({ id: 'exp', code: '5000', type: 'EXPENSE', isPostable: false });
 let accounts: AccountDto[] = [];
 let invoices: Partial<CustomerInvoiceSummaryDto>[] = [];
+let split: { allocations: { invoiceId: string; amount: string }[]; unallocated: string } = {
+  allocations: [{ invoiceId: 'i1', amount: '40' }],
+  unallocated: '5',
+};
 
 async function flush() {
   await act(async () => {
@@ -145,15 +149,21 @@ beforeEach(() => {
   api.mockReset();
   accounts = [cashAed, cashSar, rent, expenses];
   invoices = [];
+  split = { allocations: [{ invoiceId: 'i1', amount: '40' }], unallocated: '5' };
   api.mockImplementation((path: string) => {
     if (path === '/accounting/accounts') return Promise.resolve(accounts);
-    if (path.startsWith('/customer-invoices')) return Promise.resolve({ items: invoices });
-    if (path.startsWith('/receipts/allocation-suggestion')) {
+    if (path.startsWith('/customer-invoices')) {
+      // Pages of 100, as the API serves them.
+      const page = Number(new URLSearchParams(path.split('?')[1]).get('page') ?? '1');
       return Promise.resolve({
-        allocations: [{ invoiceId: 'i1', amount: '40' }],
-        unallocated: '5',
+        items: invoices.slice((page - 1) * 100, page * 100),
+        total: invoices.length,
+        page,
+        pageSize: 100,
       });
     }
+    if (path.startsWith('/receipts/allocation-suggestion')) return Promise.resolve(split);
+    if (path === '/receipts') return Promise.resolve({ id: 'r1' });
     if (path.startsWith('/transport/')) return Promise.resolve([]);
     if (path === '/accounting/expense-categories') return Promise.resolve([]);
     if (path === '/accounting/settings') return Promise.resolve({ mappings: [], chargeTypes: [] });
@@ -192,6 +202,16 @@ describe('expense and supplier payment (functional review C4, C9)', () => {
     change(control('branch'), 'b1');
     expect(control<HTMLSelectElement>('currency').value).toBe('AED');
     expect(control<HTMLInputElement>('expenseDate').value).toBe('2026-10-01');
+  });
+
+  it('keeps an entered amount in its currency when the branch changes (Codex F94-2)', async () => {
+    accounts = [cashAed, cashSar];
+    await render(<ExpenseForm />);
+    change(control('amount'), '100');
+    change(control('branch'), 'b2');
+    expect(control<HTMLSelectElement>('currency').value).toBe('AED');
+    // The cash account stays one in the amount's currency, never the SAR one.
+    expect(control<HTMLSelectElement>('cashAccount').value).toBe('cash-aed');
   });
 
   it("starts a supplier payment in the branch's currency and today", async () => {
@@ -259,6 +279,72 @@ describe('receipt (functional review C3, C9)', () => {
   });
 });
 
+describe('receipt beyond the first page of invoices (Codex F94-1)', () => {
+  const invoice = (n: number) => ({
+    id: `i${n}`,
+    number: `i${n}`,
+    currency: 'SAR',
+    balance: '10',
+    total: '10',
+    invoiceDate: '2026-10-01',
+    dueDate: '2026-10-01',
+    shipmentNumber: null,
+  });
+
+  async function save() {
+    await act(async () => {
+      document
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const post = api.mock.calls.find(([path]) => path === '/receipts');
+    return (post?.[1] as { body: Record<string, unknown> } | undefined)?.body;
+  }
+
+  it('lists every open invoice and sends the share of one past the first 100', async () => {
+    invoices = Array.from({ length: 101 }, (_, n) => invoice(n + 1));
+    split = { allocations: [{ invoiceId: 'i101', amount: '10' }], unallocated: '0' };
+    await render(<ReceiptForm />);
+    click(document.querySelector('#pick-customer'));
+    await flush();
+    expect(document.querySelectorAll('input.amount-input')).toHaveLength(101);
+    expect(control<HTMLSelectElement>('currency').value).toBe('SAR');
+    change(control('amount'), '10');
+    click(button('distribute'));
+    await flush();
+    expect(await save()).toMatchObject({
+      currency: 'SAR',
+      amount: '10',
+      allocations: [{ invoiceId: 'i101', amount: '10' }],
+    });
+  });
+
+  it('refuses a split naming an invoice the form has not listed, instead of dropping it', async () => {
+    invoices = [invoice(1)];
+    split = { allocations: [{ invoiceId: 'i-new', amount: '10' }], unallocated: '0' };
+    await render(<ReceiptForm />);
+    click(document.querySelector('#pick-customer'));
+    await flush();
+    change(control('amount'), '10');
+    click(button('distribute'));
+    await flush();
+    const shares = [...document.querySelectorAll<HTMLInputElement>('input.amount-input')];
+    expect(shares.map((i) => i.value)).toEqual(['']);
+  });
+
+  it('keeps an amount entered before the invoices suggest a currency', async () => {
+    invoices = [invoice(1)];
+    await render(<ReceiptForm />);
+    change(control('currency'), '');
+    change(control('amount'), '10');
+    click(document.querySelector('#pick-customer'));
+    await flush();
+    expect(control<HTMLSelectElement>('currency').value).toBe('');
+    expect(document.body.textContent).toContain('currencySuggestionNotApplied');
+  });
+});
+
 describe('external trip (functional review C5)', () => {
   it("starts in the branch's currency, which stays choosable", async () => {
     await render(<TripForm />);
@@ -270,6 +356,14 @@ describe('external trip (functional review C5)', () => {
     change(currency() as HTMLSelectElement, 'USD');
     change(control('branch'), 'b1');
     expect(currency()?.value).toBe('USD');
+  });
+
+  it('keeps an entered cost in its currency when the branch changes (Codex F94-2)', async () => {
+    await render(<TripForm />);
+    click(document.querySelector('input[value="EXTERNAL"]'));
+    change(control('agreedCost'), '350');
+    change(control('branch'), 'b2');
+    expect(document.querySelector<HTMLSelectElement>('select[name="currency"]')?.value).toBe('AED');
   });
 });
 
