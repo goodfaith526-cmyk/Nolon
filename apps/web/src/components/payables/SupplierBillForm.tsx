@@ -8,6 +8,7 @@ import {
   type ExpenseCategoryDto,
   type Page,
   type SupplierBillDto,
+  type SupplierBillDueDateDto,
   type SupplierBillInput,
   type SupplierBillLineInput,
   type SupplierBillLineKind,
@@ -301,8 +302,18 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
         await api<SupplierBillDto>(`/supplier-bills/${bill.id}`, { method: 'PATCH', body: input });
         router.push(`/supplier-bills/${bill.id}`);
       } else {
+        // Left empty, the due date is the API's suggestion from the supplier's terms, sent as the
+        // request's own: a retry is then compared with what was asked for (Codex F94-3).
+        const due =
+          dueDate ||
+          (
+            await api<SupplierBillDueDateDto>(
+              `/supplier-bills/due-date?${new URLSearchParams({ supplierId, billDate }).toString()}`,
+            )
+          ).dueDate;
         const body: CreateSupplierBillRequest = {
           ...input,
+          dueDate: due,
           requestId: crypto.randomUUID(),
           supplierId,
         };
