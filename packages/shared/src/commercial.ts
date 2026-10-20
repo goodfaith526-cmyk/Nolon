@@ -511,6 +511,71 @@ export interface BookingFromQuotationRequest {
   items?: BookingItemInput[];
 }
 
+/**
+ * Where a suggested set of booking parties comes from: the parties of the customer's last booking
+ * that named any, or the customer's only party (as consignee) when it has exactly one.
+ */
+export const BOOKING_PARTY_SOURCES = ['LAST_BOOKING', 'ONLY_PARTY'] as const;
+export type BookingPartySource = (typeof BOOKING_PARTY_SOURCES)[number];
+
+/**
+ * GET /bookings/party-suggestion?customerId=: parties a new booking of this customer may start
+ * from. A suggestion only: the form shows its source, the person may change it, and the API checks
+ * on save that each party is the customer's. `source` null: nothing to suggest.
+ */
+export interface BookingPartySuggestionDto {
+  customerId: string;
+  source: BookingPartySource | null;
+  /** With LAST_BOOKING: the booking the parties come from. */
+  bookingId: string | null;
+  bookingNumber: string | null;
+  shipperId: string | null;
+  consigneeId: string | null;
+  notifyPartyId: string | null;
+}
+
+/**
+ * GET /bookings/from-quotation/:quotationId: what a booking made from this approved quotation
+ * starts from, for the person to review and save (POST /bookings/from-quotation/:quotationId).
+ * Nothing is created by reading it. Route, mode, load type and cargo come from the quotation and
+ * stay as they are; `items` holds the container lines the quotation prices per container (its
+ * rate card's container type and the line's whole quantity), never its other charges.
+ */
+export interface BookingFromQuotationPreviewDto {
+  quotationId: string;
+  quotationNumber: string;
+  branchId: string;
+  customerId: string;
+  customerName: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  cargoType: CargoType;
+  cargoDescription: string | null;
+  items: BookingItemInput[];
+  parties: BookingPartySuggestionDto;
+}
+
+/** Where a new quotation's default currency comes from. */
+export const QUOTATION_CURRENCY_SOURCES = ['CUSTOMER', 'BRANCH'] as const;
+export type QuotationCurrencySource = (typeof QUOTATION_CURRENCY_SOURCES)[number];
+
+/**
+ * GET /quotations/defaults?customerId=: values a new quotation for this customer starts from. The
+ * currency is the customer's preferred one when it is active, else its branch's; valid-until is
+ * the branch's today plus `validityDays` (configuration). Suggestions for a new form only: the
+ * API still takes whatever currency and date are sent.
+ */
+export interface QuotationDefaultsDto {
+  customerId: string;
+  currency: CurrencyCode;
+  currencySource: QuotationCurrencySource;
+  today: DateString;
+  validUntil: DateString;
+  validityDays: number;
+}
+
 export interface ReasonRequest {
   reason: string;
 }

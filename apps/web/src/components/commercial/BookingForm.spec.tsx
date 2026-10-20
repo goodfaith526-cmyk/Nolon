@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import type { BookingDto, CustomerDto, CustomerPartyAddedDto } from '@nolon/shared';
+import type {
+  BookingDto,
+  BookingFromQuotationPreviewDto,
+  BookingPartySuggestionDto,
+  CustomerDto,
+  CustomerPartyAddedDto,
+} from '@nolon/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -424,3 +430,283 @@ describe('BookingForm mode, cargo, services and CBM (owner, 2026-10-19)', () => 
     expect(fieldInput('volumeCbm').disabled).toBe(true);
   });
 });
+
+function changeValue(el: HTMLSelectElement, value: string) {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- applied with the element as `this` below
+  const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+  act(() => {
+    setValue?.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+const routeSelects = () => [...document.querySelectorAll('select')].slice(0, 2);
+
+describe('BookingForm from a quotation (functional review B1)', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  const preview = {
+    quotationId: 'q1',
+    quotationNumber: 'QT-1',
+    branchId: 'b1',
+    customerId: 'c1',
+    customerName: 'Tariq',
+    originLocationId: 'l1',
+    destinationLocationId: 'l2',
+    mode: 'SEA',
+    loadType: 'FCL',
+    cargoType: 'CONTAINER',
+    cargoDescription: 'Tyres',
+    items: [{ cargoType: 'CONTAINER', containerTypeCode: '20GP', quantity: 2 }],
+    parties: {
+      customerId: 'c1',
+      source: 'LAST_BOOKING',
+      bookingId: 'bk0',
+      bookingNumber: 'BK-9',
+      shipperId: 'p1',
+      consigneeId: null,
+      notifyPartyId: null,
+    },
+  } satisfies BookingFromQuotationPreviewDto;
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  it('opens filled from the quotation, creates nothing, and saves through from-quotation', async () => {
+    api.mockReset();
+    api.mockImplementation((path: string) =>
+      path === '/customers/c1'
+        ? Promise.resolve(customer([party('p1', 'Shipper'), party('p2', 'Other')]))
+        : Promise.resolve({ ...booking, id: 'bk2' }),
+    );
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm fromQuotation={preview} />);
+    });
+    await flush();
+
+    // Opening reads the customer's parties only: nothing is written.
+    expect(api.mock.calls.map((c) => c[0] as string)).toEqual(['/customers/c1']);
+    expect(document.body.textContent).toContain('fromQuotationTitle');
+    expect(document.body.textContent).toContain('Tariq');
+    // Route, mode, load type and cargo are the quotation's and cannot change here.
+    expect(routeSelects().map((s) => [s.value, s.disabled])).toEqual([
+      ['l1', true],
+      ['l2', true],
+    ]);
+    const quantity = [...document.querySelectorAll('label.field')]
+      .find((l) => l.textContent?.startsWith('quantity'))
+      ?.querySelector('input') as HTMLInputElement;
+    expect(quantity.value).toBe('2');
+    expect(document.body.textContent).toContain('itemsFromQuotation');
+    // The suggested shipper, with where it comes from.
+    expect(select('shipperId').value).toBe('p1');
+    expect(document.body.textContent).toContain('partiesFromLastBooking');
+
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+    expect(api).toHaveBeenCalledWith('/bookings/from-quotation/q1', {
+      method: 'POST',
+      body: {
+        services: [],
+        shipperId: 'p1',
+        consigneeId: null,
+        notifyPartyId: null,
+        requestedDeparture: null,
+        specialInstructions: null,
+        items: [
+          {
+            cargoType: 'CONTAINER',
+            containerTypeCode: '20GP',
+            description: null,
+            quantity: 2,
+            lengthCm: null,
+            widthCm: null,
+            heightCm: null,
+            weightKg: null,
+            volumeCbm: null,
+          },
+        ],
+      },
+    });
+    expect(api).not.toHaveBeenCalledWith('/bookings', expect.anything());
+  });
+
+  it('shows a quotation without a load type as not set, not FCL (Codex F93-4)', async () => {
+    api.mockReset();
+    api.mockResolvedValue(customer([]));
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm fromQuotation={{ ...preview, loadType: null }} />);
+    });
+    await flush();
+    // Shown read-only, as the booking takes it from the quotation.
+    const loadType = [...document.querySelectorAll('label.field')]
+      .find((l) => l.textContent?.startsWith('loadType'))
+      ?.querySelector('input') as HTMLInputElement;
+    expect(loadType.disabled).toBe(true);
+    expect(loadType.value).toBe('notSet');
+    expect(document.querySelectorAll('select option[value="FCL"]')).toHaveLength(0);
+  });
+
+  it('starts with one empty line when the quotation prices no containers', async () => {
+    api.mockReset();
+    api.mockResolvedValue(customer([]));
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(
+        <BookingForm
+          fromQuotation={{
+            ...preview,
+            cargoType: 'PALLET',
+            loadType: 'LCL',
+            items: [],
+            parties: { ...preview.parties, source: null, shipperId: null },
+          }}
+        />,
+      );
+    });
+    await flush();
+    expect(document.querySelectorAll('.line')).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('itemsFromQuotation');
+    expect(document.body.textContent).not.toContain('partiesFrom');
+    expect(select('shipperId').value).toBe('');
+  });
+});
+
+describe('BookingForm new booking: empty route and suggested parties (functional review B5, B6)', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  const summary = (id: string) => ({
+    id,
+    name: id,
+    number: id,
+    phone: '+249912345678',
+    isActive: true,
+  });
+  const suggestionFor = (id: string): BookingPartySuggestionDto =>
+    id === 'c1'
+      ? {
+          customerId: 'c1',
+          source: 'LAST_BOOKING',
+          bookingId: 'bk0',
+          bookingNumber: 'BK-9',
+          shipperId: 'c1-s',
+          consigneeId: 'c1-c',
+          notifyPartyId: null,
+        }
+      : {
+          customerId: id,
+          source: null,
+          bookingId: null,
+          bookingNumber: null,
+          shipperId: null,
+          consigneeId: null,
+          notifyPartyId: null,
+        };
+
+  async function renderNew() {
+    api.mockReset();
+    api.mockImplementation((path: string) => {
+      if (path.startsWith('/customers?')) {
+        const id = path.includes('Second') ? 'c2' : 'c1';
+        return Promise.resolve({ items: [summary(id)], total: 1, page: 1, pageSize: 20 });
+      }
+      if (path.startsWith('/bookings/party-suggestion?customerId=')) {
+        return Promise.resolve(suggestionFor(path.split('=')[1] ?? ''));
+      }
+      const id = path.split('/')[2] ?? '';
+      return Promise.resolve({
+        ...customer([]),
+        id,
+        parties: [party(`${id}-s`, 'Shipper'), party(`${id}-c`, 'Consignee')],
+      });
+    });
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<BookingForm />);
+    });
+    await flush();
+  }
+
+  const pick = async (q: string, id: string) => {
+    typeInto(document.querySelector('input[type="search"]') as HTMLInputElement, q);
+    click(buttonByText('search'));
+    await flush();
+    click(buttonStartingWith(id));
+    await flush();
+  };
+
+  it('starts with no origin or destination picked', async () => {
+    await renderNew();
+    expect(routeSelects().map((s) => s.value)).toEqual(['', '']);
+    expect(routeSelects().every((s) => s.required)).toBe(true);
+  });
+
+  it('does not refill a party the person cleared before a late suggestion (Codex F93-3)', async () => {
+    await renderNew();
+    let answer: (s: BookingPartySuggestionDto) => void = () => {};
+    const fallback = api.getMockImplementation() as (path: string) => Promise<unknown>;
+    api.mockImplementation((path: string) =>
+      path.startsWith('/bookings/party-suggestion?')
+        ? new Promise<BookingPartySuggestionDto>((resolve) => {
+            answer = resolve;
+          })
+        : fallback(path),
+    );
+    await pick('First', 'c1');
+    // The person picks a shipper, then clears it, before the suggestion answers.
+    changeValue(select('shipperId'), 'c1-c');
+    changeValue(select('shipperId'), '');
+    await act(async () => {
+      answer(suggestionFor('c1'));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(select('shipperId').value).toBe('');
+    // A field never touched still takes the suggestion.
+    expect(select('consigneeId').value).toBe('c1-c');
+  });
+
+  it("suggests the customer's last booking parties, keeps a change, and drops them for another customer", async () => {
+    await renderNew();
+    await pick('First', 'c1');
+    expect(api).toHaveBeenCalledWith('/bookings/party-suggestion?customerId=c1');
+    expect(select('shipperId').value).toBe('c1-s');
+    expect(select('consigneeId').value).toBe('c1-c');
+    expect(select('notifyPartyId').value).toBe('');
+    expect(document.body.textContent).toContain('partiesFromLastBooking');
+
+    // The person's own choice stays; the note stays while a suggested party is still selected.
+    changeValue(select('consigneeId'), 'c1-s');
+    expect(select('consigneeId').value).toBe('c1-s');
+    expect(document.body.textContent).toContain('partiesFromLastBooking');
+    changeValue(select('shipperId'), '');
+    expect(document.body.textContent).not.toContain('partiesFromLastBooking');
+
+    // Another customer: the old suggestion and choices go; this one suggests nothing.
+    click(buttonByText('change'));
+    await pick('Second', 'c2');
+    expect(PARTY_SELECTS.map((n) => select(n).value)).toEqual(['', '', '']);
+    expect(document.body.textContent).not.toContain('partiesFrom');
+  });
+});
+
+const PARTY_SELECTS = ['shipperId', 'consigneeId', 'notifyPartyId'];

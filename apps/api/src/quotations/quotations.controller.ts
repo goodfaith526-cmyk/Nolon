@@ -17,6 +17,7 @@ import {
   RATE_UNITS,
   SHIPPING_MODES,
   type Page,
+  type QuotationDefaultsDto,
   type QuotationDto,
   type QuotationSummaryDto,
 } from '@nolon/shared';
@@ -65,6 +66,7 @@ export const quotationCreateBody = z.object({ customerId: z.uuid(), ...quotation
 /** A quotation without its customer (an update, or one for a new customer). */
 export const quotationInputBody = z.object(quotationFields).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+const defaultsQuery = z.object({ customerId: z.uuid() }).strict();
 const listQuery = pageQuery
   .extend({
     status: z.enum(QUOTATION_STATUSES).optional(),
@@ -83,6 +85,13 @@ export class QuotationsController {
   @RequirePermission('quotations:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<QuotationSummaryDto>> {
     return this.quotations.list(user, parse(listQuery, query));
+  }
+
+  /** What a new quotation for the customer starts from (declared before `:id`). */
+  @Get('defaults')
+  @RequirePermission('quotations:create')
+  defaults(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<QuotationDefaultsDto> {
+    return this.quotations.defaults(user, parse(defaultsQuery, query).customerId);
   }
 
   @AgentReadable()

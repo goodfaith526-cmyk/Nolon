@@ -1,12 +1,14 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
   CreateQuotationRequest,
   Page,
+  QuotationDefaultsDto,
   QuotationDraftValues,
   QuotationDto,
   QuotationInput,
@@ -17,7 +19,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import {
   localDayFilter,
   matchedLocations,
@@ -29,6 +31,7 @@ import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { draftBranch } from '../drafts/draft-rules.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
@@ -77,6 +80,7 @@ export class QuotationsService {
     private readonly rates: RatesService,
     private readonly masterData: MasterDataService,
     private readonly currencies: CurrenciesService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   async list(user: AuthUser, filters: QuotationFilters): Promise<Page<QuotationSummaryDto>> {
@@ -154,6 +158,33 @@ export class QuotationsService {
         lineTotal: l.lineTotal,
         unit: l.unit,
       })),
+    };
+  }
+
+  /**
+   * What a new quotation for this customer starts from (functional review B3, B4). Generated when
+   * the person picks the customer on a new quotation: the currency is the customer's preferred one
+   * when it is set and active, else the customer's branch's default currency; valid-until is that
+   * branch's today plus QUOTATION_VALIDITY_DAYS. Picking another customer asks again. These are
+   * suggestions: the form keeps a currency or date the person chose, and create/update still take
+   * whatever is sent. The customer must be active and in the user's branches (404 otherwise).
+   */
+  async defaults(user: AuthUser, customerId: string): Promise<QuotationDefaultsDto> {
+    const customer = await this.customers.requireActiveCustomer(user, customerId);
+    const branch = await this.prisma.branch.findUniqueOrThrow({
+      where: { id: customer.branchId },
+    });
+    const today = todayIn(branch.timezone);
+    const preferred = customer.preferredCurrency;
+    const fromCustomer = preferred !== null && (await this.currencies.isActive(preferred));
+    const validityDays = this.env.QUOTATION_VALIDITY_DAYS;
+    return {
+      customerId: customer.id,
+      currency: fromCustomer ? preferred : branch.defaultCurrency,
+      currencySource: fromCustomer ? 'CUSTOMER' : 'BRANCH',
+      today,
+      validUntil: addDays(today, validityDays),
+      validityDays,
     };
   }
 
@@ -343,6 +374,26 @@ export class QuotationsService {
       throw new ConflictException('Only an approved quotation can become a booking');
     }
     return quotation;
+  }
+
+  /**
+   * For bookings: the lines of a quotation (the caller checked it is the user's) priced per
+   * container whose rate card names the container type, in line order. A manual line names no
+   * container type, so it is not among them.
+   */
+  async perContainerLines(
+    quotationId: string,
+  ): Promise<{ containerTypeCode: string; quantity: Prisma.Decimal }[]> {
+    const lines = await this.prisma.quotationLine.findMany({
+      where: { quotationId, unit: 'PER_CONTAINER', rateCard: { containerTypeCode: { not: null } } },
+      select: { quantity: true, rateCard: { select: { containerTypeCode: true } } },
+      orderBy: { lineNo: 'asc' },
+    });
+    return lines.flatMap((l) =>
+      l.rateCard?.containerTypeCode
+        ? [{ containerTypeCode: l.rateCard.containerTypeCode, quantity: l.quantity }]
+        : [],
+    );
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<QuotationWithDetails> {

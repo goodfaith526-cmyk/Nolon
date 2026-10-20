@@ -17,6 +17,8 @@ import {
   LOAD_TYPES,
   SHIPPING_MODES,
   type BookingDto,
+  type BookingFromQuotationPreviewDto,
+  type BookingPartySuggestionDto,
   type BookingSummaryDto,
   type Page,
 } from '@nolon/shared';
@@ -97,6 +99,7 @@ export const bookingFromQuotationBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+const partySuggestionQuery = z.object({ customerId: z.uuid() }).strict();
 const listQuery = pageQuery
   .extend({
     status: z.enum(BOOKING_STATUSES).optional(),
@@ -115,6 +118,26 @@ export class BookingsController {
   @RequirePermission('bookings:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<BookingSummaryDto>> {
     return this.bookings.list(user, parse(listQuery, query));
+  }
+
+  /** Parties a new booking of the customer may start from (declared before `:id`). */
+  @Get('party-suggestion')
+  @RequirePermission('bookings:create')
+  partySuggestion(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<BookingPartySuggestionDto> {
+    return this.bookings.partySuggestion(user, parse(partySuggestionQuery, query).customerId);
+  }
+
+  /** What a booking from this approved quotation starts from; nothing is created. */
+  @Get('from-quotation/:quotationId')
+  @RequirePermission('bookings:create')
+  previewFromQuotation(
+    @CurrentUser() user: AuthUser,
+    @Param('quotationId', ParseUUIDPipe) quotationId: string,
+  ): Promise<BookingFromQuotationPreviewDto> {
+    return this.bookings.previewFromQuotation(user, quotationId);
   }
 
   @AgentReadable()

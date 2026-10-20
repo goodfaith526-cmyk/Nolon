@@ -35,3 +35,10 @@ export function todayIn(timeZone: string, now: Date = new Date()): string {
 export function daysBetween(from: string, to: string): number {
   return Math.round((toDbDate(to).getTime() - toDbDate(from).getTime()) / 86_400_000);
 }
+
+/** A YYYY-MM-DD date plus whole calendar days (negative to go back). */
+export function addDays(date: string, days: number): string {
+  const d = toDbDate(date);
+  d.setUTCDate(d.getUTCDate() + days);
+  return fromDbDate(d);
+}

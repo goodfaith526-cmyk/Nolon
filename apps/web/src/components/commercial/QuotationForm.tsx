@@ -9,6 +9,7 @@ import {
   type CustomerSummaryDto,
   type LoadType,
   type Page,
+  type QuotationDefaultsDto,
   type QuotationDto,
   type RateCardDto,
   type RateUnit,
@@ -53,6 +54,9 @@ interface LineState {
 }
 
 let nextKey = 1;
+/** A line that already holds an amount: a price or discount typed, or a rate card picked. */
+const hasAmount = (l: LineState) => l.unitPrice !== '' || l.discount !== '' || l.rateCardId !== '';
+
 const emptyLine = (): LineState => ({
   key: nextKey++,
   rateCardId: '',
@@ -75,13 +79,27 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const failure = useFailureText();
   const router = useRouter();
 
+  const isEdit = quotation !== undefined;
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [originChoice, setOrigin] = useState(quotation?.originLocationId ?? '');
   const [destinationChoice, setDestination] = useState(quotation?.destinationLocationId ?? '');
   const [mode, setMode] = useState<ShippingMode>(quotation?.mode ?? 'SEA');
   const [loadType, setLoadType] = useState<LoadType | ''>(quotation?.loadType ?? 'FCL');
   const [cargoType, setCargoType] = useState<CargoType>(quotation?.cargoType ?? 'CONTAINER');
-  const [currency, setCurrency] = useState(quotation?.currency ?? 'USD');
+  // A new quotation's currency and valid-until (functional review B3, B4): generated when the
+  // customer is picked, from GET /quotations/defaults (the customer's preferred currency, else
+  // its branch's; the branch's today plus the configured days). Picking another customer asks
+  // again; a currency or date the person chose (a `...Choice`, null until then) is kept, and an
+  // edit keeps what the quotation holds. Nothing is suggested before the customer.
+  // A suggested currency is applied only while no line holds an amount (Codex F93-1): once a
+  // price, discount or rate is on a line, the currency stays as it is (`autoCurrency`) and the
+  // suggestion is only shown, so an amount is never sent in a currency it was not entered in.
+  const [currencyChoice, setCurrency] = useState<string | null>(quotation?.currency ?? null);
+  const [validUntilChoice, setValidUntil] = useState<string | null>(quotation?.validUntil ?? null);
+  const [defaults, setDefaults] = useState<QuotationDefaultsDto | null>(null);
+  const [autoCurrency, setAutoCurrency] = useState('');
+  const currency = currencyChoice ?? autoCurrency;
+  const validUntil = validUntilChoice ?? defaults?.validUntil ?? '';
   const [lines, setLines] = useState<LineState[]>(
     quotation?.lines.map((l) => ({
       key: nextKey++,
@@ -96,11 +114,15 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   );
   const [rates, setRates] = useState<RateCardDto[]>([]);
   const [busy, setBusy] = useState(false);
+  // The lines as last rendered, for deciding whether a suggestion that arrives later applies.
+  const linesNow = useRef(lines);
+  useEffect(() => {
+    linesNow.current = lines;
+  }, [lines]);
 
-  // Until the user picks, the route defaults to the first two active locations.
-  const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
-  const origin = originChoice || (activeLocations[0]?.id ?? '');
-  const destination = destinationChoice || (activeLocations[1]?.id ?? '');
+  // The route starts empty: the person picks it (functional review B6).
+  const origin = originChoice;
+  const destination = destinationChoice;
   const [notice, setNotice] = useState<NoticeState | null>(null);
   // What the last refused save sent, for "Review with the assistant".
   const [refused, setRefused] = useState<CreateFormReviewRequest | null>(null);
@@ -120,6 +142,22 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   // The quotation's branch's date: the day the API checks a rate card's validity on.
   const today = me.branches.find((b) => b.id === branchId)?.today ?? todayString();
 
+  const customerId = customer?.id;
+  useEffect(() => {
+    if (isEdit || !customerId) return;
+    let cancelled = false;
+    api<QuotationDefaultsDto>(`/quotations/defaults?customerId=${customerId}`)
+      .then((d) => {
+        if (cancelled) return;
+        setDefaults(d);
+        if (!linesNow.current.some(hasAmount)) setAutoCurrency(d.currency);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, customerId]);
+
   useEffect(() => {
     if (!origin || !destination || !branchId) return;
     let cancelled = false;
@@ -129,14 +167,26 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         if (!cancelled) {
           // Rate cards of every branch price a quotation (owner, 2026-10-19). Only the cards the
           // API accepts for this quotation are offered: same currency, load type and cargo type.
-          setRates(
-            page.items.filter(
-              (r) =>
-                r.currency === currency &&
-                (r.loadType ?? '') === (hasSeaLeg(mode) ? loadType : '') &&
-                r.cargoType === cargoType,
-            ),
+          const offered = page.items.filter(
+            (r) =>
+              r.currency === currency &&
+              (r.loadType ?? '') === (hasSeaLeg(mode) ? loadType : '') &&
+              r.cargoType === cargoType,
           );
+          setRates(offered);
+          // On a new quotation, a line priced from a rate no longer offered (another customer's
+          // currency, say: functional review B3) is picked again rather than kept unseen. Typed
+          // values stay; an edit keeps its lines for the API to check.
+          if (!isEdit) {
+            const ids = new Set(offered.map((r) => r.id));
+            setLines((all) =>
+              all.some((l) => l.rateCardId && !ids.has(l.rateCardId))
+                ? all.map((l) =>
+                    l.rateCardId && !ids.has(l.rateCardId) ? { ...l, rateCardId: '' } : l,
+                  )
+                : all,
+            );
+          }
         }
       })
       .catch(() => {
@@ -145,7 +195,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     return () => {
       cancelled = true;
     };
-  }, [origin, destination, mode, currency, loadType, cargoType, today, branchId]);
+  }, [origin, destination, mode, currency, loadType, cargoType, today, branchId, isEdit]);
 
   function updateLine(key: number, patch: Partial<LineState>) {
     setLines((all) => all.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -237,7 +287,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <p>{t('sectionCustomerHint')}</p>
           </header>
           <div className="form-section-body" {...markGroup('customerId')}>
-            <CustomerPicker value={customer} onChange={setCustomer} allowCreate />
+            <CustomerPicker
+              value={customer}
+              onChange={(c) => {
+                setCustomer(c);
+                setDefaults(null);
+              }}
+              allowCreate
+            />
           </div>
         </section>
       )}
@@ -256,6 +313,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               onChange={(e) => setOrigin(e.target.value)}
               required
             >
+              <option value="" disabled>
+                —
+              </option>
               {locationOptions}
             </select>
             <FieldNote note={note} path="originLocationId" />
@@ -268,6 +328,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               onChange={(e) => setDestination(e.target.value)}
               required
             >
+              <option value="" disabled>
+                —
+              </option>
               {locationOptions}
             </select>
             <FieldNote note={note} path="destinationLocationId" />
@@ -335,8 +398,12 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <select
               {...mark('currency')}
               value={currency}
+              required
               onChange={(e) => setCurrency(e.target.value)}
             >
+              <option value="" disabled>
+                —
+              </option>
               {master.currencies
                 .filter((c) => c.isActive)
                 .map((c) => (
@@ -345,6 +412,18 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   </option>
                 ))}
             </select>
+            {defaults && currencyChoice === null && currency === defaults.currency && (
+              <small className="muted">
+                {defaults.currencySource === 'CUSTOMER'
+                  ? t('currencyFromCustomer')
+                  : t('currencyFromBranch')}
+              </small>
+            )}
+            {defaults && currencyChoice === null && currency !== defaults.currency && (
+              <small className="muted">
+                {t('currencySuggestionNotApplied', { currency: defaults.currency })}
+              </small>
+            )}
             <FieldNote note={note} path="currency" />
           </label>
           <label className="field">
@@ -354,8 +433,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               type="date"
               required
               {...mark('validUntil')}
-              defaultValue={quotation?.validUntil}
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
             />
+            {defaults && validUntilChoice === null && (
+              <small className="muted">
+                {t('validUntilFromDays', { days: defaults.validityDays })}
+              </small>
+            )}
             <FieldNote note={note} path="validUntil" />
           </label>
         </div>

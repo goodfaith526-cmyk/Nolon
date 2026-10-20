@@ -60,6 +60,11 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((value) => value === 'true'),
+  /**
+   * Days a new quotation is offered as valid for: the form's valid-until starts at the branch's
+   * today plus this (GET /quotations/defaults). A suggestion only; the person may change it.
+   */
+  QUOTATION_VALIDITY_DAYS: emptyAsUnset(z.coerce.number().int().min(1).max(365).default(30)),
   /** Hours between runs of the draft retention purge (drafts/draft-retention.service.ts); 0 = off. */
   DRAFT_PURGE_EVERY_HOURS: z.coerce.number().int().min(0).max(168).default(6),
   /** Seed only: the first Administrator, created if missing. Never committed. Empty = unset. */
