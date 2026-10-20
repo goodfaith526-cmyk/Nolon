@@ -22,6 +22,21 @@ import { can, useMe } from '../StaffShell';
 import { InvoiceNumber } from './Invoices';
 import { Money, chosenCashAccount, useAccounts } from './common';
 
+/**
+ * Every approved open invoice of the customer, page by page: the API's split may give a share to
+ * any of them, and the currency is suggested only from the whole set (Codex F94-1).
+ */
+async function openInvoicesOf(customerId: string): Promise<CustomerInvoiceSummaryDto[]> {
+  const items: CustomerInvoiceSummaryDto[] = [];
+  for (let page = 1; ; page++) {
+    const next = await api<Page<CustomerInvoiceSummaryDto>>(
+      `/customer-invoices?customerId=${customerId}&status=APPROVED&openOnly=true&pageSize=100&page=${page}`,
+    );
+    items.push(...next.items);
+    if (next.items.length === 0 || items.length >= next.total) return items;
+  }
+}
+
 /** New receipt with its allocations to the customer's open invoices. The API checks the sums. */
 export function ReceiptForm() {
   const t = useTranslations('Receipts');
@@ -50,11 +65,9 @@ export function ReceiptForm() {
   useEffect(() => {
     if (!customerId) return;
     let cancelled = false;
-    api<Page<CustomerInvoiceSummaryDto>>(
-      `/customer-invoices?customerId=${customerId}&status=APPROVED&openOnly=true&pageSize=100`,
-    )
-      .then((page) => {
-        if (!cancelled) setOpenInvoices(page.items);
+    openInvoicesOf(customerId)
+      .then((items) => {
+        if (!cancelled) setOpenInvoices(items);
       })
       .catch((e: unknown) => {
         if (!cancelled) setNotice({ ok: false, text: failure(e) });
@@ -113,6 +126,13 @@ export function ReceiptForm() {
       const split = await api<ReceiptAllocationSuggestionDto>(
         `/receipts/allocation-suggestion?${query.toString()}`,
       );
+      // Every share is shown and sent: one for an invoice this form has not listed (issued since
+      // it loaded) is not dropped silently, the person reloads instead (Codex F94-1).
+      const listed = new Set((openInvoices ?? []).map((i) => i.id));
+      if (split.allocations.some((a) => !listed.has(a.invoiceId))) {
+        setNotice({ ok: false, text: t('invoicesChanged') });
+        return;
+      }
       setAllocations(Object.fromEntries(split.allocations.map((a) => [a.invoiceId, a.amount])));
       setRest(split.unallocated === '0' ? null : split.unallocated);
     } catch (err) {
@@ -225,6 +245,9 @@ export function ReceiptForm() {
                 onChange={(e) => {
                   setAmount(e.target.value);
                   setRest(null);
+                  // An amount entered is in the currency shown then: it never follows a later
+                  // suggestion, e.g. from another customer's invoices (Codex F94-2).
+                  if (currencyChoice === null) setCurrency(currency);
                 }}
               />
             </label>
@@ -251,6 +274,11 @@ export function ReceiptForm() {
           </div>
           {currencyChoice === null && inferredCurrency !== '' && (
             <p className="muted">{t('currencyFromInvoices', { currency: inferredCurrency })}</p>
+          )}
+          {currencyChoice !== null && inferredCurrency !== '' && inferredCurrency !== currency && (
+            <p className="muted">
+              {t('currencySuggestionNotApplied', { currency: inferredCurrency })}
+            </p>
           )}
           {currencyChoice === null && invoiceCurrencies.size > 1 && (
             <p className="muted">{t('mixedCurrencies')}</p>

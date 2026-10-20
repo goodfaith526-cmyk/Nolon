@@ -180,6 +180,13 @@ describe('SupplierBillForm defaults (functional review C1, C2, C4, C9, C10)', ()
     expect(amount().value).toBe('480');
   });
 
+  it('keeps a typed amount in its currency when the branch changes (Codex F94-2)', () => {
+    change(amount(), '100');
+    change(control('branch'), 'b2');
+    expect(control<HTMLSelectElement>('currency').value).toBe('AED');
+    expect(amount().value).toBe('100');
+  });
+
   it('sends the picked shipment and no due date, for the API to generate', async () => {
     change(control('lineKind'), 'SHIPMENT_COST');
     const search = document.querySelector<HTMLInputElement>('input[type="search"]');
