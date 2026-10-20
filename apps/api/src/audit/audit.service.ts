@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { AuditAction, AuditChangeDto, AuditEntity, AuditLogEntryDto } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -11,8 +12,34 @@ type Tx = Prisma.TransactionClient;
 /** Rows per INSERT (keeps the statement under PostgreSQL's parameter limit). */
 const WRITE_CHUNK = 1000;
 
+/** The master data entries this log keeps; they belong to no branch and are keyed by code. */
+export const AUDITED_MASTER_DATA = [
+  'CONTAINER_TYPE',
+  'CHARGE_TYPE',
+  'DOCUMENT_TYPE',
+  'CURRENCY',
+] as const satisfies readonly AuditEntity[];
+export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
+
 /** The records this log keeps (the others keep their own history). */
-export type AuditedEntity = Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER'>;
+export type AuditedEntity = Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER'> | AuditedMasterData;
+
+/** Fixed namespace for codeEntityId (a random UUID, chosen once; never change it). */
+const CODE_ENTITY_NAMESPACE = '6b1f4c9e-2d3a-4f57-9a1e-0c8d7e5b3f21';
+
+/**
+ * A stable uuid for a record keyed by a code (audit_events.entity_id is a uuid): a UUID version 5
+ * (RFC 9562) of the entity and the code, so every change of one entry shares the same id.
+ */
+export function codeEntityId(entity: AuditedMasterData, code: string): string {
+  const namespace = Buffer.from(CODE_ENTITY_NAMESPACE.replaceAll('-', ''), 'hex');
+  const hash = createHash('sha1').update(namespace).update(`${entity}:${code}`, 'utf8').digest();
+  const bytes = hash.subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 export interface AuditRecord {
   /** Null for records of no branch (user accounts). */
@@ -98,18 +125,26 @@ export class AuditService {
 
   /**
    * For the audit log report: the changes recorded in the period, newest first, in the report's
-   * branches. Changes to user accounts (no branch) are listed only for those who manage users
-   * (users:view) and only when no single branch is asked for.
+   * branches. Records of no branch are listed only when no single branch is asked for: changes to
+   * user accounts for those who manage users (users:view), changes to master data for those who
+   * read it (master_data:view, every role).
    */
   async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
     const branchIds = reportBranchIds(user, q.branchId);
-    const withUsers = user.permissions.has('users:view') && !q.branchId;
-    if (branchIds.length === 0 && !withUsers) return [];
+    const unbranched: AuditedEntity[] = [];
+    if (!q.branchId) {
+      if (user.permissions.has('users:view')) unbranched.push('USER');
+      if (user.permissions.has('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
+    }
+    if (branchIds.length === 0 && unbranched.length === 0) return [];
     const inBranches =
       branchIds.length > 0
         ? Prisma.sql`x."branch_id" IN ${uuidList(branchIds)}`
         : Prisma.sql`false`;
-    const scope = withUsers ? Prisma.sql`(${inBranches} OR x."branch_id" IS NULL)` : inBranches;
+    const scope =
+      unbranched.length > 0
+        ? Prisma.sql`(${inBranches} OR (x."branch_id" IS NULL AND x."entity" IN (${Prisma.join(unbranched)})))`
+        : inBranches;
     const rows = await this.prisma.$queryRaw<
       {
         at: Date;
