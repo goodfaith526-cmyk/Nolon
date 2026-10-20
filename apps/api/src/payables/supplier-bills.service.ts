@@ -11,6 +11,7 @@ import type {
   Page,
   PaymentStatus,
   SupplierBillDto,
+  SupplierBillDueDateDto,
   SupplierBillInput,
   SupplierBillLineInput,
   SupplierBillStatus,
@@ -214,14 +215,13 @@ export class SupplierBillsService {
   }
 
   /** An exact retry returns the bill the request created; any other reuse is a 409. */
-  private async retry(
+  private retry(
     user: AuthUser,
     existing: Prisma.SupplierBillGetPayload<{ include: { lines: true } }>,
     input: CreateSupplierBillRequest,
   ): Promise<SupplierBillDto> {
-    // A retry that leaves the due date out asks for the date the first request got, whatever the
-    // supplier's terms are now: they may have changed since (C1, Codex F94-3). A due date that is
-    // sent must be the saved one.
+    // A create always names its due date, so the saved one is what the first request asked for,
+    // whatever the supplier's terms are now (Codex F94-3).
     const same =
       !existing.isOpening &&
       existing.supplierId === input.supplierId &&
@@ -230,9 +230,7 @@ export class SupplierBillsService {
       existing.currency === input.currency &&
       sameRequestedRate(existing.requestedFxRate, input.fxRate) &&
       fromDbDate(existing.billDate) === input.billDate &&
-      (input.dueDate === undefined ||
-        input.dueDate === null ||
-        fromDbDate(existing.dueDate) === input.dueDate) &&
+      fromDbDate(existing.dueDate) === input.dueDate &&
       existing.supplierReference === (input.supplierReference ?? null) &&
       existing.notes === (input.notes ?? null) &&
       existing.lines.length === input.lines.length &&
@@ -256,6 +254,19 @@ export class SupplierBillsService {
       });
     if (!same) throw new ConflictException('This request id was already used: send a new id');
     return this.get(user, existing.id);
+  }
+
+  /** The due date suggested for a new bill (C1): the bill date plus the supplier's terms. */
+  async suggestDueDate(query: {
+    supplierId: string;
+    billDate: string;
+  }): Promise<SupplierBillDueDateDto> {
+    const { paymentTermsDays } = await this.suppliers.requireSupplier(query.supplierId);
+    return {
+      ...query,
+      paymentTermsDays,
+      dueDate: billDueDate({ billDate: query.billDate }, paymentTermsDays),
+    };
   }
 
   /** Drafts only; the lines are replaced as a whole. */
@@ -723,10 +734,10 @@ export class SupplierBillsService {
 }
 
 /**
- * A bill's due date (functional review C1). A due date the client sends is kept as sent. Without
- * one, it is generated on each save of the draft (create, edit or an exact retry) from the bill
- * date plus the supplier's payment terms in days, as customer invoices take theirs from the
- * customer's terms; a later change of the bill date or of the terms moves it on the next save.
+ * A bill's due date (functional review C1). A due date the client sends is kept as sent. An edit
+ * without one, and the suggestion for a new bill, take the bill date plus the supplier's payment
+ * terms in days, as customer invoices take theirs from the customer's terms; a later change of the
+ * bill date or of the terms moves an edited draft's on its next save.
  */
 function billDueDate(
   input: Pick<SupplierBillInput, 'billDate' | 'dueDate'>,

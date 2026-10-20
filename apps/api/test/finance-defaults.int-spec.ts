@@ -98,6 +98,7 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
     currency: 'SDG',
     fxRate: '600',
     billDate: d('04-10'),
+    dueDate: d('05-25'),
     lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '1000' }],
     ...overrides,
   });
@@ -159,11 +160,19 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
   });
 
   describe('C1: a supplier bill is due after the supplier payment terms', () => {
-    it('generates the due date when none is sent, and keeps one that is', async () => {
-      const generated = (await post('/supplier-bills', cookies.financePts, billBody()).expect(201))
-        .body as SupplierBillDto;
+    const suggestion = (supplierId: string, cookie = cookies.financePts) =>
+      get(`/supplier-bills/due-date?supplierId=${supplierId}&billDate=${d('04-10')}`, cookie);
+
+    it('suggests the bill date plus the terms, and a new bill keeps the date it is sent', async () => {
       // 45 days of terms after 10 April.
-      expect(generated.dueDate).toBe(d('05-25'));
+      expect((await suggestion(supplier.id).expect(200)).body).toEqual({
+        supplierId: supplier.id,
+        billDate: d('04-10'),
+        paymentTermsDays: 45,
+        dueDate: d('05-25'),
+      });
+      await suggestion(supplier.id, cookies.salesPts).expect(403);
+      await suggestion(randomUUID()).expect(404);
 
       const explicit = (
         await post('/supplier-bills', cookies.financePts, billBody({ dueDate: d('04-12') })).expect(
@@ -171,28 +180,30 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
         )
       ).body as SupplierBillDto;
       expect(explicit.dueDate).toBe(d('04-12'));
-
-      const nulled = (
-        await post('/supplier-bills', cookies.financePts, billBody({ dueDate: null })).expect(201)
-      ).body as SupplierBillDto;
-      expect(nulled.dueDate).toBe(d('05-25'));
-
-      // An explicit due date before the bill date is still refused.
+      // A new bill names its due date (Codex F94-3).
+      await post('/supplier-bills', cookies.financePts, billBody({ dueDate: undefined })).expect(
+        400,
+      );
+      await post('/supplier-bills', cookies.financePts, billBody({ dueDate: null })).expect(400);
+      // A due date before the bill date is still refused.
       await post('/supplier-bills', cookies.financePts, billBody({ dueDate: d('04-09') })).expect(
         400,
       );
     });
 
-    it('treats an exact retry without a due date as the same request', async () => {
-      const body = billBody();
+    it('treats only an exact retry as the same request', async () => {
+      const body = billBody({ dueDate: d('09-01') });
       const first = (await post('/supplier-bills', cookies.financePts, body).expect(201))
         .body as SupplierBillDto;
       const again = (await post('/supplier-bills', cookies.financePts, body).expect(201))
         .body as SupplierBillDto;
       expect(again.id).toBe(first.id);
-      // Naming a different due date under the same request id is another request.
+      // Another due date, or none, under the same request id is another request.
       await post('/supplier-bills', cookies.financePts, { ...body, dueDate: d('04-11') }).expect(
         409,
+      );
+      await post('/supplier-bills', cookies.financePts, { ...body, dueDate: undefined }).expect(
+        400,
       );
     });
 
@@ -208,15 +219,9 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
         const again = (await post('/supplier-bills', cookies.financePts, body).expect(201))
           .body as SupplierBillDto;
         expect(again).toMatchObject({ id: first.id, dueDate: d('05-25') });
-        // The saved date sent explicitly is the same request; another one is not.
-        await post('/supplier-bills', cookies.financePts, {
-          ...body,
-          dueDate: d('05-25'),
-        }).expect(201);
-        await post('/supplier-bills', cookies.financePts, {
-          ...body,
+        expect((await suggestion(supplier.id).expect(200)).body).toMatchObject({
           dueDate: d('06-09'),
-        }).expect(409);
+        });
       } finally {
         await t.prisma.supplier.update({
           where: { id: supplier.id },
@@ -257,12 +262,10 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
           201,
         )
       ).body as SupplierDto;
-      const bill = (
-        await post('/supplier-bills', cookies.financePts, billBody({ supplierId: cash.id })).expect(
-          201,
-        )
-      ).body as SupplierBillDto;
-      expect(bill.dueDate).toBe(d('04-10'));
+      expect((await suggestion(cash.id).expect(200)).body).toMatchObject({
+        paymentTermsDays: 0,
+        dueDate: d('04-10'),
+      });
       await post('/supplier-bills', cookies.financeJed, billBody()).expect(403);
     });
   });
