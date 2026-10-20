@@ -19,7 +19,7 @@ import {
   signIn,
 } from './auth-test-app.js';
 import { AGENT_PREFIX, registerClient, requests, tokenFor } from './agent-drafts-helpers.js';
-import { uniquePhone } from './test-data.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 // A city and the places that serve it (owner, 2026-10-14: a lookup by Dubai includes Jebel Ali).
 // The relation is data: a place names its city. Lists filtered by a city also find its places
@@ -189,6 +189,44 @@ describe('a place and its city: one country', () => {
     await patch(`/master-data/locations/${saudi.id}`, cookies.sales, { cityId: null }).expect(403);
     // Not one of the city's places for the lists below.
     await patch(`/master-data/locations/${saudi.id}`, cookies.admin, { cityId: null }).expect(200);
+  });
+});
+
+describe('a place and its city, at once (Codex F96-1)', () => {
+  it("never leaves a new place in another country than its city's", async () => {
+    const lone = await createLocation(location('R', 'CITY'));
+    // Another session holds the city row, so both requests below are under way before either
+    // one writes.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let holding = () => {};
+    const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+    const holder = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "locations" WHERE "id" = ${lone.id}::uuid FOR NO KEY UPDATE`;
+        holding();
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await holdingNow;
+    const toSaudi = patch(`/master-data/locations/${lone.id}`, cookies.admin, {
+      countryCode: 'SA',
+    }).then((res) => res);
+    await waitForLockWaiter(t.prisma, 1);
+    const newPort = r
+      .post('/master-data/locations', cookies.admin, location('RP', 'PORT', { cityId: lone.id }))
+      .then((res) => res);
+    await waitForLockWaiter(t.prisma, 2);
+    release();
+    await holder;
+    const statuses = [(await toSaudi).status, (await newPort).status];
+    // One of them is refused, whichever ran second.
+    expect(statuses.filter((s) => s >= 200 && s < 300)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 400)).toHaveLength(1);
+    const saved = await t.prisma.location.findUniqueOrThrow({ where: { id: lone.id } });
+    const places = await t.prisma.location.findMany({ where: { cityId: lone.id } });
+    for (const place of places) expect(place.countryCode).toBe(saved.countryCode);
   });
 });
 
