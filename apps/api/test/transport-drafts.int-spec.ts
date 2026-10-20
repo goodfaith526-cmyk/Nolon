@@ -417,7 +417,9 @@ describe('trip drafts: a person reviews', () => {
       .body as TripDraftDto;
     expect(sales.request).toMatchObject({ agreedCost: null, currency: null });
     expect(sales.check).toEqual({ ok: true, total: null, currency: null });
-    expect(JSON.stringify(sales)).not.toContain('350');
+    // The cost must not leak through any other field either. Look for the amount itself, not the
+    // bare digits "350", which a timestamp like ".350Z" can contain.
+    expect(JSON.stringify(sales)).not.toMatch(/350\.5/);
   });
 
   it('approves into an ordinary PLANNED trip that schedules the shipment, once', async () => {
