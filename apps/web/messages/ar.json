@@ -77,7 +77,8 @@
     "apiKeys": "مفاتيح API",
     "assistantDrafts": "مسودات المساعد",
     "locations": "الموانئ والمدن",
-    "masterData": "البيانات الأساسية"
+    "masterData": "البيانات الأساسية",
+    "partners": "الشركاء"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -1676,7 +1677,10 @@
     "field_canInquire": "يحق له الاستفسار",
     "field_canReceiveCargo": "يحق له استلام البضاعة",
     "field_canReceiveDocuments": "يحق له استلام المستندات",
-    "field_isPrimary": "أساسي"
+    "field_isPrimary": "أساسي",
+    "entity_PARTNER": "شريك",
+    "entity_PRICE_CATEGORY": "فئة تسعير",
+    "entity_CUSTOMER_SEGMENT": "شريحة عملاء"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -1857,6 +1861,28 @@
     "noCarriers": "لا يوجد ناقل مرتبط.",
     "chooseCarrier": "اختر ناقلاً",
     "linkCarrier": "ربط الناقل"
+  },
+  "Partners": {
+    "title": "الشركاء",
+    "hint": "منافذ البيع، والمجمّعون في بلد المنشأ، والوكلاء بالخارج، والموزّعون داخل السودان، في أي دولة. العمولات والتسويات تُضبط لاحقاً.",
+    "add": "شريك جديد",
+    "search": "الاسم أو الرقم أو الهاتف",
+    "number": "الرقم",
+    "name": "الاسم",
+    "kind": "الدور في الشبكة",
+    "allKinds": "كل الأدوار",
+    "kind_SALES_OUTLET": "منفذ بيع",
+    "kind_ORIGIN_CONSOLIDATOR": "مجمّع في بلد المنشأ",
+    "kind_OVERSEAS_AGENT": "وكيل بالخارج",
+    "kind_DISTRIBUTOR": "موزّع داخل السودان",
+    "phone": "الهاتف",
+    "email": "البريد الإلكتروني",
+    "countryCode": "الدولة (حرفان)",
+    "countryHint": "مثلاً SA أو AE أو EG أو CN أو SD.",
+    "location": "المدينة أو الميناء",
+    "currency": "العملة",
+    "branch": "الفرع",
+    "commissionsLater": "عقود العمولات وتسويات الشركاء لم تُضبط بعد: تأتي في خطوة لاحقة."
   },
   "SupplierBills": {
     "title": "فواتير الموردين",
@@ -2434,7 +2460,8 @@
     "BRANCH_MISMATCH": "هذا الفرع ليس فرع العميل أو الشحنة: المسودة تتبع فرعهما.",
     "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها.",
     "MASTER_CODE_TAKEN": "الرمز {code} مستخدم من قبل: اختر رمزًا آخر.",
-    "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها."
+    "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها.",
+    "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2458,7 +2485,7 @@
   },
   "MasterData": {
     "title": "البيانات الأساسية",
-    "hint": "أنواع الحاويات وأنواع الرسوم وأنواع المستندات والعملات. عطّل البند بدل حذفه: السجلات التي تستخدمه تحتفظ به، ولا يمكن اختياره في سجلات جديدة حتى يُعاد تفعيله.",
+    "hint": "أنواع الحاويات وأنواع الرسوم وأنواع المستندات والعملات وفئات التسعير وشرائح العملاء. عطّل البند بدل حذفه: السجلات التي تستخدمه تحتفظ به، ولا يمكن اختياره في سجلات جديدة حتى يُعاد تفعيله.",
     "containerTypes": "أنواع الحاويات",
     "chargeTypes": "أنواع الرسوم",
     "documentTypes": "أنواع المستندات",
@@ -2477,6 +2504,13 @@
     "decimalPlacesFixed": "تُقرّب المبالغ إلى هذه الخانات، ولا يمكن تغييرها بعد حفظ العملة.",
     "none": "لا يوجد شيء بعد.",
     "createdNotice": "تمت الإضافة.",
-    "editTitle": "تعديل {code}"
+    "editTitle": "تعديل {code}",
+    "priceCategories": "فئات التسعير",
+    "customerSegments": "شرائح العملاء",
+    "add_priceCategories": "إضافة فئة تسعير",
+    "add_customerSegments": "إضافة شريحة عملاء",
+    "cargoType": "نوع البضاعة",
+    "defaultUnit": "الوحدة المقترحة",
+    "cargoTypeFixed": "لا يمكن تغيير نوع البضاعة بعد الحفظ."
   }
 }

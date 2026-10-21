@@ -48,6 +48,7 @@ export const PERMISSION_MODULES = [
   'credit_notes',
   'receipts',
   'suppliers',
+  'partners',
   'supplier_payments',
   'expenses',
   'manual_journals',
@@ -117,6 +118,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   credit_notes: 'FVANNENNNN',
   receipts: 'FVVVNFNNNV',
   suppliers: 'FVANEFNNNN',
+  // Business model (docs/plans/02-business-model-batch-1.md 4.1): the network's partners, owned by
+  // a branch. Sales and Operations read them; Branch Manager and Sales & Marketing Mgr keep them.
+  partners: 'FVFVVVNNNF',
   supplier_payments: 'FVANNFNNNN',
   expenses: 'FVANEFEEEN',
   manual_journals: 'FVNNNFNNNN',

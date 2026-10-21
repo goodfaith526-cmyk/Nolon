@@ -408,6 +408,9 @@ export const AUDIT_ENTITIES = [
   'CHARGE_TYPE',
   'DOCUMENT_TYPE',
   'CURRENCY',
+  'PARTNER',
+  'PRICE_CATEGORY',
+  'CUSTOMER_SEGMENT',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

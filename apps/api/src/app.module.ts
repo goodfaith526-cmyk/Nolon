@@ -17,6 +17,7 @@ import { DocumentsModule } from './documents/documents.module.js';
 import { ExpensesModule } from './expenses/expenses.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MasterDataModule } from './master-data/master-data.module.js';
+import { PartnersModule } from './partners/partners.module.js';
 import { PayablesModule } from './payables/payables.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
@@ -40,6 +41,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     CurrenciesModule,
     MasterDataModule,
     CustomersModule,
+    PartnersModule,
     RatesModule,
     QuotationsModule,
     BookingsModule,

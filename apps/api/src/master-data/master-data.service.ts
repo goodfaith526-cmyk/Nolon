@@ -14,6 +14,9 @@ import type {
   LocationInput,
   LocationKind,
   MasterDataDto,
+  PriceCategoryDto,
+  PriceCategoryInput,
+  PriceCategoryUpdate,
   RouteMatch,
 } from '@nolon/shared';
 import { AuditService, changedFields, codeEntityId } from '../audit/audit.service.js';
@@ -22,8 +25,10 @@ import {
   Prisma,
   type ChargeType,
   type ContainerType,
+  type CustomerSegment,
   type DocumentType,
   type Location,
+  type PriceCategory,
 } from '../generated/prisma/client.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -33,9 +38,19 @@ import { codedRefusal, fieldRefusal } from '../common/validation.js';
 type Tx = Prisma.TransactionClient;
 
 /** The master data kept by code that the master data screen edits here (currencies have theirs). */
-export type CodeType = 'CONTAINER_TYPE' | 'CHARGE_TYPE' | 'DOCUMENT_TYPE';
+export type CodeType = 'CONTAINER_TYPE' | 'CHARGE_TYPE' | 'DOCUMENT_TYPE' | 'CUSTOMER_SEGMENT';
 
-type CodeRow = ContainerType | ChargeType | DocumentType;
+type CodeRow = ContainerType | ChargeType | DocumentType | CustomerSegment;
+
+/** The fields the audit log shows for a price category, in this order. */
+const PRICE_CATEGORY_FIELDS = [
+  'code',
+  'nameEn',
+  'nameAr',
+  'cargoType',
+  'defaultUnit',
+  'isActive',
+] as const;
 
 /** The fields the audit log shows for a code type, in this order. */
 const AUDITED_FIELDS = ['code', 'nameEn', 'nameAr', 'isActive'] as const;
@@ -44,6 +59,7 @@ const CODE_TYPE_NAMES: Record<CodeType, string> = {
   CONTAINER_TYPE: 'Container type',
   CHARGE_TYPE: 'Charge type',
   DOCUMENT_TYPE: 'Document type',
+  CUSTOMER_SEGMENT: 'Customer segment',
 };
 
 /**
@@ -59,18 +75,28 @@ export class MasterDataService {
   ) {}
 
   async all(): Promise<MasterDataDto> {
-    const [branches, locations, containerTypes, chargeTypes, documentTypes, currencies] =
-      await Promise.all([
-        this.prisma.branch.findMany({
-          select: { id: true, code: true, nameEn: true, nameAr: true },
-          orderBy: { code: 'asc' },
-        }),
-        this.prisma.location.findMany({ orderBy: [{ countryCode: 'asc' }, { code: 'asc' }] }),
-        this.prisma.containerType.findMany({ orderBy: { code: 'asc' } }),
-        this.prisma.chargeType.findMany({ orderBy: { code: 'asc' } }),
-        this.prisma.documentType.findMany({ orderBy: { code: 'asc' } }),
-        this.prisma.currency.findMany({ orderBy: { code: 'asc' } }),
-      ]);
+    const [
+      branches,
+      locations,
+      containerTypes,
+      chargeTypes,
+      documentTypes,
+      currencies,
+      priceCategories,
+      customerSegments,
+    ] = await Promise.all([
+      this.prisma.branch.findMany({
+        select: { id: true, code: true, nameEn: true, nameAr: true },
+        orderBy: { code: 'asc' },
+      }),
+      this.prisma.location.findMany({ orderBy: [{ countryCode: 'asc' }, { code: 'asc' }] }),
+      this.prisma.containerType.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.chargeType.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.documentType.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.currency.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.priceCategory.findMany({ orderBy: { code: 'asc' } }),
+      this.prisma.customerSegment.findMany({ orderBy: { code: 'asc' } }),
+    ]);
     return {
       branches,
       locations: locations.map(toLocationDto),
@@ -85,6 +111,8 @@ export class MasterDataService {
         symbol: c.symbol,
         decimalPlaces: c.decimalPlaces,
       })),
+      priceCategories: priceCategories.map(toPriceCategoryDto),
+      customerSegments: customerSegments.map(toCodeNameDto),
     };
   }
 
@@ -210,6 +238,76 @@ export class MasterDataService {
       const after = await codeTable(tx, type).update(code, { isActive });
       await this.logCodeType(tx, user, type, 'UPDATED', before, after);
       return toCodeNameDto(after);
+    });
+  }
+
+  /**
+   * A new, active price category, in the audit log. Its code and cargo type never change
+   * afterwards: rates and cargo lines name it, and its cargo type is what it prices.
+   */
+  async createPriceCategory(user: AuthUser, input: PriceCategoryInput): Promise<PriceCategoryDto> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = await tx.priceCategory.create({ data: input });
+        await this.logPriceCategory(tx, user, 'CREATED', null, created);
+        return toPriceCategoryDto(created);
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'MASTER_CODE_TAKEN',
+          `Price category ${input.code} already exists`,
+          { code: input.code },
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Renames a price category or changes its suggested unit (code and cargo type stay). */
+  async updatePriceCategory(
+    user: AuthUser,
+    code: string,
+    input: PriceCategoryUpdate,
+  ): Promise<PriceCategoryDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await lockPriceCategory(tx, code);
+      const after = await tx.priceCategory.update({ where: { code }, data: input });
+      await this.logPriceCategory(tx, user, 'UPDATED', before, after);
+      return toPriceCategoryDto(after);
+    });
+  }
+
+  /** Deactivates or reactivates a price category, as setCodeTypeActive does a code type. */
+  async setPriceCategoryActive(
+    user: AuthUser,
+    code: string,
+    isActive: boolean,
+  ): Promise<PriceCategoryDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await lockPriceCategory(tx, code);
+      if (before.isActive === isActive) return toPriceCategoryDto(before);
+      const after = await tx.priceCategory.update({ where: { code }, data: { isActive } });
+      await this.logPriceCategory(tx, user, 'UPDATED', before, after);
+      return toPriceCategoryDto(after);
+    });
+  }
+
+  private async logPriceCategory(
+    tx: Tx,
+    user: AuthUser,
+    action: 'CREATED' | 'UPDATED',
+    before: PriceCategory | null,
+    after: PriceCategory,
+  ): Promise<void> {
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: 'PRICE_CATEGORY',
+      entityId: codeEntityId('PRICE_CATEGORY', after.code),
+      reference: `${after.code} ${after.nameEn}`,
+      action,
+      changes: changedFields(before, after, PRICE_CATEGORY_FIELDS),
     });
   }
 
@@ -345,6 +443,12 @@ function codeTable(tx: Tx, type: CodeType): CodeTable {
         update: (code, data) => tx.documentType.update({ where: { code }, data }),
         find: (code) => tx.documentType.findUnique({ where: { code } }),
       };
+    case 'CUSTOMER_SEGMENT':
+      return {
+        create: (data) => tx.customerSegment.create({ data }),
+        update: (code, data) => tx.customerSegment.update({ where: { code }, data }),
+        find: (code) => tx.customerSegment.findUnique({ where: { code } }),
+      };
   }
 }
 
@@ -353,6 +457,7 @@ const CODE_TABLE_NAMES: Record<CodeType, string> = {
   CONTAINER_TYPE: 'container_types',
   CHARGE_TYPE: 'charge_types',
   DOCUMENT_TYPE: 'document_types',
+  CUSTOMER_SEGMENT: 'customer_segments',
 };
 
 /**
@@ -366,6 +471,15 @@ async function lockCodeType(tx: Tx, type: CodeType, code: string): Promise<CodeR
   );
   const row = rows.length > 0 ? await codeTable(tx, type).find(code) : null;
   if (!row) throw new NotFoundException(`${CODE_TYPE_NAMES[type]} not found`);
+  return row;
+}
+
+/** The price category's row locked for update, read after the lock. 404 when missing. */
+async function lockPriceCategory(tx: Tx, code: string): Promise<PriceCategory> {
+  const rows = await tx.$queryRaw<{ code: string }[]>`
+    SELECT "code" FROM "price_categories" WHERE "code" = ${code} FOR UPDATE`;
+  const row = rows.length > 0 ? await tx.priceCategory.findUnique({ where: { code } }) : null;
+  if (!row) throw new NotFoundException('Price category not found');
   return row;
 }
 
@@ -428,6 +542,17 @@ function toLocationDto(l: Location): LocationDto {
   };
 }
 
-function toCodeNameDto(t: ContainerType | ChargeType | DocumentType): CodeNameDto {
+function toPriceCategoryDto(c: PriceCategory): PriceCategoryDto {
+  return {
+    code: c.code,
+    nameEn: c.nameEn,
+    nameAr: c.nameAr,
+    isActive: c.isActive,
+    cargoType: c.cargoType,
+    defaultUnit: c.defaultUnit,
+  };
+}
+
+function toCodeNameDto(t: CodeRow): CodeNameDto {
   return { code: t.code, nameEn: t.nameEn, nameAr: t.nameAr, isActive: t.isActive };
 }

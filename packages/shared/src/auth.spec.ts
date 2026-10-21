@@ -68,6 +68,8 @@ describe('permission matrix (annex A)', () => {
     ['credit_notes', 'ك ع م — — إ — — — —'],
     ['receipts', 'ك ع ع ع — ك — — — ع'],
     ['suppliers', 'ك ع م — إ ك — — — —'],
+    // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
+    ['partners', 'ك ع ك ع ع ع — — — ك'],
     ['supplier_payments', 'ك ع م — — ك — — — —'],
     ['expenses', 'ك ع م — إ ك إ إ إ —'],
     ['manual_journals', 'ك ع — — — ك — — — —'],

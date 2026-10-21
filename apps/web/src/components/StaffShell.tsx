@@ -21,6 +21,7 @@ interface NavLink {
   label:
     | 'home'
     | 'customers'
+    | 'partners'
     | 'rates'
     | 'quotations'
     | 'bookings'
@@ -89,6 +90,7 @@ const NAV_SECTIONS: readonly {
         permission: DRAFT_VIEW_PERMISSIONS,
       },
       { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
+      { href: '/partners', label: 'partners', icon: 'carrier', permission: 'partners:view' },
       { href: '/rates', label: 'rates', icon: 'rates', permission: 'rates:view' },
       {
         href: '/quotations',
