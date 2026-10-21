@@ -24,6 +24,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   localDayFilter,
@@ -97,6 +98,7 @@ export class BookingsService {
     const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.BookingWhereInput = {
       ...listBranchScope(user, filters.branchId),
+      ...salesOutletScope(user),
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
@@ -239,6 +241,7 @@ export class BookingsService {
       where: {
         customerId,
         ...branchScope(user),
+        ...salesOutletScope(user),
         status: { not: 'CANCELLED' },
         OR: [
           { shipperId: { not: null } },
@@ -441,6 +444,20 @@ export class BookingsService {
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
   async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
+    // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs. For
+    // Outlet Staff the outlet is checked as it is now, first in the transaction.
+    const fromQuotation = prepared.quotationId
+      ? await tx.quotation.findUniqueOrThrow({
+          where: { id: prepared.quotationId },
+          select: { salesOutletId: true },
+        })
+      : null;
+    if (fromQuotation) {
+      await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+    }
+    const salesOutletId = fromQuotation
+      ? fromQuotation.salesOutletId
+      : await this.customers.outletForSaleInTx(tx, user, prepared.customerId);
     const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
     try {
       const created = await tx.booking.create({
@@ -450,6 +467,7 @@ export class BookingsService {
           branchId: prepared.branchId,
           customerId: prepared.customerId,
           quotationId: prepared.quotationId,
+          salesOutletId,
           createdById: user.id,
           items: { create: prepared.items },
         },
@@ -487,6 +505,7 @@ export class BookingsService {
     }
     const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
+      await assertOutletInTx(tx, user, existing.salesOutletId, 'Booking not found');
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
       await tx.bookingItem.createMany({
@@ -558,7 +577,7 @@ export class BookingsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<BookingWithDetails> {
     const booking = await this.prisma.booking.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...salesOutletScope(user) },
       include: details,
     });
     if (!booking) throw new NotFoundException('Booking not found');

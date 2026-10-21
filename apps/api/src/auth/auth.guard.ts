@@ -16,8 +16,10 @@ import {
   AGENT_DRAFT_WRITABLE,
   AGENT_READABLE,
   IS_PUBLIC,
+  OUTLET_SCOPED,
   REQUIRED_PERMISSIONS,
 } from './decorators.js';
+import { outletLimited } from './outlet-scope.js';
 import { SESSION_COOKIE, readCookie } from './session-token.js';
 
 /**
@@ -30,6 +32,9 @@ import { SESSION_COOKIE, readCookie } from './session-token.js';
  * draft routes marked @AgentDraftWritable() or @AgentDraftDecidable(), and every attempt
  * with a known token (expired, revoked or refused ones included) is logged with the user and the
  * agent.
+ *
+ * An Outlet Staff user (business model plan 4.2) reaches only routes marked @OutletScoped(), and
+ * never through the assistant.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -55,6 +60,13 @@ export class AuthGuard implements CanActivate {
     if (required?.some((permission) => !user.permissions.has(permission))) {
       throw new ForbiddenException('Missing permission');
     }
+    // Outlet Staff (plan 4.2): only routes built for the outlet filter.
+    if (
+      outletLimited(user) &&
+      this.reflector.getAllAndOverride<boolean>(OUTLET_SCOPED, targets) !== true
+    ) {
+      throw new ForbiddenException('Not available to outlet staff');
+    }
     return true;
   }
 
@@ -79,8 +91,11 @@ export class AuthGuard implements CanActivate {
         (marked(AGENT_DRAFT_WRITABLE) ||
           marked(AGENT_DRAFT_DECIDABLE) ||
           marked(AGENT_DRAFT_CHECKABLE)));
+    // Outlet Staff cannot use the assistant in this batch (plan 4.2 item 5).
     const permitted =
-      user !== null && !required?.some((permission) => !user.permissions.has(permission));
+      user !== null &&
+      !outletLimited(user) &&
+      !required?.some((permission) => !user.permissions.has(permission));
     await this.auth.recordAgentAccess(
       tokenId,
       request.method,

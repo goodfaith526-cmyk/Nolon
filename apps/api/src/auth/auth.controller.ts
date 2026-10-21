@@ -16,7 +16,7 @@ import type { CookieOptions, Request, Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from './auth-user.js';
 import { AuthService } from './auth.service.js';
-import { AgentReadable, CurrentUser, Public } from './decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, Public } from './decorators.js';
 import { SESSION_COOKIE, readCookie } from './session-token.js';
 
 const loginBody = z.object({
@@ -73,6 +73,7 @@ export class AuthController {
     res.clearCookie(SESSION_COOKIE, COOKIE_OPTIONS);
   }
 
+  @OutletScoped()
   @Post('password')
   @HttpCode(HttpStatus.NO_CONTENT)
   async changePassword(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<void> {
@@ -90,6 +91,7 @@ export class AuthController {
     if (!ok) throw new BadRequestException('Current password is wrong');
   }
 
+  @OutletScoped()
   @AgentReadable()
   @Get('me')
   me(@CurrentUser() user: AuthUser): Promise<AuthMeResponse> {

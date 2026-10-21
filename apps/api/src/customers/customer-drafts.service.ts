@@ -202,9 +202,11 @@ export class CustomerDraftsService {
       assertBranchAccess(user, branchId);
       await this.customers.prepareCreate(user, presentRequestOf(branchId, input));
       throwFirstConflict(
-        await this.customers.duplicateIssues(this.prisma, [
-          { branchId, phone: input.phone ?? undefined },
-        ]),
+        await this.customers.duplicateIssues(
+          this.prisma,
+          [{ branchId, phone: input.phone ?? undefined }],
+          user,
+        ),
       );
       return { total: null, currency: null, missingFields: customerMissingFields(input) };
     });
@@ -247,6 +249,7 @@ export class CustomerDraftsService {
         await requireBranchMemberInTx(tx, user, branchId);
         if (replaced) await requireUnpaired(tx, replaced.id);
         return this.insertNewInTx(tx, {
+          user,
           scope,
           hash,
           branchId,
@@ -273,9 +276,14 @@ export class CustomerDraftsService {
    * createInTx gives for a phone already taken in the branch, at `field` (the phone's path in the
    * combined request). Reads only.
    */
-  async requirePhoneFree(branchId: string, phone: string, field: string): Promise<void> {
+  async requirePhoneFree(
+    user: AuthUser,
+    branchId: string,
+    phone: string,
+    field: string,
+  ): Promise<void> {
     const [issue] = (
-      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone }])
+      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone }], user)
     ).flat();
     if (issue) {
       throw new ConflictException({
@@ -318,6 +326,7 @@ export class CustomerDraftsService {
     });
     if (existing) throw keyReused();
     return this.insertNewInTx(tx, {
+      user,
       scope,
       hash: withReplaced(customerRequestHash(branchId, input, evidence), replacesDraftId),
       branchId,
@@ -439,6 +448,7 @@ export class CustomerDraftsService {
   private async insertNewInTx(
     tx: Prisma.TransactionClient,
     spec: {
+      user: AuthUser;
       scope: { agentClientId: string; createdById: string; idempotencyKey: string };
       hash: string;
       branchId: string;
@@ -453,7 +463,11 @@ export class CustomerDraftsService {
     // instead of proposing a duplicate; it is checked again under the lock on approval. A
     // replay is answered before this, even after its own approval took the phone.
     throwFirstConflict(
-      await this.customers.duplicateIssues(tx, [{ branchId, phone: input.phone ?? undefined }]),
+      await this.customers.duplicateIssues(
+        tx,
+        [{ branchId, phone: input.phone ?? undefined }],
+        spec.user,
+      ),
     );
     if (replaced) await replaceInTx(tx, replaced);
     const draft = await tx.customerDraft.create({
@@ -496,9 +510,11 @@ export class CustomerDraftsService {
       await requireBranchMemberInTx(tx, user, current.branchId);
       if (patch.phone) {
         throwFirstConflict(
-          await this.customers.duplicateIssues(tx, [
-            { branchId: current.branchId, phone: patch.phone },
-          ]),
+          await this.customers.duplicateIssues(
+            tx,
+            [{ branchId: current.branchId, phone: patch.phone }],
+            user,
+          ),
         );
       }
       await tx.customerDraft.update({
@@ -680,9 +696,11 @@ export class CustomerDraftsService {
         presentRequestOf(draft.branchId, customerRequestOf(draft)),
       );
       throwFirstConflict(
-        await this.customers.duplicateIssues(this.prisma, [
-          { branchId: draft.branchId, phone: draft.phone ?? undefined },
-        ]),
+        await this.customers.duplicateIssues(
+          this.prisma,
+          [{ branchId: draft.branchId, phone: draft.phone ?? undefined }],
+          user,
+        ),
       );
       return { total: null, currency: null };
     });

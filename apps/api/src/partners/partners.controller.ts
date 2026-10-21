@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import { PARTNER_KINDS, type Page, type PartnerDto, type PartnerSummaryDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { optionalFlag } from '../common/list-filters.js';
 import {
   countryCode,
@@ -50,12 +50,14 @@ const updateBody = z
 export class PartnersController {
   constructor(private readonly partners: PartnersService) {}
 
+  @OutletScoped()
   @Get()
   @RequirePermission('partners:view')
   list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<PartnerSummaryDto>> {
     return this.partners.list(user, parse(listQuery, query));
   }
 
+  @OutletScoped()
   @Get(':id')
   @RequirePermission('partners:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<PartnerDto> {

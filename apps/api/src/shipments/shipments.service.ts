@@ -346,10 +346,17 @@ export class ShipmentsService {
     branchId: string;
     sharedBranchIds: string[];
     status: ShipmentStatus;
+    salesOutletId: string | null;
   }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id, ...this.scope(user) },
-      select: { id: true, branchId: true, status: true, sharedBranches: sharedBranchesSelect },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        salesOutletId: true,
+        sharedBranches: sharedBranchesSelect,
+      },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
     const { sharedBranches, ...rest } = shipment;
@@ -414,7 +421,7 @@ export class ShipmentsService {
 
   /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
-   * customer, parties, route, services and cargo lines are copied from the booking.
+   * customer, parties, route, services, cargo lines and sales outlet are copied from the booking.
    */
   async createForBooking(tx: Tx, user: AuthUser, bookingId: string): Promise<{ id: string }> {
     const booking = await tx.booking.findUniqueOrThrow({
@@ -440,6 +447,7 @@ export class ShipmentsService {
         shipperId: booking.shipperId,
         consigneeId: booking.consigneeId,
         notifyPartyId: booking.notifyPartyId,
+        salesOutletId: booking.salesOutletId,
         trackingToken: newTrackingToken(),
         createdById: user.id,
         items: {

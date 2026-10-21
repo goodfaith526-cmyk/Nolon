@@ -19,7 +19,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { optionalFlag } from '../common/list-filters.js';
 import { optionalText, pageQuery, parse, phone, requiredText } from '../common/validation.js';
 import { createCustomerBody, email, partyBody, updateCustomerBody } from './customer-schemas.js';
@@ -50,6 +50,7 @@ const contactBody = z
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('customers:view')
@@ -57,6 +58,7 @@ export class CustomersController {
     return this.customers.list(user, parse(listQuery, query));
   }
 
+  @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('customers:view')
@@ -64,12 +66,14 @@ export class CustomersController {
     return this.customers.get(user, id);
   }
 
+  @OutletScoped()
   @Post()
   @RequirePermission('customers:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerDto> {
     return this.customers.create(user, parse(createCustomerBody, body));
   }
 
+  @OutletScoped()
   @Patch(':id')
   @RequirePermission('customers:update')
   update(
@@ -80,6 +84,7 @@ export class CustomersController {
     return this.customers.update(user, id, parse(updateCustomerBody, body));
   }
 
+  @OutletScoped()
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('customers:update')
@@ -90,6 +95,7 @@ export class CustomersController {
     return this.customers.setActive(user, id, false);
   }
 
+  @OutletScoped()
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('customers:update')
@@ -100,6 +106,7 @@ export class CustomersController {
     return this.customers.setActive(user, id, true);
   }
 
+  @OutletScoped()
   @Post(':id/contacts')
   @RequirePermission('customers:update')
   addContact(
@@ -110,6 +117,7 @@ export class CustomersController {
     return this.customers.addContact(user, id, parse(contactBody, body));
   }
 
+  @OutletScoped()
   @Patch(':id/contacts/:contactId')
   @RequirePermission('customers:update')
   updateContact(
@@ -121,6 +129,7 @@ export class CustomersController {
     return this.customers.updateContact(user, id, contactId, parse(contactBody.partial(), body));
   }
 
+  @OutletScoped()
   @Post(':id/parties')
   @RequirePermission('customers:update')
   addParty(
@@ -131,6 +140,7 @@ export class CustomersController {
     return this.customers.addParty(user, id, parse(partyBody, body));
   }
 
+  @OutletScoped()
   @Patch(':id/parties/:partyId')
   @RequirePermission('customers:update')
   updateParty(

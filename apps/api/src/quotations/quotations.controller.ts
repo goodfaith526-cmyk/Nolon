@@ -23,7 +23,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
 import {
   amount,
@@ -80,6 +80,7 @@ const listQuery = pageQuery
 export class QuotationsController {
   constructor(private readonly quotations: QuotationsService) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('quotations:view')
@@ -88,12 +89,14 @@ export class QuotationsController {
   }
 
   /** What a new quotation for the customer starts from (declared before `:id`). */
+  @OutletScoped()
   @Get('defaults')
   @RequirePermission('quotations:create')
   defaults(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<QuotationDefaultsDto> {
     return this.quotations.defaults(user, parse(defaultsQuery, query).customerId);
   }
 
+  @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('quotations:view')
@@ -104,12 +107,14 @@ export class QuotationsController {
     return this.quotations.get(user, id);
   }
 
+  @OutletScoped()
   @Post()
   @RequirePermission('quotations:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<QuotationDto> {
     return this.quotations.create(user, parse(quotationCreateBody, body));
   }
 
+  @OutletScoped()
   @Patch(':id')
   @RequirePermission('quotations:update')
   update(
@@ -120,6 +125,7 @@ export class QuotationsController {
     return this.quotations.update(user, id, parse(quotationInputBody, body));
   }
 
+  @OutletScoped()
   @Post(':id/send')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('quotations:update')

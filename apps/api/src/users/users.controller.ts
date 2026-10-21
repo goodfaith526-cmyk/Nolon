@@ -28,6 +28,7 @@ import { UsersService } from './users.service.js';
 const password = z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH);
 const roles = z.array(z.enum(ROLES)).min(1).max(ROLES.length);
 const branchIds = z.array(z.uuid()).max(50);
+const outletIds = z.array(z.uuid()).max(50);
 
 const createBody = z.object({
   email: z.string().trim().email().max(254),
@@ -36,6 +37,7 @@ const createBody = z.object({
   preferredLocale: z.enum(LOCALES),
   roles,
   branchIds,
+  outletIds: outletIds.optional(),
 });
 
 const updateBody = z
@@ -44,6 +46,7 @@ const updateBody = z
     preferredLocale: z.enum(LOCALES).optional(),
     roles: roles.optional(),
     branchIds: branchIds.optional(),
+    outletIds: outletIds.optional(),
   })
   .strict();
 
