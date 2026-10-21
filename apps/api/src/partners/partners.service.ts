@@ -139,7 +139,9 @@ export class PartnersService {
       await this.checkReferences(tx, {
         countryCode: input.countryCode ?? before.countryCode,
         locationId: input.locationId === undefined ? before.locationId : input.locationId,
-        // Only a newly named supplier or currency must be active: one already held stays.
+        // Only a newly named location, supplier or currency must be active: one already held
+        // stays, so a partner whose city was deactivated can still be edited or deactivated.
+        heldLocationId: before.locationId,
         supplierId: input.supplierId === before.supplierId ? undefined : input.supplierId,
         currency: input.currency === before.currency ? undefined : input.currency,
       });
@@ -150,20 +152,25 @@ export class PartnersService {
   }
 
   /**
-   * The location (when named) is active and in the partner's country; a supplier or currency named
-   * is active. Each is share-locked until the caller commits.
+   * The location (when named) is in the partner's country, and active unless the partner already
+   * holds it (`heldLocationId`); a supplier or currency named is active. Each is share-locked until
+   * the caller commits.
    */
   private async checkReferences(
     tx: Tx,
     input: {
       countryCode: string;
       locationId?: string | null;
+      heldLocationId?: string | null;
       supplierId?: string | null;
       currency?: string;
     },
   ): Promise<void> {
     if (input.locationId) {
-      const location = await this.masterData.requireLocationInTx(tx, input.locationId);
+      const location =
+        input.locationId === input.heldLocationId
+          ? await this.masterData.lockHeldLocationInTx(tx, input.locationId)
+          : await this.masterData.requireLocationInTx(tx, input.locationId);
       if (location.countryCode !== input.countryCode) {
         throw fieldRefusal(
           'PARTNER_LOCATION_OTHER_COUNTRY',

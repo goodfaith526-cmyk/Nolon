@@ -1882,7 +1882,8 @@
     "location": "City or port",
     "currency": "Currency",
     "branch": "Branch",
-    "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step."
+    "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step.",
+    "loadMore": "Show more"
   },
   "SupplierBills": {
     "title": "Supplier bills",

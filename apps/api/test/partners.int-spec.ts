@@ -190,6 +190,50 @@ describe('partners, price categories and customer segments', () => {
       expect(inactive.items.some((p) => p.id === partner.id)).toBe(true);
     });
 
+    it('keeps a partner editable after its city is deactivated; a new city must be active', async () => {
+      const city = await t.prisma.location.create({
+        data: {
+          code: `ZZ${suffix().slice(-6).toUpperCase()}`,
+          kind: 'CITY',
+          nameEn: 'ZZ city',
+          nameAr: 'مدينة',
+          countryCode: 'SA',
+        },
+      });
+      const partner = (
+        await post('/partners', cookies.jedManager, outlet({ locationId: city.id })).expect(201)
+      ).body as PartnerDto;
+      await t.prisma.location.update({ where: { id: city.id }, data: { isActive: false } });
+      // The held city stays: renaming and deactivating still work.
+      await patch(`/partners/${partner.id}`, cookies.jedManager, { name: 'ZZ renamed' }).expect(
+        200,
+      );
+      const off = (
+        await patch(`/partners/${partner.id}`, cookies.jedManager, { isActive: false }).expect(200)
+      ).body as PartnerDto;
+      expect(off).toMatchObject({ isActive: false, locationId: city.id, name: 'ZZ renamed' });
+      // The held city is still checked against a changed country.
+      await patch(`/partners/${partner.id}`, cookies.jedManager, { countryCode: 'SD' }).expect(400);
+      // A newly named inactive city is refused, on edit and on create.
+      const other = (await post('/partners', cookies.jedManager, outlet()).expect(201))
+        .body as PartnerDto;
+      await patch(`/partners/${other.id}`, cookies.jedManager, { locationId: city.id }).expect(400);
+      await post('/partners', cookies.jedManager, outlet({ locationId: city.id })).expect(400);
+    });
+
+    it('pages the list', async () => {
+      await post('/partners', cookies.jedManager, outlet()).expect(201);
+      await post('/partners', cookies.jedManager, outlet()).expect(201);
+      const first = (await get('/partners?pageSize=1&page=1', cookies.jedManager).expect(200))
+        .body as Page<PartnerSummaryDto>;
+      const second = (await get('/partners?pageSize=1&page=2', cookies.jedManager).expect(200))
+        .body as Page<PartnerSummaryDto>;
+      expect(first.total).toBeGreaterThanOrEqual(2);
+      expect(first.items).toHaveLength(1);
+      expect(second.items).toHaveLength(1);
+      expect(second.items[0]?.id).not.toBe(first.items[0]?.id);
+    });
+
     it('creates no journal entry or supplier bill (commissions are not in this batch)', async () => {
       const before = await Promise.all([
         t.prisma.journalEntry.count(),

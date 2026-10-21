@@ -17,6 +17,8 @@ import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data'
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 
+const PAGE_SIZE = 50;
+
 /** The partner form's fields as the API takes them (all but the branch); empty texts are null. */
 export function partnerFields(form: FormData): Omit<PartnerInput, 'branchId'> {
   const text = (name: string) => field(form, name).trim() || null;
@@ -142,12 +144,25 @@ export function Partners() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
+  // The filters of the rows shown, so "show more" fetches the next page of the same search.
+  const [shown, setShown] = useState<{ q: string; kind: PartnerKind | '' }>({ q: '', kind: '' });
+
+  /** Page 1 replaces the rows; a later page is added below them. */
   const load = useCallback(
-    (query: string, k: PartnerKind | '') => {
-      const params = new URLSearchParams({ pageSize: '50', q: query });
+    (query: string, k: PartnerKind | '', pageNo = 1) => {
+      const params = new URLSearchParams({
+        pageSize: String(PAGE_SIZE),
+        page: String(pageNo),
+        q: query,
+      });
       if (k) params.set('kind', k);
       api<Page<PartnerSummaryDto>>(`/partners?${params.toString()}`)
-        .then(setPage)
+        .then((next) => {
+          setShown({ q: query, kind: k });
+          setPage((prev) =>
+            pageNo > 1 && prev ? { ...next, items: [...prev.items, ...next.items] } : next,
+          );
+        })
         .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
     },
     [failure],
@@ -289,6 +304,12 @@ export function Partners() {
               ))}
             </tbody>
           </table>
+          <p className="muted">{tc('shown', { shown: page.items.length, total: page.total })}</p>
+          {page.items.length < page.total && (
+            <button type="button" onClick={() => load(shown.q, shown.kind, page.page + 1)}>
+              {t('loadMore')}
+            </button>
+          )}
         </div>
       )}
     </section>
