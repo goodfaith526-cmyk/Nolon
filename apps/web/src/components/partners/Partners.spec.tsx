@@ -5,6 +5,13 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const calls: string[] = [];
+/** When set, replies wait until `release()`: requests in flight. */
+let held: (() => void)[] | null = null;
+const release = (newestFirst = false) => {
+  const waiting = held ?? [];
+  held = null;
+  for (const go of newestFirst ? waiting.reverse() : waiting) go();
+};
 const row = (n: number): PartnerSummaryDto => ({
   id: `p${n}`,
   number: `NOL-PTR-00000${n}`,
@@ -37,7 +44,9 @@ vi.mock('@/lib/api', () => ({
       page,
       pageSize: 50,
     };
-    return Promise.resolve(result);
+    if (!held) return Promise.resolve(result);
+    const queue = held;
+    return new Promise((resolve) => queue.push(() => resolve(result)));
   },
 }));
 // Stable, as the real hook is: the list reloads when it changes.
@@ -58,7 +67,20 @@ afterEach(() => {
   host?.remove();
   host = null;
   calls.length = 0;
+  held = null;
 });
+
+async function show(): Promise<HTMLElement> {
+  host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => root.render(<Partners />));
+  await act(() => Promise.resolve());
+  return host;
+}
+
+const moreButton = (shown: HTMLElement) =>
+  [...shown.querySelectorAll('button')].find((b) => b.textContent === 'loadMore');
 
 describe('Partners', () => {
   it('loads the 51st partner below the first 50, with the same filters', async () => {
@@ -77,5 +99,35 @@ describe('Partners', () => {
     expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'loadMore')).toBe(
       false,
     );
+  });
+
+  it('sends the next page once however often it is pressed, and drops a stale page', async () => {
+    const shown = await show();
+    held = [];
+    act(() => moreButton(shown)?.click());
+    act(() => moreButton(shown)?.click());
+    expect(calls.filter((c) => c.includes('page=2'))).toHaveLength(1);
+    expect(moreButton(shown)?.disabled).toBe(true);
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    expect(shown.querySelectorAll('tbody tr')).toHaveLength(51);
+
+    // A new search while the next page of the old one is loading: the old page is dropped.
+    const fresh = await show();
+    held = [];
+    act(() => moreButton(fresh)?.click());
+    const form = fresh.querySelector('form');
+    act(() => {
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    // The new search answers first; the old page arriving after it must not be added.
+    await act(async () => {
+      release(true);
+      await Promise.resolve();
+    });
+    expect(calls.at(-1)).toContain('page=1');
+    expect(fresh.querySelectorAll('tbody tr')).toHaveLength(50);
   });
 });

@@ -14,6 +14,7 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { usePagedLoads } from '@/lib/paged-loads';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 
@@ -147,9 +148,16 @@ export function Partners() {
   // The filters of the rows shown, so "show more" fetches the next page of the same search.
   const [shown, setShown] = useState<{ q: string; kind: PartnerKind | '' }>({ q: '', kind: '' });
 
-  /** Page 1 replaces the rows; a later page is added below them. */
+  const { loads, loading } = usePagedLoads();
+
+  /**
+   * Page 1 replaces the rows; a later page is added below them, one at a time. A reply overtaken
+   * by a newer search is dropped.
+   */
   const load = useCallback(
     (query: string, k: PartnerKind | '', pageNo = 1) => {
+      const token = pageNo > 1 ? loads.next() : loads.first();
+      if (token === null) return;
       const params = new URLSearchParams({
         pageSize: String(PAGE_SIZE),
         page: String(pageNo),
@@ -158,14 +166,18 @@ export function Partners() {
       if (k) params.set('kind', k);
       api<Page<PartnerSummaryDto>>(`/partners?${params.toString()}`)
         .then((next) => {
+          if (!loads.current(token)) return;
           setShown({ q: query, kind: k });
           setPage((prev) =>
             pageNo > 1 && prev ? { ...next, items: [...prev.items, ...next.items] } : next,
           );
         })
-        .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+        .catch((e: unknown) => {
+          if (loads.current(token)) setNotice({ ok: false, text: failure(e) });
+        })
+        .finally(() => loads.done(token));
     },
-    [failure],
+    [failure, loads],
   );
 
   useEffect(() => load('', ''), [load]);
@@ -306,7 +318,11 @@ export function Partners() {
           </table>
           <p className="muted">{tc('shown', { shown: page.items.length, total: page.total })}</p>
           {page.items.length < page.total && (
-            <button type="button" onClick={() => load(shown.q, shown.kind, page.page + 1)}>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => load(shown.q, shown.kind, page.page + 1)}
+            >
               {t('loadMore')}
             </button>
           )}
