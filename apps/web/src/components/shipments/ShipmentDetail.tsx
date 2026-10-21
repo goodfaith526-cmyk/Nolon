@@ -14,7 +14,7 @@ import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { earliestLocalMinute, needsFreshShipment } from '@/lib/status-history';
-import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { ShipmentCustoms } from '../customs/ShipmentCustoms';
 import { ShipmentInvoices } from '../finance/ShipmentInvoices';
@@ -175,7 +175,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const party = (partyId: string | null) =>
     partyId ? (customer?.parties.find((p) => p.id === partyId)?.name ?? '…') : '—';
   const trackingUrl = `${window.location.origin}/track/${s.trackingToken}`;
-  const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
+  const activeLocations = master?.locations.filter((l) => l.isActive && isPlace(l)) ?? [];
   const list = new Intl.ListFormat(locale);
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
   const canRevert = actions.revertTo !== null && actions.revertUndoes !== null && !refreshing;

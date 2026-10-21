@@ -22,7 +22,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { asciiDigits } from '@/lib/form';
-import { useLocalName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { can, useMe } from '../StaffShell';
 import { cargoChoices } from './cargo';
@@ -330,7 +330,7 @@ export function BookingForm({
   }
 
   if (!master) return <p className="muted">{tc('loading')}</p>;
-  const locations = master.locations.filter((l) => l.isActive);
+  const locations = master.locations.filter((l) => l.isActive && isPlace(l));
   const parties = (details?.id === customerId ? details?.parties : undefined) ?? [];
   // The suggestion's source, said while a suggested party is still selected.
   const suggestedNote = (() => {

@@ -13,7 +13,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
-import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { usePagedLoads } from '@/lib/paged-loads';
 import { CountrySelect, useCountryName } from '../CountrySelect';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
@@ -46,7 +46,7 @@ export function PartnerFields({ partner }: { partner?: PartnerDto }) {
   const [country, setCountry] = useState(partner?.countryCode ?? '');
   const [locationId, setLocationId] = useState(partner?.locationId ?? '');
   const places = (master?.locations ?? []).filter(
-    (l) => (l.isActive || l.id === partner?.locationId) && l.countryCode === country,
+    (l) => (l.isActive || l.id === partner?.locationId) && isPlace(l) && l.countryCode === country,
   );
   const currencies = (master?.currencies ?? []).filter(
     (c) => c.isActive || c.code === partner?.currency,

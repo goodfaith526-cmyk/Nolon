@@ -10,10 +10,12 @@ import type {
   CreateRateCardRequest,
   LoadType,
   Page,
+  PriceScope,
   RateCardDto,
   RateCardInput,
   RateStatus,
   RateUnit,
+  RouteMatch,
   ShippingMode,
 } from '@nolon/shared';
 import { hasSeaLeg } from '@nolon/shared';
@@ -54,6 +56,7 @@ export interface RateKeyFields {
   cargoType: string;
   containerTypeCode?: string | null;
   chargeTypeCode?: string | null;
+  priceCategoryCode?: string | null;
   unit: string;
   currency: string;
   validFrom: string;
@@ -61,7 +64,7 @@ export interface RateKeyFields {
 
 /**
  * What makes two rates the same offer: branch, route, mode, load, cargo, container, charge,
- * unit, currency and start date. Two such rates in DRAFT or APPROVED would make quotation pricing
+ * price category, unit, currency and start date. Two such rates in DRAFT or APPROVED would make quotation pricing
  * ambiguous, so a branch holds at most one.
  */
 export function rateKey(r: RateKeyFields): string {
@@ -77,6 +80,7 @@ export function rateKey(r: RateKeyFields): string {
     r.unit,
     r.currency,
     r.validFrom,
+    r.priceCategoryCode ?? '',
   ].join('|');
 }
 
@@ -102,6 +106,21 @@ export interface RatePricingContext {
   mode: ShippingMode;
   loadType: LoadType | null;
   cargoType: CargoType;
+  /**
+   * The line's price category (plan 5.3): null or left out, the line is priced from general
+   * cards only; with one, from its category's cards first, else the general ones.
+   */
+  priceCategoryCode?: string | null;
+}
+
+/** The scope a rate card's end matched a document's place at, narrowest first (plan 5.3). */
+const SCOPE_RANK: Readonly<Record<PriceScope, number>> = { PLACE: 0, CITY: 1, COUNTRY: 2 };
+
+/** A rate card that prices a document's route, and at which scope each end matched. */
+export interface ScopedRate {
+  rate: RateCard;
+  originScope: PriceScope;
+  destinationScope: PriceScope;
 }
 
 /** What the system price looks for: the document's context, and the line's charge and unit when given. */
@@ -128,6 +147,8 @@ export interface RateFilters extends PageQuery {
   validOn?: string;
   /** The rates of this branch; else of every branch. */
   branchId?: string;
+  /** The origin and destination are a document's places: the cards covering them (plan 5.3). */
+  covering?: boolean;
 }
 
 /**
@@ -149,7 +170,9 @@ export class RatesService {
   ) {}
 
   async list(filters: RateFilters): Promise<Page<RateCardDto>> {
-    const route = await this.masterData.matchRoute(filters);
+    const route = filters.covering
+      ? await this.coveringRoute(filters)
+      : await this.masterData.matchRoute(filters);
     const where: Prisma.RateCardWhereInput = {
       ...(filters.branchId ? { branchId: filters.branchId } : {}),
       ...(filters.status ? { status: filters.status } : {}),
@@ -180,6 +203,16 @@ export class RatesService {
       page: filters.page,
       pageSize: filters.pageSize,
       ...matchedLocations(route),
+    };
+  }
+
+  /** The locations whose cards price each given end of a document's route (scopesOf). */
+  private async coveringRoute(filters: RateFilters): Promise<RouteMatch> {
+    const of = async (id: string | undefined) =>
+      id === undefined ? null : [...(await this.scopesOf(id)).keys()].sort();
+    return {
+      originLocationIds: await of(filters.originLocationId),
+      destinationLocationIds: await of(filters.destinationLocationId),
     };
   }
 
@@ -222,7 +255,7 @@ export class RatesService {
     // The rules check a location with the other end of its route; one given alone is checked here.
     const { originLocationId: from, destinationLocationId: to } = input;
     const alone = from && !to ? from : to && !from ? to : null;
-    if (alone) await this.masterData.requireLocation(alone);
+    if (alone) await this.masterData.requireRateLocation(alone);
     const issues = await this.ruleChecker()(input);
     throwFirstIssue(issues.filter((issue) => issue.code !== 'CONTAINER_TYPE_REQUIRED'));
   }
@@ -470,28 +503,80 @@ export class RatesService {
   }
 
   /**
-   * For quotation lines: an APPROVED rate of any branch, valid on `onDate`
-   * (YYYY-MM-DD, branch time), that prices exactly this quotation: same currency, route, mode,
-   * load type and cargo type. 400 on any mismatch.
+   * For quotation lines: an APPROVED rate of any branch, valid on `onDate` (YYYY-MM-DD, branch
+   * time), that prices this quotation: same currency, mode, load type and cargo type, a route that
+   * covers the quotation's (each end the place itself, its city or its country, plan 5.3), and no
+   * other price category than the line's. 400 on any mismatch. The rate and the scope each end
+   * matched at.
    */
-  async requireUsableRate(rateId: string, context: RatePricingContext): Promise<RateCard> {
+  async requireUsableRate(rateId: string, context: RatePricingContext): Promise<ScopedRate> {
     const rate = await this.requireApprovedRate(rateId);
     const day = toDbDate(context.onDate);
     if (rate.validFrom > day || (rate.validTo !== null && rate.validTo < day)) {
       throw new BadRequestException('Rate is not valid today');
     }
+    const [origins, destinations] = await Promise.all([
+      this.scopesOf(context.originLocationId),
+      this.scopesOf(context.destinationLocationId),
+    ]);
+    const originScope = origins.get(rate.originLocationId);
+    const destinationScope = destinations.get(rate.destinationLocationId);
+    const category = context.priceCategoryCode ?? null;
     const mismatches = [
       rate.currency !== context.currency && 'currency',
-      rate.originLocationId !== context.originLocationId && 'origin',
-      rate.destinationLocationId !== context.destinationLocationId && 'destination',
+      originScope === undefined && 'origin',
+      destinationScope === undefined && 'destination',
       rate.mode !== context.mode && 'mode',
       rate.loadType !== context.loadType && 'load type',
       rate.cargoType !== context.cargoType && 'cargo type',
+      category !== null &&
+        rate.priceCategoryCode !== null &&
+        rate.priceCategoryCode !== category &&
+        'price category',
     ].filter((m): m is string => typeof m === 'string');
-    if (mismatches.length > 0) {
+    if (mismatches.length > 0 || originScope === undefined || destinationScope === undefined) {
       throw new BadRequestException(`Rate does not match the quotation: ${mismatches.join(', ')}`);
     }
-    return rate;
+    return { rate, originScope, destinationScope };
+  }
+
+  /**
+   * The rules of a rate card chosen by hand, after requireUsableRate (plan 5.3): a category card
+   * needs the line's category chosen first (RATE_CATEGORY_REQUIRED), and a broader card is refused
+   * while a narrower one of the same charge, unit and container type matches (RATE_SUPERSEDED,
+   * naming it): the narrowest scope is a rule, not a hint.
+   */
+  async assertRateChoice(
+    chosen: ScopedRate,
+    context: RatePricingContext,
+    fields: readonly string[],
+  ): Promise<void> {
+    const { rate } = chosen;
+    if (rate.priceCategoryCode !== null && !context.priceCategoryCode) {
+      throw fieldRefusal(
+        'RATE_CATEGORY_REQUIRED',
+        `Rate card ${rate.id} prices the category ${rate.priceCategoryCode}: choose the line's ` +
+          'price category first',
+        fields,
+        { category: rate.priceCategoryCode },
+      );
+    }
+    const narrower = (await this.scopedRates(context)).find(
+      (r) =>
+        r.rate.chargeTypeCode === rate.chargeTypeCode &&
+        r.rate.unit === rate.unit &&
+        r.rate.containerTypeCode === rate.containerTypeCode &&
+        compareScopes(r, chosen) < 0,
+    );
+    if (narrower) {
+      throw fieldRefusal(
+        'RATE_SUPERSEDED',
+        `Rate card ${narrower.rate.id} prices this route more narrowly ` +
+          `(${narrower.originScope} to ${narrower.destinationScope}): use it`,
+        fields,
+        { rate: narrower.rate.id },
+      );
+    }
   }
 
   /**
@@ -507,70 +592,133 @@ export class RatesService {
   }
 
   /**
-   * The offers systemRate chooses from: the APPROVED rates valid on `onDate` that match the
-   * context, one per branch, container type, charge and unit (the latest started of rates that
-   * differ only by start date: two branches' rates are always two offers). The document's own branch's rates when it has any that match; else those of
-   * every branch (rate cards are shared by all branches). Read-only.
+   * The locations a rate card may name to price a document's place, by scope (plan 5.3): the
+   * place itself, its city, and its country's pricing scope (a COUNTRY location of its country).
+   * A city is its own city scope.
    */
-  async systemRates(context: RateMatchContext): Promise<RateCard[]> {
-    const own = await this.matchingRates(context, context.branchId);
-    return own.length > 0 ? own : this.matchingRates(context, null);
+  private async scopesOf(locationId: string): Promise<Map<string, PriceScope>> {
+    const place = await this.prisma.location.findUnique({
+      where: { id: locationId },
+      select: { id: true, kind: true, cityId: true, countryCode: true },
+    });
+    const scopes = new Map<string, PriceScope>();
+    if (!place) return scopes;
+    const countries = await this.prisma.location.findMany({
+      where: { kind: 'COUNTRY', countryCode: place.countryCode },
+      select: { id: true },
+    });
+    for (const c of countries) scopes.set(c.id, 'COUNTRY');
+    if (place.cityId) scopes.set(place.cityId, 'CITY');
+    scopes.set(
+      place.id,
+      place.kind === 'CITY' ? 'CITY' : place.kind === 'COUNTRY' ? 'COUNTRY' : 'PLACE',
+    );
+    return scopes;
   }
 
-  /** systemRates of one branch, or of every branch (`branchId` null). */
-  private async matchingRates(
-    context: RateMatchContext,
-    branchId: string | null,
-  ): Promise<RateCard[]> {
+  /**
+   * Every APPROVED rate of any branch valid on `onDate` that prices the context (currency, mode,
+   * load, cargo, and the charge and unit when given), with a route that covers the document's
+   * (scopesOf) and a category the line may use: a line without a category only general cards; a
+   * line with one its category's cards and the general ones. Read-only.
+   */
+  private async scopedRates(context: RateMatchContext): Promise<ScopedRate[]> {
     const day = toDbDate(context.onDate);
+    const [origins, destinations] = await Promise.all([
+      this.scopesOf(context.originLocationId),
+      this.scopesOf(context.destinationLocationId),
+    ]);
+    const category = context.priceCategoryCode ?? null;
     const rates = await this.prisma.rateCard.findMany({
       where: {
-        ...(branchId === null ? {} : { branchId }),
         status: 'APPROVED',
         validFrom: { lte: day },
         OR: [{ validTo: null }, { validTo: { gte: day } }],
         currency: context.currency,
-        originLocationId: context.originLocationId,
-        destinationLocationId: context.destinationLocationId,
+        originLocationId: { in: [...origins.keys()] },
+        destinationLocationId: { in: [...destinations.keys()] },
         mode: context.mode,
         loadType: context.loadType,
         cargoType: context.cargoType,
+        AND: [
+          category === null
+            ? { priceCategoryCode: null }
+            : { OR: [{ priceCategoryCode: null }, { priceCategoryCode: category }] },
+        ],
         ...(context.chargeTypeCode ? { chargeTypeCode: context.chargeTypeCode } : {}),
         ...(context.unit ? { unit: context.unit } : {}),
       },
       orderBy: [{ validFrom: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
     });
-    const offers = new Map<string, RateCard>();
-    for (const rate of rates) {
+    return rates.map((rate) => ({
+      rate,
+      originScope: origins.get(rate.originLocationId) ?? 'COUNTRY',
+      destinationScope: destinations.get(rate.destinationLocationId) ?? 'COUNTRY',
+    }));
+  }
+
+  /**
+   * The offers systemRate chooses from, with their scopes (plan 5.3). For each charge type, only
+   * the rates of the narrowest scope that has any: the origin's scope first (place, city,
+   * country), then the destination's; at the same scope, the line's category cards before the
+   * general ones. Of those, the document's own branch's rates when it has any; else those of
+   * every branch (rate cards are shared by all branches): so a city card of any branch beats a
+   * country card of the document's branch. One offer per branch, container type, charge and unit
+   * (the latest started of rates that differ only by start date: two branches' rates are always
+   * two offers). Read-only.
+   */
+  async systemScopedRates(context: RateMatchContext): Promise<ScopedRate[]> {
+    const category = context.priceCategoryCode ?? null;
+    const tier = (r: ScopedRate) => [
+      SCOPE_RANK[r.originScope],
+      SCOPE_RANK[r.destinationScope],
+      category !== null && r.rate.priceCategoryCode === category ? 0 : 1,
+    ];
+    const all = await this.scopedRates(context);
+    const best = new Map<string, number[]>();
+    for (const r of all) {
+      const known = best.get(r.rate.chargeTypeCode);
+      if (!known || compareTiers(tier(r), known) < 0) best.set(r.rate.chargeTypeCode, tier(r));
+    }
+    const narrowest = all.filter(
+      (r) => compareTiers(tier(r), best.get(r.rate.chargeTypeCode) ?? []) === 0,
+    );
+    const own = narrowest.filter((r) => r.rate.branchId === context.branchId);
+    const offers = new Map<string, ScopedRate>();
+    for (const r of own.length > 0 ? own : narrowest) {
       // Per branch: two branches' rates are different offers (rateKey), never revisions of one.
       const offer = [
-        rate.branchId,
-        rate.containerTypeCode ?? '',
-        rate.chargeTypeCode,
-        rate.unit,
+        r.rate.branchId,
+        r.rate.containerTypeCode ?? '',
+        r.rate.chargeTypeCode,
+        r.rate.unit,
       ].join('|');
-      if (!offers.has(offer)) offers.set(offer, rate);
+      if (!offers.has(offer)) offers.set(offer, r);
     }
     return [...offers.values()];
   }
 
+  /** systemScopedRates, as the rate cards only. */
+  async systemRates(context: RateMatchContext): Promise<RateCard[]> {
+    return (await this.systemScopedRates(context)).map((r) => r.rate);
+  }
+
   /**
-   * The system price of a line that names no rate card and gives no price: the only APPROVED rate
-   * (of the document's branch, else of every branch: systemRates), valid on `onDate`, for this
-   * route, mode, load type, cargo type and currency, and for the charge type and unit when given.
-   * Of one branch's rates that differ only by start date, the latest started replaces the older
-   * ones; rates of two branches are never one offer. RATE_NO_MATCH when none matches; RATE_SEVERAL (with
-   * the candidates) when the line must say which (a charge type, a unit or the rate card).
+   * The system price of a line that names no rate card and gives no price: the only offer of
+   * systemScopedRates, for this route, mode, load type, cargo type and currency, and for the
+   * charge type and unit when given. RATE_NO_MATCH when none matches; RATE_SEVERAL (with the
+   * candidates) when the line must say which (a charge type, a unit or the rate card).
    */
-  async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<RateCard> {
-    const [only, ...others] = await this.systemRates(context);
+  async systemRate(context: RateMatchContext, fields: RateMatchFields): Promise<ScopedRate> {
+    const [only, ...others] = await this.systemScopedRates(context);
     if (!only) {
       throw fieldRefusal(
         'RATE_NO_MATCH',
         `No approved rate card matches (route, mode, load, cargo, currency${
           context.chargeTypeCode ? `, charge ${context.chargeTypeCode}` : ''
-        }${context.unit ? `, unit ${context.unit}` : ''}, valid on ${context.onDate}): ` +
-          'enter the price',
+        }${context.unit ? `, unit ${context.unit}` : ''}${
+          context.priceCategoryCode ? `, category ${context.priceCategoryCode}` : ''
+        }, valid on ${context.onDate}): enter the price`,
         fields.noMatch,
       );
     }
@@ -578,7 +726,7 @@ export class RatesService {
       const listed = [only, ...others]
         .slice(0, LISTED_RATES)
         .map(
-          (r) =>
+          ({ rate: r }) =>
             `${r.chargeTypeCode} per ${r.unit}${
               r.containerTypeCode ? ` ${r.containerTypeCode}` : ''
             } ${toDecimalString(r.price)} ${r.currency} (rate card ${r.id})`,
@@ -626,10 +774,10 @@ export class RatesService {
   ruleChecker(): (input: Partial<RateCardInput>) => Promise<RuleIssue[]> {
     const routeRefusal = memoAsync((key: string) => {
       const [origin = '', destination = ''] = key.split('|');
-      return refusal(() => this.masterData.requireRoute(origin, destination));
+      return refusal(() => this.masterData.requireRateRoute(origin, destination));
     });
     const locationRefusal = memoAsync((id: string) =>
-      refusal(() => this.masterData.requireLocation(id)),
+      refusal(() => this.masterData.requireRateLocation(id)),
     );
     const containerRefusal = memoAsync((code: string) =>
       refusal(() => this.masterData.requireContainerType(code)),
@@ -640,6 +788,12 @@ export class RatesService {
     const currencyRefusal = memoAsync((code: string) =>
       refusal(() => this.currencies.requireActive(code)),
     );
+    const categoryRefusal = memoAsync((key: string) => {
+      const [code = '', cargoType = ''] = key.split('|');
+      return refusal(() =>
+        this.masterData.requirePriceCategory(code, (cargoType || null) as CargoType | null),
+      );
+    });
     return async (input) => {
       const issues: RuleIssue[] = [];
       const add = (field: string, code: RuleIssue['code'], message: string) =>
@@ -679,6 +833,13 @@ export class RatesService {
       if (charge) add('chargeTypeCode', 'UNKNOWN_CHARGE_TYPE', charge);
       const currency = input.currency ? await currencyRefusal(input.currency) : null;
       if (currency) add('currency', 'UNKNOWN_CURRENCY', currency);
+      // A category card (plan 5.3): an active category of the card's cargo type.
+      if (input.priceCategoryCode) {
+        const category = await categoryRefusal(
+          `${input.priceCategoryCode}|${input.cargoType ?? ''}`,
+        );
+        if (category) add('priceCategoryCode', 'INVALID_VALUE', category);
+      }
       if (input.validFrom && input.validTo && input.validTo < input.validFrom) {
         add('validTo', 'VALID_TO_BEFORE_FROM', 'Valid-to is before valid-from');
       }
@@ -734,6 +895,7 @@ const RATE_AUDIT_FIELDS = [
   'cargoType',
   'containerTypeCode',
   'chargeTypeCode',
+  'priceCategoryCode',
   'unit',
   'price',
   'minimumCharge',
@@ -745,6 +907,23 @@ const RATE_AUDIT_FIELDS = [
 ] as const;
 
 /** How a rate is named in the audit log: route, charge, container, currency. */
+/** Lexicographic order of two scope tiers: negative when `a` is narrower. */
+function compareTiers(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** compareTiers of two rates' scopes, origin first (plan 5.3). */
+function compareScopes(a: ScopedRate, b: ScopedRate): number {
+  return compareTiers(
+    [SCOPE_RANK[a.originScope], SCOPE_RANK[a.destinationScope]],
+    [SCOPE_RANK[b.originScope], SCOPE_RANK[b.destinationScope]],
+  );
+}
+
 function rateReference(r: RateCard, codes: ReadonlyMap<string, string>): string {
   const route = `${codes.get(r.originLocationId) ?? '?'}→${codes.get(r.destinationLocationId) ?? '?'}`;
   return [route, r.chargeTypeCode, r.containerTypeCode, r.currency].filter(Boolean).join(' ');
@@ -759,6 +938,7 @@ function fromRow(r: RateCard): RateFields {
     cargoType: r.cargoType,
     containerTypeCode: r.containerTypeCode,
     chargeTypeCode: r.chargeTypeCode,
+    priceCategoryCode: r.priceCategoryCode,
     unit: r.unit,
     price: toDecimalString(r.price),
     minimumCharge: toDecimalString(r.minimumCharge),

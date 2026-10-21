@@ -21,7 +21,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { asciiDigits } from '@/lib/form';
-import { useLocalName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { todayString } from '@/lib/money';
 import { icons } from '../Icons';
 import { useMe } from '../StaffShell';
@@ -45,6 +45,8 @@ import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
 interface LineState {
   key: number;
+  /** '' for none: the line is priced from general cards only (plan 5.3). */
+  priceCategoryCode: string;
   rateCardId: string;
   chargeTypeCode: string;
   unit: RateUnit;
@@ -60,6 +62,7 @@ const hasAmount = (l: LineState) => l.unitPrice !== '' || l.discount !== '' || l
 
 const emptyLine = (): LineState => ({
   key: nextKey++,
+  priceCategoryCode: '',
   rateCardId: '',
   chargeTypeCode: 'FREIGHT',
   unit: 'PER_SHIPMENT',
@@ -112,6 +115,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const [lines, setLines] = useState<LineState[]>(
     quotation?.lines.map((l) => ({
       key: nextKey++,
+      priceCategoryCode: l.priceCategoryCode ?? '',
       rateCardId: l.rateCardId ?? '',
       chargeTypeCode: l.chargeTypeCode,
       unit: l.unit,
@@ -170,7 +174,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   useEffect(() => {
     if (!origin || !destination || !branchId) return;
     let cancelled = false;
-    const query = `status=APPROVED&originLocationId=${origin}&destinationLocationId=${destination}&mode=${mode}&validOn=${today}&pageSize=100`;
+    const query = `status=APPROVED&originLocationId=${origin}&destinationLocationId=${destination}&mode=${mode}&validOn=${today}&covering=true&pageSize=100`;
     api<Page<RateCardDto>>(`/rates?${query}`)
       .then((page) => {
         if (!cancelled) {
@@ -228,12 +232,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
         l.rateCardId
           ? {
               rateCardId: l.rateCardId,
+              priceCategoryCode: l.priceCategoryCode || null,
               quantity: l.quantity,
               discount: l.discount || undefined,
               description: l.description || null,
             }
           : {
               chargeTypeCode: l.chargeTypeCode,
+              priceCategoryCode: l.priceCategoryCode || null,
               unit: l.unit,
               unitPrice: l.unitPrice,
               quantity: l.quantity,
@@ -270,9 +276,30 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   }
 
   if (!master) return <p className="muted">{tc('loading')}</p>;
-  const locations = master.locations.filter((l) => l.isActive);
+  const locations = master.locations.filter((l) => l.isActive && isPlace(l));
+  // A card of the place's city or country names where it prices from (plan 5.3).
+  const locationName = (id: string) => {
+    const l = master.locations.find((x) => x.id === id);
+    return l ? name(l) : '…';
+  };
+  const scopeOf = (r: RateCardDto) =>
+    r.originLocationId !== origin || r.destinationLocationId !== destination
+      ? ` · ${tc('route', { from: locationName(r.originLocationId), to: locationName(r.destinationLocationId) })}`
+      : '';
+  const categoryName = (code: string | null) => {
+    const c = master.priceCategories.find((x) => x.code === code);
+    return c ? ` · ${name(c)}` : '';
+  };
   const rateLabel = (r: RateCardDto) =>
-    `${r.chargeTypeCode} · ${te(`cargo_${r.cargoType}`)}${r.containerTypeCode ? ` ${r.containerTypeCode}` : ''}${r.loadType ? ` ${r.loadType}` : ''} · ${r.price} ${r.currency} / ${te(`unit_${r.unit}`)}`;
+    `${r.chargeTypeCode} · ${te(`cargo_${r.cargoType}`)}${r.containerTypeCode ? ` ${r.containerTypeCode}` : ''}${r.loadType ? ` ${r.loadType}` : ''}${categoryName(r.priceCategoryCode)} · ${r.price} ${r.currency} / ${te(`unit_${r.unit}`)}${scopeOf(r)}`;
+  // A line offers the general cards, and its category's when it has one (plan 5.3).
+  const ratesFor = (l: LineState) =>
+    rates.filter((r) => !r.priceCategoryCode || r.priceCategoryCode === l.priceCategoryCode);
+  const categories = master.priceCategories.filter(
+    (c) =>
+      c.cargoType === cargoType &&
+      (c.isActive || lines.some((l) => l.priceCategoryCode === c.code)),
+  );
 
   const locationOptions = locations.map((l) => (
     <option key={l.id} value={l.id}>
@@ -371,7 +398,15 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             <select
               {...mark('cargoType')}
               value={cargoType}
-              onChange={(e) => setCargoType(e.target.value as CargoType)}
+              onChange={(e) => {
+                setCargoType(e.target.value as CargoType);
+                // A category follows one cargo type: the lines' categories go with the old one.
+                setLines((all) =>
+                  all.some((l) => l.priceCategoryCode)
+                    ? all.map((l) => ({ ...l, priceCategoryCode: '' }))
+                    : all,
+                );
+              }}
             >
               {cargoChoices(cargoType).map((c) => (
                 <option key={c} value={c}>
@@ -477,6 +512,32 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                   {index + 1}
                 </span>
                 <label className="cell" role="cell" data-label={t('rate')}>
+                  {categories.length > 0 && (
+                    <select
+                      aria-label={t('priceCategory')}
+                      {...mark(`lines.${index}.priceCategoryCode`)}
+                      value={l.priceCategoryCode}
+                      onChange={(e) => {
+                        const code = e.target.value;
+                        // A card of another category no longer prices the line.
+                        const card = rates.find((r) => r.id === l.rateCardId);
+                        const keeps =
+                          !card || !card.priceCategoryCode || card.priceCategoryCode === code;
+                        updateLine(l.key, {
+                          priceCategoryCode: code,
+                          ...(keeps ? {} : { rateCardId: '' }),
+                        });
+                      }}
+                    >
+                      <option value="">{t('noCategory')}</option>
+                      {categories.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {name(c)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <FieldNote note={note} path={`lines.${index}.priceCategoryCode`} />
                   <select
                     aria-label={t('rate')}
                     {...mark(`lines.${index}.rateCardId`)}
@@ -484,7 +545,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     onChange={(e) => updateLine(l.key, { rateCardId: e.target.value })}
                   >
                     <option value="">{t('manualLine')}</option>
-                    {rates.map((r) => (
+                    {ratesFor(l).map((r) => (
                       <option key={r.id} value={r.id}>
                         {rateLabel(r)}
                       </option>

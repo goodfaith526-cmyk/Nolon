@@ -8,6 +8,8 @@ import {
 import type {
   CreateQuotationRequest,
   Page,
+  PriceScope,
+  PriceSourceDto,
   QuotationDefaultsDto,
   QuotationDraftValues,
   QuotationDto,
@@ -36,10 +38,10 @@ import { draftBranch } from '../drafts/draft-rules.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { Prisma, Quotation, QuotationLine, RateCard } from '../generated/prisma/client.js';
+import type { Prisma, Quotation, QuotationLine } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { RatesService } from '../rates/rates.service.js';
+import { type RatePricingContext, RatesService, type ScopedRate } from '../rates/rates.service.js';
 import { DiscountExceedsLineError, computeQuotationAmounts } from './quotation-totals.js';
 
 export interface QuotationFilters extends PageQuery, RouteFilters {
@@ -443,7 +445,7 @@ export class QuotationsService {
     branchId: string,
     today: string,
     input: QuotationInput,
-    stored?: Quotation | null,
+    stored?: (Quotation & { lines?: QuotationLine[] }) | null,
   ) {
     const route = ['originLocationId', 'destinationLocationId'];
     if (input.originLocationId === input.destinationLocationId) {
@@ -479,31 +481,57 @@ export class QuotationsService {
     const resolved = [];
     for (const [index, line] of input.lines.entries()) {
       const path = `lines.${index}`;
-      const rateLine = (rate: RateCard) => ({
-        rateCardId: rate.id,
-        chargeTypeCode: rate.chargeTypeCode,
-        unit: rate.unit,
-        unitPrice: rate.price,
-        minimumCharge: rate.minimumCharge,
+      const category = line.priceCategoryCode ?? null;
+      if (category) {
+        await onFields(
+          [`${path}.priceCategoryCode`],
+          () => this.masterData.requirePriceCategory(category, input.cargoType),
+          'PRICE_CATEGORY_NOT_USABLE',
+        );
+      }
+      const context = { ...pricing, priceCategoryCode: category };
+      const rateLine = (scoped: ScopedRate) => ({
+        rateCardId: scoped.rate.id,
+        chargeTypeCode: scoped.rate.chargeTypeCode,
+        unit: scoped.rate.unit,
+        unitPrice: scoped.rate.price,
+        minimumCharge: scoped.rate.minimumCharge,
         description: line.description ?? null,
         quantity: dec(line.quantity),
         discount: dec(line.discount ?? '0'),
+        priceCategoryCode: category,
+        priceSource: 'RATE_CARD' as const,
+        priceSourceSnapshot: sourceSnapshot(scoped, context),
       });
-      if (line.rateCardId) {
-        const rateCardId = line.rateCardId;
-        const rate = await onFields(
-          [`${path}.rateCardId`],
-          () => this.rates.requireUsableRate(rateCardId, pricing),
-          'RATE_NOT_USABLE',
-        );
-        resolved.push(rateLine(rate));
-      } else if (line.unitPrice === undefined) {
+      const suggest = (chargeTypeCode: string | null, unit: RateUnit | null) =>
         // No rate card and no price: the system price, from the one rate card that matches.
-        const rate = await this.rates.systemRate(
-          { ...pricing, chargeTypeCode: line.chargeTypeCode ?? null, unit: line.unit ?? null },
+        this.rates.systemRate(
+          { ...context, chargeTypeCode, unit },
           { noMatch: [`${path}.unitPrice`], several: [`${path}.rateCardId`] },
         );
-        resolved.push(rateLine(rate));
+      if (line.rateCardId) {
+        const rateCardId = line.rateCardId;
+        // The line as saved, priced from this card (an edit sends the card back).
+        const was = stored?.lines?.find((l) => l.rateCardId === rateCardId);
+        if (was && stored && sourceChanged(stored, was, context, line.unit)) {
+          // Plan 5.2: a price suggested for another route, currency, mode, load, cargo, unit or
+          // category is never kept. Priced again from the card that matches now, or refused.
+          resolved.push(
+            rateLine(await suggest(line.chargeTypeCode ?? was.chargeTypeCode, line.unit ?? null)),
+          );
+          continue;
+        }
+        const scoped = await onFields(
+          [`${path}.rateCardId`],
+          () => this.rates.requireUsableRate(rateCardId, context),
+          'RATE_NOT_USABLE',
+        );
+        // A card newly chosen by hand meets the scope and category rules (plan 5.3); one the line
+        // already held keeps its price (a line saved before, without a source, included).
+        if (!was) await this.rates.assertRateChoice(scoped, context, [`${path}.rateCardId`]);
+        resolved.push(rateLine(scoped));
+      } else if (line.unitPrice === undefined) {
+        resolved.push(rateLine(await suggest(line.chargeTypeCode ?? null, line.unit ?? null)));
       } else {
         if (!line.unit || !line.chargeTypeCode) {
           const missing = [!line.chargeTypeCode && 'chargeTypeCode', !line.unit && 'unit'].filter(
@@ -530,6 +558,9 @@ export class QuotationsService {
           description: line.description ?? null,
           quantity: dec(line.quantity),
           discount: dec(line.discount ?? '0'),
+          priceCategoryCode: category,
+          priceSource: 'TYPED' as const,
+          priceSourceSnapshot: undefined,
         });
       }
     }
@@ -622,6 +653,9 @@ function toDto(q: QuotationWithDetails): QuotationDto {
       chargeTypeCode: l.chargeTypeCode,
       description: l.description,
       rateCardId: l.rateCardId,
+      priceCategoryCode: l.priceCategoryCode,
+      priceSource: l.priceSource,
+      priceSourceDetail: sourceDetail(l),
       unit: l.unit,
       quantity: toDecimalString(l.quantity),
       unitPrice: toDecimalString(l.unitPrice),
@@ -630,4 +664,85 @@ function toDto(q: QuotationWithDetails): QuotationDto {
       lineTotal: toDecimalString(l.lineTotal),
     })),
   };
+}
+
+/**
+ * What a RATE_CARD line's price was suggested from (plan 5.2), kept on the line: the card (and its
+ * last change), its currency, unit and category, the route it covers with each end's scope, and
+ * the quotation's route, mode, load and cargo it priced. Read back by sourceDetail.
+ */
+function sourceSnapshot(scoped: ScopedRate, context: RatePricingContext): Prisma.InputJsonObject {
+  const { rate } = scoped;
+  return {
+    rateCardId: rate.id,
+    rateUpdatedAt: rate.updatedAt.toISOString(),
+    currency: rate.currency,
+    unit: rate.unit,
+    priceCategoryCode: rate.priceCategoryCode,
+    originLocationId: rate.originLocationId,
+    originScope: scoped.originScope,
+    destinationLocationId: rate.destinationLocationId,
+    destinationScope: scoped.destinationScope,
+    price: toDecimalString(rate.price),
+    minimumCharge: toDecimalString(rate.minimumCharge),
+    priced: {
+      originLocationId: context.originLocationId,
+      destinationLocationId: context.destinationLocationId,
+      mode: context.mode,
+      loadType: context.loadType,
+      cargoType: context.cargoType,
+      priceCategoryCode: context.priceCategoryCode ?? null,
+    },
+  };
+}
+
+/** The saved source of a RATE_CARD line, for the screen; null for a line without one. */
+function sourceDetail(l: QuotationLine): PriceSourceDto | null {
+  const v = l.priceSourceSnapshot;
+  if (l.priceSource !== 'RATE_CARD' || v === null || typeof v !== 'object' || Array.isArray(v)) {
+    return null;
+  }
+  const text = (key: string): string => {
+    const x = v[key];
+    return typeof x === 'string' ? x : '';
+  };
+  const scope = (key: string): PriceScope => {
+    const x = v[key];
+    return x === 'CITY' || x === 'COUNTRY' ? x : 'PLACE';
+  };
+  return {
+    rateCardId: text('rateCardId'),
+    currency: text('currency'),
+    unit: l.unit,
+    priceCategoryCode: typeof v.priceCategoryCode === 'string' ? v.priceCategoryCode : null,
+    originLocationId: text('originLocationId'),
+    originScope: scope('originScope'),
+    destinationLocationId: text('destinationLocationId'),
+    destinationScope: scope('destinationScope'),
+    price: text('price'),
+    minimumCharge: text('minimumCharge'),
+  };
+}
+
+/**
+ * Whether an edit changed what a saved rate card line was priced for (plan 5.2): the quotation's
+ * currency, route, mode, load or cargo, or the line's unit or category. Compared with the
+ * quotation as saved, so a line saved before sources were kept is covered too.
+ */
+function sourceChanged(
+  stored: Quotation,
+  was: QuotationLine,
+  now: RatePricingContext,
+  unit: RateUnit | undefined,
+): boolean {
+  return (
+    stored.currency !== now.currency ||
+    stored.originLocationId !== now.originLocationId ||
+    stored.destinationLocationId !== now.destinationLocationId ||
+    stored.mode !== now.mode ||
+    stored.loadType !== now.loadType ||
+    stored.cargoType !== now.cargoType ||
+    (unit !== undefined && unit !== was.unit) ||
+    (was.priceCategoryCode ?? null) !== (now.priceCategoryCode ?? null)
+  );
 }

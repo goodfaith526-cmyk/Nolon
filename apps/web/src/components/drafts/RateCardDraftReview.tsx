@@ -3,6 +3,7 @@
 import type { RateCardDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { Notice } from '../commercial/Notice';
+import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { MissingFields } from './MissingFields';
@@ -20,6 +21,15 @@ export function RateCardDraftReview({ id }: { id: string }) {
     setRecord,
   } = useRecord<RateCardDraftDto>(`/rate-card-drafts/${id}`);
   const [ticked, setTicked] = useEvidenceTicks(draft?.version);
+  const master = useMasterData();
+  const localName = useLocalName();
+  // A rate card may also name a country as its scope (business model plan 5.3).
+  const routeChoices = (master?.locations ?? [])
+    .filter((l) => l.isActive)
+    .map((l) => ({
+      value: l.id,
+      label: `${localName(l)} (${l.code})${l.kind === 'COUNTRY' ? ` · ${tr('countryScope')}` : ''}`,
+    }));
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const rate = draft.request;
@@ -42,7 +52,12 @@ export function RateCardDraftReview({ id }: { id: string }) {
       approveBody={confirmedBody(draft.evidence, ticked)}
       onChanged={setRecord}
     >
-      <MissingFields draft={draft} apiPath="/rate-card-drafts" onChanged={setRecord} />
+      <MissingFields
+        draft={draft}
+        apiPath="/rate-card-drafts"
+        choices={{ originLocationId: routeChoices, destinationLocationId: routeChoices }}
+        onChanged={setRecord}
+      />
       <dl className="details">
         <dt>{tr('branch')}</dt>
         <dd dir="ltr">{draft.branchCode}</dd>
