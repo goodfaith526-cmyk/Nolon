@@ -2,14 +2,13 @@
 
 import { CUSTOMER_KINDS, type NewCustomerQuotationDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
-import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { EvidenceChecklist, confirmedBody, useEvidenceTicks } from './EvidenceChecklist';
 import { MissingFields } from './MissingFields';
 
 const LINE_FIELD = /^lines\[(\d+)\]\.(quantity|unitPrice|discount)$/;
@@ -31,7 +30,7 @@ export function NewCustomerQuotationDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<NewCustomerQuotationDraftDto>(`/new-customer-quotation-drafts/${id}`);
-  const [ticked, setTicked] = useState<string[]>([]);
+  const [ticked, setTicked] = useEvidenceTicks(draft?.version);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const q = draft.request;

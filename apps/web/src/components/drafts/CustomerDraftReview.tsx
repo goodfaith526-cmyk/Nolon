@@ -2,12 +2,11 @@
 
 import { CUSTOMER_KINDS, type CustomerDraftDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { DraftFrame } from './DraftFrame';
-import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { EvidenceChecklist, confirmedBody, useEvidenceTicks } from './EvidenceChecklist';
 import { MissingFields } from './MissingFields';
 
 /** A new customer the assistant proposed: their contact details, and the decision. */
@@ -20,7 +19,7 @@ export function CustomerDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<CustomerDraftDto>(`/customer-drafts/${id}`);
-  const [ticked, setTicked] = useState<string[]>([]);
+  const [ticked, setTicked] = useEvidenceTicks(draft?.version);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const customer = draft.request;

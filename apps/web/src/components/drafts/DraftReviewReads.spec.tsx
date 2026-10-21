@@ -217,7 +217,7 @@ describe('a booking for a new customer, approved with its customer', () => {
     const el = await show(booking, <NewCustomerBookingDraftReview id="d1" />);
     expect(el.textContent).toContain('approveWithCustomer');
     expect(approveButton(el)?.disabled).toBe(true);
-    const tick = el.querySelector<HTMLInputElement>('#evidence-name');
+    const tick = el.querySelector<HTMLInputElement>('[id$="-evidence-name"]');
     act(() => tick?.click());
     expect(approveButton(el)?.disabled).toBe(false);
     api.mockResolvedValue({ ...booking, status: 'APPROVED' });

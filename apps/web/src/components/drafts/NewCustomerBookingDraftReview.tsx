@@ -2,7 +2,6 @@
 
 import type { CustomerDraftDto, NewCustomerBookingDraftDto } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice } from '../commercial/Notice';
@@ -10,7 +9,7 @@ import { useRecord } from '../finance/common';
 import { CustomerRequestDetails } from './CustomerDraftReview';
 import { DraftContainerDetails } from './DraftContainerDetails';
 import { DraftFrame, DraftStatusBadge } from './DraftFrame';
-import { EvidenceChecklist, confirmedBody } from './EvidenceChecklist';
+import { EvidenceChecklist, confirmedBody, useEvidenceTicks } from './EvidenceChecklist';
 import { MissingFields } from './MissingFields';
 import { useOptionalRead } from './use-optional-read';
 
@@ -37,14 +36,14 @@ export function NewCustomerBookingDraftReview({ id }: { id: string }) {
     notice,
     setRecord,
   } = useRecord<NewCustomerBookingDraftDto>(`/new-customer-booking-drafts/${id}`);
-  const [ticked, setTicked] = useState<string[]>([]);
-  const [customerTicked, setCustomerTicked] = useState<string[]>([]);
+  const [ticked, setTicked] = useEvidenceTicks(draft?.version);
   const customerOpen = draft?.status === 'DRAFT' && draft.customer.status === 'DRAFT';
   // The customer draft as its own screen reads it (its version, words and whether this person may
   // decide it); refused or not asked, the booking waits for it as before.
   const customerDraft = useOptionalRead<CustomerDraftDto>(
     customerOpen ? `/customer-drafts/${draft.customer.draftId}` : null,
   );
+  const [customerTicked, setCustomerTicked] = useEvidenceTicks(customerDraft?.version);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const b = draft.request;
