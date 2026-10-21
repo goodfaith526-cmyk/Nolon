@@ -64,6 +64,7 @@ afterEach(() => {
   host = null;
   assistantUrl = null;
   assistantPanel = false;
+  Reflect.deleteProperty(window, 'matchMedia');
 });
 
 describe('StaffShell menu', () => {
@@ -108,6 +109,60 @@ describe('StaffShell assistant', () => {
     expect(page.querySelector('#assistant-panel')?.hasAttribute('hidden')).toBe(true);
     // The same frame, so the conversation and unsent text survive.
     expect(page.querySelector('iframe')).toBe(frame);
+  });
+
+  function screenWidth(narrow: boolean) {
+    window.matchMedia = ((query: string) => ({
+      matches: narrow,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  it('on a narrow screen, moves the keyboard into the panel, makes the page inert, and returns it on close', async () => {
+    assistantUrl = url;
+    assistantPanel = true;
+    screenWidth(true);
+    const page = await render();
+    const toggle = page.querySelector<HTMLButtonElement>('button[aria-controls="assistant-panel"]');
+    toggle?.focus();
+    act(() => toggle?.click());
+    const panel = page.querySelector<HTMLElement>('#assistant-panel');
+    const frame = page.querySelector('iframe');
+    expect(panel?.contains(document.activeElement)).toBe(true);
+    expect(panel?.getAttribute('aria-modal')).toBe('true');
+    expect(page.querySelector('.main')?.hasAttribute('inert')).toBe(true);
+    expect(page.querySelector('.sidebar')?.hasAttribute('inert')).toBe(true);
+
+    act(() => panel?.querySelector<HTMLButtonElement>('.assistant-panel-head button')?.click());
+    expect(panel?.hasAttribute('hidden')).toBe(true);
+    expect(page.querySelector('.main')?.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+
+    // Escape from the panel's controls closes it too, and the frame is still the same one.
+    act(() => toggle?.click());
+    const close = panel?.querySelector<HTMLButtonElement>('.assistant-panel-head button');
+    act(() => {
+      close?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(panel?.hasAttribute('hidden')).toBe(true);
+    expect(document.activeElement).toBe(toggle);
+    expect(page.querySelector('iframe')).toBe(frame);
+  });
+
+  it('on a wide screen, keeps the page usable beside the open panel', async () => {
+    assistantUrl = url;
+    assistantPanel = true;
+    screenWidth(false);
+    const page = await render();
+    act(() =>
+      page.querySelector<HTMLButtonElement>('button[aria-controls="assistant-panel"]')?.click(),
+    );
+    const panel = page.querySelector<HTMLElement>('#assistant-panel');
+    expect(panel?.contains(document.activeElement)).toBe(true);
+    expect(panel?.hasAttribute('aria-modal')).toBe(false);
+    expect(page.querySelector('.main')?.hasAttribute('inert')).toBe(false);
   });
 
   it('shows no assistant at all without an address, even with the panel on', async () => {

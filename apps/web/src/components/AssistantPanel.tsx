@@ -17,18 +17,26 @@ export function AssistantPanel({
   url,
   pathname,
   open,
+  modal,
   onClose,
 }: {
   /** AGENT_ASSISTANT_URL. */
   url: string;
   pathname: string;
   open: boolean;
+  /** Lying over the page (narrow screens): announced as a dialog, the page behind is inert. */
+  modal: boolean;
   onClose: () => void;
 }) {
   const t = useTranslations('Shell');
   const frameRef = useRef<HTMLIFrameElement>(null);
   const hostRef = useRef<ReturnType<typeof createScreenHost> | null>(null);
   const origin = new URL(url).origin;
+
+  // Opening moves the keyboard into the panel (its frame), so typing goes to the assistant.
+  useEffect(() => {
+    if (open) frameRef.current?.focus();
+  }, [open]);
 
   useEffect(() => {
     const host = createScreenHost({
@@ -53,7 +61,14 @@ export function AssistantPanel({
       id="assistant-panel"
       className="assistant-panel"
       aria-label={t('assistant')}
+      role={modal ? 'dialog' : undefined}
+      aria-modal={modal ? true : undefined}
       hidden={!open}
+      // Escape closes from the panel's own controls. Keys pressed inside the assistant's frame
+      // never reach this page (another origin); its close button stays one Tab away.
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onClose();
+      }}
     >
       <div className="assistant-panel-head">
         <strong>{t('assistant')}</strong>

@@ -3,12 +3,13 @@
 import type { AuthMeResponse, Locale, Permission } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Image from 'next/image';
-import { type ReactNode, createContext, use, useEffect, useState } from 'react';
+import { type ReactNode, createContext, use, useEffect, useRef, useState } from 'react';
 import logoAr from '@/assets/brand/logo-ar.webp';
 import logoEn from '@/assets/brand/logo-en.webp';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { ApiError, api } from '@/lib/api';
 import { assistantPageUrl } from '@/lib/assistant-page';
+import { useMediaQuery } from '@/lib/media-query';
 import { useFoldedSections } from '@/lib/nav-folds';
 import { AlertsBell } from './alerts/Alerts';
 import { AssistantPanel } from './AssistantPanel';
@@ -293,10 +294,30 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantLoaded, setAssistantLoaded] = useState(false);
 
+  const assistantToggle = useRef<HTMLButtonElement>(null);
+  const assistantReturn = useRef(false);
+  // Below this width the open panel lies over the page instead of beside it (globals.css), so it
+  // acts as a dialog: the page behind is inert until it closes. Wider, both stay usable.
+  const assistantCovers = useMediaQuery('(max-width: 1099px)');
+  const pageInert = assistantOpen && assistantCovers;
+
   function toggleAssistant() {
     setAssistantLoaded(true);
     setAssistantOpen((value) => !value);
   }
+
+  function closeAssistant() {
+    assistantReturn.current = true;
+    setAssistantOpen(false);
+  }
+
+  // Closed from inside the panel: the keyboard goes back to the button that opened it, once the
+  // page behind is no longer inert.
+  useEffect(() => {
+    if (assistantOpen || !assistantReturn.current) return;
+    assistantReturn.current = false;
+    assistantToggle.current?.focus();
+  }, [assistantOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -336,7 +357,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
           .filter(Boolean)
           .join(' ')}
       >
-        <aside className="sidebar" aria-label={t('menu')}>
+        <aside className="sidebar" aria-label={t('menu')} inert={pageInert}>
           <Link href="/dashboard" className="sidebar-logo" onClick={() => setMenuOpen(false)}>
             <Image
               src={locale === 'ar' ? logoAr : logoEn}
@@ -400,7 +421,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
           aria-label={t('closeMenu')}
           onClick={() => setMenuOpen(false)}
         />
-        <div className="main">
+        <div className="main" inert={pageInert}>
           <header className="topbar">
             <button
               type="button"
@@ -415,6 +436,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
               <AlertsBell />
               {me.assistantUrl && me.assistantPanel ? (
                 <button
+                  ref={assistantToggle}
                   type="button"
                   className="ghost"
                   aria-expanded={assistantOpen}
@@ -463,7 +485,8 @@ export function StaffShell({ children }: { children: ReactNode }) {
             url={me.assistantUrl}
             pathname={pathname}
             open={assistantOpen}
-            onClose={() => setAssistantOpen(false)}
+            modal={pageInert}
+            onClose={closeAssistant}
           />
         ) : null}
       </div>
