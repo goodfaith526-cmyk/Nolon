@@ -32,8 +32,8 @@ vi.mock('@/lib/api', () => ({
     calls.push(path);
     const page = Number(new URLSearchParams(path.split('?')[1]).get('page'));
     const result: Page<PartnerSummaryDto> = {
-      items: page === 1 ? [row(1), row(2)] : [row(3)],
-      total: 3,
+      items: page === 1 ? Array.from({ length: 50 }, (_, i) => row(i + 1)) : [row(51)],
+      total: 51,
       page,
       pageSize: 50,
     };
@@ -61,18 +61,18 @@ afterEach(() => {
 });
 
 describe('Partners', () => {
-  it('shows how many are listed and loads the next page below the first', async () => {
+  it('loads the 51st partner below the first 50, with the same filters', async () => {
     host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
     act(() => root.render(<Partners />));
     await act(() => Promise.resolve());
-    expect(host.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(50);
     const more = [...host.querySelectorAll('button')].find((b) => b.textContent === 'loadMore');
     act(() => more?.click());
     await act(() => Promise.resolve());
     expect(calls.at(-1)).toContain('page=2');
-    expect(host.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(51);
     // Every row is shown: no more button.
     expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'loadMore')).toBe(
       false,

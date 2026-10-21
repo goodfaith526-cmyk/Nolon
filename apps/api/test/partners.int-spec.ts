@@ -204,7 +204,14 @@ describe('partners, price categories and customer segments', () => {
         await post('/partners', cookies.jedManager, outlet({ locationId: city.id })).expect(201)
       ).body as PartnerDto;
       await t.prisma.location.update({ where: { id: city.id }, data: { isActive: false } });
-      // The held city stays: renaming and deactivating still work.
+      // The held city stays: renaming and deactivating still work, with the whole form (the city
+      // sent back as it is) or with only the changed field.
+      await patch(`/partners/${partner.id}`, cookies.jedManager, {
+        name: 'ZZ full form',
+        countryCode: 'SA',
+        locationId: city.id,
+        currency: 'SAR',
+      }).expect(200);
       await patch(`/partners/${partner.id}`, cookies.jedManager, { name: 'ZZ renamed' }).expect(
         200,
       );
