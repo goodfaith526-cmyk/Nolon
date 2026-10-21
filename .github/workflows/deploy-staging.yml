@@ -44,6 +44,8 @@ jobs:
       # The staff AI assistant's address (e.g. https://pilot.example.com/?tenant=nolon). Empty: no
       # assistant button. Not secret.
       ASSISTANT_URL: ${{ vars.STAGING_AGENT_ASSISTANT_URL }}
+      # `true`: the assistant opens as a panel inside NOLON's pages. Empty: a new tab. Not secret.
+      ASSISTANT_PANEL: ${{ vars.STAGING_AGENT_ASSISTANT_PANEL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -263,6 +265,11 @@ jobs:
               *"'"*) echo "::error::STAGING_AGENT_ASSISTANT_URL must not contain a single quote"; exit 1 ;;
             esac
             echo "AGENT_ASSISTANT_URL='$ASSISTANT_URL'"
+            case "$ASSISTANT_PANEL" in
+              ''|true|false) ;;
+              *) echo "::error::STAGING_AGENT_ASSISTANT_PANEL must be true, false or empty"; exit 1 ;;
+            esac
+            echo "AGENT_ASSISTANT_PANEL='$ASSISTANT_PANEL'"
             # The first Administrator (checked above). The seed creates it only if missing.
             echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
             echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"

@@ -75,6 +75,7 @@ services:
       LOGIN_IP_LIMIT_ENABLED: 'true'
       # The staff AI assistant stays off in production until it passes its own gates: no button.
       AGENT_ASSISTANT_URL: ''
+      AGENT_ASSISTANT_PANEL: ''
     depends_on:
       postgres:
         condition: service_healthy

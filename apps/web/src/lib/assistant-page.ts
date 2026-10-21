@@ -10,13 +10,24 @@ const PAGES: Readonly<Record<string, string>> = {
   customers: 'customer',
 };
 
-/** The record of a staff page (`/shipments/<id>`, with or without a locale), or null. */
-export function pageRecord(pathname: string): { kind: string; id: string } | null {
+/**
+ * The record of a staff page (`/shipments/<id>`, with or without a locale) among `pages` (the
+ * page's section by the assistant's name for its kind), or null.
+ */
+export function recordOf(
+  pathname: string,
+  pages: Readonly<Record<string, string>>,
+): { kind: string; id: string } | null {
   const parts = pathname.split('/').filter(Boolean);
   const [section, id, ...rest] = /^(ar|en)$/.test(parts[0] ?? '') ? parts.slice(1) : parts;
   if (rest.length > 0 || !section || !id || !UUID.test(id)) return null;
-  const kind = Object.hasOwn(PAGES, section) ? PAGES[section] : undefined;
+  const kind = Object.hasOwn(pages, section) ? pages[section] : undefined;
   return kind ? { kind, id: id.toLowerCase() } : null;
+}
+
+/** The record of a staff page the assistant can open on, or null. */
+export function pageRecord(pathname: string): { kind: string; id: string } | null {
+  return recordOf(pathname, PAGES);
 }
 
 /** The assistant's address for this page: on its record when it has one, else as it is. */

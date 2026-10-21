@@ -28,6 +28,8 @@
   },
   "Shell": {
     "assistant": "المساعد",
+    "assistantNewTab": "افتح في تبويب جديد",
+    "closeAssistant": "أغلق المساعد",
     "home": "الرئيسية",
     "users": "المستخدمون",
     "account": "حسابي",

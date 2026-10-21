@@ -76,6 +76,9 @@ services:
       LOGIN_IP_LIMIT_ENABLED: 'false'
       # Empty: no assistant button (repository variable STAGING_AGENT_ASSISTANT_URL).
       AGENT_ASSISTANT_URL: ${AGENT_ASSISTANT_URL:-}
+      # `true`: the assistant opens as a panel inside the pages (repository variable
+      # STAGING_AGENT_ASSISTANT_PANEL). Empty: a new tab.
+      AGENT_ASSISTANT_PANEL: ${AGENT_ASSISTANT_PANEL:-}
     depends_on:
       postgres:
         condition: service_healthy

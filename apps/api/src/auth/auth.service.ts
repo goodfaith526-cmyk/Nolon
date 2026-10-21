@@ -280,6 +280,7 @@ export class AuthService {
       allBranches: user.allBranches,
       branches,
       assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
+      assistantPanel: Boolean(this.env.AGENT_ASSISTANT_URL) && this.env.AGENT_ASSISTANT_PANEL,
     };
   }
 }

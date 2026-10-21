@@ -11,6 +11,7 @@ import { ApiError, api } from '@/lib/api';
 import { assistantPageUrl } from '@/lib/assistant-page';
 import { useFoldedSections } from '@/lib/nav-folds';
 import { AlertsBell } from './alerts/Alerts';
+import { AssistantPanel } from './AssistantPanel';
 import { DRAFT_VIEW_PERMISSIONS } from './drafts/draft-kinds';
 import { icons } from './Icons';
 
@@ -288,6 +289,14 @@ export function StaffShell({ children }: { children: ReactNode }) {
   const [folded, toggleSection] = useFoldedSections(SECTION_TITLES, FOLDED_BY_DEFAULT);
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  // The assistant panel: loaded on first open, then kept (hidden when closed) so its work survives.
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantLoaded, setAssistantLoaded] = useState(false);
+
+  function toggleAssistant() {
+    setAssistantLoaded(true);
+    setAssistantOpen((value) => !value);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -322,7 +331,11 @@ export function StaffShell({ children }: { children: ReactNode }) {
 
   return (
     <MeContext value={me}>
-      <div className={menuOpen ? 'app menu-open' : 'app'}>
+      <div
+        className={['app', menuOpen && 'menu-open', assistantOpen && 'assistant-open']
+          .filter(Boolean)
+          .join(' ')}
+      >
         <aside className="sidebar" aria-label={t('menu')}>
           <Link href="/dashboard" className="sidebar-logo" onClick={() => setMenuOpen(false)}>
             <Image
@@ -400,7 +413,18 @@ export function StaffShell({ children }: { children: ReactNode }) {
             <div className="topbar-spacer" />
             <div className="topbar-actions">
               <AlertsBell />
-              {me.assistantUrl ? (
+              {me.assistantUrl && me.assistantPanel ? (
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-expanded={assistantOpen}
+                  aria-controls="assistant-panel"
+                  onClick={toggleAssistant}
+                >
+                  {icons.assistant}
+                  <span>{t('assistant')}</span>
+                </button>
+              ) : me.assistantUrl ? (
                 <a
                   href={assistantPageUrl(me.assistantUrl, pathname)}
                   target="_blank"
@@ -434,6 +458,14 @@ export function StaffShell({ children }: { children: ReactNode }) {
           </header>
           <main className="page">{children}</main>
         </div>
+        {me.assistantUrl && me.assistantPanel && assistantLoaded ? (
+          <AssistantPanel
+            url={me.assistantUrl}
+            pathname={pathname}
+            open={assistantOpen}
+            onClose={() => setAssistantOpen(false)}
+          />
+        ) : null}
       </div>
     </MeContext>
   );

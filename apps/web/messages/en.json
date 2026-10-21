@@ -28,6 +28,8 @@
   },
   "Shell": {
     "assistant": "Assistant",
+    "assistantNewTab": "Open in a new tab",
+    "closeAssistant": "Close the assistant",
     "home": "Home",
     "users": "Users",
     "account": "My account",
