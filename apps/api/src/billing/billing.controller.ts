@@ -22,6 +22,7 @@ import {
   type CustomerStatementDto,
   type Page,
   type ReceiptAllocationSuggestionDto,
+  type ReceiptApplicableInvoiceDto,
   type ReceiptDto,
   type ReceiptSummaryDto,
 } from '@nolon/shared';
@@ -43,6 +44,7 @@ import {
 import { CustomerStatementService } from './customer-statement.service.js';
 import { CreditNotesService } from './credit-notes.service.js';
 import { InvoicesService } from './invoices.service.js';
+import { ReceiptApplicationsService } from './receipt-applications.service.js';
 import { ReceiptsService } from './receipts.service.js';
 
 export const invoiceLine = z
@@ -97,6 +99,14 @@ const allocationSuggestionQuery = z.strictObject({
   currency: currencyCode,
   amount,
 });
+const applyReceiptBody = z
+  .object({
+    requestId: z.uuid(),
+    invoiceId: z.uuid(),
+    amount,
+    applicationDate: dateString,
+  })
+  .strict();
 const statementQuery = z
   .object({ from: dateString, to: dateString, branchId: z.uuid().optional() })
   .strict();
@@ -213,7 +223,10 @@ export class InvoicesController {
 
 @Controller('receipts')
 export class ReceiptsController {
-  constructor(private readonly receipts: ReceiptsService) {}
+  constructor(
+    private readonly receipts: ReceiptsService,
+    private readonly applications: ReceiptApplicationsService,
+  ) {}
 
   @AgentReadable()
   @Get()
@@ -254,6 +267,41 @@ export class ReceiptsController {
     @Body() body: unknown,
   ): Promise<ReceiptDto> {
     return this.receipts.cancel(user, id, parse(reasonBody, body).reason);
+  }
+
+  /** Open invoices the receipt's advance can be applied to (same customer, branch, currency). */
+  @Get(':id/applicable-invoices')
+  @RequirePermission('receipts:create')
+  applicableInvoices(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ReceiptApplicableInvoiceDto[]> {
+    return this.applications.applicableInvoices(user, id);
+  }
+
+  /** Applies part of the receipt's advance to a later invoice (decision z6). */
+  @Post(':id/applications')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('receipts:create')
+  apply(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ReceiptDto> {
+    return this.applications.apply(user, id, parse(applyReceiptBody, body));
+  }
+
+  /** Reverses an application: a reversing entry, never a deletion. As cancelling a receipt. */
+  @Post(':id/applications/:applicationId/reverse')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('receipts:cancel')
+  reverseApplication(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('applicationId', ParseUUIDPipe) applicationId: string,
+    @Body() body: unknown,
+  ): Promise<ReceiptDto> {
+    return this.applications.reverse(user, id, applicationId, parse(reasonBody, body).reason);
   }
 }
 

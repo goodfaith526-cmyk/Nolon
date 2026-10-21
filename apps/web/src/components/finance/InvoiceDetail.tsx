@@ -309,13 +309,14 @@ export function InvoiceDetail({ id }: { id: string }) {
             </thead>
             <tbody>
               {inv.payments.map((p) => (
-                <tr key={p.receiptId} className={p.cancelled ? 'inactive' : ''}>
+                <tr key={p.applicationId ?? p.receiptId} className={p.cancelled ? 'inactive' : ''}>
                   <td dir="ltr">
                     {can(me, 'receipts:view') ? (
                       <Link href={`/receipts/${p.receiptId}`}>{p.receiptNumber}</Link>
                     ) : (
                       p.receiptNumber
                     )}
+                    {p.applicationId && <div className="muted">{t('fromAdvance')}</div>}
                   </td>
                   <td dir="ltr">{p.receiptDate}</td>
                   <td dir="ltr">

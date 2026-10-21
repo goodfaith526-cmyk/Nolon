@@ -45,6 +45,29 @@ export interface ReceiptForPosting {
   }[];
 }
 
+/** Part of a receipt's advance applied to a later invoice of the same customer and currency. */
+export interface ReceiptApplicationForPosting {
+  id: string;
+  branchId: string;
+  customerId: string;
+  /** YYYY-MM-DD */
+  applicationDate: string;
+  currency: string;
+  receiptNumber: string;
+  receiptFxRate: Decimal;
+  /** The account the receipt's entry credited the advance to (`advanceOf`). */
+  advanceAccountId: string;
+  invoiceNumber: string;
+  invoiceFxRate: Decimal;
+  receivableAccountId: string;
+  shipmentId: string | null;
+  amount: Decimal;
+  /** The advance's USD value cleared, at the receipt's rate. */
+  advanceUsd: Decimal;
+  /** The receivable's USD value cleared, at the invoice's rate. */
+  relievedUsd: Decimal;
+}
+
 /**
  * Description of the line that books a receipt's realized exchange difference (annex C section 3).
  * Reports find realized FX by it, inside receipt entries and their reversals, so a later remap of
@@ -423,6 +446,91 @@ export class AutoJournalService {
         description: `Receipt ${receipt.number}`,
         source: 'RECEIPT',
         sourceId: receipt.id,
+        userId,
+      },
+      lines,
+    );
+  }
+
+  /**
+   * The advance a receipt's entry holds: its credit line on a liability account (rules 3 and 4
+   * credit only the customer advances account so), wherever it was posted, so a later remap of
+   * CUSTOMER_ADVANCES does not move what an application clears. Null when the receipt allocated
+   * all of its amount.
+   */
+  async advanceOf(
+    tx: Tx,
+    receiptEntryId: string,
+  ): Promise<{ accountId: string; amount: Decimal; amountUsd: Decimal } | null> {
+    const lines = await tx.journalLine.findMany({
+      where: { entryId: receiptEntryId, credit: { gt: 0 }, account: { type: 'LIABILITY' } },
+      select: { accountId: true, credit: true, creditUsd: true },
+    });
+    if (lines.length === 0) return null;
+    const [line] = lines;
+    if (lines.length > 1 || !line) throw new Error('A receipt entry holds one advance line');
+    return { accountId: line.accountId, amount: line.credit, amountUsd: line.creditUsd };
+  }
+
+  /**
+   * A receipt's advance applied to a later invoice: debit the advance account the receipt
+   * credited, at the receipt's rate (the advance's USD value cleared); credit the invoice's own
+   * receivable at the invoice's USD value cleared, as a receipt allocation does. The USD
+   * difference is the realized exchange difference, booked like a receipt's (rounding when the
+   * rates are the same), and the reports find it the same way.
+   */
+  async receiptApplied(
+    tx: Tx,
+    application: ReceiptApplicationForPosting,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const a = application;
+    const common = { branchId: a.branchId, currency: a.currency, customerId: a.customerId };
+    const lines: LineSpec[] = [
+      {
+        ...common,
+        accountId: a.advanceAccountId,
+        fxRate: a.receiptFxRate,
+        side: 'DEBIT',
+        amount: a.amount,
+        amountUsd: a.advanceUsd,
+        description: a.receiptNumber,
+      },
+      {
+        ...common,
+        accountId: a.receivableAccountId,
+        fxRate: a.invoiceFxRate,
+        shipmentId: a.shipmentId,
+        side: 'CREDIT',
+        amount: a.amount,
+        amountUsd: a.relievedUsd,
+        description: a.invoiceNumber,
+      },
+    ];
+    const difference = a.advanceUsd.minus(a.relievedUsd);
+    if (!difference.isZero()) {
+      const sameRate = a.invoiceFxRate.eq(a.receiptFxRate);
+      const role = sameRate ? 'ROUNDING' : difference.gt(0) ? 'FX_GAIN' : 'FX_LOSS';
+      lines.push({
+        branchId: a.branchId,
+        customerId: a.customerId,
+        accountId: await this.accounts.roleAccount(tx, role),
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'CREDIT' : 'DEBIT',
+        amount: difference.abs(),
+        amountUsd: difference.abs(),
+        description: sameRate ? 'Rounding' : FX_DIFFERENCE_LINE,
+      });
+    }
+    return this.journal.post(
+      tx,
+      {
+        branchId: a.branchId,
+        entryDate: a.applicationDate,
+        description: `Advance of receipt ${a.receiptNumber} applied to invoice ${a.invoiceNumber}`,
+        source: 'RECEIPT_APPLICATION',
+        sourceId: a.id,
         userId,
       },
       lines,

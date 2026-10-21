@@ -162,6 +162,10 @@ const details = {
     },
     orderBy: { receipt: { receiptDate: 'asc' } },
   },
+  applications: {
+    include: { receipt: { select: { id: true, number: true } } },
+    orderBy: [{ applicationDate: 'asc' }, { createdAt: 'asc' }],
+  },
   creditNotes: {
     select: { id: true, number: true, creditDate: true, amount: true, status: true },
     orderBy: { createdAt: 'asc' },
@@ -1120,13 +1124,25 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
       unitPrice: l.unitPrice.toFixed(),
       lineTotal: l.lineTotal.toFixed(),
     })),
-    payments: i.allocations.map((a) => ({
-      receiptId: a.receipt.id,
-      receiptNumber: a.receipt.number,
-      receiptDate: fromDbDate(a.receipt.receiptDate),
-      amount: a.amount.toFixed(),
-      cancelled: a.receipt.status === 'CANCELLED',
-    })),
+    payments: [
+      ...i.allocations.map((a) => ({
+        receiptId: a.receipt.id,
+        receiptNumber: a.receipt.number,
+        receiptDate: fromDbDate(a.receipt.receiptDate),
+        amount: a.amount.toFixed(),
+        cancelled: a.receipt.status === 'CANCELLED',
+        applicationId: null,
+      })),
+      // A receipt's advance applied later pays the invoice too, from the day it was applied.
+      ...i.applications.map((a) => ({
+        receiptId: a.receipt.id,
+        receiptNumber: a.receipt.number,
+        receiptDate: fromDbDate(a.applicationDate),
+        amount: a.amount.toFixed(),
+        cancelled: a.status === 'REVERSED',
+        applicationId: a.id,
+      })),
+    ],
     creditNotes: i.creditNotes.map((c) => ({
       creditNoteId: c.id,
       number: c.number,

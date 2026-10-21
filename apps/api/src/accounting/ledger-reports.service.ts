@@ -29,6 +29,14 @@ import { shipmentIdOwnedBy } from '../shipments/shipment-scope.js';
 import { FX_DIFFERENCE_LINE } from './auto-journal.service.js';
 import { naturalBalance, sum } from './report-math.js';
 
+/**
+ * Entries that move a customer's advance: a receipt (its unallocated rest), the application of
+ * that advance to a later invoice, and the reversal of either. Their liability lines are the
+ * advance, on whatever account they were posted to.
+ */
+const ADVANCE_SOURCES = Prisma.sql`(e."source" IN ('RECEIPT', 'RECEIPT_APPLICATION')
+  OR o."source" IN ('RECEIPT', 'RECEIPT_APPLICATION'))`;
+
 /** Revenue and cost of one shipment from its journal lines (shipment dimension). */
 export interface ShipmentResult {
   shipmentId: string;
@@ -394,8 +402,8 @@ export class LedgerReportsService {
     const from = toDbDate(period.from);
     const to = toDbDate(period.to);
     const onlyAccount = accountId ? Prisma.sql`AND a."id" = ${accountId}::uuid` : Prisma.empty;
-    // Realized FX: the exchange-difference lines of receipt and supplier payment entries and of
-    // their reversals, on whatever revenue (gain) or expense (loss) account they were posted to at
+    // Realized FX: the exchange-difference lines of receipt, advance application and supplier
+    // payment entries and of their reversals, on whatever revenue (gain) or expense (loss) account they were posted to at
     // the time. With an account chosen, only the receipts into (payments from) that account.
     const onlyReceiptsInto = accountId
       ? Prisma.sql`AND EXISTS (
@@ -456,8 +464,8 @@ export class LedgerReportsService {
               JOIN "branches" b ON b."id" = l."branch_id"
               WHERE e."status" = 'POSTED'
                 AND e."entry_date" BETWEEN ${from} AND ${to}
-                AND (e."source" IN ('RECEIPT', 'SUPPLIER_PAYMENT')
-                     OR o."source" IN ('RECEIPT', 'SUPPLIER_PAYMENT'))
+                AND (e."source" IN ('RECEIPT', 'RECEIPT_APPLICATION', 'SUPPLIER_PAYMENT')
+                     OR o."source" IN ('RECEIPT', 'RECEIPT_APPLICATION', 'SUPPLIER_PAYMENT'))
                 AND l."description" = ${FX_DIFFERENCE_LINE}
                 AND a."type" IN ('REVENUE', 'EXPENSE')
                 AND ${lineBranchIn(branchIds)}
@@ -630,8 +638,9 @@ export class LedgerReportsService {
 
   /**
    * Unapplied customer advances as of a date, per customer, credit - debit in USD: the liability
-   * lines of receipt entries and their reversals (the part of a receipt not allocated to an
-   * invoice), wherever they were posted, plus any other line carrying the customer on the account
+   * lines of receipt entries (the part of a receipt not allocated to an invoice), of the entries
+   * applying that advance to a later invoice, and of their reversals, wherever they were posted,
+   * plus any other line carrying the customer on the account
    * mapped to CUSTOMER_ADVANCES today.
    */
   async customerAdvances(
@@ -661,8 +670,7 @@ export class LedgerReportsService {
       JOIN "customers" c ON c."id" = l."customer_id"
       WHERE e."status" = 'POSTED'
         AND e."entry_date" <= ${toDbDate(asOf)}
-        AND (((e."source" = 'RECEIPT' OR o."source" = 'RECEIPT') AND a."type" = 'LIABILITY')
-             ${onMapped})
+        AND ((${ADVANCE_SOURCES} AND a."type" = 'LIABILITY') ${onMapped})
         AND ${lineBranchIn(branchIds)}
         ${onlyCustomer}
       GROUP BY l."customer_id", c."name"
@@ -674,8 +682,8 @@ export class LedgerReportsService {
    * Posted lines carrying the customer on its own accounts, in the report's branches: the
    * receivable accounts its invoices were posted to (`receivableAccountIds`, which billing keeps),
    * the accounts mapped to RECEIVABLE and CUSTOMER_ADVANCES today, and the liability lines of
-   * receipt entries and their reversals (advances, wherever they were posted, as in
-   * `customerAdvances`). Lines dated before `from` are summed per currency (the opening); lines
+   * receipt and advance application entries and their reversals (advances, wherever they were
+   * posted, as in `customerAdvances`). Lines dated before `from` are summed per currency (the opening); lines
    * from `from` to `to` are summed per entry and currency, in date and entry-number order.
    */
   async customerAccountLines(
@@ -713,7 +721,7 @@ export class LedgerReportsService {
       WHERE e."status" = 'POSTED'
         AND l."customer_id" = ${q.customerId}::uuid
         AND (${onAccounts}
-             OR ((e."source" = 'RECEIPT' OR o."source" = 'RECEIPT') AND a."type" = 'LIABILITY'))
+             OR (${ADVANCE_SOURCES} AND a."type" = 'LIABILITY'))
         AND ${lineBranchIn(branchIds)}`;
     const [opening, movements] = await Promise.all([
       this.prisma.$queryRaw<

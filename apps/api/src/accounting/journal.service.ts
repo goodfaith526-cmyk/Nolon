@@ -75,6 +75,8 @@ const details = {
   supplierPaymentCancel: { select: { number: true } },
   expense: { select: { number: true } },
   expenseCancel: { select: { number: true } },
+  receiptApplication: { select: { receipt: { select: { number: true } } } },
+  receiptApplicationRev: { select: { receipt: { select: { number: true } } } },
 } satisfies Prisma.JournalEntryInclude;
 
 type EntryWithDetails = Prisma.JournalEntryGetPayload<{ include: typeof details }>;
@@ -339,6 +341,8 @@ function toDto(e: EntryWithDetails, user: AuthUser): JournalEntryDto {
       e.supplierPaymentCancel?.number ??
       e.expense?.number ??
       e.expenseCancel?.number ??
+      e.receiptApplication?.receipt.number ??
+      e.receiptApplicationRev?.receipt.number ??
       null,
     reversalOfNumber: e.reversalOf?.number ?? null,
     reversedByNumber: e.reversedBy?.number ?? null,

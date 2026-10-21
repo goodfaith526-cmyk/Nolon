@@ -428,7 +428,8 @@
     "consolidation_DECONSOLIDATED": "فُرّغت",
     "consolidation_CANCELLED": "ملغاة",
     "billLineKind_CONSOLIDATION": "حاوية مجمعة",
-    "journalSource_CONSOLIDATION_ALLOCATION": "توزيع تكلفة حاوية"
+    "journalSource_CONSOLIDATION_ALLOCATION": "توزيع تكلفة حاوية",
+    "journalSource_RECEIPT_APPLICATION": "تطبيق دفعة مقدمة على فاتورة"
   },
   "Quotations": {
     "title": "عروض الأسعار",
@@ -733,7 +734,8 @@
     "creditNotes": "الإشعارات الدائنة",
     "noCreditNotes": "لا توجد إشعارات دائنة.",
     "creditNote": "الإشعار الدائن",
-    "creditDate": "تاريخ الإشعار"
+    "creditDate": "تاريخ الإشعار",
+    "fromAdvance": "من دفعة مقدمة"
   },
   "Receipts": {
     "title": "سندات القبض",
@@ -785,7 +787,27 @@
     "mixedCurrencies": "الفواتير المفتوحة بأكثر من عملة: اختر عملة السند.",
     "payBalance": "سداد الرصيد",
     "distribute": "توزيع المبلغ على الفواتير، الأقدم أولاً",
-    "distributedRest": "يتبقى {amount} {currency} ويُحتفظ به كدفعة مقدمة."
+    "distributedRest": "يتبقى {amount} {currency} ويُحتفظ به كدفعة مقدمة.",
+    "applied": "مطبَّق على فواتير لاحقة",
+    "applyAdvance": "تطبيق الدفعة المقدمة على فاتورة",
+    "applyHint": "مبلغ {amount} {currency} من هذا السند محفوظ كدفعة مقدمة. اختر فاتورة مفتوحة لنفس العميل والفرع والعملة، والمبلغ المراد تطبيقه. سيُنشأ قيد يومية ينقله من الدفعة المقدمة إلى الفاتورة.",
+    "noApplicableInvoices": "لا توجد للعميل فاتورة مفتوحة بهذه العملة في هذا الفرع.",
+    "chooseInvoice": "اختر فاتورة",
+    "applicableInvoice": "{number} ({date})، الرصيد {balance} {currency}",
+    "applyAmount": "المبلغ المراد تطبيقه ({currency})",
+    "applicationDate": "تاريخ التطبيق",
+    "appliedNotice": "تم تطبيق الدفعة المقدمة على الفاتورة.",
+    "applications": "الدفعة المقدمة المطبقة على فواتير لاحقة",
+    "noApplications": "لم تُطبَّق الدفعة المقدمة على أي فاتورة.",
+    "appliedAmount": "المبلغ المطبَّق",
+    "advanceUsd": "الدفعة المقدمة المسوّاة (دولار)",
+    "applicationStatus_ACTIVE": "مطبَّق",
+    "applicationStatus_REVERSED": "معكوس",
+    "reverseApplication": "عكس التطبيق",
+    "reverseApplicationHint": "العكس يُنشئ قيد يومية عكسياً، ويعيد المبلغ إلى الدفعة المقدمة، ويعيد فتح الفاتورة بنفس المبلغ. القيد الأصلي يبقى كما هو.",
+    "reverseReason": "سبب العكس",
+    "applicationReversedNotice": "تم عكس التطبيق.",
+    "cancelNeedsReversal": "جزء من الدفعة المقدمة لهذا السند مطبَّق على فواتير لاحقة. لإلغاء السند، اعكس هذه التطبيقات أولاً."
   },
   "Journals": {
     "title": "القيود اليومية",
@@ -1787,7 +1809,9 @@
     "printNote": "طباعة السند",
     "reportFilters": "عوامل التصفية",
     "labelsNext": "الملصقات التالية، من الطرد {from}",
-    "hiddenEntry": "قيد محاسبي"
+    "hiddenEntry": "قيد محاسبي",
+    "kind_ADVANCE_APPLICATION": "تطبيق دفعة مقدمة",
+    "kind_ADVANCE_APPLICATION_REVERSAL": "عكس تطبيق دفعة مقدمة"
   },
   "CreditNotes": {
     "title": "الإشعارات الدائنة",

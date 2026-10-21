@@ -29,6 +29,8 @@ export const ACCOUNTING_OBJECTS: ReadonlySet<string> = new Set([
   'receipt_status',
   'receipts',
   'receipt_allocations',
+  'receipt_application_status',
+  'receipt_applications',
   'credit_note_status',
   'credit_notes',
   'supplier_bill_status',
