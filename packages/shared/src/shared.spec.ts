@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EVENT_BOUND_SHIPMENT_STATUSES,
+  SHIPMENT_STATUSES,
+  SHIPMENT_STATUS_DRAFT_EXCLUDED,
+  SHIPMENT_STATUS_RECORD,
   SHIPPING_MODES,
   hasRoadLeg,
   hasSeaLeg,
   isBranchCode,
   isCurrencyCodeFormat,
+  isEventBoundShipmentStatus,
   isLocale,
+  isManualShipmentStatus,
   loadTypeOf,
   localeDirection,
   modeOfLegs,
@@ -57,5 +63,66 @@ describe('load type left unchosen (functional review B2)', () => {
     expect(loadTypeOf('SEA', 'GENERAL')).toBe('LCL');
     expect(loadTypeOf('ROAD', 'CONTAINER')).toBeNull();
     expect(loadTypeOf('ROAD', 'PALLET')).toBeNull();
+  });
+});
+
+describe('shipment statuses set by their own record (functional review Z1, E7)', () => {
+  const noTrip = { onOpenTrip: false };
+  const onTrip = { onOpenTrip: true };
+
+  it('locks the warehouse, container, customs and delivery statuses whatever the trip', () => {
+    for (const status of [
+      'RECEIVED_ORIGIN_WAREHOUSE',
+      'RECEIVED_DESTINATION_WAREHOUSE',
+      'CONSOLIDATED',
+      'CUSTOMS_IN_PROGRESS',
+      'CUSTOMS_CLEARED',
+      'PARTIALLY_DELIVERED',
+      'DELIVERED',
+    ] as const) {
+      expect(isManualShipmentStatus(status, noTrip)).toBe(false);
+      expect(isManualShipmentStatus(status, onTrip)).toBe(false);
+    }
+  });
+
+  it('keeps the trip statuses manual for a shipment on no open trip (external carrier)', () => {
+    for (const status of ['TRIP_SCHEDULED', 'ROAD_DEPARTED', 'ROAD_ARRIVED'] as const) {
+      expect(isManualShipmentStatus(status, noTrip)).toBe(true);
+      expect(isManualShipmentStatus(status, onTrip)).toBe(false);
+    }
+  });
+
+  it('keeps every status no record sets manual', () => {
+    const manual = SHIPMENT_STATUSES.filter((s) => !isEventBoundShipmentStatus(s));
+    expect(manual).toEqual([
+      'CREATED',
+      'PICKUP_SCHEDULED',
+      'LOADED',
+      'DEPARTED',
+      'IN_TRANSIT',
+      'ARRIVED_PORT',
+      'ROAD_IN_TRANSIT',
+      'OUT_FOR_DELIVERY',
+      'CLOSED',
+      'ON_HOLD',
+      'CANCELLED',
+    ]);
+    for (const status of manual) {
+      expect(isManualShipmentStatus(status, onTrip)).toBe(true);
+    }
+  });
+
+  it('names the record of every event-bound status', () => {
+    expect(Object.keys(SHIPMENT_STATUS_RECORD).sort()).toEqual(
+      [...EVENT_BOUND_SHIPMENT_STATUSES].sort(),
+    );
+  });
+
+  it('never lets a status draft propose a status that is locked whatever the trip', () => {
+    const excluded: readonly string[] = SHIPMENT_STATUS_DRAFT_EXCLUDED;
+    for (const status of EVENT_BOUND_SHIPMENT_STATUSES) {
+      const lockedAlways = !isManualShipmentStatus(status, noTrip);
+      expect(excluded.includes(status)).toBe(lockedAlways);
+    }
   });
 });

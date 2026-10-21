@@ -1,6 +1,10 @@
 'use client';
 
-import { SHIPMENT_STATUSES, type ShipmentStatusDraftDto } from '@nolon/shared';
+import {
+  SHIPMENT_STATUS_DRAFT_EXCLUDED,
+  SHIPMENT_STATUSES,
+  type ShipmentStatusDraftDto,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
@@ -27,7 +31,12 @@ export function ShipmentStatusDraftReview({ id }: { id: string }) {
   // A value the draft still misses shows as a dash (MissingFields names it).
   const shipmentNumber = draft.shipmentNumber ?? '—';
   const statusName = (s: string | null | undefined) => (s ? te(`shipment_${s}`) : '—');
-  const statuses = SHIPMENT_STATUSES.map((s) => ({ value: s, label: te(`shipment_${s}`) }));
+  // The statuses a draft may propose (the API refuses the others).
+  const excluded: readonly string[] = SHIPMENT_STATUS_DRAFT_EXCLUDED;
+  const statuses = SHIPMENT_STATUSES.filter((s) => !excluded.includes(s)).map((s) => ({
+    value: s,
+    label: te(`shipment_${s}`),
+  }));
 
   return (
     <DraftFrame

@@ -8,7 +8,6 @@ import {
   type CustomsStatus,
   type ShipmentCustomsDto,
   type ShipmentDto,
-  type ShipmentStatus,
 } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
@@ -20,16 +19,13 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
 
-/** Shipment statuses of the customs stage, offered here when the state machine allows them. */
-const CUSTOMS_STAGE: readonly ShipmentStatus[] = ['CUSTOMS_IN_PROGRESS', 'CUSTOMS_CLEARED'];
-
 /**
  * The shipment's customs file: clearance status, declaration number, broker, dates, notes and
  * fees. Fees are recorded only (no journal entry). Saving the file moves the shipment to
- * customs in progress or cleared when the state machine allows it (the API does this); the
- * manual status buttons stay for moves without a file. The broker can be linked to a supplier;
- * those who see costs also see the supplier bill lines that are the shipment's customs costs,
- * listed apart from the fees (group Z2).
+ * customs in progress or cleared when the state machine allows it (the API does this). Only the
+ * file sets those statuses (functional review Z1): there are no manual buttons for them. The
+ * broker can be linked to a supplier; those who see costs also see the supplier bill lines that
+ * are the shipment's customs costs, listed apart from the fees (group Z2).
  */
 export function ShipmentCustoms({
   shipment,
@@ -153,16 +149,6 @@ export function ShipmentCustoms({
     if (saved) setData(saved);
   }
 
-  async function moveShipment(status: ShipmentStatus) {
-    const moved = await run(
-      () =>
-        api<ShipmentDto>(`/shipments/${shipmentId}/status`, { method: 'POST', body: { status } }),
-      t('shipmentMoved', { status: te(`shipment_${status}`) }),
-    );
-    if (moved) onShipmentChange(moved);
-  }
-
-  const stageMoves = shipment.actions.transitions.filter((s) => CUSTOMS_STAGE.includes(s));
   const clearance = data?.clearance ?? null;
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
   const currencies = (master?.currencies ?? []).filter((c) => c.isActive);
@@ -180,17 +166,6 @@ export function ShipmentCustoms({
         <h2>{t('section')}</h2>
         <div className="actions">
           {clearance && <StatusBadge kind="customs" status={clearance.status} />}
-          {stageMoves.map((status) => (
-            <button
-              key={status}
-              type="button"
-              className="primary"
-              disabled={busy}
-              onClick={() => void moveShipment(status)}
-            >
-              {t('moveShipment', { status: te(`shipment_${status}`) })}
-            </button>
-          ))}
           {data?.actions.canEdit && !editing && (
             <button type="button" onClick={() => setEditing(true)}>
               {clearance ? tc('edit') : t('open')}

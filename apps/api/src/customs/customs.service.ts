@@ -39,7 +39,8 @@ type Tx = Prisma.TransactionClient;
  * dates, notes and fees. Access follows the shipment. Fees are recorded with their currency
  * only: no journal entry is posted (supplier bills, group 4b, will carry the cost). Saving the
  * file moves the shipment to CUSTOMS_IN_PROGRESS / CUSTOMS_CLEARED through the shipment state
- * machine in the same transaction (functional review D1); the manual status buttons stay.
+ * machine in the same transaction (functional review D1). Only the file sets those statuses: by
+ * hand they are a correction (Z1).
  *
  * Group Z2: the broker can be linked to an active supplier, and the file then shows, apart from
  * its fees, the supplier bill lines that are this shipment's customs costs (read from payables;

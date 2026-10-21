@@ -378,7 +378,9 @@ export interface ShipmentStatusGate {
 
 /**
  * A shipment status draft: the shipment and the status, never one the assistant may not propose
- * (closing, holding and cancelling stay a person's own actions).
+ * (closing, holding and cancelling stay a person's own actions; a status its own record sets is
+ * never proposed). A draft saved before a status was excluded holds it as invalid: its approval is
+ * refused (422) until a person picks another status.
  */
 export function shipmentStatusCompleteness(values: ShipmentStatusGate): Completeness {
   const excluded: readonly string[] = SHIPMENT_STATUS_DRAFT_EXCLUDED;

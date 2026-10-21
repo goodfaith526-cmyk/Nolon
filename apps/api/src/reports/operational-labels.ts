@@ -263,6 +263,7 @@ const AUDIT_ACTION = {
   CREATED: { en: 'Created', ar: 'إنشاء' },
   UPDATED: { en: 'Updated', ar: 'تعديل' },
   STATUS: { en: 'Status change', ar: 'تغيير حالة' },
+  STATUS_CORRECTED: { en: 'Status corrected', ar: 'تصحيح حالة' },
   HOLD: { en: 'Put on hold', ar: 'إيقاف مؤقت' },
   RESUME: { en: 'Resumed', ar: 'استئناف' },
   REVERT: { en: 'Went back a status', ar: 'رجوع حالة' },

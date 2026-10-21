@@ -805,11 +805,20 @@ describe('inland transport: fleet, trips, POD', () => {
       const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id, b.id])).expect(201))
         .body as TripDto;
       await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
-      // a arrives and is delivered by hand before the trip is marked arrived.
-      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
-        200,
-      );
-      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'DELIVERED' }).expect(200);
+      // a arrives and is delivered before the trip is marked arrived: the arrival as a
+      // correction (the trip sets it, Z1), the delivery by its proof.
+      await post(`/shipments/${a.id}/status`, cookies.admin, {
+        status: 'ROAD_ARRIVED',
+        correction: true,
+        reason: 'Arrived ahead of the trip update',
+      }).expect(200);
+      await recordPod(a.id, cookies.admin, {
+        recipientName: 'Ahmed Ali',
+        recipientCapacity: 'Consignee',
+        shipmentStatus: 'DELIVERED',
+      })
+        .attach('signature', PNG, 'signature.png')
+        .expect(201);
       const events = await t.prisma.shipmentEvent.count({ where: { shipmentId: a.id } });
 
       const arrived = (
@@ -833,10 +842,13 @@ describe('inland transport: fleet, trips, POD', () => {
       const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))
         .body as TripDto;
       await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
-      // Marked arrived by hand, with no location given: the tracking page still says Port Sudan.
-      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
-        200,
-      );
+      // Marked arrived by hand (a correction: the trip sets it, Z1), with no location given: the
+      // tracking page still says Port Sudan.
+      await post(`/shipments/${a.id}/status`, cookies.admin, {
+        status: 'ROAD_ARRIVED',
+        correction: true,
+        reason: 'Driver called in',
+      }).expect(200);
       expect(await location(a.id)).toBe(portSudan);
       await recordPod(a.id, cookies.opsDxb, {
         recipientName: 'Ahmed Ali',
@@ -847,6 +859,51 @@ describe('inland transport: fleet, trips, POD', () => {
         .expect(201);
       expect(await status(a.id)).toBe('DELIVERED');
       expect(await location(a.id)).toBe(khartoum);
+    });
+
+    it('road statuses: manual with no open trip (external carrier), set by the trip on one (Z1)', async () => {
+      const move = (id: string, status: string) =>
+        post(`/shipments/${id}/status`, cookies.opsDxb, { status });
+      // No trip: an external carrier's leg is recorded by hand, step by step.
+      const external = await roadShipment();
+      const created = (await get(`/shipments/${external.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(created.actions.manualTransitions).toContain('TRIP_SCHEDULED');
+      expect(created.actions.correctionTransitions).toEqual([]);
+      for (const step of ['TRIP_SCHEDULED', 'ROAD_DEPARTED', 'ROAD_IN_TRANSIT', 'ROAD_ARRIVED']) {
+        await move(external.id, step).expect(200);
+      }
+      expect(await status(external.id)).toBe('ROAD_ARRIVED');
+
+      // On a planned trip: departing is the trip's, by hand only as a correction.
+      const carried = await roadShipment();
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([carried.id])).expect(201))
+        .body as TripDto;
+      expect(await status(carried.id)).toBe('TRIP_SCHEDULED');
+      const refused = await move(carried.id, 'ROAD_DEPARTED').expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'STATUS_SET_BY_RECORD',
+        params: { status: 'ROAD_DEPARTED', record: 'TRIP' },
+      });
+      const planned = (await get(`/shipments/${carried.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(planned.actions).toMatchObject({
+        transitions: ['ROAD_DEPARTED'],
+        manualTransitions: [],
+        correctionTransitions: ['ROAD_DEPARTED'],
+      });
+      // Under way: the in-transit update stays manual, the arrival is the trip's.
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+      await move(carried.id, 'ROAD_IN_TRANSIT').expect(200);
+      await move(carried.id, 'ROAD_ARRIVED').expect(409);
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'ARRIVED' }).expect(200);
+      expect(await status(carried.id)).toBe('ROAD_ARRIVED');
+      // Once the trip has arrived it is no longer open: a next leg by an external carrier is
+      // recorded by hand again.
+      const arrived = (await get(`/shipments/${carried.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(arrived.actions.manualTransitions).toContain('TRIP_SCHEDULED');
+      await move(carried.id, 'TRIP_SCHEDULED').expect(200);
     });
 
     it('a POD that keeps the status still moves the tracking location, with or without a trip', async () => {

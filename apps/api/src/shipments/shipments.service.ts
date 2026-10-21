@@ -3,10 +3,17 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  type HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  SHIPMENT_STATUS_RECORD,
+  isEventBoundShipmentStatus,
+  isManualShipmentStatus,
+} from '@nolon/shared';
 import type {
   BookingService,
   CargoType,
@@ -42,12 +49,13 @@ import {
 import { toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, fieldRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { OPEN_TRIP_STATUSES } from '../transport/transport-rules.js';
 import {
   FINISHED,
   type HistoryEntry,
@@ -88,6 +96,16 @@ const sharedBranchesSelect = {
 
 const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
 
+/**
+ * Whether the shipment is on an open trip (planned or departed): the trip then sets its road
+ * statuses, which otherwise stay manual (isManualShipmentStatus).
+ */
+const openTripLinks = {
+  where: { trip: { status: { in: [...OPEN_TRIP_STATUSES] } } },
+  select: { tripId: true },
+  take: 1,
+} satisfies Prisma.Shipment$tripLinksArgs;
+
 const details = {
   customer: { select: { name: true } },
   booking: { select: { number: true } },
@@ -95,6 +113,7 @@ const details = {
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
+  tripLinks: openTripLinks,
 } satisfies Prisma.ShipmentInclude;
 
 type ShipmentWithDetails = Prisma.ShipmentGetPayload<{ include: typeof details }>;
@@ -541,19 +560,25 @@ export class ShipmentsService {
     return this.get(user, id);
   }
 
-  /** Moves the shipment forward (or to CLOSED) along the state machine. */
+  /**
+   * Moves the shipment forward (or to CLOSED) along the state machine, by hand. A status its own
+   * record sets (goods receipt, consolidation, trip, customs file, proof of delivery) is refused
+   * unless the request is a correction (functional review Z1): shipments:approve and a reason,
+   * which the event keeps; the move itself still follows the state machine.
+   */
   async changeStatus(
     user: AuthUser,
     id: string,
     input: ShipmentStatusRequest,
   ): Promise<ShipmentDto> {
+    const correction = input.correction ? requireCorrection(user, input.reason) : null;
     await this.findScoped(user, id);
     const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
     if (occurredAt.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
       throw new BadRequestException('The time of a status change cannot be in the future');
     }
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEvent(user, id, this.statusPlan(user, { ...input, occurredAt }));
+    await this.applyEvent(user, id, this.statusPlan(user, { ...input, occurredAt, correction }));
     return this.get(user, id);
   }
 
@@ -569,7 +594,7 @@ export class ShipmentsService {
   ): Promise<{ branchId: string }> {
     const shipment = await this.findScoped(user, id);
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    this.statusPlan(user, { ...input, occurredAt: new Date() })(
+    this.statusPlan(user, { ...input, occurredAt: new Date(), correction: null })(
       shipment,
       replayHistory(shipment.events),
     );
@@ -607,7 +632,7 @@ export class ShipmentsService {
       tx,
       user,
       id,
-      this.statusPlan(user, { ...input, occurredAt: new Date() }),
+      this.statusPlan(user, { ...input, occurredAt: new Date(), correction: null }),
     );
   }
 
@@ -618,19 +643,28 @@ export class ShipmentsService {
       occurredAt: Date;
       locationId?: string | null;
       note?: string | null;
+      /** A correction (checked by requireCorrection): its reason. Null for a plain change. */
+      correction: { reason: string } | null;
     },
   ): Planner {
     return (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(input.status)) {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
-      requireAny(user, permissionForTransition(input.status));
+      if (input.correction === null) {
+        // Whether it is on an open trip is read with the shipment (under its lock when applied).
+        if (!isManualShipmentStatus(input.status, onOpenTrip(shipment))) {
+          throw setByRecord(input.status);
+        }
+        requireAny(user, permissionForTransition(input.status));
+      }
       return {
         kind: 'STATUS',
         status: input.status,
         occurredAt: input.occurredAt,
         locationId: input.locationId ?? null,
         note: input.note ?? null,
+        reason: input.correction?.reason ?? null,
         update: {
           status: input.status,
           ...(input.status === 'CLOSED' ? { closedAt: new Date() } : {}),
@@ -1072,7 +1106,7 @@ export class ShipmentsService {
     await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`;
     const shipment = await tx.shipment.findUniqueOrThrow({
       where: { id },
-      include: { events: { orderBy: { id: 'asc' } } },
+      include: { events: { orderBy: { id: 'asc' } }, tripLinks: openTripLinks },
     });
     const path = replayHistory(shipment.events);
     const event = plan(shipment, path);
@@ -1309,6 +1343,7 @@ export class ShipmentsService {
         source: e.source,
         note: e.note,
         reason: e.reason,
+        correction: isCorrection(e),
       })),
       sharedBranches: s.sharedBranches.map((b) => b.branch),
       shareableBranches: [],
@@ -1317,7 +1352,9 @@ export class ShipmentsService {
   }
 }
 
-type LockedShipment = Prisma.ShipmentGetPayload<{ include: { events: true } }>;
+type LockedShipment = Prisma.ShipmentGetPayload<{
+  include: { events: true; tripLinks: typeof openTripLinks };
+}>;
 
 interface PlannedEvent {
   kind: ShipmentEventKind;
@@ -1342,6 +1379,50 @@ function requireAny(user: AuthUser, permissions: readonly Permission[]): void {
   }
 }
 
+function onOpenTrip(shipment: { tripLinks: readonly unknown[] }): { onOpenTrip: boolean } {
+  return { onOpenTrip: shipment.tripLinks.length > 0 };
+}
+
+/**
+ * A manual change of a status its own record sets: 409 with the record that sets it, so the
+ * client can point to it (a goods receipt, the container, the trip, the customs file, a POD).
+ */
+function setByRecord(status: ShipmentStatus): HttpException {
+  const record = isEventBoundShipmentStatus(status) ? SHIPMENT_STATUS_RECORD[status] : null;
+  return codedRefusal(
+    HttpStatus.CONFLICT,
+    'STATUS_SET_BY_RECORD',
+    `${status} is set by its own record (${record ?? 'none'}), not by hand; a manager may record ` +
+      'a correction with a reason',
+    { status, record: record ?? '' },
+  );
+}
+
+/**
+ * A correction (Z1): shipments:approve (403), then a reason (400). Returns the trimmed reason.
+ */
+function requireCorrection(user: AuthUser, reason: string | null | undefined): { reason: string } {
+  if (!user.permissions.has('shipments:approve')) {
+    throw codedRefusal(
+      HttpStatus.FORBIDDEN,
+      'STATUS_CORRECTION_FORBIDDEN',
+      'A status correction needs the shipments approve permission',
+    );
+  }
+  const text = reason?.trim();
+  if (!text) {
+    throw fieldRefusal('STATUS_CORRECTION_REASON_REQUIRED', 'A status correction needs a reason', [
+      'reason',
+    ]);
+  }
+  return { reason: text };
+}
+
+/** A status event with a reason: a correction (plain changes and records carry none). */
+function isCorrection(event: { kind: ShipmentEventKind; reason: string | null }): boolean {
+  return event.kind === 'STATUS' && event.reason !== null;
+}
+
 function isLateCanceller(user: AuthUser): boolean {
   return user.roles.some((role) => (LATE_CANCEL_ROLES as readonly string[]).includes(role));
 }
@@ -1353,10 +1434,15 @@ function actionsFor(
 ): ShipmentActionsDto {
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
+  const next = nextStatuses(s.status, s, visitedStatuses(path));
+  const trip = onOpenTrip(s);
+  const transitions = next.filter((status) => permissionForTransition(status).some(has));
   return {
-    transitions: nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
-      permissionForTransition(next).some(has),
-    ),
+    transitions,
+    manualTransitions: transitions.filter((status) => isManualShipmentStatus(status, trip)),
+    correctionTransitions: has('shipments:approve')
+      ? next.filter((status) => !isManualShipmentStatus(status, trip))
+      : [],
     canHold: canUpdate && canHold(s.status),
     canResume: canUpdate && s.status === 'ON_HOLD',
     revertTo: has('shipments:approve') ? revertTarget(path) : null,

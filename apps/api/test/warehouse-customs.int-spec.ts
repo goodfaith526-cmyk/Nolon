@@ -21,6 +21,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { shipmentRecords } from './shipment-records.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
@@ -436,9 +437,14 @@ describe('warehouse and customs', () => {
 
     it('a closed or cancelled shipment takes no receipt (409); a cancelled one can return goods', async () => {
       const closed = await confirmedShipment(['MAIN_FREIGHT']);
-      for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED', 'CLOSED']) {
+      for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT']) {
         await post(`/shipments/${closed.id}/status`, cookies.opsDxb, { status: next }).expect(200);
       }
+      // Delivered by its proof (Z1), then closed.
+      await shipmentRecords(t).pod(closed.id, cookies.opsDxb, 'DELIVERED').expect(201);
+      await post(`/shipments/${closed.id}/status`, cookies.opsDxb, { status: 'CLOSED' }).expect(
+        200,
+      );
       await receive(closed.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
       await release(closed.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
 
@@ -551,6 +557,16 @@ describe('warehouse and customs', () => {
       const before = await view(s.id);
       expect(before.actions.receiptStatuses).toEqual(['RECEIVED_ORIGIN_WAREHOUSE']);
       expect(before.actions.defaultReceiptStatus).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+      // Only a receipt sets it (Z1): by hand it is refused, to the warehouse team too.
+      for (const cookie of [cookies.warehouseDxb, cookies.opsDxb]) {
+        const refused = await post(`/shipments/${s.id}/status`, cookie, {
+          status: 'RECEIVED_ORIGIN_WAREHOUSE',
+        }).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'STATUS_SET_BY_RECORD',
+          params: { status: 'RECEIVED_ORIGIN_WAREHOUSE', record: 'GOODS_RECEIPT' },
+        });
+      }
 
       // Not allowed now (destination side before the sea leg): recorded, status unchanged.
       const early = (
@@ -1021,9 +1037,15 @@ describe('warehouse and customs', () => {
 
       it('after a later stage the file is saved and the shipment stays where it is', async () => {
         const s = await atPort();
-        await move(s.id, 'CUSTOMS_IN_PROGRESS');
-        await move(s.id, 'CUSTOMS_CLEARED');
-        await move(s.id, 'DELIVERED');
+        // Cleared before the file was opened (an old shipment): corrections by hand (Z1).
+        for (const to of ['CUSTOMS_IN_PROGRESS', 'CUSTOMS_CLEARED']) {
+          await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+            status: to,
+            correction: true,
+            reason: 'Cleared before the file was opened',
+          }).expect(200);
+        }
+        await shipmentRecords(t).pod(s.id, cookies.opsDxb, 'DELIVERED').expect(201);
         const before = (await events(s.id)).length;
         await save(s.id, { status: 'SUBMITTED' }).expect(200);
         await save(s.id, { status: 'CLEARED', clearedOn: today() }).expect(200);
