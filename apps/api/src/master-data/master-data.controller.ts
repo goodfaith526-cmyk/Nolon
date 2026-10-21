@@ -10,11 +10,14 @@ import {
   Post,
 } from '@nestjs/common';
 import {
+  CARGO_TYPES,
   LOCATION_KINDS,
+  RATE_UNITS,
   type CodeNameDto,
   type CurrencyDto,
   type LocationDto,
   type MasterDataDto,
+  type PriceCategoryDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -62,6 +65,7 @@ const CODES: Record<CodeType, z.ZodType<string>> = {
   CONTAINER_TYPE: code(10),
   CHARGE_TYPE: code(20),
   DOCUMENT_TYPE: documentTypeCode,
+  CUSTOMER_SEGMENT: code(20),
 };
 
 const names = {
@@ -74,6 +78,21 @@ const codeNameBody = (type: CodeType) => z.object({ code: CODES[type], ...names 
 
 /** An edit names only what may change: the code is fixed (strict, so `code` is a 400). */
 const codeNameUpdate = z.object(names).partial().strict();
+
+const priceCategoryBody = z
+  .object({
+    code: code(20),
+    ...names,
+    cargoType: z.enum(CARGO_TYPES),
+    defaultUnit: z.enum(RATE_UNITS),
+  })
+  .strict();
+
+/** Code and cargo type are fixed once created: rates and cargo lines name the category. */
+const priceCategoryUpdate = z
+  .object({ ...names, defaultUnit: z.enum(RATE_UNITS) })
+  .partial()
+  .strict();
 
 const currencyBody = z
   .object({
@@ -237,6 +256,88 @@ export class MasterDataController {
     @Param('code') code: string,
   ): Promise<CodeNameDto> {
     return this.masterData.setCodeTypeActive(user, 'DOCUMENT_TYPE', codeParam(code), true);
+  }
+
+  @Post('customer-segments')
+  @RequirePermission('master_data:create')
+  createCustomerSegment(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.createCodeType(user, 'CUSTOMER_SEGMENT', body);
+  }
+
+  @Patch('customer-segments/:code')
+  @RequirePermission('master_data:update')
+  updateCustomerSegment(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<CodeNameDto> {
+    return this.updateCodeType(user, 'CUSTOMER_SEGMENT', code, body);
+  }
+
+  @Post('customer-segments/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivateCustomerSegment(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CUSTOMER_SEGMENT', codeParam(code), false);
+  }
+
+  @Post('customer-segments/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivateCustomerSegment(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<CodeNameDto> {
+    return this.masterData.setCodeTypeActive(user, 'CUSTOMER_SEGMENT', codeParam(code), true);
+  }
+
+  @Post('price-categories')
+  @RequirePermission('master_data:create')
+  createPriceCategory(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<PriceCategoryDto> {
+    return this.masterData.createPriceCategory(user, parse(priceCategoryBody, body));
+  }
+
+  @Patch('price-categories/:code')
+  @RequirePermission('master_data:update')
+  updatePriceCategory(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<PriceCategoryDto> {
+    return this.masterData.updatePriceCategory(
+      user,
+      codeParam(code),
+      parse(priceCategoryUpdate, body),
+    );
+  }
+
+  @Post('price-categories/:code/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  deactivatePriceCategory(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<PriceCategoryDto> {
+    return this.masterData.setPriceCategoryActive(user, codeParam(code), false);
+  }
+
+  @Post('price-categories/:code/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('master_data:update')
+  reactivatePriceCategory(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<PriceCategoryDto> {
+    return this.masterData.setPriceCategoryActive(user, codeParam(code), true);
   }
 
   @Post('currencies')

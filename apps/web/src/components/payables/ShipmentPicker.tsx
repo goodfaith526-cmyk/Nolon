@@ -4,6 +4,7 @@ import type { ShipmentPickPage, ShipmentSummaryDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { usePagedLoads } from '@/lib/paged-loads';
 
 /** A shipment a document line names: its id, and its number to show. */
 export interface PickedShipment {
@@ -38,8 +39,12 @@ export function ShipmentPicker({
     page: number;
   } | null>(null);
   const [failed, setFailed] = useState(false);
+  const { loads, loading } = usePagedLoads();
 
+  /** Page 1 replaces the list; the next page is added once, and only to the same search. */
   async function search(page: number) {
+    const token = page > 1 ? loads.next() : loads.first();
+    if (token === null) return;
     setFailed(false);
     try {
       const query = new URLSearchParams({
@@ -49,6 +54,7 @@ export function ShipmentPicker({
         pageSize: String(PAGE_SIZE),
       });
       const found = await api<ShipmentPickPage>(`/shipments/pick?${query.toString()}`);
+      if (!loads.current(token)) return;
       setResult((before) => ({
         exact: page === 1 ? found.exact : (before?.exact ?? null),
         items: page === 1 ? found.items : [...(before?.items ?? []), ...found.items],
@@ -56,7 +62,9 @@ export function ShipmentPicker({
         page,
       }));
     } catch {
-      setFailed(true);
+      if (loads.current(token)) setFailed(true);
+    } finally {
+      loads.done(token);
     }
   }
 
@@ -91,6 +99,7 @@ export function ShipmentPicker({
           onChange={(e) => {
             setQ(e.target.value);
             setResult(null);
+            loads.reset();
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -124,7 +133,7 @@ export function ShipmentPicker({
       )}
       {result && result.items.length < result.total && (
         <div className="actions">
-          <button type="button" onClick={() => void search(result.page + 1)}>
+          <button type="button" disabled={loading} onClick={() => void search(result.page + 1)}>
             {t('moreShipments')}
           </button>
         </div>

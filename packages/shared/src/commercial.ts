@@ -162,6 +162,29 @@ export interface MasterDataDto {
   chargeTypes: CodeNameDto[];
   documentTypes: CodeNameDto[];
   currencies: CurrencyDto[];
+  /** The categories a fixed price is set for (carton, barrel, pallet...). */
+  priceCategories: PriceCategoryDto[];
+  customerSegments: CodeNameDto[];
+}
+
+/**
+ * A price category (business model): a fixed published price is set per category. It follows one
+ * cargo type, and its unit is the one a rate for it suggests.
+ */
+export interface PriceCategoryDto extends CodeNameDto {
+  cargoType: CargoType;
+  defaultUnit: RateUnit;
+}
+
+/** A new price category. Its code and cargo type are fixed once it is created. */
+export interface PriceCategoryInput extends CodeNameInput {
+  cargoType: CargoType;
+  defaultUnit: RateUnit;
+}
+
+/** An edit of a price category: its names and suggested unit. */
+export interface PriceCategoryUpdate extends CodeNameUpdate {
+  defaultUnit?: RateUnit;
 }
 
 export interface LocationInput {
@@ -674,6 +697,8 @@ export const FORM_REFUSALS = [
   'BRANCH_MISMATCH',
   // A location (master data) with a city is in the city's country: params `city` and `country`.
   'CITY_OTHER_COUNTRY',
+  // A partner's city or port is in the partner's country: params `location` and `country`.
+  'PARTNER_LOCATION_OTHER_COUNTRY',
   // Master data screens: a code already in use (409, param `code`), and the base currency, which
   // every journal entry balances in, stays active (param `code`).
   'MASTER_CODE_TAKEN',

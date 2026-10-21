@@ -44,6 +44,7 @@ model Branch {
 
   users               UserBranch[]
   customers           Customer[]
+  partners            Partner[]
   rateCards           RateCard[]
   quotations          Quotation[]
   bookings            Booking[]
@@ -118,6 +119,7 @@ model Currency {
 
   branches             Branch[]
   customersPreferred   Customer[]        @relation("CustomerPreferredCurrency")
+  partners             Partner[]
   customersCreditLimit Customer[]        @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
   quotations           Quotation[]
@@ -176,6 +178,7 @@ model User {
   assistantFormReviews AssistantFormReview[]
 
   customersCreated            Customer[]           @relation("CustomerCreatedBy")
+  partnersCreated             Partner[]            @relation("PartnerCreatedBy")
   ratesCreated                RateCard[]           @relation("RateCreatedBy")
   ratesApproved               RateCard[]           @relation("RateApprovedBy")
   quotationsCreated           Quotation[]          @relation("QuotationCreatedBy")
@@ -371,6 +374,7 @@ model Location {
   consolidationsFrom Consolidation[]       @relation("ConsolidationOrigin")
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
   warehouses         Warehouse[]
+  partners           Partner[]
 
   @@index([cityId])
   @@map("locations")
@@ -565,6 +569,82 @@ model Party {
 
   @@index([customerId])
   @@map("parties")
+}
+
+/// The partner's role in the network (business model, 2026-10-21): a sales outlet (travel agency,
+/// shipping office), an origin consolidator, an overseas agent, or a distributor in Sudan.
+enum PartnerKind {
+  SALES_OUTLET
+  ORIGIN_CONSOLIDATOR
+  OVERSEAS_AGENT
+  DISTRIBUTOR
+
+  @@map("partner_kind")
+}
+
+/// A partner of the NOLON network (docs/plans/02-business-model-batch-1.md 3.1). Branch-owned:
+/// staff see the partners of their branches only. Its commissions, settlements and payments come
+/// in later batches; the supplier link is for paying it then. Deactivate, never delete.
+model Partner {
+  id          String      @id @default(uuid()) @db.Uuid
+  /// NOL-PTR-000001
+  number      String      @unique @db.VarChar(30)
+  kind        PartnerKind
+  branchId    String      @map("branch_id") @db.Uuid
+  name        String      @db.VarChar(200)
+  /// E.164.
+  phone       String?     @db.VarChar(20)
+  email       String?     @db.VarChar(254)
+  /// ISO 3166-1 alpha-2: any country.
+  countryCode String      @map("country_code") @db.Char(2)
+  /// The partner's city or port.
+  locationId  String?     @map("location_id") @db.Uuid
+  supplierId  String?     @map("supplier_id") @db.Uuid
+  /// ISO 4217, in the currencies master: the currency it usually deals in.
+  currency    String      @db.Char(3)
+  notes       String?
+  isActive    Boolean     @default(true) @map("is_active")
+  createdById String      @map("created_by_id") @db.Uuid
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch      Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  location    Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  currencyRef Currency  @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy   User      @relation("PartnerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([branchId, kind])
+  @@index([locationId])
+  @@index([supplierId])
+  @@map("partners")
+}
+
+/// Carton/parcel, barrel, pallet, special... The categories a fixed published price is set for
+/// (business model). Master data the client extends. Each follows one cargo type, so a category
+/// never contradicts the cargo it prices; its unit is the one a rate for it suggests.
+model PriceCategory {
+  code        String    @id @db.VarChar(20)
+  nameEn      String    @map("name_en")
+  nameAr      String    @map("name_ar")
+  cargoType   CargoType @map("cargo_type")
+  defaultUnit RateUnit  @map("default_unit")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("price_categories")
+}
+
+/// Individuals and families, merchants and importers, companies and online shops... Master data
+/// the client extends (business model, customer segments).
+model CustomerSegment {
+  code      String   @id @db.VarChar(20)
+  nameEn    String   @map("name_en")
+  nameAr    String   @map("name_ar")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("customer_segments")
 }
 
 enum RateStatus {
@@ -2296,6 +2376,7 @@ model Supplier {
   payments     SupplierPayment[]
   journalLines JournalLine[]
   customsFiles CustomsClearance[]
+  partners     Partner[]
 
   @@map("suppliers")
 }

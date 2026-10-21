@@ -1,13 +1,20 @@
 'use client';
 
-import type {
-  CodeNameDto,
-  CodeNameInput,
-  CodeNameUpdate,
-  CurrencyDto,
-  CurrencyInput,
-  CurrencyUpdate,
-  MasterDataDto,
+import {
+  CARGO_TYPES,
+  RATE_UNITS,
+  type CargoType,
+  type CodeNameDto,
+  type CodeNameInput,
+  type CodeNameUpdate,
+  type CurrencyDto,
+  type CurrencyInput,
+  type CurrencyUpdate,
+  type MasterDataDto,
+  type PriceCategoryDto,
+  type PriceCategoryInput,
+  type PriceCategoryUpdate,
+  type RateUnit,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
@@ -19,8 +26,14 @@ import { can, useMe } from '../StaffShell';
 import { FormDialog } from './FormDialog';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
-/** The four lists of this page, by the API path that edits each. */
-type ListKey = 'containerTypes' | 'chargeTypes' | 'documentTypes' | 'currencies';
+/** The lists of this page, by the API path that edits each. */
+type ListKey =
+  | 'containerTypes'
+  | 'chargeTypes'
+  | 'documentTypes'
+  | 'currencies'
+  | 'priceCategories'
+  | 'customerSegments';
 
 interface ListSpec {
   key: ListKey;
@@ -40,12 +53,17 @@ const LISTS: readonly ListSpec[] = [
     codePattern: '[A-Za-z0-9]+(_[A-Za-z0-9]+)*',
   },
   { key: 'currencies', path: 'currencies', codeMax: 3, codePattern: '[A-Za-z]{3}' },
+  { key: 'priceCategories', path: 'price-categories', codeMax: 20, codePattern: '[A-Za-z0-9]+' },
+  { key: 'customerSegments', path: 'customer-segments', codeMax: 20, codePattern: '[A-Za-z0-9]+' },
 ];
 
-type Entry = CodeNameDto & Partial<Pick<CurrencyDto, 'symbol' | 'decimalPlaces'>>;
+type Entry = CodeNameDto &
+  Partial<Pick<CurrencyDto, 'symbol' | 'decimalPlaces'>> &
+  Partial<Pick<PriceCategoryDto, 'cargoType' | 'defaultUnit'>>;
 
 /**
- * Container types, charge types, document types and currencies (master data): add, rename,
+ * Container types, charge types, document types, currencies, price categories and customer
+ * segments (master data): add, rename,
  * deactivate and reactivate. Nothing is deleted: an inactive entry stays on the records that
  * already name it, and the API refuses it on new ones.
  */
@@ -141,7 +159,9 @@ function MasterList({
   const tc = useTranslations('Common');
   const localName = useLocalName();
   const [editing, setEditing] = useState<Entry | null>(null);
+  const te = useTranslations('Enums');
   const isCurrency = spec.key === 'currencies';
+  const isCategory = spec.key === 'priceCategories';
   const base = `/master-data/${spec.path}`;
 
   async function onCreate(event: FormEvent<HTMLFormElement>) {
@@ -153,14 +173,20 @@ function MasterList({
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
     };
-    const body: CodeNameInput | CurrencyInput = isCurrency
+    const body: CodeNameInput | CurrencyInput | PriceCategoryInput = isCurrency
       ? {
           ...names,
           symbol: field(form, 'symbol').trim() || null,
           // A count of minor units (0 to 4), not an amount.
           decimalPlaces: Number(field(form, 'decimalPlaces')),
         }
-      : names;
+      : isCategory
+        ? {
+            ...names,
+            cargoType: field(form, 'cargoType') as CargoType,
+            defaultUnit: field(form, 'defaultUnit') as RateUnit,
+          }
+        : names;
     if (await run(() => api(base, { method: 'POST', body }), t('createdNotice'))) element.reset();
   }
 
@@ -171,9 +197,11 @@ function MasterList({
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
     };
-    const body: CodeNameUpdate | CurrencyUpdate = isCurrency
+    const body: CodeNameUpdate | CurrencyUpdate | PriceCategoryUpdate = isCurrency
       ? { ...names, symbol: field(form, 'symbol').trim() || null }
-      : names;
+      : isCategory
+        ? { ...names, defaultUnit: field(form, 'defaultUnit') as RateUnit }
+        : names;
     const path = `${base}/${encodeURIComponent(entry.code)}`;
     if (await run(() => api(path, { method: 'PATCH', body }), tc('saved'))) setEditing(null);
   }
@@ -237,6 +265,24 @@ function MasterList({
                 </label>
               </>
             )}
+            {isCategory && (
+              <>
+                <label className="field">
+                  <span>{t('cargoType')}</span>
+                  <select name="cargoType" required aria-describedby="master-cargo-type">
+                    {CARGO_TYPES.map((c) => (
+                      <option key={c} value={c}>
+                        {te(`cargo_${c}`)}
+                      </option>
+                    ))}
+                  </select>
+                  <small id="master-cargo-type" className="muted">
+                    {t('cargoTypeFixed')}
+                  </small>
+                </label>
+                <UnitField />
+              </>
+            )}
           </div>
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
@@ -256,6 +302,8 @@ function MasterList({
                 <th>{t('name')}</th>
                 {isCurrency && <th>{t('symbol')}</th>}
                 {isCurrency && <th>{t('decimalPlaces')}</th>}
+                {isCategory && <th>{t('cargoType')}</th>}
+                {isCategory && <th>{t('defaultUnit')}</th>}
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
               </tr>
@@ -267,6 +315,10 @@ function MasterList({
                   <td>{localName(entry)}</td>
                   {isCurrency && <td dir="ltr">{entry.symbol ?? '—'}</td>}
                   {isCurrency && <td dir="ltr">{entry.decimalPlaces}</td>}
+                  {isCategory && <td>{entry.cargoType ? te(`cargo_${entry.cargoType}`) : '—'}</td>}
+                  {isCategory && (
+                    <td>{entry.defaultUnit ? te(`unit_${entry.defaultUnit}`) : '—'}</td>
+                  )}
                   <td>{entry.isActive ? tc('active') : tc('inactive')}</td>
                   {canUpdate && (
                     <td>
@@ -327,6 +379,7 @@ function MasterList({
                   />
                 </label>
               )}
+              {isCategory && <UnitField defaultValue={editing.defaultUnit} />}
             </div>
             <div className="actions">
               <button type="submit" className="primary" disabled={busy}>
@@ -340,5 +393,23 @@ function MasterList({
         </FormDialog>
       )}
     </>
+  );
+}
+
+/** The unit a rate for a price category suggests. */
+function UnitField({ defaultValue }: { defaultValue?: RateUnit }) {
+  const t = useTranslations('MasterData');
+  const te = useTranslations('Enums');
+  return (
+    <label className="field">
+      <span>{t('defaultUnit')}</span>
+      <select name="defaultUnit" required defaultValue={defaultValue ?? 'PER_PIECE'}>
+        {RATE_UNITS.map((u) => (
+          <option key={u} value={u}>
+            {te(`unit_${u}`)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

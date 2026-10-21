@@ -77,7 +77,8 @@
     "apiKeys": "API keys",
     "assistantDrafts": "Drafts from the assistant",
     "locations": "Ports and cities",
-    "masterData": "Master data"
+    "masterData": "Master data",
+    "partners": "Partners"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -1676,7 +1677,10 @@
     "field_canInquire": "May inquire",
     "field_canReceiveCargo": "May receive cargo",
     "field_canReceiveDocuments": "May receive documents",
-    "field_isPrimary": "Primary"
+    "field_isPrimary": "Primary",
+    "entity_PARTNER": "Partner",
+    "entity_PRICE_CATEGORY": "Price category",
+    "entity_CUSTOMER_SEGMENT": "Customer segment"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -1857,6 +1861,29 @@
     "noCarriers": "No carrier linked.",
     "chooseCarrier": "Choose a carrier",
     "linkCarrier": "Link carrier"
+  },
+  "Partners": {
+    "title": "Partners",
+    "hint": "Sales outlets, origin consolidators, overseas agents and distributors in Sudan, in any country. Commissions and settlements are set up later.",
+    "add": "New partner",
+    "search": "Name, number or phone",
+    "number": "Number",
+    "name": "Name",
+    "kind": "Role in the network",
+    "allKinds": "All roles",
+    "kind_SALES_OUTLET": "Sales outlet",
+    "kind_ORIGIN_CONSOLIDATOR": "Origin consolidator",
+    "kind_OVERSEAS_AGENT": "Overseas agent",
+    "kind_DISTRIBUTOR": "Distributor in Sudan",
+    "phone": "Phone",
+    "email": "Email",
+    "countryCode": "Country (2 letters)",
+    "countryHint": "For example SA, AE, EG, CN, SD.",
+    "location": "City or port",
+    "currency": "Currency",
+    "branch": "Branch",
+    "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step.",
+    "loadMore": "Show more"
   },
   "SupplierBills": {
     "title": "Supplier bills",
@@ -2434,7 +2461,8 @@
     "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs.",
     "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country.",
     "MASTER_CODE_TAKEN": "The code {code} is already in use: choose another code.",
-    "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated."
+    "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated.",
+    "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2458,7 +2486,7 @@
   },
   "MasterData": {
     "title": "Master data",
-    "hint": "Container types, charge types, document types and currencies. Deactivate an entry instead of deleting it: records that already use it keep it, and new ones cannot choose it until it is reactivated.",
+    "hint": "Container types, charge types, document types, currencies, price categories and customer segments. Deactivate an entry instead of deleting it: records that already use it keep it, and new ones cannot choose it until it is reactivated.",
     "containerTypes": "Container types",
     "chargeTypes": "Charge types",
     "documentTypes": "Document types",
@@ -2477,6 +2505,13 @@
     "decimalPlacesFixed": "Amounts are rounded to these places; they cannot be changed after the currency is saved.",
     "none": "Nothing here yet.",
     "createdNotice": "Added.",
-    "editTitle": "Edit {code}"
+    "editTitle": "Edit {code}",
+    "priceCategories": "Price categories",
+    "customerSegments": "Customer segments",
+    "add_priceCategories": "Add price category",
+    "add_customerSegments": "Add customer segment",
+    "cargoType": "Cargo type",
+    "defaultUnit": "Suggested unit",
+    "cargoTypeFixed": "The cargo type cannot be changed after it is saved."
   }
 }

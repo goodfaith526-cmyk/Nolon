@@ -22,6 +22,17 @@ const data = {
       decimalPlaces: 2,
     },
   ],
+  priceCategories: [
+    {
+      code: 'CARTON',
+      nameEn: 'Carton / parcel',
+      nameAr: 'كرتون / طرد',
+      isActive: true,
+      cargoType: 'GENERAL',
+      defaultUnit: 'PER_PIECE',
+    },
+  ],
+  customerSegments: [],
 } satisfies MasterDataDto;
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
@@ -76,7 +87,7 @@ afterEach(() => {
 });
 
 describe('MasterData', () => {
-  it('shows the four lists as tabs, each with its entries and status', async () => {
+  it('shows the six lists as tabs, each with its entries and status', async () => {
     permissions = ['master_data:view'];
     const shown = await show();
     expect([...shown.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual([
@@ -84,6 +95,8 @@ describe('MasterData', () => {
       'chargeTypes',
       'documentTypes',
       'currencies',
+      'priceCategories',
+      'customerSegments',
     ]);
     expect(panel(shown, 'containerTypes').textContent).toContain('20GP');
     expect(panel(shown, 'chargeTypes').querySelector('tr.inactive')?.textContent).toContain('THC');
@@ -148,6 +161,56 @@ describe('MasterData', () => {
     expect(calls).toContainEqual({
       path: '/master-data/container-types/20GP',
       init: { method: 'PATCH', body: { nameEn: '20 foot', nameAr: '20 قدم' } },
+    });
+  });
+
+  it('adds a price category with its cargo type and unit, and edits its unit only', async () => {
+    permissions = ['master_data:view', 'master_data:create', 'master_data:update'];
+    const shown = await show();
+    const categories = panel(shown, 'priceCategories');
+    expect(categories.textContent).toContain('cargo_GENERAL');
+    expect(categories.textContent).toContain('unit_PER_PIECE');
+    const form = categories.querySelector('form')!;
+    const set = (name: string, value: string) => {
+      form.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)!.value = value;
+    };
+    set('code', 'drum');
+    set('nameAr', 'برميل');
+    set('nameEn', 'Drum');
+    set('cargoType', 'BARREL');
+    set('defaultUnit', 'PER_BARREL');
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    expect(calls).toContainEqual({
+      path: '/master-data/price-categories',
+      init: {
+        method: 'POST',
+        body: {
+          code: 'DRUM',
+          nameEn: 'Drum',
+          nameAr: 'برميل',
+          cargoType: 'BARREL',
+          defaultUnit: 'PER_BARREL',
+        },
+      },
+    });
+
+    click(categories.querySelectorAll('tbody button')[0]);
+    const dialog = document.querySelector('dialog form')!;
+    expect(dialog.querySelector('[name="cargoType"]')).toBeNull();
+    dialog.querySelector<HTMLSelectElement>('select[name="defaultUnit"]')!.value = 'PER_SHIPMENT';
+    act(() => {
+      dialog.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    expect(calls).toContainEqual({
+      path: '/master-data/price-categories/CARTON',
+      init: {
+        method: 'PATCH',
+        body: { nameEn: 'Carton / parcel', nameAr: 'كرتون / طرد', defaultUnit: 'PER_SHIPMENT' },
+      },
     });
   });
 

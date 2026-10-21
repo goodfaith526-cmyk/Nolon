@@ -12,6 +12,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { usePagedLoads } from '@/lib/paged-loads';
 import { can, useMe } from '../StaffShell';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { DRAFT_KINDS, type DraftKind, REVIEW_KINDS } from './draft-kinds';
@@ -81,11 +82,13 @@ function WaitingDrafts() {
   const [kind, setKind] = useState<MyDraftKind | ''>('');
   const [pages, setPages] = useState<{ kind: string; items: ReviewDraftItemDto[] } | null>(null);
   const [next, setNext] = useState<ReviewDraftsPageDto['next']>(null);
-  const [busy, setBusy] = useState(false);
+  const { loads, loading } = usePagedLoads();
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    // A new kind: a "more" still in flight for the previous kind is dropped.
+    const token = loads.first();
     api<ReviewDraftsPageDto>(`/assistant-drafts/review${kind ? `?kind=${kind}` : ''}`)
       .then((page) => {
         if (cancelled) return;
@@ -94,25 +97,29 @@ function WaitingDrafts() {
       })
       .catch((e: unknown) => {
         if (!cancelled) setNotice({ ok: false, text: failure(e) });
-      });
+      })
+      .finally(() => loads.done(token));
     return () => {
       cancelled = true;
     };
-  }, [kind, failure]);
+  }, [kind, failure, loads]);
 
+  /** The next page, once at a time, added only to the kind it was asked for. */
   async function more() {
     if (!next) return;
-    setBusy(true);
+    const token = loads.next();
+    if (token === null) return;
     try {
       const query = new URLSearchParams({ before: next.before, beforeId: next.beforeId });
       if (kind) query.set('kind', kind);
       const page = await api<ReviewDraftsPageDto>(`/assistant-drafts/review?${query.toString()}`);
+      if (!loads.current(token)) return;
       setPages((p) => ({ kind, items: [...(p?.items ?? []), ...page.items] }));
       setNext(page.next);
     } catch (e) {
-      setNotice({ ok: false, text: failure(e) });
+      if (loads.current(token)) setNotice({ ok: false, text: failure(e) });
     } finally {
-      setBusy(false);
+      loads.done(token);
     }
   }
 
@@ -178,7 +185,7 @@ function WaitingDrafts() {
       )}
       {next && items !== null && (
         <div className="actions">
-          <button type="button" disabled={busy} onClick={() => void more()}>
+          <button type="button" disabled={loading} onClick={() => void more()}>
             {t('loadMore')}
           </button>
         </div>

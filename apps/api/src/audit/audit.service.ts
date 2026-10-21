@@ -18,11 +18,14 @@ export const AUDITED_MASTER_DATA = [
   'CHARGE_TYPE',
   'DOCUMENT_TYPE',
   'CURRENCY',
+  'PRICE_CATEGORY',
+  'CUSTOMER_SEGMENT',
 ] as const satisfies readonly AuditEntity[];
 export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
 /** The records this log keeps (the others keep their own history). */
-export type AuditedEntity = Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER'> | AuditedMasterData;
+export type AuditedEntity =
+  Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER'> | AuditedMasterData;
 
 /** Fixed namespace for codeEntityId (a random UUID, chosen once; never change it). */
 const CODE_ENTITY_NAMESPACE = '6b1f4c9e-2d3a-4f57-9a1e-0c8d7e5b3f21';
