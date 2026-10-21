@@ -26,6 +26,7 @@ import {
 } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { customerOutletScope, outletForWrite } from '../auth/outlet-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatShortNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
@@ -86,6 +87,7 @@ export class CustomersService {
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
     const where: Prisma.CustomerWhereInput = {
       ...listBranchScope(user, query.branchId),
+      ...customerOutletScope(user),
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
     };
@@ -157,7 +159,14 @@ export class CustomersService {
     throwFirstConflict(await this.duplicateIssues(tx, [input]));
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
-      data: { ...toData(fields), number, branchId, createdById: user.id },
+      data: {
+        ...toData(fields),
+        number,
+        branchId,
+        // Outlet Staff (plan 4.2): the customer is theirs; everyone else records none yet.
+        acquiredViaOutletId: outletForWrite(user),
+        createdById: user.id,
+      },
       include: details,
     });
     await this.audit.record(
@@ -297,7 +306,9 @@ export class CustomersService {
     await this.checkReferences(withLimit(read));
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
-      const current = await tx.customer.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      const current = await tx.customer.findFirst({
+        where: { id: read.id, ...branchScope(user), ...customerOutletScope(user) },
+      });
       if (!current) throw new NotFoundException('Customer not found');
       if (
         current.creditLimit?.toString() !== read.creditLimit?.toString() ||
@@ -523,13 +534,17 @@ export class CustomersService {
    */
   /** For other modules: 404 unless the customer is in one of the user's branches. */
   async requireCustomer(user: AuthUser, id: string): Promise<Customer> {
-    const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
+    });
     if (!customer) throw new NotFoundException('Customer not found');
     return customer;
   }
 
   async requireActiveCustomer(user: AuthUser, id: string): Promise<Customer> {
-    const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
+    });
     if (!customer) throw new NotFoundException('Customer not found');
     if (!customer.isActive) throw new BadRequestException('Customer is inactive');
     return customer;
@@ -557,7 +572,7 @@ export class CustomersService {
 
   private async findScoped(user: AuthUser, id: string): Promise<CustomerWithDetails> {
     const customer = await this.prisma.customer.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
       include: details,
     });
     if (!customer) throw new NotFoundException('Customer not found');

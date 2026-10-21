@@ -11,6 +11,7 @@ import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { partnerOutletScope } from '../auth/outlet-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import type { PageQuery } from '../common/validation.js';
@@ -66,6 +67,7 @@ export class PartnersService {
   async list(user: AuthUser, query: PartnerFilters): Promise<Page<PartnerSummaryDto>> {
     const where: Prisma.PartnerWhereInput = {
       ...listBranchScope(user, query.branchId),
+      ...partnerOutletScope(user),
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
       ...(query.q
@@ -93,7 +95,7 @@ export class PartnersService {
   /** 404 for a partner of another branch: its existence is not disclosed. */
   async get(user: AuthUser, id: string): Promise<PartnerDto> {
     const partner = await this.prisma.partner.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...partnerOutletScope(user) },
       include: details,
     });
     if (!partner) throw new NotFoundException('Partner not found');

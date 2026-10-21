@@ -414,7 +414,7 @@ export class ShipmentsService {
 
   /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
-   * customer, parties, route, services and cargo lines are copied from the booking.
+   * customer, parties, route, services, cargo lines and sales outlet are copied from the booking.
    */
   async createForBooking(tx: Tx, user: AuthUser, bookingId: string): Promise<{ id: string }> {
     const booking = await tx.booking.findUniqueOrThrow({
@@ -440,6 +440,7 @@ export class ShipmentsService {
         shipperId: booking.shipperId,
         consigneeId: booking.consigneeId,
         notifyPartyId: booking.notifyPartyId,
+        salesOutletId: booking.salesOutletId,
         trackingToken: newTrackingToken(),
         createdById: user.id,
         items: {

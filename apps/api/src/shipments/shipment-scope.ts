@@ -1,4 +1,5 @@
 import type { AuthUser } from '../auth/auth-user.js';
+import { salesOutletScope } from '../auth/outlet-scope.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { uuidList } from '../common/report-sql.js';
 
@@ -7,6 +8,8 @@ import { uuidList } from '../common/report-sql.js';
  * the other branches working on it (shipment_branches: a DXB → KRT shipment is worked on in Port
  * Sudan and Khartoum too: goods receipt, customs, the delivery trip). Billing stays with the
  * owning branch, which uses `branchScope` instead.
+ *
+ * An Outlet Staff user sees, of those, only the shipments sold through their outlets.
  *
  * Returned under `AND`, so it can be spread next to a caller's own `OR`.
  */
@@ -17,6 +20,8 @@ export function shipmentScope(user: AuthUser): Prisma.ShipmentWhereInput {
       {
         OR: [{ branchId: { in: ids } }, { sharedBranches: { some: { branchId: { in: ids } } } }],
       },
+      // Outlet Staff (business model plan 4.2): only the shipments sold through their outlets.
+      salesOutletScope(user),
     ],
   };
 }

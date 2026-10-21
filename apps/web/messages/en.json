@@ -176,7 +176,8 @@
     "WAREHOUSE": "Warehouse",
     "CUSTOMS": "Customs",
     "DRIVER": "Driver / Transport",
-    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager"
+    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager",
+    "OUTLET_STAFF": "Outlet Staff"
   },
   "Common": {
     "invalidInput": "Check the fields and try again.",

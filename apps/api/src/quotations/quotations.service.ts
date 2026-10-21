@@ -19,6 +19,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { outletForWrite, salesOutletScope } from '../auth/outlet-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { followLoadType } from '../common/load-type.js';
 import {
@@ -89,6 +90,7 @@ export class QuotationsService {
     const created = await localDayFilter(this.prisma, 'createdAt', filters.from, filters.to);
     const where: Prisma.QuotationWhereInput = {
       ...listBranchScope(user, filters.branchId),
+      ...salesOutletScope(user),
       AND: created,
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
@@ -299,6 +301,8 @@ export class QuotationsService {
         number,
         branchId: prepared.branchId,
         customerId: prepared.customerId,
+        // Outlet Staff (plan 4.2): sold through their outlet; everyone else records none yet.
+        salesOutletId: outletForWrite(user),
         createdById: user.id,
         lines: { create: prepared.lines },
       },
@@ -368,7 +372,7 @@ export class QuotationsService {
   /** For bookings: an APPROVED quotation in the user's branches. */
   async requireApproved(user: AuthUser, id: string): Promise<Quotation> {
     const quotation = await this.prisma.quotation.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...salesOutletScope(user) },
     });
     if (!quotation) throw new NotFoundException('Quotation not found');
     if (quotation.status !== 'APPROVED') {
@@ -399,7 +403,7 @@ export class QuotationsService {
 
   private async findScoped(user: AuthUser, id: string): Promise<QuotationWithDetails> {
     const quotation = await this.prisma.quotation.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...salesOutletScope(user) },
       include: details,
     });
     if (!quotation) throw new NotFoundException('Quotation not found');

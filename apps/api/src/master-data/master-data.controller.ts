@@ -21,7 +21,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { AgentReadable, CurrentUser, RequirePermission } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import {
   clearableText,
   countryCode,
@@ -125,6 +125,7 @@ export class MasterDataController {
     private readonly currencies: CurrenciesService,
   ) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('master_data:view')
