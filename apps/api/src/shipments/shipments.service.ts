@@ -346,10 +346,17 @@ export class ShipmentsService {
     branchId: string;
     sharedBranchIds: string[];
     status: ShipmentStatus;
+    salesOutletId: string | null;
   }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id, ...this.scope(user) },
-      select: { id: true, branchId: true, status: true, sharedBranches: sharedBranchesSelect },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        salesOutletId: true,
+        sharedBranches: sharedBranchesSelect,
+      },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
     const { sharedBranches, ...rest } = shipment;

@@ -279,9 +279,11 @@ export class NewCustomerQuotationDraftsService {
       const prepared = await this.validate(user, branchId, values);
       // As a new request: a customer with this phone in the branch refuses it, at its field.
       const [taken] = (
-        await this.customers.duplicateIssues(this.prisma, [
-          { branchId, phone: values.customer.phone ?? undefined },
-        ])
+        await this.customers.duplicateIssues(
+          this.prisma,
+          [{ branchId, phone: values.customer.phone ?? undefined }],
+          user,
+        )
       ).flat();
       if (taken) {
         throw new ConflictException({
@@ -369,9 +371,11 @@ export class NewCustomerQuotationDraftsService {
         // assistant can say so instead of proposing a duplicate; it is checked again under the
         // lock on approval.
         throwFirstConflict(
-          await this.customers.duplicateIssues(tx, [
-            { branchId, phone: customer.phone ?? undefined },
-          ]),
+          await this.customers.duplicateIssues(
+            tx,
+            [{ branchId, phone: customer.phone ?? undefined }],
+            user,
+          ),
         );
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.newCustomerQuotationDraft.create({
@@ -426,9 +430,11 @@ export class NewCustomerQuotationDraftsService {
       await requireBranchMemberInTx(tx, user, current.branchId);
       if (customerPatch.phone) {
         throwFirstConflict(
-          await this.customers.duplicateIssues(tx, [
-            { branchId: current.branchId, phone: customerPatch.phone },
-          ]),
+          await this.customers.duplicateIssues(
+            tx,
+            [{ branchId: current.branchId, phone: customerPatch.phone }],
+            user,
+          ),
         );
       }
       await tx.newCustomerQuotationDraft.update({
@@ -676,9 +682,11 @@ export class NewCustomerQuotationDraftsService {
     const values = valuesOfRow(draft);
     const phoneTaken = async () =>
       throwFirstConflict(
-        await this.customers.duplicateIssues(this.prisma, [
-          { branchId: draft.branchId, phone: values.customer.phone ?? undefined },
-        ]),
+        await this.customers.duplicateIssues(
+          this.prisma,
+          [{ branchId: draft.branchId, phone: values.customer.phone ?? undefined }],
+          user,
+        ),
       );
     if (newCustomerQuotationMissingFields(values).length > 0) {
       // No prices while values are missing; null check while those present pass (missingFields).

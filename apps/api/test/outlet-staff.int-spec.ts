@@ -22,7 +22,8 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
-import { deleteCommercialTestData, uniquePhone } from './test-data.js';
+import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
+import type { Prisma } from '../src/generated/prisma/client.js';
 
 // Outlet isolation (business model plan 4.2, condition ش1): an Outlet Staff user sees and writes
 // only the customers, quotations, bookings, shipments and documents of their own outlet, even in
@@ -325,6 +326,252 @@ describe('outlet staff: isolation by sales outlet', () => {
       name: 'ZZ',
       phone: uniquePhone(),
     }).expect(403);
+  });
+
+  it('never names a customer of another outlet, or of the branch, in a duplicate refusal', async () => {
+    const mine = await newCustomer(cookies.staffA);
+    await patch(`/customers/${mine.id}`, cookies.staffA, { taxNumber: `ZZTX${randomInt(1e9)}` });
+    const held = await t.prisma.customer.findUniqueOrThrow({ where: { id: mine.id } });
+    const branchOwn = await newCustomer(cookies.salesJed);
+    const taxed = `ZZTX${randomInt(1e9)}`;
+    await patch(`/customers/${branchOwn.id}`, cookies.salesJed, { taxNumber: taxed }).expect(200);
+    const message = (res: { body: unknown }) => (res.body as { message: string }).message;
+    const create = (cookie: string, extra: object) =>
+      post('/customers', cookie, {
+        branchId: jed,
+        kind: 'INDIVIDUAL',
+        name: `ZZ duplicate ${randomInt(1e9)}`,
+        phone: uniquePhone(),
+        ...extra,
+      });
+
+    // Create: outlet B is refused (the value stays unique in the branch) without learning whose.
+    for (const [extra, field] of [
+      [{ phone: held.phone }, 'phone'],
+      [{ taxNumber: held.taxNumber }, 'tax number'],
+      [{ phone: branchOwn.phone }, 'phone'],
+      [{ taxNumber: taxed }, 'tax number'],
+    ] as const) {
+      const refused = await create(cookies.staffB, extra).expect(409);
+      expect(message(refused)).toBe(`Another customer of this branch has this ${field}`);
+      expect(JSON.stringify(refused.body)).not.toMatch(/CS\d/);
+    }
+    // Update: the same, on a customer of outlet B.
+    const theirs = await newCustomer(cookies.staffB);
+    for (const body of [
+      { phone: held.phone },
+      { taxNumber: held.taxNumber },
+      { phone: branchOwn.phone },
+      { taxNumber: taxed },
+    ]) {
+      const refused = await patch(`/customers/${theirs.id}`, cookies.staffB, body).expect(409);
+      expect(message(refused)).toMatch(/^Another customer of this branch has this /);
+      expect(JSON.stringify(refused.body)).not.toMatch(/CS\d/);
+    }
+    // Their own outlet's customer, and the branch's staff: named as before.
+    expect(message(await create(cookies.staffA, { phone: held.phone }).expect(409))).toBe(
+      `Customer ${held.number} of this branch has this phone`,
+    );
+    expect(message(await create(cookies.salesJed, { taxNumber: taxed }).expect(409))).toBe(
+      `Customer ${branchOwn.number} of this branch has this tax number`,
+    );
+  });
+
+  describe('a write queued while the outlet is taken away', () => {
+    /**
+     * Runs `revoke` in a transaction that stays open until `write` (signed in before, so its
+     * sign-in snapshot still names the outlet) waits on its locks, then commits it: the revocation
+     * wins serialization, and the write must see it.
+     */
+    async function queuedBehind<T>(
+      revoke: (tx: Prisma.TransactionClient) => Promise<void>,
+      write: () => PromiseLike<T>,
+    ): Promise<T> {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let holding = () => {};
+      const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+      const holder = t.prisma.$transaction(
+        async (tx) => {
+          await revoke(tx);
+          holding();
+          await held;
+        },
+        { timeout: 20_000 },
+      );
+      await holdingNow;
+      const result = Promise.resolve(write());
+      await waitForLockWaiter(t.prisma);
+      release();
+      await holder;
+      return result;
+    }
+
+    const deactivate = (outlet: PartnerDto) => async (tx: Prisma.TransactionClient) => {
+      await tx.partner.update({ where: { id: outlet.id }, data: { isActive: false } });
+    };
+    const reassign =
+      (userId: string, from: PartnerDto, to: PartnerDto) =>
+      async (tx: Prisma.TransactionClient) => {
+        await tx.userPartner.delete({
+          where: { userId_partnerId: { userId, partnerId: from.id } },
+        });
+        await tx.userPartner.create({ data: { userId, partnerId: to.id } });
+      };
+
+    /** A fresh outlet with its own Outlet Staff user, a customer and a draft quotation. */
+    async function freshOutlet() {
+      const outlet = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const staff = await outletStaff([outlet]);
+      const customer = await newCustomer(staff.cookie);
+      const quotation = (
+        await post('/quotations', staff.cookie, quotationBody(customer.id)).expect(201)
+      ).body as QuotationDto;
+      return { outlet, staff, customer, quotation };
+    }
+
+    it('refuses a customer create once the outlet is deactivated', async () => {
+      const { outlet, staff } = await freshOutlet();
+      const name = `ZZ queued ${randomInt(1e9)}`;
+      const res = await queuedBehind(deactivate(outlet), () =>
+        post('/customers', staff.cookie, {
+          branchId: jed,
+          kind: 'INDIVIDUAL',
+          name,
+          phone: uniquePhone(),
+        }),
+      );
+      expect(res.status).toBe(403);
+      expect(await t.prisma.customer.count({ where: { name } })).toBe(0);
+    });
+
+    it('refuses a customer create once the user is moved to another outlet', async () => {
+      const { outlet, staff } = await freshOutlet();
+      const other = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const name = `ZZ queued ${randomInt(1e9)}`;
+      const res = await queuedBehind(reassign(staff.id, outlet, other), () =>
+        post('/customers', staff.cookie, {
+          branchId: jed,
+          kind: 'INDIVIDUAL',
+          name,
+          phone: uniquePhone(),
+        }),
+      );
+      expect(res.status).toBe(403);
+      expect(await t.prisma.customer.count({ where: { name } })).toBe(0);
+    });
+
+    it('refuses customer edits, contacts and deactivation of the old outlet’s customer', async () => {
+      const { outlet, staff, customer } = await freshOutlet();
+      const other = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const renamed = await queuedBehind(reassign(staff.id, outlet, other), () =>
+        patch(`/customers/${customer.id}`, staff.cookie, { name: 'ZZ renamed late' }),
+      );
+      expect(renamed.status).toBe(404);
+      const row = await t.prisma.customer.findUniqueOrThrow({ where: { id: customer.id } });
+      expect(row.name).toBe(customer.name);
+
+      const second = await freshOutlet();
+      const contact = await queuedBehind(deactivate(second.outlet), () =>
+        post(`/customers/${second.customer.id}/contacts`, second.staff.cookie, {
+          name: 'ZZ contact',
+          phone: uniquePhone(),
+        }),
+      );
+      expect(contact.status).toBe(404);
+      expect(
+        await t.prisma.customerContact.count({ where: { customerId: second.customer.id } }),
+      ).toBe(0);
+
+      const third = await freshOutlet();
+      const off = await queuedBehind(deactivate(third.outlet), () =>
+        post(`/customers/${third.customer.id}/deactivate`, third.staff.cookie),
+      );
+      expect(off.status).toBe(404);
+      expect(
+        (await t.prisma.customer.findUniqueOrThrow({ where: { id: third.customer.id } })).isActive,
+      ).toBe(true);
+    });
+
+    it('refuses quotation and booking creates, edits and sends', async () => {
+      const a = await freshOutlet();
+      const quoted = await queuedBehind(deactivate(a.outlet), () =>
+        post('/quotations', a.staff.cookie, quotationBody(a.customer.id)),
+      );
+      expect(quoted.status).toBe(403);
+      expect(await t.prisma.quotation.count({ where: { customerId: a.customer.id } })).toBe(1);
+
+      const b = await freshOutlet();
+      const booked = await queuedBehind(deactivate(b.outlet), () =>
+        post('/bookings', b.staff.cookie, bookingBody(b.customer.id)),
+      );
+      expect(booked.status).toBe(403);
+      expect(await t.prisma.booking.count({ where: { customerId: b.customer.id } })).toBe(0);
+
+      // Moved to another outlet: the new outlet cannot sell to the old outlet's customer either.
+      const c = await freshOutlet();
+      const other = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const crossed = await queuedBehind(reassign(c.staff.id, c.outlet, other), () =>
+        post('/bookings', c.staff.cookie, bookingBody(c.customer.id)),
+      );
+      expect(crossed.status).toBe(403);
+      expect(await t.prisma.booking.count({ where: { customerId: c.customer.id } })).toBe(0);
+
+      const d = await freshOutlet();
+      const sent = await queuedBehind(deactivate(d.outlet), () =>
+        post(`/quotations/${d.quotation.id}/send`, d.staff.cookie),
+      );
+      expect(sent.status).toBe(404);
+      expect(
+        (await t.prisma.quotation.findUniqueOrThrow({ where: { id: d.quotation.id } })).status,
+      ).toBe('DRAFT');
+
+      const e = await freshOutlet();
+      const edit: Partial<ReturnType<typeof quotationBody>> = quotationBody(e.customer.id);
+      delete edit.customerId;
+      const edited = await queuedBehind(deactivate(e.outlet), () =>
+        patch(`/quotations/${e.quotation.id}`, e.staff.cookie, {
+          ...edit,
+          lines: [{ ...edit.lines?.[0], unitPrice: '999' }],
+        }),
+      );
+      expect(edited.status).toBe(404);
+      const lines = await t.prisma.quotationLine.findMany({
+        where: { quotationId: e.quotation.id },
+      });
+      expect(lines.map((l) => l.unitPrice.toString())).toEqual(['500']);
+
+      const f = await freshOutlet();
+      const draft = (
+        await post('/bookings', f.staff.cookie, bookingBody(f.customer.id)).expect(201)
+      ).body as BookingDto;
+      const bookingEdit: Partial<ReturnType<typeof bookingBody>> = bookingBody(f.customer.id);
+      delete bookingEdit.customerId;
+      const rebooked = await queuedBehind(deactivate(f.outlet), () =>
+        patch(`/bookings/${draft.id}`, f.staff.cookie, {
+          ...bookingEdit,
+          items: [{ ...bookingEdit.items?.[0], quantity: 2 }],
+        }),
+      );
+      expect(rebooked.status).toBe(404);
+      const items = await t.prisma.bookingItem.findMany({ where: { bookingId: draft.id } });
+      expect(items.map((i) => i.quantity)).toEqual([1]);
+    });
+
+    it('refuses a document upload on the outlet’s shipment', async () => {
+      const g = await freshOutlet();
+      const direct = (
+        await post('/bookings', g.staff.cookie, bookingBody(g.customer.id)).expect(201)
+      ).body as BookingDto;
+      const confirmed = (await post(`/bookings/${direct.id}/confirm`, cookies.opsJed).expect(200))
+        .body as BookingDto;
+      const shipmentId = confirmed.shipmentId ?? '';
+      const res = await queuedBehind(deactivate(g.outlet), () =>
+        upload(shipmentId, g.staff.cookie),
+      );
+      expect(res.status).toBe(404);
+      expect(await t.prisma.document.count({ where: { shipmentId } })).toBe(0);
+    });
   });
 
   describe('assigning the role', () => {

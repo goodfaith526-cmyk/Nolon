@@ -24,7 +24,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { outletForWrite, salesOutletScope } from '../auth/outlet-scope.js';
+import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   localDayFilter,
@@ -444,14 +444,21 @@ export class BookingsService {
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
   async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
-    const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
-    // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs.
+    // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs. For
+    // Outlet Staff the outlet is checked as it is now, first in the transaction.
     const fromQuotation = prepared.quotationId
       ? await tx.quotation.findUniqueOrThrow({
           where: { id: prepared.quotationId },
           select: { salesOutletId: true },
         })
       : null;
+    if (fromQuotation) {
+      await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+    }
+    const salesOutletId = fromQuotation
+      ? fromQuotation.salesOutletId
+      : await this.customers.outletForSaleInTx(tx, user, prepared.customerId);
+    const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
     try {
       const created = await tx.booking.create({
         data: {
@@ -460,7 +467,7 @@ export class BookingsService {
           branchId: prepared.branchId,
           customerId: prepared.customerId,
           quotationId: prepared.quotationId,
-          salesOutletId: fromQuotation ? fromQuotation.salesOutletId : outletForWrite(user),
+          salesOutletId,
           createdById: user.id,
           items: { create: prepared.items },
         },
@@ -498,6 +505,7 @@ export class BookingsService {
     }
     const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
+      await assertOutletInTx(tx, user, existing.salesOutletId, 'Booking not found');
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
       await tx.bookingItem.createMany({

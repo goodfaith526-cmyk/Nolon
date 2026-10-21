@@ -16,6 +16,7 @@ import {
   type ShipmentDocumentDto,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
+import { assertOutletInTx } from '../auth/outlet-scope.js';
 import type { Document, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -81,6 +82,8 @@ export class DocumentsService {
     }
     const file = await this.prepare(input);
     return this.prisma.$transaction(async (tx) => {
+      // Outlet Staff: the shipment is still one of their outlet's (plan 4.2), checked first.
+      await assertOutletInTx(tx, user, shipment.salesOutletId, 'Shipment not found');
       // Re-checked under the shipment lock: a cancel that commits meanwhile is seen here.
       if ((await this.shipments.lockForChildWrite(tx, shipmentId)) === 'CANCELLED') {
         throw new ConflictException('A cancelled shipment does not take new documents');

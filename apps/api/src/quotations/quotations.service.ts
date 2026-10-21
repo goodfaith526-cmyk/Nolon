@@ -19,7 +19,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { outletForWrite, salesOutletScope } from '../auth/outlet-scope.js';
+import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { followLoadType } from '../common/load-type.js';
 import {
@@ -294,6 +294,9 @@ export class QuotationsService {
     user: AuthUser,
     prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
   ): Promise<QuotationWithDetails> {
+    // Outlet Staff (plan 4.2): sold through their outlet, checked first in the transaction;
+    // everyone else records none yet.
+    const salesOutletId = await this.customers.outletForSaleInTx(tx, user, prepared.customerId);
     const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
     return tx.quotation.create({
       data: {
@@ -301,8 +304,7 @@ export class QuotationsService {
         number,
         branchId: prepared.branchId,
         customerId: prepared.customerId,
-        // Outlet Staff (plan 4.2): sold through their outlet; everyone else records none yet.
-        salesOutletId: outletForWrite(user),
+        salesOutletId,
         createdById: user.id,
         lines: { create: prepared.lines },
       },
@@ -319,6 +321,7 @@ export class QuotationsService {
     const today = await this.branchToday(existing.branchId);
     const prepared = await this.prepare(existing.branchId, today, input, existing);
     await this.prisma.$transaction(async (tx) => {
+      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
       await casStatus(tx, id, ['DRAFT'], prepared.header);
       await tx.quotationLine.deleteMany({ where: { quotationId: id } });
       await tx.quotationLine.createMany({
@@ -332,7 +335,10 @@ export class QuotationsService {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft can be sent');
     await this.assertNotExpired(existing);
-    await casStatus(this.prisma, id, ['DRAFT'], { status: 'SENT', sentAt: new Date() });
+    await this.prisma.$transaction(async (tx) => {
+      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
+      await casStatus(tx, id, ['DRAFT'], { status: 'SENT', sentAt: new Date() });
+    });
     return this.get(user, id);
   }
 

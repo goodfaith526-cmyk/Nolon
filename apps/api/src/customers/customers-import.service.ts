@@ -422,6 +422,7 @@ export class CustomersImportService implements OnModuleInit {
     const duplicates = await this.customers.duplicateIssues(
       this.prisma,
       parsed.map((p) => p.input),
+      user,
     );
     parsed.forEach((p, i) => addRuleIssues(p.row, duplicates[i] ?? []));
     return rows;
