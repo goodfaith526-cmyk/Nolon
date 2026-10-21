@@ -169,6 +169,12 @@ example `https://pilot.example.com/?tenant=nolon`, and deploy. Staff then see an
 in the top bar. It must be https. Empty: no button. The assistant reads only what each staff
 member may read (NOLON rechecks roles and branches on every request).
 
+To open the assistant as a panel beside the pages instead of a new tab, also set
+`STAGING_AGENT_ASSISTANT_PANEL` to `true`. Do this only once the assistant allows NOLON to frame
+it: the assistant's `TENANT_ORIGINS` names NOLON's address as `hostOrigin` and the assistant runs
+on its own address under the same site (e.g. `assistant.<NOLON's domain>`), or the panel stays
+blank or signed out. Empty or `false`: a new tab.
+
 ### 5. GitHub secrets
 
 Settings > Secrets and variables > Actions > **Secrets** > New repository secret:

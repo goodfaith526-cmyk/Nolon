@@ -220,4 +220,9 @@ export interface AuthMeResponse {
    * what this user may read: NOLON rechecks the user's roles and branches on every request.
    */
   assistantUrl: string | null;
+  /**
+   * Whether the assistant opens as a panel beside NOLON's pages (it frames `assistantUrl`). Only
+   * true when the assistant allows NOLON's address to frame it; false: the button opens a new tab.
+   */
+  assistantPanel: boolean;
 }

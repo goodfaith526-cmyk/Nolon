@@ -51,6 +51,17 @@ describe('loadEnv', () => {
     ).toBe('http://localhost:4100/?tenant=nolon');
   });
 
+  it('reads the assistant panel switch: off unless exactly true', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    expect(loadEnv(base).AGENT_ASSISTANT_PANEL).toBe(false);
+    expect(loadEnv({ ...base, AGENT_ASSISTANT_PANEL: '' }).AGENT_ASSISTANT_PANEL).toBe(false);
+    expect(loadEnv({ ...base, AGENT_ASSISTANT_PANEL: 'false' }).AGENT_ASSISTANT_PANEL).toBe(false);
+    expect(loadEnv({ ...base, AGENT_ASSISTANT_PANEL: 'true' }).AGENT_ASSISTANT_PANEL).toBe(true);
+    expect(() => loadEnv({ ...base, AGENT_ASSISTANT_PANEL: 'yes' })).toThrow(
+      /AGENT_ASSISTANT_PANEL/,
+    );
+  });
+
   it('rejects an assistant URL that is not https', () => {
     const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
     for (const value of ['http://pilot.example.com/', 'javascript:alert(1)', 'not a url']) {

@@ -46,6 +46,18 @@ const envSchema = z.object({
       )
       .optional(),
   ),
+  /**
+   * `true`: the assistant opens as a panel inside NOLON's pages (a frame of AGENT_ASSISTANT_URL)
+   * instead of a new tab. Only once the assistant allows this NOLON address to frame it (its
+   * TENANT_ORIGINS hostOrigin) and shares its site, or the panel stays blank. Ignored without
+   * AGENT_ASSISTANT_URL.
+   */
+  AGENT_ASSISTANT_PANEL: emptyAsUnset(
+    z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+  ),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

@@ -113,6 +113,7 @@ describe('sign-in, sessions and permissions', () => {
       expect(me.permissions).not.toContain('users:view');
       expect(me.branches.map((b) => b.code)).toEqual(['DXB', 'JED']);
       expect(me.assistantUrl).toBeNull();
+      expect(me.assistantPanel).toBe(false);
     });
 
     it("gives each branch's time zone and local date in /auth/me, on both sides of UTC midnight", async () => {
@@ -174,8 +175,28 @@ describe('sign-in, sessions and permissions', () => {
           .set('Cookie', cookie)
           .expect(200);
         expect((res.body as AuthMeResponse).assistantUrl).toBe(url);
+        // A new tab until the panel is switched on.
+        expect((res.body as AuthMeResponse).assistantPanel).toBe(false);
       } finally {
         await withAssistant.close();
+      }
+    });
+
+    it('offers the assistant panel only when it is switched on and the assistant has an address', async () => {
+      const url = 'https://assistant.nolon.example/';
+      for (const [env, panel] of [
+        [{ AGENT_ASSISTANT_URL: url, AGENT_ASSISTANT_PANEL: true }, true],
+        [{ AGENT_ASSISTANT_PANEL: true }, false],
+      ] as const) {
+        const app = await createTestApp(env);
+        try {
+          const { email } = await createUser(app.prisma, ['SALES'], ['DXB']);
+          const cookie = await signIn(app, email);
+          const res = await app.http().get('/api/v1/auth/me').set('Cookie', cookie).expect(200);
+          expect((res.body as AuthMeResponse).assistantPanel).toBe(panel);
+        } finally {
+          await app.close();
+        }
       }
     });
 
