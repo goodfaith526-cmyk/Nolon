@@ -14,6 +14,7 @@ import { onlyBranch } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { CountrySelect } from '../CountrySelect';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 /** `startCreating`: open with the new-customer form showing (the home page's "New customer"). */
@@ -156,6 +157,7 @@ export function CustomerForm({
     customer?.branchId ?? single?.id ?? me.branches[0]?.id ?? '',
   );
   const [preferredCurrency, setPreferredCurrency] = useState(customer?.preferredCurrency ?? '');
+  const [country, setCountry] = useState(customer?.countryCode ?? '');
   // The credit limit's currency (functional review B8). An existing limit keeps its currency. A
   // new or empty limit's currency follows the preferred currency chosen on this form, else the
   // branch's currency, until the person picks one (null until then), which is kept. Typing an
@@ -179,6 +181,7 @@ export function CustomerForm({
       phone: field(form, 'phone').replace(/\s/g, ''),
       whatsapp: opt(form, 'whatsapp')?.replace(/\s/g, '') ?? null,
       email: opt(form, 'email'),
+      countryCode: opt(form, 'countryCode'),
       city: opt(form, 'city'),
       address: opt(form, 'address'),
       taxNumber: opt(form, 'taxNumber'),
@@ -209,7 +212,7 @@ export function CustomerForm({
   const currencies = master?.currencies.filter((c) => c.isActive) ?? [];
 
   return (
-    <form className="card stack" onSubmit={(e) => void submit(e)}>
+    <form className="card stack" autoComplete="off" onSubmit={(e) => void submit(e)}>
       <h2>{customer ? t('editTitle', { name: customer.name }) : t('add')}</h2>
       <Notice notice={notice} />
       <div className="grid">
@@ -271,6 +274,15 @@ export function CustomerForm({
         <label className="field">
           {t('email')}
           <input name="email" type="email" dir="ltr" defaultValue={customer?.email ?? ''} />
+        </label>
+        <label className="field">
+          {t('country')}
+          <CountrySelect
+            name="countryCode"
+            locations={master?.locations}
+            value={country}
+            onChange={setCountry}
+          />
         </label>
         <label className="field">
           {t('city')}

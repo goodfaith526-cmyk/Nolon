@@ -217,7 +217,10 @@
     "reviewWithAssistantHint": "المساعد يشرح لك سبب الرفض، ويقدر يجهّز الإدخال كمسودة لو حبيت.",
     "reviewWithAssistantFailed": "تعذّر فتح المساعد. حاول مرة أخرى.",
     "openAssistant": "افتح المساعد",
-    "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها."
+    "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها.",
+    "chooseCountry": "اختر الدولة",
+    "countriesInUse": "دول مستخدمة",
+    "allCountries": "كل الدول"
   },
   "Customers": {
     "title": "العملاء",
@@ -258,7 +261,8 @@
     "parties": "المرسل والمستلم والجهة المُخطَرة",
     "addParty": "إضافة جهة",
     "partiesHint": "الجهات منفصلة عن العميل وتُختار في كل حجز.",
-    "import": "استيراد من Excel"
+    "import": "استيراد من Excel",
+    "country": "الدولة"
   },
   "Rates": {
     "title": "الأسعار",
@@ -1891,13 +1895,16 @@
     "kind_DISTRIBUTOR": "موزّع داخل السودان",
     "phone": "الهاتف",
     "email": "البريد الإلكتروني",
-    "countryCode": "الدولة (حرفان)",
-    "countryHint": "مثلاً SA أو AE أو EG أو CN أو SD.",
+    "countryCode": "الدولة",
     "location": "المدينة أو الميناء",
     "currency": "العملة",
     "branch": "الفرع",
     "commissionsLater": "عقود العمولات وتسويات الشركاء لم تُضبط بعد: تأتي في خطوة لاحقة.",
-    "loadMore": "عرض المزيد"
+    "loadMore": "عرض المزيد",
+    "noLocation": "بدون مدينة أو ميناء",
+    "chooseCountryFirst": "اختر الدولة أولاً.",
+    "noPlacesInCountry": "لا توجد مدينة أو ميناء مسجّل لهذه الدولة بعد.",
+    "addPlace": "أضِف من صفحة المواقع"
   },
   "SupplierBills": {
     "title": "فواتير الموردين",

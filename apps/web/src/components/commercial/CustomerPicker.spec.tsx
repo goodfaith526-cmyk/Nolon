@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.fn();
 let permissions: string[] = ['customers:create'];
 
-vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
+vi.mock('next-intl', () => ({
+  useLocale: () => 'en',
+  useTranslations: () => (key: string) => key,
+}));
 vi.mock('@/i18n/navigation', () => ({ Link: () => null, useRouter: () => ({ push: () => {} }) }));
 vi.mock('@/lib/api', () => ({ api: (...args: unknown[]) => api(...args) as unknown }));
 vi.mock('@/lib/master-data', () => ({

@@ -217,7 +217,10 @@
     "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
     "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
     "openAssistant": "Open the assistant",
-    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it."
+    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it.",
+    "chooseCountry": "Choose a country",
+    "countriesInUse": "Countries in use",
+    "allCountries": "All countries"
   },
   "Customers": {
     "title": "Customers",
@@ -258,7 +261,8 @@
     "parties": "Shipper, consignee and notify party",
     "addParty": "Add party",
     "partiesHint": "Parties are kept separately from the customer and chosen on each booking.",
-    "import": "Import from Excel"
+    "import": "Import from Excel",
+    "country": "Country"
   },
   "Rates": {
     "title": "Rates",
@@ -1891,13 +1895,16 @@
     "kind_DISTRIBUTOR": "Distributor in Sudan",
     "phone": "Phone",
     "email": "Email",
-    "countryCode": "Country (2 letters)",
-    "countryHint": "For example SA, AE, EG, CN, SD.",
+    "countryCode": "Country",
     "location": "City or port",
     "currency": "Currency",
     "branch": "Branch",
     "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step.",
-    "loadMore": "Show more"
+    "loadMore": "Show more",
+    "noLocation": "No city or port",
+    "chooseCountryFirst": "Choose the country first.",
+    "noPlacesInCountry": "No city or port of this country is recorded yet.",
+    "addPlace": "Add one in Locations"
   },
   "SupplierBills": {
     "title": "Supplier bills",
