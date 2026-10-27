@@ -321,7 +321,7 @@
     "service_INLAND_TRANSPORT": "النقل الداخلي",
     "service_LAST_MILE": "التسليم النهائي",
     "shipment_CREATED": "تم التسجيل",
-    "shipment_PICKUP_SCHEDULED": "استلام مجدول من المرسل",
+    "shipment_PICKUP_SCHEDULED": "جاري الاستلام من المرسل",
     "shipment_RECEIVED_ORIGIN_WAREHOUSE": "استُلمت في مستودع المنشأ",
     "shipment_CONSOLIDATED": "مجمّعة (LCL)",
     "shipment_LOADED": "حُمّلت على السفينة",
@@ -646,7 +646,8 @@
     "revertReasonOther": "السبب كتابةً",
     "revertDetails": "تفاصيل (اختياري)",
     "recordedAt": "سُجّلت في {time}",
-    "revertTargetChanged": "تغيّرت الخطوة التي ستُلغى منذ فتح هذا النموذج. أغلقه وافتح «الرجوع لحالة سابقة» من جديد لمراجعة الخطوة الحالية."
+    "revertTargetChanged": "تغيّرت الخطوة التي ستُلغى منذ فتح هذا النموذج. أغلقه وافتح «الرجوع لحالة سابقة» من جديد لمراجعة الخطوة الحالية.",
+    "containerMoveWarning": "هذه الشحنة في الحاوية {container}. «{status}» تُسجَّل عادة بتحريك الحاوية، فتتحرك كل شحناتها. سجّلها هنا فقط إن كانت هذه الشحنة وحدها مختلفة."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",

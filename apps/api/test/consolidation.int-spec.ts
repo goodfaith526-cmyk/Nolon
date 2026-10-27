@@ -1001,7 +1001,15 @@ describe('consolidated LCL containers', () => {
 
   it('an open container does not stop going back from a consolidation entered by hand', async () => {
     const id = await lclShipment(customers[1], '1');
-    await newContainer([id]).expect(201);
+    const before = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
+    expect(before.actions.containerMoves).toBeNull();
+    const created = (await newContainer([id]).expect(201)).body as ConsolidationDto;
+    // Allowed by hand, with a warning that the container's own move does it (owner choice Q3).
+    const inside = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
+    expect(inside.actions.containerMoves).toEqual({
+      container: created.number,
+      statuses: ['CONSOLIDATED'],
+    });
     const moved = (
       await post(`/shipments/${id}/status`, cookies.admin, { status: 'CONSOLIDATED' }).expect(200)
     ).body as ShipmentDto;
