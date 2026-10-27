@@ -1,11 +1,23 @@
 # Plan: shared-container space left, route-coded LCL numbers, shipment keeps the booking number
 
 Date: 2026-10-27. Source: client WhatsApp (Musab, Shaker), 27 Oct 2026. Plan only; nothing is built
-until Codex reviews this plan and the owner answers the questions in section 5 (س1-س6 = Q1-Q6).
+until Codex reviews this plan.
 
-Base: `main` 4300b72. Open PRs touching the same areas: #109 (status history, consolidations close
-rules) and #104 (status locks). This plan does not change status flows, so it does not overlap them;
-whichever merges second rebases.
+**Owner decisions (2026-10-27 23:26, answers to س1-س6 of the first draft):**
+
+- س1 = أ: we seed usable capacities for 20GP/40GP/40HC; the admin can edit them. This is the owner's
+  OK to update the existing `container_types` rows.
+- س2: the fill level must be visible **before** the container is full; going over capacity is
+  **blocked**, with a warning.
+- س3 = both: the shared container **and** LCL bookings get route-coded numbers.
+- س4: **old numbers change.** The system is not in live operation yet; existing records are
+  renumbered to the new scheme (section 4).
+- س5 = continuous counter, never resets.
+- س6 = we seed the city letters (owner's OK to update the existing `locations` rows).
+
+Base: `main` 4300b72. Open PRs touching nearby code: #109 (status history, container close rules),
+#104 (status locks), #108 (outlet staff). None changes numbering or capacity; whichever merges second
+rebases.
 
 ## 1. Shared container: space left while it fills (Musab)
 
@@ -16,133 +28,138 @@ shipment items) but shows no total against a limit.
 Change:
 
 - `container_types` gets two nullable columns: `max_volume_cbm Decimal(18,4)` and
-  `max_payload_kg Decimal(18,4)` (usable capacity, not the nominal inside volume). Additive. Both
-  editable in the existing master-data screen (Admin only, as today). `OTHER` stays empty.
-- Values for the three standard types (Q1). Setting them on existing rows is an `UPDATE` on an
-  existing table, so that one migration is **not additive** under rule 4: it needs the owner's OK and
-  the `migration-ok-<digest>` label. If the owner prefers, the columns ship empty and the admin types
-  the numbers; then the migration is purely additive.
+  `max_payload_kg Decimal(18,4)`: usable capacity, not the nominal inside volume. Editable in the
+  existing master-data screen (Admin only, as today). Seed (owner س1): 20GP 28 CBM / 28,000 kg;
+  40GP 58 CBM / 26,500 kg; 40HC 68 CBM / 26,500 kg; `OTHER` stays empty.
 - `GET /consolidations/:id` returns a `capacity` block computed in the service, all Decimal strings:
   `maxVolumeCbm`, `maxPayloadKg` (null when the type has none), `usedVolumeCbm`, `usedWeightKg`,
-  `remainingVolumeCbm`, `remainingWeightKg` (may be negative), and `incomplete`: the shipment numbers
-  with no CBM or no weight on any cargo line. Missing values are never counted as zero silently:
-  the total is labelled incomplete and the shipments are listed (same rule as the business-model
-  plan: missing = «غير مكتملة», not zero).
-- Container page (`ConsolidationDetail.tsx`): a panel at the top, two bars (CBM, weight) with used /
-  capacity / left and a percentage; amber at 90 %, red when over. When the type has no capacity:
-  "set the capacity of this container type" with a link for admins.
-- Adding a shipment: the picker shows each candidate's CBM and weight and "left after adding".
-  Going over capacity is a **warning, not a block** (Q2): real loading depends on stacking and the
-  client's figures are estimates; the warning names both numbers.
-- Applies to OPEN containers and also shows (read-only) on closed ones, from the frozen basis.
+  `remainingVolumeCbm`, `remainingWeightKg`, `fillPercent` for each, and `incomplete`: the shipment
+  numbers with no CBM or no weight on a cargo line. Missing values are never silently zero: the total
+  is labelled incomplete and the shipments are listed («غير مكتملة»).
+- Seen before it is full (owner س2):
+  - Container page (`ConsolidationDetail.tsx`): a panel at the top, two bars (CBM, weight) with used
+    / capacity / left; amber from 80 %, red at 100 %.
+  - Containers list: a "filled" column (the higher of the two percentages) with the same colours,
+    so staff see which open containers still have room without opening each.
+  - Adding a shipment: the picker shows each candidate's CBM and weight and "left after adding";
+    candidates that would not fit are shown disabled with the reason.
+  - When the type has no capacity: "set the capacity of this container type" (link for admins), and
+    no limit applies.
+- **Block** (owner س2): a write that would put an OPEN container over its capacity on CBM **or**
+  weight is refused with 409 `CONTAINER_FULL` naming the used, capacity and attempted numbers. The
+  check runs in the service, inside the write's transaction, after the container row lock that
+  `addShipments` already takes, so two staff adding at once cannot both slip past the limit. It
+  covers adding shipments (create with shipments, add, move into a container) and editing cargo
+  lines of a shipment that sits in an open container, wherever such an edit exists.
+- A shipment with missing CBM or weight can still be added (it shows in `incomplete`, the bar says
+  "incomplete", and closing the container already requires the basis value). Blocking it would stop
+  work on data that is simply not entered yet; the check uses the known values.
+- If an admin lowers a type's capacity below a container's current load, nothing is undone: the
+  panel shows red and further additions are blocked.
+- Closed containers show the panel read-only from the frozen basis.
 
-Tests: unit for the capacity maths (Decimal, rounding at display only, negative remaining, missing
-lines); integration: other branch gets 404 on the container (existing rule), capacity null when the
-type has none, incomplete list, over-capacity add returns the warning and still saves.
+Tests: unit for the capacity maths (Decimal, rounding at display only, missing lines, exactly at
+capacity is allowed, one unit over is refused); integration: other branch gets 404 (existing rule),
+capacity null for `OTHER`, over-capacity add refused on CBM and on weight, concurrent adds (only one
+of two that each fit alone but not together succeeds), move into a full container refused, incomplete
+list.
 
-## 2. LCL reference: origin + destination letters + a number (Musab)
+## 2. Route-coded LCL numbers (Musab)
 
-"DXB-KRT-0001": route letters, then a counter per route.
+Format: `<ORIG>-<DEST>-<NNNN>`, four digits zero-padded, a fifth digit after 9999. No year, never
+resets (owner س5). Applies to (owner س3):
 
-Format: `<ORIG>-<DEST>-<NNNN>`, four digits, zero-padded, a fifth digit after 9999 (same idea as the
-short BK numbers). No year, never resets (Q5). Counter per route pair through the existing
-`number_sequences` table, inside the creating transaction, so numbers are gapless and concurrent
-creators are serialised by the row lock: `doc_type = 'LCL'`, `period_key = 'DXB-KRT'`
-(`period_key` is `VARCHAR(10)`; letters are capped at 3 or 4 so the key fits, see below).
-Uniqueness: the record's `number` column is already `UNIQUE`; DXB-KRT and KRT-DXB are different
-counters.
+- **LCL bookings** (`load_type = LCL`): `DXB-KRT-0001`. Their shipment carries the same number
+  (section 3).
+- **Shared containers**: `DXB-KRT-C0001` (the `C` keeps a container and a booking of the same route
+  from carrying the same text; our choice, the owner may change the letter).
+- FCL bookings and road bookings without a load type keep `BK00001`; their shipments take that
+  number.
 
-Where the letters come from: a location code is a UN/LOCODE (AEJEA Jebel Ali, AEDXB Dubai, SAJED,
-SDPZU Port Sudan, SDKRT). The client's letters are their branch codes (DXB, JED, PTS, ATB, KRT), and
-PZU is not PTS, JEA is not DXB. So `locations` gets a nullable `short_code VARCHAR(4)` (letters only,
-upper case), editable in master data. The letters used are: the location's `short_code`, else its
-city's `short_code`, else the last three letters of its LOCODE. Additive column; filling it for the
-six seeded locations (AEJEA, AEDXB -> DXB; SAJED -> JED; SDPZU -> PTS; SDATB -> ATB; SDKRT -> KRT) is
-an `UPDATE`, so same rule as section 1, Q6 (owner OK + label, or admin fills it).
+Counters: the existing `number_sequences` table, inside the creating transaction (row lock serialises
+concurrent creators, rollback returns the number): `doc_type = 'LCL_BOOKING'` or `'LCL_CONTAINER'`,
+`period_key = 'DXB-KRT'` (fits `VARCHAR(10)` with letters capped at 4). Uniqueness: each table's
+`number` is already `UNIQUE`; DXB-KRT and KRT-DXB are separate counters.
 
-Which record gets this number (Q3): the shared container (today `NOL-CON-2026-000001`), the LCL
-booking (today `BK00001`), or both. The container's route is fixed when it is created; a booking's
-route can still change while it is a draft, and its number would then keep the old letters (the
-number is not re-issued, a number never changes once given).
+Letters: location codes are UN/LOCODEs (AEJEA Jebel Ali, AEDXB Dubai, SAJED, SDPZU Port Sudan,
+SDATB, SDKRT), and PZU is not the client's PTS. So `locations` gets a nullable
+`short_code VARCHAR(4)` (2-4 upper-case letters, check constraint), editable in master data. Letters
+used: the location's `short_code`, else its city's, else the last three letters of its LOCODE.
+Seed (owner س6): AEJEA, AEDXB -> DXB; SAJED -> JED; SDPZU -> PTS; SDATB -> ATB; SDKRT -> KRT.
 
-Only new records: existing containers/bookings keep their numbers (Q4).
+A draft booking's route or load type can still change. While the booking is a DRAFT (no shipment
+yet), a change of origin, destination or LCL/FCL gives it a new number from the right counter (the
+old number is left unused and the change is in the audit log). Once confirmed the number never
+changes. A container's route is fixed at creation.
 
-Tests: format, per-route counter, two routes, concurrent create (no duplicate), fallback letters,
-short code validation (letters, 2-4), unique clash impossible across routes.
+Tests: format, per-route counters, the two kinds don't share numbers, concurrent create, fallback
+letters, short code validation, draft route change re-issues, confirmed booking keeps its number.
 
 ## 3. Shipment keeps the booking number (Shaker)
 
-Today: confirming a booking creates the shipment with a new number `NOL-SHP-<year>-<6 digits>`
+Today: confirming a booking creates the shipment with a new `NOL-SHP-<year>-<6 digits>`
 (`ShipmentsService.createForBooking`, sequence `SHIPMENT`).
 
-Change: the new shipment's `number` is the booking's `number`. One shipment per booking
-(`shipments.booking_id` is unique), so the number stays unique among shipments. The `SHIPMENT`
-sequence is no longer used for new shipments. No migration (`shipments.number` is `VARCHAR(30)`).
-Old shipments keep their `NOL-SHP-...` numbers, QR codes, printed papers and tracking links (Q4).
-Tracking links and QR codes use a random token, never the number, so nothing breaks there.
+Change: the shipment's `number` is the booking's `number`. One shipment per booking
+(`shipments.booking_id` is unique), so it stays unique among shipments. The `SHIPMENT` sequence is no
+longer used. `shipments.number` is `VARCHAR(30)`; no schema change.
 
-Effects checked:
+## 4. Renumbering existing records (owner س4)
 
-- NOLON search, invoices, statements, prints and reports show `shipment.number` as a string: no
-  format assumption, nothing to change. Searching `BK00012` will now find the booking and its
-  shipment, which is what the client wants.
-- Public tracking by reference + last 4 phone digits: reference length 5-30, `BK00012` passes. A
-  short sequential number is easier to guess than the yearly one, but the lookup still needs the
-  phone's last 4 digits and is rate-limited per reference and per IP (unchanged). Placeholder text in
-  `PublicTracking.tsx` changes to the new form.
+One data migration, raw SQL, in one transaction, in this order:
+
+1. Seed `short_code` and capacities (sections 1, 2).
+2. LCL bookings: new number per route, in `created_at, id` order.
+3. Containers: new number per route, in `created_at, id` order.
+4. Shipments: `number = booking.number` for every shipment.
+5. `number_sequences`: set `LCL_BOOKING`/`LCL_CONTAINER` per route to max + 1. `BOOKING` and
+   `SHIPMENT` rows stay (FCL keeps BK; the BK numbers LCL bookings vacate are simply gaps).
+
+Uniqueness during the update: new formats never collide with old ones (`NOL-CON-...`,
+`NOL-SHP-...`, `BK...` vs `DXB-KRT-...`), and a shipment takes a number no other shipment has, so a
+single `UPDATE ... FROM` per table keeps the unique indexes valid.
+
+What is untouched, and why it is safe:
+
+- Records point to each other by id, never by number (bookings, shipments, containers, invoices,
+  drafts, documents). Display names are read live (`drafts/reference-names.ts`).
+- Public tracking links and QR codes carry a random token (`tracking_token`), not the number: every
+  link and printed QR keeps working.
+- Posted journals never carried shipment or container numbers (they use invoice and receipt numbers),
+  so the immutability triggers are not involved.
+- Append-only history keeps the old text where it was written: `audit_events`,
+  `agent_access_events`, and `shipment_events.note` (holds the container number on container status
+  moves). Not rewritten: the audit trigger forbids it and history should show what was true then.
+  The shipment page will show those old container numbers in old notes; acceptable on test data.
+- Already printed or exported PDFs (acceptance files) show old numbers; they are test papers.
+
+Migration rule 4: this migration updates existing rows, so it is not additive. The owner gave the
+OK in their own words (2026-10-27 23:26, «القديمة دي تتغير»). Before the `migration-ok-<digest>`
+label: Codex reviews it; the staging deploy takes and verifies its own backup before migrations.
+Production has no data yet.
+
+## 5. Other effects checked
+
+- NOLON search, invoices, statements, prints, reports: show `number` as a string, no format
+  assumption. Searching `DXB-KRT-0001` or `BK00012` finds the booking and its shipment.
+- Public tracking by reference + last 4 phone digits: reference length 5-30, new forms pass. A route
+  number is easier to guess than the yearly one, but the lookup still needs the phone's last 4 digits
+  and stays rate-limited per reference and per IP. Placeholder in `PublicTracking.tsx` changes.
 - Customer Service API (`/customer-service/shipments/:number`): accepts any 1-30 character
   reference; unchanged.
 - **Agent (erp-agents), breaking**: `connectors/nolon/nolon-customer.ts` validates shipment numbers
-  with `/^NOL-SHP-\d{4}-\d{6}$/` on the tool input _and_ on NOLON's response, and finds shipment
-  references in customer messages with an `SHP-` pattern; `nolon-status.ts` matches `shp-YYYY-...`
-  in staff messages. A shipment numbered `BK00012` (or `DXB-KRT-0001`) would fail the response
-  schema, so the customer WhatsApp tool would refuse every new shipment. Per the compat rule, an
-  erp-agents compat PR merges **first**: accept old `NOL-SHP-...` and the new booking forms
-  (`BK\d{5,}`, and `[A-Z]{2,4}-[A-Z]{2,4}-\d{4,}` if Q3 picks bookings), in input, response and
-  message matching, with tests. Then this NOLON part merges. Agent draft routes are unchanged (no new
-  field in any draft route); the new capacity block and `short_code` are response/master-data
-  additions the agent's non-strict response parsing ignores.
+  with `/^NOL-SHP-\d{4}-\d{6}$/` on the tool input _and_ on NOLON's response, and finds references in
+  customer messages with an `SHP-` pattern; `nolon-status.ts` matches `shp-YYYY-...` in staff
+  messages. After this change no shipment has that form, so the customer WhatsApp tool would refuse
+  every shipment. Per the compat rule an erp-agents compat PR merges **first**: accept `BK\d{5,}`,
+  `[A-Z]{2,4}-[A-Z]{2,4}-\d{4,}` and the old `NOL-SHP-...`, in input, response and message matching,
+  with tests. Old numbers in past agent conversations will no longer be found; acceptable, the system
+  is not live. Agent draft routes are unchanged (no new field in any draft route); the capacity block
+  and `short_code` are response additions the agent's non-strict response parsing ignores.
 
-Tests: integration: confirm booking -> shipment number equals booking number; old shipments
-untouched; a booking created by an approved draft still gets its shipment with the same number;
-cancelled-and-reconfirmed path (a booking has at most one shipment, unchanged).
+## 6. Order of PRs
 
-## 4. Order of PRs
-
-1. PR-A (NOLON): shipment keeps the booking number. Waits for the erp-agents compat PR.
-2. PR-B (NOLON): container capacity panel (+ capacity columns migration).
-3. PR-C (NOLON): route-coded LCL numbers (+ `short_code` migration), after Q3.
-4. erp-agents compat PR: number patterns, merged before PR-A (and before PR-C if bookings).
-
-## 5. Questions for the owner (اسئلة للمالك)
-
-**س1: سعة الحاويات بالأرقام دي؟** (المساحة الفعلية للتحميل، مش المساحة الداخلية الكاملة)
-
-- ⭐ أ) 20 قدم: 28 متر مكعب، 28,000 كجم. 40 قدم: 58 متر مكعب، 26,500 كجم. 40 عالية: 68 متر مكعب، 26,500 كجم. نكتبها في التحديث (محتاج «موافق» منك لأنو بيعدّل جدول موجود)، والأدمن يقدر يغيّرها بعدين.
-- ب) نخليها فاضية والأدمن يكتب الأرقام بنفسه.
-
-**س2: لو الشحنة الجديدة بتزيد الحاوية فوق سعتها؟**
-
-- ⭐ أ) تحذير بس ويحفظ (التحميل الحقيقي بيختلف).
-- ب) يمنع الإضافة.
-
-**س3: الرقم بحروف المنشأ والوجهة (DXB-KRT-0001) يكون لياتو؟**
-
-- ⭐ أ) الحاوية المشتركة نفسها (مسارها ثابت من أول ما تتعمل).
-- ب) حجوزات LCL (والشحنة بتاخد نفس الرقم حسب طلب شاكر). لو المسار اتغيّر في المسودة، الرقم بيفضل بالحروف القديمة.
-- ج) الاتنين.
-
-**س4: الأرقام القديمة؟**
-
-- ⭐ أ) تفضل زي ما هي (مطبوعة ومرسلة للعملاء). الجديد بس بالنظام الجديد.
-- ب) نغيّرها كلها (ما بننصح: الورق المطبوع والرسائل القديمة بتبقى غلط).
-
-**س5: العداد يبدأ من جديد كل سنة؟**
-
-- ⭐ أ) لا، مستمر (DXB-KRT-0001 ... 9999 ثم 10000).
-- ب) أيوة، والسنة تدخل في الرقم (DXB-KRT-26-0001).
-
-**س6: حروف المدن (دبي/جبل علي = DXB، جدة = JED، بورتسودان = PTS، عطبرة = ATB، الخرطوم = KRT)؟**
-
-- ⭐ أ) نكتبها في التحديث (محتاج «موافق» لأنو بيعدّل جدول موجود)، والأدمن يزيد لأي مدينة جديدة.
-- ب) الأدمن يكتبها بنفسه.
+1. erp-agents compat PR (number patterns). Merges first.
+2. NOLON PR-A: migration (columns, seeds, renumbering) + route-coded numbers + shipment takes the
+   booking number. One PR, because the renumbering and the new numbering rules must land together.
+3. NOLON PR-B: capacity panel, list column, picker, and the over-capacity block.
