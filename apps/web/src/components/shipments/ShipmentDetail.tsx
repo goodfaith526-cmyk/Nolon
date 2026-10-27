@@ -13,6 +13,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
+import { earliestLocalMinute, needsFreshShipment } from '@/lib/status-history';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { ShipmentCustoms } from '../customs/ShipmentCustoms';
@@ -34,13 +35,6 @@ function toIso(local: string): string | undefined {
   if (!local) return undefined;
   const date = new Date(local);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-/** An ISO timestamp as a datetime-local value (local time, minutes), for the input's `min`. */
-function toLocalInput(iso: string): string {
-  const date = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** Ready reasons for going back a status; OTHER asks for the reason in words. */
@@ -99,6 +93,12 @@ export function ShipmentDetail({ id }: { id: string }) {
       setNotice({ ok: true, text: success });
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
+      // The step shown is no longer the one a revert would undo: show the shipment as it is now,
+      // so the user reviews the new step and confirms again.
+      if (needsFreshShipment(e)) {
+        setPanel(null);
+        load();
+      }
     } finally {
       setBusy(false);
     }
@@ -192,6 +192,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
   const list = new Intl.ListFormat(locale);
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  const earliestMinute = earliestLocalMinute(actions.earliestStatusTime);
   const chosenStatus = nextStatus || actions.transitions[0] || '';
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
   const chosenLocation = pickedLocation ?? suggested ?? '';
@@ -297,11 +298,7 @@ export function ShipmentDetail({ id }: { id: string }) {
             </label>
             <label className="field">
               <span>{t('occurredAt')}</span>
-              <input
-                name="occurredAt"
-                type="datetime-local"
-                min={toLocalInput(actions.earliestStatusTime)}
-              />
+              <input name="occurredAt" type="datetime-local" min={earliestMinute} />
             </label>
             <label className="field">
               <span>{t('location')}</span>
@@ -333,7 +330,7 @@ export function ShipmentDetail({ id }: { id: string }) {
           )}
           <p className="muted">
             {t('occurredAtHint', {
-              earliest: dateTime.format(new Date(actions.earliestStatusTime)),
+              earliest: dateTime.format(new Date(earliestMinute)),
             })}
           </p>
           <div className="actions">
