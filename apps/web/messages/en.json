@@ -645,7 +645,8 @@
     "revertReason_OTHER": "Other",
     "revertReasonOther": "The reason, in words",
     "revertDetails": "Details (optional)",
-    "recordedAt": "Recorded on {time}"
+    "recordedAt": "Recorded on {time}",
+    "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",

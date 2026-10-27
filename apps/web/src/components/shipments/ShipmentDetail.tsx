@@ -26,6 +26,7 @@ import { ShipmentContainersTab } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
+import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
@@ -36,10 +37,6 @@ function toIso(local: string): string | undefined {
   const date = new Date(local);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
-
-/** Ready reasons for going back a status; OTHER asks for the reason in words. */
-const REVERT_REASONS = ['WRONG_SHIPMENT', 'WRONG_STATUS', 'WRONG_TIME', 'OTHER'] as const;
-type RevertReason = (typeof REVERT_REASONS)[number];
 
 /** A recorded time shown apart from when it was recorded when they differ by over an hour. */
 const LATE_ENTRY_MS = 60 * 60 * 1000;
@@ -63,7 +60,8 @@ export function ShipmentDetail({ id }: { id: string }) {
   const [nextStatus, setNextStatus] = useState<ShipmentStatus | ''>('');
   // null: the user has not picked a location, so the status's usual one is suggested.
   const [pickedLocation, setPickedLocation] = useState<string | null>(null);
-  const [revertReason, setRevertReason] = useState<RevertReason>('WRONG_SHIPMENT');
+  // A refresh after a refused revert is under way: no revert is offered on the old preview.
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(() => {
     api<ShipmentDto>(`/shipments/${id}`)
@@ -97,7 +95,11 @@ export function ShipmentDetail({ id }: { id: string }) {
       // so the user reviews the new step and confirms again.
       if (needsFreshShipment(e)) {
         setPanel(null);
-        load();
+        setRefreshing(true);
+        api<ShipmentDto>(`/shipments/${id}`)
+          .then(setShipment)
+          .catch(() => undefined)
+          .finally(() => setRefreshing(false));
       }
     } finally {
       setBusy(false);
@@ -107,7 +109,6 @@ export function ShipmentDetail({ id }: { id: string }) {
   function openPanel(next: Panel) {
     setNextStatus('');
     setPickedLocation(null);
-    setRevertReason('WRONG_SHIPMENT');
     setPanel(next);
   }
 
@@ -140,21 +141,6 @@ export function ShipmentDetail({ id }: { id: string }) {
     if (reason === null) return;
     const messages = { hold: t('heldNotice'), cancel: t('cancelledNotice') };
     void send(`/${action}`, { reason }, messages[action]);
-  }
-
-  function onRevert(event: FormEvent<HTMLFormElement>, undoEventId: string) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const details = field(form, 'reason').trim();
-    let reason: string | null;
-    if (revertReason === 'OTHER') {
-      reason = reasonText(form);
-    } else {
-      const preset = t(`revertReason_${revertReason}`);
-      reason = details ? `${preset}: ${details}` : preset;
-    }
-    if (reason === null) return;
-    void send('/revert', { reason, undoEventId }, t('revertedNotice'));
   }
 
   function onEdit(event: FormEvent<HTMLFormElement>) {
@@ -192,6 +178,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
   const list = new Intl.ListFormat(locale);
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  const canRevert = actions.revertTo !== null && actions.revertUndoes !== null && !refreshing;
   const earliestMinute = earliestLocalMinute(actions.earliestStatusTime);
   const chosenStatus = nextStatus || actions.transitions[0] || '';
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
@@ -236,13 +223,13 @@ export function ShipmentDetail({ id }: { id: string }) {
           <MoreMenu>
             <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
-            {(actions.canHold || actions.revertTo || actions.canCancel) && <hr />}
+            {(actions.canHold || canRevert || actions.canCancel) && <hr />}
             {actions.canHold && (
               <button type="button" onClick={() => openPanel('hold')}>
                 {t('hold')}
               </button>
             )}
-            {actions.revertTo && (
+            {canRevert && (
               <button type="button" onClick={() => openPanel('revert')}>
                 {t('revert')}
               </button>
@@ -344,63 +331,19 @@ export function ShipmentDetail({ id }: { id: string }) {
         </form>
       )}
       {panel === 'hold' && reasonForm('hold', t('holdReason'), t('hold'))}
-      {panel === 'revert' && actions.revertTo && actions.revertUndoes && (
-        <form
-          className="card stack"
-          onSubmit={(e) => onRevert(e, actions.revertUndoes?.eventId ?? '')}
-        >
-          <p>
-            {t('revertUndoes', {
-              status: te(`shipment_${actions.revertUndoes.status}`),
-              user: actions.revertUndoes.userName ?? '—',
-              time: dateTime.format(new Date(actions.revertUndoes.occurredAt)),
-              to: te(`shipment_${actions.revertTo}`),
-            })}
-          </p>
-          {!actions.revertUndoes.byMe && (
-            <>
-              <p className="warning">
-                {t('revertOthersStep', { user: actions.revertUndoes.userName ?? '—' })}
-              </p>
-              <div className="checks">
-                <label>
-                  <input type="checkbox" name="confirmOthers" required />
-                  {t('revertConfirmOthers')}
-                </label>
-              </div>
-            </>
-          )}
-          <label className="field">
-            <span>{t('revertReason')}</span>
-            <select
-              value={revertReason}
-              onChange={(e) => setRevertReason(e.target.value as RevertReason)}
-            >
-              {REVERT_REASONS.map((r) => (
-                <option key={r} value={r}>
-                  {t(`revertReason_${r}`)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>{revertReason === 'OTHER' ? t('revertReasonOther') : t('revertDetails')}</span>
-            <textarea
-              name="reason"
-              required={revertReason === 'OTHER'}
-              minLength={revertReason === 'OTHER' ? SHIPMENT_REASON_MIN_LENGTH : undefined}
-              maxLength={900}
-            />
-          </label>
-          <div className="actions">
-            <button type="submit" className="primary" disabled={busy}>
-              {t('revert')}
-            </button>
-            <button type="button" onClick={() => setPanel(null)}>
-              {tc('back')}
-            </button>
-          </div>
-        </form>
+      {panel === 'revert' && (
+        <ShipmentRevertForm
+          step={actions.revertUndoes}
+          to={actions.revertTo}
+          busy={busy}
+          onRevert={(reason, undoEventId) =>
+            void send('/revert', { reason, undoEventId }, t('revertedNotice'))
+          }
+          onTooShort={() =>
+            setNotice({ ok: false, text: t('reasonTooShort', { min: SHIPMENT_REASON_MIN_LENGTH }) })
+          }
+          onBack={() => setPanel(null)}
+        />
       )}
       {panel === 'cancel' && reasonForm('cancel', t('cancelReason'), t('cancel'))}
       {panel === 'edit' && (
