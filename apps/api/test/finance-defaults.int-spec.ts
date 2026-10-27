@@ -447,7 +447,9 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
       const cancelled = await shipment();
       const number = (await t.prisma.shipment.findUniqueOrThrow({ where: { id: cancelled } }))
         .number;
-      await post(`/shipments/${cancelled}/cancel`, cookies.opsPts, { reason: 'x' }).expect(200);
+      await post(`/shipments/${cancelled}/cancel`, cookies.opsPts, {
+        reason: 'Wrong entry',
+      }).expect(200);
       const gone = (await pick(`branchId=${pts}&q=${encodeURIComponent(number)}`).expect(200))
         .body as ShipmentPickPage;
       expect(gone.exact).toBeNull();

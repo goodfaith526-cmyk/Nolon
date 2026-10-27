@@ -1127,9 +1127,11 @@ legend {
   color: var(--ok);
 }
 
-/* Messages after an action (Notice) and load failures: a tinted banner with an icon. */
+/* Messages after an action (Notice) and load failures: a tinted banner with an icon. A warning
+   asks the user to check before saving; it does not block. */
 p.error,
-p.success {
+p.success,
+p.warning {
   display: flex;
   align-items: flex-start;
   gap: 0.625rem;
@@ -1150,6 +1152,12 @@ p.error {
 p.success {
   border-color: color-mix(in srgb, var(--ok) 25%, transparent);
   background: var(--ok-soft);
+}
+
+p.warning {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 25%, transparent);
+  background: var(--warn-soft);
 }
 
 p.error::before,

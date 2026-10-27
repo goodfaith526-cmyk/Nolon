@@ -249,6 +249,36 @@ export function visitedStatuses(path: readonly HistoryEntry[]): Set<ShipmentStat
 }
 
 /**
+ * Where a status normally happens, to suggest in the status form (a suggestion, never enforced:
+ * transshipment is real): the origin for pickup, origin storage and consolidation, the
+ * destination for destination storage and delivery; on a sea-only shipment also the origin for
+ * loading and departure and the destination for arrival. Null when it depends on the leg.
+ */
+export function usualPlace(
+  status: ShipmentStatus,
+  mode: ShippingMode,
+): 'ORIGIN' | 'DESTINATION' | null {
+  switch (status) {
+    case 'PICKUP_SCHEDULED':
+    case 'RECEIVED_ORIGIN_WAREHOUSE':
+    case 'CONSOLIDATED':
+      return 'ORIGIN';
+    case 'RECEIVED_DESTINATION_WAREHOUSE':
+    case 'OUT_FOR_DELIVERY':
+    case 'PARTIALLY_DELIVERED':
+    case 'DELIVERED':
+      return 'DESTINATION';
+    case 'LOADED':
+    case 'DEPARTED':
+      return mode === 'SEA' ? 'ORIGIN' : null;
+    case 'ARRIVED_PORT':
+      return mode === 'SEA' ? 'DESTINATION' : null;
+    default:
+      return null;
+  }
+}
+
+/**
  * Permissions that allow moving a shipment to `status`, besides shipments:update. Warehouse,
  * customs, trip and delivery staff record their own stage through their module's permission.
  */
@@ -298,16 +328,22 @@ export function canCancelStatus(status: ShipmentStatus): boolean {
 // ---------------------------------------------------------------------------------------------
 
 export interface HistoryEvent {
+  /** Absent where only the public path is replayed (the customer service view). */
+  id?: bigint;
   kind: ShipmentEventKind;
   status: ShipmentStatus;
   occurredAt: Date;
   locationId: string | null;
+  userId?: string | null;
 }
 
 export interface HistoryEntry {
+  /** The event that recorded this step; a resume keeps the step's own event. */
+  eventId: string | null;
   status: ShipmentStatus;
   occurredAt: Date;
   locationId: string | null;
+  userId: string | null;
 }
 
 /**
@@ -318,9 +354,11 @@ export function replayHistory(events: readonly HistoryEvent[]): HistoryEntry[] {
   const path: HistoryEntry[] = [];
   for (const event of events) {
     const entry = {
+      eventId: event.id?.toString() ?? null,
       status: event.status,
       occurredAt: event.occurredAt,
       locationId: event.locationId,
+      userId: event.userId ?? null,
     };
     switch (event.kind) {
       case 'RESUME':
@@ -343,6 +381,19 @@ export function revertTarget(path: readonly HistoryEntry[]): ShipmentStatus | nu
   const current = path.at(-1)?.status;
   if (!current || !isActive(current) || current === 'ON_HOLD') return null;
   return path.at(-2)?.status ?? null;
+}
+
+/** The step a revert undoes (the current one), or null when there is nothing to revert. */
+export function revertUndoes(path: readonly HistoryEntry[]): HistoryEntry | null {
+  return revertTarget(path) ? (path.at(-1) ?? null) : null;
+}
+
+/**
+ * The earliest time a status change entered by hand may carry: not before the shipment was
+ * created, nor before any step it still stands on (steps undone by a revert no longer count).
+ */
+export function earliestEntryTime(createdAt: Date, path: readonly HistoryEntry[]): Date {
+  return path.reduce((max, entry) => (entry.occurredAt > max ? entry.occurredAt : max), createdAt);
 }
 
 /** True once the path has gone past the loading stage (cancelling then needs a manager). */
