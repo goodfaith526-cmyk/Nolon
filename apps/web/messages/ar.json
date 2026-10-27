@@ -566,7 +566,7 @@
     "changeStatus": "تحديث الحالة",
     "newStatus": "الحالة الجديدة",
     "occurredAt": "وقت الحدث",
-    "occurredAtHint": "اترك الوقت فارغاً ليُسجَّل الآن. يمكن إدخال وقت سابق، لا وقت في المستقبل.",
+    "occurredAtHint": "اترك الوقت فارغاً ليُسجَّل الآن. لا يكون قبل {earliest} (آخر حالة للشحنة) ولا في المستقبل.",
     "location": "الموقع",
     "note": "ملاحظة",
     "statusChanged": "تم تحديث الحالة.",
@@ -577,7 +577,6 @@
     "resumedNotice": "تم استئناف الشحنة.",
     "revert": "رجوع للحالة السابقة",
     "revertReason": "سبب الرجوع",
-    "revertTo": "سترجع الشحنة إلى: {status}",
     "revertedNotice": "تم الرجوع للحالة السابقة.",
     "cancel": "إلغاء الشحنة",
     "cancelReason": "سبب الإلغاء",
@@ -634,7 +633,19 @@
     "sharedBranches": "فروع مشاركة",
     "sharedBranchesHint": "يرى مستخدمو هذه الفروع الشحنة ويسجّلون استلامها وتخليصها ورحلاتها وتسليمها. تبقى الفوترة مع فرع الشحنة.",
     "inConsolidation": "تُشحن هذه الشحنة في الحاوية المجمّعة {number}: حاويتها هي حاوية التجميع، وتظهر هنا للقراءة فقط.",
-    "containerTypeFromBooking": "من بنود الحجز، وفيها نوع الحاوية هذا وحده."
+    "containerTypeFromBooking": "من بنود الحجز، وفيها نوع الحاوية هذا وحده.",
+    "locationNotUsual": "«{status}» تكون عادة في {usual}. تأكد أنها الشحنة والمكان الصحيحان قبل الحفظ.",
+    "reasonTooShort": "اكتب سبباً من {min} أحرف على الأقل.",
+    "revertUndoes": "سيُلغى «{status}» الذي سجّله {user} في {time}، وترجع الشحنة إلى «{to}».",
+    "revertOthersStep": "هذه الخطوة سجّلها {user}، لا أنت. ألغها فقط إن كنت متأكداً أنها خطأ.",
+    "revertConfirmOthers": "تأكدت: هذه الخطوة خطأ ويجب إلغاؤها.",
+    "revertReason_WRONG_SHIPMENT": "تحديث على شحنة خاطئة",
+    "revertReason_WRONG_STATUS": "حالة خاطئة",
+    "revertReason_WRONG_TIME": "وقت خاطئ",
+    "revertReason_OTHER": "أخرى",
+    "revertReasonOther": "السبب كتابةً",
+    "revertDetails": "تفاصيل (اختياري)",
+    "recordedAt": "سُجّلت في {time}"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -2462,7 +2473,10 @@
     "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها.",
     "MASTER_CODE_TAKEN": "الرمز {code} مستخدم من قبل: اختر رمزًا آخر.",
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها.",
-    "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة."
+    "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة.",
+    "STATUS_TIME_TOO_EARLY": "لا يكون الوقت قبل إنشاء الشحنة أو قبل آخر حالة لها.",
+    "REVERT_STALE": "تغيّرت الشحنة منذ فتحتها. راجع سجل حالاتها وحاول مرة أخرى.",
+    "REVERT_CLOSED_CONTAINER": "الشحنة في الحاوية المغلقة {container}: إغلاق الحاوية نهائي، فلا يُلغى تجميعها."
   },
   "Locations": {
     "title": "الموانئ والمدن",

@@ -2,6 +2,7 @@
 
 import {
   BOOKING_SERVICES,
+  SHIPMENT_REASON_MIN_LENGTH,
   type BookingService,
   type CustomerDto,
   type ShipmentDto,
@@ -35,6 +36,20 @@ function toIso(local: string): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+/** An ISO timestamp as a datetime-local value (local time, minutes), for the input's `min`. */
+function toLocalInput(iso: string): string {
+  const date = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** Ready reasons for going back a status; OTHER asks for the reason in words. */
+const REVERT_REASONS = ['WRONG_SHIPMENT', 'WRONG_STATUS', 'WRONG_TIME', 'OTHER'] as const;
+type RevertReason = (typeof REVERT_REASONS)[number];
+
+/** A recorded time shown apart from when it was recorded when they differ by over an hour. */
+const LATE_ENTRY_MS = 60 * 60 * 1000;
+
 export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
   const tc = useTranslations('Common');
@@ -51,6 +66,10 @@ export function ShipmentDetail({ id }: { id: string }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [nextStatus, setNextStatus] = useState<ShipmentStatus | ''>('');
+  // null: the user has not picked a location, so the status's usual one is suggested.
+  const [pickedLocation, setPickedLocation] = useState<string | null>(null);
+  const [revertReason, setRevertReason] = useState<RevertReason>('WRONG_SHIPMENT');
 
   const load = useCallback(() => {
     api<ShipmentDto>(`/shipments/${id}`)
@@ -85,6 +104,21 @@ export function ShipmentDetail({ id }: { id: string }) {
     }
   }
 
+  function openPanel(next: Panel) {
+    setNextStatus('');
+    setPickedLocation(null);
+    setRevertReason('WRONG_SHIPMENT');
+    setPanel(next);
+  }
+
+  /** The reason, trimmed, or null (with a notice) when it is too short to explain anything. */
+  function reasonText(form: FormData): string | null {
+    const reason = field(form, 'reason').trim();
+    if (reason.length >= SHIPMENT_REASON_MIN_LENGTH) return reason;
+    setNotice({ ok: false, text: t('reasonTooShort', { min: SHIPMENT_REASON_MIN_LENGTH }) });
+    return null;
+  }
+
   function onStatus(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -100,15 +134,27 @@ export function ShipmentDetail({ id }: { id: string }) {
     );
   }
 
-  function onReason(event: FormEvent<HTMLFormElement>, action: 'hold' | 'revert' | 'cancel') {
+  function onReason(event: FormEvent<HTMLFormElement>, action: 'hold' | 'cancel') {
+    event.preventDefault();
+    const reason = reasonText(new FormData(event.currentTarget));
+    if (reason === null) return;
+    const messages = { hold: t('heldNotice'), cancel: t('cancelledNotice') };
+    void send(`/${action}`, { reason }, messages[action]);
+  }
+
+  function onRevert(event: FormEvent<HTMLFormElement>, undoEventId: string) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const messages = {
-      hold: t('heldNotice'),
-      revert: t('revertedNotice'),
-      cancel: t('cancelledNotice'),
-    };
-    void send(`/${action}`, { reason: field(form, 'reason') }, messages[action]);
+    const details = field(form, 'reason').trim();
+    let reason: string | null;
+    if (revertReason === 'OTHER') {
+      reason = reasonText(form);
+    } else {
+      const preset = t(`revertReason_${revertReason}`);
+      reason = details ? `${preset}: ${details}` : preset;
+    }
+    if (reason === null) return;
+    void send('/revert', { reason, undoEventId }, t('revertedNotice'));
   }
 
   function onEdit(event: FormEvent<HTMLFormElement>) {
@@ -146,15 +192,15 @@ export function ShipmentDetail({ id }: { id: string }) {
   const activeLocations = master?.locations.filter((l) => l.isActive) ?? [];
   const list = new Intl.ListFormat(locale);
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  const chosenStatus = nextStatus || actions.transitions[0] || '';
+  const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
+  const chosenLocation = pickedLocation ?? suggested ?? '';
 
-  const reasonForm = (action: 'hold' | 'revert' | 'cancel', label: string, submit: string) => (
+  const reasonForm = (action: 'hold' | 'cancel', label: string, submit: string) => (
     <form className="card stack" onSubmit={(e) => onReason(e, action)}>
-      {action === 'revert' && actions.revertTo && (
-        <p>{t('revertTo', { status: te(`shipment_${actions.revertTo}`) })}</p>
-      )}
       <label className="field">
         <span>{label}</span>
-        <textarea name="reason" required maxLength={1000} />
+        <textarea name="reason" required minLength={SHIPMENT_REASON_MIN_LENGTH} maxLength={1000} />
       </label>
       <div className="actions">
         <button type="submit" className="primary" disabled={busy}>
@@ -191,29 +237,29 @@ export function ShipmentDetail({ id }: { id: string }) {
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
             {(actions.canHold || actions.revertTo || actions.canCancel) && <hr />}
             {actions.canHold && (
-              <button type="button" onClick={() => setPanel('hold')}>
+              <button type="button" onClick={() => openPanel('hold')}>
                 {t('hold')}
               </button>
             )}
             {actions.revertTo && (
-              <button type="button" onClick={() => setPanel('revert')}>
+              <button type="button" onClick={() => openPanel('revert')}>
                 {t('revert')}
               </button>
             )}
             {actions.canCancel && (
-              <button type="button" className="danger" onClick={() => setPanel('cancel')}>
+              <button type="button" className="danger" onClick={() => openPanel('cancel')}>
                 {t('cancel')}
               </button>
             )}
           </MoreMenu>
           {actions.canEdit && (
-            <button type="button" onClick={() => setPanel('edit')}>
+            <button type="button" onClick={() => openPanel('edit')}>
               {t('editDetails')}
             </button>
           )}
           <PrintLink href={`/shipments/${s.id}`} label={tp('printShipmentSheet')} />
           {actions.transitions.length > 0 && (
-            <button type="button" className="primary" onClick={() => setPanel('status')}>
+            <button type="button" className="primary" onClick={() => openPanel('status')}>
               {t('changeStatus')}
             </button>
           )}
@@ -236,7 +282,12 @@ export function ShipmentDetail({ id }: { id: string }) {
           <div className="grid">
             <label className="field">
               <span>{t('newStatus')}</span>
-              <select name="status" required>
+              <select
+                name="status"
+                required
+                value={chosenStatus}
+                onChange={(e) => setNextStatus(e.target.value as ShipmentStatus)}
+              >
                 {actions.transitions.map((next) => (
                   <option key={next} value={next}>
                     {te(`shipment_${next}`)}
@@ -246,11 +297,19 @@ export function ShipmentDetail({ id }: { id: string }) {
             </label>
             <label className="field">
               <span>{t('occurredAt')}</span>
-              <input name="occurredAt" type="datetime-local" />
+              <input
+                name="occurredAt"
+                type="datetime-local"
+                min={toLocalInput(actions.earliestStatusTime)}
+              />
             </label>
             <label className="field">
               <span>{t('location')}</span>
-              <select name="locationId" defaultValue="">
+              <select
+                name="locationId"
+                value={chosenLocation}
+                onChange={(e) => setPickedLocation(e.target.value)}
+              >
                 <option value="">—</option>
                 {activeLocations.map((l) => (
                   <option key={l.id} value={l.id}>
@@ -264,7 +323,19 @@ export function ShipmentDetail({ id }: { id: string }) {
             <span>{t('note')}</span>
             <textarea name="note" maxLength={1000} />
           </label>
-          <p className="muted">{t('occurredAtHint')}</p>
+          {suggested && chosenLocation !== suggested && (
+            <p className="warning">
+              {t('locationNotUsual', {
+                status: te(`shipment_${chosenStatus}`),
+                usual: locationName(suggested),
+              })}
+            </p>
+          )}
+          <p className="muted">
+            {t('occurredAtHint', {
+              earliest: dateTime.format(new Date(actions.earliestStatusTime)),
+            })}
+          </p>
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {tc('save')}
@@ -276,7 +347,64 @@ export function ShipmentDetail({ id }: { id: string }) {
         </form>
       )}
       {panel === 'hold' && reasonForm('hold', t('holdReason'), t('hold'))}
-      {panel === 'revert' && reasonForm('revert', t('revertReason'), t('revert'))}
+      {panel === 'revert' && actions.revertTo && actions.revertUndoes && (
+        <form
+          className="card stack"
+          onSubmit={(e) => onRevert(e, actions.revertUndoes?.eventId ?? '')}
+        >
+          <p>
+            {t('revertUndoes', {
+              status: te(`shipment_${actions.revertUndoes.status}`),
+              user: actions.revertUndoes.userName ?? '—',
+              time: dateTime.format(new Date(actions.revertUndoes.occurredAt)),
+              to: te(`shipment_${actions.revertTo}`),
+            })}
+          </p>
+          {!actions.revertUndoes.byMe && (
+            <>
+              <p className="warning">
+                {t('revertOthersStep', { user: actions.revertUndoes.userName ?? '—' })}
+              </p>
+              <div className="checks">
+                <label>
+                  <input type="checkbox" name="confirmOthers" required />
+                  {t('revertConfirmOthers')}
+                </label>
+              </div>
+            </>
+          )}
+          <label className="field">
+            <span>{t('revertReason')}</span>
+            <select
+              value={revertReason}
+              onChange={(e) => setRevertReason(e.target.value as RevertReason)}
+            >
+              {REVERT_REASONS.map((r) => (
+                <option key={r} value={r}>
+                  {t(`revertReason_${r}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>{revertReason === 'OTHER' ? t('revertReasonOther') : t('revertDetails')}</span>
+            <textarea
+              name="reason"
+              required={revertReason === 'OTHER'}
+              minLength={revertReason === 'OTHER' ? SHIPMENT_REASON_MIN_LENGTH : undefined}
+              maxLength={900}
+            />
+          </label>
+          <div className="actions">
+            <button type="submit" className="primary" disabled={busy}>
+              {t('revert')}
+            </button>
+            <button type="button" onClick={() => setPanel(null)}>
+              {tc('back')}
+            </button>
+          </div>
+        </form>
+      )}
       {panel === 'cancel' && reasonForm('cancel', t('cancelReason'), t('cancel'))}
       {panel === 'edit' && (
         <form className="card stack" onSubmit={onEdit}>
@@ -459,6 +587,12 @@ export function ShipmentDetail({ id }: { id: string }) {
                           {' · '}
                           {e.userName ?? te(`source_${e.source}`)}
                         </div>
+                        {Math.abs(Date.parse(e.createdAt) - Date.parse(e.occurredAt)) >
+                          LATE_ENTRY_MS && (
+                          <div className="muted">
+                            {t('recordedAt', { time: dateTime.format(new Date(e.createdAt)) })}
+                          </div>
+                        )}
                         {e.reason && (
                           <div>
                             <strong>{t('reason')}: </strong>
