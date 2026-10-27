@@ -56,10 +56,11 @@ Change:
   work on data that is simply not entered yet; the check uses the known values.
 - If an admin lowers a type's capacity below a container's current load, nothing is undone: the
   panel shows red and further additions are blocked.
-- Closed containers show the panel read-only from the frozen basis.
+- Closed containers show the panel read-only from **current** cargo and **current** limits, labelled
+  as such (section 7, F111-3); the frozen `basisValue` is not used for it.
 
-Tests: unit for the capacity maths (Decimal, rounding at display only, missing lines, exactly at
-capacity is allowed, one unit over is refused); integration: other branch gets 404 (existing rule),
+Tests (see also section 7): unit for the capacity maths (Decimal, rounding at display only, missing lines, exactly at
+capacity is allowed, one unit over is refused); integration: visibility per viewer (section 7, F111-1),
 capacity null for `OTHER`, over-capacity add refused on CBM and on weight, concurrent adds (only one
 of two that each fit alone but not together succeeds), move into a full container refused, incomplete
 list.
@@ -84,7 +85,8 @@ concurrent creators, rollback returns the number): `doc_type = 'LCL_BOOKING'` or
 Letters: location codes are UN/LOCODEs (AEJEA Jebel Ali, AEDXB Dubai, SAJED, SDPZU Port Sudan,
 SDATB, SDKRT), and PZU is not the client's PTS. So `locations` gets a nullable
 `short_code VARCHAR(4)` (2-4 upper-case letters, check constraint), editable in master data. Letters
-used: the location's `short_code`, else its city's, else the last three letters of its LOCODE.
+used: the location's `short_code`, else its city's, else the last three letters of its LOCODE
+only when those are letters; anything else fails closed (section 7, F111-4).
 Seed (owner س6): AEJEA, AEDXB -> DXB; SAJED -> JED; SDPZU -> PTS; SDATB -> ATB; SDKRT -> KRT.
 
 A draft booking's route or load type can still change. While the booking is a DRAFT (no shipment
