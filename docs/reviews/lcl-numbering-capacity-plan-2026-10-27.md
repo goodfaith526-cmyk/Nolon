@@ -163,3 +163,89 @@ Production has no data yet.
 2. NOLON PR-A: migration (columns, seeds, renumbering) + route-coded numbers + shipment takes the
    booking number. One PR, because the renumbering and the new numbering rules must land together.
 3. NOLON PR-B: capacity panel, list column, picker, and the over-capacity block.
+
+## 7. Codex review at b60a54d: answers (F111-1 to F111-4 and conditions 1-7)
+
+This section wins where it differs from the sections above.
+
+**F111-1, who sees what in the capacity block.** `findViewable` lets three kinds of user see a
+container: its own branch (`own`), another branch that may book into an OPEN container, and another
+branch with a shipment in it. `toDto` already shows the last two only their own shipments. The
+capacity block follows the same split:
+
+- Own branch: the whole block, including the numbers of incomplete shipments.
+- Any other viewer: only container-level aggregates (capacity, used, left, fill %, and per dimension
+  whether the total is complete), plus incomplete flags on **their own** shipments only. No other
+  branch's shipment number, customer or per-shipment measure appears. The aggregate is computed over
+  **all** shipments in the container, never the visible subset, because space left is what a booking
+  branch needs to decide to book into a shared container; it reveals a combined volume and weight,
+  not whose cargo it is. If the owner wants other branches to see only "has room / full", that is a
+  one-line switch in the same service.
+- Tests: a mixed-branch container seen by its branch, by a booker of another branch without
+  shipments in it, by another branch with one linked shipment (sees only its own incomplete flag),
+  and an outsider (404, as today).
+
+**F111-2, deployed agent first, and rollback.** Merging the erp-agents compat PR is not enough:
+
+1. erp-agents compat PR merged **and deployed** to the agent preview; the owner confirms the running
+   sha (the version the agent's health page shows) is at or after the compat commit.
+2. Smoke test on that deployment against NOLON staging, with old, new and mixed references: customer
+   shipment list and detail, an invoice whose `shipmentNumber` is new, and a staff message naming a
+   new number.
+3. Only then NOLON PR-A merges (its staging deploy runs the renumbering).
+
+PR-A's description carries this gate as a checklist, and it is not merged until the owner ticks it.
+No runtime flag: the renumbering migration rewrites existing rows, so a flag could not hold old
+numbers back anyway. Rollback: the renumbering is forward-only. After it, NOLON code may roll back
+(old code only stores and shows `number` as text), but the agent must never go back below the
+compat commit. The compat change keeps accepting the old `NOL-SHP-...` form for good. Tenant,
+customer and branch checks are not touched.
+
+**F111-3, closed containers.** No snapshot. A closed container's panel uses its current cargo lines
+and the container type's current limits and says so ("as of now, not at closing"). `basisValue` and
+cost shares stay exactly as they are. Tests: CBM-basis and weight-basis closed containers, an old
+closed container without measures, and a capacity edit after closing (the panel changes, cost shares
+do not).
+
+**F111-4, letters fail closed.** Letters resolve as: the location's `short_code`, else its city's
+`short_code`, else the last three characters of its code **only if** they are three letters. The
+result must match `^[A-Z]{2,4}$`; otherwise creating an LCL booking or a container on that route is
+refused with 422 `ROUTE_CODE_MISSING` naming the location, so the admin sets its short code first.
+No alias is invented. Tests: internal code (`AE12A`), numeric tail, one-character code, city
+fallback, explicit short code.
+
+The renumbering migration applies the same rule in SQL. A record whose route does not resolve keeps
+its old number (logged with `RAISE NOTICE`, listed in the deploy log), so a stray location cannot
+fail the deploy. The six seeded locations all resolve.
+
+**Conditions:**
+
+1. Completeness is per dimension and per cargo line: a shipment with any line missing CBM is
+   incomplete for CBM. The panel shows known totals separately; a dimension with unknown cargo is
+   never green: it shows "at least X used, incomplete" in grey. The block uses known values: if the
+   known load alone goes over, it is refused. Limits must be positive; null means "no limit set".
+2. The add/move check and the picker estimate use the same service function, run against the
+   container's membership read after the row lock, for create-with-shipments, add, move between
+   containers and booking into a container. The estimate names the uncertain dimension. Display
+   rounding only; allocation and frozen shares untouched.
+3. Capacity: positive Decimal(18,4) (> 0, at most 4 decimal places); short code: 2-4 letters.
+   Admin-only (existing master-data permission), audited like other master-data edits, with
+   permission tests. Records on a deactivated type or location stay readable.
+4. A CANCELLED booking cannot be confirmed (existing rule); the test asserts the refusal, no second
+   shipment and no new number.
+5. Counters: two namespaces, `LCL_BOOKING` and `LCL_CONTAINER`, each keyed by the **rendered** route
+   letters (so Jebel Ali and Dubai, both `DXB`, share one counter). The container's `C` keeps the two
+   kinds' texts apart. Within each namespace numbers are serialised and gapless except that a draft
+   booking re-issued after a route or LCL/FCL change leaves its old number unused.
+6. Formats are final (owner: both kinds, continuous): bookings and shipments `BK\d{5,}` or
+   `[A-Z]{2,4}-[A-Z]{2,4}-\d{4,}`; containers `[A-Z]{2,4}-[A-Z]{2,4}-C\d{4,}` (containers are not
+   shipment references, so the agent's shipment patterns do not include them). Longest realistic
+   number is well under 30 characters; public lookup minimum 5 holds.
+7. Owner choices are made (decisions at the top). The seeded capacities are defaults, not verified
+   limits: the master-data screen labels them "default, set your real limits".
+
+**Agent compat PR tests:** old, new and mixed lists; invoice responses with a new `shipmentNumber`;
+Arabic-digit input; customer text boundaries; staff selections (`shipmentSelections`,
+`namedShipment`) with new numbers; ambiguous numeric suffixes (`0001` on two routes asks, never
+picks); `9999` to `10000`; no selection outside the authenticated customer, branch and tenant. No
+catch-all reference pattern.
