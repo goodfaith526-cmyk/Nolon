@@ -251,3 +251,84 @@ Arabic-digit input; customer text boundaries; staff selections (`shipmentSelecti
 `namedShipment`) with new numbers; ambiguous numeric suffixes (`0001` on two routes asks, never
 picks); `9999` to `10000`; no selection outside the authenticated customer, branch and tenant. No
 catch-all reference pattern.
+
+## 8. Codex review at 30e9a3a: answers (F111-5 to F111-7 and the seven numbering conditions)
+
+F111-1 to F111-4 were re-raised on 30e9a3a; section 7 (f30c7df) answers them. This section wins
+where it differs from anything above.
+
+**F111-5, backup and restore before the label (fail closed).** `deploy/staging/deploy.sh` only warns
+when `BACKUP_S3_BUCKET` is not set. For this migration that is not enough:
+
+1. Before the `migration-ok-<digest>` label, the owner, on the staging server: takes a backup
+   (`./backup.sh pre-migrate`), restores it into a scratch database, and we check row counts of the
+   renumbered tables match. Steps given one command at a time.
+2. PR-A makes `deploy.sh` refuse to run migrations when backups are not set up (instead of the
+   warning). This is an intentional behaviour change of the deploy script, called out in PR-A.
+3. Codex reviews the exact SQL and its digest; the label names that digest.
+
+Acceptance: deploy without backup settings stops before `migrate`; after deploy, a reconcile query
+(row counts per table, every mapping row's new number present, counters = max + 1) is run.
+
+**F111-6, unknown measurements under a hard limit.** While a container is OPEN, a shipment with any
+cargo line missing CBM or weight is **pending** on that dimension: allowed, flagged, and the
+dimension is shown as "not checked", never as within capacity. Adding is refused when the known load
+alone goes over. The hard boundary is **close and load**: for every dimension the container type has
+a limit on (CBM, weight, or both, independent of the cost basis), every cargo line of every
+shipment must have that measure, and the complete totals are rechecked against the limits under the
+container lock. Missing measures refuse with `CONTAINER_MEASURES_MISSING` (naming the shipments, to
+the own branch); over the limit refuses with `CONTAINER_FULL`. A dimension the type has no limit for
+is shown as "no limit set", distinct from missing measures. Tests: partial-null lines, a CBM-basis
+container missing weights with a weight limit, a WEIGHT-basis container missing CBM with a CBM limit,
+and the basis itself still required as today.
+
+**F111-7, posted journals do carry container numbers.** Correct:
+`AutoJournalService.containerCostAllocated` writes the container number into the entry description
+and line descriptions. They stay byte-for-byte as posted: no update, no trigger change. The
+old-to-new mapping (below) explains them. Test: a container with a posted cost allocation is
+renumbered; journal ids, descriptions and amounts are unchanged.
+
+**Old-to-new mapping.** A new table `reference_renumberings` (kind, record id, old number, new
+number, reason `migration` or `draft_route_change`, at, by), insert-only. Staff search for
+bookings, shipments and containers also matches an old number through it (staff only; public
+tracking and the agent are not given old-number aliases). This replaces any claim that old text
+references keep working: QR codes and tracking links keep working (token untouched); an old number
+typed into public lookup, or written in an old conversation or paper, no longer resolves there.
+
+**Numbering conditions:**
+
+1. Counter namespaces are per record kind and per **rendered** letter pair (`DXB-KRT`), not per
+   location pair, so Jebel Ali and Dubai share the `DXB` counter. The migration numbers with
+   `row_number() over (partition by kind, rendered pair order by created_at, id)` and sets each
+   namespace's `next_value` to its max + 1. Tests: aliases, reverse routes, over 9999, both kinds,
+   rollback, and a rerun on an already-renumbered database is a no-op (it only touches rows whose
+   number is still in an old format).
+2. The migration first computes every new number into a temporary table, checks uniqueness (against
+   each other and against all existing numbers of that table), format and length, and aborts the
+   whole transaction (`RAISE EXCEPTION`) on any violation, before any update. Ids, foreign keys and
+   tracking tokens are not touched. Every change is written to `reference_renumberings`.
+3. Write pause: PR-A's `deploy.sh` stops `api` and `web` before migrations and starts the new ones
+   after (staging has a short downtime). With NOLON's API stopped, the agent cannot write either (it
+   only writes through NOLON). After release, the reconcile query from F111-5 runs.
+4. A draft booking's route or LCL/FCL change re-issues its number under the booking row lock
+   (`SELECT ... FOR UPDATE`, the same lock confirm takes), writes a mapping row and an audit event;
+   confirmed bookings and shipments never change. Test: concurrent edit and confirm (one wins, the
+   other sees the result). Wording: numbers are allocated transactionally and never reused; the list
+   of live booking numbers may have gaps.
+5. Capacity is enforced, in the service under the container lock (container rows first, then
+   shipments, the existing lock order), on: create with shipments, add, move between containers,
+   booking into a container, any later cargo correction on a shipment in an open container, changing
+   an open container's type, and close/load (F111-6). An admin lowering a type's limit is allowed and
+   undoes nothing; afterwards only writes that would increase the load of an over-limit container are
+   refused. The picker only shows the estimate; the service is the guard.
+6. Covered above (mapping): no broader backward compatibility is claimed.
+7. The agent's shipment parsers accept `BK\d{5,}` and `[A-Z]{2,4}-[A-Z]{2,4}-\d{4,}` (plus old
+   `NOL-SHP-...`) and explicitly reject the container form `...-C\d{4,}`, with a test, so a shipment
+   tool never selects a container. Customer, branch and tenant scope and the ambiguity checks stay.
+
+**F111-2, cutover order with renumbering of every shipment:** (1) agent compat merged and deployed,
+owner confirms the running sha; (2) smoke test old/new/mixed on staging against a copy where a few
+numbers were changed by hand (customer shipment list, detail, invoice `shipmentNumber`, customer and
+staff text); (3) owner backup + restore (F111-5); (4) PR-A merges, deploy stops api/web, migrates,
+starts new api/web; (5) reconcile. Rollback: restore the backup from step 3 (agent can stay on the
+compat version, which reads both forms). The agent is never rolled back below the compat commit.
