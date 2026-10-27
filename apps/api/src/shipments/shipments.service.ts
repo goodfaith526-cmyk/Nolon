@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
@@ -28,6 +29,7 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
@@ -42,7 +44,7 @@ import {
 import { toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -126,6 +128,7 @@ export class ShipmentsService {
     private readonly customers: CustomersService,
     private readonly masterData: MasterDataService,
     private readonly bookingLifecycle: BookingLifecycleService,
+    private readonly invoices: ShipmentInvoicesRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -1049,8 +1052,27 @@ export class ShipmentsService {
         statusBeforeHold: null,
         holdReason: null,
       },
-      after: (tx) => this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason),
+      after: async (tx) => {
+        await this.requireNoLiveInvoices(tx, shipment);
+        await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
+      },
     };
+  }
+
+  /**
+   * Annex B: a shipment that an invoice still bills is not cancelled (owner decision Q2). The
+   * caller holds the shipment's row lock exclusively; invoices lock it (share) before they are
+   * created or approved, so none appears or gets approved between this check and the commit.
+   */
+  private async requireNoLiveInvoices(tx: Tx, shipment: LockedShipment): Promise<void> {
+    const { approved, drafts } = await this.invoices.get().liveInvoicesInTx(tx, shipment.id);
+    if (approved.length === 0 && drafts === 0) return;
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'SHIPMENT_HAS_LIVE_INVOICES',
+      `Shipment ${shipment.number} still has invoices: cancel its draft invoices (${drafts}) and fully credit its approved ones (${approved.join(', ') || 'none'}); a paid invoice blocks the cancellation`,
+      { shipment: shipment.number, approved: approved.join(', ') || '—', drafts: String(drafts) },
+    );
   }
 
   private async applyEvent(user: AuthUser, id: string, plan: Planner): Promise<void> {
