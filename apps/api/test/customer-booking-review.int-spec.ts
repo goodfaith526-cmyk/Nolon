@@ -369,6 +369,150 @@ describe('Customer Service booking request review (R3c1)', () => {
       .expect(409);
   });
 
+  it('shows a request awaiting routing where the person may only route it (F131-1)', async () => {
+    const OWNER = '00000000-0000-0000-0000-000000000000';
+    const grant = async (
+      userId: string,
+      branch: string,
+      permission: string,
+      effect: 'ALLOW' | 'DENY',
+    ) =>
+      t.prisma.userBranchPermission.create({
+        data: {
+          userId,
+          branchId: branch,
+          permission,
+          effect,
+          sourceKey: OWNER,
+          createdById: userId,
+        },
+      });
+    // Operations in both branches: VIEW in JED only, and in PTS routing without viewing.
+    const router = await createUser(t.prisma, ['OPERATIONS'], ['PTS', 'JED'], LEDGER_PREFIX);
+    await grant(router.id, pts, 'cs_booking_requests:update', 'ALLOW');
+    await grant(router.id, pts, 'cs_booking_requests:view', 'DENY');
+    // Finance holds nothing of it but routing in PTS.
+    const onlyRoute = await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX);
+    await grant(onlyRoute.id, pts, 'cs_booking_requests:update', 'ALLOW');
+    await t.prisma.accessState.update({ where: { id: 1 }, data: { version: { increment: 1 } } });
+    const routerCookie = await signIn(t, router.email);
+    const onlyRouteCookie = await signIn(t, onlyRoute.email);
+
+    const awaiting = await request(ids.two!);
+    const pending = await request(ids.served!);
+    const listed = async (cookie: string) =>
+      (
+        (await staff(cookie).get('/cs-booking-requests').expect(200))
+          .body as CsBookingRequestSummaryDto[]
+      ).map((r) => r.id);
+    for (const cookie of [routerCookie, onlyRouteCookie]) {
+      const seen = await listed(cookie);
+      expect(seen).toContain(awaiting.id);
+      // A pending request of PTS stays closed to them: no VIEW there.
+      expect(seen).not.toContain(pending.id);
+      await staff(cookie).get(`/cs-booking-requests/${pending.id}`).expect(404);
+    }
+    const shown = await detail(routerCookie, awaiting.id);
+    expect(shown.actions).toMatchObject({ canRoute: true, canReject: false });
+
+    const routed = (
+      await staff(routerCookie)
+        .post(`/cs-booking-requests/${awaiting.id}/route`, {
+          version: shown.version,
+          branchId: pts,
+        })
+        .expect(201)
+    ).body as CsBookingRequestStaffDto;
+    expect(routed).toMatchObject({ id: awaiting.id, status: 'pending', branchId: pts });
+    // Routed to PTS, where they do not view: it is no longer theirs to open.
+    await staff(routerCookie).get(`/cs-booking-requests/${awaiting.id}`).expect(404);
+    expect(await listed(routerCookie)).not.toContain(awaiting.id);
+    // Nobody without any part of the review reaches it.
+    await staff(cookies.finance).get('/cs-booking-requests').expect(403);
+    await staff(cookies.finance).get('/cs-booking-requests/reject-reasons').expect(403);
+  });
+
+  it('keeps a request readable when its quote’s currency is deactivated (F131-2)', async () => {
+    const code = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    await t.prisma.currency.upsert({
+      where: { code },
+      create: { code, nameEn: `Test ${code}`, nameAr: `تجربة ${code}`, decimalPlaces: 2 },
+      update: { isActive: true },
+    });
+    const approver = (await t.prisma.rateCard.findUniqueOrThrow({ where: { id: cardId } }))
+      .createdById;
+    const extra: string[] = [];
+    for (const origin of [ids.served!, ids.two!]) {
+      const card = await t.prisma.rateCard.create({
+        data: {
+          branchId: pts,
+          originLocationId: origin,
+          destinationLocationId: ids.dest!,
+          mode: 'ROAD',
+          cargoType: 'GENERAL',
+          chargeTypeCode: 'FREIGHT',
+          unit: 'PER_SHIPMENT',
+          price: '10',
+          currency: code,
+          validFrom: new Date(Date.now() - 86_400_000),
+          status: 'APPROVED',
+          createdById: approver,
+          approvedById: approver,
+          approvedAt: new Date(),
+        },
+      });
+      extra.push(card.id);
+    }
+    const quoted = async (origin: string) => {
+      const quote = (
+        await t
+          .http()
+          .get('/api/v1/cs/quote')
+          .query({
+            originId: origin,
+            destinationId: ids.dest,
+            category,
+            quantity: '2',
+            currency: code,
+          })
+          .set('Authorization', `Bearer ${bot.key}`)
+          .expect(200)
+      ).body as CsQuoteDto;
+      return request(origin, { quoteRef: quote.quoteRef });
+    };
+    const pending = await quoted(ids.served!);
+    const awaiting = await quoted(ids.two!);
+    await t.prisma.currency.update({ where: { code }, data: { isActive: false } });
+
+    const shown = await detail(cookies.salesPts, pending.id);
+    expect(shown.priceCheck).toMatchObject({ state: 'stale', currency: code, totalNow: null });
+    const rejected = (
+      await staff(cookies.salesPts)
+        .post(`/cs-booking-requests/${pending.id}/reject`, {
+          version: shown.version,
+          reasonCode: 'ROUTE_UNAVAILABLE',
+        })
+        .expect(201)
+    ).body as CsBookingRequestStaffDto;
+    expect(rejected).toMatchObject({ status: 'rejected', priceCheck: { state: 'stale' } });
+
+    const waiting = await detail(cookies.salesPts, awaiting.id);
+    const routed = (
+      await staff(cookies.salesPts)
+        .post(`/cs-booking-requests/${awaiting.id}/route`, {
+          version: waiting.version,
+          branchId: pts,
+        })
+        .expect(201)
+    ).body as CsBookingRequestStaffDto;
+    expect(routed).toMatchObject({ status: 'pending', priceCheck: { state: 'stale' } });
+    // The other tests quote without a currency.
+    await t.prisma.rateCard.updateMany({
+      where: { id: { in: extra } },
+      data: { status: 'CANCELLED' },
+    });
+  });
+
   it('checks the quote of a request again when staff open it', async () => {
     const quote = (
       await t

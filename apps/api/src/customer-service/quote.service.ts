@@ -235,8 +235,9 @@ export class QuoteService {
   /**
    * The advisory check of a kept quote for staff (plan 04a section 1): the engine run again today
    * on the quote's own inputs, for the request's branch and quantity. Current when it picks the
-   * same card, still approved and valid, and gives the same total; anything else is stale, with
-   * today's total when one card still prices it. Never a price of record.
+   * same card, still approved and valid, in a currency still active, and gives the same total;
+   * anything else is stale, with today's total when one card still prices it. Never a price of
+   * record, and never a failure: the request it belongs to stays readable.
    */
   async recheck(
     quote: CsQuote,
@@ -255,10 +256,12 @@ export class QuoteService {
       priceCategoryCode: quote.priceCategoryCode,
       chargeTypeCode: FREIGHT,
     });
-    const inUnit = offers.filter((o) => o.rate.unit === quote.unit);
+    // The quote's currency as recorded, active or not (Codex F131-1/2): a saved request stays
+    // readable; a currency no longer offered only makes the quote stale.
+    const currency = await this.currencies.requireRecorded(quote.currency);
+    const inUnit = currency.isActive ? offers.filter((o) => o.rate.unit === quote.unit) : [];
     const card = inUnit.length === 1 ? inUnit[0]?.rate : undefined;
-    const places = (await this.currencies.requireActive(quote.currency))
-      .decimalPlaces;
+    const places = currency.decimalPlaces;
     const totalNow = card
       ? computeQuotationAmounts(
           [

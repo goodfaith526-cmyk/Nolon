@@ -14,6 +14,7 @@ import type {
   CsReviewFilter,
   CsRouteRequest,
   CsSenderChannel,
+  Permission,
 } from '@nolon/shared';
 import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -29,9 +30,9 @@ type Tx = Prisma.TransactionClient;
 /** The most requests a staff list shows at once (newest first). */
 const LIST_LIMIT = 200;
 
-const VIEW = 'cs_booking_requests:view';
-const ROUTE = 'cs_booking_requests:update';
-const DECIDE = 'cs_booking_requests:approve';
+const VIEW: Permission = 'cs_booking_requests:view';
+const ROUTE: Permission = 'cs_booking_requests:update';
+const DECIDE: Permission = 'cs_booking_requests:approve';
 
 type Row = CsBookingRequest & { customer: { number: string } | null };
 
@@ -43,20 +44,22 @@ function undecided(r: Pick<CsBookingRequest, 'status' | 'expiresAt'>, now = new 
 }
 
 /**
- * Whether `user` may see a request: one with a branch, when it is one of theirs (for viewing); one
- * awaiting routing, only to a person who may route it in one of the branches it may go to (plan
- * 04a section 3).
+ * Whether `user` may see a request (plan 04a section 3; Codex F131-1): one with a branch, when they
+ * hold VIEW there; one awaiting routing, when they may route or decide it in one of the branches
+ * it may go to. Per row and per branch from the person's access, never from a route's narrowed
+ * branch list, so a branch where they may only route it still counts.
  */
 export function visibleTo(
   user: AuthUser,
   r: Pick<CsBookingRequest, 'branchId' | 'allowedBranchIds'>,
 ): boolean {
-  if (r.branchId !== null) {
-    return user.allowedBranchIds.includes(r.branchId) && user.access.has(VIEW, r.branchId);
-  }
-  return r.allowedBranchIds.some(
-    (b) => user.allowedBranchIds.includes(b) && user.access.has(ROUTE, b),
-  );
+  if (r.branchId !== null) return user.access.has(VIEW, r.branchId);
+  return r.allowedBranchIds.some((b) => user.access.has(ROUTE, b) || user.access.has(DECIDE, b));
+}
+
+/** Whether `user` may use the review screen at all: VIEW, ROUTE or DECIDE in some branch. */
+export function mayReview(user: AuthUser): boolean {
+  return [VIEW, ROUTE, DECIDE].some((p) => user.access.any(p));
 }
 
 /**
@@ -68,7 +71,7 @@ function decideBranches(
   r: Pick<CsBookingRequest, 'branchId' | 'allowedBranchIds'>,
 ): string[] {
   const candidates = r.branchId !== null ? [r.branchId] : r.allowedBranchIds;
-  return candidates.filter((b) => user.allowedBranchIds.includes(b) && user.access.has(DECIDE, b));
+  return candidates.filter((b) => user.access.has(DECIDE, b));
 }
 
 /**
@@ -89,8 +92,10 @@ export class BookingReviewService {
 
   async list(user: AuthUser, filter: CsReviewFilter): Promise<CsBookingRequestSummaryDto[]> {
     const now = new Date();
-    const mine = [...user.allowedBranchIds];
-    const routable = mine.filter((b) => user.access.has(ROUTE, b));
+    const viewable = user.access.branchesWith([VIEW]);
+    const routable = user.access
+      .branchIds()
+      .filter((b) => user.access.has(ROUTE, b) || user.access.has(DECIDE, b));
     const status: Prisma.CsBookingRequestWhereInput =
       filter === 'open'
         ? { status: { in: ['PENDING', 'AWAITING_ROUTING'] }, expiresAt: { gt: now } }
@@ -108,7 +113,7 @@ export class BookingReviewService {
           status,
           {
             OR: [
-              { branchId: { in: mine } },
+              { branchId: { in: viewable } },
               { branchId: null, allowedBranchIds: { hasSome: routable } },
             ],
           },
@@ -122,11 +127,26 @@ export class BookingReviewService {
   }
 
   async detail(user: AuthUser, id: string): Promise<CsBookingRequestStaffDto> {
+    return this.read(user, id, true);
+  }
+
+  /**
+   * A request with its advisory price check. `checkVisible` false only for the answer to a write
+   * `user` just made on it (Codex F131-1): routing it to a branch where they may route but not
+   * view still answers with the request they routed, and opens no other.
+   */
+  private async read(
+    user: AuthUser,
+    id: string,
+    checkVisible: boolean,
+  ): Promise<CsBookingRequestStaffDto> {
     const row = await this.prisma.csBookingRequest.findUnique({
       where: { id },
       include: { customer: { select: { number: true } }, quote: true },
     });
-    if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+    if (!row || (checkVisible && !visibleTo(user, row))) {
+      throw new NotFoundException('Booking request not found');
+    }
     const priceCheck = row.quote
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
@@ -146,7 +166,6 @@ export class BookingReviewService {
       }
       if (
         !row.allowedBranchIds.includes(input.branchId) ||
-        !user.allowedBranchIds.includes(input.branchId) ||
         !user.access.has(ROUTE, input.branchId)
       ) {
         throw new ForbiddenException('You may not route this request to that branch');
@@ -163,7 +182,7 @@ export class BookingReviewService {
         },
       });
     });
-    return this.detail(user, id);
+    return this.read(user, id, false);
   }
 
   /**
@@ -200,7 +219,7 @@ export class BookingReviewService {
         },
       });
     });
-    return this.detail(user, id);
+    return this.read(user, id, false);
   }
 
   async reasons(): Promise<CsRejectReasonDto[]> {
@@ -344,9 +363,7 @@ function staffDto(
       canRoute:
         open &&
         r.status === 'AWAITING_ROUTING' &&
-        r.allowedBranchIds.some(
-          (b) => user.allowedBranchIds.includes(b) && user.access.has(ROUTE, b),
-        ),
+        r.allowedBranchIds.some((b) => user.access.has(ROUTE, b)),
       canReject: open && decideBranches(user, r).length > 0,
     },
   };

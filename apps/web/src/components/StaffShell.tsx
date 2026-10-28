@@ -98,7 +98,11 @@ const NAV_SECTIONS: readonly {
         href: '/cs-booking-requests',
         label: 'botRequests',
         icon: 'assistant',
-        permission: 'cs_booking_requests:view',
+        permission: [
+          'cs_booking_requests:view',
+          'cs_booking_requests:update',
+          'cs_booking_requests:approve',
+        ],
       },
       { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
       { href: '/partners', label: 'partners', icon: 'carrier', permission: 'partners:view' },
