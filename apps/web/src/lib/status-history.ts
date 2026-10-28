@@ -12,15 +12,23 @@ export function earliestLocalMinute(iso: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+const FRESH_SHIPMENT_REFUSALS: readonly string[] = [
+  'REVERT_STALE',
+  'REVERT_CLOSED_CONTAINER',
+  'SHIPMENT_CLOSE_GOODS_ON_HAND',
+  'SHIPMENT_CLOSE_NOT_INVOICED',
+];
+
 /**
  * A revert refused because the shipment changed since the page showed it (another step, another
- * revert, a container closed): the page reloads the shipment so the user reviews the step a
- * revert would now undo and confirms again. Nothing is resent.
+ * revert, a container closed), or a close refused for its goods or its invoice (B1-5): the page
+ * reloads the shipment so the user reviews it as it is now and acts again. Nothing is resent.
  */
 export function needsFreshShipment(e: unknown): boolean {
   return (
     e instanceof ApiError &&
     e.status === 409 &&
-    (e.code === 'REVERT_STALE' || e.code === 'REVERT_CLOSED_CONTAINER')
+    e.code !== null &&
+    FRESH_SHIPMENT_REFUSALS.includes(e.code)
   );
 }
