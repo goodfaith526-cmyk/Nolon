@@ -25,7 +25,18 @@ export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
 /** The records this log keeps (the others keep their own history). */
 export type AuditedEntity =
-  Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER'> | AuditedMasterData;
+  | Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER'>
+  | AuditedMasterData
+  | AuditedAccess;
+
+/** Changes of who may do what (plan 03, section 7). */
+export const AUDITED_ACCESS = [
+  'TEAM',
+  'USER_ACCESS',
+  'BRANCH_LIMIT',
+  'DELEGATION',
+] as const satisfies readonly AuditEntity[];
+export type AuditedAccess = (typeof AUDITED_ACCESS)[number];
 
 /** Fixed namespace for codeEntityId (a random UUID, chosen once; never change it). */
 const CODE_ENTITY_NAMESPACE = '6b1f4c9e-2d3a-4f57-9a1e-0c8d7e5b3f21';
@@ -126,6 +137,45 @@ export class AuditService {
     }
   }
 
+  /** For the permissions screen (the Administrator): the latest changes of access, newest first. */
+  async accessEntries(limit: number): Promise<AuditLogEntryDto[]> {
+    const rows = await this.prisma.$queryRaw<
+      {
+        at: Date;
+        branchCode: string | null;
+        userId: string | null;
+        userName: string | null;
+        entity: AuditedEntity;
+        action: AuditRecord['action'];
+        reference: string;
+        changes: AuditChangeDto[];
+        source: 'USER' | 'API' | 'SYSTEM';
+      }[]
+    >`
+      SELECT x."occurred_at" AS "at", b."code" AS "branchCode", x."user_id" AS "userId",
+             u."full_name" AS "userName", x."entity", x."action", x."reference", x."changes",
+             x."source"::text AS "source"
+      FROM "audit_events" x
+      LEFT JOIN "branches" b ON b."id" = x."branch_id"
+      LEFT JOIN "users" u ON u."id" = x."user_id"
+      WHERE x."entity" IN (${Prisma.join([...AUDITED_ACCESS])})
+      ORDER BY x."occurred_at" DESC, x."id" DESC
+      LIMIT ${limit}`;
+    return rows.map((r) => ({
+      at: r.at.toISOString(),
+      branchCode: r.branchCode ?? '—',
+      userId: r.userId,
+      userName: r.userName,
+      entity: r.entity,
+      action: r.action,
+      reference: r.reference,
+      status: null,
+      detail: null,
+      changes: r.changes,
+      source: r.source,
+    }));
+  }
+
   /**
    * For the audit log report: the changes recorded in the period, newest first, in the report's
    * branches. Records of no branch are listed only when no single branch is asked for: changes to
@@ -138,6 +188,7 @@ export class AuditService {
     if (!q.branchId) {
       if (user.access.any('users:view')) unbranched.push('USER');
       if (user.access.any('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
+      if (user.access.any('access_control:view')) unbranched.push(...AUDITED_ACCESS);
     }
     if (branchIds.length === 0 && unbranched.length === 0) return [];
     const inBranches =

@@ -299,8 +299,28 @@ export class AuthService {
         branchId: b.id,
         permissions: user.access.inBranch(b.id),
       })),
+      delegations: await this.liveDelegations(user),
       assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
       assistantPanel: Boolean(this.env.AGENT_ASSISTANT_URL) && this.env.AGENT_ASSISTANT_PANEL,
     };
+  }
+
+  /** Plan 03: the delegations this person holds in a branch they still work in. */
+  private async liveDelegations(user: AuthUser): Promise<{ id: string; branchId: string }[]> {
+    const rows = await this.prisma.branchDelegation.findMany({
+      where: {
+        delegateUserId: user.id,
+        revokedAt: null,
+        delegate: { isActive: true },
+      },
+      select: { id: true, branchId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const member = await this.prisma.userBranch.findMany({
+      where: { userId: user.id },
+      select: { branchId: true },
+    });
+    const branches = new Set(member.map((m) => m.branchId));
+    return rows.filter((d) => branches.has(d.branchId));
   }
 }

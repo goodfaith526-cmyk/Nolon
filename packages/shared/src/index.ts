@@ -33,3 +33,4 @@ export * from './rate-card-drafts.js';
 export * from './new-customer-booking-drafts.js';
 export * from './new-customer-quotation-drafts.js';
 export * from './assistant-form-reviews.js';
+export * from './access-control.js';

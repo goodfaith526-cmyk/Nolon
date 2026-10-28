@@ -24,6 +24,16 @@ export async function loadAccess(
   roles: readonly Role[],
   memberBranchIds: readonly string[],
 ): Promise<Access> {
+  return computeAccess(await loadAccessRows(db, userId, roles, memberBranchIds));
+}
+
+/** The rows `loadAccess` computes from (the permissions screen explains them). */
+export async function loadAccessRows(
+  db: Db,
+  userId: string,
+  roles: readonly Role[],
+  memberBranchIds: readonly string[],
+): Promise<AccessRows> {
   const [state, branchIds, branchTeams, branchPermissions] = await Promise.all([
     db.accessState.findUniqueOrThrow({ where: { id: 1 }, select: { version: true } }),
     hasAllBranchAccess([...roles])
@@ -74,7 +84,6 @@ export async function loadAccess(
               select: {
                 isActive: true,
                 branches: { select: { branchId: true } },
-                roles: { select: { role: true } },
               },
             },
             permissions: { select: { permission: true } },
@@ -101,10 +110,10 @@ export async function loadAccess(
       live:
         d.revokedAt === null &&
         d.delegate.isActive &&
-        (hasAllBranchAccess(d.delegate.roles.map((r) => r.role)) ||
-          d.delegate.branches.some((b) => b.branchId === d.branchId)),
+        // A member of the branch (user_branches), as when the delegation was made.
+        d.delegate.branches.some((b) => b.branchId === d.branchId),
       permissions: d.permissions.map((p) => p.permission),
     })),
   };
-  return computeAccess(rows);
+  return rows;
 }

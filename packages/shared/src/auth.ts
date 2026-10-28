@@ -67,6 +67,8 @@ export const PERMISSION_MODULES = [
   'master_data',
   'users',
   'audit_log',
+  // Plan 03: who may do what (the permissions screen). The Administrator only, never given.
+  'access_control',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -142,6 +144,7 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   master_data: 'FVVVVVVVVVV',
   users: 'FNNNNNNNNNN',
   audit_log: 'VVVNNNNNNNN',
+  access_control: 'FNNNNNNNNNN',
 };
 
 /**
@@ -184,13 +187,14 @@ export const GLOBAL_MODULES: readonly PermissionModule[] = [
   'fx_rates',
   'alert_settings',
   'users',
+  'access_control',
 ];
 
 /**
  * Modules only the Administrator team holds: no team change, branch grant or delegation gives
  * them, so nobody but an Administrator can raise anyone's access (plan 03, section 4).
  */
-export const NON_GRANTABLE_MODULES: readonly PermissionModule[] = ['users'];
+export const NON_GRANTABLE_MODULES: readonly PermissionModule[] = ['users', 'access_control'];
 
 /**
  * Roles that are security scopes, not only sets of permissions (plan 03, F114-2): their row
@@ -285,6 +289,8 @@ export interface AuthMeResponse {
    * a page about one branch's record shows its actions from that branch's list here.
    */
   branchPermissions?: { branchId: string; permissions: Permission[] }[];
+  /** Plan 03: the live delegations this person holds (the branch-permissions screen). */
+  delegations?: { id: string; branchId: string }[];
   /**
    * The staff AI assistant's address, or null when none is configured. The assistant reads only
    * what this user may read: NOLON rechecks the user's roles and branches on every request.

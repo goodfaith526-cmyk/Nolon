@@ -1,6 +1,6 @@
 import { ROLE_PERMISSIONS, type Permission } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
-import { type AccessRows, computeAccess } from './access.js';
+import { type AccessRows, computeAccess, explainAccess } from './access.js';
 
 // effective(u, b) of plan 03, section 4, one rule at a time.
 
@@ -264,5 +264,29 @@ describe('who may do what, per branch', () => {
     const access = computeAccess(rows({ branchPermissions: [allow(DXB, 'master_data:update')] }));
     expect(access.has('master_data:update', JED)).toBe(true);
     expect(access.has('master_data:update', null)).toBe(true);
+  });
+});
+
+describe('why a permission is held', () => {
+  it('names the role team, the branch team, the added permission and the delegation', () => {
+    const explained = explainAccess(
+      rows({
+        branchTeams: [{ teamId: CUSTOM_TEAM, branchId: DXB, delegationId: null }],
+        branchPermissions: [
+          allow(DXB, 'expenses:create'),
+          allow(DXB, 'manual_journals:create', 'd'),
+        ],
+        delegations: [
+          { id: 'd', branchId: DXB, live: true, permissions: ['manual_journals:create'] },
+        ],
+      }),
+      DXB,
+    );
+    const of = (p: Permission) => explained.find((e) => e.permission === p)?.sources;
+    expect(of('bookings:create')).toEqual([{ kind: 'ROLE', teamId: SALES_TEAM }]);
+    expect(of('manual_journals:view')).toEqual([{ kind: 'TEAM', teamId: CUSTOM_TEAM }]);
+    expect(of('expenses:create')).toEqual([{ kind: 'ADDED' }]);
+    expect(of('manual_journals:create')).toEqual([{ kind: 'DELEGATED', delegationId: 'd' }]);
+    expect(explained.every((e) => e.sources.length > 0)).toBe(true);
   });
 });

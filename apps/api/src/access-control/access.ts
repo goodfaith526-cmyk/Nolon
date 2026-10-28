@@ -207,3 +207,61 @@ export function computeAccess(rows: AccessRows): Access {
   }
   return new Access(rows.version, byBranch);
 }
+
+/** Where a permission held in a branch comes from (the permissions screen's "why"). */
+export interface AccessSource {
+  kind: 'ROLE' | 'TEAM' | 'ADDED' | 'DELEGATED';
+  teamId?: string;
+  delegationId?: string;
+}
+
+/**
+ * The sources of every permission `computeAccess(rows)` holds in `branchId`, by the same rules.
+ * A permission held has at least one source; one not held is not listed.
+ */
+export function explainAccess(
+  rows: AccessRows,
+  branchId: string,
+): { permission: Permission; sources: AccessSource[] }[] {
+  const held = computeAccess(rows).inBranch(branchId);
+  const teams = new Map(rows.teams.map((t) => [t.id, t]));
+  const sources = new Map<Permission, AccessSource[]>(held.map((p) => [p, []]));
+  const add = (p: Permission, source: AccessSource) => sources.get(p)?.push(source);
+  const restrictedHolder = rows.roles.some((r) =>
+    rows.teams.some((t) => t.systemRole === r && t.restricted),
+  );
+  const live = new Map(
+    rows.delegations
+      .filter((d) => d.live && d.branchId === branchId)
+      .map((d) => [d.id, new Set(d.permissions)]),
+  );
+
+  for (const team of rows.teams) {
+    if (!team.systemRole || !rows.roles.includes(team.systemRole)) continue;
+    for (const p of teamPermissions(team)) add(p, { kind: 'ROLE', teamId: team.id });
+  }
+  if (!restrictedHolder && !rows.roles.includes('ADMINISTRATOR')) {
+    for (const row of rows.branchTeams) {
+      const team = teams.get(row.teamId);
+      if (row.branchId !== branchId || !team || team.restricted) continue;
+      const limit = row.delegationId === null ? null : live.get(row.delegationId);
+      if (row.delegationId !== null && !limit) continue;
+      for (const p of teamPermissions(team)) {
+        if (!limit) add(p, { kind: 'TEAM', teamId: team.id });
+        else if (limit.has(p)) {
+          add(p, { kind: 'DELEGATED', teamId: team.id, delegationId: row.delegationId! });
+        }
+      }
+    }
+    for (const row of rows.branchPermissions) {
+      if (row.branchId !== branchId || row.effect !== 'ALLOW' || !isPermission(row.permission)) {
+        continue;
+      }
+      if (row.delegationId === null) add(row.permission, { kind: 'ADDED' });
+      else if (live.get(row.delegationId)?.has(row.permission)) {
+        add(row.permission, { kind: 'DELEGATED', delegationId: row.delegationId });
+      }
+    }
+  }
+  return held.map((permission) => ({ permission, sources: sources.get(permission) ?? [] }));
+}
