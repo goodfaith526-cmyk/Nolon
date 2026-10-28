@@ -308,6 +308,7 @@ describe("NOLON's suggestions on the review screens", () => {
     const draft: InvoiceDraftDto = {
       ...base,
       missingFields: ['currency', 'invoiceDate', 'dueDate'],
+      shipmentInvoices: [],
       customerId: 'c1',
       customerName: 'Customer',
       shipmentNumber: 'SH-1',
