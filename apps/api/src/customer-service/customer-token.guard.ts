@@ -14,6 +14,7 @@ import { hashApiKey } from './api-key.js';
 import { keyScopes } from './api-scopes.js';
 import {
   CustomerTokensService,
+  grantId,
   grantVersion,
   readCustomerToken,
   sha256,
@@ -25,6 +26,8 @@ export interface CustomerTokenAuth {
   client: ApiClientAuth;
   customerId: string;
   customerNumber: string;
+  /** The reason of the match (customer-tokens grantId): with the customer, whom a request is for. */
+  grantId: string;
   level: CsAccessLevel;
 }
 
@@ -139,6 +142,7 @@ export class CustomerTokenGuard implements CanActivate {
       client: { id: key.id, name: key.name, allowedBranchIds: branchIds, scopes },
       customerId: customer.id,
       customerNumber: customer.number,
+      grantId: grantId(customer.id, { kind: row.grantKind, contactId: row.contactId }),
       level: row.level,
     };
     return true;

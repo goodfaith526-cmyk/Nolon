@@ -283,3 +283,63 @@ export interface CsQuoteChoices {
   field: 'mode' | 'currency' | 'offer';
   values: string[];
 }
+
+/** The services a booking request may ask for (the catalog's). */
+export const CS_REQUEST_SERVICES = ['PICKUP', 'LAST_MILE'] as const;
+
+export const CS_SENDER_CHANNELS = ['whatsapp', 'telegram'] as const;
+export type CsSenderChannel = (typeof CS_SENDER_CHANNELS)[number];
+
+export const CS_HANDOVERS = ['PICKUP', 'BRANCH_DROP'] as const;
+
+/** At most this many new booking requests per owner per day (UTC); a retry does not count. */
+export const CS_DAILY_REQUESTS = 5;
+
+/** A request nobody decided in this long is expired. */
+export const CS_REQUEST_TTL_DAYS = 14;
+
+/**
+ * A booking request (R3, docs/plans/04 section 7.1). With a customer token the owner is the
+ * token's customer, and `sender` is refused; without one `sender` is required: a channel identity
+ * the key vouches its channel verified, never linked to an account by itself.
+ */
+export interface CsBookingRequestCreate {
+  sender?: { channel: CsSenderChannel; id: string };
+  /** A number shared for contact only (Telegram's «share my number»). */
+  contactPhone?: string;
+  originId: string;
+  destinationId: string;
+  category: string;
+  quantity: DecimalString;
+  services: (typeof CS_REQUEST_SERVICES)[number][];
+  senderName: string;
+  consigneeName: string;
+  consigneePhone: string;
+  handover: (typeof CS_HANDOVERS)[number];
+  requestedDate?: DateString;
+  /** A quote (R2) of the same key whose inputs match this request. */
+  quoteRef?: string;
+  language: 'ar' | 'en';
+  idempotencyKey: string;
+}
+
+export type CsBookingRequestState =
+  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface CsBookingRequestCreated {
+  requestId: string;
+  status: CsBookingRequestState;
+  reference: string;
+}
+
+/** What the owner reads back (section 7.2). Decisions fill the last three (R3, staff review). */
+export interface CsBookingRequestDto {
+  requestId: string;
+  reference: string;
+  status: CsBookingRequestState;
+  createdAt: string;
+  expiresAt: string;
+  bookingNumber: string | null;
+  customerReason: { ar: string; en: string } | null;
+  paymentInstructions: null;
+}

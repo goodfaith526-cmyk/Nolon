@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,16 +10,23 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
   CS_INVOICE_STATES,
+  CS_HANDOVERS,
+  CS_REQUEST_SERVICES,
   CS_SCOPES,
+  CS_SENDER_CHANNELS,
   CS_SHIPMENT_STATES,
   LOAD_TYPES,
   SHIPPING_MODES,
+  type CsBookingRequestCreated,
+  type CsBookingRequestDto,
   type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
@@ -51,6 +59,12 @@ import {
 } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
 import { QuoteService } from './quote.service.js';
+import {
+  type BookingRequestCaller,
+  BookingRequestGuard,
+  CurrentBookingCaller,
+} from './booking-request.guard.js';
+import { BookingRequestsService } from './booking-requests.service.js';
 
 const reference = z.string().trim().min(1).max(30);
 const phoneQuery = z.object({ phone }).strict();
@@ -83,6 +97,46 @@ const quoteQuery = z
     onDate: dateString.optional(),
   })
   .strict();
+const telegramId = z.string().regex(/^[1-9]\d{0,19}$/, 'Telegram user id');
+const sender = z.discriminatedUnion('channel', [
+  z.object({ channel: z.literal('whatsapp'), id: phone }).strict(),
+  z.object({ channel: z.literal('telegram'), id: telegramId }).strict(),
+]);
+const name200 = requiredText(200);
+const requestBody = z
+  .object({
+    sender: sender.optional(),
+    contactPhone: phone.optional(),
+    originId: z.uuid(),
+    destinationId: z.uuid(),
+    category: z.string().trim().min(1).max(20),
+    quantity,
+    services: z
+      .array(z.enum(CS_REQUEST_SERVICES))
+      .max(CS_REQUEST_SERVICES.length)
+      .refine((s) => new Set(s).size === s.length, 'Each service once'),
+    senderName: name200,
+    consigneeName: name200,
+    consigneePhone: phone,
+    handover: z.enum(CS_HANDOVERS),
+    requestedDate: dateString.optional(),
+    quoteRef: z
+      .string()
+      .regex(/^q_[A-Za-z0-9_-]{32}$/)
+      .optional(),
+    language: z.enum(['ar', 'en']),
+    idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+  })
+  .strict();
+/** `X-Cs-Sender: whatsapp:+2499...` or `telegram:123`: the owner a key-only read names. */
+function senderHeader(value: string | undefined): z.infer<typeof sender> | null {
+  const at = value?.indexOf(':') ?? -1;
+  if (!value || at < 0) return null;
+  const parsed = sender.safeParse({ channel: value.slice(0, at), id: value.slice(at + 1) });
+  return parsed.success && (CS_SENDER_CHANNELS as readonly string[]).includes(parsed.data.channel)
+    ? parsed.data
+    : null;
+}
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const createBody = z
   .object({ name: requiredText(100), branchIds: z.array(z.uuid()).min(1).max(20), scopes })
@@ -191,6 +245,38 @@ export class QuoteController {
   @Get()
   get(@CurrentApiClient() client: ApiClientAuth, @Query() query: unknown): Promise<CsQuoteDto> {
     return this.quotes.quote(client, parse(quoteQuery, query));
+  }
+}
+
+/**
+ * Booking requests (R3): a draft for staff, never a booking. With a customer token it is that
+ * customer's; with the key alone, the sender's it names. Read back by the same owner only.
+ */
+@Controller('cs/booking-requests')
+@Public()
+@UseGuards(BookingRequestGuard)
+@RequireApiScope('cs:booking_requests:create')
+export class BookingRequestsController {
+  constructor(private readonly requests: BookingRequestsService) {}
+
+  @Post()
+  async create(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CsBookingRequestCreated> {
+    const { created, body: answer } = await this.requests.create(caller, parse(requestBody, body));
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return answer;
+  }
+
+  @Get(':id')
+  read(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-cs-sender') sender: string | undefined,
+  ): Promise<CsBookingRequestDto> {
+    return this.requests.read(caller, id, senderHeader(sender));
   }
 }
 

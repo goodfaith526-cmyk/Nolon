@@ -7,6 +7,7 @@ import {
   CustomerServiceController,
   CustomerTokensController,
   QuoteController,
+  BookingRequestsController,
 } from './customer-service.controller.js';
 
 describe('Customer Service API scopes', () => {
@@ -15,6 +16,7 @@ describe('Customer Service API scopes', () => {
     CustomerTokensController,
     CatalogController,
     QuoteController,
+    BookingRequestsController,
   ])('names a scope on every route of the API-key controller %o', (controller) => {
     const reflector = new Reflector();
     const proto = controller.prototype as unknown as Record<string, unknown>;

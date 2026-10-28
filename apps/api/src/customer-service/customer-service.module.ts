@@ -3,12 +3,15 @@ import { AuditModule } from '../audit/audit.module.js';
 import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { RatesModule } from '../rates/rates.module.js';
+import { BookingRequestGuard } from './booking-request.guard.js';
+import { BookingRequestsService } from './booking-requests.service.js';
 import { CatalogService } from './catalog.service.js';
 import { ApiClientGuard } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { CustomerMeService } from './customer-me.service.js';
 import {
   ApiClientsController,
+  BookingRequestsController,
   CatalogController,
   CustomerMeController,
   CustomerServiceController,
@@ -28,6 +31,7 @@ import { QuoteService } from './quote.service.js';
     CustomerTokensController,
     CatalogController,
     QuoteController,
+    BookingRequestsController,
     CustomerMeController,
     ApiClientsController,
   ],
@@ -40,6 +44,8 @@ import { QuoteService } from './quote.service.js';
     CustomerMeService,
     CatalogService,
     QuoteService,
+    BookingRequestGuard,
+    BookingRequestsService,
   ],
 })
 export class CustomerServiceModule {}

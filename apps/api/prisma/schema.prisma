@@ -44,6 +44,7 @@ model Branch {
 
   users               UserBranch[]
   routingRules        BranchRoutingRule[]
+  csRequests          CsBookingRequest[]
   customers           Customer[]
   partners            Partner[]
   rateCards           RateCard[]
@@ -405,6 +406,8 @@ model Location {
   partners           Partner[]
   aliases            LocationAlias[]
   routingRules       BranchRoutingRule[]
+  csRequestsFrom     CsBookingRequest[]    @relation("CsRequestOrigin")
+  csRequestsTo       CsBookingRequest[]    @relation("CsRequestDestination")
 
   @@index([cityId])
   @@map("locations")
@@ -588,6 +591,7 @@ model Customer {
 
   csTokens       CsCustomerToken[]
   csAccessEvents CsAccessEvent[]
+  csRequests     CsBookingRequest[]
 
   @@index([branchId])
   @@index([phone])
@@ -718,6 +722,7 @@ model PriceCategory {
 
   rateCards      RateCard[]
   quotationLines QuotationLine[]
+  csRequests     CsBookingRequest[]
 
   @@map("price_categories")
 }
@@ -2820,13 +2825,14 @@ model ApiClient {
   /// key made before scopes existed keeps it (the default); a new key has it only when given.
   customersRead Boolean   @default(true) @map("customers_read")
 
-  createdBy      User              @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  revokedBy      User?             @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
-  branches       ApiClientBranch[]
-  scopes         ApiClientScope[]
-  customerTokens CsCustomerToken[]
-  accessEvents   CsAccessEvent[]
-  quotes         CsQuote[]
+  createdBy       User               @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy       User?              @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  branches        ApiClientBranch[]
+  scopes          ApiClientScope[]
+  customerTokens  CsCustomerToken[]
+  accessEvents    CsAccessEvent[]
+  quotes          CsQuote[]
+  bookingRequests CsBookingRequest[]
 
   @@map("api_clients")
 }
@@ -2950,13 +2956,88 @@ model CsQuote {
   expiresAt             DateTime     @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  apiClient ApiClient @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  rateCard  RateCard  @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  apiClient ApiClient          @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  rateCard  RateCard           @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  requests  CsBookingRequest[]
 
   @@index([apiClientId, createdAt])
   @@index([rateCardId])
   @@index([expiresAt])
   @@map("cs_quotes")
+}
+
+/// A booking request's state (docs/plans/04 section 7). Expired is read from expires_at.
+enum CsBookingRequestStatus {
+  AWAITING_ROUTING
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("cs_booking_request_status")
+}
+
+/// How the goods reach NOLON: picked up from the sender, or brought to the branch.
+enum CsHandover {
+  PICKUP
+  BRANCH_DROP
+
+  @@map("cs_handover")
+}
+
+/// A booking request from a customer-service client (R3, docs/plans/04 section 7): a draft only,
+/// never a booking, shipment, invoice or journal entry. Its owner is a customer (through a customer
+/// token) or a channel identity (sender), exactly one. Every value is the customer's, as sent.
+model CsBookingRequest {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  /// BR-000001.
+  reference             String                 @unique @db.VarChar(20)
+  apiClientId           String                 @map("api_client_id") @db.Uuid
+  /// c:<customer id>:<grant id> or s:<channel>:<id>: whom the request belongs to.
+  ownerRef              String                 @map("owner_ref") @db.VarChar(200)
+  customerId            String?                @map("customer_id") @db.Uuid
+  grantId               String?                @map("grant_id") @db.VarChar(41)
+  senderChannel         String?                @map("sender_channel") @db.VarChar(20)
+  senderId              String?                @map("sender_id") @db.VarChar(64)
+  /// A number the sender shared for contact only (Telegram): never a proof of an account.
+  contactPhone          String?                @map("contact_phone") @db.VarChar(20)
+  idempotencyKey        String                 @map("idempotency_key") @db.VarChar(100)
+  /// SHA-256 of the request body without its idempotency key.
+  contentHash           String                 @map("content_hash") @db.Char(64)
+  status                CsBookingRequestStatus
+  /// The branch the request is for; null while it awaits routing.
+  branchId              String?                @map("branch_id") @db.Uuid
+  /// The branches staff may route it to (its routing candidates the key served when made).
+  allowedBranchIds      String[]               @map("allowed_branch_ids") @db.Uuid
+  originLocationId      String                 @map("origin_location_id") @db.Uuid
+  destinationLocationId String                 @map("destination_location_id") @db.Uuid
+  priceCategoryCode     String                 @map("price_category_code") @db.VarChar(20)
+  quantity              Decimal                @db.Decimal(18, 4)
+  services              BookingService[]
+  senderName            String                 @map("sender_name") @db.VarChar(200)
+  consigneeName         String                 @map("consignee_name") @db.VarChar(200)
+  consigneePhone        String                 @map("consignee_phone") @db.VarChar(20)
+  handover              CsHandover
+  requestedDate         DateTime?              @map("requested_date") @db.Date
+  quoteRef              String?                @map("quote_ref") @db.VarChar(40)
+  language              String                 @db.VarChar(2)
+  version               Int                    @default(1)
+  expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  apiClient   ApiClient     @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch      Branch?       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin      Location      @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location      @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category    PriceCategory @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote       CsQuote?      @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+
+  @@unique([apiClientId, ownerRef, idempotencyKey])
+  @@index([ownerRef, createdAt])
+  @@index([branchId, status])
+  @@index([status])
+  @@map("cs_booking_requests")
 }
 
 /// The branches whose customers an API key may read (AGENTS.md rule 2).
