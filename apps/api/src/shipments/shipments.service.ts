@@ -16,6 +16,7 @@ import type {
   LoadType,
   Page,
   Permission,
+  RateUnit,
   ShipmentActionsDto,
   ShipmentContainerInput,
   ShipmentCloseCheckDto,
@@ -34,7 +35,11 @@ import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { currentLocationOf } from './location-timeline.js';
-import { ShipmentLinksRegistry, type ShipmentLinkBlocker } from './shipment-links.registry.js';
+import {
+  type LocationEffect,
+  ShipmentLinksRegistry,
+  type ShipmentLinkBlocker,
+} from './shipment-links.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -981,27 +986,63 @@ export class ShipmentsService {
         reason: step.reason,
         note: noteOf(path.at(-1)?.eventId ?? null),
         update: { status: target },
-        after: async (tx) => {
-          const createdAt = (eventId: string | null, fallback: Date) =>
-            shipment.events.find((e) => e.id.toString() === eventId)?.createdAt ?? fallback;
-          const steps = remaining.flatMap((entry) =>
-            entry.locationId
-              ? [
-                  {
-                    at: entry.occurredAt,
-                    createdAt: createdAt(entry.eventId, entry.occurredAt),
-                    locationId: entry.locationId,
-                  },
-                ]
-              : [],
-          );
-          const effects = await this.links.locationEffectsInTx(tx, shipment.id);
-          await tx.shipment.update({
-            where: { id: shipment.id },
-            data: { currentLocationId: currentLocationOf([...steps, ...effects]) },
-          });
-        },
+        after: (tx) => this.placeFromTimelineInTx(tx, shipment.id, shipment.events, remaining),
       };
+    });
+  }
+
+  /**
+   * B3-2 (F132-4), inside the caller's transaction under the shipment's exclusive lock: a record
+   * that moved the shipment without a step (a proof of delivery that kept the status) was just
+   * cancelled. Refused with `moved()` when anything placed the shipment since: a step after it
+   * (by time, then by when it was recorded), or a place other than the record's now. Otherwise the
+   * place becomes the latest left on the location timeline (the caller already left the record
+   * out of it).
+   */
+  async unplaceRecordInTx(
+    tx: Tx,
+    id: string,
+    record: LocationEffect,
+    moved: () => HttpException,
+  ): Promise<void> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: { currentLocationId: true, events: { orderBy: { id: 'asc' } } },
+    });
+    const path = replayHistory(shipment.events);
+    const later = path.some((entry) => {
+      const at = entry.occurredAt.getTime() - record.at.getTime();
+      const created = shipment.events.find((e) => e.id.toString() === entry.eventId)?.createdAt;
+      return at > 0 || (at === 0 && created !== undefined && created > record.createdAt);
+    });
+    if (later || shipment.currentLocationId !== record.locationId) throw moved();
+    await this.placeFromTimelineInTx(tx, id, shipment.events, path);
+  }
+
+  /** Sets the shipment's place from the location timeline: `steps` and the live records. */
+  private async placeFromTimelineInTx(
+    tx: Tx,
+    id: string,
+    events: readonly { id: bigint; createdAt: Date }[],
+    steps: readonly HistoryEntry[],
+  ): Promise<void> {
+    const placed = steps.flatMap((entry) =>
+      entry.locationId
+        ? [
+            {
+              at: entry.occurredAt,
+              createdAt:
+                events.find((e) => e.id.toString() === entry.eventId)?.createdAt ??
+                entry.occurredAt,
+              locationId: entry.locationId,
+            },
+          ]
+        : [],
+    );
+    const effects = await this.links.locationEffectsInTx(tx, id);
+    await tx.shipment.update({
+      where: { id },
+      data: { currentLocationId: currentLocationOf([...placed, ...effects]) },
     });
   }
 
@@ -1132,6 +1173,130 @@ export class ShipmentsService {
       branchCode: branch.code,
       customerName: customer.name,
     }));
+  }
+
+  /**
+   * For the profitability report (business model plan 6.2-6.3): what the shipments among `ids` the
+   * user may see roll up by beyond their route: sales outlet, origin country, booked services,
+   * mode, the route's ends as cities, cargo type, their booking's lines (category and measures), status, trips, and the instants of
+   * the cycle time: the first receipt at the origin warehouse still on the shipment's path (a
+   * reverted receipt no longer counts), and the latest proof of delivery once delivered.
+   */
+  async profitDetails(
+    user: AuthUser,
+    ids: readonly string[],
+  ): Promise<
+    {
+      id: string;
+      status: ShipmentStatus;
+      mode: ShippingMode;
+      /** The route's two ends, each as the city it serves. */
+      route: { from: string; to: string };
+      services: BookingService[];
+      cargoType: CargoType;
+      salesOutlet: { id: string; name: string } | null;
+      originCountry: { code: string; nameEn: string; nameAr: string };
+      lines: {
+        category: { code: string; nameEn: string; nameAr: string; unit: RateUnit } | null;
+        cargoType: CargoType;
+        containerTypeCode: string | null;
+        quantity: number;
+        volumeCbm: Prisma.Decimal | null;
+        weightKg: Prisma.Decimal | null;
+      }[];
+      tripIds: string[];
+      receivedAt: Date | null;
+      deliveredAt: Date | null;
+    }[]
+  > {
+    if (ids.length === 0) return [];
+    const shipments = await this.prisma.shipment.findMany({
+      where: { id: { in: [...ids] }, ...this.scope(user) },
+      select: {
+        id: true,
+        status: true,
+        mode: true,
+        services: true,
+        cargoType: true,
+        salesOutlet: { select: { id: true, name: true } },
+        origin: { select: { id: true, cityId: true, countryCode: true } },
+        destination: { select: { id: true, cityId: true } },
+        booking: {
+          select: {
+            items: {
+              select: {
+                cargoType: true,
+                containerTypeCode: true,
+                quantity: true,
+                volumeCbm: true,
+                weightKg: true,
+                priceCategory: {
+                  select: { code: true, nameEn: true, nameAr: true, defaultUnit: true },
+                },
+              },
+              orderBy: { lineNo: 'asc' },
+            },
+          },
+        },
+        tripLinks: { select: { tripId: true } },
+        events: {
+          select: { id: true, kind: true, status: true, occurredAt: true, locationId: true },
+          orderBy: { id: 'asc' },
+        },
+        pods: { select: { deliveredAt: true }, orderBy: { deliveredAt: 'desc' }, take: 1 },
+      },
+    });
+    const codes = [...new Set(shipments.map((s) => s.origin.countryCode))];
+    const countries = new Map(
+      (
+        await this.prisma.location.findMany({
+          where: { kind: 'COUNTRY', countryCode: { in: codes } },
+          select: { countryCode: true, nameEn: true, nameAr: true },
+        })
+      ).map((c) => [c.countryCode, c]),
+    );
+    const delivered = new Set<ShipmentStatus>(['DELIVERED', 'CLOSED']);
+    return shipments.map((s) => {
+      const country = countries.get(s.origin.countryCode);
+      const received = replayHistory(s.events).find(
+        (step) => step.status === 'RECEIVED_ORIGIN_WAREHOUSE',
+      );
+      return {
+        id: s.id,
+        status: s.status,
+        mode: s.mode,
+        route: {
+          from: s.origin.cityId ?? s.origin.id,
+          to: s.destination.cityId ?? s.destination.id,
+        },
+        services: s.services,
+        cargoType: s.cargoType,
+        salesOutlet: s.salesOutlet,
+        originCountry: {
+          code: s.origin.countryCode,
+          nameEn: country?.nameEn ?? s.origin.countryCode,
+          nameAr: country?.nameAr ?? s.origin.countryCode,
+        },
+        lines: s.booking.items.map((i) => ({
+          category: i.priceCategory
+            ? {
+                code: i.priceCategory.code,
+                nameEn: i.priceCategory.nameEn,
+                nameAr: i.priceCategory.nameAr,
+                unit: i.priceCategory.defaultUnit,
+              }
+            : null,
+          cargoType: i.cargoType,
+          containerTypeCode: i.containerTypeCode,
+          quantity: i.quantity,
+          volumeCbm: i.volumeCbm,
+          weightKg: i.weightKg,
+        })),
+        tripIds: s.tripLinks.map((t) => t.tripId),
+        receivedAt: received?.occurredAt ?? null,
+        deliveredAt: delivered.has(s.status) ? (s.pods[0]?.deliveredAt ?? null) : null,
+      };
+    });
   }
 
   /**

@@ -15,6 +15,12 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   // Confirmed bookings have shipments (and maybe documents, warehouse movements and customs
   // records), which restrict deleting them.
   // Trips and PODs (inland transport); fleet records of the tests are named ZZ...
+  // Cancellations are insert-only (a trigger refuses DELETE). Test data only: the test database
+  // role is a superuser, and replica mode skips that trigger for this transaction.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+    await tx.podCancellation.deleteMany({ where: { pod: { shipment: createdBy } } });
+  });
   await prisma.podPhoto.deleteMany({ where: { pod: { shipment: createdBy } } });
   await prisma.proofOfDelivery.deleteMany({ where: { shipment: createdBy } });
   // Trip drafts are created by the assistant's agent-it- users, for it- shipments (or none yet).

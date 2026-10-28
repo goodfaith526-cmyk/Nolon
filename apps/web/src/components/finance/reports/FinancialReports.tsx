@@ -15,6 +15,8 @@ import {
   type OpenAccrualsDto,
   type ProfitFiguresDto,
   type ReportLocationDto,
+  type ProfitCategoryDto,
+  type ProfitGroupFiguresDto,
   type ShipmentProfitabilityDto,
   type SupplierSummaryDto,
   type Page,
@@ -440,8 +442,11 @@ export function ApAging() {
 
 export function ShipmentProfitability() {
   const t = useTranslations('Reports');
+  const te = useTranslations('Enums');
   const name = useLocalName();
   const place = (l: ReportLocationDto) => `${l.code} · ${name(l)}`;
+  const category = (c: ProfitCategoryDto) =>
+    c.kind === 'SINGLE' ? name(c) : t(c.kind === 'MIXED' ? 'categoryMixed' : 'unspecified');
   const figures = (f: ProfitFiguresDto, strong = false) => (
     <>
       <AmountCell value={f.revenueUsd} strong={strong} />
@@ -458,6 +463,27 @@ export function ShipmentProfitability() {
       <th>{t('marginPercent')}</th>
     </>
   );
+  // Each group: its shipments, how many are not final yet, then its figures.
+  const countHeads = (
+    <>
+      <th>{t('shipmentCount')}</th>
+      <th>{t('notFinalCount')}</th>
+    </>
+  );
+  const counts = (g: ProfitGroupFiguresDto) => (
+    <>
+      <td dir="ltr">{g.shipments}</td>
+      <td dir="ltr">{g.incompleteShipments || '—'}</td>
+    </>
+  );
+  const totalRow = (r: ShipmentProfitabilityDto, leading: number, trailing = 0) => (
+    <tr className="subtotal">
+      <td colSpan={leading}>{t('total')}</td>
+      {counts(r.totals)}
+      {figures(r.totals, true)}
+      {trailing > 0 && <td colSpan={trailing} />}
+    </tr>
+  );
   return (
     <ReportView<ShipmentProfitabilityDto>
       id="shipment-profitability"
@@ -468,28 +494,29 @@ export function ShipmentProfitability() {
     >
       {(r) => (
         <div className="stack">
+          {r.totals.incompleteShipments > 0 && (
+            <p className="warning">
+              {t('includesNotFinal', { count: r.totals.incompleteShipments })}
+            </p>
+          )}
           <ReportTable title={t('byCustomer')}>
             <thead>
               <tr>
                 <th>{t('customer')}</th>
-                <th>{t('shipmentCount')}</th>
+                {countHeads}
                 {figureHeads}
               </tr>
             </thead>
             <tbody>
-              {r.customers.length === 0 && <EmptyRow columns={6} text={t('noLines')} />}
+              {r.customers.length === 0 && <EmptyRow columns={7} text={t('noLines')} />}
               {r.customers.map((c) => (
                 <tr key={c.customerId}>
                   <td>{c.customerName}</td>
-                  <td dir="ltr">{c.shipments}</td>
+                  {counts(c)}
                   {figures(c)}
                 </tr>
               ))}
-              <tr className="subtotal">
-                <td>{t('total')}</td>
-                <td dir="ltr">{r.shipments.length}</td>
-                {figures(r.totals, true)}
-              </tr>
+              {totalRow(r, 1)}
             </tbody>
           </ReportTable>
           <ReportTable title={t('byRoute')}>
@@ -497,33 +524,121 @@ export function ShipmentProfitability() {
               <tr>
                 <th>{t('origin')}</th>
                 <th>{t('destination')}</th>
-                <th>{t('shipmentCount')}</th>
+                {countHeads}
                 {figureHeads}
+                <th>{t('cycleAverage')}</th>
               </tr>
             </thead>
             <tbody>
-              {r.routes.length === 0 && <EmptyRow columns={7} text={t('noLines')} />}
+              {r.routes.length === 0 && <EmptyRow columns={9} text={t('noLines')} />}
               {r.routes.map((x) => (
                 <tr key={`${x.origin.id}-${x.destination.id}`}>
                   <td>{place(x.origin)}</td>
                   <td>{place(x.destination)}</td>
-                  <td dir="ltr">{x.shipments}</td>
+                  {counts(x)}
                   {figures(x)}
+                  <td dir="ltr">
+                    {x.cycle.averageDays === null
+                      ? '—'
+                      : t('cycleOf', {
+                          days: x.cycle.averageDays,
+                          min: x.cycle.minDays ?? '',
+                          max: x.cycle.maxDays ?? '',
+                          count: x.cycle.measured,
+                        })}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </ReportTable>
+          <ReportTable title={t('byOutlet')}>
+            <thead>
+              <tr>
+                <th>{t('salesOutlet')}</th>
+                {countHeads}
+                {figureHeads}
+              </tr>
+            </thead>
+            <tbody>
+              {r.outlets.length === 0 && <EmptyRow columns={7} text={t('noLines')} />}
+              {r.outlets.map((o) => (
+                <tr key={o.salesOutlet?.id ?? 'none'}>
+                  <td>{o.salesOutlet?.name ?? t('unspecified')}</td>
+                  {counts(o)}
+                  {figures(o)}
+                </tr>
+              ))}
+              {totalRow(r, 1)}
+            </tbody>
+          </ReportTable>
+          <ReportTable title={t('byOriginCountry')}>
+            <thead>
+              <tr>
+                <th>{t('originCountry')}</th>
+                {countHeads}
+                {figureHeads}
+              </tr>
+            </thead>
+            <tbody>
+              {r.countries.length === 0 && <EmptyRow columns={7} text={t('noLines')} />}
+              {r.countries.map((c) => (
+                <tr key={c.originCountry.code}>
+                  <td>{name(c.originCountry)}</td>
+                  {counts(c)}
+                  {figures(c)}
+                </tr>
+              ))}
+              {totalRow(r, 1)}
+            </tbody>
+          </ReportTable>
+          <ReportTable title={t('byCategory')}>
+            <thead>
+              <tr>
+                <th>{t('category')}</th>
+                {countHeads}
+                {figureHeads}
+                <th>{t('units')}</th>
+                <th>{t('marginPerUnitUsd')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.categories.length === 0 && <EmptyRow columns={9} text={t('noLines')} />}
+              {r.categories.map((c) => (
+                <tr key={c.category.kind === 'SINGLE' ? c.category.code : c.category.kind}>
+                  <td>{category(c.category)}</td>
+                  {counts(c)}
+                  {figures(c)}
+                  <td dir="ltr">
+                    {c.units === null || c.unit === null
+                      ? '—'
+                      : `${c.units} ${te(`unit_${c.unit}`)}`}
+                  </td>
+                  {c.marginPerUnitUsd === null ? (
+                    <td>—</td>
+                  ) : (
+                    <AmountCell value={c.marginPerUnitUsd} />
+                  )}
+                </tr>
+              ))}
+              {totalRow(r, 1, 2)}
+            </tbody>
+          </ReportTable>
+          <p className="muted">{t('categoryHint')}</p>
           <ReportTable title={t('shipments')}>
             <thead>
               <tr>
                 <th>{t('shipment')}</th>
                 <th>{t('customer')}</th>
                 <th>{t('route')}</th>
+                <th>{t('salesOutlet')}</th>
+                <th>{t('category')}</th>
                 {figureHeads}
+                <th>{t('notFinal')}</th>
+                <th>{t('cycleDays')}</th>
               </tr>
             </thead>
             <tbody>
-              {r.shipments.length === 0 && <EmptyRow columns={7} text={t('noLines')} />}
+              {r.shipments.length === 0 && <EmptyRow columns={11} text={t('noLines')} />}
               {r.shipments.map((s) => (
                 <tr key={s.shipmentId}>
                   <td dir="ltr">
@@ -533,7 +648,25 @@ export function ShipmentProfitability() {
                   <td className="nowrap">
                     {s.origin.code} → {s.destination.code}
                   </td>
+                  <td>{s.salesOutlet?.name ?? '—'}</td>
+                  <td>{category(s.category)}</td>
                   {figures(s)}
+                  <td>
+                    {s.incompleteReasons.length === 0
+                      ? '—'
+                      : s.incompleteReasons
+                          .map((x) =>
+                            x === 'MISSING_COST'
+                              ? t('notFinal_MISSING_COST', {
+                                  services: s.missingCosts
+                                    .map((service) => te(`service_${service}`))
+                                    .join('، '),
+                                })
+                              : t(`notFinal_${x}`),
+                          )
+                          .join('، ')}
+                  </td>
+                  <td dir="ltr">{s.cycleDays ?? '—'}</td>
                 </tr>
               ))}
             </tbody>

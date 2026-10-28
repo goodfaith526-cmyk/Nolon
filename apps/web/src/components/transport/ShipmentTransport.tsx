@@ -1,8 +1,15 @@
 'use client';
 
-import type { PodDto, ShipmentDto, ShipmentPodsDto, ShipmentTripDto } from '@nolon/shared';
+import {
+  SHIPMENT_REASON_MIN_LENGTH,
+  type PodCancelRequest,
+  type PodDto,
+  type ShipmentDto,
+  type ShipmentPodsDto,
+  type ShipmentTripDto,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
@@ -130,6 +137,10 @@ export function ShipmentPods({
   const [data, setData] = useState<ShipmentPodsDto | null>(null);
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // B3-2: the POD whose cancel form is open, and the reason typed for it.
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [busy, setBusy] = useState(false);
   const shipmentId = shipment.id;
 
   const load = useCallback(() => {
@@ -150,6 +161,28 @@ export function ShipmentPods({
     });
     load();
     if (pod.statusApplied) onShipmentChanged();
+  }
+
+  async function onCancelPod(event: FormEvent<HTMLFormElement>, pod: PodDto) {
+    event.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    try {
+      const body: PodCancelRequest = { reason: cancelReason.trim() };
+      await api<PodDto>(`/shipments/${shipmentId}/pods/${pod.id}/cancel`, {
+        method: 'POST',
+        body,
+      });
+      setCancelling(null);
+      setCancelReason('');
+      setNotice({ ok: true, text: t('podCancelledNotice', { number: pod.number }) });
+      load();
+      onShipmentChanged();
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
   }
 
   const fileUrl = (documentId: string) =>
@@ -205,6 +238,11 @@ export function ShipmentPods({
                         <StatusBadge kind="shipment" status={p.statusApplied} />
                       </div>
                     )}
+                    {p.cancellation && (
+                      <div>
+                        <span className="badge">{t('podCancelledBadge')}</span>
+                      </div>
+                    )}
                     <PrintLink
                       href={`/shipments/${shipmentId}/pods/${p.id}`}
                       label={tp('printDeliveryNote')}
@@ -219,6 +257,55 @@ export function ShipmentPods({
                     {p.recipientName}
                     <div className="muted">{p.recipientCapacity}</div>
                     {p.note && <div className="pre">{p.note}</div>}
+                    {p.cancellation && (
+                      <div className="muted">
+                        {t('podCancelledBy', {
+                          name: p.cancellation.cancelledByName,
+                          at: dateTime(p.cancellation.cancelledAt),
+                        })}
+                        <div className="pre">{p.cancellation.reason}</div>
+                      </div>
+                    )}
+                    {!p.cancellation && data.actions.canCancel && cancelling !== p.id && (
+                      <button
+                        type="button"
+                        className="button small"
+                        disabled={busy}
+                        onClick={() => {
+                          setCancelling(p.id);
+                          setCancelReason('');
+                        }}
+                      >
+                        {t('cancelPod')}
+                      </button>
+                    )}
+                    {!p.cancellation && cancelling === p.id && (
+                      <form className="stack tight" onSubmit={(e) => void onCancelPod(e, p)}>
+                        <label className="field">
+                          <span>{t('podCancelReason')}</span>
+                          <textarea
+                            required
+                            minLength={SHIPMENT_REASON_MIN_LENGTH}
+                            maxLength={500}
+                            value={cancelReason}
+                            onChange={(e) => setCancelReason(e.target.value)}
+                          />
+                        </label>
+                        <p className="muted">{t('cancelPodHint')}</p>
+                        <div className="actions">
+                          <button type="submit" className="danger small" disabled={busy}>
+                            {t('confirmCancelPod')}
+                          </button>
+                          <button
+                            type="button"
+                            className="small"
+                            onClick={() => setCancelling(null)}
+                          >
+                            {tc('back')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
                   </td>
                   <td>{p.packages ?? '—'}</td>
                   <td dir="ltr">{p.tripNumber ?? '—'}</td>
