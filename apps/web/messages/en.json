@@ -1362,7 +1362,7 @@
   },
   "ApiKeys": {
     "title": "Customer Service API keys",
-    "hint": "In use now: a key lets a customer-service client (such as a WhatsApp agent) call the Customer Service API (/cs/…) and read customers' shipments, timelines and invoices of its branches, with customer-safe fields only. It cannot change anything.",
+    "hint": "In use now: a key lets a customer-service client (such as a WhatsApp agent) call the Customer Service API (/cs/…) for the customers of its branches, with customer-safe fields only. A key does only what its scopes allow, and no scope is given by default.",
     "name": "Name",
     "namePlaceholder": "e.g. WhatsApp agent",
     "branches": "Branches",
@@ -1378,7 +1378,19 @@
     "createdTitle": "Copy the key now",
     "createdHint": "This is the only time it is shown. Keep it in the client's secret settings, never in code or chat.",
     "copy": "Copy",
-    "done": "Done"
+    "done": "Done",
+    "scopes": "Scopes",
+    "scopesHint": "Give a customer-facing bot only what it needs. «Read customers» reads every customer of the key's branches: never give it to a bot that serves one customer at a time.",
+    "scope_customers_read": "Read customers, shipments and invoices by number",
+    "scope_customer_tokens_issue": "Issue a one-customer token",
+    "scope_catalog_read": "Read places and shipment types",
+    "scope_quote_read": "Read prices for a route",
+    "scope_booking_requests_create": "Send booking requests",
+    "scope_tracking_lookup": "Track by shipment number and phone",
+    "editScopes": "Change scopes",
+    "saveScopes": "Save scopes",
+    "cancel": "Cancel",
+    "scopesSaved": "The key's scopes were saved."
   },
   "Reports": {
     "title": "Financial reports",
@@ -1710,7 +1722,8 @@
     "field_isPrimary": "Primary",
     "entity_PARTNER": "Partner",
     "entity_PRICE_CATEGORY": "Price category",
-    "entity_CUSTOMER_SEGMENT": "Customer segment"
+    "entity_CUSTOMER_SEGMENT": "Customer segment",
+    "entity_API_CLIENT": "API key"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
