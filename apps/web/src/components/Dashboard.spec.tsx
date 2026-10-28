@@ -42,7 +42,7 @@ vi.mock('./StaffShell', () => ({
     roles: [],
     allBranches: false,
     branches: [],
-    permissions: ['customers:create'],
+    permissions: ['customers:create', 'customers:view'],
   }),
   can: (me: { permissions: string[] }, p: string) => me.permissions.includes(p),
 }));
@@ -70,23 +70,52 @@ describe('Home page', () => {
     const page = await show();
     const hrefs = [...page.querySelectorAll('a')].map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/customers?new=1');
-    // No figures of the user's own work when the API sends none.
-    expect(page.querySelector('[role="group"]')).toBeNull();
+    // Nothing to act on that the user may see: no "needs your action" panel.
+    expect(page.textContent).not.toContain('needsAction');
   });
 
-  it('shows the figures the API sent for the user’s roles, and only those', async () => {
+  it('shows shortcuts only to the sections the user may view, and no counters', async () => {
     data = {
       ...NONE,
-      trips: { planned: 2, onTheRoad: 1, ownOnly: true },
-      drafts: { awaitingReview: 3 },
-      alerts: { total: 4, byKind: [{ kind: 'TRIP_LATE', count: 4 }] },
+      customers: { total: 13 },
+      bookings: { draft: 0, confirmed: 33, recent: [] },
     };
     const page = await show();
-    const group = page.querySelector('[role="group"]')!;
-    const hrefs = [...group.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['/drafts', '/alerts', '/trips']);
-    expect(group.textContent).toContain('myTripsOnTheRoad');
-    expect(group.textContent).not.toContain('warehouseShipments');
-    expect(group.textContent).not.toContain('openCustomsFiles');
+    const nav = page.querySelector('nav')!;
+    const hrefs = [...nav.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['/customers']);
+    expect(page.textContent).not.toContain('13');
+    expect(page.textContent).not.toContain('33');
+  });
+
+  it('lists what waits for the user, most pressing first, with where to act', async () => {
+    data = {
+      ...NONE,
+      drafts: { awaitingReview: 3 },
+      quotations: { draft: 0, sent: 0, approved: 0, recent: [] },
+      alerts: {
+        total: 6,
+        byKind: [
+          { kind: 'SHIPMENT_ARRIVING_SOON', count: 2 },
+          { kind: 'TRIP_LATE', count: 4 },
+        ],
+      },
+    };
+    const page = await show();
+    const rows = [...page.querySelectorAll('.attention-list a')];
+    expect(rows.map((r) => [r.getAttribute('href'), r.textContent])).toEqual([
+      ['/alerts', 'kind_TRIP_LATE4'],
+      ['/drafts', 'draftsAwaitingReview3'],
+      ['/alerts', 'kind_SHIPMENT_ARRIVING_SOON2'],
+    ]);
+    // Approved quotations: none, so no row.
+    expect(page.textContent).not.toContain('approvedToBook');
+  });
+
+  it('says nothing waits when the user may see the sources but all are empty', async () => {
+    data = { ...NONE, drafts: { awaitingReview: 0 }, alerts: { total: 0, byKind: [] } };
+    const page = await show();
+    expect(page.querySelector('.attention-list')).toBeNull();
+    expect(page.textContent).toContain('allClear');
   });
 });

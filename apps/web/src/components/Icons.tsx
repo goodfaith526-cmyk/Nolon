@@ -216,6 +216,11 @@ export const icons = {
       <path d="m6 9 6 6 6-6" />
     </Icon>
   ),
+  check: (
+    <Icon>
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </Icon>
+  ),
   close: (
     <Icon>
       <path d="M6 6l12 12M18 6 6 18" />
