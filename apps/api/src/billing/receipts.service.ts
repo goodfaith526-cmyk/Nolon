@@ -24,7 +24,6 @@ import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import { isUniqueViolation } from '../common/prisma-errors.js';
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -137,18 +136,24 @@ export class ReceiptsService {
       const done = await this.findForRetry(requestId);
       if (done) return this.retry(user, done, input);
     }
-    const prepared = await this.prepareCreate(user, input);
+    let receiptId: string;
     try {
-      const receiptId = await this.prisma.$transaction((tx) =>
+      const prepared = await this.prepareCreate(user, input);
+      receiptId = await this.prisma.$transaction((tx) =>
         this.createInTx(tx, user, prepared, input),
       );
-      return await this.get(user, receiptId);
     } catch (error) {
-      if (!requestId || !isUniqueViolation(error)) throw error;
+      // A request racing one with its id fails once that one commits: on the receipt's unique
+      // id, or earlier on a check the committed receipt changed (it settled the invoice, so the
+      // balance is gone; Codex F121-1). The id is then answered as a retry: the committed
+      // receipt for the same content, 409 for other content. With no receipt under the id, the
+      // error is this request's own.
+      if (!requestId) throw error;
       const raced = await this.findForRetry(requestId);
       if (!raced) throw error;
       return this.retry(user, raced, input);
     }
+    return this.get(user, receiptId);
   }
 
   private findForRetry(id: string) {
@@ -182,12 +187,7 @@ export class ReceiptsService {
       existing.cashAccountId === input.cashAccountId &&
       existing.reference === (input.reference ?? null) &&
       existing.notes === (input.notes ?? null) &&
-      existing.allocations.length === input.allocations.length &&
-      input.allocations.every((sent) =>
-        existing.allocations.some(
-          (a) => a.invoiceId === sent.invoiceId && a.amount.eq(dec(sent.amount)),
-        ),
-      );
+      sameAllocations(existing.allocations, input.allocations);
     if (!same) throw new ConflictException('This request id was already used: send a new id');
     return this.get(user, existing.id);
   }
@@ -658,4 +658,20 @@ export function requireReceivable(invoice: LockedInvoice): string {
     throw new Error(`Invoice ${invoice.number ?? invoice.id} has no receivable account`);
   }
   return invoice.receivableAccountId;
+}
+
+/**
+ * The same allocations, one to one (Codex F121-2): each invoice once in each list, with the same
+ * amount. A posted receipt never names an invoice twice, so a request that does is other content.
+ */
+function sameAllocations(
+  posted: readonly { invoiceId: string; amount: Prisma.Decimal }[],
+  sent: readonly { invoiceId: string; amount: DecimalString }[],
+): boolean {
+  const amounts = new Map(sent.map((a) => [a.invoiceId, dec(a.amount)]));
+  return (
+    amounts.size === sent.length &&
+    amounts.size === posted.length &&
+    posted.every((a) => amounts.get(a.invoiceId)?.eq(a.amount) === true)
+  );
 }
