@@ -17,6 +17,7 @@ import type {
   QuotationStatus,
   QuotationSummaryDto,
   RateUnit,
+  ShippingMode,
 } from '@nolon/shared';
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -143,9 +144,14 @@ export class QuotationsService {
    */
   async invoiceSource(id: string): Promise<{
     id: string;
+    number: string;
     updatedAt: Date;
     currency: string;
+    originLocationId: string;
+    destinationLocationId: string;
+    mode: ShippingMode;
     lines: {
+      priceCategoryCode: string | null;
       chargeTypeCode: string;
       description: string | null;
       quantity: Prisma.Decimal;
@@ -161,9 +167,14 @@ export class QuotationsService {
     if (!quotation) return null;
     return {
       id: quotation.id,
+      number: quotation.number,
       updatedAt: quotation.updatedAt,
       currency: quotation.currency,
+      originLocationId: quotation.originLocationId,
+      destinationLocationId: quotation.destinationLocationId,
+      mode: quotation.mode,
       lines: quotation.lines.map((l) => ({
+        priceCategoryCode: l.priceCategoryCode,
         chargeTypeCode: l.chargeTypeCode,
         description: l.description,
         quantity: l.quantity,

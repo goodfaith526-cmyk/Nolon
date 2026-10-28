@@ -142,6 +142,16 @@ export const INVOICE_SUGGESTION_ISSUES = [
   'SERVICE_NOT_MAPPED',
   /** The charge's service is not one of the shipment's services. */
   'SERVICE_NOT_ON_SHIPMENT',
+  /**
+   * The shipment's route or mode is no longer the quotation's (plan 5.2): its prices are not
+   * used, the lines come from the rate cards.
+   */
+  'QUOTATION_ROUTE_CHANGED',
+  /**
+   * The shipment's price categories are no longer the quotation's (plan 5.2): its prices are not
+   * used, the lines come from the rate cards.
+   */
+  'QUOTATION_CATEGORY_CHANGED',
 ] as const;
 export type InvoiceSuggestionIssue = (typeof INVOICE_SUGGESTION_ISSUES)[number];
 

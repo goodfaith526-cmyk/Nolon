@@ -31,6 +31,22 @@ const emptyLine = (chargeTypeCode: string): LineState => ({
   unitPrice: '',
 });
 
+/**
+ * Why a draft's prices are the rate cards' and not its shipment's quotation's (plan 5.2): the
+ * shipment changed since the quotation. Nothing when there is no such change.
+ */
+export function PricingNotice({ invoice }: { invoice: CustomerInvoiceDto }) {
+  const t = useTranslations('Invoices');
+  if (!invoice.pricingNotice) return null;
+  return (
+    <p className="warning">
+      {t(`pricingNotice_${invoice.pricingNotice.code}`, {
+        number: invoice.pricingNotice.quotationNumber,
+      })}
+    </p>
+  );
+}
+
 /** Loads a draft invoice for editing. */
 export function InvoiceEdit({ id }: { id: string }) {
   const t = useTranslations('Invoices');
@@ -151,6 +167,7 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
       <p className="muted">
         {invoice.customerName} · <span dir="ltr">{invoice.shipmentNumber}</span>
       </p>
+      <PricingNotice invoice={invoice} />
       <Notice notice={notice} />
       <section className="form-section">
         <header>

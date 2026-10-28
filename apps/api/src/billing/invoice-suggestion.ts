@@ -12,7 +12,7 @@ import { requestHash } from '../drafts/draft-rules.js';
 // for createForShipment.
 
 /** Changes when the rules below change, so an older suggestion's fingerprint no longer matches. */
-export const SUGGESTION_DERIVATION = 'invoice-suggestion/3';
+export const SUGGESTION_DERIVATION = 'invoice-suggestion/4';
 
 /**
  * The invoice's currency: the one asked for, else the quotation's (the agreed prices), else the
@@ -28,6 +28,52 @@ export function invoiceCurrency(input: {
   if (input.quotation) return { code: input.quotation, source: 'QUOTATION' };
   if (input.customer) return { code: input.customer, source: 'CUSTOMER' };
   return { code: input.branch, source: 'BRANCH' };
+}
+
+/**
+ * Why the shipment's quotation no longer prices it (plan 5.2), or null when it still does: its
+ * route or mode changed since the quotation (ROUTE), or the price categories of its booking's
+ * cargo lines are not those the quotation priced (CATEGORY: each side's set of categories, so a
+ * line added or dropped in a category both already have is no change). Its prices are then not
+ * the agreed ones, and the invoice is priced from the rate cards.
+ */
+export function quotationDrift(
+  quotation: {
+    originLocationId: string;
+    destinationLocationId: string;
+    mode: string;
+    lines: readonly { priceCategoryCode: string | null }[];
+  },
+  shipment: {
+    originLocationId: string;
+    destinationLocationId: string;
+    mode: string;
+    priceCategoryCodes: readonly (string | null)[];
+  },
+): 'ROUTE' | 'CATEGORY' | null {
+  if (
+    quotation.originLocationId !== shipment.originLocationId ||
+    quotation.destinationLocationId !== shipment.destinationLocationId ||
+    quotation.mode !== shipment.mode
+  ) {
+    return 'ROUTE';
+  }
+  const set = (codes: readonly (string | null)[]) =>
+    [...new Set(codes.flatMap((c) => (c === null ? [] : [c])))].sort().join('|');
+  return set(quotation.lines.map((l) => l.priceCategoryCode)) === set(shipment.priceCategoryCodes)
+    ? null
+    : 'CATEGORY';
+}
+
+/**
+ * The price category the rate cards are asked for when the shipment is priced from them: the one
+ * category every cargo line of its booking has; null (general cards only) with no lines, a line
+ * without a category, or several categories, where no one category's cards price it all.
+ */
+export function shipmentPriceCategory(codes: readonly (string | null)[]): string | null {
+  const [first, ...rest] = codes;
+  if (first === undefined || first === null) return null;
+  return rest.every((c) => c === first) ? first : null;
 }
 
 /** A cargo line of the shipment, as its measures are recorded (weight and volume per line). */

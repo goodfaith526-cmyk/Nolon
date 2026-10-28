@@ -5,9 +5,11 @@ import { InvoicesService } from './invoices.service.js';
 import {
   type CargoLine,
   invoiceCurrency,
+  quotationDrift,
   quotedLine,
   ratedLine,
   ratedPrice,
+  shipmentPriceCategory,
   suggestionFingerprint,
   systemPriceGives,
   unitQuantity,
@@ -245,6 +247,7 @@ describe('invoice suggestion: derivation', () => {
               item({ quantity: 2, weightKg: dec(100) }),
               item({ quantity: 1 }),
             ],
+            priceCategoryCodes: [null],
           }),
       },
       customers: {
@@ -342,10 +345,15 @@ describe('invoice suggestion: derivation', () => {
   it("takes the quotation's lines, and prices none in another currency", async () => {
     const quotation = {
       id: 'q1',
+      number: 'NOL-QT-2026-000001',
       updatedAt: new Date('2026-10-01T00:00:00Z'),
       currency: 'SDG',
+      originLocationId: 'o',
+      destinationLocationId: 'd',
+      mode: 'SEA',
       lines: [
         {
+          priceCategoryCode: null,
           chargeTypeCode: 'FREIGHT',
           description: 'Sea freight',
           quantity: dec(2),
@@ -367,6 +375,17 @@ describe('invoice suggestion: derivation', () => {
       { path: 'lines.0.unitPrice', code: 'QUOTED_PRICE_OTHER_CURRENCY' },
     ]);
     expect(other.fingerprint).not.toBe(own.fingerprint);
+
+    // The shipment went by road after all: the quotation's prices are not used (plan 5.2).
+    const moved = await service({ quotation: { ...quotation, mode: 'ROAD' } }).deriveForShipment(
+      user,
+      's1',
+      {},
+    );
+    expect(moved.currencySource).toBe('BRANCH');
+    expect(moved.unresolved[0]).toMatchObject({ path: 'lines', code: 'QUOTATION_ROUTE_CHANGED' });
+    expect(moved.lines.some((l) => l.priceSource === 'QUOTATION')).toBe(false);
+    expect(moved.lines.find((l) => l.chargeTypeCode === 'FREIGHT')?.rateCardId).toBe('r-freight');
   });
 
   it('changes its fingerprint with the shipment measures alone, and the payment terms alone (Codex N89-2)', async () => {
@@ -385,5 +404,42 @@ describe('invoice suggestion: derivation', () => {
     );
     expect(later.dueDate).not.toBe(one.dueDate);
     expect(later.fingerprint).not.toBe(one.fingerprint);
+  });
+});
+
+describe('a quotation that no longer prices the shipment (plan 5.2)', () => {
+  const route = { originLocationId: 'a', destinationLocationId: 'b', mode: 'ROAD' };
+  const quotation = (...codes: (string | null)[]) => ({
+    ...route,
+    lines: codes.map((priceCategoryCode) => ({ priceCategoryCode })),
+  });
+  const shipment = (...priceCategoryCodes: (string | null)[]) => ({
+    ...route,
+    priceCategoryCodes,
+  });
+
+  it('is the same while route, mode and the set of categories are', () => {
+    expect(quotationDrift(quotation(null, null), shipment(null))).toBeNull();
+    // More lines in a category both have is no change; nor is a line without one.
+    expect(quotationDrift(quotation('CARTON', null), shipment('CARTON', 'CARTON'))).toBeNull();
+    expect(quotationDrift(quotation('CARTON', 'BARREL'), shipment('BARREL', 'CARTON'))).toBeNull();
+  });
+
+  it('drifts on another route or mode, or another set of categories', () => {
+    expect(quotationDrift(quotation(), { ...shipment(), destinationLocationId: 'c' })).toBe(
+      'ROUTE',
+    );
+    expect(quotationDrift(quotation(), { ...shipment(), mode: 'SEA' })).toBe('ROUTE');
+    expect(quotationDrift(quotation(null), shipment('CARTON'))).toBe('CATEGORY');
+    expect(quotationDrift(quotation('CARTON'), shipment(null))).toBe('CATEGORY');
+    expect(quotationDrift(quotation('CARTON'), shipment('CARTON', 'BARREL'))).toBe('CATEGORY');
+  });
+
+  it("asks the rate cards for the shipment's one category only", () => {
+    expect(shipmentPriceCategory(['CARTON', 'CARTON'])).toBe('CARTON');
+    expect(shipmentPriceCategory(['CARTON', 'BARREL'])).toBeNull();
+    expect(shipmentPriceCategory(['CARTON', null])).toBeNull();
+    expect(shipmentPriceCategory([null])).toBeNull();
+    expect(shipmentPriceCategory([])).toBeNull();
   });
 });

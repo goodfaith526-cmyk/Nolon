@@ -14,6 +14,7 @@ import { CreditNoteFields, creditNoteFields } from './CreditNoteDetail';
 import { CreditNoteNumber } from './CreditNotes';
 import { Money, useRecord } from './common';
 import { InvoiceNumber } from './Invoices';
+import { PricingNotice } from './InvoiceForm';
 import { PrintLink } from '../print/PrintLink';
 
 type Panel = 'approve' | 'cancel' | 'credit' | null;
@@ -130,6 +131,7 @@ export function InvoiceDetail({ id }: { id: string }) {
           )}
         </div>
       </div>
+      <PricingNotice invoice={inv} />
       <Notice notice={notice} />
 
       {panel === 'approve' && (

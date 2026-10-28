@@ -114,3 +114,38 @@ describe('InvoiceForm currency change (Codex F92-6)', () => {
     expect(price().value).toBe('');
   });
 });
+
+describe('InvoiceForm pricing notice (Codex F139-1)', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  async function open(inv: CustomerInvoiceDto) {
+    api.mockReset();
+    api.mockResolvedValue(inv);
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root.render(<InvoiceEdit id="inv1" />);
+    });
+    await flush();
+  }
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  it('tells the editor why the prices are not the quotation’s', async () => {
+    await open({
+      ...invoice,
+      pricingNotice: { code: 'QUOTATION_CATEGORY_CHANGED', quotationNumber: 'NOL-QUO-000001' },
+    });
+    expect(document.querySelector('.warning')?.textContent).toBe(
+      'pricingNotice_QUOTATION_CATEGORY_CHANGED',
+    );
+  });
+
+  it('shows nothing when the quotation still prices the shipment', async () => {
+    await open({ ...invoice, pricingNotice: null });
+    expect(document.querySelector('.warning')).toBeNull();
+  });
+});

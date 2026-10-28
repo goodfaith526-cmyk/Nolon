@@ -370,6 +370,8 @@ export class ShipmentsService {
       weightKg: Prisma.Decimal | null;
       volumeCbm: Prisma.Decimal | null;
     }[];
+    /** The price category of each of its booking's cargo lines (null: none). */
+    priceCategoryCodes: (string | null)[];
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -396,12 +398,21 @@ export class ShipmentsService {
           },
           orderBy: { lineNo: 'asc' },
         },
-        booking: { select: { quotationId: true } },
+        booking: {
+          select: {
+            quotationId: true,
+            items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
+          },
+        },
       },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
     const { booking, ...rest } = shipment;
-    return { ...rest, quotationId: booking.quotationId };
+    return {
+      ...rest,
+      quotationId: booking.quotationId,
+      priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
+    };
   }
 
   /** For other modules (documents): 404 unless the user may see the shipment. */
