@@ -73,7 +73,7 @@ beforeAll(async () => {
   const agent = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
   token = await tokenFor(t, await signIn(t, agent.email), client);
 
-  city = await createLocation(location('C', 'CITY'));
+  city = await createLocation(location('C', 'CITY', { shortCode: 'ZCP' }));
   port = await createLocation(location('P', 'PORT', { cityId: city.id }));
   otherPort = await createLocation(location('Q', 'PORT'));
   rateFromPort = (

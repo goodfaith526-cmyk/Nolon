@@ -135,6 +135,8 @@ export interface LocationDto {
   isActive: boolean;
   /** The city this place serves (a port's city); a lookup by the city also finds it. */
   cityId: string | null;
+  /** The client's letters for this place in route numbers (DXB in DXB-KRT-0001). */
+  shortCode: string | null;
 }
 
 export interface CodeNameDto {
@@ -200,6 +202,8 @@ export interface LocationInput {
   isActive?: boolean;
   /** A CITY location this place serves; not for a city itself. */
   cityId?: string | null;
+  /** 2 to 4 capital letters for route numbers; empty: its city's, else from its code. */
+  shortCode?: string | null;
 }
 
 /**
@@ -768,6 +772,10 @@ export const FORM_REFUSALS = [
   'STATUS_TIME_TOO_EARLY',
   'REVERT_STALE',
   'REVERT_CLOSED_CONTAINER',
+  // An LCL booking or shared container numbered by its route (DXB-KRT-0001): a place on the route
+  // has no letters (no short code, none on its city, and its code does not end in three letters).
+  // Param `location`: the place's code.
+  'ROUTE_CODE_MISSING',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

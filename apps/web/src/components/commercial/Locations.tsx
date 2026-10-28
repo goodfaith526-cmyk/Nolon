@@ -69,6 +69,7 @@ export function Locations() {
       nameAr: field(form, 'nameAr').trim(),
       countryCode: field(form, 'countryCode'),
       cityId: chosenCity?.id ?? null,
+      shortCode: field(form, 'shortCode').trim().toUpperCase() || null,
     };
     const ok = await run(
       () => api<LocationDto>('/master-data/locations', { method: 'POST', body }),
@@ -164,6 +165,19 @@ export function Locations() {
                 </small>
               )}
             </label>
+            <label className="field">
+              <span>{t('shortCode')}</span>
+              <input
+                name="shortCode"
+                maxLength={4}
+                dir="ltr"
+                pattern="[A-Za-z]{2,4}"
+                aria-describedby="location-short-code-hint"
+              />
+              <small id="location-short-code-hint" className="muted">
+                {t('shortCodeHint')}
+              </small>
+            </label>
             {kind !== 'CITY' && kind !== 'COUNTRY' && (
               <label className="field">
                 <span>{t('city')}</span>
@@ -203,6 +217,7 @@ export function Locations() {
                 <th>{t('name')}</th>
                 <th>{t('kind')}</th>
                 <th>{t('country')}</th>
+                <th>{t('shortCode')}</th>
                 <th>{t('city')}</th>
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
@@ -215,6 +230,25 @@ export function Locations() {
                   <td>{localName(l)}</td>
                   <td>{t(`kind_${l.kind}`)}</td>
                   <td>{countryName(l.countryCode)}</td>
+                  <td dir="ltr">
+                    {canUpdate ? (
+                      <input
+                        key={`${l.id}-${l.shortCode ?? ''}`}
+                        aria-label={t('shortCode')}
+                        defaultValue={l.shortCode ?? ''}
+                        maxLength={4}
+                        size={4}
+                        pattern="[A-Za-z]{2,4}"
+                        disabled={busy}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim().toUpperCase() || null;
+                          if (value !== l.shortCode) update(l, { shortCode: value });
+                        }}
+                      />
+                    ) : (
+                      (l.shortCode ?? '—')
+                    )}
+                  </td>
                   <td>
                     {canUpdate && l.kind !== 'CITY' && l.kind !== 'COUNTRY' ? (
                       <select

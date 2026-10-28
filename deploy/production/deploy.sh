@@ -25,6 +25,34 @@ compose --profile jobs build --quiet backup
 echo "==> Starting database"
 compose up -d --wait postgres
 
+# Migrations that rewrite existing rows (not only add): applied only with a backup taken just before,
+# and with api and web stopped from before the migration until the new ones start, so no old code
+# writes in between (AGENTS.md rule 4; docs/reviews/lcl-numbering-capacity-plan-2026-10-27.md, F111-5).
+REWRITING_MIGRATIONS=(20261027235016_route_numbers_renumbering)
+
+# Sets `rewrites` to the rewriting migrations not applied yet to this database (none on an empty
+# one: no table yet). Run in this shell, not in $(...), so a failed query stops the deploy (set -e)
+# and never counts as "nothing pending".
+rewrites=""
+find_pending_rewrites() {
+  local q='SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL'
+  local exists applied name
+  exists=$(compose exec -T postgres psql -U nolon -d nolon -tAc \
+    "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")
+  [ "$exists" = t ] || return 0
+  applied=$(compose exec -T postgres psql -U nolon -d nolon -tAc "$q")
+  for name in "${REWRITING_MIGRATIONS[@]}"; do
+    grep -qx "$name" <<<"$applied" || rewrites="$rewrites $name"
+  done
+}
+
+# The backup below is required for every migration here; a rewriting one also stops api and web.
+find_pending_rewrites
+if [ -n "$rewrites" ]; then
+  echo "==> Stopping api and web: these migrations rewrite existing data: $rewrites"
+  compose stop api web
+fi
+
 # Every migration runs right after a fresh, verified, locked off-server backup. On a database that
 # holds anything, a deploy without backups set up, or with a failed backup, stops here before
 # anything changes. Only the very first deploy, onto an empty database, has nothing to back up.

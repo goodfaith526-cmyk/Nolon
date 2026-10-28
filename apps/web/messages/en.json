@@ -2462,6 +2462,7 @@
     "VOLUME_TOO_LARGE": "The volume is too large: check the dimensions and the quantity.",
     "VALID_UNTIL_PAST": "The valid-until date is in the past.",
     "CURRENCY_NOT_ACTIVE": "This currency is unknown or no longer in use.",
+    "ROUTE_CODE_MISSING": "Place {location} has no letters for route numbers: an administrator sets its short code (Master data, Locations).",
     "QUOTED_ROUTE_FIXED": "This booking was made from a quotation: its route and mode are the quotation's and cannot change.",
     "RATE_NOT_USABLE": "This rate does not apply to this quotation (route, mode, load, cargo, currency or date).",
     "MANUAL_LINE_INCOMPLETE": "A line without a rate needs a charge, a unit and a price.",
@@ -2527,6 +2528,8 @@
     "kind_BORDER": "Border point",
     "kind_OTHER": "Other",
     "countryFromCity": "The city's country: a place is in the country of its city.",
+    "shortCode": "Route letters",
+    "shortCodeHint": "Letters in route numbers (DXB in DXB-KRT-0001), 2 to 4. Empty: the city's, else the last three letters of the code.",
     "kind_COUNTRY": "Country (pricing scope)"
   },
   "MasterData": {
