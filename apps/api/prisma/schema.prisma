@@ -289,6 +289,8 @@ model User {
   delegationsHeld          BranchDelegation[]        @relation("BranchDelegationDelegate")
   delegationsCreated       BranchDelegation[]        @relation("BranchDelegationCreatedBy")
   delegationsRevoked       BranchDelegation[]        @relation("BranchDelegationRevokedBy")
+  csRequestsRouted         CsBookingRequest[]        @relation("CsRequestRoutedBy")
+  csRequestsDecided        CsBookingRequest[]        @relation("CsRequestDecidedBy")
 
   @@map("users")
 }
@@ -3375,24 +3377,50 @@ model CsBookingRequest {
   botQuotedAmount       Decimal?               @map("bot_quoted_amount") @db.Decimal(18, 4)
   botQuotedCurrency     String?                @map("bot_quoted_currency") @db.Char(3)
   language              String?                @db.VarChar(2)
+  /// Staff review (docs/plans/04a): who routed it and when, who decided and when, and why rejected.
+  routedById            String?                @map("routed_by_id") @db.Uuid
+  routedAt              DateTime?              @map("routed_at") @db.Timestamptz(3)
+  decidedById           String?                @map("decided_by_id") @db.Uuid
+  decidedAt             DateTime?              @map("decided_at") @db.Timestamptz(3)
+  /// The approved reason the customer sees (cs_reject_reasons).
+  rejectReasonCode      String?                @map("reject_reason_code") @db.VarChar(20)
+  /// For staff only: never shown to the customer or the bot.
+  internalNote          String?                @map("internal_note") @db.VarChar(1000)
   version               Int                    @default(1)
   expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  apiClient   ApiClient      @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  customer    Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  branch      Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin      Location?      @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination Location?      @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  category    PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  quote       CsQuote?       @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  apiClient    ApiClient       @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch       Branch?         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin       Location?       @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination  Location?       @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category     PriceCategory?  @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote        CsQuote?        @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  routedBy     User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
+  decidedBy    User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  rejectReason CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
   @@index([ownerRef, createdAt])
   @@index([branchId, status])
   @@index([status])
   @@map("cs_booking_requests")
+}
+
+/// Why staff reject a bot's booking request, in the words the customer sees (docs/plans/04a
+/// section 4). Master data the Administrator keeps; a reason in use is deactivated, never deleted.
+model CsRejectReason {
+  code      String   @id @db.VarChar(20)
+  textAr    String   @map("text_ar") @db.VarChar(300)
+  textEn    String   @map("text_en") @db.VarChar(300)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  requests CsBookingRequest[]
+
+  @@map("cs_reject_reasons")
 }
 
 /// The branches whose customers an API key may read (AGENTS.md rule 2).

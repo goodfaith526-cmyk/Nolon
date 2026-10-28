@@ -418,6 +418,8 @@ export const AUDIT_ENTITIES = [
   'USER_ACCESS',
   'BRANCH_LIMIT',
   'DELEGATION',
+  // Plan 04a section 4: why staff reject a bot's booking request.
+  'CS_REJECT_REASON',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

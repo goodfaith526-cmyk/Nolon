@@ -55,7 +55,8 @@ interface NavLink {
     | 'branchPermissions'
     | 'alertSettings'
     | 'apiKeys'
-    | 'assistantDrafts';
+    | 'assistantDrafts'
+    | 'botRequests';
   icon: keyof typeof icons;
   /** Shown with this permission, or with any of these. */
   permission?: Permission | readonly Permission[];
@@ -92,6 +93,16 @@ const NAV_SECTIONS: readonly {
         label: 'assistantDrafts',
         icon: 'assistant',
         permission: DRAFT_VIEW_PERMISSIONS,
+      },
+      {
+        href: '/cs-booking-requests',
+        label: 'botRequests',
+        icon: 'assistant',
+        permission: [
+          'cs_booking_requests:view',
+          'cs_booking_requests:update',
+          'cs_booking_requests:approve',
+        ],
       },
       { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
       { href: '/partners', label: 'partners', icon: 'carrier', permission: 'partners:view' },

@@ -71,6 +71,9 @@ export const PERMISSION_MODULES = [
   'audit_log',
   // Plan 03: who may do what (the permissions screen). The Administrator only, never given.
   'access_control',
+  // Plan 04a: staff review of the shipping bot's booking requests. view: the list; update:
+  // routing to a branch; approve: approval and rejection.
+  'cs_booking_requests',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -152,6 +155,8 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   users: 'FNNNNNNNNNN',
   audit_log: 'VVVNNNNNNNN',
   access_control: 'FNNNNNNNNNN',
+  // Plan 04a section 2 (⭐ proposed, in the owner's decisions file): those who book review them.
+  cs_booking_requests: 'FVFFVNNNNFN',
 };
 
 /**

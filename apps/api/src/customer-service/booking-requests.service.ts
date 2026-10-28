@@ -380,7 +380,10 @@ export class BookingRequestsService {
     const row =
       where.length === 0
         ? null
-        : await this.prisma.csBookingRequest.findFirst({ where: { OR: where } });
+        : await this.prisma.csBookingRequest.findFirst({
+            where: { OR: where },
+            include: { rejectReason: true },
+          });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
       await this.tokens.record(
@@ -399,7 +402,11 @@ export class BookingRequestsService {
       createdAt: row.createdAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
       bookingNumber: null,
-      customerReason: null,
+      // Plan 04a section 5: the approved reason only, never the internal note.
+      customerReason:
+        row.status === 'REJECTED' && row.rejectReason
+          ? { ar: row.rejectReason.textAr, en: row.rejectReason.textEn }
+          : null,
       paymentInstructions: null,
     };
   }

@@ -373,3 +373,98 @@ export interface CsBookingRequestDto {
   customerReason: { ar: string; en: string } | null;
   paymentInstructions: null;
 }
+
+/** Why staff reject a bot's booking request, as the customer reads it (plan 04a section 4). */
+export interface CsRejectReasonDto {
+  code: string;
+  textAr: string;
+  textEn: string;
+  isActive: boolean;
+}
+
+export interface CsRejectReasonInput {
+  textAr: string;
+  textEn: string;
+  isActive: boolean;
+}
+
+/** A staff list's filter: the requests still undecided (default), or one state. */
+export const CS_REVIEW_FILTERS = [
+  'open',
+  'awaiting_routing',
+  'pending',
+  'approved',
+  'rejected',
+  'expired',
+] as const;
+export type CsReviewFilter = (typeof CS_REVIEW_FILTERS)[number];
+
+/** A booking request in the staff list (plan 04a section 3). */
+export interface CsBookingRequestSummaryDto {
+  id: string;
+  reference: string;
+  /** The real state, awaiting routing included, whatever the bot reads. */
+  status: CsBookingRequestState;
+  createdAt: string;
+  expiresAt: string;
+  branchId: string | null;
+  originId: string | null;
+  destinationId: string | null;
+  category: string | null;
+  quantity: DecimalString;
+  senderName: string;
+  channel: CsSenderChannel | null;
+  customerId: string | null;
+  /** The request is in the bot's own words: some of its places or type may be unmatched. */
+  byNames: boolean;
+}
+
+/** The advisory price check of a request's quote, done when staff open it (plan 04a section 1). */
+export interface CsRequestPriceCheck {
+  /** current: the same card, still approved and valid, gives the same total today; else stale. */
+  state: 'current' | 'stale';
+  rateCardId: string;
+  approvedAt: string | null;
+  currency: string;
+  unitPrice: DecimalString;
+  /** The quote's total, as the bot showed it. */
+  quotedTotal: DecimalString | null;
+  /** The engine's total today for the request's quantity; null when no card prices it now. */
+  totalNow: DecimalString | null;
+}
+
+export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
+  version: number;
+  allowedBranchIds: string[];
+  customerNumber: string | null;
+  /** The sender's number as the request carries it: contact only, never a proof of an account. */
+  contactPhone: string | null;
+  consigneeName: string;
+  consigneePhone: string;
+  handover: (typeof CS_HANDOVERS)[number];
+  services: (typeof CS_REQUEST_SERVICES)[number][];
+  requestedDate: DateString | null;
+  language: 'ar' | 'en' | null;
+  /** The names the customer saw, for a request by names. */
+  botNames: { origin: CsName; destination: CsName; kind: CsName } | null;
+  /** The price the bot says it showed from its own material: a claim, never NOLON's price. */
+  botQuotedPrice: { amount: DecimalString; currency: string } | null;
+  quoteRef: string | null;
+  priceCheck: CsRequestPriceCheck | null;
+  routedAt: string | null;
+  decidedAt: string | null;
+  rejectReasonCode: string | null;
+  internalNote: string | null;
+  actions: { canRoute: boolean; canReject: boolean };
+}
+
+export interface CsRouteRequest {
+  version: number;
+  branchId: string;
+}
+
+export interface CsRejectRequest {
+  version: number;
+  reasonCode: string;
+  internalNote?: string | null;
+}
