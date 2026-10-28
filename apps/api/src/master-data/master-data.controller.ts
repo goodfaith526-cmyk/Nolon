@@ -50,6 +50,12 @@ const locationBody = z
     countryCode,
     isActive: z.boolean().optional(),
     cityId: z.uuid().nullish(),
+    shortCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{2,4}$/)
+      .nullish(),
   })
   .strict();
 
@@ -134,17 +140,18 @@ export class MasterDataController {
 
   @Post('locations')
   @RequirePermission('master_data:create')
-  createLocation(@Body() body: unknown): Promise<LocationDto> {
-    return this.masterData.createLocation(parse(locationBody, body));
+  createLocation(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<LocationDto> {
+    return this.masterData.createLocation(user, parse(locationBody, body));
   }
 
   @Patch('locations/:id')
   @RequirePermission('master_data:update')
   updateLocation(
+    @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<LocationDto> {
-    return this.masterData.updateLocation(id, parse(locationBody.partial(), body));
+    return this.masterData.updateLocation(user, id, parse(locationBody.partial(), body));
   }
 
   // Container, charge and document types, and currencies: add, rename, deactivate, reactivate.

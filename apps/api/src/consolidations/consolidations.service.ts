@@ -42,7 +42,8 @@ import {
   routeWhere,
 } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { ROUTE_SEQUENCES, formatRouteNumber, nextSequenceValue } from '../common/numbering.js';
+import { oldNumberTerm } from '../common/old-numbers.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
 import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -165,6 +166,9 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     if (filters.bookable && !canBookInto(user)) {
       throw new ForbiddenException('Missing permission to book into a container');
     }
+    const oldNumbers = filters.q
+      ? await oldNumberTerm(this.prisma, 'CONSOLIDATION', filters.q)
+      : [];
     const where: Prisma.ConsolidationWhereInput = {
       ...(filters.bookable ? { status: 'OPEN' } : listBranchScope(user, filters.branchId)),
       etd: dateRange(filters.from, filters.to),
@@ -175,6 +179,7 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
             OR: [
               { number: { contains: filters.q, mode: 'insensitive' } },
               { containerNumber: { contains: filters.q.toUpperCase() } },
+              ...oldNumbers,
             ],
           }
         : {}),
@@ -251,16 +256,17 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       throw new BadRequestException('Each shipment appears once');
     }
     const numbers = await this.requireVisibleShipments(user, shipmentIds);
-    const branch = await this.prisma.branch.findUniqueOrThrow({
-      where: { id: input.branchId },
-      select: { timezone: true },
-    });
     const id = await this.prisma.$transaction(async (tx) => {
-      const year = todayIn(branch.timezone).slice(0, 4);
-      const number = formatDocumentNumber(
-        'CON',
-        await nextSequenceValue(tx, 'CONSOLIDATION', year),
-        year,
+      // Numbered by its route, which never changes: DXB-KRT-C0001.
+      const letters = await this.masterData.routeLetters(
+        tx,
+        input.originLocationId,
+        input.destinationLocationId,
+      );
+      const number = formatRouteNumber(
+        letters,
+        await nextSequenceValue(tx, ROUTE_SEQUENCES.container, letters),
+        true,
       );
       const container = await tx.consolidation.create({
         data: {

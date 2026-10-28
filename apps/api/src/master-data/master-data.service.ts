@@ -52,6 +52,17 @@ const PRICE_CATEGORY_FIELDS = [
   'isActive',
 ] as const;
 
+/** The fields the audit log shows for a location, in this order. */
+const LOCATION_FIELDS = [
+  'code',
+  'kind',
+  'nameEn',
+  'nameAr',
+  'countryCode',
+  'shortCode',
+  'isActive',
+] as const;
+
 /** The fields the audit log shows for a code type, in this order. */
 const AUDITED_FIELDS = ['code', 'nameEn', 'nameAr', 'isActive'] as const;
 
@@ -121,13 +132,15 @@ export class MasterDataService {
    * edit (which locks it for update) and the place's insert run one after the other, so a place
    * never lands in a city that moved to another country meanwhile (Codex F96-1).
    */
-  async createLocation(input: LocationInput): Promise<LocationDto> {
+  async createLocation(user: AuthUser, input: LocationInput): Promise<LocationDto> {
     try {
       return toLocationDto(
         await this.prisma.$transaction(async (tx) => {
           const city = await requireCityOf(tx, null, input.kind, input.cityId);
           requireCityCountry(city, input.countryCode);
-          return tx.location.create({ data: input });
+          const created = await tx.location.create({ data: input });
+          await this.logLocation(tx, user, 'CREATED', null, created);
+          return created;
         }),
       );
     } catch (error) {
@@ -141,7 +154,11 @@ export class MasterDataService {
    * so the checks below and the write see the same city and the same places (Codex F96-1). A place
    * locks itself before its city, and a city has no city, so the order never cycles.
    */
-  async updateLocation(id: string, input: Partial<LocationInput>): Promise<LocationDto> {
+  async updateLocation(
+    user: AuthUser,
+    id: string,
+    input: Partial<LocationInput>,
+  ): Promise<LocationDto> {
     try {
       return toLocationDto(
         await this.prisma.$transaction(async (tx) => {
@@ -173,7 +190,9 @@ export class MasterDataService {
             if (places > 0)
               throw new BadRequestException('Places name this location as their city');
           }
-          return tx.location.update({ where: { id }, data: input });
+          const updated = await tx.location.update({ where: { id }, data: input });
+          await this.logLocation(tx, user, 'UPDATED', existing, updated);
+          return updated;
         }),
       );
     } catch (error) {
@@ -311,6 +330,25 @@ export class MasterDataService {
     });
   }
 
+  private async logLocation(
+    tx: Tx,
+    user: AuthUser,
+    action: 'CREATED' | 'UPDATED',
+    before: Location | null,
+    after: Location,
+  ): Promise<void> {
+    const changes = changedFields(before, after, LOCATION_FIELDS);
+    if (action === 'UPDATED' && changes.length === 0) return;
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: 'LOCATION',
+      entityId: after.id,
+      reference: `${after.code} ${after.nameEn}`,
+      action,
+      changes,
+    });
+  }
+
   private async logCodeType(
     tx: Tx,
     user: AuthUser,
@@ -327,6 +365,40 @@ export class MasterDataService {
       action,
       changes: changedFields(before, after, AUDITED_FIELDS),
     });
+  }
+
+  /**
+   * The letters of a route numbered by it (an LCL booking or a shared container: DXB-KRT). Each
+   * end is its short code, else its city's, else the last three characters of its code when they
+   * are three letters. Refused (ROUTE_CODE_MISSING, on that end's field) when an end has none:
+   * an administrator sets its short code; no letters are made up.
+   */
+  async routeLetters(
+    db: Tx,
+    originId: string,
+    destinationId: string,
+    fields: readonly [string, string] = ['originLocationId', 'destinationLocationId'],
+  ): Promise<string> {
+    const ends = await db.location.findMany({
+      where: { id: { in: [originId, destinationId] } },
+      select: { id: true, code: true, shortCode: true, city: { select: { shortCode: true } } },
+    });
+    const letters = (id: string, field: string): string => {
+      const end = ends.find((e) => e.id === id);
+      if (!end) throw new NotFoundException('Location not found');
+      const tail = end.code.slice(-3);
+      const found = end.shortCode ?? end.city?.shortCode ?? (/^[A-Z]{3}$/.test(tail) ? tail : null);
+      if (found === null || !/^[A-Z]{2,4}$/.test(found)) {
+        throw fieldRefusal(
+          'ROUTE_CODE_MISSING',
+          `Location ${end.code} has no letters for route numbers: set its short code`,
+          [field],
+          { location: end.code },
+        );
+      }
+      return found;
+    };
+    return `${letters(originId, fields[0])}-${letters(destinationId, fields[1])}`;
   }
 
   /**
@@ -550,6 +622,7 @@ function toLocationDto(l: Location): LocationDto {
     countryCode: l.countryCode,
     isActive: l.isActive,
     cityId: l.cityId,
+    shortCode: l.shortCode,
   };
 }
 

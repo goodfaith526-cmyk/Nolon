@@ -305,7 +305,7 @@ describe('internal alerts', () => {
     const late = find(ops, 'SHIPMENT_PAST_ETA', ids.late);
     expect(late).toMatchObject({ branchCode: 'DXB', detail: customer.name, since: old });
     expect(late?.days).toBeGreaterThan(365 * 1000);
-    expect(late?.number).toMatch(/^NOL-SHP-/);
+    expect(late?.number).toMatch(/^(BK\d{5,}|[A-Z]{2,4}-[A-Z]{2,4}-\d{4,})$/);
     expect(find(ops, 'SHIPMENT_PAST_ETA', ids.recent)?.days).toBe(2);
     expect(find(ops, 'CUSTOMS_STALLED', ids.customs)).toMatchObject({
       detail: 'SUBMITTED',

@@ -221,7 +221,10 @@ the bucket. Daily at 01:47 UTC, and before every migration once set up. CI runs 
 trip for the staging stack too (`deploy/production/test-backup.sh staging`).
 
 Until the settings below exist, staging still deploys, with a warning, and migrates without a
-backup. Once they exist, a failed backup stops the deploy before any migration.
+backup, except a migration that rewrites existing data (`REWRITING_MIGRATIONS` in `deploy.sh`,
+e.g. the 2026-10 renumbering): that deploy stops before migrating until backups are set up. Once
+they exist, a failed backup stops the deploy before any migration, and a rewriting migration also
+stops api and web from before it runs until the new ones start.
 
 ### Setup, once
 

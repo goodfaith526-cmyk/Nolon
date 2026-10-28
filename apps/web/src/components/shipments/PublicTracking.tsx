@@ -175,13 +175,7 @@ export function TrackingLookup() {
         <p className="muted">{t('lookupHint')}</p>
         <label className="field">
           <span>{t('reference')}</span>
-          <input
-            name="reference"
-            required
-            dir="ltr"
-            placeholder="NOL-SHP-2026-000001"
-            maxLength={30}
-          />
+          <input name="reference" required dir="ltr" placeholder="BK00001" maxLength={30} />
         </label>
         <label className="field">
           <span>{t('phoneLast4')}</span>

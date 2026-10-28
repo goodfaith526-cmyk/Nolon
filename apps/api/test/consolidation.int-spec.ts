@@ -203,7 +203,7 @@ describe('consolidated LCL containers', () => {
       await lclShipment(customers[2], '5'),
     ] as const;
     const created = (await newContainer(ids).expect(201)).body as ConsolidationDto;
-    expect(created.number).toMatch(/^NOL-CON-\d{4}-\d{6}$/);
+    expect(created.number).toMatch(/^JED-PTS-C\d{4,}$/);
     expect(created.status).toBe('OPEN');
     expect(created.shipments.map((s) => s.shipmentId).sort()).toEqual([...ids].sort());
     // The container's voyage is the shipments' voyage.
@@ -643,7 +643,9 @@ describe('consolidated LCL containers', () => {
 
     const made = (await post(path, cookies.opsJed, body).expect(201))
       .body as ConsolidationBookingDto;
-    expect(made.bookingNumber).toMatch(/^BK\d{5,}$/);
+    // An LCL booking is numbered by its route; its shipment keeps the number.
+    expect(made.bookingNumber).toMatch(/^JED-PTS-\d{4,}$/);
+    expect(made.shipmentNumber).toBe(made.bookingNumber);
     const booking = (await get(`/bookings/${made.bookingId}`, cookies.opsJed).expect(200))
       .body as BookingDto;
     expect(booking).toMatchObject({

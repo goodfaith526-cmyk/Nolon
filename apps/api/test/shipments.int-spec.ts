@@ -168,7 +168,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
   describe('creation from a booking', () => {
     it('confirming a booking creates one shipment that copies the booking', async () => {
       const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);
-      expect(s.number).toMatch(/^NOL-SHP-\d{4}-\d{6}$/);
+      // It keeps its booking's number (an FCL booking: BK00001).
+      expect(s.number).toMatch(/^BK\d{5,}$/);
+      expect(s.number).toBe(s.bookingNumber);
       expect(s.status).toBe('CREATED');
       expect(s.branchId).toBe(dxb);
       expect(s.customerId).toBe(customer.id);

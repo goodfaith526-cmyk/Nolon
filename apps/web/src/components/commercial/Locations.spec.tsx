@@ -16,6 +16,7 @@ const place = (id: string, kind: LocationDto['kind'], cityId: string | null = nu
     countryCode: 'AE',
     isActive: true,
     cityId,
+    shortCode: null,
   }) satisfies LocationDto;
 const locations = [place('dxb', 'CITY'), place('jea', 'PORT'), place('ruh', 'CITY')];
 locations[2] = { ...locations[2]!, countryCode: 'SA' };

@@ -351,6 +351,9 @@ model Location {
   isActive    Boolean      @default(true) @map("is_active")
   /// The city a port (or other place) serves, a CITY location: a lookup by the city also finds it.
   cityId      String?      @map("city_id") @db.Uuid
+  /// The client's letters for this place in route numbers (DXB-KRT-0001): 2 to 4 capital letters.
+  /// Empty: its city's, else the last three letters of its code when they are letters.
+  shortCode   String?      @map("short_code") @db.VarChar(4)
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -805,7 +808,7 @@ enum BookingService {
 /// quotation) or directly. A confirmed booking produces exactly one shipment (group 3).
 model Booking {
   id                    String           @id @default(uuid()) @db.Uuid
-  /// NOL-BK-2026-000001
+  /// BK00001, or for an LCL booking its route letters and a serial: DXB-KRT-0001
   number                String           @unique @db.VarChar(30)
   branchId              String           @map("branch_id") @db.Uuid
   customerId            String           @map("customer_id") @db.Uuid
@@ -934,7 +937,7 @@ enum ShipmentEventKind {
  */
 model Shipment {
   id                    String           @id @default(uuid()) @db.Uuid
-  /// NOL-SHP-2026-000001
+  /// Its booking's number (BK00001 or DXB-KRT-0001)
   number                String           @unique @db.VarChar(30)
   branchId              String           @map("branch_id") @db.Uuid
   customerId            String           @map("customer_id") @db.Uuid
@@ -2141,7 +2144,7 @@ enum ConsolidationBasis {
  */
 model Consolidation {
   id                    String              @id @default(uuid()) @db.Uuid
-  /// NOL-CON-2026-000001
+  /// Its route letters, C and a serial: DXB-PTS-C0001
   number                String              @unique @db.VarChar(30)
   branchId              String              @map("branch_id") @db.Uuid
   /// Port of loading and port of discharge.
@@ -3680,4 +3683,42 @@ enum DraftKeyOutcome {
   NOT_CREATED
 
   @@map("draft_key_outcome")
+}
+
+/// What kind of record a renumbering changed.
+enum RenumberedKind {
+  BOOKING
+  SHIPMENT
+  CONSOLIDATION
+
+  @@map("renumbered_kind")
+}
+
+/// Why a record's number changed.
+enum RenumberReason {
+  /// The one-time move to route numbers and booking numbers on shipments (2026-10).
+  MIGRATION
+  /// A draft LCL booking's route or load type changed, so it took a number of its new series.
+  DRAFT_ROUTE_CHANGE
+
+  @@map("renumber_reason")
+}
+
+/// Every change of a booking's, shipment's or container's number, old to new. Insert-only (a
+/// trigger refuses updates and deletes): old numbers in printed papers, posted journal texts and
+/// history stay explainable, and staff search finds a record by an old number through it.
+model ReferenceRenumbering {
+  id         BigInt         @id @default(autoincrement())
+  kind       RenumberedKind
+  recordId   String         @map("record_id") @db.Uuid
+  oldNumber  String         @map("old_number") @db.VarChar(30)
+  newNumber  String         @map("new_number") @db.VarChar(30)
+  reason     RenumberReason
+  /// Null for the migration.
+  userId     String?        @map("user_id") @db.Uuid
+  occurredAt DateTime       @default(now()) @map("occurred_at") @db.Timestamptz(3)
+
+  @@index([oldNumber])
+  @@index([kind, recordId])
+  @@map("reference_renumberings")
 }
