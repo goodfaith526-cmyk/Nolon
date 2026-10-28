@@ -15,6 +15,7 @@ import { RatesService } from '../rates/rates.service.js';
  * between, the shipment types (price categories) and the services. Public master data only: no
  * price, cost or staff name. A place is listed when an APPROVED rate card valid today (UTC) covers
  * it: one on the place itself, on its city, or on its country (the pricing scopes of plan 5.3).
+ * An origin is listed too when a routing rule covers it the same way (a branch serves it).
  * Countries themselves are not listed: a quote and a booking go between places.
  */
 @Injectable()
@@ -25,10 +26,11 @@ export class CatalogService {
   ) {}
 
   async catalog(): Promise<CsCatalogDto> {
-    const [all, aliases, ends] = await Promise.all([
+    const [all, aliases, ends, routing] = await Promise.all([
       this.masterData.all(),
       this.masterData.locationAliases(),
       this.rates.approvedRouteEnds(todayIn('UTC')),
+      this.masterData.routingBranches(),
     ]);
     // Places only: a country is a pricing scope, never a quote's or a booking's end.
     const active = all.locations.filter((l) => l.isActive && l.kind !== 'COUNTRY');
@@ -49,7 +51,8 @@ export class CatalogService {
         .map((l) => place(l, aliases[l.id] ?? []));
     };
     const body: Omit<CsCatalogDto, 'version'> = {
-      origins: covered(ends.origins),
+      // A place a branch serves (section 6) is an origin too, priced or not.
+      origins: covered([...ends.origins, ...Object.keys(routing)]),
       destinations: covered(ends.destinations),
       categories: all.priceCategories
         .filter((c) => c.isActive)

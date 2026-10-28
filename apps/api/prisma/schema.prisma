@@ -43,6 +43,7 @@ model Branch {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   users               UserBranch[]
+  routingRules        BranchRoutingRule[]
   customers           Customer[]
   partners            Partner[]
   rateCards           RateCard[]
@@ -403,6 +404,7 @@ model Location {
   warehouses         Warehouse[]
   partners           Partner[]
   aliases            LocationAlias[]
+  routingRules       BranchRoutingRule[]
 
   @@index([cityId])
   @@map("locations")
@@ -419,6 +421,22 @@ model LocationAlias {
 
   @@id([locationId, alias])
   @@map("location_aliases")
+}
+
+/// Which branch serves a customer-service request starting at a location (docs/plans/04 section
+/// 6): a place, a city or a country. The narrowest level with rules decides; one branch there is
+/// the branch, several or none is no branch (staff route it).
+model BranchRoutingRule {
+  locationId String   @map("location_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([locationId, branchId])
+  @@index([branchId])
+  @@map("branch_routing_rules")
 }
 
 /// 20GP, 40GP, 40HC, OTHER... Master data the client extends.

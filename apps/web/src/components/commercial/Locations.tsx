@@ -26,6 +26,8 @@ export function Locations() {
   const failure = useFailureText();
   const [locations, setLocations] = useState<LocationDto[] | null>(null);
   const [aliases, setAliases] = useState<Record<string, string[]>>({});
+  const [branches, setBranches] = useState<MasterDataDto['branches']>([]);
+  const [routing, setRouting] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<LocationKind>('PORT');
@@ -35,10 +37,16 @@ export function Locations() {
 
   const load = useCallback(() => {
     api<MasterDataDto>('/master-data')
-      .then((d) => setLocations(d.locations))
+      .then((d) => {
+        setLocations(d.locations);
+        setBranches(d.branches);
+      })
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
     api<Record<string, string[]>>('/master-data/location-aliases')
       .then(setAliases)
+      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+    api<Record<string, string[]>>('/master-data/routing-branches')
+      .then(setRouting)
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
   }, [failure]);
 
@@ -107,6 +115,26 @@ export function Locations() {
       tc('saved'),
     );
   }
+
+  /** Adds or removes one branch serving customer-service requests from a location. */
+  function toggleRouting(l: LocationDto, branchId: string, on: boolean) {
+    const now = routing[l.id] ?? [];
+    const branchIds = on ? [...now, branchId] : now.filter((id) => id !== branchId);
+    void run(
+      () =>
+        api(`/master-data/locations/${l.id}/routing-branches`, {
+          method: 'PUT',
+          body: { branchIds },
+        }),
+      tc('saved'),
+    );
+  }
+
+  const branchCodes = (l: LocationDto) =>
+    branches
+      .filter((b) => (routing[l.id] ?? []).includes(b.id))
+      .map((b) => b.code)
+      .join('، ') || '—';
 
   const cities = (locations ?? []).filter((l) => l.kind === 'CITY');
   // The city picked for the new place (a city has none): its country is the place's.
@@ -241,6 +269,7 @@ export function Locations() {
                 <th>{t('shortCode')}</th>
                 <th>{t('city')}</th>
                 <th>{t('aliases')}</th>
+                <th title={t('routingHint')}>{t('routing')}</th>
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
               </tr>
@@ -299,6 +328,26 @@ export function Locations() {
                       />
                     ) : (
                       (aliases[l.id] ?? []).join('، ') || '—'
+                    )}
+                  </td>
+                  <td>
+                    {canUpdate ? (
+                      <div className="checks">
+                        {branches.map((b) => (
+                          <label key={b.id} dir="ltr">
+                            <input
+                              type="checkbox"
+                              aria-label={`${t('routing')} ${b.code}`}
+                              checked={(routing[l.id] ?? []).includes(b.id)}
+                              disabled={busy}
+                              onChange={(e) => toggleRouting(l, b.id, e.target.checked)}
+                            />
+                            {b.code}
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      branchCodes(l)
                     )}
                   </td>
                   <td>{l.isActive ? tc('active') : tc('inactive')}</td>

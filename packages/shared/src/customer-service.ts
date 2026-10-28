@@ -271,6 +271,11 @@ export interface CsQuoteDto {
   quoteRefExpiresAt: string;
   /** A note for the customer on the card: none yet, so always null. */
   customerNote: { ar: string; en: string } | null;
+  /**
+   * Whether a booking request from this origin can be made with this key: a branch that may serve
+   * the origin (its routing rules) is one of the key's. False: the client hands over to staff.
+   */
+  bookable: boolean;
 }
 
 /** `422 QUOTE_AMBIGUOUS`: the cards differ on `field`; the client asks the customer, or staff. */

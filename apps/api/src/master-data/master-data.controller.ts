@@ -44,6 +44,7 @@ const code = (max: number) =>
     .min(1)
     .max(max);
 
+const routingBody = z.object({ branchIds: z.array(z.uuid()).max(20) }).strict();
 const aliasesBody = z
   .object({ aliases: z.array(z.string().trim().min(1).max(100)).max(20) })
   .strict();
@@ -181,10 +182,28 @@ export class MasterDataController {
   @Put('locations/:id/aliases')
   @RequirePermission('master_data:update')
   setLocationAliases(
+    @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<string[]> {
-    return this.masterData.setLocationAliases(id, parse(aliasesBody, body).aliases);
+    return this.masterData.setLocationAliases(user, id, parse(aliasesBody, body).aliases);
+  }
+
+  /** The branches serving customer-service requests from each location (docs/plans/04 section 6). */
+  @Get('routing-branches')
+  @RequirePermission('master_data:view')
+  routingBranches(): Promise<Record<string, string[]>> {
+    return this.masterData.routingBranches();
+  }
+
+  @Put('locations/:id/routing-branches')
+  @RequirePermission('master_data:update')
+  setRoutingBranches(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<string[]> {
+    return this.masterData.setRoutingBranches(user, id, parse(routingBody, body).branchIds);
   }
 
   // Container, charge and document types, and currencies: add, rename, deactivate, reactivate.

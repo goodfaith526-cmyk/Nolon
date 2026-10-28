@@ -69,7 +69,8 @@ function noRate(): HttpException {
 
 /**
  * The customer-service price for a route (R2, docs/plans/04 section 5), from NOLON's own engine:
- * the cards systemScopedRates offers (narrowest scope, category before general, every branch),
+ * the cards systemScopedRates offers (narrowest scope, category before general, the branch that
+ * serves the origin first, else every branch),
  * the FREIGHT charge only, and computeQuotationAmounts for the minimum and the rounding. Where
  * the cards differ on what the client left out, it is asked (QUOTE_AMBIGUOUS), never chosen for
  * it. Each answer is kept (cs_quotes) under a random `quoteRef` a booking request names later.
@@ -105,6 +106,11 @@ export class QuoteService {
     await this.masterData.requireRoute(input.originId, input.destinationId);
     const category = await this.masterData.requirePriceCategory(input.category, null);
     const cargoType = category.cargoType;
+    // Plan section 6: one branch serving the origin prices first from its own cards; else every
+    // branch's. Bookable when a branch that may serve the origin is one of the key's.
+    const candidates = await this.masterData.routingCandidates(input.originId);
+    const branchId = candidates.length === 1 ? (candidates[0] ?? null) : null;
+    const bookable = candidates.some((id) => client.allowedBranchIds.includes(id));
 
     const kinds = await this.rates.routeOfferKinds({
       onDate,
@@ -130,7 +136,7 @@ export class QuoteService {
     if (currency === null) throw noRate();
 
     const context = {
-      branchId: null,
+      branchId,
       onDate,
       currency,
       originLocationId: input.originId,
@@ -220,6 +226,7 @@ export class QuoteService {
       quoteRef: ref,
       quoteRefExpiresAt: expiresAt.toISOString(),
       customerNote: null,
+      bookable,
     };
   }
 }
