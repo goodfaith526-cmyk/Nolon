@@ -17,6 +17,16 @@ export interface UndoneStep {
 }
 
 /**
+ * Where a record put the shipment without a status step of its own (a proof of delivery that kept
+ * the status moves the shipment to where it was delivered): for the location timeline (B3).
+ */
+export interface LocationEffect {
+  at: Date;
+  createdAt: Date;
+  locationId: string;
+}
+
+/**
  * Trips, containers, warehouse movements, proofs of delivery and customs files belong to their own
  * modules, which already depend on shipments. Each registers a handler at start-up, so a cancel or
  * a revert checks them without the shipments module reaching into their tables (plan #110, B2).
@@ -35,6 +45,8 @@ export interface ShipmentLinkHandler {
     shipmentId: string,
     step: UndoneStep,
   ): Promise<ShipmentLinkBlocker | null>;
+  /** The live records of this module that moved the shipment without a status step. */
+  locationEffectsInTx?(tx: Tx, shipmentId: string): Promise<LocationEffect[]>;
 }
 
 @Injectable()
@@ -63,5 +75,13 @@ export class ShipmentLinksRegistry {
       if (blocker) return blocker;
     }
     return null;
+  }
+
+  async locationEffectsInTx(tx: Tx, shipmentId: string): Promise<LocationEffect[]> {
+    const effects: LocationEffect[] = [];
+    for (const handler of this.handlers) {
+      effects.push(...((await handler.locationEffectsInTx?.(tx, shipmentId)) ?? []));
+    }
+    return effects;
   }
 }

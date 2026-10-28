@@ -145,6 +145,55 @@ export function extraPackagesOnReceipt(
   return Math.max(0, (peak ?? balance) + packages - expected);
 }
 
+function inLogOrder<T extends TimedMovement>(movements: readonly T[]): T[] {
+  return [...movements].sort(
+    (a, b) =>
+      a.occurredAt.getTime() - b.occurredAt.getTime() ||
+      a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+}
+
+/** The most packages the warehouses together held at any time, in log order. */
+export function peakHeldPackages(movements: readonly TimedMovement[]): number {
+  let balance = 0;
+  let peak = 0;
+  for (const m of inLogOrder(movements)) {
+    balance += m.kind === 'RECEIPT' ? m.packages : -m.packages;
+    peak = Math.max(peak, balance);
+  }
+  return peak;
+}
+
+/** Why a movement cannot be cancelled (B3-1), or null when it can. */
+export type MovementCancelBlocker =
+  { kind: 'NEGATIVE'; warehouseId: string } | { kind: 'OVER_PACKAGES'; peak: number };
+
+/**
+ * Cancelling a receipt or release (docs/plans/05-correction-contracts.md, section 1) takes it out
+ * of the log. Then, in log order, no warehouse may hold less than nothing at any time (a receipt
+ * a release took goods from stays), and the warehouses together may not hold more than the cargo
+ * lines at any time, unless they already did before the cancel (an extra confirmed on a receipt):
+ * a cancel never creates extra packages. `live` are the shipment's movements not cancelled yet,
+ * the cancelled one among them.
+ */
+export function movementCancelBlocker(
+  live: readonly (TimedMovement & { id: string })[],
+  movementId: string,
+  expected: number,
+): MovementCancelBlocker | null {
+  const after = live.filter((m) => m.id !== movementId);
+  const balances = new Map<string, number>();
+  for (const m of inLogOrder(after)) {
+    const balance =
+      (balances.get(m.warehouseId) ?? 0) + (m.kind === 'RECEIPT' ? m.packages : -m.packages);
+    if (balance < 0) return { kind: 'NEGATIVE', warehouseId: m.warehouseId };
+    balances.set(m.warehouseId, balance);
+  }
+  const peak = peakHeldPackages(after);
+  if (peak > Math.max(expected, peakHeldPackages(live))) return { kind: 'OVER_PACKAGES', peak };
+  return null;
+}
+
 /** A release is allowed only for at least one package and no more than is on hand. */
 export function canRelease(onHand: number, packages: number): boolean {
   return Number.isInteger(packages) && packages > 0 && packages <= onHand;

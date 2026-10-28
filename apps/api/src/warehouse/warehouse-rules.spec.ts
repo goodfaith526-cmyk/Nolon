@@ -6,6 +6,8 @@ import {
   canRelease,
   defaultReceiptStatus,
   extraPackagesOnReceipt,
+  movementCancelBlocker,
+  peakHeldPackages,
   heldPackages,
   onHandPackages,
   type TimedMovement,
@@ -228,5 +230,66 @@ describe('remainingWeightKg (functional review D5)', () => {
     expect(remainingWeightKg([receipt('A', 2, '20'), release('A', 2, '20')], 'A')).toBeNull();
     expect(remainingWeightKg([receipt('A', 2, '20'), release('A', 1, '25')], 'A')).toBeNull();
     expect(remainingWeightKg([], 'A')).toBeNull();
+  });
+});
+
+describe('movementCancelBlocker (B3-1)', () => {
+  const day = (d: number) => new Date(Date.UTC(2026, 9, d));
+  const mv = (
+    id: string,
+    kind: 'RECEIPT' | 'RELEASE',
+    warehouseId: string,
+    packages: number,
+    on: number,
+  ) => ({
+    id,
+    kind,
+    warehouseId,
+    packages,
+    weightKg: null,
+    occurredAt: day(on),
+    createdAt: day(20),
+  });
+
+  it('lets a receipt nothing was released from go', () => {
+    expect(movementCancelBlocker([mv('r1', 'RECEIPT', 'pts', 10, 1)], 'r1', 10)).toBeNull();
+  });
+
+  it('keeps a receipt a later release took goods from', () => {
+    const log = [mv('r1', 'RECEIPT', 'pts', 10, 1), mv('l1', 'RELEASE', 'pts', 4, 2)];
+    expect(movementCancelBlocker(log, 'r1', 10)).toEqual({ kind: 'NEGATIVE', warehouseId: 'pts' });
+    // The release goes first, then the receipt.
+    expect(movementCancelBlocker(log, 'l1', 10)).toBeNull();
+  });
+
+  it('checks the whole timeline, not only the balance now', () => {
+    // 5 in on day 1, 5 out on day 2, 5 in on day 3: cancelling the first receipt leaves the
+    // release on day 2 taking goods that were not there yet.
+    const log = [
+      mv('r1', 'RECEIPT', 'pts', 5, 1),
+      mv('l1', 'RELEASE', 'pts', 5, 2),
+      mv('r2', 'RECEIPT', 'pts', 5, 3),
+    ];
+    expect(movementCancelBlocker(log, 'r1', 5)).toEqual({ kind: 'NEGATIVE', warehouseId: 'pts' });
+  });
+
+  it('refuses a release cancel that holds the goods in two warehouses at once (F132-3)', () => {
+    const log = [
+      mv('a-in', 'RECEIPT', 'pts', 10, 1),
+      mv('a-out', 'RELEASE', 'pts', 10, 2),
+      mv('b-in', 'RECEIPT', 'krt', 10, 3),
+    ];
+    expect(movementCancelBlocker(log, 'a-out', 10)).toEqual({ kind: 'OVER_PACKAGES', peak: 20 });
+    // Once B's receipt is cancelled, A's release can go.
+    const withoutB = log.filter((m) => m.id !== 'b-in');
+    expect(movementCancelBlocker(withoutB, 'a-out', 10)).toBeNull();
+  });
+
+  it('keeps an extra confirmed before, but adds none', () => {
+    // 12 received of 10 (confirmed extra), 2 released: cancelling the release holds 12 again,
+    // which the warehouses already held.
+    const log = [mv('r1', 'RECEIPT', 'pts', 12, 1), mv('l1', 'RELEASE', 'pts', 2, 2)];
+    expect(movementCancelBlocker(log, 'l1', 10)).toBeNull();
+    expect(peakHeldPackages(log)).toBe(12);
   });
 });

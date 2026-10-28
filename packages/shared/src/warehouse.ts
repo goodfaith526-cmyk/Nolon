@@ -92,6 +92,20 @@ export interface WarehouseMovementDto {
   statusApplied: ShipmentStatus | null;
   createdByName: string;
   photos: WarehouseMovementPhotoDto[];
+  /** Set once the movement is cancelled (B3-1): it no longer counts in any balance. */
+  cancellation: WarehouseMovementCancellationDto | null;
+}
+
+export interface WarehouseMovementCancellationDto {
+  reason: string;
+  cancelledAt: string;
+  cancelledByName: string;
+}
+
+/** POST /shipments/:shipmentId/warehouse/movements/:movementId/cancel. */
+export interface WarehouseMovementCancelRequest {
+  /** 3 to 500 characters. */
+  reason: string;
 }
 
 /** What one warehouse holds for the shipment. */
@@ -117,6 +131,11 @@ export interface ShipmentWarehouseActionsDto {
   canReceive: boolean;
   canRelease: boolean;
   canAddPhotos: boolean;
+  /**
+   * Whether this user may cancel the shipment's receipts and releases (warehouse:cancel in the
+   * shipment's branch, shipment not closed). The API still checks each cancel's balances.
+   */
+  canCancelMovements: boolean;
   /** Statuses a receipt may move the shipment to now (state machine and permissions). */
   receiptStatuses: WarehouseReceiptStatus[];
   /** Preselected on the receipt form: the only allowed status, when there is exactly one. */

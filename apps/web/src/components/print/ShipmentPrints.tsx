@@ -279,6 +279,21 @@ export function MovementPrint({ id, movementId }: { id: string; movementId: stri
             ]}
           />
         </DocSection>
+        {m.cancellation && (
+          <DocSection title={tw('cancelledBadge')}>
+            <DocFields
+              fields={[
+                [
+                  tw('cancelledBy', {
+                    name: m.cancellation.cancelledByName,
+                    at: dateTime(m.cancellation.cancelledAt),
+                  }),
+                  <span className="pre">{m.cancellation.reason}</span>,
+                ],
+              ]}
+            />
+          </DocSection>
+        )}
         <DocSection title={tp('shipmentCargo')}>
           <ItemsTable items={s.items} />
         </DocSection>
