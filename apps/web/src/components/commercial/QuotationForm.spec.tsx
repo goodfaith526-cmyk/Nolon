@@ -13,6 +13,7 @@ vi.mock('@/lib/api', async (actual) => ({
   api: (...args: unknown[]) => api(...args) as unknown,
 }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => ({
     currencies: [
       { code: 'AED', nameEn: 'Dirham', isActive: true },
@@ -24,6 +25,7 @@ vi.mock('@/lib/master-data', () => ({
       { id: 'l2', code: 'PZU', nameEn: 'Port Sudan', isActive: true },
     ],
     chargeTypes: [{ code: 'FREIGHT', nameEn: 'Freight', isActive: true }],
+    priceCategories: [],
   }),
   useLocalName: () => (x: { nameEn?: string }) => x.nameEn ?? '',
 }));

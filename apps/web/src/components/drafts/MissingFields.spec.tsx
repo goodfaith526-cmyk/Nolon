@@ -9,6 +9,7 @@ vi.mock('next-intl', () => ({ useTranslations: () => translate, useLocale: () =>
 const api = vi.fn();
 vi.mock('@/lib/api', () => ({ api, ApiError: class extends Error {} }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => null,
   useLocalName: () => (item: { nameEn: string }) => item.nameEn,
   failureStatus: () => 0,

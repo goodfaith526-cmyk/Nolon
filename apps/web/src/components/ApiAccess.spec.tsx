@@ -33,7 +33,10 @@ const platform: AgentClientDto = {
 
 vi.mock('next-intl', () => ({ useTranslations: (ns: string) => (k: string) => `${ns}.${k}` }));
 vi.mock('@/lib/api', () => ({ api: () => Promise.resolve({}) }));
-vi.mock('@/lib/master-data', () => ({ useLocalName: () => (l: { nameEn: string }) => l.nameEn }));
+vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
+  useLocalName: () => (l: { nameEn: string }) => l.nameEn,
+}));
 vi.mock('./commercial/Notice', () => ({ Notice: () => null, useFailureText: () => () => 'x' }));
 vi.mock('./transport/common', () => ({ useDateTime: () => (iso: string | null) => iso ?? '' }));
 vi.mock('./finance/common', () => ({

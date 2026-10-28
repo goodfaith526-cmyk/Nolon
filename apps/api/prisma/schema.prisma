@@ -354,6 +354,9 @@ enum LocationKind {
   CITY
   BORDER
   OTHER
+  /// A whole country as a pricing scope (business model plan 5.3): rate cards may name it as
+  /// their origin or destination; documents name places only.
+  COUNTRY
 
   @@map("location_kind")
 }
@@ -464,6 +467,14 @@ enum CargoType {
   GENERAL
 
   @@map("cargo_type")
+}
+
+/// Where a quotation line's price came from (business model plan 5.2).
+enum PriceSource {
+  RATE_CARD
+  TYPED
+
+  @@map("price_source")
 }
 
 enum RateUnit {
@@ -665,6 +676,9 @@ model PriceCategory {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  rateCards      RateCard[]
+  quotationLines QuotationLine[]
+
   @@map("price_categories")
 }
 
@@ -701,6 +715,9 @@ model RateCard {
   cargoType             CargoType    @map("cargo_type")
   containerTypeCode     String?      @map("container_type_code") @db.VarChar(10)
   chargeTypeCode        String       @default("FREIGHT") @map("charge_type_code") @db.VarChar(20)
+  /// The price category the card prices (plan 5.3); null = a general card, the only kind a line
+  /// without a category is priced from.
+  priceCategoryCode     String?      @map("price_category_code") @db.VarChar(20)
   unit                  RateUnit
   price                 Decimal      @db.Decimal(18, 4)
   minimumCharge         Decimal      @default(0) @map("minimum_charge") @db.Decimal(18, 4)
@@ -721,6 +738,7 @@ model RateCard {
   destination       Location           @relation("RateDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
   containerType     ContainerType?     @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
   chargeType        ChargeType         @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  priceCategory     PriceCategory?     @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
   currencyRef       Currency           @relation(fields: [currency], references: [code], onDelete: Restrict)
   approvedBy        User?              @relation("RateApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
   createdBy         User               @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -731,6 +749,7 @@ model RateCard {
 
   @@index([branchId, status])
   @@index([originLocationId, destinationLocationId, mode])
+  @@index([priceCategoryCode])
   @@map("rate_cards")
 }
 
@@ -794,26 +813,36 @@ model Quotation {
 }
 
 model QuotationLine {
-  id             String   @id @default(uuid()) @db.Uuid
-  quotationId    String   @map("quotation_id") @db.Uuid
-  lineNo         Int      @map("line_no") @db.SmallInt
-  chargeTypeCode String   @map("charge_type_code") @db.VarChar(20)
-  description    String?
-  rateCardId     String?  @map("rate_card_id") @db.Uuid
-  unit           RateUnit
-  quantity       Decimal  @db.Decimal(18, 4)
-  unitPrice      Decimal  @map("unit_price") @db.Decimal(18, 4)
+  id                  String       @id @default(uuid()) @db.Uuid
+  quotationId         String       @map("quotation_id") @db.Uuid
+  lineNo              Int          @map("line_no") @db.SmallInt
+  chargeTypeCode      String       @map("charge_type_code") @db.VarChar(20)
+  description         String?
+  rateCardId          String?      @map("rate_card_id") @db.Uuid
+  unit                RateUnit
+  quantity            Decimal      @db.Decimal(18, 4)
+  unitPrice           Decimal      @map("unit_price") @db.Decimal(18, 4)
   /// From the rate card: the line is never charged less than this, before discount.
-  minimumCharge  Decimal  @default(0) @map("minimum_charge") @db.Decimal(18, 4)
-  discount       Decimal  @default(0) @db.Decimal(18, 4)
+  minimumCharge       Decimal      @default(0) @map("minimum_charge") @db.Decimal(18, 4)
+  discount            Decimal      @default(0) @db.Decimal(18, 4)
   /// max(round(quantity * unitPrice), minimumCharge) - discount, rounded to the currency.
-  lineTotal      Decimal  @map("line_total") @db.Decimal(18, 4)
+  lineTotal           Decimal      @map("line_total") @db.Decimal(18, 4)
+  /// The price category of the line (plan 5.3); null = none, priced from general cards only.
+  priceCategoryCode   String?      @map("price_category_code") @db.VarChar(20)
+  /// Where the price came from (plan 5.2): a rate card, or typed. Null on lines saved before.
+  priceSource         PriceSource? @map("price_source")
+  /// For a RATE_CARD line: what the price was suggested from (card, currency, unit, category,
+  /// route and its scope, mode, load, cargo, price, minimum). A change to any of them on save
+  /// prices the line again instead of keeping this price.
+  priceSourceSnapshot Json?        @map("price_source_snapshot")
 
-  quotation  Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  chargeType ChargeType @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
-  rateCard   RateCard?  @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  chargeType    ChargeType     @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  rateCard      RateCard?      @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  priceCategory PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
 
   @@unique([quotationId, lineNo])
+  @@index([priceCategoryCode])
   @@map("quotation_lines")
 }
 

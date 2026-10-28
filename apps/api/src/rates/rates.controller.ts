@@ -15,6 +15,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { dateString, pageQuery, parse } from '../common/validation.js';
+import { flag } from '../common/list-filters.js';
 import { createRateBody, updateRateBody } from './rate-schemas.js';
 import { RatesService } from './rates.service.js';
 
@@ -26,6 +27,12 @@ const listQuery = pageQuery.extend({
   /** Valid on this date: valid from on or before it, valid to (if any) on or after it. */
   validOn: dateString.optional(),
   branchId: z.uuid().optional(),
+  /**
+   * With an origin or destination: the cards that price it, each end the place itself, its city
+   * or its country (plan 5.3), as a quotation line may choose them. Without it, a city finds its
+   * places (as before).
+   */
+  covering: flag,
 });
 
 @Controller('rates')
@@ -36,16 +43,16 @@ export class RatesController {
   @AgentReadable()
   @Get()
   @RequirePermission('rates:view')
-  list(@Query() query: unknown): Promise<Page<RateCardDto>> {
-    return this.rates.list(parse(listQuery, query));
+  list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<RateCardDto>> {
+    return this.rates.list({ ...parse(listQuery, query), generalOnly: user.agent !== undefined });
   }
 
   @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('rates:view')
-  get(@Param('id', ParseUUIDPipe) id: string): Promise<RateCardDto> {
-    return this.rates.get(id);
+  get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<RateCardDto> {
+    return this.rates.get(id, { generalOnly: user.agent !== undefined });
   }
 
   @Post()

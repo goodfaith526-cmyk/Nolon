@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CargoType,
   CodeNameDto,
   CodeNameInput,
   CodeNameUpdate,
@@ -138,6 +139,7 @@ export class MasterDataService {
         await this.prisma.$transaction(async (tx) => {
           const city = await requireCityOf(tx, null, input.kind, input.cityId);
           requireCityCountry(city, input.countryCode);
+          if (input.kind === 'COUNTRY') await requireNoCountryScope(tx, input.countryCode);
           const created = await tx.location.create({ data: input });
           await this.logLocation(tx, user, 'CREATED', null, created);
           return created;
@@ -167,6 +169,19 @@ export class MasterDataService {
           const kind = input.kind ?? existing.kind;
           const cityId = input.cityId === undefined ? existing.cityId : input.cityId;
           const countryCode = input.countryCode ?? existing.countryCode;
+          // A country scope stays that country: rate cards price its places through it.
+          if ((kind === 'COUNTRY') !== (existing.kind === 'COUNTRY')) {
+            throw fieldRefusal(
+              'COUNTRY_KIND_FIXED',
+              'A country scope stays one, and a place does not become one: add a new location',
+              ['kind'],
+            );
+          }
+          if (kind === 'COUNTRY' && countryCode !== existing.countryCode) {
+            throw fieldRefusal('COUNTRY_KIND_FIXED', 'A country scope keeps its country', [
+              'countryCode',
+            ]);
+          }
           const city = await requireCityOf(tx, id, kind, cityId);
           // Checked when the country or the city changes (a place saved before the check keeps
           // its own).
@@ -425,8 +440,33 @@ export class MasterDataService {
     };
   }
 
-  /** 400 unless the location exists and is active. */
+  /**
+   * 400 unless the location exists, is active and is a place: a country scope (COUNTRY) is for
+   * rate cards only (requireRateLocation), never a document's origin, destination or position.
+   */
   async requireLocation(id: string): Promise<Location> {
+    return requirePlace(await this.requireRateLocation(id));
+  }
+
+  /**
+   * 400 unless the price category exists and is active, and (when given) prices `cargoType`: a
+   * category follows one cargo type, so it never contradicts the cargo it prices.
+   */
+  async requirePriceCategory(code: string, cargoType: CargoType | null): Promise<PriceCategory> {
+    const category = await this.prisma.priceCategory.findUnique({ where: { code } });
+    if (!category?.isActive) {
+      throw new BadRequestException(`Unknown or inactive price category: ${code}`);
+    }
+    if (cargoType !== null && category.cargoType !== cargoType) {
+      throw new BadRequestException(
+        `Price category ${code} prices ${category.cargoType} cargo, not ${cargoType}`,
+      );
+    }
+    return category;
+  }
+
+  /** For a rate card: 400 unless the location exists and is active, a place or a country. */
+  async requireRateLocation(id: string): Promise<Location> {
     const location = await this.prisma.location.findUnique({ where: { id } });
     if (!location?.isActive) throw new BadRequestException('Unknown or inactive location');
     return location;
@@ -450,15 +490,25 @@ export class MasterDataService {
   async requireLocationInTx(tx: Tx, id: string): Promise<Location> {
     const location = await lockLocation(tx, id, 'SHARE');
     if (!location?.isActive) throw new BadRequestException('Unknown or inactive location');
-    return location;
+    return requirePlace(location);
   }
 
+  /** A document's route: two different active places (requireLocation). */
   async requireRoute(originId: string, destinationId: string): Promise<void> {
     if (originId === destinationId) {
       throw new BadRequestException('Origin and destination must differ');
     }
     await this.requireLocation(originId);
     await this.requireLocation(destinationId);
+  }
+
+  /** A rate card's route: as requireRoute, and either end may be a country scope. */
+  async requireRateRoute(originId: string, destinationId: string): Promise<void> {
+    if (originId === destinationId) {
+      throw new BadRequestException('Origin and destination must differ');
+    }
+    await this.requireRateLocation(originId);
+    await this.requireRateLocation(destinationId);
   }
 
   async requireContainerType(code: string): Promise<ContainerType> {
@@ -578,10 +628,41 @@ async function requireCityOf(
 ): Promise<Location | null> {
   if (!cityId) return null;
   if (kind === 'CITY') throw new BadRequestException('A city does not belong to another city');
+  if (kind === 'COUNTRY') throw new BadRequestException('A country scope has no city');
   if (cityId === id) throw new BadRequestException('A location cannot be its own city');
   const city = await lockLocation(tx, cityId, 'SHARE');
   if (city?.kind !== 'CITY') throw new BadRequestException('cityId must be a city');
   return city;
+}
+
+/** A country scope prices places through rate cards; it is not a place a document names. */
+function requirePlace(location: Location): Location {
+  if (location.kind === 'COUNTRY') {
+    throw new BadRequestException(
+      `${location.code} is a country pricing scope, not a place: choose a port, city or point`,
+    );
+  }
+  return location;
+}
+
+/**
+ * One country scope per country: a second would split its rate cards. Checked under a lock on
+ * the country code, so two creates cannot both pass.
+ */
+async function requireNoCountryScope(tx: Tx, countryCode: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`location-country:${countryCode}`}))`;
+  const taken = await tx.location.findFirst({
+    where: { kind: 'COUNTRY', countryCode },
+    select: { code: true },
+  });
+  if (taken) {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'COUNTRY_SCOPE_TAKEN',
+      `${taken.code} is already the pricing scope of ${countryCode}`,
+      { code: taken.code, country: countryCode },
+    );
+  }
 }
 
 /** A location row locked until the caller commits, read after the lock; null when missing. */

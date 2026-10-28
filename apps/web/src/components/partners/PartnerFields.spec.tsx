@@ -24,6 +24,7 @@ vi.mock('@/i18n/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => ({
     currencies: [{ code: 'USD', isActive: true }],
     locations: [place('jed', 'SA'), place('ruh', 'SA', 'CITY'), place('dxb', 'AE')],
@@ -83,7 +84,7 @@ describe('PartnerFields country and city', () => {
     expect(shown.textContent).toContain('chooseCountryFirst');
     choose(country, 'SA');
     expect(place.disabled).toBe(false);
-    // Places and cities of Saudi Arabia only.
+    // Places and cities of Saudi Arabia; never its country-wide pricing scope.
     expect([...place.options].map((o) => o.value)).toEqual(['', 'jed', 'ruh']);
     choose(place, 'jed');
     choose(country, 'AE');

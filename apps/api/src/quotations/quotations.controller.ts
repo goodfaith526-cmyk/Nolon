@@ -59,7 +59,16 @@ export const quotationFields = {
   currency: currencyCode,
   validUntil: dateString,
   terms: optionalText(4000),
-  lines: z.array(lineBody).min(1).max(50),
+  // NOLON screens only: a line's price category (plan 5.3). Quotation drafts replace `lines`
+  // with their own, without it (plan 7.2).
+  lines: z
+    .array(
+      lineBody
+        .extend({ priceCategoryCode: z.string().trim().toUpperCase().max(20).nullish() })
+        .strict(),
+    )
+    .min(1)
+    .max(50),
 };
 
 export const quotationCreateBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();

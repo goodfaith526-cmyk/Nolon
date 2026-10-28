@@ -70,7 +70,11 @@ export type RateUnit = (typeof RATE_UNITS)[number];
 export const CUSTOMER_KINDS = ['INDIVIDUAL', 'COMPANY'] as const;
 export type CustomerKind = (typeof CUSTOMER_KINDS)[number];
 
-export const LOCATION_KINDS = ['PORT', 'CITY', 'BORDER', 'OTHER'] as const;
+/**
+ * COUNTRY is a whole country as a pricing scope (business model plan 5.3): rate cards may name it;
+ * quotations, bookings, shipments and the other documents name places only.
+ */
+export const LOCATION_KINDS = ['PORT', 'CITY', 'BORDER', 'OTHER', 'COUNTRY'] as const;
 export type LocationKind = (typeof LOCATION_KINDS)[number];
 
 export const RATE_STATUSES = ['DRAFT', 'APPROVED', 'CANCELLED'] as const;
@@ -360,6 +364,8 @@ export interface RateCardDto {
   cargoType: CargoType;
   containerTypeCode: string | null;
   chargeTypeCode: string;
+  /** The price category it prices; null = a general card (plan 5.3). */
+  priceCategoryCode: string | null;
   unit: RateUnit;
   price: DecimalString;
   minimumCharge: DecimalString;
@@ -381,6 +387,8 @@ export interface RateCardInput {
   cargoType: CargoType;
   containerTypeCode?: string | null;
   chargeTypeCode?: string;
+  /** NOLON screens only (not assistant drafts, plan 7.2): the category the card prices. */
+  priceCategoryCode?: string | null;
   unit: RateUnit;
   price: DecimalString;
   minimumCharge?: DecimalString;
@@ -399,11 +407,41 @@ export interface CreateRateCardRequest extends RateCardInput {
 // Quotations
 // ---------------------------------------------------------------------------------------------
 
+/** Where a quotation line's price came from (plan 5.2). */
+export const QUOTATION_PRICE_SOURCES = ['RATE_CARD', 'TYPED'] as const;
+export type QuotationPriceSource = (typeof QUOTATION_PRICE_SOURCES)[number];
+
+/** The scope a rate card's origin or destination matched a document's place at (plan 5.3). */
+export const PRICE_SCOPES = ['PLACE', 'CITY', 'COUNTRY'] as const;
+export type PriceScope = (typeof PRICE_SCOPES)[number];
+
+/**
+ * What a RATE_CARD line's price was suggested from: the card, its currency, unit and category,
+ * the route the card covers and at which scope. Changing any of them prices the line again.
+ */
+export interface PriceSourceDto {
+  rateCardId: string;
+  currency: CurrencyCode;
+  unit: RateUnit;
+  priceCategoryCode: string | null;
+  originLocationId: string;
+  originScope: PriceScope;
+  destinationLocationId: string;
+  destinationScope: PriceScope;
+  price: DecimalString;
+  minimumCharge: DecimalString;
+}
+
 export interface QuotationLineDto {
   lineNo: number;
   chargeTypeCode: string;
   description: string | null;
   rateCardId: string | null;
+  priceCategoryCode: string | null;
+  /** Null on a line saved before price sources were kept. */
+  priceSource: QuotationPriceSource | null;
+  /** For a RATE_CARD line saved since: what the price came from. */
+  priceSourceDetail: PriceSourceDto | null;
   unit: RateUnit;
   quantity: DecimalString;
   unitPrice: DecimalString;
@@ -451,6 +489,8 @@ export interface QuotationDto extends QuotationSummaryDto {
 export interface QuotationLineInput {
   rateCardId?: string | null;
   chargeTypeCode?: string;
+  /** NOLON screens only (not assistant drafts, plan 7.2): the line's price category. */
+  priceCategoryCode?: string | null;
   description?: string | null;
   unit?: RateUnit;
   quantity: DecimalString;
@@ -665,6 +705,13 @@ export const FORM_REFUSALS = [
   // The system price (no rate card and no price given): none or several rate cards match.
   'RATE_NO_MATCH',
   'RATE_SEVERAL',
+  // Pricing scope and category (business model plan 5.3). A rate card chosen by hand while a
+  // narrower one (city before country, place before city) matches: param `rate`, its id.
+  'RATE_SUPERSEDED',
+  // A category card chosen for a line without a category: choose the line's category first.
+  'RATE_CATEGORY_REQUIRED',
+  // A price category unknown, inactive, or of another cargo type: param `category`.
+  'PRICE_CATEGORY_NOT_USABLE',
   'MANUAL_LINE_INCOMPLETE',
   'UNKNOWN_CHARGE_TYPE',
   'DISCOUNT_EXCEEDS_LINE',
@@ -709,6 +756,10 @@ export const FORM_REFUSALS = [
   'BRANCH_MISMATCH',
   // A location (master data) with a city is in the city's country: params `city` and `country`.
   'CITY_OTHER_COUNTRY',
+  // A country pricing scope (location kind COUNTRY) keeps its kind and country, and each country
+  // has one (409, params `code` and `country`).
+  'COUNTRY_KIND_FIXED',
+  'COUNTRY_SCOPE_TAKEN',
   // A partner's city or port is in the partner's country: params `location` and `country`.
   'PARTNER_LOCATION_OTHER_COUNTRY',
   // Master data screens: a code already in use (409, param `code`), and the base currency, which

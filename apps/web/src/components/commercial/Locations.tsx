@@ -89,7 +89,8 @@ export function Locations() {
 
   const cities = (locations ?? []).filter((l) => l.kind === 'CITY');
   // The city picked for the new place (a city has none): its country is the place's.
-  const chosenCity = kind === 'CITY' ? undefined : cities.find((c) => c.id === cityId);
+  const chosenCity =
+    kind === 'CITY' || kind === 'COUNTRY' ? undefined : cities.find((c) => c.id === cityId);
   const canCreate = can(me, 'master_data:create');
   const canUpdate = can(me, 'master_data:update');
   const cityName = (id: string | null) => {
@@ -177,7 +178,7 @@ export function Locations() {
                 {t('shortCodeHint')}
               </small>
             </label>
-            {kind !== 'CITY' && (
+            {kind !== 'CITY' && kind !== 'COUNTRY' && (
               <label className="field">
                 <span>{t('city')}</span>
                 <select
@@ -249,7 +250,7 @@ export function Locations() {
                     )}
                   </td>
                   <td>
-                    {canUpdate && l.kind !== 'CITY' ? (
+                    {canUpdate && l.kind !== 'CITY' && l.kind !== 'COUNTRY' ? (
                       <select
                         aria-label={t('city')}
                         value={l.cityId ?? ''}

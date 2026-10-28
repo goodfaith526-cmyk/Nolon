@@ -24,6 +24,7 @@ vi.mock('@/lib/api', async (actual) => ({
   api: (...args: unknown[]) => api(...args) as unknown,
 }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => ({
     currencies: [],
     locations: [
