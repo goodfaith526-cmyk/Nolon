@@ -495,6 +495,16 @@ export class RatesService {
     );
   }
 
+  /** A change of a card's reference costs (RateCostsService), in the card's audit log. */
+  async logCostsInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    rate: RateCard,
+    changes: AuditChangeDto[],
+  ): Promise<void> {
+    await this.log(tx, user, 'UPDATED', [rate], () => changes);
+  }
+
   private async logStatus(
     tx: Prisma.TransactionClient,
     user: AuthUser,

@@ -54,6 +54,9 @@ describe('permission matrix (annex A)', () => {
     // Manager, the tenth column (Sales' cells elsewhere). The eleventh column is Outlet Staff
     // (business model plan 4.2, owner 2026-10-21).
     ['rates', 'ك ع ع ع ع ع — — — ك ع'],
+    // Business model plan 4.1: reference costs and the expected margin, apart from the rates so
+    // Sales and Operations see a price without its cost.
+    ['rate_costs', 'ك ع ع — — ع — — — ك —'],
     ['quotations', 'ك ع م ك ع ع — — — ك إ'],
     ['bookings', 'ك ع م ك ك ع ع ع — ك إ'],
     ['shipments', 'ك ع ك ع ك ع ع ع ع ع ع'],
@@ -72,6 +75,7 @@ describe('permission matrix (annex A)', () => {
     ['suppliers', 'ك ع م — إ ك — — — — —'],
     // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
     ['partners', 'ك ع ك ع ع ع — — — ك ع'],
+    ['partner_contracts', 'ك ع ع — — ع — — — ك —'],
     ['supplier_payments', 'ك ع م — — ك — — — — —'],
     ['expenses', 'ك ع م — إ ك إ إ إ — —'],
     ['manual_journals', 'ك ع — — — ك — — — — —'],

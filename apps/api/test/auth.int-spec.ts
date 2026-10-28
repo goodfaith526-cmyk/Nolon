@@ -116,6 +116,7 @@ describe('sign-in, sessions and permissions', () => {
       expect(me.branches.map((b) => b.code)).toEqual(['DXB', 'JED']);
       expect(me.assistantUrl).toBeNull();
       expect(me.assistantPanel).toBe(false);
+      expect(me.outletStaffAssignable).toBe(false);
     });
 
     it("gives each branch's time zone and local date in /auth/me, on both sides of UTC midnight", async () => {
