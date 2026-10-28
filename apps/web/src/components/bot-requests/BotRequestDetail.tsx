@@ -3,12 +3,14 @@
 import type { CsBookingRequestStaffDto, CsName, CsRejectReasonDto } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
+import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { useMe } from '../StaffShell';
+import { BotRequestApprove } from './BotRequestApprove';
 
 /**
  * One bot booking request for staff (plan 04a): what the customer asked, in NOLON's terms and, for
@@ -196,6 +198,21 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.bookingId && (
+          <>
+            <dt>{t('booking')}</dt>
+            <dd>
+              <Link href={`/bookings/${r.bookingId}`} dir="ltr">
+                {r.bookingNumber}
+              </Link>{' '}
+              {r.paymentCurrency && (
+                <span className="muted">
+                  {t('paymentCurrency')}: <span dir="ltr">{r.paymentCurrency}</span>
+                </span>
+              )}
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>
@@ -256,8 +273,13 @@ export function BotRequestDetail({ id }: { id: string }) {
           </div>
         </form>
       )}
-      {(r.status === 'pending' || r.status === 'awaiting_routing') && (
-        <p className="muted">{t('approveLater')}</p>
+      {r.actions.canApprove && master && (
+        <BotRequestApprove
+          request={r}
+          master={master}
+          busy={busy}
+          onApprove={(body) => void post('approve', body)}
+        />
       )}
     </section>
   );

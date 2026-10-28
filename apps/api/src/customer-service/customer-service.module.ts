@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
+import { BookingsModule } from '../bookings/bookings.module.js';
 import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { RatesModule } from '../rates/rates.module.js';
@@ -27,7 +28,7 @@ import { QuoteService } from './quote.service.js';
 
 /** The Customer Service API and its keys (scope section 17). */
 @Module({
-  imports: [AuditModule, CurrenciesModule, MasterDataModule, RatesModule],
+  imports: [AuditModule, BookingsModule, CurrenciesModule, MasterDataModule, RatesModule],
   controllers: [
     CustomerServiceController,
     CustomerTokensController,

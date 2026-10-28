@@ -107,6 +107,25 @@ version, created_by, approved_by)`، اعتماد بشخص غير المنشئ،
 من `allowed_branch_ids`. الموافقة ما بتمشي إلا بعد ما الموظف يحدد الأماكن والفئة في نموذج الحجز نفسو (النموذج
 بيتعبّى بالمطابَق، والفاضي يملاهو الموظف).
 
+## 7أ. R3-ج2 كما اتبنى
+
+- **مسار موافقة خاص** `POST /cs-booking-requests/:id/approve {version, paymentCurrency, pricing, pricingFingerprint, booking}`
+  (approve + bookings:create)، بدل حقل `csRequest` في `POST /bookings`. السبب: `CreateBookingRequest` مستخدم في
+  مسودات المساعد اللي بترفض أي حقل ما معروف، فما بنغيّر شكلو. `booking` هو نفس جسم `POST /bookings`، وبيمر بنفس
+  فحوص `prepareCreate` و`insertInTx` بصلاحيات الموظف.
+- **مدخلات التسعير** `pricing {originId, destinationId, mode, loadType?, category, quantity, currency}`: المنشأ والوجهة
+  والطريقة لازم تطابق الحجز (وإلا `400 PRICING_MISMATCH`)؛ الفئة والكمية (بوحدة الفئة) والعملة الموظف بيأكدها.
+  `GET /cs-booking-requests/:id/price` بيرجّع السعر والبصمة لنفس المدخلات.
+- **داخل المعاملة**: قفل الطلب، النسخة، الحالة `PENDING` وما منتهي، فرع الحجز = فرع الطلب (`BRANCH_MISMATCH`)،
+  زبون الطلب لو عندو زبون (`CUSTOMER_MISMATCH`)، صلاحية approve في الفرع، المفتاح لسه بيخدم الفرع، عملة الدفع
+  نشطة ومقفولة، وإعادة التسعير: البصمة لازم تطابق، وصف البطاقة مقفول `FOR SHARE` ولسه APPROVED وبنفس السعر
+  والحد الأدنى و`approvedAt` وسارية اليوم. غير كده = `409 PRICE_STALE` مع السعر الحالي، وما في حجز ولا موافقة.
+- **الحجز** بيتعمل مسودة بلا أسطر وبلا سعر، والموظف بيكمّلو في شاشة الحجز. البوت بيشوف `bookingNumber` (رقم الحجز
+  الحالي).
+- **زبون جديد**: في المرحلة دي الموظف بيختار زبون موجود (أو بيعملو من منتقي الزبون في نفس الشاشة). نموذج «حجز لزبون
+  جديد» بمسودتو ما مربوط هنا.
+- **Migration إضافي**: `booking_id` و`payment_currency` عمودين nullable مع FK وفهرس عادي على `cs_booking_requests`.
+
 ## 8. الترتيب
 
 1. R3-ج1: الصلاحيات، مسارات الموظف (قائمة، تفاصيل، توجيه، رفض)، أسباب الرفض، الشاشة.

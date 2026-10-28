@@ -192,6 +192,7 @@ describe('Customer Service booking request review (R3c1)', () => {
     expect((await detail(cookies.ops, pending.id)).actions).toEqual({
       canRoute: false,
       canReject: false,
+      canApprove: false,
     });
     // Finance holds no part of it.
     await staff(cookies.finance).get('/cs-booking-requests').expect(403);

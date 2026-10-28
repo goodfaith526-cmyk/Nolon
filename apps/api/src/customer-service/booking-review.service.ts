@@ -1,11 +1,15 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CsApprovalPriceDto,
+  CsApproveRequest,
   CsBookingRequestStaffDto,
+  CsPriceInputs,
   CsBookingRequestSummaryDto,
   CsName,
   CsRejectReasonDto,
@@ -18,12 +22,14 @@ import type {
 } from '@nolon/shared';
 import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { fromDbDateOrNull } from '../common/dates.js';
+import { fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { toDecimalString } from '../common/money.js';
+import { BookingsService } from '../bookings/bookings.service.js';
+import { CurrenciesService } from '../currencies/currencies.service.js';
 import { type CsBookingRequest, type CsQuote, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
-import { QuoteService } from './quote.service.js';
+import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -34,10 +40,17 @@ const VIEW: Permission = 'cs_booking_requests:view';
 const ROUTE: Permission = 'cs_booking_requests:update';
 const DECIDE: Permission = 'cs_booking_requests:approve';
 
-type Row = CsBookingRequest & { customer: { number: string } | null };
+type Row = CsBookingRequest & {
+  customer: { number: string } | null;
+  booking: { number: string } | null;
+};
 type QuotedRow = Row & { quote: CsQuote | null };
 
-const withQuote = { customer: { select: { number: true } }, quote: true } as const;
+const rowInclude = {
+  customer: { select: { number: true } },
+  booking: { select: { number: true } },
+} as const;
+const withQuote = { ...rowInclude, quote: true } as const;
 
 function undecided(r: Pick<CsBookingRequest, 'status' | 'expiresAt'>, now = new Date()): boolean {
   return (
@@ -91,6 +104,8 @@ export class BookingReviewService {
     private readonly prisma: PrismaService,
     private readonly quotes: QuoteService,
     private readonly audit: AuditService,
+    private readonly bookings: BookingsService,
+    private readonly currencies: CurrenciesService,
   ) {}
 
   async list(user: AuthUser, filter: CsReviewFilter): Promise<CsBookingRequestSummaryDto[]> {
@@ -122,7 +137,7 @@ export class BookingReviewService {
           },
         ],
       },
-      include: { customer: { select: { number: true } } },
+      include: rowInclude,
       orderBy: { createdAt: 'desc' },
       take: LIST_LIMIT,
     });
@@ -220,6 +235,91 @@ export class BookingReviewService {
     return this.format(user, written);
   }
 
+  /**
+   * The engine's price for an approval's inputs (plan 04a section 1), for a request `user` may
+   * approve, in its branch. The screen shows it and sends its fingerprint back on approval.
+   */
+  async price(user: AuthUser, id: string, inputs: CsPriceInputs): Promise<CsApprovalPriceDto> {
+    const row = await this.prisma.csBookingRequest.findUnique({ where: { id } });
+    if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+    if (row.branchId === null || decideBranches(user, row).length === 0) {
+      throw new ForbiddenException('You may not approve this request');
+    }
+    return (await this.quotes.priceFor(inputs, row.branchId)).dto;
+  }
+
+  /**
+   * Plan 04a section 3 (R3-ج2): the booking made through the ordinary create checks, with the
+   * person's permissions, and the request approved, in one transaction. Inside it, with the
+   * request row locked: the version, the state (PENDING, not expired), the booking in the
+   * request's branch and (a request of a customer) for that customer, the person's approve
+   * permission there, the key still active and serving it, the payment currency active, and the
+   * price again (requireSamePrice). Any refusal makes neither the booking nor the approval.
+   */
+  async approve(
+    user: AuthUser,
+    id: string,
+    input: CsApproveRequest,
+  ): Promise<CsBookingRequestStaffDto> {
+    const { booking, pricing } = input;
+    if (
+      booking.originLocationId !== pricing.originId ||
+      booking.destinationLocationId !== pricing.destinationId ||
+      booking.mode !== pricing.mode ||
+      ((booking.loadType ?? null) !== null && (pricing.loadType ?? null) !== booking.loadType)
+    ) {
+      throw new BadRequestException({
+        message: 'The price is for another route, mode or load type than the booking',
+        code: 'PRICING_MISMATCH',
+      });
+    }
+    await this.currencies.requireActive(input.paymentCurrency);
+    const prepared = await this.bookings.prepareCreate(user, booking);
+    const written = await this.prisma.$transaction(async (tx) => {
+      const row = await lockRequest(tx, user, id, input.version);
+      if (row.status !== 'PENDING' || row.branchId === null) {
+        throw new ConflictException('Only a pending request with a branch is approved');
+      }
+      if (!decideBranches(user, row).includes(row.branchId)) {
+        throw new ForbiddenException('You may not approve this request');
+      }
+      if (prepared.branchId !== row.branchId) {
+        throw new BadRequestException({
+          message: "The booking's customer is not of the request's branch",
+          code: 'BRANCH_MISMATCH',
+        });
+      }
+      if (row.customerId !== null && prepared.customerId !== row.customerId) {
+        throw new BadRequestException({
+          message: "A customer's request is booked for that customer",
+          code: 'CUSTOMER_MISMATCH',
+        });
+      }
+      await requireKeyServes(tx, row.apiClientId, row.branchId);
+      await this.currencies.requireActiveInTx(tx, input.paymentCurrency);
+      await requireSamePrice(
+        tx,
+        await this.quotes.priceFor(pricing, row.branchId),
+        input.pricingFingerprint,
+      );
+      const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      return tx.csBookingRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          bookingId,
+          paymentCurrency: input.paymentCurrency,
+          decidedById: user.id,
+          decidedAt: new Date(),
+          version: { increment: 1 },
+        },
+        include: withQuote,
+      });
+    });
+    // As route and reject (F131-3): the row this transaction wrote.
+    return this.format(user, written);
+  }
+
   async reasons(): Promise<CsRejectReasonDto[]> {
     const rows = await this.prisma.csRejectReason.findMany({
       orderBy: [{ isActive: 'desc' }, { code: 'asc' }],
@@ -299,6 +399,47 @@ async function requireKeyServes(tx: Tx, apiClientId: string, branchId: string): 
   }
 }
 
+/**
+ * 409 PRICE_STALE (plan 04a section 1) unless the price computed now has the fingerprint staff
+ * saw and its card, share-locked here, is still the same approved card: a cancellation either
+ * committed before (and is seen) or waits for this transaction. No approved price now passes only
+ * when staff saw none.
+ */
+async function requireSamePrice(tx: Tx, now: ApprovalPrice, seen: string | null): Promise<void> {
+  const stale = () =>
+    new ConflictException({
+      message: 'The price changed: check it again before approving',
+      code: 'PRICE_STALE',
+      price: now.dto,
+    });
+  if (now.dto.pricingFingerprint !== seen) throw stale();
+  if (now.card === null) return;
+  const cards = await tx.$queryRaw<
+    {
+      status: string;
+      approved_at: Date | null;
+      price: Prisma.Decimal;
+      minimum_charge: Prisma.Decimal;
+      valid_from: Date;
+      valid_to: Date | null;
+    }[]
+  >`SELECT "status"::text AS "status", "approved_at", "price", "minimum_charge", "valid_from", "valid_to"
+    FROM "rate_cards" WHERE "id" = ${now.card.id}::uuid FOR SHARE`;
+  const card = cards[0];
+  const today = toDbDate(todayIn('UTC')).getTime();
+  if (
+    !card ||
+    card.status !== 'APPROVED' ||
+    card.approved_at?.getTime() !== now.card.approvedAt.getTime() ||
+    !card.price.eq(now.card.price) ||
+    !card.minimum_charge.eq(now.card.minimumCharge) ||
+    card.valid_from.getTime() > today ||
+    (card.valid_to !== null && card.valid_to.getTime() < today)
+  ) {
+    throw stale();
+  }
+}
+
 function reasonDto(r: {
   code: string;
   textAr: string;
@@ -357,12 +498,21 @@ function staffDto(
     decidedAt: r.decidedAt?.toISOString() ?? null,
     rejectReasonCode: r.rejectReasonCode,
     internalNote: r.internalNote,
+    bookingId: r.bookingId,
+    bookingNumber: r.booking?.number ?? null,
+    paymentCurrency: r.paymentCurrency,
     actions: {
       canRoute:
         open &&
         r.status === 'AWAITING_ROUTING' &&
         r.allowedBranchIds.some((b) => user.access.has(ROUTE, b)),
       canReject: open && decideBranches(user, r).length > 0,
+      canApprove:
+        open &&
+        r.status === 'PENDING' &&
+        r.branchId !== null &&
+        decideBranches(user, r).includes(r.branchId) &&
+        user.access.has('bookings:create', r.branchId),
     },
   };
 }

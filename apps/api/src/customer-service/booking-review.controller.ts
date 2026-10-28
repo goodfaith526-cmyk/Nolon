@@ -11,6 +11,9 @@ import {
 } from '@nestjs/common';
 import {
   CS_REVIEW_FILTERS,
+  LOAD_TYPES,
+  SHIPPING_MODES,
+  type CsApprovalPriceDto,
   type CsBookingRequestStaffDto,
   type CsBookingRequestSummaryDto,
   type CsRejectReasonDto,
@@ -18,7 +21,8 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
-import { optionalText, parse, requiredText } from '../common/validation.js';
+import { bookingCreateBody } from '../bookings/bookings.controller.js';
+import { currencyCode, optionalText, parse, quantity, requiredText } from '../common/validation.js';
 import { BookingReviewService, mayReview } from './booking-review.service.js';
 
 /**
@@ -39,13 +43,36 @@ const reasonCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'A code of capital
 const rejectBody = z
   .object({ version, reasonCode, internalNote: optionalText(1000).optional() })
   .strict();
+const priceInputs = z
+  .object({
+    originId: z.uuid(),
+    destinationId: z.uuid(),
+    mode: z.enum(SHIPPING_MODES),
+    loadType: z.enum(LOAD_TYPES).nullish(),
+    category: z.string().trim().toUpperCase().min(1).max(20),
+    quantity,
+    currency: currencyCode,
+  })
+  .strict();
+const approveBody = z
+  .object({
+    version,
+    paymentCurrency: currencyCode,
+    pricing: priceInputs,
+    pricingFingerprint: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable(),
+    booking: bookingCreateBody,
+  })
+  .strict();
 const reasonBody = z
   .object({ textAr: requiredText(300), textEn: requiredText(300), isActive: z.boolean() })
   .strict();
 
 /**
  * Staff review of the shipping bot's booking requests (plan 04a section 3): a staff session only,
- * never an API key. Approval goes through the booking form (R3-ج2).
+ * never an API key. Approval makes the booking with the ordinary create checks (R3-ج2).
  */
 @Controller('cs-booking-requests')
 export class BookingReviewController {
@@ -72,6 +99,28 @@ export class BookingReviewController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.detail(requireReviewer(user), id);
+  }
+
+  /** The engine's price for the approval's inputs (plan 04a section 1); a read, no price kept. */
+  @Get(':id/price')
+  @RequirePermission('cs_booking_requests:approve')
+  price(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: unknown,
+  ): Promise<CsApprovalPriceDto> {
+    return this.review.price(user, id, parse(priceInputs, query));
+  }
+
+  /** Makes the booking and approves the request in one transaction. */
+  @Post(':id/approve')
+  @RequirePermission('cs_booking_requests:approve', 'bookings:create')
+  approve(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.approve(user, id, parse(approveBody, body));
   }
 
   @Post(':id/route')

@@ -126,9 +126,9 @@ model Currency {
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branches             Branch[]
-  customersPreferred   Customer[]        @relation("CustomerPreferredCurrency")
+  customersPreferred   Customer[]         @relation("CustomerPreferredCurrency")
   partners             Partner[]
-  customersCreditLimit Customer[]        @relation("CustomerCreditLimitCurrency")
+  customersCreditLimit Customer[]         @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
   partnerContracts     PartnerContract[]
   rateCardCosts        RateCardCost[]
@@ -144,6 +144,7 @@ model Currency {
   supplierBills        SupplierBill[]
   supplierPayments     SupplierPayment[]
   expenses             Expense[]
+  csRequestsPaid       CsBookingRequest[] @relation("CsRequestPaymentCurrency")
 
   @@map("currencies")
 }
@@ -1253,6 +1254,7 @@ model Booking {
   shipment         Shipment?
   draft            BookingDraft?            @relation("BookingDraftResult")
   newCustomerDraft NewCustomerBookingDraft?
+  csRequests       CsBookingRequest[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -3363,6 +3365,10 @@ model CsBookingRequest {
   rejectReasonCode      String?                @map("reject_reason_code") @db.VarChar(20)
   /// For staff only: never shown to the customer or the bot.
   internalNote          String?                @map("internal_note") @db.VarChar(1000)
+  /// The booking staff made when they approved the request (plan 04a section 3, R3-ج2).
+  bookingId             String?                @map("booking_id") @db.Uuid
+  /// The currency the customer pays in, set by staff on approval (the currencies master).
+  paymentCurrency       String?                @map("payment_currency") @db.Char(3)
   version               Int                    @default(1)
   expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3378,8 +3384,11 @@ model CsBookingRequest {
   routedBy     User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
   decidedBy    User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
   rejectReason CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
+  booking      Booking?        @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  payCurrency  Currency?       @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
+  @@index([bookingId])
   @@index([ownerRef, createdAt])
   @@index([branchId, status])
   @@index([status])

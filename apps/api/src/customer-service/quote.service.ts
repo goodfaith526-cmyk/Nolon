@@ -1,7 +1,9 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import {
   CS_QUOTE_INCLUDES,
+  type CsApprovalPriceDto,
+  type CsPriceInputs,
   type CsQuoteChoices,
   type CsQuoteDto,
   type CsQuoteRequest,
@@ -233,6 +235,82 @@ export class QuoteService {
   }
 
   /**
+   * The engine's price for an approval's inputs (plan 04a section 1), in `branchId` first: the one
+   * approved FREIGHT card in the category's unit, with its total and the fingerprint approval sends
+   * back; else `none` with why. Read outside any transaction: approval checks the card again under
+   * its lock (requireSamePrice).
+   */
+  async priceFor(inputs: CsPriceInputs, branchId: string): Promise<ApprovalPrice> {
+    const category = await this.masterData.requirePriceCategory(inputs.category, null);
+    const places = (await this.currencies.requireActive(inputs.currency)).decimalPlaces;
+    const loadType = inputs.loadType ?? loadTypeOf(inputs.mode, category.cargoType);
+    const quantity = dec(inputs.quantity);
+    const none = (reason: CsApprovalPriceDto['reason']): ApprovalPrice => ({
+      dto: {
+        state: 'none',
+        reason,
+        rateCardId: null,
+        approvedAt: null,
+        currency: inputs.currency,
+        unit: null,
+        unitPrice: null,
+        minimumCharge: null,
+        total: null,
+        pricingFingerprint: null,
+      },
+      card: null,
+    });
+    const offers = await this.rates.systemScopedRates({
+      branchId,
+      onDate: todayIn('UTC'),
+      currency: inputs.currency,
+      originLocationId: inputs.originId,
+      destinationLocationId: inputs.destinationId,
+      mode: inputs.mode,
+      loadType,
+      cargoType: category.cargoType,
+      priceCategoryCode: category.code,
+      chargeTypeCode: FREIGHT,
+    });
+    if (offers.length === 0) return none('NO_RATE');
+    const inUnit = offers.filter((o) => o.rate.unit === category.defaultUnit);
+    if (inUnit.length === 0) return none('UNIT_MISMATCH');
+    const [scoped, ...others] = inUnit;
+    if (!scoped || others.length > 0) return none('AMBIGUOUS');
+    const { rate } = scoped;
+    if (!rate.approvedAt) return none('NO_RATE');
+    const total = computeQuotationAmounts(
+      [{ quantity, unitPrice: rate.price, minimumCharge: rate.minimumCharge, discount: ZERO }],
+      places,
+    ).total.toFixed(places);
+    const card = {
+      id: rate.id,
+      approvedAt: rate.approvedAt,
+      price: rate.price,
+      minimumCharge: rate.minimumCharge,
+    };
+    return {
+      dto: {
+        state: 'priced',
+        reason: null,
+        rateCardId: rate.id,
+        approvedAt: rate.approvedAt.toISOString(),
+        currency: inputs.currency,
+        unit: rate.unit,
+        unitPrice: toDecimalString(rate.price),
+        minimumCharge: toDecimalString(rate.minimumCharge),
+        total,
+        pricingFingerprint: pricingFingerprint(
+          { ...inputs, loadType, category: category.code },
+          card,
+          total,
+        ),
+      },
+      card,
+    };
+  }
+
+  /**
    * The advisory check of a kept quote for staff (plan 04a section 1): the engine run again today
    * on the quote's own inputs, for the request's branch and quantity. Current when it picks the
    * same card, still approved and valid, in a currency still active, and gives the same total;
@@ -292,4 +370,40 @@ export class QuoteService {
       totalNow: totalNow === null ? null : totalNow.toFixed(places),
     };
   }
+}
+
+/** A price for an approval, and the card it comes from (null when there is no approved price). */
+export interface ApprovalPrice {
+  dto: CsApprovalPriceDto;
+  card: {
+    id: string;
+    approvedAt: Date;
+    price: Prisma.Decimal;
+    minimumCharge: Prisma.Decimal;
+  } | null;
+}
+
+/**
+ * SHA-256 of an approval's pricing inputs, the card (id and approval time) and the total (plan 04a
+ * section 1): any change to one of them is another fingerprint. The quantity is normalised, so 2
+ * and 2.0 are the same input.
+ */
+export function pricingFingerprint(
+  inputs: CsPriceInputs & { loadType: LoadType | null },
+  card: { id: string; approvedAt: Date },
+  total: string,
+): string {
+  const parts = [
+    inputs.originId,
+    inputs.destinationId,
+    inputs.category,
+    dec(inputs.quantity).toString(),
+    inputs.mode,
+    inputs.loadType ?? '',
+    inputs.currency,
+    card.id,
+    card.approvedAt.toISOString(),
+    total,
+  ];
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
