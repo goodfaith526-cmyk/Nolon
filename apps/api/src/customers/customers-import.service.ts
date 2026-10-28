@@ -28,7 +28,7 @@ import {
 import { importRecordIds, importRequest } from '../imports/request-ids.js';
 import { buildTemplate } from '../imports/template.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { createCustomerBody } from './customer-schemas.js';
+import { importCustomerBody } from './customer-schemas.js';
 import { CustomersService, normalizeTaxNumber } from './customers.service.js';
 
 type Column = CustomerImportColumn;
@@ -383,7 +383,7 @@ export class CustomersImportService implements OnModuleInit {
       if (typeof input.preferredLocale === 'string') {
         input.preferredLocale = input.preferredLocale.toLowerCase();
       }
-      const parsed = createCustomerBody.safeParse(input);
+      const parsed = importCustomerBody.safeParse(input);
       const checked: Row = { row, values, issues, input: null };
       if (parsed.success) {
         checked.input = parsed.data;
@@ -394,7 +394,7 @@ export class CustomersImportService implements OnModuleInit {
         );
       } else {
         addIssues(issues, schemaIssues(row, input, parsed.error, columnOf, kindOf));
-        const rest = passingFields(createCustomerBody, input, parsed.error);
+        const rest = passingFields(importCustomerBody, input, parsed.error);
         if (rest) {
           addIssues(
             issues,

@@ -1,5 +1,6 @@
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { Locale } from './locales.js';
+import type { PartnerRefDto } from './partners.js';
 
 /**
  * Commercial cycle (scope 6 and 7, annex B sections 1 to 3): customers, rates, quotations and
@@ -305,6 +306,10 @@ export interface CustomerDto extends CustomerSummaryDto {
   creditLimit: DecimalString | null;
   creditLimitCurrency: CurrencyCode | null;
   notes: string | null;
+  /** The customer's segment (customer_segments master). */
+  segmentCode: string | null;
+  /** The sales outlet that brought the customer. */
+  acquiredViaOutlet: PartnerRefDto | null;
   createdAt: string;
   contacts: CustomerContactDto[];
   parties: PartyDto[];
@@ -332,6 +337,13 @@ export interface CustomerInput {
   creditLimit?: DecimalString | null;
   creditLimitCurrency?: CurrencyCode | null;
   notes?: string | null;
+  /** NOLON screens only (not assistant drafts or the Excel import, plan 7.2). */
+  segmentCode?: string | null;
+  /**
+   * NOLON screens only: an active sales outlet of the customer's branch. Outlet Staff record their
+   * own outlet whatever is sent (any other is refused).
+   */
+  acquiredViaOutletId?: string | null;
 }
 
 /** POST /customers: the branch is chosen once and never changes. */
@@ -489,6 +501,8 @@ export interface QuotationDto extends QuotationSummaryDto {
   sentAt: string | null;
   decidedAt: string | null;
   bookingId: string | null;
+  /** The sales outlet it is sold through. */
+  salesOutlet: PartnerRefDto | null;
   lines: QuotationLineDto[];
 }
 
@@ -520,6 +534,12 @@ export interface QuotationInput {
   currency: CurrencyCode;
   validUntil: DateString;
   terms?: string | null;
+  /**
+   * NOLON screens only (not assistant drafts, plan 7.2): an active sales outlet of the quotation's
+   * branch; omitted on an edit, it stays. Outlet Staff record their own outlet (any other is
+   * refused).
+   */
+  salesOutletId?: string | null;
   lines: QuotationLineInput[];
 }
 
@@ -543,6 +563,7 @@ export interface BookingItemDto {
   heightCm: DecimalString | null;
   weightKg: DecimalString | null;
   volumeCbm: DecimalString | null;
+  priceCategoryCode: string | null;
 }
 
 export interface BookingSummaryDto {
@@ -574,6 +595,8 @@ export interface BookingDto extends BookingSummaryDto {
   /** Created when the booking is confirmed. */
   shipmentId: string | null;
   shipmentNumber: string | null;
+  /** The sales outlet it is sold through (its quotation's, when made from one). */
+  salesOutlet: PartnerRefDto | null;
   items: BookingItemDto[];
 }
 
@@ -591,6 +614,8 @@ export interface BookingItemInput {
   heightCm?: DecimalString | null;
   weightKg?: DecimalString | null;
   volumeCbm?: DecimalString | null;
+  /** NOLON screens only (not assistant drafts, plan 7.2): a category of the line's cargo type. */
+  priceCategoryCode?: string | null;
 }
 
 export interface BookingInput {
@@ -609,6 +634,11 @@ export interface BookingInput {
   notifyPartyId?: string | null;
   requestedDeparture?: DateString | null;
   specialInstructions?: string | null;
+  /**
+   * NOLON screens only (not assistant drafts, plan 7.2), as a quotation's. A booking made from a
+   * quotation keeps the quotation's outlet.
+   */
+  salesOutletId?: string | null;
   items: BookingItemInput[];
 }
 
@@ -790,6 +820,13 @@ export const FORM_REFUSALS = [
   'COUNTRY_SCOPE_TAKEN',
   // A partner's city or port is in the partner's country: params `location` and `country`.
   'PARTNER_LOCATION_OTHER_COUNTRY',
+  // A sales outlet, origin consolidator or distributor named on a customer, quotation, booking or
+  // shipment is not an active partner of that kind in its branches.
+  'PARTNER_NOT_USABLE',
+  // A booking made from a quotation keeps the quotation's sales outlet.
+  'QUOTED_OUTLET_FIXED',
+  // A customer segment that is unknown or no longer in use.
+  'CUSTOMER_SEGMENT_NOT_USABLE',
   // Master data screens: a code already in use (409, param `code`), and the base currency, which
   // every journal entry balances in, stays active (param `code`).
   'MASTER_CODE_TAKEN',

@@ -5,12 +5,13 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
-import { useLocalName } from '@/lib/master-data';
+import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Money } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PartyForm } from './PartyForm';
+import { PartnerName } from '../partners/PartnerSelect';
 import { PrintLink } from '../print/PrintLink';
 
 type Mode = 'view' | 'edit' | 'contact' | 'party';
@@ -21,6 +22,7 @@ export function CustomerDetail({ id }: { id: string }) {
   const tp = useTranslations('Print');
   const me = useMe();
   const name = useLocalName();
+  const master = useMasterData();
   const failure = useFailureText();
   const [customer, setCustomer] = useState<CustomerDto | null>(null);
   const [mode, setMode] = useState<Mode>('view');
@@ -39,6 +41,10 @@ export function CustomerDetail({ id }: { id: string }) {
   }
   const canEdit = can(me, 'customers:update');
   const branch = me.branches.find((b) => b.id === customer.branchId);
+  const segmentName = (code: string | null) => {
+    const segment = master?.customerSegments.find((s) => s.code === code);
+    return segment ? name(segment) : (code ?? '—');
+  };
 
   async function post(path: string, body: unknown, success: string) {
     setNotice(null);
@@ -154,6 +160,12 @@ export function CustomerDetail({ id }: { id: string }) {
             ) : (
               '—'
             )}
+          </dd>
+          <dt>{t('segment')}</dt>
+          <dd>{segmentName(customer.segmentCode)}</dd>
+          <dt>{t('acquiredViaOutlet')}</dt>
+          <dd>
+            <PartnerName partner={customer.acquiredViaOutlet} />
           </dd>
           <dt>{tc('status')}</dt>
           <dd>{customer.isActive ? tc('active') : tc('inactive')}</dd>

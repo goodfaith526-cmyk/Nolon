@@ -14,6 +14,15 @@ export const PARTNER_KINDS = [
 ] as const;
 export type PartnerKind = (typeof PARTNER_KINDS)[number];
 
+/** A partner as a customer, quotation, booking or shipment names it. */
+export interface PartnerRefDto {
+  id: string;
+  /** NOL-PTR-000001 */
+  number: string;
+  name: string;
+  isActive: boolean;
+}
+
 export interface PartnerSummaryDto {
   id: string;
   /** NOL-PTR-000001 */

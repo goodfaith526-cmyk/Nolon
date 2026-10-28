@@ -265,7 +265,10 @@
     "addParty": "إضافة جهة",
     "partiesHint": "الجهات منفصلة عن العميل وتُختار في كل حجز.",
     "import": "استيراد من Excel",
-    "country": "الدولة"
+    "country": "الدولة",
+    "segment": "شريحة العميل",
+    "noSegment": "بدون شريحة",
+    "acquiredViaOutlet": "منفذ الاستقطاب"
   },
   "Rates": {
     "title": "الأسعار",
@@ -1957,7 +1960,12 @@
     "noLocation": "بدون مدينة أو ميناء",
     "chooseCountryFirst": "اختر الدولة أولاً.",
     "noPlacesInCountry": "لا توجد مدينة أو ميناء مسجّل لهذه الدولة بعد.",
-    "addPlace": "أضِف من صفحة المواقع"
+    "addPlace": "أضِف من صفحة المواقع",
+    "noPartner": "بدون",
+    "inactivePartner": "موقوف",
+    "salesOutlet": "منفذ البيع",
+    "originConsolidator": "المجمّع في المنشأ",
+    "distributor": "الموزّع داخل السودان"
   },
   "SupplierBills": {
     "title": "فواتير الموردين",
@@ -2543,6 +2551,9 @@
     "MASTER_CODE_TAKEN": "الرمز {code} مستخدم من قبل: اختر رمزًا آخر.",
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها.",
     "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة.",
+    "PARTNER_NOT_USABLE": "هذا الشريك غير معروف، أو موقوف، أو ليس من فروع هذا السجل.",
+    "QUOTED_OUTLET_FIXED": "الحجز المُنشأ من عرض سعر يحتفظ بمنفذ البيع الخاص بالعرض.",
+    "CUSTOMER_SEGMENT_NOT_USABLE": "شريحة العملاء هذه غير معروفة أو لم تعد مستخدمة.",
     "STATUS_TIME_TOO_EARLY": "لا يكون الوقت قبل إنشاء الشحنة أو قبل آخر حالة لها.",
     "REVERT_STALE": "تغيّرت الشحنة منذ فتحتها. راجع سجل حالاتها وحاول مرة أخرى.",
     "REVERT_CLOSED_CONTAINER": "الشحنة في الحاوية المغلقة {container}: إغلاق الحاوية نهائي، فلا يُلغى تجميعها.",

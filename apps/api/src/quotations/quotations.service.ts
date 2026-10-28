@@ -21,7 +21,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
+import { lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { followLoadType } from '../common/load-type.js';
 import {
@@ -40,6 +40,11 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma, Quotation, QuotationLine } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
+import {
+  PartnerRefsService,
+  partnerRefSelect,
+  toPartnerRef,
+} from '../partners/partner-refs.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { type RatePricingContext, RatesService, type ScopedRate } from '../rates/rates.service.js';
 import { DiscountExceedsLineError, computeQuotationAmounts } from './quotation-totals.js';
@@ -58,6 +63,7 @@ type QuotationWithDetails = Quotation & {
   lines: QuotationLine[];
   customer: { name: string };
   booking: { id: string } | null;
+  salesOutlet: { id: string; number: string; name: string; isActive: boolean } | null;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -69,6 +75,7 @@ const details = {
   lines: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
   booking: { select: { id: true } },
+  salesOutlet: partnerRefSelect,
 } satisfies Prisma.QuotationInclude;
 
 /**
@@ -84,6 +91,7 @@ export class QuotationsService {
     private readonly rates: RatesService,
     private readonly masterData: MasterDataService,
     private readonly currencies: CurrenciesService,
+    private readonly partnerRefs: PartnerRefsService,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -209,7 +217,14 @@ export class QuotationsService {
     const branchId = customer.branchId;
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
-    return { customerId: customer.id, branchId, ...prepared };
+    return {
+      customerId: customer.id,
+      branchId,
+      ...prepared,
+      // Only when sent (NOLON screens): an assistant draft's prepared quotation, and so its
+      // pricing key, stays as it was (plan 7.2).
+      ...(input.salesOutletId !== undefined ? { salesOutletId: input.salesOutletId } : {}),
+    };
   }
 
   /**
@@ -297,13 +312,19 @@ export class QuotationsService {
     prepared: Awaited<ReturnType<QuotationsService['prepareCreate']>>,
   ): Promise<QuotationWithDetails> {
     // Outlet Staff (plan 4.2): sold through their outlet, checked first in the transaction;
-    // everyone else records none yet.
-    const salesOutletId = await this.customers.outletForSaleInTx(
-      tx,
-      user,
-      prepared.branchId,
-      prepared.customerId,
-    );
+    // everyone else names one of the branch's outlets, or none.
+    const salesOutletId = await this.partnerRefs.chooseInTx(tx, user, {
+      kind: 'SALES_OUTLET',
+      requested: prepared.salesOutletId,
+      held: await this.customers.outletForSaleInTx(
+        tx,
+        user,
+        prepared.branchId,
+        prepared.customerId,
+      ),
+      branchIds: [prepared.branchId],
+      field: 'salesOutletId',
+    });
     const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
     return tx.quotation.create({
       data: {
@@ -328,8 +349,23 @@ export class QuotationsService {
     const today = await this.branchToday(existing.branchId);
     const prepared = await this.prepare(existing.branchId, today, input, existing);
     await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
-      await casStatus(tx, id, ['DRAFT'], prepared.header);
+      // The outlet as it is now: another user may have moved the quotation since it was read.
+      const held = await lockRecordOutletInTx(
+        tx,
+        user,
+        'quotations',
+        id,
+        'Quotation not found',
+        'UPDATE',
+      );
+      const salesOutletId = await this.partnerRefs.chooseInTx(tx, user, {
+        kind: 'SALES_OUTLET',
+        requested: input.salesOutletId,
+        held,
+        branchIds: [existing.branchId],
+        field: 'salesOutletId',
+      });
+      await casStatus(tx, id, ['DRAFT'], { ...prepared.header, salesOutletId });
       await tx.quotationLine.deleteMany({ where: { quotationId: id } });
       await tx.quotationLine.createMany({
         data: prepared.lines.map((line) => ({ ...line, quotationId: id })),
@@ -343,7 +379,7 @@ export class QuotationsService {
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft can be sent');
     await this.assertNotExpired(existing);
     await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
+      await lockRecordOutletInTx(tx, user, 'quotations', id, 'Quotation not found', 'UPDATE');
       await casStatus(tx, id, ['DRAFT'], { status: 'SENT', sentAt: new Date() });
     });
     return this.get(user, id);
@@ -663,6 +699,7 @@ function toDto(q: QuotationWithDetails): QuotationDto {
     sentAt: q.sentAt?.toISOString() ?? null,
     decidedAt: q.decidedAt?.toISOString() ?? null,
     bookingId: q.booking?.id ?? null,
+    salesOutlet: toPartnerRef(q.salesOutlet),
     lines: q.lines.map((l) => ({
       lineNo: l.lineNo,
       chargeTypeCode: l.chargeTypeCode,

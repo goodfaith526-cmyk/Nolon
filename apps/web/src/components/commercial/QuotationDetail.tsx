@@ -12,11 +12,13 @@ import { StatusBadge } from '../StatusBadge';
 import { MoreMenu } from '../MoreMenu';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
+import { PartnerName } from '../partners/PartnerSelect';
 
 export function QuotationDetail({ id }: { id: string }) {
   const t = useTranslations('Quotations');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Partners');
   const me = useMe();
   const master = useMasterData();
   const name = useLocalName();
@@ -174,6 +176,10 @@ export function QuotationDetail({ id }: { id: string }) {
         </dd>
         <dt>{t('validUntil')}</dt>
         <dd dir="ltr">{quotation.validUntil}</dd>
+        <dt>{tp('salesOutlet')}</dt>
+        <dd>
+          <PartnerName partner={quotation.salesOutlet} />
+        </dd>
         {quotation.cargoDescription && (
           <>
             <dt>{t('cargoDescription')}</dt>

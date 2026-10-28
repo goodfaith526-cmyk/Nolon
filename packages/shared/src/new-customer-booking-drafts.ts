@@ -30,7 +30,7 @@ export type NewCustomerBookingItem = Pick<
 /** The booking without its customer and parties; it may name an open container to go in. */
 export interface NewCustomerBookingRequest
   extends
-    Omit<BookingInput, 'shipperId' | 'consigneeId' | 'notifyPartyId' | 'items'>,
+    Omit<BookingInput, 'shipperId' | 'consigneeId' | 'notifyPartyId' | 'items' | 'salesOutletId'>,
     ContainerChoice {
   items: NewCustomerBookingItem[];
 }

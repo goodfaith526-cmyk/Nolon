@@ -125,10 +125,12 @@ export async function outletForWriteInTx(
 }
 
 /**
- * For a write by Outlet Staff to an existing record: the record's outlet must be one of the user's
- * outlets, checked and locked inside the write's transaction (lockOutletsInTx: 403 when the user's
- * access changed). Otherwise the record is of another outlet: 404 with `notFound`. A no-op for a
- * user not limited by outlet.
+ * For a write by Outlet Staff to an existing record whose outlet never changes (a shipment), or
+ * that the caller read under its row lock (an approved quotation becoming a booking): the
+ * record's outlet must be one of the user's outlets, checked and locked inside the write's
+ * transaction (lockOutletsInTx: 403 when the user's access changed). Otherwise the record is of
+ * another outlet: 404 with `notFound`. A no-op for a user not limited by outlet. A record another
+ * user can move to another outlet goes through lockRecordOutletInTx instead.
  */
 export async function assertOutletInTx(
   tx: Prisma.TransactionClient,
@@ -140,4 +142,39 @@ export async function assertOutletInTx(
   if (outlets !== null && (recordOutletId === null || !outlets.has(recordOutletId))) {
     throw new NotFoundException(notFound);
   }
+}
+
+/** Records another user can move to another outlet (plan PR-3), with the column naming it. */
+const MOVABLE_OUTLET_COLUMN = {
+  quotations: 'sales_outlet_id',
+  bookings: 'sales_outlet_id',
+  customers: 'acquired_via_outlet_id',
+} as const;
+
+/**
+ * For any write to a record whose outlet can change after the request read it: the record's row
+ * lock (`lock`, the one the write takes anyway), and its outlet as it is now, under that lock. For
+ * Outlet Staff the user's outlets are checked and locked first (lockOutletsInTx), then the record
+ * must be of one of them, or 404 with `notFound`: a record moved to another outlet meanwhile is
+ * never written, nor moved back, from a read made before the move. 404 too when the row is gone.
+ * The caller writes, and keeps or checks the outlet, from the value returned, never from its read.
+ */
+export async function lockRecordOutletInTx(
+  tx: Prisma.TransactionClient,
+  user: AuthUser,
+  table: keyof typeof MOVABLE_OUTLET_COLUMN,
+  id: string,
+  notFound: string,
+  lock: 'UPDATE' | 'NO KEY UPDATE' | 'SHARE',
+): Promise<string | null> {
+  const outlets = await lockOutletsInTx(tx, user);
+  const rows = await tx.$queryRaw<{ outlet_id: string | null }[]>(
+    Prisma.sql`SELECT ${Prisma.raw(`"${MOVABLE_OUTLET_COLUMN[table]}"`)} AS "outlet_id"
+      FROM ${Prisma.raw(`"${table}"`)} WHERE "id" = ${id}::uuid FOR ${Prisma.raw(lock)}`,
+  );
+  const row = rows[0];
+  if (!row || (outlets !== null && (row.outlet_id === null || !outlets.has(row.outlet_id)))) {
+    throw new NotFoundException(notFound);
+  }
+  return row.outlet_id;
 }

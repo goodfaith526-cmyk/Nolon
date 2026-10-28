@@ -48,6 +48,8 @@ const updateBody = z
     etd: dateString.nullish(),
     eta: dateString.nullish(),
     sharedBranchIds: z.array(z.uuid()).max(MAX_SHARED_BRANCHES).optional(),
+    originConsolidatorId: z.uuid().nullish(),
+    distributorId: z.uuid().nullish(),
   })
   .strict();
 

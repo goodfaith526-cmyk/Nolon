@@ -39,7 +39,7 @@ export type QuotationDraftLine = DraftValues<
  * cargo, currency, validity and lines may all be missing until a person fills them in.
  */
 export type QuotationDraftValues = DraftValues<
-  Omit<CreateQuotationRequest, 'lines'>,
+  Omit<CreateQuotationRequest, 'lines' | 'salesOutletId'>,
   | 'customerId'
   | 'originLocationId'
   | 'destinationLocationId'
@@ -145,7 +145,10 @@ export type QuotationDraftListItemDto = Omit<
 // ---------------------------------------------------------------------------------------------
 
 /** A cargo line as a booking draft holds it: its cargo type and quantity may be missing. */
-export type BookingDraftItem = DraftValues<BookingItemInput, 'cargoType' | 'quantity'>;
+export type BookingDraftItem = DraftValues<
+  Omit<BookingItemInput, 'priceCategoryCode'>,
+  'cargoType' | 'quantity'
+>;
 
 /** A booking made from an approved quotation, as its draft holds it. */
 export type BookingDraftFromQuotation = Omit<BookingFromQuotationRequest, 'items'> & {
@@ -157,7 +160,7 @@ export type BookingDraftFromQuotation = Omit<BookingFromQuotationRequest, 'items
  * cargo, services and lines may all be missing.
  */
 export type BookingDraftDirect = DraftValues<
-  Omit<CreateBookingRequest, 'items' | 'services'>,
+  Omit<CreateBookingRequest, 'items' | 'services' | 'salesOutletId'>,
   'customerId' | 'originLocationId' | 'destinationLocationId' | 'mode' | 'cargoType'
 > &
   ContainerChoice & { services?: BookingService[]; items?: BookingDraftItem[] };
