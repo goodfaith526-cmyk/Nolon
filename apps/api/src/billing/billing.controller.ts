@@ -89,6 +89,7 @@ const invoiceListQuery = pageQuery
 
 export const createReceiptBody = z
   .object({
+    requestId: z.uuid().optional(),
     customerId: z.uuid(),
     receiptDate: dateString,
     currency: currencyCode,

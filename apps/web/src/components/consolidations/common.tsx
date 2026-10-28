@@ -3,6 +3,7 @@
 import {
   hasSeaLeg,
   type ConsolidationDto,
+  type ContainerFitDto,
   type Page,
   type ShipmentSummaryDto,
 } from '@nolon/shared';
@@ -11,6 +12,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { StatusBadge } from '../StatusBadge';
+import { FitNote } from './Capacity';
 
 /** The container's details, for the new container form and the edit form (named inputs). */
 export function ConsolidationDetailFields({ value }: { value: ConsolidationDto | null }) {
@@ -97,8 +99,11 @@ export function LclShipmentPicker({
   onPick,
   onError,
   disabled = false,
+  consolidationId,
 }: {
   exclude: readonly string[];
+  /** An existing container: each result shows whether it would fit (an estimate). */
+  consolidationId?: string;
   /** The container's port of loading, once known: shipments leaving from another are left out. */
   originLocationId?: string;
   onPick: (shipment: ShipmentSummaryDto) => void;
@@ -111,20 +116,28 @@ export function LclShipmentPicker({
   const locationName = useLocationName(master);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<ShipmentSummaryDto[] | null>(null);
+  const [fits, setFits] = useState<Map<string, ContainerFitDto>>(new Map());
 
   async function search() {
     try {
       const page = await api<Page<ShipmentSummaryDto>>(
         `/shipments?pageSize=50&q=${encodeURIComponent(q)}`,
       );
-      setResults(
-        page.items.filter(
-          (s) =>
-            hasSeaLeg(s.mode) &&
-            s.loadType === 'LCL' &&
-            (!originLocationId || s.originLocationId === originLocationId),
-        ),
+      const found = page.items.filter(
+        (s) =>
+          hasSeaLeg(s.mode) &&
+          s.loadType === 'LCL' &&
+          (!originLocationId || s.originLocationId === originLocationId),
       );
+      setResults(found);
+      setFits(new Map());
+      const ids = found.filter((s) => !exclude.includes(s.id)).map((s) => s.id);
+      if (consolidationId && ids.length > 0) {
+        const estimate = await api<ContainerFitDto[]>(
+          `/consolidations/${consolidationId}/fit?shipmentIds=${ids.join(',')}`,
+        );
+        setFits(new Map(estimate.map((f) => [f.shipmentId, f])));
+      }
     } catch (e) {
       onError(e);
     }
@@ -169,6 +182,7 @@ export function LclShipmentPicker({
                     })}
                   </span>
                   <StatusBadge kind="shipment" status={s.status} />
+                  <FitNote fit={fits.get(s.id)} />
                 </button>
               </li>
             ))}

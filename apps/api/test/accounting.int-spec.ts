@@ -479,6 +479,141 @@ describe('accounting: journals, invoices, receipts, periods', () => {
       expect(stored.paidAmount.eq(stored.total)).toBe(true);
     });
 
+    it('a request id posts the receipt once: a retry returns it, other content is refused (B1-3)', async () => {
+      const invoice = await approvedInvoice(d('05-07'));
+      const body = {
+        requestId: randomUUID(),
+        customerId: customer.id,
+        receiptDate: d('05-08'),
+        currency: 'SDG',
+        fxRate: '600',
+        amount: '1000',
+        cashAccountId: cashSdg.id,
+        reference: 'RQ-1',
+        allocations: [{ invoiceId: invoice.id, amount: '400' }],
+      };
+      const first = (await post('/receipts', cookies.financePts, body).expect(201))
+        .body as ReceiptDto;
+      expect(first.id).toBe(body.requestId);
+      const again = (await post('/receipts', cookies.financePts, body).expect(201))
+        .body as ReceiptDto;
+      expect(again).toMatchObject({ id: first.id, number: first.number });
+      // Without a rate, the retry matches the rate the first request was posted at.
+      await post('/receipts', cookies.financePts, { ...body, fxRate: null }).expect(201);
+      // Other content, another user, a user of another branch: refused, nothing posted.
+      for (const [cookie, changed] of [
+        [cookies.financePts, { amount: '1001' }],
+        [cookies.financePts, { fxRate: '601' }],
+        [cookies.financePts, { reference: 'RQ-2' }],
+        [cookies.financePts, { allocations: [{ invoiceId: invoice.id, amount: '401' }] }],
+        [cookies.financePts, { allocations: [] }],
+        [cookies.admin, {}],
+        [cookies.financeJed, {}],
+      ] as const) {
+        await post('/receipts', cookie, { ...body, ...changed }).expect(409);
+      }
+      const stored = await t.prisma.receipt.findMany({ where: { id: body.requestId } });
+      expect(stored).toHaveLength(1);
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'RECEIPT', sourceId: body.requestId },
+        }),
+      ).toBe(1);
+      const paid = await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      expect(paid.paidAmount.toFixed()).toBe('400');
+
+      // The same request sent twice at once posts one receipt; both get it back.
+      const twin = { ...body, requestId: randomUUID(), reference: 'RQ-3' };
+      const results = await Promise.all([
+        post('/receipts', cookies.financePts, twin),
+        post('/receipts', cookies.financePts, twin),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([201, 201]);
+      expect(results.map((r) => (r.body as ReceiptDto).id)).toEqual([
+        twin.requestId,
+        twin.requestId,
+      ]);
+      expect(await t.prisma.receipt.count({ where: { id: twin.requestId } })).toBe(1);
+      const after = await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      expect(after.paidAmount.toFixed()).toBe('800');
+
+      // Without a request id, each request posts its own receipt, as before.
+      const plain = { ...body, requestId: undefined };
+      const a = (
+        await post('/receipts', cookies.financePts, { ...plain, allocations: [] }).expect(201)
+      ).body as ReceiptDto;
+      const b = (
+        await post('/receipts', cookies.financePts, { ...plain, allocations: [] }).expect(201)
+      ).body as ReceiptDto;
+      expect(a.id).not.toBe(b.id);
+    });
+
+    it('a retry matches the allocations one to one, in any order (Codex F121-2)', async () => {
+      const [first, second] = [
+        await approvedInvoice(d('05-07')),
+        await approvedInvoice(d('05-07')),
+      ];
+      if (!first || !second) throw new Error('No invoices');
+      const body = {
+        requestId: randomUUID(),
+        customerId: customer.id,
+        receiptDate: d('05-08'),
+        currency: 'SDG',
+        fxRate: '600',
+        amount: '20',
+        cashAccountId: cashSdg.id,
+        allocations: [
+          { invoiceId: first.id, amount: '10' },
+          { invoiceId: second.id, amount: '10' },
+        ],
+      };
+      const posted = (await post('/receipts', cookies.financePts, body).expect(201))
+        .body as ReceiptDto;
+      const reordered = (
+        await post('/receipts', cookies.financePts, {
+          ...body,
+          allocations: [...body.allocations].reverse(),
+        }).expect(201)
+      ).body as ReceiptDto;
+      expect(reordered.id).toBe(posted.id);
+      // One invoice named twice is other content, even with as many lines and the same amounts.
+      await post('/receipts', cookies.financePts, {
+        ...body,
+        allocations: [
+          { invoiceId: first.id, amount: '10' },
+          { invoiceId: first.id, amount: '10' },
+        ],
+      }).expect(409);
+    });
+
+    it('two identical requests settling an invoice in full both get the one receipt (Codex F121-1)', async () => {
+      const invoice = await approvedInvoice(d('05-07'));
+      const body = {
+        requestId: randomUUID(),
+        customerId: customer.id,
+        receiptDate: d('05-08'),
+        currency: 'SDG',
+        fxRate: '600',
+        amount: '1000000.5',
+        cashAccountId: cashSdg.id,
+        allocations: [{ invoiceId: invoice.id, amount: '1000000.5' }],
+      };
+      const results = await Promise.all([
+        post('/receipts', cookies.financePts, body),
+        post('/receipts', cookies.financePts, body),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([201, 201]);
+      expect(results.map((r) => (r.body as ReceiptDto).id)).toEqual([
+        body.requestId,
+        body.requestId,
+      ]);
+      expect(await t.prisma.receipt.count({ where: { id: body.requestId } })).toBe(1);
+      const paid = await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      expect(paid.paidAmount.eq(paid.total)).toBe(true);
+      // Another request settling it, with its own id, is refused on the balance as before.
+      await post('/receipts', cookies.financePts, { ...body, requestId: randomUUID() }).expect(400);
+    });
+
     it('permissions and branch scope', async () => {
       const body = {
         customerId: customer.id,

@@ -20,6 +20,7 @@ import { Money, useBranchCode, useRecord } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { toIso, useDateTime } from '../transport/common';
+import { CapacityPanel } from './Capacity';
 import { ConsolidationDetailFields, LclShipmentPicker } from './common';
 
 /** One container: its moves, shipments, details and (for those who see costs) its cost sharing. */
@@ -321,6 +322,8 @@ export function ConsolidationDetail({ id }: { id: string }) {
         </dl>
       )}
 
+      <CapacityPanel capacity={c.capacity} />
+
       <div className="panel">
         <div className="panel-head">
           <div>
@@ -456,6 +459,7 @@ export function ConsolidationDetail({ id }: { id: string }) {
             <LclShipmentPicker
               exclude={c.shipments.map((s) => s.shipmentId)}
               originLocationId={c.originLocationId}
+              consolidationId={id}
               disabled={busy}
               onError={(e) => setNotice({ ok: false, text: failure(e) })}
               onPick={(s) =>

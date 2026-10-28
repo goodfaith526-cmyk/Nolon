@@ -15,6 +15,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
+import { FillCell } from './Capacity';
 
 /**
  * Consolidated (LCL) containers of the user's branches; or, for those who book into containers,
@@ -124,6 +125,7 @@ export function Consolidations() {
                 <th>{t('etd')}</th>
                 <th>{t('eta')}</th>
                 <th>{t('shipmentsCount')}</th>
+                <th>{t('fill')}</th>
                 <th>{tc('status')}</th>
               </tr>
             </thead>
@@ -148,6 +150,9 @@ export function Consolidations() {
                   <td dir="ltr">{c.etd ?? '—'}</td>
                   <td dir="ltr">{c.eta ?? '—'}</td>
                   <td>{c.shipmentCount}</td>
+                  <td>
+                    <FillCell fillPercent={c.fillPercent} fillIncomplete={c.fillIncomplete} />
+                  </td>
                   <td>
                     <StatusBadge kind="consolidation" status={c.status} />
                   </td>

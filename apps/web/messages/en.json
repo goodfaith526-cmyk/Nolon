@@ -1310,7 +1310,24 @@
     "move": "Move",
     "moveTo": "Move to container",
     "moveNone": "No other open container in your branches.",
-    "shipmentMovedNotice": "Shipment {shipment} moved to container {container}."
+    "shipmentMovedNotice": "Shipment {shipment} moved to container {container}.",
+    "capacitySection": "Space in the container",
+    "capacityHint": "CBM and weight of the cargo in it against the limits of its container type. A shipment that would take it over a limit is refused.",
+    "capacityAsOfNow": "The cargo in it now against the current limits of its container type.",
+    "capacity_volumeCbm": "Volume",
+    "capacity_weightKg": "Weight",
+    "unit_volumeCbm": "CBM",
+    "unit_weightKg": "kg",
+    "capacityRemaining": "{remaining} {unit} left",
+    "capacityNoLimit": "{used} {unit} (no limit set for this container type)",
+    "capacityNotChecked": "Not checked in full: some cargo has no such measure yet.",
+    "capacityIncomplete": "Cargo without CBM or weight (enter it before closing):",
+    "capacityIncompleteShort": "incomplete",
+    "fill": "Fill",
+    "fitOver": "Would exceed: {measures}",
+    "fitLeft": "Fits, leaving {left}",
+    "fitNoLimit": "No limit set",
+    "fitUnchecked": "not checked: {measures}"
   },
   "Alerts": {
     "title": "Alerts",
@@ -1996,7 +2013,9 @@
     "exactMatch": "Exact match:",
     "moreShipments": "More shipments",
     "noShipments": "No shipment of this branch matches.",
-    "chooseShipmentFirst": "Line {line}: choose the shipment."
+    "chooseShipmentFirst": "Line {line}: choose the shipment.",
+    "duplicateWarning": "Supplier reference {reference} is on {count, plural, one {# other supplier bill} other {# other supplier bills}} in this branch that {count, plural, one {is} other {are}} not cancelled. The same supplier invoice may be entered twice: check {count, plural, one {it} other {them}} first.",
+    "duplicateConfirm": "I checked these bills; this is a different supplier invoice."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
@@ -2516,11 +2535,16 @@
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
     "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
     "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
     "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
     "PRICE_CATEGORY_NOT_USABLE": "This price category is unknown, no longer in use, or for another cargo type.",
     "COUNTRY_KIND_FIXED": "A country pricing scope keeps its kind and country: add a new location instead.",
-    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}."
+    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}.",
+    "CONTAINER_OVER_VOLUME": "Container {container} has no room for this volume: it holds {limit} CBM, has {used} and would have {after}.",
+    "CONTAINER_OVER_WEIGHT": "Container {container} has no room for this weight: it takes {limit} kg, has {used} and would have {after}.",
+    "CONTAINER_VOLUME_MISSING": "Enter the volume (CBM) of every cargo line before closing or loading container {container}: {shipments}.",
+    "CONTAINER_WEIGHT_MISSING": "Enter the weight of every cargo line before closing or loading container {container}: {shipments}."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2573,6 +2597,10 @@
     "add_customerSegments": "Add customer segment",
     "cargoType": "Cargo type",
     "defaultUnit": "Suggested unit",
-    "cargoTypeFixed": "The cargo type cannot be changed after it is saved."
+    "cargoTypeFixed": "The cargo type cannot be changed after it is saved.",
+    "maxVolumeCbm": "Usable volume (CBM)",
+    "maxPayloadKg": "Payload (kg)",
+    "noLimit": "No limit",
+    "capacityHint": "The values given at first are defaults: set the real limits you load to. Empty means no limit."
   }
 }
