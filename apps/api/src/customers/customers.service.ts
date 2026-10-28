@@ -27,7 +27,7 @@ import {
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
 import {
-  assertOutletInTx,
+  lockRecordOutletInTx,
   customerOutletScope,
   outletForWriteInTx,
   outletLimited,
@@ -358,8 +358,14 @@ export class CustomersService {
     await this.checkSegment(input.segmentCode, read.segmentCode);
     const { acquiredViaOutletId: requested, ...fields } = input;
     const updated = await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, read.acquiredViaOutletId, 'Customer not found');
-      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
+      await lockRecordOutletInTx(
+        tx,
+        user,
+        'customers',
+        read.id,
+        'Customer not found',
+        'NO KEY UPDATE',
+      );
       const current = await tx.customer.findFirst({
         where: { id: read.id, ...branchScope(user), ...customerOutletScope(user) },
       });
@@ -416,10 +422,16 @@ export class CustomersService {
     const existing = await this.findScoped(user, id);
     return toDto(
       await this.prisma.$transaction(async (tx) => {
-        await assertOutletInTx(tx, user, existing.acquiredViaOutletId, 'Customer not found');
         // Locked before `before` is read: two concurrent changes queue, and each logs what it
-        // actually changed.
-        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${existing.id}::uuid FOR NO KEY UPDATE`;
+        // actually changed. The outlet is checked as it is now, under that lock.
+        await lockRecordOutletInTx(
+          tx,
+          user,
+          'customers',
+          existing.id,
+          'Customer not found',
+          'NO KEY UPDATE',
+        );
         const before = await tx.customer.findUniqueOrThrow({ where: { id: existing.id } });
         const changed = await tx.customer.update({
           where: { id: existing.id },
@@ -491,8 +503,14 @@ export class CustomersService {
       tx.customerContact.findMany({ where: { customerId: customer.id } });
     try {
       await this.prisma.$transaction(async (tx) => {
-        await assertOutletInTx(tx, user, customer.acquiredViaOutletId, 'Customer not found');
-        await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customer.id}::uuid FOR UPDATE`;
+        await lockRecordOutletInTx(
+          tx,
+          user,
+          'customers',
+          customer.id,
+          'Customer not found',
+          'UPDATE',
+        );
         const before = await read(tx);
         await write(tx);
         const changes = childChanges('contact', before, await read(tx), CONTACT_AUDIT_FIELDS);
@@ -584,8 +602,7 @@ export class CustomersService {
     write: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<void> {
     const read = () => tx.party.findMany({ where: { customerId: customer.id } });
-    await assertOutletInTx(tx, user, customer.acquiredViaOutletId, 'Customer not found');
-    await this.lockForPartyWrite(tx, customer.id);
+    await lockRecordOutletInTx(tx, user, 'customers', customer.id, 'Customer not found', 'UPDATE');
     const before = await read();
     await write(tx);
     const changes = childChanges('party', before, await read(), PARTY_AUDIT_FIELDS);

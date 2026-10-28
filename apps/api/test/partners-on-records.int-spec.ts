@@ -3,6 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   AGENT_PREFIX,
+  changedBeforeTransaction,
   draftKey,
   registerClient,
   requests,
@@ -406,6 +407,129 @@ describe('partners named on customers, quotations, bookings and shipments', () =
         await r.get(`/shipments/${confirmed.shipmentId}`, cookies.opsJed).expect(200)
       ).body as ShipmentDto;
       expect(shipment.salesOutlet?.id).toBe(outlets.a.id);
+    });
+  });
+
+  // F125-1: a record moved to another outlet after an Outlet Staff request read it, before its
+  // write, is neither written nor moved back by that request. The move commits just as the
+  // request's transaction starts (changedBeforeTransaction).
+  describe('a record moved to another outlet during an Outlet Staff edit', () => {
+    const noRestore = () => Promise.resolve();
+
+    it('refuses the stale edit or send of a quotation, keeping the move', async () => {
+      const customer = await newCustomer(cookies.staffA);
+      const quotation = (
+        await r.post('/quotations', cookies.staffA, quotationBody(customer.id)).expect(201)
+      ).body as QuotationDto;
+      expect(quotation.salesOutlet?.id).toBe(outlets.a.id);
+      const moveTo = (outlet: PartnerDto) => () =>
+        r
+          .patch(`/quotations/${quotation.id}`, cookies.salesJed, {
+            ...quotationEdit(),
+            salesOutletId: outlet.id,
+          })
+          .expect(200);
+      const edited = quotationEdit();
+      const edit = await changedBeforeTransaction(
+        t,
+        '/quotations.service',
+        { revoke: moveTo(outlets.b), restore: noRestore },
+        () =>
+          r.patch(`/quotations/${quotation.id}`, cookies.staffA, {
+            ...edited,
+            lines: [{ ...edited.lines[0], unitPrice: '900' }],
+          }),
+      );
+      expect(edit.revoked).toBe(true);
+      expect(edit.result.status).toBe(404);
+      const after = (await r.get(`/quotations/${quotation.id}`, cookies.salesJed).expect(200))
+        .body as QuotationDto;
+      expect(after.salesOutlet?.id).toBe(outlets.b.id);
+      expect(after.lines.map((l) => l.unitPrice)).toEqual(quotation.lines.map((l) => l.unitPrice));
+
+      await moveTo(outlets.a)();
+      const send = await changedBeforeTransaction(
+        t,
+        '/quotations.service',
+        { revoke: moveTo(outlets.b), restore: noRestore },
+        () => r.post(`/quotations/${quotation.id}/send`, cookies.staffA),
+      );
+      expect(send.result.status).toBe(404);
+      const unsent = (await r.get(`/quotations/${quotation.id}`, cookies.salesJed).expect(200))
+        .body as QuotationDto;
+      expect(unsent).toMatchObject({ status: 'DRAFT', salesOutlet: { id: outlets.b.id } });
+    });
+
+    it('refuses the stale edit of a booking, keeping the move', async () => {
+      const customer = await newCustomer(cookies.staffA);
+      const booking = (
+        await r.post('/bookings', cookies.staffA, bookingBody(customer.id)).expect(201)
+      ).body as BookingDto;
+      expect(booking.salesOutlet?.id).toBe(outlets.a.id);
+      const edit = await changedBeforeTransaction(
+        t,
+        '/bookings.service',
+        {
+          revoke: () =>
+            r
+              .patch(`/bookings/${booking.id}`, cookies.salesJed, {
+                ...without(bookingBody(customer.id), 'customerId'),
+                salesOutletId: outlets.b.id,
+              })
+              .expect(200),
+          restore: noRestore,
+        },
+        () =>
+          r.patch(`/bookings/${booking.id}`, cookies.staffA, {
+            ...without(bookingBody(customer.id), 'customerId'),
+            specialInstructions: 'stale edit',
+          }),
+      );
+      expect(edit.revoked).toBe(true);
+      expect(edit.result.status).toBe(404);
+      const after = (await r.get(`/bookings/${booking.id}`, cookies.salesJed).expect(200))
+        .body as BookingDto;
+      expect(after.salesOutlet?.id).toBe(outlets.b.id);
+      expect(after.specialInstructions).toBeNull();
+    });
+
+    it('refuses a stale write to a customer brought by the outlet, keeping the move', async () => {
+      const customer = await newCustomer(cookies.staffA);
+      expect(customer.acquiredViaOutlet?.id).toBe(outlets.a.id);
+      const moveTo = (outlet: PartnerDto) => () =>
+        r
+          .patch(`/customers/${customer.id}`, cookies.salesJed, {
+            acquiredViaOutletId: outlet.id,
+          })
+          .expect(200);
+      const writes = [
+        () =>
+          r.post(`/customers/${customer.id}/contacts`, cookies.staffA, {
+            name: 'Stale',
+            phone: '+249912345678',
+          }),
+        () => r.post(`/customers/${customer.id}/deactivate`, cookies.staffA),
+        () => r.patch(`/customers/${customer.id}`, cookies.staffA, { name: 'Stale name' }),
+      ];
+      for (const write of writes) {
+        await moveTo(outlets.a)();
+        const res = await changedBeforeTransaction(
+          t,
+          '/customers.service',
+          { revoke: moveTo(outlets.b), restore: noRestore },
+          write,
+        );
+        expect(res.revoked).toBe(true);
+        expect(res.result.status).toBe(404);
+      }
+      const after = (await r.get(`/customers/${customer.id}`, cookies.salesJed).expect(200))
+        .body as CustomerDto;
+      expect(after).toMatchObject({
+        acquiredViaOutlet: { id: outlets.b.id },
+        isActive: true,
+        name: customer.name,
+      });
+      expect(after.contacts.map((c) => c.name)).not.toContain('Stale');
     });
   });
 

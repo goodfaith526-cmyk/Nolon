@@ -21,7 +21,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
+import { lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { followLoadType } from '../common/load-type.js';
 import {
@@ -349,11 +349,19 @@ export class QuotationsService {
     const today = await this.branchToday(existing.branchId);
     const prepared = await this.prepare(existing.branchId, today, input, existing);
     await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
+      // The outlet as it is now: another user may have moved the quotation since it was read.
+      const held = await lockRecordOutletInTx(
+        tx,
+        user,
+        'quotations',
+        id,
+        'Quotation not found',
+        'UPDATE',
+      );
       const salesOutletId = await this.partnerRefs.chooseInTx(tx, user, {
         kind: 'SALES_OUTLET',
         requested: input.salesOutletId,
-        held: existing.salesOutletId,
+        held,
         branchIds: [existing.branchId],
         field: 'salesOutletId',
       });
@@ -371,7 +379,7 @@ export class QuotationsService {
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft can be sent');
     await this.assertNotExpired(existing);
     await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, existing.salesOutletId, 'Quotation not found');
+      await lockRecordOutletInTx(tx, user, 'quotations', id, 'Quotation not found', 'UPDATE');
       await casStatus(tx, id, ['DRAFT'], { status: 'SENT', sentAt: new Date() });
     });
     return this.get(user, id);

@@ -24,7 +24,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { assertOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
+import { lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   localDayFilter,
@@ -493,16 +493,20 @@ export class BookingsService {
     // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs, or
     // the one of the branch's outlets the person names. For Outlet Staff the outlet is checked as
     // it is now, first in the transaction.
+    // The quotation's outlet as it is now, share-locked: another user may move it meanwhile.
     const fromQuotation = prepared.quotationId
-      ? await tx.quotation.findUniqueOrThrow({
-          where: { id: prepared.quotationId },
-          select: { salesOutletId: true },
-        })
+      ? {
+          salesOutletId: await lockRecordOutletInTx(
+            tx,
+            user,
+            'quotations',
+            prepared.quotationId,
+            'Quotation not found',
+            'SHARE',
+          ),
+        }
       : null;
-    if (fromQuotation) {
-      await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
-      requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
-    }
+    if (fromQuotation) requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
       : await this.partnerRefs.chooseInTx(tx, user, {
@@ -561,15 +565,23 @@ export class BookingsService {
           changed,
         );
       }
-      requireQuotedOutlet(input.salesOutletId, existing.salesOutletId);
     }
     const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
-      await assertOutletInTx(tx, user, existing.salesOutletId, 'Booking not found');
+      // The outlet as it is now: another user may have moved the booking since it was read.
+      const held = await lockRecordOutletInTx(
+        tx,
+        user,
+        'bookings',
+        id,
+        'Booking not found',
+        'UPDATE',
+      );
+      if (existing.quotationId) requireQuotedOutlet(input.salesOutletId, held);
       const salesOutletId = await this.partnerRefs.chooseInTx(tx, user, {
         kind: 'SALES_OUTLET',
         requested: input.salesOutletId,
-        held: existing.salesOutletId,
+        held,
         branchIds: [existing.branchId],
         field: 'salesOutletId',
       });
