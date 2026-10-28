@@ -682,6 +682,10 @@ export const FORM_REFUSALS = [
   // The assistant's chat cannot list them, so its approval is sent to NOLON's review screen.
   'SHIPMENT_ALREADY_INVOICED',
   'SHIPMENT_ALREADY_INVOICED_REVIEW',
+  // Approving a supplier bill whose reference other bills of the supplier and branch carry (or
+  // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
+  // dash) and `drafts` (a count).
+  'SUPPLIER_REFERENCE_DUPLICATE',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',

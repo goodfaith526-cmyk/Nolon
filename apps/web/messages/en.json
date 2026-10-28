@@ -1973,7 +1973,9 @@
     "exactMatch": "Exact match:",
     "moreShipments": "More shipments",
     "noShipments": "No shipment of this branch matches.",
-    "chooseShipmentFirst": "Line {line}: choose the shipment."
+    "chooseShipmentFirst": "Line {line}: choose the shipment.",
+    "duplicateWarning": "Supplier reference {reference} is on {count, plural, one {# other supplier bill} other {# other supplier bills}} in this branch that {count, plural, one {is} other {are}} not cancelled. The same supplier invoice may be entered twice: check {count, plural, one {it} other {them}} first.",
+    "duplicateConfirm": "I checked these bills; this is a different supplier invoice."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
@@ -2491,7 +2493,8 @@
     "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country.",
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
-    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone."
+    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice."
   },
   "Locations": {
     "title": "Ports and cities",

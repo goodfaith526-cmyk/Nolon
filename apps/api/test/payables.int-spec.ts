@@ -1165,6 +1165,132 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('a supplier reference on another bill needs the person to acknowledge it (B1-4)', () => {
+    const draft = async (reference: string, branchId = pts, cookie = cookies.financePts) =>
+      (
+        await post('/supplier-bills', cookie, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId,
+          supplierReference: reference,
+          currency: 'SDG',
+          fxRate: '600',
+          billDate: d('04-12'),
+          dueDate: d('05-12'),
+          lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '600' }],
+        }).expect(201)
+      ).body as SupplierBillDto;
+    const approve = (
+      id: string,
+      acknowledgedDuplicateBillIds?: string[],
+      cookie = cookies.financePts,
+    ) =>
+      post(
+        `/supplier-bills/${id}/approve`,
+        cookie,
+        acknowledgedDuplicateBillIds ? { acknowledgedDuplicateBillIds } : {},
+      );
+    const refused = (res: Response, reference: string, approved: string, drafts: string) => {
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'SUPPLIER_REFERENCE_DUPLICATE',
+        params: { reference, approved, drafts },
+      });
+    };
+    const read = async (id: string) =>
+      (await get(`/supplier-bills/${id}`, cookies.financePts).expect(200)).body as SupplierBillDto;
+
+    it('is refused until the approval names exactly the bills carrying the reference', async () => {
+      const reference = `DUP-${randomInt(1e9)}`;
+      const first = await draft(reference);
+      expect(first.duplicateBills).toEqual([]);
+      const firstApproved = (await approve(first.id).expect(200)).body as SupplierBillDto;
+      const number = firstApproved.number ?? '';
+
+      // The same reference in another case: the first bill is listed, and must be acknowledged.
+      const second = await draft(reference.toLowerCase());
+      expect((await read(second.id)).duplicateBills).toEqual([
+        {
+          id: first.id,
+          number,
+          status: 'APPROVED',
+          billDate: d('04-12'),
+          currency: 'SDG',
+          total: '600',
+        },
+      ]);
+      // Another branch and a missing permission are refused first.
+      await approve(second.id, [first.id], cookies.financeJed).expect(404);
+      await approve(second.id, [first.id], cookies.opsPts).expect(403);
+      await approve(second.id, ['not-a-uuid']).expect(400);
+      refused(await approve(second.id), reference.toLowerCase(), number, '0');
+      refused(await approve(second.id, []), reference.toLowerCase(), number, '0');
+      refused(await approve(second.id, [randomUUID()]), reference.toLowerCase(), number, '0');
+      refused(
+        await approve(second.id, [first.id, randomUUID()]),
+        reference.toLowerCase(),
+        number,
+        '0',
+      );
+      expect(await read(second.id)).toMatchObject({ status: 'DRAFT', journalEntryId: null });
+
+      // A third draft lists the second draft too; once that draft is cancelled, the first alone.
+      const third = await draft(reference);
+      refused(await approve(third.id, [first.id]), reference, number, '1');
+      await post(`/supplier-bills/${second.id}/cancel`, cookies.financePts, {
+        reason: 'Entered twice',
+      }).expect(200);
+      expect((await read(third.id)).duplicateBills.map((b) => b.id)).toEqual([first.id]);
+      await approve(third.id, [first.id]).expect(200);
+      expect(
+        await t.prisma.journalEntry.count({
+          where: { source: 'SUPPLIER_BILL', sourceId: { in: [first.id, second.id, third.id] } },
+        }),
+      ).toBe(2);
+    });
+
+    it('another branch, no reference, or a cancelled bill is not a duplicate', async () => {
+      const reference = `DUP-${randomInt(1e9)}`;
+      const pts1 = await draft(reference);
+      // The same supplier and reference in Jeddah is another branch's bill.
+      const jed1 = await draft(reference, jed, cookies.admin);
+      expect((await read(pts1.id)).duplicateBills).toEqual([]);
+      expect(jed1.duplicateBills).toEqual([]);
+      await post(`/supplier-bills/${pts1.id}/cancel`, cookies.financePts, {
+        reason: 'Wrong amount',
+      }).expect(200);
+      const pts2 = await draft(reference);
+      expect(pts2.duplicateBills).toEqual([]);
+      await approve(pts2.id).expect(200);
+      // Bills without a reference are never compared.
+      const plain = (
+        await post('/supplier-bills', cookies.financePts, {
+          requestId: randomUUID(),
+          supplierId: supplier.id,
+          branchId: pts,
+          currency: 'SDG',
+          fxRate: '600',
+          billDate: d('04-12'),
+          dueDate: d('05-12'),
+          lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '600' }],
+        }).expect(201)
+      ).body as SupplierBillDto;
+      expect(plain.duplicateBills).toEqual([]);
+      await approve(plain.id).expect(200);
+    });
+
+    it('two drafts with one reference approved at once: neither passes unacknowledged', async () => {
+      const reference = `DUP-${randomInt(1e9)}`;
+      const a = await draft(reference);
+      const b = await draft(reference);
+      const results = await Promise.all([approve(a.id), approve(b.id)]);
+      for (const res of results) refused(res, reference, '—', '1');
+      // Each acknowledging the other: the second approval waits, then finds the first approved.
+      const both = await Promise.all([approve(a.id, [b.id]), approve(b.id, [a.id])]);
+      expect(both.map((r) => r.status)).toEqual([200, 200]);
+    });
+  });
+
   describe('rule 11a, payments and AP aging', () => {
     let trip: TripDto;
     let bill: SupplierBillDto;

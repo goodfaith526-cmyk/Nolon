@@ -108,6 +108,31 @@ export interface SupplierBillPaymentDto {
   cancelled: boolean;
 }
 
+/** Another bill of the supplier, in the same branch, carrying the same supplier reference. */
+export interface SupplierBillRefDto {
+  id: string;
+  number: string | null;
+  status: SupplierBillStatus;
+  billDate: string;
+  currency: CurrencyCode;
+  total: DecimalString;
+}
+
+/**
+ * The most bill ids an approval may acknowledge. A reference on more bills that are not cancelled
+ * takes no further approval until some are cancelled.
+ */
+export const MAX_ACKNOWLEDGED_BILLS = 1000;
+
+export interface ApproveSupplierBillRequest {
+  /**
+   * The bills carrying the same supplier reference that the person checked (`duplicateBills`).
+   * The approval is refused (409 `SUPPLIER_REFERENCE_DUPLICATE`) unless these are exactly the
+   * bills that carry it now; omitted, the reference must be on no other bill (B1-4).
+   */
+  acknowledgedDuplicateBillIds?: string[];
+}
+
 export interface SupplierBillDto extends SupplierBillSummaryDto {
   fxRate: FxRateString;
   /**
@@ -125,6 +150,11 @@ export interface SupplierBillDto extends SupplierBillSummaryDto {
   cancelJournalEntryNumber: string | null;
   approvedAt: string | null;
   cancelReason: string | null;
+  /**
+   * The supplier's other bills in the same branch with the same reference (any case), not
+   * cancelled: a possible double entry of one supplier invoice. Empty without a reference.
+   */
+  duplicateBills: SupplierBillRefDto[];
   actions: { canEdit: boolean; canApprove: boolean; canCancel: boolean };
 }
 

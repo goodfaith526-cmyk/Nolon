@@ -2,7 +2,7 @@
 
 import type { SupplierBillDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { useLocalName, useMasterData } from '@/lib/master-data';
@@ -30,6 +30,9 @@ export function SupplierBillDetail({ id }: { id: string }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // The duplicates the person ticked as checked; a changed list needs a new tick (B1-4).
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  const checkId = useId();
 
   if (!bill) {
     return loadNotice ? <Notice notice={loadNotice} /> : <p className="muted">{tc('loading')}</p>;
@@ -46,12 +49,21 @@ export function SupplierBillDetail({ id }: { id: string }) {
       setNotice({ ok: true, text: success });
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
+      // The bills carrying the reference may have changed: show them as they are now.
+      if (action === 'approve') {
+        await api<SupplierBillDto>(`/supplier-bills/${id}`)
+          .then(setRecord)
+          .catch(() => undefined);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   const b = bill;
+  const duplicates = b.duplicateBills;
+  const fingerprint = duplicates.map((d) => `${d.id}:${d.status}`).join(',');
+  const confirmed = duplicates.length === 0 || confirmedFor === fingerprint;
   const journals = can(me, 'manual_journals:view');
   const chargeName = (code: string | null) => {
     const charge = master?.chargeTypes.find((c) => c.code === code);
@@ -103,12 +115,48 @@ export function SupplierBillDetail({ id }: { id: string }) {
       {panel === 'approve' && (
         <div className="card stack">
           <p>{t('approveConfirm')}</p>
+          {duplicates.length > 0 && (
+            <div className="stack">
+              <p className="warning">
+                {t('duplicateWarning', {
+                  count: duplicates.length,
+                  reference: b.supplierReference ?? '',
+                })}
+              </p>
+              <ul>
+                {duplicates.map((d) => (
+                  <li key={d.id}>
+                    <Link href={`/supplier-bills/${d.id}`}>
+                      <BillNumber number={d.number} />
+                    </Link>{' '}
+                    <StatusBadge kind="supplierBill" status={d.status} />{' '}
+                    <span dir="ltr">{d.billDate}</span>{' '}
+                    <Money value={d.total} currency={d.currency} />
+                  </li>
+                ))}
+              </ul>
+              <label className="field inline" htmlFor={checkId}>
+                <input
+                  id={checkId}
+                  type="checkbox"
+                  checked={confirmedFor === fingerprint}
+                  disabled={busy}
+                  onChange={(e) => setConfirmedFor(e.target.checked ? fingerprint : null)}
+                />
+                {t('duplicateConfirm')}
+              </label>
+            </div>
+          )}
           <div className="actions">
             <button
               type="button"
               className="primary"
-              disabled={busy}
-              onClick={() => void act('approve', t('approvedNotice'))}
+              disabled={busy || !confirmed}
+              onClick={() =>
+                void act('approve', t('approvedNotice'), {
+                  acknowledgedDuplicateBillIds: duplicates.map((d) => d.id),
+                })
+              }
             >
               {t('approve')}
             </button>
