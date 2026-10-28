@@ -997,6 +997,43 @@ describe('consolidated LCL containers', () => {
     expect(
       await t.prisma.consolidationShipment.count({ where: { consolidationId: created.id } }),
     ).toBe(1);
+
+    // Still final once the container is unpacked: going back step by step down to the
+    // consolidation, the page and the revert agree that it stays.
+    for (const [status, day] of [
+      ['LOADED', '03-02'],
+      ['DEPARTED', '03-02'],
+      ['ARRIVED', '03-06'],
+      ['DECONSOLIDATED', '03-07'],
+    ] as const) {
+      await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+        status,
+        occurredAt: at(day),
+      }).expect(200);
+    }
+    let unpacked = await view();
+    expect(unpacked.status).toBe('ARRIVED_PORT');
+    expect(unpacked.actions.containerMoves).toBeNull();
+    for (const expected of ['DEPARTED', 'LOADED', 'CONSOLIDATED'] as const) {
+      const step = unpacked.actions.revertUndoes;
+      if (!step) throw new Error('No step to undo');
+      unpacked = (
+        await post(`/shipments/${id}/revert`, cookies.admin, {
+          reason: 'Wrong entry',
+          undoEventId: step.eventId,
+        }).expect(200)
+      ).body as ShipmentDto;
+      expect(unpacked.status).toBe(expected);
+    }
+    unpacked = await view();
+    expect(unpacked.actions.revertTo).toBeNull();
+    expect(unpacked.actions.revertUndoes).toBeNull();
+    expect(unpacked.actions.revertBlockedByContainer).toBe(created.number);
+    const refusedAfterUnpacking = await post(`/shipments/${id}/revert`, cookies.admin, {
+      reason: 'Wrong container',
+      undoEventId: consolidated.id,
+    }).expect(409);
+    expect((refusedAfterUnpacking.body as { code?: string }).code).toBe('REVERT_CLOSED_CONTAINER');
   });
 
   it('an open container does not stop going back from a consolidation entered by hand', async () => {

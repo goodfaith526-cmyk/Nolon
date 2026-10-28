@@ -101,13 +101,14 @@ const closedContainerLinks = {
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
 /**
- * The container a shipment travels in, for its page: not cancelled and not yet unpacked (after
- * unpacking the shipment goes on by itself). Its status tells whether it is closed.
+ * The containers a shipment is or was in, for its page (not cancelled). The closed one (any status
+ * but OPEN, unpacked included) blocks undoing its consolidation exactly as the locked check
+ * (closedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
+ * the shipment goes on by itself).
  */
 const containerLinks = {
-  where: { consolidation: { status: { notIn: ['CANCELLED', 'DECONSOLIDATED'] } } },
+  where: { consolidation: { status: { not: 'CANCELLED' } } },
   select: { consolidation: { select: { number: true, status: true } } },
-  take: 1,
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
 /**
@@ -1438,11 +1439,10 @@ function actionsFor(
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
   const undoes = revertUndoes(path);
-  const inContainer = s.consolidationLinks[0]?.consolidation ?? null;
-  const container =
-    undoes?.status === 'CONSOLIDATED' && inContainer && inContainer.status !== 'OPEN'
-      ? inContainer.number
-      : null;
+  const links = s.consolidationLinks.map((link) => link.consolidation);
+  const inContainer = links.find((c) => c.status !== 'DECONSOLIDATED') ?? null;
+  const closed = links.find((c) => c.status !== 'OPEN') ?? null;
+  const container = undoes?.status === 'CONSOLIDATED' && closed ? closed.number : null;
   const canRevert = has('shipments:approve') && undoes !== null && container === null;
   const transitions = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
     permissionForTransition(next).some(has),
