@@ -16,6 +16,7 @@ const row = (id: string, over: Partial<PaymentInstructionDto>): PaymentInstructi
   version: 2,
   createdById: 'u1',
   createdByName: 'Maker',
+  editedByName: 'Maker',
   createdAt: '2026-10-28T00:00:00.000Z',
   approvedByName: null,
   approvedAt: null,

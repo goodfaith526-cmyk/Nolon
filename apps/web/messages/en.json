@@ -3002,6 +3002,7 @@
     "approve": "Approve",
     "retire": "Retire",
     "madeBy": "Written by {name}",
-    "approvedBy": "approved by {name}"
+    "approvedBy": "approved by {name}",
+    "editedBy": "last edited by {name}"
   }
 }

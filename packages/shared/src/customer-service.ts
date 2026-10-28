@@ -408,6 +408,8 @@ export interface PaymentInstructionDto {
   version: number;
   createdById: string;
   createdByName: string;
+  /** Who wrote the current text (its maker, or the last editor); never its approver. */
+  editedByName: string;
   createdAt: string;
   approvedByName: string | null;
   approvedAt: string | null;

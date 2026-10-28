@@ -3002,6 +3002,7 @@
     "approve": "اعتماد",
     "retire": "تقاعد",
     "madeBy": "كتبها {name}",
-    "approvedBy": "اعتمدها {name}"
+    "approvedBy": "اعتمدها {name}",
+    "editedBy": "آخر تعديل من {name}"
   }
 }

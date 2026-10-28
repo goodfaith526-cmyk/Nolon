@@ -186,6 +186,8 @@ export function PaymentInstructions() {
               </p>
               <p className="muted">
                 {t('madeBy', { name: r.createdByName })}
+                {r.editedByName !== r.createdByName &&
+                  ` · ${t('editedBy', { name: r.editedByName })}`}
                 {r.approvedByName && ` · ${t('approvedBy', { name: r.approvedByName })}`}
               </p>
               <div className="actions">

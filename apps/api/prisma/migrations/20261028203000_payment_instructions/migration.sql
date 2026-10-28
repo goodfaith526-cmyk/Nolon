@@ -11,6 +11,7 @@ CREATE TABLE "payment_instructions" (
     "status" "payment_instruction_status" NOT NULL DEFAULT 'DRAFT',
     "version" INTEGER NOT NULL DEFAULT 1,
     "created_by_id" UUID NOT NULL,
+    "edited_by_id" UUID NOT NULL,
     "approved_by_id" UUID,
     "approved_at" TIMESTAMPTZ(3),
     "retired_by_id" UUID,
@@ -37,6 +38,9 @@ ALTER TABLE "payment_instructions" ADD CONSTRAINT "payment_instructions_currency
 ALTER TABLE "payment_instructions" ADD CONSTRAINT "payment_instructions_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "payment_instructions" ADD CONSTRAINT "payment_instructions_edited_by_id_fkey" FOREIGN KEY ("edited_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "payment_instructions" ADD CONSTRAINT "payment_instructions_approved_by_id_fkey" FOREIGN KEY ("approved_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -51,13 +55,15 @@ CREATE UNIQUE INDEX "payment_instructions_one_approved" ON "payment_instructions
     (CASE WHEN "status" = 'APPROVED' THEN "currency" END)
 );
 
--- Two people: an approved or retired-after-approval row names an approver other than its maker.
+-- Two people (F140-1): an approved or retired-after-approval row names an approver other than its
+-- maker and other than the person who wrote its current text (edited_by_id).
 ALTER TABLE "payment_instructions" ADD CONSTRAINT "payment_instructions_approval_check" CHECK (
     ("status" = 'DRAFT' AND "approved_by_id" IS NULL AND "approved_at" IS NULL)
     OR ("status" = 'APPROVED' AND "approved_by_id" IS NOT NULL AND "approved_at" IS NOT NULL
-        AND "approved_by_id" <> "created_by_id")
+        AND "approved_by_id" <> "created_by_id" AND "approved_by_id" <> "edited_by_id")
     OR ("status" = 'RETIRED' AND ("approved_by_id" IS NULL) = ("approved_at" IS NULL)
-        AND ("approved_by_id" IS NULL OR "approved_by_id" <> "created_by_id"))
+        AND ("approved_by_id" IS NULL
+            OR ("approved_by_id" <> "created_by_id" AND "approved_by_id" <> "edited_by_id")))
 );
 
 -- An approved row is never edited, only retired; a retired row never changes; neither is deleted.
@@ -80,6 +86,7 @@ BEGIN
         OR NEW."text_ar" <> OLD."text_ar"
         OR NEW."text_en" <> OLD."text_en"
         OR NEW."created_by_id" <> OLD."created_by_id"
+        OR NEW."edited_by_id" <> OLD."edited_by_id"
         OR NEW."approved_by_id" IS NULL
         OR NEW."approved_by_id" <> OLD."approved_by_id"
         OR NEW."approved_at" IS NULL

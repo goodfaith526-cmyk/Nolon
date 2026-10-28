@@ -172,12 +172,38 @@ describe('Payment instructions (R3c3)', () => {
       .post(`/payment-instructions/${first.id}/approve`, { version: first.version + 1 })
       .expect(409);
 
+    // F140-1: whoever rewrote the text may not approve it, though another person made the draft.
+    const rewritten = (
+      await staff(cookies.manager)
+        .patch(`/payment-instructions/${first.id}`, {
+          version: first.version,
+          textAr: 'ادفع لحساب المدير',
+          textEn: "Pay to the manager's account",
+        })
+        .expect(200)
+    ).body as PaymentInstructionDto;
+    expect(rewritten.editedByName).not.toBeNull();
+    expect(rewritten.actions.canApprove).toBe(false);
+    const own2 = await staff(cookies.manager)
+      .post(`/payment-instructions/${first.id}/approve`, { version: rewritten.version })
+      .expect(403);
+    expect((own2.body as { code?: string }).code).toBe('SAME_PERSON');
+    // Its maker rewrites it back; then another person approves the text they did not write.
+    const back = (
+      await staff(cookies.admin)
+        .patch(`/payment-instructions/${first.id}`, {
+          version: rewritten.version,
+          textAr: 'ادفع: First',
+          textEn: 'First',
+        })
+        .expect(200)
+    ).body as PaymentInstructionDto;
     const one = (
       await staff(cookies.manager)
-        .post(`/payment-instructions/${first.id}/approve`, { version: first.version })
+        .post(`/payment-instructions/${first.id}/approve`, { version: back.version })
         .expect(201)
     ).body as PaymentInstructionDto;
-    expect(one).toMatchObject({ status: 'APPROVED', version: first.version + 1 });
+    expect(one).toMatchObject({ status: 'APPROVED', version: back.version + 1, textEn: 'First' });
     expect(one.approvedByName).not.toBeNull();
     await staff(cookies.finance)
       .patch(`/payment-instructions/${first.id}`, {
@@ -245,6 +271,7 @@ describe('Payment instructions (R3c3)', () => {
           textEn: 'Second approved',
           status: 'APPROVED',
           createdById: financeId,
+          editedById: financeId,
           approvedById: approver,
           approvedAt: new Date(),
         },
@@ -259,11 +286,28 @@ describe('Payment instructions (R3c3)', () => {
           textEn: 'Self approved',
           status: 'APPROVED',
           createdById: financeId,
+          editedById: financeId,
           approvedById: financeId,
           approvedAt: new Date(),
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/payment_instructions_approval_check/);
+    // F140-1: nor by the writer of its current text, whoever made it first.
+    await expect(
+      t.prisma.paymentInstruction.create({
+        data: {
+          branchId: pts,
+          currency: other,
+          textAr: 'محرر',
+          textEn: 'Edited and approved',
+          status: 'APPROVED',
+          createdById: financeId,
+          editedById: approver,
+          approvedById: approver,
+          approvedAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/payment_instructions_approval_check/);
   });
 
   it('shows the bot exactly the approved text of an approved request’s branch and payment currency', async () => {

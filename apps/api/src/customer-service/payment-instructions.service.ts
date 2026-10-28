@@ -32,6 +32,7 @@ const AUDITED_FIELDS = ['currency', 'textAr', 'textEn', 'status', 'version'] as 
 const withNames = {
   branch: { select: { code: true } },
   createdBy: { select: { fullName: true } },
+  editedBy: { select: { fullName: true } },
   approvedBy: { select: { fullName: true } },
 } as const satisfies Prisma.PaymentInstructionInclude;
 
@@ -98,6 +99,7 @@ export class PaymentInstructionsService {
           textAr: input.textAr,
           textEn: input.textEn,
           createdById: user.id,
+          editedById: user.id,
         },
       });
       await this.log(tx, user, 'CREATED', null, row);
@@ -119,7 +121,13 @@ export class PaymentInstructionsService {
       }
       const after = await tx.paymentInstruction.update({
         where: { id },
-        data: { textAr: input.textAr, textEn: input.textEn, version: { increment: 1 } },
+        // The editor now wrote the text: they may not approve it (F140-1).
+        data: {
+          textAr: input.textAr,
+          textEn: input.textEn,
+          editedById: user.id,
+          version: { increment: 1 },
+        },
       });
       await this.log(tx, user, 'UPDATED', before, after);
     });
@@ -128,7 +136,8 @@ export class PaymentInstructionsService {
 
   /**
    * A draft becomes the instructions of its branch and currency, approved by another person than
-   * its maker (403 SAME_PERSON), in a currency still active. The approved one it replaces is
+   * its maker and than the writer of its current text (403 SAME_PERSON, F140-1), in a currency
+   * still active. The approved one it replaces is
    * retired in the same transaction, under a lock of the branch and currency, so there is never a
    * moment with two or none in between.
    */
@@ -140,7 +149,7 @@ export class PaymentInstructionsService {
     await this.prisma.$transaction(async (tx) => {
       const draft = await lockRow(tx, user, id, input.version);
       if (draft.status !== 'DRAFT') throw new ConflictException('Only a draft is approved');
-      if (draft.createdById === user.id) {
+      if (draft.createdById === user.id || draft.editedById === user.id) {
         throw new ForbiddenException({
           message: 'Another person than the one who wrote them approves payment instructions',
           code: 'SAME_PERSON',
@@ -273,6 +282,7 @@ function toDto(r: Row, user: AuthUser): PaymentInstructionDto {
     version: r.version,
     createdById: r.createdById,
     createdByName: r.createdBy.fullName,
+    editedByName: r.editedBy.fullName,
     createdAt: r.createdAt.toISOString(),
     approvedByName: r.approvedBy?.fullName ?? null,
     approvedAt: r.approvedAt?.toISOString() ?? null,
@@ -282,6 +292,7 @@ function toDto(r: Row, user: AuthUser): PaymentInstructionDto {
       canApprove:
         draft &&
         r.createdById !== user.id &&
+        r.editedById !== user.id &&
         user.access.has('payment_instructions:approve', r.branchId),
       canRetire:
         r.status !== 'RETIRED' && user.access.has('payment_instructions:cancel', r.branchId),
