@@ -34,7 +34,11 @@ import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { currentLocationOf } from './location-timeline.js';
-import { ShipmentLinksRegistry, type ShipmentLinkBlocker } from './shipment-links.registry.js';
+import {
+  type LocationEffect,
+  ShipmentLinksRegistry,
+  type ShipmentLinkBlocker,
+} from './shipment-links.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -981,27 +985,63 @@ export class ShipmentsService {
         reason: step.reason,
         note: noteOf(path.at(-1)?.eventId ?? null),
         update: { status: target },
-        after: async (tx) => {
-          const createdAt = (eventId: string | null, fallback: Date) =>
-            shipment.events.find((e) => e.id.toString() === eventId)?.createdAt ?? fallback;
-          const steps = remaining.flatMap((entry) =>
-            entry.locationId
-              ? [
-                  {
-                    at: entry.occurredAt,
-                    createdAt: createdAt(entry.eventId, entry.occurredAt),
-                    locationId: entry.locationId,
-                  },
-                ]
-              : [],
-          );
-          const effects = await this.links.locationEffectsInTx(tx, shipment.id);
-          await tx.shipment.update({
-            where: { id: shipment.id },
-            data: { currentLocationId: currentLocationOf([...steps, ...effects]) },
-          });
-        },
+        after: (tx) => this.placeFromTimelineInTx(tx, shipment.id, shipment.events, remaining),
       };
+    });
+  }
+
+  /**
+   * B3-2 (F132-4), inside the caller's transaction under the shipment's exclusive lock: a record
+   * that moved the shipment without a step (a proof of delivery that kept the status) was just
+   * cancelled. Refused with `moved()` when anything placed the shipment since: a step after it
+   * (by time, then by when it was recorded), or a place other than the record's now. Otherwise the
+   * place becomes the latest left on the location timeline (the caller already left the record
+   * out of it).
+   */
+  async unplaceRecordInTx(
+    tx: Tx,
+    id: string,
+    record: LocationEffect,
+    moved: () => HttpException,
+  ): Promise<void> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: { currentLocationId: true, events: { orderBy: { id: 'asc' } } },
+    });
+    const path = replayHistory(shipment.events);
+    const later = path.some((entry) => {
+      const at = entry.occurredAt.getTime() - record.at.getTime();
+      const created = shipment.events.find((e) => e.id.toString() === entry.eventId)?.createdAt;
+      return at > 0 || (at === 0 && created !== undefined && created > record.createdAt);
+    });
+    if (later || shipment.currentLocationId !== record.locationId) throw moved();
+    await this.placeFromTimelineInTx(tx, id, shipment.events, path);
+  }
+
+  /** Sets the shipment's place from the location timeline: `steps` and the live records. */
+  private async placeFromTimelineInTx(
+    tx: Tx,
+    id: string,
+    events: readonly { id: bigint; createdAt: Date }[],
+    steps: readonly HistoryEntry[],
+  ): Promise<void> {
+    const placed = steps.flatMap((entry) =>
+      entry.locationId
+        ? [
+            {
+              at: entry.occurredAt,
+              createdAt:
+                events.find((e) => e.id.toString() === entry.eventId)?.createdAt ??
+                entry.occurredAt,
+              locationId: entry.locationId,
+            },
+          ]
+        : [],
+    );
+    const effects = await this.links.locationEffectsInTx(tx, id);
+    await tx.shipment.update({
+      where: { id },
+      data: { currentLocationId: currentLocationOf([...placed, ...effects]) },
     });
   }
 

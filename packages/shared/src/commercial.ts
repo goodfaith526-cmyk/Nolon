@@ -866,6 +866,11 @@ export const FORM_REFUSALS = [
   'MOVEMENT_CANCEL_OVER_PACKAGES',
   'MOVEMENT_CANCEL_STATUS_MOVED',
   'MOVEMENT_CANCEL_CLOSED',
+  // Cancelling a proof of delivery (param `pod`: its number): a later live POD of the shipment
+  // (`later`: its number); a later step or place than the one it recorded; the shipment is closed.
+  'POD_CANCEL_LATER_POD',
+  'POD_CANCEL_STATUS_MOVED',
+  'POD_CANCEL_CLOSED',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

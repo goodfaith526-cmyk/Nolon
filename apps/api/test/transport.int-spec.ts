@@ -31,6 +31,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { AGENT_PREFIX, registerClient, tokenFor } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /** A PNG signature header is enough for the content check (magic bytes). */
@@ -955,6 +956,176 @@ describe('inland transport: fleet, trips, POD', () => {
       expect(withoutTrip).toMatchObject({ tripId: null, statusApplied: null });
       expect(await status(b.id)).toBe('ROAD_DEPARTED');
       expect(await location(b.id)).toBe(khartoum);
+    });
+
+    describe('B3-2: cancelling a proof of delivery', () => {
+      let atbara: string;
+      const keep = { recipientName: 'Ahmed Ali', recipientCapacity: 'Consignee' };
+      const pod = async (shipmentId: string, fields: Record<string, string>) =>
+        (
+          await recordPod(shipmentId, cookies.opsDxb, fields)
+            .attach('signature', PNG, 'signature.png')
+            .expect(201)
+        ).body as PodDto;
+      const cancel = (
+        shipmentId: string,
+        podId: string,
+        cookie = cookies.opsDxb,
+        reason = 'Wrong recipient',
+      ) => post(`/shipments/${shipmentId}/pods/${podId}/cancel`, cookie, { reason });
+      /** A road shipment Port Sudan to Khartoum on a departed trip to `to`. */
+      async function departed(to = khartoum): Promise<{ shipment: ShipmentDto; trip: TripDto }> {
+        const shipment = await roadShipment();
+        const trip = (
+          await post('/trips', cookies.opsDxb, {
+            ...ownTrip([shipment.id]),
+            destinationLocationId: to,
+          }).expect(201)
+        ).body as TripDto;
+        await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+        return { shipment, trip };
+      }
+
+      const arrived = async (id: string) =>
+        post(`/shipments/${id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(200);
+
+      beforeAll(async () => {
+        atbara = (await t.prisma.location.findUniqueOrThrow({ where: { code: 'SDATB' } })).id;
+      });
+
+      it('the status and place a POD applied go back; the POD stays, marked', async () => {
+        const { shipment: a } = await departed();
+        await arrived(a.id);
+        const delivered = await pod(a.id, { ...keep, shipmentStatus: 'DELIVERED' });
+        expect([await status(a.id), await location(a.id)]).toEqual(['DELIVERED', khartoum]);
+        const view = async () =>
+          (await get(`/shipments/${a.id}/pods`, cookies.opsDxb).expect(200))
+            .body as ShipmentPodsDto;
+        expect((await view()).actions.canCancel).toBe(true);
+        const done = (await cancel(a.id, delivered.id).expect(201)).body as PodDto;
+        expect(done.cancellation).toMatchObject({ reason: 'Wrong recipient' });
+        expect([await status(a.id), await location(a.id)]).toEqual(['ROAD_ARRIVED', portSudan]);
+        const back = (await get(`/shipments/${a.id}`, cookies.opsDxb).expect(200))
+          .body as ShipmentDto;
+        expect(back.events.at(-1)).toMatchObject({
+          kind: 'REVERT',
+          status: 'ROAD_ARRIVED',
+          reason: 'Wrong recipient',
+          note: delivered.number,
+        });
+        expect((await view()).pods.map((p) => p.cancellation?.reason)).toEqual(['Wrong recipient']);
+        // Again for the same reason: nothing more; for another: refused.
+        await cancel(a.id, delivered.id).expect(201);
+        const other = await cancel(a.id, delivered.id, cookies.opsDxb, 'Another reason').expect(
+          409,
+        );
+        expect(other.body).toMatchObject({
+          code: 'CORRECTION_ALREADY_DONE',
+          params: { record: delivered.number },
+        });
+        // The delivery can be recorded again.
+        await pod(a.id, { ...keep, shipmentStatus: 'DELIVERED' });
+        expect(await status(a.id)).toBe('DELIVERED');
+        await expect(
+          t.prisma.podCancellation.delete({ where: { podId: delivered.id } }),
+        ).rejects.toThrow(/cannot be changed or deleted/);
+      });
+
+      it('keeps the place of an earlier POD that kept the status (F132-4)', async () => {
+        const { shipment: a, trip } = await departed(atbara);
+        expect(await location(a.id)).toBe(portSudan);
+        // A keeps the status at the trip's destination; B keeps it at the shipment's.
+        const first = await pod(a.id, { ...keep, tripId: trip.id });
+        const second = await pod(a.id, keep);
+        expect(await location(a.id)).toBe(khartoum);
+        const refused = await cancel(a.id, first.id).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'POD_CANCEL_LATER_POD',
+          params: { pod: first.number, later: second.number },
+        });
+        await cancel(a.id, second.id).expect(201);
+        expect([await status(a.id), await location(a.id)]).toEqual(['ROAD_DEPARTED', atbara]);
+        await cancel(a.id, first.id).expect(201);
+        expect(await location(a.id)).toBe(portSudan);
+      });
+
+      it('a POD that kept the status, then a status move: the POD stays (409)', async () => {
+        const { shipment: a } = await departed(atbara);
+        const kept = await pod(a.id, keep);
+        await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
+          200,
+        );
+        const refused = await cancel(a.id, kept.id).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'POD_CANCEL_STATUS_MOVED',
+          params: { pod: kept.number },
+        });
+        expect(await t.prisma.podCancellation.count({ where: { podId: kept.id } })).toBe(0);
+      });
+
+      it('a POD that kept the status, then one that delivered: cancelling the second keeps the first place', async () => {
+        const { shipment: a, trip } = await departed(atbara);
+        await pod(a.id, { ...keep, tripId: trip.id });
+        // Marked arrived by hand with no place: the shipment stays where the POD put it.
+        await arrived(a.id);
+        const delivered = await pod(a.id, { ...keep, shipmentStatus: 'DELIVERED' });
+        expect([await status(a.id), await location(a.id)]).toEqual(['DELIVERED', khartoum]);
+        await cancel(a.id, delivered.id).expect(201);
+        expect([await status(a.id), await location(a.id)]).toEqual(['ROAD_ARRIVED', atbara]);
+      });
+
+      it('a closed shipment keeps its PODs; pod:cancel in the branch is needed', async () => {
+        const { shipment: a } = await departed();
+        await arrived(a.id);
+        const delivered = await pod(a.id, { ...keep, shipmentStatus: 'DELIVERED' });
+        await cancel(a.id, delivered.id, cookies.salesDxb).expect(403);
+        await cancel(a.id, delivered.id, cookies.driver).expect(403);
+        await cancel(a.id, delivered.id, cookies.opsJed).expect(404);
+        // F133-1: a branch sharing the shipment sees it, but the cancel needs the owning branch,
+        // and the button follows the same rule.
+        const jed = await branchId(t.prisma, 'JED');
+        await patch(`/shipments/${a.id}`, cookies.opsDxb, { sharedBranchIds: [jed] }).expect(200);
+        const podsOf = async (cookie: string) =>
+          (await get(`/shipments/${a.id}/pods`, cookie).expect(200)).body as ShipmentPodsDto;
+        expect((await podsOf(cookies.opsJed)).actions.canCancel).toBe(false);
+        await cancel(a.id, delivered.id, cookies.opsJed).expect(403);
+        expect((await podsOf(cookies.opsDxb)).actions.canCancel).toBe(true);
+        await cancel(a.id, delivered.id, cookies.opsDxb, 'x').expect(400);
+        const b = await roadShipment();
+        await cancel(b.id, delivered.id).expect(404);
+        // Closing needs its own conditions; the guard under test is the cancel's.
+        await t.prisma.shipment.update({
+          where: { id: a.id },
+          data: { status: 'CLOSED', closedAt: new Date() },
+        });
+        const refused = await cancel(a.id, delivered.id).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'POD_CANCEL_CLOSED',
+          params: { pod: delivered.number },
+        });
+        expect(await t.prisma.podCancellation.count({ where: { podId: delivered.id } })).toBe(0);
+      });
+
+      it("the assistant's POD read leaves cancelled PODs out", async () => {
+        const { shipment: a } = await departed();
+        const kept = await pod(a.id, keep);
+        const wrong = await pod(a.id, keep);
+        await cancel(a.id, wrong.id).expect(201);
+        // Users acting through the assistant are never deleted (agent_access_events references them).
+        const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX);
+        const agentUser = await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX);
+        const client = await registerClient(t, await signIn(t, admin.email), 'B3-2 PODs');
+        const token = await tokenFor(t, await signIn(t, agentUser.email), client);
+        const seen = (
+          await t
+            .http()
+            .get(`/api/v1/shipments/${a.id}/pods`)
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200)
+        ).body as ShipmentPodsDto;
+        expect(seen.pods.map((p) => p.number)).toEqual([kept.number]);
+        expect(seen.actions.canCancel).toBe(false);
+      });
     });
 
     it('a driver record with trips keeps its user: relinking would expose the trips (409)', async () => {

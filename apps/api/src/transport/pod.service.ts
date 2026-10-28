@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -15,6 +17,7 @@ import {
 import type { AuthUser } from '../auth/auth-user.js';
 import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
+import { codedRefusal } from '../common/validation.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService, type PreparedUpload } from '../documents/documents.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -33,6 +36,7 @@ import {
 const podDetails = {
   trip: { select: { number: true } },
   createdBy: { select: { fullName: true } },
+  cancellation: { include: { cancelledBy: { select: { fullName: true } } } },
   photos: {
     where: { document: { deletedAt: null } },
     include: { document: { select: { id: true, fileName: true, uploadedAt: true } } },
@@ -79,7 +83,7 @@ export class PodService implements OnModuleInit {
       revertBlockerInTx: async (tx, shipmentId, step) => {
         if (step.note === null) return null;
         const pod = await tx.proofOfDelivery.findFirst({
-          where: { shipmentId, number: step.note, statusApplied: step.status },
+          where: { shipmentId, number: step.note, statusApplied: step.status, cancellation: null },
           select: { number: true },
         });
         return pod ? { record: 'POD', number: pod.number } : null;
@@ -89,7 +93,7 @@ export class PodService implements OnModuleInit {
       // set, so the place is the one the POD recorded.
       locationEffectsInTx: async (tx, shipmentId) => {
         const pods = await tx.proofOfDelivery.findMany({
-          where: { shipmentId, statusApplied: null },
+          where: { shipmentId, statusApplied: null, cancellation: null },
           select: {
             deliveredAt: true,
             createdAt: true,
@@ -110,7 +114,12 @@ export class PodService implements OnModuleInit {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const [pods, trips] = await Promise.all([
       this.prisma.proofOfDelivery.findMany({
-        where: { shipmentId, shipment: shipmentScope(user) },
+        where: {
+          shipmentId,
+          shipment: shipmentScope(user),
+          // The assistant's field list knows no cancelled POD: it sees the live ones only.
+          ...(user.agent ? { cancellation: null } : {}),
+        },
         include: podDetails,
         orderBy: { deliveredAt: 'asc' },
       }),
@@ -130,6 +139,9 @@ export class PodService implements OnModuleInit {
         statuses,
         defaultStatus: defaultPodStatus(statuses),
         trips,
+        // The cancel's own rule (F133-1): not offered to a branch that only shares the shipment.
+        canCancel:
+          !user.agent && mayCancelPods(user, shipment.branchId) && shipment.status !== 'CLOSED',
       },
     };
   }
@@ -241,6 +253,115 @@ export class PodService implements OnModuleInit {
   }
 
   /**
+   * Cancels a proof of delivery (B3-2, docs/plans/05-correction-contracts.md, section 2). The POD,
+   * its signature and photos stay; a cancellation row is linked to it and from then on it stands
+   * for no delivery. pod:cancel in the POD's branch. Locks as recording does: the trip shared, then
+   * the shipment exclusively. Refused (409) on a closed shipment, when a later live POD of the
+   * shipment exists (cancel that one first), and when the shipment moved on since: a later step, or
+   * for a POD that kept the status, another place. The status it applied is undone while it is
+   * the current step; the place goes back to the latest left on the location timeline, an earlier
+   * POD that kept the status included (F132-4). Cancelling again for the same reason returns it;
+   * for another reason it is refused.
+   */
+  async cancel(user: AuthUser, shipmentId: string, podId: string, reason: string): Promise<PodDto> {
+    const found = await this.prisma.proofOfDelivery.findFirst({
+      where: { id: podId, shipmentId, shipment: shipmentScope(user) },
+      include: {
+        trip: { select: { destinationLocationId: true } },
+        shipment: { select: { destinationLocationId: true } },
+      },
+    });
+    if (!found) throw new NotFoundException('Proof of delivery not found');
+    if (!mayCancelPods(user, found.branchId)) {
+      throw new ForbiddenException('You may not cancel proofs of delivery of this branch');
+    }
+    const label = { pod: found.number };
+    await this.prisma.$transaction(async (tx) => {
+      if (found.tripId) await lockTripShared(tx, found.tripId);
+      const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      const done = await tx.podCancellation.findUnique({
+        where: { podId },
+        select: { reason: true },
+      });
+      if (done) {
+        if (done.reason === reason) return;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_ALREADY_DONE',
+          `Proof of delivery ${found.number} was already cancelled for another reason`,
+          { record: found.number },
+        );
+      }
+      if (status === 'CLOSED') {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'POD_CANCEL_CLOSED',
+          `Shipment is closed: proof of delivery ${found.number} cannot be cancelled`,
+          label,
+        );
+      }
+      const later = await tx.proofOfDelivery.findFirst({
+        where: {
+          shipmentId,
+          id: { not: podId },
+          cancellation: null,
+          OR: [
+            { deliveredAt: { gt: found.deliveredAt } },
+            { deliveredAt: found.deliveredAt, createdAt: { gt: found.createdAt } },
+          ],
+        },
+        select: { number: true },
+        orderBy: [{ deliveredAt: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (later) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'POD_CANCEL_LATER_POD',
+          `Proof of delivery ${later.number} came after ${found.number}: cancel it first`,
+          { ...label, later: later.number },
+        );
+      }
+      // Out of the location timeline from here on (locationEffectsInTx reads live PODs only).
+      await tx.podCancellation.create({
+        data: { podId, branchId: found.branchId, reason, cancelledById: user.id },
+      });
+      const moved = () =>
+        codedRefusal(
+          HttpStatus.CONFLICT,
+          'POD_CANCEL_STATUS_MOVED',
+          `The shipment moved on since proof of delivery ${found.number}: undo the later steps first`,
+          label,
+        );
+      if (found.statusApplied) {
+        // Its step carried its place; a step undone before already took both back.
+        await this.shipments.undoRecordStepInTx(
+          tx,
+          user,
+          shipmentId,
+          { status: found.statusApplied, numbers: [found.number], reason },
+          moved,
+        );
+      } else {
+        await this.shipments.unplaceRecordInTx(
+          tx,
+          shipmentId,
+          {
+            at: found.deliveredAt,
+            createdAt: found.createdAt,
+            locationId: found.trip?.destinationLocationId ?? found.shipment.destinationLocationId,
+          },
+          moved,
+        );
+      }
+    });
+    const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({
+      where: { id: podId, shipment: shipmentScope(user) },
+      include: podDetails,
+    });
+    return toDto(pod);
+  }
+
+  /**
    * Inside the POD's transaction, before the shipment lock: the trip, share-locked, still carries
    * the shipment, has departed (or arrived, or completed) and is not cancelled (409); a driver's
    * trip is still assigned to them (404, as for any trip that is not theirs). Returns the trip's
@@ -342,5 +463,20 @@ function toDto(p: PodWithDetails): PodDto {
       .sort((a, b) => a.document.uploadedAt.getTime() - b.document.uploadedAt.getTime())
       .map((ph) => ({ documentId: ph.document.id, fileName: ph.document.fileName })),
     createdByName: p.createdBy.fullName,
+    cancellation: p.cancellation
+      ? {
+          reason: p.cancellation.reason,
+          cancelledAt: p.cancellation.cancelledAt.toISOString(),
+          cancelledByName: p.cancellation.cancelledBy.fullName,
+        }
+      : null,
   };
+}
+
+/**
+ * pod:cancel in the branch that owns the PODs (the shipment's own branch, where every POD is
+ * recorded): the cancel and the button that offers it (F133-1).
+ */
+function mayCancelPods(user: AuthUser, branchId: string): boolean {
+  return user.access.has('pod:cancel', branchId);
 }

@@ -320,6 +320,11 @@ export class TripReportsService {
         SELECT p."branch_id", p."created_at", p."created_by_id", 'POD', 'CREATED', p."number",
                NULL, p."recipient_name" || ' (' || p."recipient_capacity" || ')'
         FROM "proofs_of_delivery" p
+        UNION ALL
+        SELECT x."branch_id", x."cancelled_at", x."cancelled_by_id", 'POD', 'CANCELLED', p."number",
+               NULL, x."reason"
+        FROM "pod_cancellations" x
+        JOIN "proofs_of_delivery" p ON p."id" = x."pod_id"
       )
       SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
              x."entity", x."action", x."reference", x."status", x."detail"

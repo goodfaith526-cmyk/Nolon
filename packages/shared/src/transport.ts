@@ -323,6 +323,17 @@ export interface PodDto {
   signatureDocumentId: string;
   photos: { documentId: string; fileName: string }[];
   createdByName: string;
+  /**
+   * Set once the POD is cancelled (B3-2): it stays with its signature and photos but no longer
+   * stands for a delivery.
+   */
+  cancellation: { reason: string; cancelledAt: string; cancelledByName: string } | null;
+}
+
+/** POST /shipments/:shipmentId/pods/:podId/cancel. */
+export interface PodCancelRequest {
+  /** 3 to 500 characters. */
+  reason: string;
 }
 
 /** GET /shipments/:id/pods. */
@@ -335,6 +346,11 @@ export interface ShipmentPodsDto {
     defaultStatus: PodStatus | null;
     /** Trips of this shipment a POD may refer to (the driver's own, for a driver). */
     trips: { id: string; number: string }[];
+    /**
+     * Whether this user may cancel the shipment's PODs (pod:cancel in its branch, shipment not
+     * closed). The API still checks each cancel.
+     */
+    canCancel: boolean;
   };
 }
 
