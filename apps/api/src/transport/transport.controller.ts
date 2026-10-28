@@ -19,6 +19,7 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_POD_PHOTOS,
   POD_STATUSES,
+  SHIPMENT_REASON_MIN_LENGTH,
   TRIP_KINDS,
   TRIP_MOVES,
   TRIP_STATUSES,
@@ -68,6 +69,11 @@ const plate = z
   .min(1)
   .max(30)
   .regex(/^[\p{L}\p{N}][\p{L}\p{N} -]*$/u, 'Invalid plate');
+
+/** B3-2: why a proof of delivery is cancelled (3 to 500 characters, as the cancellation keeps). */
+const podCancelBody = z
+  .object({ reason: requiredText(500).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH)) })
+  .strict();
 
 const vehicleBody = z
   .object({ branchId: z.uuid(), plateNumber: plate, vehicleType: requiredText(100), capacityKg })
@@ -438,5 +444,16 @@ export class ShipmentTransportController {
       { fileName: 'signature.png', data: signature.buffer },
       (files?.photos ?? []).map((p) => ({ fileName: p.originalname, data: p.buffer })),
     );
+  }
+
+  @Post('pods/:podId/cancel')
+  @RequirePermission('pod:cancel')
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Param('podId', ParseUUIDPipe) podId: string,
+    @Body() body: unknown,
+  ): Promise<PodDto> {
+    return this.pods.cancel(user, shipmentId, podId, parse(podCancelBody, body).reason);
   }
 }

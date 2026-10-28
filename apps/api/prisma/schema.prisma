@@ -66,6 +66,7 @@ model Branch {
   storageLocations               StorageLocation[]
   warehouseMovements             WarehouseMovement[]
   warehouseMovementCancellations WarehouseMovementCancellation[]
+  podCancellations               PodCancellation[]
   grnDrafts                      GrnDraft[]
   grnDraftLines                  GrnDraftLine[]
   grnDraftProposals              GrnDraftProposal[]
@@ -217,6 +218,7 @@ model User {
 
   warehouseMovements                WarehouseMovement[]             @relation("WarehouseMovementCreatedBy")
   warehouseMovementCancellations    WarehouseMovementCancellation[] @relation("WarehouseMovementCancelledBy")
+  podCancellations                  PodCancellation[]               @relation("PodCancelledBy")
   grnDraftsCreated                  GrnDraft[]                      @relation("GrnDraftCreatedBy")
   grnDraftsDecided                  GrnDraft[]                      @relation("GrnDraftDecidedBy")
   quotationDraftsCreated            QuotationDraft[]                @relation("QuotationDraftCreatedBy")
@@ -2698,6 +2700,25 @@ model TripExpense {
 }
 
 /// Proof of delivery: one per delivery (or partial delivery batch) of a shipment.
+/// The cancellation of a proof of delivery (B3-2, docs/plans/05-correction-contracts.md, section
+/// 2). The POD, its signature and photos stay as recorded; once this row exists the POD no longer
+/// stands for a delivery. One per POD; insert-only (a trigger refuses UPDATE, DELETE and TRUNCATE).
+model PodCancellation {
+  podId         String   @id @map("pod_id") @db.Uuid
+  /// The POD's (and its shipment's) branch.
+  branchId      String   @map("branch_id") @db.Uuid
+  reason        String   @db.VarChar(500)
+  cancelledById String   @map("cancelled_by_id") @db.Uuid
+  cancelledAt   DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(3)
+
+  pod         ProofOfDelivery @relation(fields: [podId], references: [id], onDelete: Restrict)
+  branch      Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  cancelledBy User            @relation("PodCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  @@index([branchId])
+  @@map("pod_cancellations")
+}
+
 model ProofOfDelivery {
   id                  String          @id @default(uuid()) @db.Uuid
   /// NOL-POD-2026-000001
@@ -2717,12 +2738,14 @@ model ProofOfDelivery {
   createdById         String          @map("created_by_id") @db.Uuid
   createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment  Shipment   @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  trip      Trip?      @relation(fields: [tripId], references: [id], onDelete: Restrict)
-  signature Document   @relation("PodSignature", fields: [signatureDocumentId], references: [id], onDelete: Restrict)
-  createdBy User       @relation("PodCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  photos    PodPhoto[]
+  branch       Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment     Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  trip         Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  signature    Document         @relation("PodSignature", fields: [signatureDocumentId], references: [id], onDelete: Restrict)
+  createdBy    User             @relation("PodCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  photos       PodPhoto[]
+  /// B3-2 (docs/plans/05-correction-contracts.md, 2): set once the POD is cancelled.
+  cancellation PodCancellation?
 
   @@index([shipmentId])
   @@index([tripId])

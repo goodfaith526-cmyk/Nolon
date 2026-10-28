@@ -1279,7 +1279,14 @@
     "supplierExists": "A supplier with the same name or phone already exists. Link the carrier to it instead of creating another:",
     "linkTo": "Link to {supplier}",
     "carrierNotLinked": "The carrier is added but not linked to the supplier: {reason}",
-    "nameFromUser": "Filled from the linked user's name. You can change it."
+    "nameFromUser": "Filled from the linked user's name. You can change it.",
+    "cancelPod": "Cancel proof of delivery",
+    "podCancelReason": "Reason for cancelling",
+    "cancelPodHint": "The proof of delivery stays, with its signature and photos, marked cancelled. If it moved the shipment's status, the status goes back, and the shipment's place goes back to where it was before.",
+    "confirmCancelPod": "Confirm cancel",
+    "podCancelledBadge": "Cancelled",
+    "podCancelledBy": "Cancelled by {name} on {at}",
+    "podCancelledNotice": "Proof of delivery {number} cancelled."
   },
   "Consolidations": {
     "title": "Consolidated containers",
@@ -2637,7 +2644,7 @@
     "REVERT_BY_TRIP": "Trip {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "REVERT_BY_CONTAINER": "Container {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "REVERT_BY_WAREHOUSE": "Warehouse movement {record} recorded this step: it cannot be undone from here. Cancel the movement on the Warehouse tab (with the permission to cancel warehouse movements).",
-    "REVERT_BY_POD": "Proof of delivery {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_POD": "Proof of delivery {record} recorded this step: it cannot be undone from here. Cancel the proof of delivery in the Proofs of delivery section (with the permission to cancel them).",
     "REVERT_BY_CUSTOMS": "The customs file ({record}) recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
     "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
@@ -2655,7 +2662,10 @@
     "MOVEMENT_CANCEL_NEGATIVE": "Without movement {movement}, warehouse {warehouse} would release goods it did not hold: cancel the later release first.",
     "MOVEMENT_CANCEL_OVER_PACKAGES": "Without movement {movement}, the warehouses together would hold {peak} packages of {packages}: cancel the later receipt first.",
     "MOVEMENT_CANCEL_STATUS_MOVED": "The shipment moved on from the status movement {movement} recorded: undo the later steps first.",
-    "MOVEMENT_CANCEL_CLOSED": "The shipment is closed: movement {movement} cannot be cancelled."
+    "MOVEMENT_CANCEL_CLOSED": "The shipment is closed: movement {movement} cannot be cancelled.",
+    "POD_CANCEL_LATER_POD": "Proof of delivery {later} came after {pod}: cancel it first.",
+    "POD_CANCEL_STATUS_MOVED": "The shipment moved on since proof of delivery {pod}: undo the later steps first.",
+    "POD_CANCEL_CLOSED": "The shipment is closed: proof of delivery {pod} cannot be cancelled."
   },
   "Locations": {
     "title": "Ports and cities",

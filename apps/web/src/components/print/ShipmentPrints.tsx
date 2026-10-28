@@ -379,6 +379,21 @@ export function DeliveryNotePrint({ id, podId }: { id: string; podId: string }) 
             )}
           </div>
         </DocSection>
+        {pod.cancellation && (
+          <DocSection title={tt('podCancelledBadge')}>
+            <DocFields
+              fields={[
+                [
+                  tt('podCancelledBy', {
+                    name: pod.cancellation.cancelledByName,
+                    at: dateTime(pod.cancellation.cancelledAt),
+                  }),
+                  <span className="pre">{pod.cancellation.reason}</span>,
+                ],
+              ]}
+            />
+          </DocSection>
+        )}
         <SignatureBoxes labels={[tp('signDriver')]} />
       </DocumentSheet>
     </>
