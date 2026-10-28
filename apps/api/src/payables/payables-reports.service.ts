@@ -14,6 +14,14 @@ import {
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+/** A supplier cost's service, or the two ends (as places) of the trip a carrier line is for. */
+export interface CostCoverage {
+  shipmentId: string;
+  service: BookingService | null;
+  legFrom: string | null;
+  legTo: string | null;
+}
+
 /**
  * Payables reports (annex D section 4, report 6): AP aging, and the payables' audit log entries. Only bills whose approval entry is
  * POSTED count, in the report's branches (the requested one, checked against the user's, or all of
@@ -28,20 +36,17 @@ export class PayablesReportsService {
    * services of the shipments among `shipmentIds` have a supplier cost recorded as of a date, from
    * bills approved by then and not cancelled by then, whatever the line's amount (a zero entered
    * on a bill counts as entered). A shipment cost line covers its charge type's service; a
-   * container cost line covers it for each shipment in the container; a carrier's trip line
-   * covers the road services (`road`) of each shipment on the trip. A charge type without a
-   * service covers nothing. Flags for shipments the caller already scoped: no amount leaves here.
+   * container cost line covers it for each shipment in the container. A carrier's trip line
+   * gives, for each shipment on the trip, the trip's two ends as places (a port or other place
+   * counts as the city it serves), from which the report maps it to the one service they prove. A
+   * charge type without a service covers nothing. Flags for shipments the caller already scoped:
+   * no amount leaves here.
    */
-  async costCoverage(
-    shipmentIds: readonly string[],
-    asOf: string,
-  ): Promise<{ shipmentId: string; service: BookingService | null; road: boolean }[]> {
+  async costCoverage(shipmentIds: readonly string[], asOf: string): Promise<CostCoverage[]> {
     if (shipmentIds.length === 0) return [];
     const at = toDbDate(asOf);
     const ids = [...shipmentIds];
-    return this.prisma.$queryRaw<
-      { shipmentId: string; service: BookingService | null; road: boolean }[]
-    >`
+    return this.prisma.$queryRaw<CostCoverage[]>`
       WITH live AS (
         SELECT sb."id"
         FROM "supplier_bills" sb
@@ -51,23 +56,28 @@ export class PayablesReportsService {
           AND be."entry_date" <= ${at}
           AND (ce."id" IS NULL OR ce."entry_date" > ${at})
       )
-      SELECT l."shipment_id" AS "shipmentId", ct."service"::text AS "service", false AS "road"
+      SELECT l."shipment_id" AS "shipmentId", ct."service"::text AS "service",
+             NULL::text AS "legFrom", NULL::text AS "legTo"
       FROM "supplier_bill_lines" l
       JOIN live ON live."id" = l."bill_id"
       LEFT JOIN "charge_types" ct ON ct."code" = l."charge_type_code"
       WHERE l."kind" = 'SHIPMENT_COST' AND l."shipment_id" = ANY(${ids}::uuid[])
       UNION
-      SELECT cs."shipment_id", ct."service"::text, false
+      SELECT cs."shipment_id", ct."service"::text, NULL, NULL
       FROM "supplier_bill_lines" l
       JOIN live ON live."id" = l."bill_id"
       JOIN "consolidation_shipments" cs ON cs."consolidation_id" = l."consolidation_id"
       LEFT JOIN "charge_types" ct ON ct."code" = l."charge_type_code"
       WHERE l."kind" = 'CONSOLIDATION' AND cs."shipment_id" = ANY(${ids}::uuid[])
       UNION
-      SELECT ts."shipment_id", NULL, true
+      SELECT ts."shipment_id", NULL, coalesce(lo."city_id", lo."id")::text,
+             coalesce(ld."city_id", ld."id")::text
       FROM "supplier_bill_lines" l
       JOIN live ON live."id" = l."bill_id"
       JOIN "trip_shipments" ts ON ts."trip_id" = l."trip_id"
+      JOIN "trips" t ON t."id" = l."trip_id"
+      JOIN "locations" lo ON lo."id" = t."origin_location_id"
+      JOIN "locations" ld ON ld."id" = t."destination_location_id"
       WHERE l."kind" = 'TRIP' AND ts."shipment_id" = ANY(${ids}::uuid[])`;
   }
 

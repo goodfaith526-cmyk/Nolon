@@ -196,29 +196,42 @@ export function cycleTime(days: readonly (Decimal | null)[]): CycleTimeDto {
   };
 }
 
+/** Two places, each as the city it serves (a port or other place counts as its city). */
+export interface Leg {
+  from: string;
+  to: string;
+}
+
 /**
- * The services a supplier's trip line or a trip's own cost covers: the road legs, and the main
- * freight of a shipment that goes by road (its truck is the trip).
+ * The one booked service a trip carrying the shipment proves a cost for, from the trip's ends
+ * against the shipment's route (Codex F134-4: one trip never covers several services). A trip
+ * ending where the shipment starts brings the cargo in (pickup); one starting where it ends takes
+ * it out (last mile); any other trip is the road haul: the main freight of a road shipment, the
+ * inland leg of any other. A shipment whose route starts and ends in one city gets nothing from
+ * its trips (its legs cannot be told apart), nor does a trip from its destination back to its
+ * origin.
  */
-const ROAD_SERVICES: readonly BookingService[] = ['PICKUP', 'INLAND_TRANSPORT', 'LAST_MILE'];
-const roadServices = (mode: ShippingMode): readonly BookingService[] =>
-  mode === 'ROAD' ? [...ROAD_SERVICES, 'MAIN_FREIGHT'] : ROAD_SERVICES;
+export function tripService(mode: ShippingMode, route: Leg, trip: Leg): BookingService | null {
+  if (route.from === route.to) return null;
+  const bringsIn = trip.to === route.from;
+  const takesOut = trip.from === route.to;
+  if (bringsIn && takesOut) return null;
+  if (bringsIn) return 'PICKUP';
+  if (takesOut) return 'LAST_MILE';
+  return mode === 'ROAD' ? 'MAIN_FREIGHT' : 'INLAND_TRANSPORT';
+}
 
 /**
  * The booked services with no cost recorded for them (plan 6.2): each booked service needs a cost
  * of its own, so an unrelated small cost never makes the shipment final. A service is covered by
- * a supplier cost of a charge type of that service (on the shipment or its container); the road
- * legs also by a carrier's trip line or a trip cost carrying the shipment.
+ * a supplier cost of a charge type of that service (on the shipment or its container), or by a
+ * cost of a trip carrying the shipment, for the one service that trip proves (`tripService`).
  */
 export function missingCosts(
   booked: readonly BookingService[],
-  mode: ShippingMode,
-  coverage: readonly { service: BookingService | null; road: boolean }[],
-  tripCost: boolean,
+  covered: readonly (BookingService | null)[],
 ): BookingService[] {
-  const covered = new Set(coverage.flatMap((c) => (c.service ? [c.service] : [])));
-  const road = tripCost || coverage.some((c) => c.road) ? roadServices(mode) : [];
-  return booked.filter((service) => !covered.has(service) && !road.includes(service));
+  return booked.filter((service) => !covered.includes(service));
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   profitFigures,
   shipmentCategory,
   totalOf,
+  tripService,
 } from './profitability.js';
 
 const place = (id: string) => ({ id, code: id.toUpperCase(), nameEn: id, nameAr: id });
@@ -176,30 +177,35 @@ describe('shipment profitability', () => {
   });
 
   it('lists each booked service no cost covers yet', () => {
-    const cost = (service: 'MAIN_FREIGHT' | 'WAREHOUSE' | null, road = false) => ({
-      service,
-      road,
-    });
     // A storage bill alone does not cover the freight (Codex F134-1).
-    expect(missingCosts(['MAIN_FREIGHT', 'WAREHOUSE'], 'SEA', [cost('WAREHOUSE')], false)).toEqual([
-      'MAIN_FREIGHT',
+    expect(missingCosts(['MAIN_FREIGHT', 'WAREHOUSE'], ['WAREHOUSE'])).toEqual(['MAIN_FREIGHT']);
+    expect(missingCosts(['MAIN_FREIGHT'], ['MAIN_FREIGHT', null])).toEqual([]);
+    // A cost line with no service covers nothing.
+    expect(missingCosts(['CUSTOMS'], [null])).toEqual(['CUSTOMS']);
+    expect(missingCosts([], [])).toEqual([]);
+  });
+
+  it('maps each trip to the one service its ends prove (Codex F134-4)', () => {
+    const route = { from: 'jed', to: 'krt' };
+    // The main haul of a road shipment is its freight; it proves no pickup or last mile.
+    const haul = tripService('ROAD', route, { from: 'jed', to: 'krt' });
+    expect(haul).toBe('MAIN_FREIGHT');
+    expect(missingCosts(['MAIN_FREIGHT', 'PICKUP', 'LAST_MILE'], [haul])).toEqual([
+      'PICKUP',
+      'LAST_MILE',
     ]);
-    expect(missingCosts(['MAIN_FREIGHT'], 'SEA', [cost('MAIN_FREIGHT')], false)).toEqual([]);
-    // A trip's cost (its bill line or its expense) covers the road legs; by sea, not the freight.
-    expect(missingCosts(['PICKUP', 'LAST_MILE', 'MAIN_FREIGHT'], 'SEA', [], true)).toEqual([
-      'MAIN_FREIGHT',
-    ]);
-    expect(missingCosts(['PICKUP', 'MAIN_FREIGHT'], 'SEA_ROAD', [cost(null, true)], false)).toEqual(
-      ['MAIN_FREIGHT'],
-    );
-    // By road the truck is the main freight.
-    expect(missingCosts(['MAIN_FREIGHT', 'INLAND_TRANSPORT'], 'ROAD', [], true)).toEqual([]);
-    expect(missingCosts(['MAIN_FREIGHT', 'CUSTOMS'], 'ROAD', [cost(null, true)], false)).toEqual([
-      'CUSTOMS',
-    ]);
-    // Without a trip cost the road legs stay missing; a cost line with no service covers nothing.
-    expect(missingCosts(['MAIN_FREIGHT'], 'ROAD', [cost(null)], false)).toEqual(['MAIN_FREIGHT']);
-    expect(missingCosts([], 'ROAD', [], false)).toEqual([]);
+    // In town at the origin, or from elsewhere to it: pickup. Out of the destination: last mile.
+    expect(tripService('ROAD', route, { from: 'jed', to: 'jed' })).toBe('PICKUP');
+    expect(tripService('ROAD', route, { from: 'mak', to: 'jed' })).toBe('PICKUP');
+    expect(tripService('ROAD', route, { from: 'krt', to: 'krt' })).toBe('LAST_MILE');
+    expect(tripService('ROAD', route, { from: 'krt', to: 'omd' })).toBe('LAST_MILE');
+    // By sea the road haul is the inland leg, never the freight.
+    expect(tripService('SEA_ROAD', route, { from: 'pzu', to: 'krt' })).toBe('INLAND_TRANSPORT');
+    expect(tripService('SEA', route, { from: 'jed', to: 'krt' })).toBe('INLAND_TRANSPORT');
+    // A trip back from the destination to the origin, or any trip of a shipment within one
+    // city, proves nothing.
+    expect(tripService('ROAD', route, { from: 'krt', to: 'jed' })).toBeNull();
+    expect(tripService('ROAD', { from: 'krt', to: 'krt' }, { from: 'krt', to: 'krt' })).toBeNull();
   });
 
   it('marks figures that are not final, with each reason', () => {

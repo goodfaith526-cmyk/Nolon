@@ -637,18 +637,29 @@ export class LedgerReportsService {
   }
 
   /**
-   * Of `shipmentIds`, the shipments carrying a trip's transport cost as of a date: a line of a
+   * Of `shipmentIds`, the trips whose transport cost a shipment carries as of a date: a line of a
    * posted trip expense (rule 10) or carrier accrual (rule 11) entry dated by then and not
-   * reversed by then. For the profitability report's "not final" mark (it covers the road
-   * services); a flag for shipments the caller already scoped, so it reads every branch's lines.
+   * reversed by then, with the trip's two ends as places (a port or other place counts as the
+   * city it serves). For the profitability report's "not final" mark, which maps each trip to the
+   * one service its ends prove; flags for shipments the caller already scoped, so it reads every
+   * branch's lines and returns no amount.
    */
-  async shipmentsWithTripCost(shipmentIds: readonly string[], asOf: string): Promise<Set<string>> {
-    if (shipmentIds.length === 0) return new Set();
+  async tripCostLegs(
+    shipmentIds: readonly string[],
+    asOf: string,
+  ): Promise<{ shipmentId: string; legFrom: string; legTo: string }[]> {
+    if (shipmentIds.length === 0) return [];
     const at = toDbDate(asOf);
-    const rows = await this.prisma.$queryRaw<{ shipmentId: string }[]>`
-      SELECT DISTINCT l."shipment_id" AS "shipmentId"
+    return this.prisma.$queryRaw<{ shipmentId: string; legFrom: string; legTo: string }[]>`
+      SELECT DISTINCT l."shipment_id" AS "shipmentId",
+             coalesce(lo."city_id", lo."id")::text AS "legFrom",
+             coalesce(ld."city_id", ld."id")::text AS "legTo"
       FROM "journal_lines" l
       JOIN "journal_entries" e ON e."id" = l."entry_id"
+      LEFT JOIN "trip_expenses" x ON e."source" = 'TRIP_EXPENSE' AND x."id" = e."source_id"
+      JOIN "trips" t ON t."id" = CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE x."trip_id" END
+      JOIN "locations" lo ON lo."id" = t."origin_location_id"
+      JOIN "locations" ld ON ld."id" = t."destination_location_id"
       WHERE e."status" = 'POSTED'
         AND e."source" IN ('TRIP_EXPENSE', 'TRIP_ACCRUAL')
         AND e."entry_date" <= ${at}
@@ -656,7 +667,6 @@ export class LedgerReportsService {
         AND NOT EXISTS (
           SELECT 1 FROM "journal_entries" r
           WHERE r."reversal_of_id" = e."id" AND r."status" = 'POSTED' AND r."entry_date" <= ${at})`;
-    return new Set(rows.map((r) => r.shipmentId));
   }
 
   /**

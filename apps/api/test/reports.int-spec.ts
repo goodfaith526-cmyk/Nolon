@@ -98,7 +98,7 @@ describe('financial reports', () => {
   async function shipment(
     destination: string,
     volumeCbm: string,
-    extra: { categories?: string[]; salesOutletId?: string } = {},
+    extra: { categories?: string[]; salesOutletId?: string; services?: string[] } = {},
   ): Promise<string> {
     const loc = async (code: string) =>
       (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
@@ -109,7 +109,7 @@ describe('financial reports', () => {
         destinationLocationId: await loc(destination),
         mode: 'ROAD',
         cargoType: 'GENERAL',
-        services: ['MAIN_FREIGHT'],
+        services: extra.services ?? ['MAIN_FREIGHT'],
         items: (extra.categories ?? [undefined]).map((priceCategoryCode) => ({
           cargoType: 'GENERAL',
           quantity: 1,
@@ -910,6 +910,43 @@ describe('financial reports', () => {
         null,
         null,
       ]);
+    });
+
+    it('a main-haul trip proves the freight, not the pickup or the last mile', async () => {
+      // Codex F134-4: one trip cost covers the one service its ends prove. Dated today, outside
+      // the year the figures above are in.
+      const s5 = await shipment('SDKRT', '1', {
+        services: ['MAIN_FREIGHT', 'PICKUP', 'LAST_MILE'],
+      });
+      await post(`/shipments/${s5}/status`, cookies.opsPts, {
+        status: 'PICKUP_SCHEDULED',
+      }).expect(200);
+      const loc = async (code: string) =>
+        (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
+      const haul = (
+        await post('/trips', cookies.opsPts, {
+          branchId: pts,
+          kind: 'EXTERNAL',
+          carrierId: carrier.id,
+          agreedCost: '100',
+          currency: 'USD',
+          originLocationId: await loc('SDPZU'),
+          destinationLocationId: await loc('SDKRT'),
+          shipmentIds: [s5],
+        }).expect(201)
+      ).body as TripDto;
+      for (const status of ['DEPARTED', 'ARRIVED', 'COMPLETED'] as const) {
+        await post(`/trips/${haul.id}/status`, cookies.opsPts, { status }).expect(200);
+      }
+      const now = new Date().getUTCFullYear();
+      const r = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?from=${now - 1}-01-01&to=${now + 1}-12-31&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      const row = r.shipments.find((x) => x.shipmentId === s5);
+      expect(row?.costUsd).toBe('100');
+      expect(row?.missingCosts).toEqual(['PICKUP', 'LAST_MILE']);
+      expect(row?.incompleteReasons).toEqual(['MISSING_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED']);
     });
 
     it('is empty for another branch; needs its own permission', async () => {

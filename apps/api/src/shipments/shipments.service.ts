@@ -1071,7 +1071,7 @@ export class ShipmentsService {
   /**
    * For the profitability report (business model plan 6.2-6.3): what the shipments among `ids` the
    * user may see roll up by beyond their route: sales outlet, origin country, booked services,
-   * mode, cargo type, their booking's lines (category and measures), status, trips, and the instants of
+   * mode, the route's ends as cities, cargo type, their booking's lines (category and measures), status, trips, and the instants of
    * the cycle time: the first receipt at the origin warehouse still on the shipment's path (a
    * reverted receipt no longer counts), and the latest proof of delivery once delivered.
    */
@@ -1083,6 +1083,8 @@ export class ShipmentsService {
       id: string;
       status: ShipmentStatus;
       mode: ShippingMode;
+      /** The route's two ends, each as the city it serves. */
+      route: { from: string; to: string };
       services: BookingService[];
       cargoType: CargoType;
       salesOutlet: { id: string; name: string } | null;
@@ -1110,7 +1112,8 @@ export class ShipmentsService {
         services: true,
         cargoType: true,
         salesOutlet: { select: { id: true, name: true } },
-        origin: { select: { countryCode: true } },
+        origin: { select: { id: true, cityId: true, countryCode: true } },
+        destination: { select: { id: true, cityId: true } },
         booking: {
           select: {
             items: {
@@ -1155,6 +1158,10 @@ export class ShipmentsService {
         id: s.id,
         status: s.status,
         mode: s.mode,
+        route: {
+          from: s.origin.cityId ?? s.origin.id,
+          to: s.destination.cityId ?? s.destination.id,
+        },
         services: s.services,
         cargoType: s.cargoType,
         salesOutlet: s.salesOutlet,

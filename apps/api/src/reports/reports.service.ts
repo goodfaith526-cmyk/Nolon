@@ -41,6 +41,7 @@ import {
   incompleteReasons,
   marginPerUnit,
   missingCosts,
+  tripService,
   NO_AMOUNTS,
   profitFigures,
   type ShipmentAmounts,
@@ -186,13 +187,13 @@ export class ReportsService {
       ).map((d) => [d.id, d]),
     );
     const detailIds = [...details.keys()];
-    const [open, coverage, tripCost] = await Promise.all([
+    const [open, coverage, tripCosts] = await Promise.all([
       this.ledger.tripsWithOpenAccrual(
         [...new Set([...details.values()].flatMap((d) => d.tripIds))],
         q.to,
       ),
       this.payables.costCoverage(detailIds, q.to),
-      this.ledger.shipmentsWithTripCost(detailIds, q.to),
+      this.ledger.tripCostLegs(detailIds, q.to),
     ]);
     const shipments = summaries.flatMap((s) => {
       const d = details.get(s.id);
@@ -200,12 +201,18 @@ export class ReportsService {
       const money = amounts.get(s.id) ?? NO_AMOUNTS;
       const category = shipmentCategory(d.lines);
       const unit = category.kind === 'SINGLE' ? (d.lines[0]?.category?.unit ?? null) : null;
-      const missing = missingCosts(
-        d.services,
-        d.mode,
-        coverage.filter((c) => c.shipmentId === s.id),
-        tripCost.has(s.id),
-      );
+      const legs = [
+        ...coverage.flatMap((c) =>
+          c.shipmentId === s.id && c.legFrom && c.legTo ? [{ from: c.legFrom, to: c.legTo }] : [],
+        ),
+        ...tripCosts.flatMap((c) =>
+          c.shipmentId === s.id ? [{ from: c.legFrom, to: c.legTo }] : [],
+        ),
+      ];
+      const missing = missingCosts(d.services, [
+        ...coverage.flatMap((c) => (c.shipmentId === s.id ? [c.service] : [])),
+        ...legs.map((leg) => tripService(d.mode, d.route, leg)),
+      ]);
       const row: ShipmentAmounts & { id: string; number: string; branchCode: string } = {
         ...s,
         ...money,
