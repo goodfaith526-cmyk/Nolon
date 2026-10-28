@@ -68,6 +68,7 @@ model Branch {
   warehouseMovementCancellations WarehouseMovementCancellation[]
   podCancellations               PodCancellation[]
   shipmentCargoCorrections       ShipmentCargoCorrection[]
+  tripDepartureUndos             TripDepartureUndo[]
   grnDrafts                      GrnDraft[]
   grnDraftLines                  GrnDraftLine[]
   grnDraftProposals              GrnDraftProposal[]
@@ -223,6 +224,7 @@ model User {
   warehouseMovementCancellations    WarehouseMovementCancellation[] @relation("WarehouseMovementCancelledBy")
   podCancellations                  PodCancellation[]               @relation("PodCancelledBy")
   shipmentCargoCorrections          ShipmentCargoCorrection[]       @relation("CargoCorrectedBy")
+  tripDepartureUndos                TripDepartureUndo[]             @relation("TripDepartureUndoneBy")
   grnDraftsCreated                  GrnDraft[]                      @relation("GrnDraftCreatedBy")
   grnDraftsDecided                  GrnDraft[]                      @relation("GrnDraftDecidedBy")
   quotationDraftsCreated            QuotationDraft[]                @relation("QuotationDraftCreatedBy")
@@ -2559,27 +2561,60 @@ model Trip {
   createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch       Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin       Location           @relation("TripOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination  Location           @relation("TripDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  vehicle      Vehicle?           @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
-  driver       Driver?            @relation(fields: [driverId], references: [id], onDelete: Restrict)
-  carrier      Carrier?           @relation(fields: [carrierId], references: [id], onDelete: Restrict)
-  currencyRef  Currency?          @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
-  accrualEntry JournalEntry?      @relation("TripAccrualJournal", fields: [accrualEntryId], references: [id], onDelete: Restrict)
-  carrierBill  SupplierBill?      @relation("TripCarrierBill", fields: [carrierBillId], references: [id], onDelete: Restrict)
-  billLines    SupplierBillLine[]
-  journalLines JournalLine[]
-  createdBy    User               @relation("TripCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  shipments    TripShipment[]
-  expenses     TripExpense[]
-  pods         ProofOfDelivery[]
+  branch         Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin         Location            @relation("TripOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination    Location            @relation("TripDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  vehicle        Vehicle?            @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driver         Driver?             @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  carrier        Carrier?            @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  currencyRef    Currency?           @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  accrualEntry   JournalEntry?       @relation("TripAccrualJournal", fields: [accrualEntryId], references: [id], onDelete: Restrict)
+  carrierBill    SupplierBill?       @relation("TripCarrierBill", fields: [carrierBillId], references: [id], onDelete: Restrict)
+  billLines      SupplierBillLine[]
+  journalLines   JournalLine[]
+  createdBy      User                @relation("TripCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  shipments      TripShipment[]
+  expenses       TripExpense[]
+  pods           ProofOfDelivery[]
+  departureUndos TripDepartureUndo[]
 
   draft TripDraft? @relation("TripDraftResult")
 
   @@index([branchId, status])
   @@index([driverId])
   @@map("trips")
+}
+
+/// A departure taken back (B3-4, docs/plans/05-correction-contracts.md, sections 0 and 4): the
+/// trip went back to PLANNED and its shipments to TRIP_SCHEDULED. `revision` counts the undos of
+/// the trip (the version a request names); `request_id` and `request_hash` make a retry return the
+/// stored result. Insert-only (trigger).
+model TripDepartureUndo {
+  id          String   @id @default(uuid()) @db.Uuid
+  tripId      String   @map("trip_id") @db.Uuid
+  /// The trip's branch.
+  branchId    String   @map("branch_id") @db.Uuid
+  /// 1 for the first undo of the trip, then 2, 3...
+  revision    Int
+  requestId   String   @map("request_id") @db.Uuid
+  /// SHA-256 (hex) of the request without its id.
+  requestHash String   @map("request_hash") @db.Char(64)
+  /// The departure time that was taken back.
+  departedAt  DateTime @map("departed_at") @db.Timestamptz(3)
+  /// The shipments that went back to TRIP_SCHEDULED.
+  shipmentIds String[] @map("shipment_ids") @db.Uuid
+  reason      String   @db.VarChar(500)
+  undoneById  String   @map("undone_by_id") @db.Uuid
+  undoneAt    DateTime @default(now()) @map("undone_at") @db.Timestamptz(3)
+
+  trip     Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  undoneBy User   @relation("TripDepartureUndoneBy", fields: [undoneById], references: [id], onDelete: Restrict)
+
+  @@unique([tripId, revision])
+  @@unique([tripId, requestId])
+  @@index([branchId])
+  @@map("trip_departure_undos")
 }
 
 /// A shipment carried on a trip (one road leg of the shipment).

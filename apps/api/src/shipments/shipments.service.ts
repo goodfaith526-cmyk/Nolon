@@ -736,7 +736,7 @@ export class ShipmentsService {
           HttpStatus.CONFLICT,
           'CORRECTION_STALE',
           `Shipment ${label} changed since it was read: reload it and try again`,
-          { shipment: label },
+          { record: label },
         );
       }
       const lines: PreparedLine[] = [];
