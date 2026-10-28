@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import type {
   SupplierBillDueDateDto,
   SupplierBillInput,
   SupplierBillLineInput,
+  SupplierBillRefDto,
   SupplierBillStatus,
   SupplierBillSummaryDto,
 } from '@nolon/shared';
@@ -37,7 +39,7 @@ import {
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, type PageQuery } from '../common/validation.js';
 import { ConsolidationsService } from '../consolidations/consolidations.service.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { Prisma, type SupplierBill } from '../generated/prisma/client.js';
@@ -186,7 +188,66 @@ export class SupplierBillsService {
   }
 
   async get(user: AuthUser, id: string): Promise<SupplierBillDto> {
-    return toDto(await this.findScoped(user, id), user);
+    const bill = await this.findScoped(user, id);
+    return toDto(bill, user, await this.duplicatesOf(bill));
+  }
+
+  /**
+   * The supplier's other bills in the bill's branch with the same reference (any case), not
+   * cancelled, oldest first: one supplier invoice entered twice would be paid twice (B1-4).
+   */
+  private async duplicatesOf(
+    bill: Pick<SupplierBill, 'id' | 'supplierId' | 'branchId' | 'supplierReference'>,
+    tx: Tx | PrismaService = this.prisma,
+  ): Promise<SupplierBillRefDto[]> {
+    if (!bill.supplierReference) return [];
+    const rows = await tx.supplierBill.findMany({
+      where: {
+        id: { not: bill.id },
+        supplierId: bill.supplierId,
+        branchId: bill.branchId,
+        supplierReference: { equals: bill.supplierReference, mode: 'insensitive' },
+        status: { not: 'CANCELLED' },
+      },
+      select: { id: true, number: true, status: true, billDate: true, currency: true, total: true },
+      orderBy: [{ billDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      number: r.number,
+      status: r.status,
+      billDate: fromDbDate(r.billDate),
+      currency: r.currency,
+      total: r.total.toFixed(),
+    }));
+  }
+
+  /**
+   * Under a transaction lock on the supplier, branch and reference (so two approvals of bills
+   * carrying it run one after the other), refuses the approval unless the person acknowledged
+   * exactly the bills that carry the reference now. A lock of its own, not the supplier row's:
+   * other writes share-lock the supplier while holding shipment locks.
+   */
+  private async checkDuplicatesInTx(
+    tx: Tx,
+    bill: Pick<SupplierBill, 'id' | 'supplierId' | 'branchId' | 'supplierReference'>,
+    acknowledged: readonly string[],
+  ): Promise<void> {
+    const reference = bill.supplierReference;
+    if (!reference) return;
+    const key = `supplier-bill-reference:${bill.supplierId}:${bill.branchId}:${reference.toLowerCase()}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+    const current = await this.duplicatesOf(bill, tx);
+    const seen = new Set(acknowledged);
+    if (current.length === seen.size && current.every((b) => seen.has(b.id))) return;
+    const approved = current.flatMap((b) => (b.number ? [b.number] : [])).join(', ') || '—';
+    const drafts = String(current.filter((b) => b.status === 'DRAFT').length);
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'SUPPLIER_REFERENCE_DUPLICATE',
+      `Supplier reference ${reference} is on other bills than those acknowledged (approved: ${approved}; drafts: ${drafts}): check them and send their ids to approve this bill`,
+      { reference, approved, drafts },
+    );
   }
 
   /**
@@ -364,7 +425,11 @@ export class SupplierBillsService {
    * currency and the expense categories are share-locked and checked again, and each trip is
    * locked and marked billed (rule 11a: an accrual is cleared once).
    */
-  async approve(user: AuthUser, id: string): Promise<SupplierBillDto> {
+  async approve(
+    user: AuthUser,
+    id: string,
+    acknowledgedDuplicateBillIds: readonly string[] = [],
+  ): Promise<SupplierBillDto> {
     await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       await lockStatus(tx, id, ['DRAFT']);
@@ -375,6 +440,7 @@ export class SupplierBillsService {
       if (bill.lines.length === 0 || !bill.total.gt(0)) {
         throw new BadRequestException('A bill needs at least one line with an amount');
       }
+      await this.checkDuplicatesInTx(tx, bill, acknowledgedDuplicateBillIds);
       await this.suppliers.requireActiveInTx(tx, bill.supplierId);
       await this.currencies.requireActiveInTx(tx, bill.currency);
       // The containers before any shipment lock (see the class comment).
@@ -860,7 +926,11 @@ function toSummary(b: BillWithDetails): SupplierBillSummaryDto {
   };
 }
 
-function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
+function toDto(
+  b: BillWithDetails,
+  user: AuthUser,
+  duplicateBills: SupplierBillRefDto[],
+): SupplierBillDto {
   const isDraft = b.status === 'DRAFT';
   const can = (p: 'update' | 'approve' | 'cancel') => user.permissions.has(`suppliers:${p}`);
   const cancellable = isDraft || (b.status === 'APPROVED' && !b.isOpening && b.paidAmount.isZero());
@@ -897,6 +967,7 @@ function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
     cancelJournalEntryNumber: b.cancelJournal?.number ?? null,
     approvedAt: b.approvedAt?.toISOString() ?? null,
     cancelReason: b.cancelReason,
+    duplicateBills,
     actions: {
       canEdit: isDraft && can('update'),
       canApprove: isDraft && can('approve'),

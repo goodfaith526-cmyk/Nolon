@@ -19,7 +19,7 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { branchScope, canAccessBranch, listBranchScope } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
@@ -125,12 +125,71 @@ export class ReceiptsService {
     return toDto(await this.findScoped(user, id), user);
   }
 
+  /**
+   * Records and posts a receipt. With a `requestId` (it becomes the receipt's id), an exact retry
+   * returns the receipt the first request posted, and anything else reusing the id is refused
+   * (409), so a lost response never posts the money twice (B1-3).
+   */
   async create(user: AuthUser, input: CreateReceiptRequest): Promise<ReceiptDto> {
-    const prepared = await this.prepareCreate(user, input);
-    const receiptId = await this.prisma.$transaction((tx) =>
-      this.createInTx(tx, user, prepared, input),
-    );
+    const { requestId } = input;
+    if (requestId) {
+      const done = await this.findForRetry(requestId);
+      if (done) return this.retry(user, done, input);
+    }
+    let receiptId: string;
+    try {
+      const prepared = await this.prepareCreate(user, input);
+      receiptId = await this.prisma.$transaction((tx) =>
+        this.createInTx(tx, user, prepared, input),
+      );
+    } catch (error) {
+      // A request racing one with its id fails once that one commits: on the receipt's unique
+      // id, or earlier on a check the committed receipt changed (it settled the invoice, so the
+      // balance is gone; Codex F121-1). The id is then answered as a retry: the committed
+      // receipt for the same content, 409 for other content. With no receipt under the id, the
+      // error is this request's own.
+      if (!requestId) throw error;
+      const raced = await this.findForRetry(requestId);
+      if (!raced) throw error;
+      return this.retry(user, raced, input);
+    }
     return this.get(user, receiptId);
+  }
+
+  private findForRetry(id: string) {
+    return this.prisma.receipt.findUnique({
+      where: { id },
+      include: { allocations: true },
+    });
+  }
+
+  /**
+   * An exact retry (same user, same content) returns the receipt the request posted; any other
+   * reuse of the id is a 409, which also says nothing about a receipt the user may not see. The
+   * receipt keeps the rate it was posted at, not the one asked for: a retry that names a rate must
+   * name that one, and a retry that names none matches whatever the first one resolved.
+   */
+  private async retry(
+    user: AuthUser,
+    existing: NonNullable<Awaited<ReturnType<ReceiptsService['findForRetry']>>>,
+    input: CreateReceiptRequest,
+  ): Promise<ReceiptDto> {
+    const same =
+      existing.createdById === user.id &&
+      canAccessBranch(user, existing.branchId) &&
+      existing.customerId === input.customerId &&
+      fromDbDate(existing.receiptDate) === input.receiptDate &&
+      existing.currency === input.currency &&
+      (input.fxRate === null ||
+        input.fxRate === undefined ||
+        existing.fxRate.eq(dec(input.fxRate))) &&
+      existing.amount.eq(dec(input.amount)) &&
+      existing.cashAccountId === input.cashAccountId &&
+      existing.reference === (input.reference ?? null) &&
+      existing.notes === (input.notes ?? null) &&
+      sameAllocations(existing.allocations, input.allocations);
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return this.get(user, existing.id);
   }
 
   /**
@@ -292,7 +351,7 @@ export class ReceiptsService {
     const customer = { id: prepared.customerId };
     const currency = { code: prepared.currency };
     const invoiceIds = input.allocations.map((a) => a.invoiceId);
-    const receiptId = randomUUID();
+    const receiptId = input.requestId ?? randomUUID();
     await this.accounts.requireCash(tx, input.cashAccountId, branchId, currency.code);
     // Lock the invoices in a fixed order so two receipts for the same invoices cannot deadlock.
     const invoices = await lockInvoices(tx, [...invoiceIds].sort());
@@ -599,4 +658,20 @@ export function requireReceivable(invoice: LockedInvoice): string {
     throw new Error(`Invoice ${invoice.number ?? invoice.id} has no receivable account`);
   }
   return invoice.receivableAccountId;
+}
+
+/**
+ * The same allocations, one to one (Codex F121-2): each invoice once in each list, with the same
+ * amount. A posted receipt never names an invoice twice, so a request that does is other content.
+ */
+function sameAllocations(
+  posted: readonly { invoiceId: string; amount: Prisma.Decimal }[],
+  sent: readonly { invoiceId: string; amount: DecimalString }[],
+): boolean {
+  const amounts = new Map(sent.map((a) => [a.invoiceId, dec(a.amount)]));
+  return (
+    amounts.size === sent.length &&
+    amounts.size === posted.length &&
+    posted.every((a) => amounts.get(a.invoiceId)?.eq(a.amount) === true)
+  );
 }

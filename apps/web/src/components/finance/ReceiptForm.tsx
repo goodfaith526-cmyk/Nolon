@@ -58,6 +58,8 @@ export function ReceiptForm() {
   const [dateChoice, setDate] = useState<string | null>(null);
   /** What the last "allocate the amount" left over (held as an advance), shown until changed. */
   const [rest, setRest] = useState<string | null>(null);
+  // One id per form: a resend after a lost response returns the receipt already posted (B1-3).
+  const [requestId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
@@ -148,6 +150,7 @@ export function ReceiptForm() {
     const form = new FormData(e.currentTarget);
     const fxRate = field(form, 'fxRate').trim();
     const body: CreateReceiptRequest = {
+      requestId,
       customerId: customer.id,
       receiptDate,
       currency,

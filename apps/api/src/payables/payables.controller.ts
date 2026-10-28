@@ -13,6 +13,7 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  MAX_ACKNOWLEDGED_BILLS,
   SUPPLIER_BILL_LINE_KINDS,
   SUPPLIER_BILL_STATUSES,
   SUPPLIER_PAYMENT_STATUSES,
@@ -94,6 +95,11 @@ const createBillBody = z
   .strict();
 const billDueDateQuery = z.object({ supplierId: z.uuid(), billDate: dateString }).strict();
 const updateBillBody = z.object(billFields).strict();
+const approveBillBody = z
+  .object({
+    acknowledgedDuplicateBillIds: z.array(z.uuid()).max(MAX_ACKNOWLEDGED_BILLS).optional(),
+  })
+  .strict();
 const billListQuery = pageQuery
   .extend({
     status: z.enum(SUPPLIER_BILL_STATUSES).optional(),
@@ -300,8 +306,10 @@ export class SupplierBillsController {
   approve(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
   ): Promise<SupplierBillDto> {
-    return this.bills.approve(user, id);
+    const { acknowledgedDuplicateBillIds } = parse(approveBillBody, body ?? {});
+    return this.bills.approve(user, id, acknowledgedDuplicateBillIds);
   }
 
   @Post(':id/cancel')

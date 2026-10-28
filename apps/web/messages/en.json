@@ -1983,7 +1983,9 @@
     "exactMatch": "Exact match:",
     "moreShipments": "More shipments",
     "noShipments": "No shipment of this branch matches.",
-    "chooseShipmentFirst": "Line {line}: choose the shipment."
+    "chooseShipmentFirst": "Line {line}: choose the shipment.",
+    "duplicateWarning": "Supplier reference {reference} is on {count, plural, one {# other supplier bill} other {# other supplier bills}} in this branch that {count, plural, one {is} other {are}} not cancelled. The same supplier invoice may be entered twice: check {count, plural, one {it} other {them}} first.",
+    "duplicateConfirm": "I checked these bills; this is a different supplier invoice."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
@@ -2503,6 +2505,7 @@
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
     "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
     "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
     "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
     "PRICE_CATEGORY_NOT_USABLE": "This price category is unknown, no longer in use, or for another cargo type.",
