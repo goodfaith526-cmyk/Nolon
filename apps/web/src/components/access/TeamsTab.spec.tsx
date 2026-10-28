@@ -31,9 +31,15 @@ const team = (over: Partial<AccessTeamDto>): AccessTeamDto => ({
 
 const catalog: AccessCatalogDto = {
   version: '3',
-  modules: ['customers', 'rates'],
+  modules: ['customers', 'rates', 'receipts'],
   actions: ['view', 'create', 'update', 'approve', 'cancel'],
-  grantable: ['customers:view', 'customers:create', 'customers:update', 'rates:view'],
+  grantable: [
+    'customers:view',
+    'customers:create',
+    'customers:update',
+    'rates:view',
+    'receipts:view',
+  ],
   teams: [
     team({
       id: 'sales',
@@ -49,6 +55,14 @@ const catalog: AccessCatalogDto = {
       restricted: true,
       permissions: ['rates:view'],
       defaults: ['rates:view'],
+    }),
+    team({
+      id: 'outlet',
+      nameEn: 'Outlet staff',
+      systemRole: 'OUTLET_STAFF',
+      restricted: true,
+      permissions: ['customers:view'],
+      defaults: ['customers:create', 'customers:view'],
     }),
   ],
   branches: [],
@@ -76,11 +90,21 @@ const cells = (shown: HTMLElement) =>
 
 describe('TeamsTab', () => {
   it('shows each cell’s annex letter and marks a cell changed from the default', () => {
-    // Rows: customers, rates; columns: Sales, Driver.
-    expect(cells(show())).toEqual(['level_E', 'level_N', 'level_V*', 'level_V']);
+    // Rows: customers, rates, receipts; columns: Sales, Driver, Outlet staff.
+    expect(cells(show())).toEqual([
+      'level_E',
+      'level_N',
+      'level_V*',
+      'level_V*',
+      'level_V',
+      'level_N',
+      'level_N',
+      'level_N',
+      'level_N',
+    ]);
   });
 
-  it('shows a restricted team read only', () => {
+  it('lets the driver team be switched off and back, only within its defaults', () => {
     const shown = show();
     const driver = [...shown.querySelectorAll('thead button')].find(
       (b) => b.textContent === 'Driver',
@@ -88,9 +112,35 @@ describe('TeamsTab', () => {
     act(() => (driver as HTMLButtonElement).click());
     expect(shown.textContent).toContain('restrictedTeam');
     const boxes = [...shown.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(boxes.length).toBeGreaterThan(0);
-    expect(boxes.every((b) => b.disabled)).toBe(true);
-    expect([...shown.querySelectorAll('button')].some((b) => b.textContent === 'save')).toBe(false);
+    expect(boxes.map((b) => [b.value, b.checked, b.disabled])).toEqual([
+      ['rates:view', true, false],
+    ]);
+    expect(shown.querySelector('input[name="nameAr"]')).toBeNull();
+  });
+
+  it('lets the owner give the outlet staff team any permission, with its warnings', () => {
+    const shown = show();
+    const outlet = [...shown.querySelectorAll('thead button')].find(
+      (b) => b.textContent === 'Outlet staff',
+    );
+    act(() => (outlet as HTMLButtonElement).click());
+    expect(shown.textContent).toContain('outletTeam');
+    const boxes = () => [...shown.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(boxes().map((b) => [b.value, b.checked, b.disabled])).toEqual([
+      ['customers:view', true, false],
+      ['customers:create', false, false],
+      ['customers:update', false, false],
+      ['rates:view', false, false],
+      ['receipts:view', false, false],
+    ]);
+    expect(shown.textContent).not.toContain('outletNotReady');
+    // A permission whose screens do not filter by outlet yet, and a finance one: both warned.
+    const receipts = boxes().find((b) => b.value === 'receipts:view')!;
+    act(() => receipts.click());
+    expect(shown.textContent).toContain('outletNotReady');
+    expect(shown.textContent).toContain('outletSensitive');
+    expect([...shown.querySelectorAll('button')].some((b) => b.textContent === 'save')).toBe(true);
+    expect(shown.querySelector('input[name="nameAr"]')).toBeNull();
   });
 
   it('offers reset to default for a changed system team', () => {

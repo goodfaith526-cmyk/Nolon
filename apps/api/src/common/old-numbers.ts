@@ -43,3 +43,17 @@ export async function onceNumbered(
   });
   return rows.map((r) => r.recordId);
 }
+
+/** Every number the record of `kind` had before its current one (B3-5: a container's close). */
+export async function oldNumbersOf(
+  db: Db,
+  kind: RenumberedKind,
+  recordId: string,
+): Promise<string[]> {
+  const rows = await db.referenceRenumbering.findMany({
+    where: { kind, recordId },
+    select: { oldNumber: true },
+    distinct: ['oldNumber'],
+  });
+  return rows.map((r) => r.oldNumber);
+}

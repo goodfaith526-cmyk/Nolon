@@ -36,6 +36,12 @@ export interface ContainerCostHandler {
   allocatePendingInTx(tx: Tx, user: AuthUser, container: ClosedContainer): Promise<void>;
   /** How many approved bill lines charge the container (it cannot be cancelled while any do). */
   approvedCostCountInTx(tx: Tx, consolidationId: string): Promise<number>;
+  /**
+   * B3-5: whether anything was ever charged to the container and kept: a bill line approved now,
+   * or one shared out at any time (its allocation entry is posted and stays, even once the bill is
+   * cancelled). A container with such a history is not reopened.
+   */
+  hasCostHistoryInTx(tx: Tx, consolidationId: string): Promise<boolean>;
   view(consolidationId: string): Promise<ContainerCostsView>;
 }
 

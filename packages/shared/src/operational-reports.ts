@@ -381,8 +381,8 @@ export interface TripsReportDto {
 /**
  * The log is read from the records that already say who did what and when (shipment events,
  * warehouse movements, customs fees and files, journal entries, invoices, receipts, credit notes,
- * supplier bills and payments, general expenses, trips, trip expenses, proofs of delivery and
- * documents), plus the audit table for records that keep no history of their own (rates,
+ * supplier bills and payments, general expenses, trips, trip expenses, proofs of delivery,
+ * container reopenings and documents), plus the audit table for records that keep no history of their own (rates,
  * customers, user accounts, and container, charge and document types and currencies). Edits that
  * leave no such record (a draft's lines) are not in it.
  */
@@ -400,6 +400,8 @@ export const AUDIT_ENTITIES = [
   'TRIP',
   'TRIP_EXPENSE',
   'POD',
+  // B3-5: a closed container opened again.
+  'CONTAINER',
   'DOCUMENT',
   'RATE',
   'CUSTOMER',
@@ -453,8 +455,8 @@ export interface AuditLogEntryDto {
   reference: string;
   /**
    * The status reached, as its code: a shipment status (SHIPMENT), customs status (CUSTOMS), trip
-   * status (TRIP), or the document's status (CREDIT_NOTE, SUPPLIER_BILL, SUPPLIER_PAYMENT,
-   * EXPENSE); null otherwise.
+   * status (TRIP), container status (CONTAINER), or the document's status (CREDIT_NOTE,
+   * SUPPLIER_BILL, SUPPLIER_PAYMENT, EXPENSE); null otherwise.
    */
   status: string | null;
   /** The reason or note, as recorded. */

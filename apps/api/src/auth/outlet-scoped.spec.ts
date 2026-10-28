@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { OUTLET_READY_PERMISSIONS } from '@nolon/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { Access } from '../access-control/access.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -95,6 +96,23 @@ const user = (allowedOutletIds?: string[] | null): AuthUser => ({
 describe('routes open to Outlet Staff', () => {
   it('are exactly the outlet-scoped reads and writes, nothing else', () => {
     expect(openedRoutes()).toEqual([...OPEN].sort());
+  });
+
+  it('need exactly the permissions the screen calls ready for Outlet Staff', () => {
+    const files = readdirSync(SRC, { recursive: true, encoding: 'utf8' }).filter((f) =>
+      f.endsWith('.controller.ts'),
+    );
+    const needed = new Set<string>();
+    for (const file of files) {
+      const lines = readFileSync(join(SRC, file), 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        if (line.trim() !== '@OutletScoped()') return;
+        const block = lines.slice(i + 1, i + 8).join('\n');
+        const required = /@RequirePermission\('([^']+)'\)/.exec(block)?.[1];
+        if (required) needed.add(required);
+      });
+    }
+    expect([...needed].sort()).toEqual([...OUTLET_READY_PERMISSIONS].sort());
   });
 
   it('never approve, confirm, cancel, delete, export or administer', () => {

@@ -12,6 +12,7 @@ import {
   PERMISSION_MODULES,
   RESTRICTED_ROLES,
   ROLE_PERMISSIONS,
+  takesAddedPermissions,
   hasAllBranchAccess,
   isPermission,
   permissionModule,
@@ -256,7 +257,8 @@ export class AccessControlService {
   /**
    * A team's whole set: a role team stores what differs from its defaults (a set equal to them
    * clears its changes); an added team stores its ALLOW rows. The Administrator team is fixed; a
-   * restricted team may only lose permissions (plan 03, F114-2).
+   * Driver's restricted team may only lose permissions (plan 03, F114-2); the Outlet Staff team
+   * takes any grantable one (owner, 2026-10-28).
    */
   async setTeamPermissions(
     actor: Actor,
@@ -275,7 +277,7 @@ export class AccessControlService {
       // A role team keeps its non-grantable defaults (none today outside the Administrator).
       const keep = [...defaults].filter((p) => !grantable(p));
       const next = new Set<Permission>([...requireGrantable(wanted), ...keep]);
-      if (team.restricted && [...next].some((p) => !defaults.has(p))) {
+      if (!takesAddedPermissions(team) && [...next].some((p) => !defaults.has(p))) {
         throw new BadRequestException('A restricted team cannot take more permissions');
       }
       const rows: { permission: Permission; effect: 'ALLOW' | 'DENY' }[] = team.systemRole
