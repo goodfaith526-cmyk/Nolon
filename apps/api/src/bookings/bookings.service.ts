@@ -457,7 +457,7 @@ export class BookingsService {
     }
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
-      : await this.customers.outletForSaleInTx(tx, user, prepared.customerId);
+      : await this.customers.outletForSaleInTx(tx, user, prepared.branchId, prepared.customerId);
     const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
     try {
       const created = await tx.booking.create({

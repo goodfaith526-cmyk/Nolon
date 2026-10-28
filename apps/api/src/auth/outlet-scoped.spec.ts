@@ -118,47 +118,74 @@ describe('outlet scope', () => {
     expect(partnerOutletScope(user(['o1']))).toEqual({ AND: [{ id: { in: ['o1'] } }] });
   });
 
-  /** A transaction whose share-locking reads return role, branches, links and outlets in turn. */
-  const tx = (outlets: string[], role = true) => {
+  /**
+   * A transaction whose share-locking reads return role, branches, links and outlets in turn, as
+   * they are now: `outlets` maps each linked active outlet to its branch.
+   */
+  const tx = (outlets: Record<string, string>, { role = true, branches = ['b'] } = {}) => {
     const replies = [
       role ? [{ role: 'OUTLET_STAFF' }] : [],
-      [{ branch_id: 'b' }],
-      outlets.map((partner_id) => ({ partner_id })),
-      outlets.map((id) => ({ id })),
+      branches.map((branch_id) => ({ branch_id })),
+      Object.keys(outlets).map((partner_id) => ({ partner_id })),
+      Object.entries(outlets).map(([id, branch_id]) => ({ id, branch_id })),
     ];
     const $queryRaw = vi.fn(() => Promise.resolve(replies.shift() ?? []));
     return { client: { $queryRaw } as unknown as Prisma.TransactionClient, $queryRaw };
   };
+  const changed = /access changed/;
 
-  it('records the only outlet of an Outlet Staff user as it is now, and none for anyone else', async () => {
-    const none = tx(['o1']);
-    await expect(outletForWriteInTx(none.client, user(null))).resolves.toBeNull();
+  it('records the only outlet of an Outlet Staff user, of the write’s branch, and none for anyone else', async () => {
+    const none = tx({ o1: 'b' });
+    await expect(outletForWriteInTx(none.client, user(null), 'b')).resolves.toBeNull();
     expect(none.$queryRaw).not.toHaveBeenCalled();
-    await expect(outletForWriteInTx(tx(['o1']).client, user(['o1']))).resolves.toBe('o1');
-    // The sign-in snapshot still names o1, but the outlet is gone (deactivated or reassigned).
-    await expect(outletForWriteInTx(tx([]).client, user(['o1']))).rejects.toThrow(
+    await expect(outletForWriteInTx(tx({ o1: 'b' }).client, user(['o1']), 'b')).resolves.toBe('o1');
+    // Never an outlet of another branch than the record's.
+    await expect(outletForWriteInTx(tx({ o1: 'b' }).client, user(['o1']), 'b2')).rejects.toThrow(
       /single sales outlet/,
     );
-    await expect(outletForWriteInTx(tx(['o1'], false).client, user(['o1']))).rejects.toThrow(
+    // A user with no outlet now, as at sign-in, records nothing.
+    await expect(outletForWriteInTx(tx({}).client, user([]), 'b')).rejects.toThrow(
       /single sales outlet/,
     );
-    await expect(outletForWriteInTx(tx(['o1', 'o2']).client, user(['o1']))).rejects.toThrow(
-      /single sales outlet/,
-    );
+    await expect(
+      outletForWriteInTx(tx({ o1: 'b', o2: 'b' }).client, user(['o1', 'o2']), 'b'),
+    ).rejects.toThrow(/single sales outlet/);
   });
 
-  it('lets Outlet Staff write a record only while its outlet is still theirs', async () => {
+  it('refuses the request when the access read under lock is not the sign-in snapshot', async () => {
+    // Outlet deactivated or link removed.
+    await expect(outletForWriteInTx(tx({}).client, user(['o1']), 'b')).rejects.toThrow(changed);
+    // Out of the role.
     await expect(
-      assertOutletInTx(tx([]).client, user(null), null, 'Gone'),
+      outletForWriteInTx(tx({ o1: 'b' }, { role: false }).client, user(['o1']), 'b'),
+    ).rejects.toThrow(changed);
+    // Moved to another outlet of the same branch, completed before this request's locks: the
+    // refusal comes before any other check could use the stale outlet list.
+    await expect(outletForWriteInTx(tx({ o2: 'b' }).client, user(['o1']), 'b')).rejects.toThrow(
+      changed,
+    );
+    // Moved to another branch and its outlet.
+    await expect(
+      outletForWriteInTx(tx({ o2: 'b2' }, { branches: ['b2'] }).client, user(['o1']), 'b'),
+    ).rejects.toThrow(changed);
+    // Given a second outlet.
+    await expect(
+      assertOutletInTx(tx({ o1: 'b', o2: 'b' }).client, user(['o1']), 'o1', 'Gone'),
+    ).rejects.toThrow(changed);
+  });
+
+  it('lets Outlet Staff write a record only of their own outlet', async () => {
+    await expect(
+      assertOutletInTx(tx({}).client, user(null), null, 'Gone'),
     ).resolves.toBeUndefined();
     await expect(
-      assertOutletInTx(tx(['o1']).client, user(['o1']), 'o1', 'Gone'),
+      assertOutletInTx(tx({ o1: 'b' }).client, user(['o1']), 'o1', 'Gone'),
     ).resolves.toBeUndefined();
-    await expect(assertOutletInTx(tx([]).client, user(['o1']), 'o1', 'Gone')).rejects.toThrow(
-      'Gone',
-    );
-    await expect(assertOutletInTx(tx(['o1']).client, user(['o1']), null, 'Gone')).rejects.toThrow(
-      'Gone',
-    );
+    await expect(
+      assertOutletInTx(tx({ o1: 'b' }).client, user(['o1']), 'o2', 'Gone'),
+    ).rejects.toThrow('Gone');
+    await expect(
+      assertOutletInTx(tx({ o1: 'b' }).client, user(['o1']), null, 'Gone'),
+    ).rejects.toThrow('Gone');
   });
 });

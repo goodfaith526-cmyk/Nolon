@@ -381,7 +381,7 @@ describe('outlet staff: isolation by sales outlet', () => {
     /**
      * Runs `revoke` in a transaction that stays open until `write` (signed in before, so its
      * sign-in snapshot still names the outlet) waits on its locks, then commits it: the revocation
-     * wins serialization, and the write must see it.
+     * wins serialization, the write sees access that is not its snapshot's, and is refused (403).
      */
     async function queuedBehind<T>(
       revoke: (tx: Prisma.TransactionClient) => Promise<void>,
@@ -461,13 +461,13 @@ describe('outlet staff: isolation by sales outlet', () => {
       expect(await t.prisma.customer.count({ where: { name } })).toBe(0);
     });
 
-    it('refuses customer edits, contacts and deactivation of the old outlet’s customer', async () => {
+    it('refuses customer edits, contacts and deactivation by the moved user', async () => {
       const { outlet, staff, customer } = await freshOutlet();
       const other = await partner('SALES_OUTLET', jed, cookies.jedManager);
       const renamed = await queuedBehind(reassign(staff.id, outlet, other), () =>
         patch(`/customers/${customer.id}`, staff.cookie, { name: 'ZZ renamed late' }),
       );
-      expect(renamed.status).toBe(404);
+      expect(renamed.status).toBe(403);
       const row = await t.prisma.customer.findUniqueOrThrow({ where: { id: customer.id } });
       expect(row.name).toBe(customer.name);
 
@@ -478,7 +478,7 @@ describe('outlet staff: isolation by sales outlet', () => {
           phone: uniquePhone(),
         }),
       );
-      expect(contact.status).toBe(404);
+      expect(contact.status).toBe(403);
       expect(
         await t.prisma.customerContact.count({ where: { customerId: second.customer.id } }),
       ).toBe(0);
@@ -487,7 +487,7 @@ describe('outlet staff: isolation by sales outlet', () => {
       const off = await queuedBehind(deactivate(third.outlet), () =>
         post(`/customers/${third.customer.id}/deactivate`, third.staff.cookie),
       );
-      expect(off.status).toBe(404);
+      expect(off.status).toBe(403);
       expect(
         (await t.prisma.customer.findUniqueOrThrow({ where: { id: third.customer.id } })).isActive,
       ).toBe(true);
@@ -521,7 +521,7 @@ describe('outlet staff: isolation by sales outlet', () => {
       const sent = await queuedBehind(deactivate(d.outlet), () =>
         post(`/quotations/${d.quotation.id}/send`, d.staff.cookie),
       );
-      expect(sent.status).toBe(404);
+      expect(sent.status).toBe(403);
       expect(
         (await t.prisma.quotation.findUniqueOrThrow({ where: { id: d.quotation.id } })).status,
       ).toBe('DRAFT');
@@ -535,7 +535,7 @@ describe('outlet staff: isolation by sales outlet', () => {
           lines: [{ ...edit.lines?.[0], unitPrice: '999' }],
         }),
       );
-      expect(edited.status).toBe(404);
+      expect(edited.status).toBe(403);
       const lines = await t.prisma.quotationLine.findMany({
         where: { quotationId: e.quotation.id },
       });
@@ -553,7 +553,7 @@ describe('outlet staff: isolation by sales outlet', () => {
           items: [{ ...bookingEdit.items?.[0], quantity: 2 }],
         }),
       );
-      expect(rebooked.status).toBe(404);
+      expect(rebooked.status).toBe(403);
       const items = await t.prisma.bookingItem.findMany({ where: { bookingId: draft.id } });
       expect(items.map((i) => i.quantity)).toEqual([1]);
     });
@@ -569,8 +569,90 @@ describe('outlet staff: isolation by sales outlet', () => {
       const res = await queuedBehind(deactivate(g.outlet), () =>
         upload(shipmentId, g.staff.cookie),
       );
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
       expect(await t.prisma.document.count({ where: { shipmentId } })).toBe(0);
+    });
+  });
+
+  describe('a change of access completed before the write takes its first lock', () => {
+    /**
+     * Holds the user's role row so that `write` (signed in before) waits on its first lock, then
+     * runs and commits `move` (which leaves the role row alone) and lets the write go: the user's
+     * branches and outlets were already changed when the write first reads them, while its
+     * snapshot still has the old ones.
+     */
+    async function movedBeforeLocks<T>(
+      userId: string,
+      move: (tx: Prisma.TransactionClient) => Promise<void>,
+      write: () => PromiseLike<T>,
+    ): Promise<T> {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let holding = () => {};
+      const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+      const holder = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT 1 FROM "user_roles" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+          holding();
+          await held;
+        },
+        { timeout: 20_000 },
+      );
+      await holdingNow;
+      const result = Promise.resolve(write());
+      await waitForLockWaiter(t.prisma);
+      await t.prisma.$transaction(move);
+      release();
+      await holder;
+      return result;
+    }
+
+    it('refuses a create after a move to another branch and its outlet: nothing is recorded', async () => {
+      const outlet = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const staff = await outletStaff([outlet]);
+      const name = `ZZ moved ${randomInt(1e9)}`;
+      const res = await movedBeforeLocks(
+        staff.id,
+        async (tx) => {
+          await tx.userBranch.deleteMany({ where: { userId: staff.id } });
+          await tx.userBranch.create({ data: { userId: staff.id, branchId: dxb } });
+          await tx.userPartner.deleteMany({ where: { userId: staff.id } });
+          await tx.userPartner.create({ data: { userId: staff.id, partnerId: outletDxb.id } });
+        },
+        () =>
+          post('/customers', staff.cookie, {
+            branchId: jed,
+            kind: 'INDIVIDUAL',
+            name,
+            phone: uniquePhone(),
+          }),
+      );
+      expect(res.status).toBe(403);
+      expect(await t.prisma.customer.count({ where: { name } })).toBe(0);
+    });
+
+    it('names no customer of the old outlet after a move within the branch', async () => {
+      const outlet = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const other = await partner('SALES_OUTLET', jed, cookies.jedManager);
+      const staff = await outletStaff([outlet]);
+      const holder = await newCustomer(staff.cookie);
+      const res = await movedBeforeLocks(
+        staff.id,
+        async (tx) => {
+          await tx.userPartner.deleteMany({ where: { userId: staff.id } });
+          await tx.userPartner.create({ data: { userId: staff.id, partnerId: other.id } });
+        },
+        () =>
+          post('/customers', staff.cookie, {
+            branchId: jed,
+            kind: 'INDIVIDUAL',
+            name: `ZZ same phone ${randomInt(1e9)}`,
+            phone: holder.phone,
+          }),
+      );
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(res.body)).not.toContain(holder.number);
     });
   });
 

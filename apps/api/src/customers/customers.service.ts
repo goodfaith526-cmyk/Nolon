@@ -159,7 +159,7 @@ export class CustomersService {
     const { branchId, ...fields } = input;
     // Outlet Staff (plan 4.2): the customer is theirs; everyone else records none yet. Checked
     // first, before any other lock of the write.
-    const outletId = await outletForWriteInTx(tx, user);
+    const outletId = await outletForWriteInTx(tx, user, branchId);
     if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
       throw new BadRequestException('Unknown or inactive branch');
     }
@@ -584,9 +584,10 @@ export class CustomersService {
   async outletForSaleInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
+    branchId: string,
     customerId: string,
   ): Promise<string | null> {
-    const outletId = await outletForWriteInTx(tx, user);
+    const outletId = await outletForWriteInTx(tx, user, branchId);
     if (outletId === null) return null;
     const customer = await tx.customer.findUnique({
       where: { id: customerId },

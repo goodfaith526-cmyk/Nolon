@@ -296,7 +296,12 @@ export class QuotationsService {
   ): Promise<QuotationWithDetails> {
     // Outlet Staff (plan 4.2): sold through their outlet, checked first in the transaction;
     // everyone else records none yet.
-    const salesOutletId = await this.customers.outletForSaleInTx(tx, user, prepared.customerId);
+    const salesOutletId = await this.customers.outletForSaleInTx(
+      tx,
+      user,
+      prepared.branchId,
+      prepared.customerId,
+    );
     const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
     return tx.quotation.create({
       data: {
