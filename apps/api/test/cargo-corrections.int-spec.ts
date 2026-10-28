@@ -208,10 +208,12 @@ describe('cargo line corrections (B3-3)', () => {
     const bookingItems = await t.prisma.bookingItem.findMany({ where: { bookingId: booking } });
     expect(bookingItems.map((i) => i.quantity)).toEqual([1]);
 
-    const today = new Date().toISOString().slice(0, 10);
+    // A day either side: the log filters on the branch's local date, which may be tomorrow in UTC.
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
     const log = (
       await get(
-        `/reports/audit-log?from=${today}&to=${today}&entity=SHIPMENT&userId=${opsJedId}`,
+        `/reports/audit-log?from=${day(-1)}&to=${day(1)}&entity=SHIPMENT&userId=${opsJedId}`,
         cookies.admin,
       ).expect(200)
     ).body as AuditLogDto;

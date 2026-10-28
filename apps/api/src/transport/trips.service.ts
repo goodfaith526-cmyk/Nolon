@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -10,6 +12,7 @@ import type {
   Permission,
   ShipmentStatus,
   ShipmentTripDto,
+  TripDepartureUndoDto,
   TripDto,
   TripDraftValues,
   TripInput,
@@ -17,6 +20,7 @@ import type {
   TripShipmentDto,
   TripStatus,
   TripSummaryDto,
+  TripUndoDepartureRequest,
 } from '@nolon/shared';
 import { seesTransportCosts } from '@nolon/shared';
 import { AccountsService } from '../accounting/accounts.service.js';
@@ -33,8 +37,9 @@ import {
   toDecimalStringOrNull,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
+import { requestHash } from '../drafts/draft-rules.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -102,6 +107,10 @@ const detailInclude = {
       createdBy: { select: { fullName: true } },
     },
     orderBy: { createdAt: 'asc' },
+  },
+  departureUndos: {
+    orderBy: { revision: 'asc' },
+    include: { undoneBy: { select: { fullName: true } } },
   },
 } satisfies Prisma.TripInclude;
 
@@ -492,6 +501,180 @@ export class TripsService implements OnModuleInit {
   }
 
   /**
+   * B3-4 (docs/plans/05-correction-contracts.md, sections 0 and 4): takes back a departure entered
+   * by mistake. The trip goes back to PLANNED (its departure time cleared) and each of its
+   * shipments back to TRIP_SCHEDULED by a REVERT event of the trip's ROAD_DEPARTED step; then the
+   * vehicle and driver can be changed as on any planned trip. The undo is kept with the reason.
+   *
+   * Locks as a trip move does: the trip, then each shipment exclusively in id order. A retry with
+   * the same request id and content changes nothing; a request made on an older revision, or once
+   * the trip is no longer DEPARTED, is STALE. Refused while the trip has live proofs of delivery
+   * or expenses, when a shipment moved on since the trip left (its last step is not the trip's
+   * departure), or when a shipment went on a later trip.
+   */
+  async undoDeparture(
+    user: AuthUser,
+    id: string,
+    input: TripUndoDepartureRequest,
+  ): Promise<TripDto> {
+    const existing = await this.findScoped(user, id);
+    if (!mayUndoDeparture(user, existing.branchId)) {
+      throw new ForbiddenException('Missing permission');
+    }
+    const hash = requestHash({
+      expectedRevision: input.expectedRevision,
+      expectedStatus: input.expectedStatus,
+      reason: input.reason,
+    });
+    const label = existing.number;
+    const numbers = await this.shipmentNumbers(user, existing);
+    const shipmentLabel = (shipmentId: string) => numbers.get(shipmentId) ?? shipmentId;
+    await this.prisma.$transaction(async (tx) => {
+      const trip = await lockTrip(tx, id);
+      const stored = await tx.tripDepartureUndo.findUnique({
+        where: { tripId_requestId: { tripId: id, requestId: input.requestId } },
+        select: { requestHash: true },
+      });
+      if (stored) {
+        if (stored.requestHash === hash) return;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_KEY_REUSED',
+          'This request id was used for another correction',
+        );
+      }
+      const revision = await tx.tripDepartureUndo.count({ where: { tripId: id } });
+      if (revision !== input.expectedRevision || trip.status !== input.expectedStatus) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_STALE',
+          `Trip ${label} changed since it was read: reload it and try again`,
+          { record: label },
+        );
+      }
+      if (!trip.actualDeparture) throw new Error('A departed trip has a departure time');
+      const links = await tx.tripShipment.findMany({
+        where: { tripId: id },
+        select: { shipmentId: true, addedAt: true },
+        orderBy: { shipmentId: 'asc' },
+      });
+      const shipmentIds = links.map((l) => l.shipmentId);
+      // Each shipment exclusively, in id order, before anything is read about them: a POD, a
+      // receipt or a trip of theirs locks the shipment too, so none is added behind the checks.
+      for (const shipmentId of shipmentIds) {
+        await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      }
+      // PODs naming the trip, and those of its shipments naming no trip that were delivered since
+      // it left: both happened on this departure.
+      const pods = await tx.proofOfDelivery.findMany({
+        where: {
+          cancellation: null,
+          OR: [
+            { tripId: id },
+            {
+              tripId: null,
+              shipmentId: { in: shipmentIds },
+              deliveredAt: { gte: trip.actualDeparture },
+            },
+          ],
+        },
+        select: { number: true },
+        orderBy: { number: 'asc' },
+      });
+      if (pods.length > 0) {
+        const list = pods.map((p) => p.number).join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'TRIP_UNDO_HAS_POD',
+          `Trip ${label} has proofs of delivery (${list}): cancel them first`,
+          { trip: label, pods: list },
+        );
+      }
+      const expenses = await tx.tripExpense.findMany({
+        where: { tripId: id, status: 'POSTED' },
+        select: { number: true },
+        orderBy: { number: 'asc' },
+      });
+      if (expenses.length > 0) {
+        const list = expenses.map((e) => e.number).join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'TRIP_UNDO_HAS_EXPENSES',
+          `Trip ${label} has expenses (${list}): cancel them first`,
+          { trip: label, expenses: list },
+        );
+      }
+      const others = await tx.tripShipment.findMany({
+        where: {
+          shipmentId: { in: shipmentIds },
+          tripId: { not: id },
+          trip: { status: { not: 'CANCELLED' } },
+        },
+        select: { shipmentId: true, addedAt: true },
+      });
+      const later = links
+        .filter((l) => others.some((o) => o.shipmentId === l.shipmentId && o.addedAt > l.addedAt))
+        .map((l) => shipmentLabel(l.shipmentId));
+      if (later.length > 0) {
+        const list = later.join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'TRIP_UNDO_LATER_TRIP',
+          `Shipments of trip ${label} are on a later trip: ${list}`,
+          { trip: label, shipments: list },
+        );
+      }
+      const moved: string[] = [];
+      for (const shipmentId of shipmentIds) {
+        let undone = false;
+        try {
+          undone = await this.shipments.undoRecordStepInTx(
+            tx,
+            user,
+            shipmentId,
+            { status: 'ROAD_DEPARTED', numbers: [trip.number], reason: input.reason },
+            () => new StepMoved(),
+          );
+        } catch (e) {
+          if (!(e instanceof StepMoved)) throw e;
+        }
+        // Not undone: the trip's departure is not the shipment's last step (it moved on, or it
+        // had passed that step before the trip left).
+        if (!undone) moved.push(shipmentLabel(shipmentId));
+      }
+      if (moved.length > 0) {
+        const list = moved.join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'TRIP_UNDO_SHIPMENT_MOVED',
+          `Shipments of trip ${label} moved on since it left: ${list}`,
+          { trip: label, shipments: list },
+        );
+      }
+      // Compare-and-set on top of the row lock.
+      const { count } = await tx.trip.updateMany({
+        where: { id, status: 'DEPARTED' },
+        data: { status: 'PLANNED', actualDeparture: null },
+      });
+      if (count !== 1) throw new ConflictException('The trip changed meanwhile');
+      await tx.tripDepartureUndo.create({
+        data: {
+          tripId: id,
+          branchId: trip.branchId,
+          revision: revision + 1,
+          requestId: input.requestId,
+          requestHash: hash,
+          departedAt: trip.actualDeparture,
+          shipmentIds,
+          reason: input.reason,
+          undoneById: user.id,
+        },
+      });
+    });
+    return this.get(user, id);
+  }
+
+  /**
    * Cancels a planned trip. Its shipments keep TRIP_SCHEDULED and can go on another trip. 409
    * once the trip has left, or while it has expenses that are not cancelled.
    */
@@ -765,15 +948,38 @@ export class TripsService implements OnModuleInit {
         shares: shareDtos(e.journalEntryId),
       })),
       cashAccounts,
+      departureRevision: t.departureUndos.length,
+      departureUndos: t.departureUndos.map((u): TripDepartureUndoDto => ({
+        revision: u.revision,
+        departedAt: u.departedAt.toISOString(),
+        reason: u.reason,
+        undoneAt: u.undoneAt.toISOString(),
+        undoneByName: u.undoneBy.fullName,
+        shipmentCount: u.shipmentIds.length,
+      })),
       actions: {
         moves: has('transport_trips:update') ? [...tripMoves(t.status)] : [],
         canCancel: !driverOnly && has('transport_trips:cancel') && isPlanned(t.status),
         canEditShipments: !driverOnly && has('transport_trips:update') && isPlanned(t.status),
         canAddExpense,
         canCancelExpense: showsCost && !driverOnly && has('expenses:cancel'),
+        // The undo's own rule (mayUndoDeparture), not offered to a driver.
+        canUndoDeparture:
+          !driverOnly && mayUndoDeparture(user, t.branchId) && t.status === 'DEPARTED',
       },
     };
   }
+}
+
+/** A shipment whose last step is not the trip's departure (undoDeparture collects them). */
+class StepMoved extends ConflictException {}
+
+/**
+ * transport_trips:cancel in the trip's branch: the undo of its departure and the button that
+ * offers it (B3-4).
+ */
+function mayUndoDeparture(user: AuthUser, branchId: string): boolean {
+  return user.access.has('transport_trips:cancel', branchId);
 }
 
 function toSummary(t: TripWithSummary): TripSummaryDto {

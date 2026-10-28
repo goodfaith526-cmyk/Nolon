@@ -292,7 +292,7 @@ export class TripReportsService {
         userId: string | null;
         userName: string | null;
         entity: 'TRIP' | 'TRIP_EXPENSE' | 'POD';
-        action: 'CREATED' | 'CANCELLED';
+        action: 'CREATED' | 'CANCELLED' | 'REVERT';
         reference: string;
         status: TripStatus | null;
         detail: string | null;
@@ -325,6 +325,11 @@ export class TripReportsService {
                NULL, x."reason"
         FROM "pod_cancellations" x
         JOIN "proofs_of_delivery" p ON p."id" = x."pod_id"
+        UNION ALL
+        SELECT x."branch_id", x."undone_at", x."undone_by_id", 'TRIP', 'REVERT', t."number",
+               'PLANNED', x."reason"
+        FROM "trip_departure_undos" x
+        JOIN "trips" t ON t."id" = x."trip_id"
       )
       SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
              x."entity", x."action", x."reference", x."status", x."detail"
