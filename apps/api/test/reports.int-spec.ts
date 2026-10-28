@@ -13,6 +13,7 @@ import type {
   JournalEntryDto,
   OpenAccrualsDto,
   Page,
+  PartnerDto,
   ReceiptDto,
   ReportAccountOptionDto,
   ShipmentProfitabilityDto,
@@ -54,6 +55,7 @@ describe('financial reports', () => {
   let carrier: CarrierDto;
   let trip: TripDto;
   const shipments = { s1: '', s2: '', s3: '' };
+  let outlet: PartnerDto;
   const invoices: Record<'i1' | 'i2' | 'i3', CustomerInvoiceDto> = {} as Record<
     'i1' | 'i2' | 'i3',
     CustomerInvoiceDto
@@ -91,7 +93,11 @@ describe('financial reports', () => {
     return (await get(path, cookie).expect(200)).body as T;
   }
 
-  async function shipment(destination: string, volumeCbm: string): Promise<string> {
+  async function shipment(
+    destination: string,
+    volumeCbm: string,
+    extra: { categories?: string[]; salesOutletId?: string } = {},
+  ): Promise<string> {
     const loc = async (code: string) =>
       (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
     const booking = (
@@ -102,7 +108,14 @@ describe('financial reports', () => {
         mode: 'ROAD',
         cargoType: 'GENERAL',
         services: ['MAIN_FREIGHT'],
-        items: [{ cargoType: 'GENERAL', quantity: 1, volumeCbm, weightKg: '100' }],
+        items: (extra.categories ?? [undefined]).map((priceCategoryCode) => ({
+          cargoType: 'GENERAL',
+          quantity: 1,
+          volumeCbm,
+          weightKg: '100',
+          ...(priceCategoryCode ? { priceCategoryCode } : {}),
+        })),
+        ...(extra.salesOutletId ? { salesOutletId: extra.salesOutletId } : {}),
       }).expect(201)
     ).body as BookingDto;
     const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.salesPts).expect(200))
@@ -239,9 +252,23 @@ describe('financial reports', () => {
     ).body as CarrierDto;
 
     // Three shipments of one customer: two to Khartoum (on one carrier trip), one to Atbara.
-    shipments.s1 = await shipment('SDKRT', '5');
-    shipments.s2 = await shipment('SDKRT', '3');
-    shipments.s3 = await shipment('SDATB', '1');
+    // Business model plan 6.3: S1 sold through an outlet; S1 and S2 cartons; S3 mixes two
+    // categories (one line each).
+    outlet = (
+      await post('/partners', cookies.admin, {
+        kind: 'SALES_OUTLET',
+        branchId: pts,
+        name: `Ledger Outlet ${year} ${randomUUID().slice(0, 4)}`,
+        countryCode: 'SD',
+        currency: 'USD',
+      }).expect(201)
+    ).body as PartnerDto;
+    shipments.s1 = await shipment('SDKRT', '5', {
+      categories: ['CARTON'],
+      salesOutletId: outlet.id,
+    });
+    shipments.s2 = await shipment('SDKRT', '3', { categories: ['CARTON'] });
+    shipments.s3 = await shipment('SDATB', '1', { categories: ['CARTON', 'SPECIAL'] });
 
     // Revenue: 1000 + 300 USD, and 600,000 SDG at 600 (1000 USD). A draft invoice posts nothing.
     invoices.i1 = await invoice(
@@ -647,6 +674,7 @@ describe('financial reports', () => {
           customerId: customer.id,
           customerName: customer.name,
           shipments: 3,
+          incompleteShipments: 3,
           revenueUsd: '2300',
           costUsd: '400',
           marginUsd: '1900',
@@ -660,11 +688,135 @@ describe('financial reports', () => {
         ['SDPZU', 'SDKRT', 2, '900'],
       ]);
       expect(r.totals).toEqual({
+        shipments: 3,
+        incompleteShipments: 3,
         revenueUsd: '2300',
         costUsd: '400',
         marginUsd: '1900',
         marginPercent: '82.61',
       });
+    });
+
+    it('per sales outlet, origin country and category, each shipment whole in one column', async () => {
+      const r = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?${yearQuery()}&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      expect(r.outlets.map((o) => [o.salesOutlet?.id ?? null, o.shipments, o.marginUsd])).toEqual([
+        [outlet.id, 1, '750'],
+        [null, 2, '1150'],
+      ]);
+      expect(r.countries.map((c) => [c.originCountry.code, c.shipments, c.marginUsd])).toEqual([
+        ['SD', 3, '1900'],
+      ]);
+      expect(
+        r.categories.map((c) => [
+          c.category.kind === 'SINGLE' ? c.category.code : c.category.kind,
+          c.shipments,
+          c.revenueUsd,
+          c.costUsd,
+          c.unit,
+          c.units,
+          c.marginPerUnitUsd,
+        ]),
+      ).toEqual([
+        // S1 + S2: 1300 - 400 over two pieces.
+        ['CARTON', 2, '1300', '400', 'PER_PIECE', '2', '450'],
+        ['MIXED', 1, '1000', '0', null, null, null],
+      ]);
+      // The columns add up to the report's totals exactly.
+      const margins = r.categories.reduce((a, c) => a.plus(c.marginUsd), new Prisma.Decimal(0));
+      expect(margins.toFixed()).toBe(r.totals.marginUsd);
+
+      // Not final: S1 and S2 wait on the carrier bill (open accrual); S3 has no cost; none closed.
+      const reasons = Object.fromEntries(
+        r.shipments.map((s) => [s.shipmentId, s.incompleteReasons]),
+      );
+      expect(reasons).toEqual({
+        [shipments.s1]: ['OPEN_ACCRUAL', 'NOT_CLOSED'],
+        [shipments.s2]: ['OPEN_ACCRUAL', 'NOT_CLOSED'],
+        [shipments.s3]: ['NO_COST', 'NOT_CLOSED'],
+      });
+      expect(r.outlets.map((o) => o.incompleteShipments)).toEqual([1, 2]);
+    });
+
+    it('cycle time per route, from first receipt at origin to proof of delivery', async () => {
+      const before = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?${yearQuery()}&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      expect(before.routes.every((x) => x.cycle.measured === 0)).toBe(true);
+      // Fixture: S1 received at origin on 1 January, delivered with a POD on 11 January 12:00.
+      const s1 = await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipments.s1 } });
+      const user = await t.prisma.user.findFirstOrThrow({ where: { id: s1.createdById } });
+      await t.prisma.shipmentEvent.createMany({
+        data: [
+          {
+            shipmentId: s1.id,
+            kind: 'STATUS',
+            status: 'RECEIVED_ORIGIN_WAREHOUSE',
+            occurredAt: new Date(`${d('01-01')}T00:00:00Z`),
+            branchId: s1.branchId,
+            userId: user.id,
+            source: 'USER',
+          },
+          {
+            shipmentId: s1.id,
+            kind: 'STATUS',
+            status: 'RECEIVED_ORIGIN_WAREHOUSE',
+            occurredAt: new Date(`${d('01-03')}T00:00:00Z`),
+            branchId: s1.branchId,
+            userId: user.id,
+            source: 'USER',
+          },
+        ],
+      });
+      const signature = await t.prisma.document.create({
+        data: {
+          branchId: s1.branchId,
+          shipmentId: s1.id,
+          typeCode: 'POD',
+          fileName: 'signature.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          sha256: '0'.repeat(64),
+          uploadedById: user.id,
+        },
+      });
+      await t.prisma.proofOfDelivery.create({
+        data: {
+          number: `NOL-POD-${year}-${randomInt(1e6)}`,
+          branchId: s1.branchId,
+          shipmentId: s1.id,
+          recipientName: 'Receiver',
+          recipientCapacity: 'Owner',
+          deliveredAt: new Date(`${d('01-11')}T12:00:00Z`),
+          statusApplied: 'DELIVERED',
+          signatureDocumentId: signature.id,
+          createdById: user.id,
+        },
+      });
+      // Not delivered yet: a POD alone does not measure the cycle.
+      const pending = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?${yearQuery()}&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      expect(pending.shipments.find((s) => s.shipmentId === s1.id)?.cycleDays).toBeNull();
+      await t.prisma.shipment.update({ where: { id: s1.id }, data: { status: 'DELIVERED' } });
+      const after = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?${yearQuery()}&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      // From the first receipt (1 January), not the second.
+      expect(after.shipments.find((s) => s.shipmentId === s1.id)?.cycleDays).toBe('10.5');
+      const khartoum = after.routes.find((x) => x.destination.code === 'SDKRT');
+      expect(khartoum?.cycle).toEqual({
+        measured: 1,
+        averageDays: '10.5',
+        minDays: '10.5',
+        maxDays: '10.5',
+      });
+      expect(after.routes.find((x) => x.destination.code === 'SDATB')?.cycle.measured).toBe(0);
     });
 
     it('is empty for another branch; needs its own permission', async () => {

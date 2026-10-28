@@ -637,6 +637,36 @@ export class LedgerReportsService {
   }
 
   /**
+   * Of `tripIds`, the trips with a transport accrual still open as of a date (the same lines as
+   * `openTripAccruals`, any balance left). A flag for the profitability report's "incomplete"
+   * mark on shipments the caller already scoped: no amount leaves here, so it reads the trips'
+   * lines whatever their branch (a trip of another branch carrying a visible shipment counts).
+   */
+  async tripsWithOpenAccrual(tripIds: readonly string[], asOf: string): Promise<Set<string>> {
+    if (tripIds.length === 0) return new Set();
+    const rows = await this.prisma.$queryRaw<{ tripId: string }[]>`
+      SELECT t."trip_id" AS "tripId"
+      FROM (
+        SELECT coalesce(l."trip_id",
+                        CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE o."source_id" END) AS "trip_id",
+               l."currency", l."credit", l."debit"
+        FROM "journal_lines" l
+        JOIN "journal_entries" e ON e."id" = l."entry_id"
+        LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+        JOIN "accounts" a ON a."id" = l."account_id"
+        WHERE e."status" = 'POSTED'
+          AND e."entry_date" <= ${toDbDate(asOf)}
+          AND (e."source" = 'TRIP_ACCRUAL' OR o."source" = 'TRIP_ACCRUAL' OR l."trip_id" IS NOT NULL)
+          AND l."shipment_id" IS NULL
+          AND a."type" = 'LIABILITY'
+      ) t
+      WHERE t."trip_id" = ANY(${[...tripIds]}::uuid[])
+      GROUP BY t."trip_id", t."currency"
+      HAVING sum(t."credit" - t."debit") <> 0`;
+    return new Set(rows.map((r) => r.tripId));
+  }
+
+  /**
    * Unapplied customer advances as of a date, per customer, credit - debit in USD: the liability
    * lines of receipt entries (the part of a receipt not allocated to an invoice), of the entries
    * applying that advance to a later invoice, and of their reversals, wherever they were posted,

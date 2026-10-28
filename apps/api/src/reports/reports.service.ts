@@ -12,6 +12,7 @@ import {
   type Locale,
   type OpenAccrualsDto,
   type ReportAccountOptionDto,
+  type ProfitCategoryDto,
   type ShipmentProfitabilityDto,
   type TrialBalanceDto,
 } from '@nolon/shared';
@@ -29,7 +30,24 @@ import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripsService } from '../transport/trips.service.js';
 import { withAdvances } from './ar-aging.js';
 import { buildWorkbook } from './excel.js';
-import { addAmounts, byCustomer, byRoute, NO_AMOUNTS, profitFigures } from './profitability.js';
+import {
+  byCategory,
+  byCustomer,
+  byOriginCountry,
+  byOutlet,
+  byRoute,
+  cycleTime,
+  daysBetween,
+  incompleteReasons,
+  marginPerUnit,
+  NO_AMOUNTS,
+  profitFigures,
+  type ShipmentAmounts,
+  shipmentCategory,
+  showDays,
+  totalOf,
+  unitsIn,
+} from './profitability.js';
 import {
   type ExportContext,
   apAgingSheets,
@@ -141,8 +159,11 @@ export class ReportsService {
   }
 
   /**
-   * Revenue, cost and margin per shipment from the journal lines that carry it, then per customer
-   * and per route. Only shipments the user may see count (and, when asked, of one customer).
+   * Revenue, cost and margin per shipment from the journal lines that carry it, then per customer,
+   * route, sales outlet, origin country and price category (business model plan 6.3), each
+   * shipment whole in one group. A shipment whose figures are not final yet (plan 6.2) is marked
+   * and every group counts its marked shipments. Routes carry the cycle time of their delivered
+   * shipments. Only shipments the user may see count (and, when asked, of one customer).
    */
   async shipmentProfitability(
     user: AuthUser,
@@ -155,9 +176,50 @@ export class ReportsService {
       results.map((r) => r.shipmentId),
       q.customerId,
     );
-    const shipments = summaries.map((s) => ({ ...s, ...(amounts.get(s.id) ?? NO_AMOUNTS) }));
-    const totals = shipments.reduce(addAmounts, NO_AMOUNTS);
+    const details = new Map(
+      (
+        await this.shipments.profitDetails(
+          user,
+          summaries.map((s) => s.id),
+        )
+      ).map((d) => [d.id, d]),
+    );
+    const open = await this.ledger.tripsWithOpenAccrual(
+      [...new Set([...details.values()].flatMap((d) => d.tripIds))],
+      q.to,
+    );
+    const shipments = summaries.flatMap((s) => {
+      const d = details.get(s.id);
+      if (!d) return [];
+      const money = amounts.get(s.id) ?? NO_AMOUNTS;
+      const category = shipmentCategory(d.lines);
+      const unit = category.kind === 'SINGLE' ? (d.lines[0]?.category?.unit ?? null) : null;
+      const row: ShipmentAmounts & { id: string; number: string; branchCode: string } = {
+        ...s,
+        ...money,
+        salesOutlet: d.salesOutlet,
+        originCountry: d.originCountry,
+        category,
+        unit,
+        units: unit ? unitsIn(unit, d.lines) : null,
+        incompleteReasons: incompleteReasons({
+          amounts: money,
+          openAccrual: d.tripIds.some((id) => open.has(id)),
+          status: d.status,
+        }),
+        cycleDays:
+          d.receivedAt && d.deliveredAt && d.deliveredAt >= d.receivedAt
+            ? daysBetween(d.receivedAt, d.deliveredAt)
+            : null,
+      };
+      return [row];
+    });
     const name = (a: string, b: string) => a.localeCompare(b);
+    const group = (g: { shipments: number; incompleteShipments: number }) => ({
+      shipments: g.shipments,
+      incompleteShipments: g.incompleteShipments,
+    });
+    const total = totalOf(shipments);
     return {
       from: q.from,
       to: q.to,
@@ -171,17 +233,65 @@ export class ReportsService {
         customerName: s.customerName,
         origin: s.origin,
         destination: s.destination,
+        salesOutlet: s.salesOutlet,
+        originCountry: s.originCountry,
+        category: s.category,
+        incompleteReasons: [...s.incompleteReasons],
+        cycleDays: showDays(s.cycleDays),
         ...profitFigures(s),
       })),
       customers: byCustomer(shipments)
-        .map((g) => ({ ...g.key, shipments: g.shipments, ...profitFigures(g) }))
+        .map((g) => ({ ...g.key, ...group(g), ...profitFigures(g) }))
         .sort((a, b) => name(a.customerName, b.customerName)),
       routes: byRoute(shipments)
-        .map((g) => ({ ...g.key, shipments: g.shipments, ...profitFigures(g) }))
+        .map((g) => ({
+          ...g.key,
+          ...group(g),
+          ...profitFigures(g),
+          cycle: cycleTime(
+            shipments
+              .filter(
+                (s) => s.origin.id === g.key.origin.id && s.destination.id === g.key.destination.id,
+              )
+              .map((s) => s.cycleDays),
+          ),
+        }))
         .sort((a, b) =>
           name(`${a.origin.code}>${a.destination.code}`, `${b.origin.code}>${b.destination.code}`),
         ),
-      totals: profitFigures(totals),
+      outlets: byOutlet(shipments)
+        .map((g) => ({ ...g.key, ...group(g), ...profitFigures(g) }))
+        // Named outlets by name, then the shipments without one.
+        .sort((a, b) =>
+          a.salesOutlet && b.salesOutlet
+            ? name(a.salesOutlet.name, b.salesOutlet.name)
+            : a.salesOutlet
+              ? -1
+              : b.salesOutlet
+                ? 1
+                : 0,
+        ),
+      countries: byOriginCountry(shipments)
+        .map((g) => ({ ...g.key, ...group(g), ...profitFigures(g) }))
+        .sort((a, b) => name(a.originCountry.code, b.originCountry.code)),
+      categories: byCategory(shipments)
+        .map((g) => ({
+          category: g.key.category,
+          unit: g.key.unit,
+          units: g.units?.toFixed() ?? null,
+          marginPerUnitUsd: marginPerUnit(g, g.units),
+          ...group(g),
+          ...profitFigures(g),
+        }))
+        .sort(
+          (a, b) =>
+            categoryOrder(a.category) - categoryOrder(b.category) ||
+            name(
+              a.category.kind === 'SINGLE' ? a.category.code : '',
+              b.category.kind === 'SINGLE' ? b.category.code : '',
+            ),
+        ),
+      totals: { ...group(total), ...profitFigures(total) },
     };
   }
 
@@ -326,4 +436,9 @@ export class ReportsService {
 function fileDates(request: ReportRequest): string {
   const q = request.query;
   return 'asOf' in q ? q.asOf : `${q.from}_${q.to}`;
+}
+
+/** Single categories first (by code), then mixed, then unspecified. */
+function categoryOrder(category: ProfitCategoryDto): number {
+  return category.kind === 'SINGLE' ? 0 : category.kind === 'MIXED' ? 1 : 2;
 }

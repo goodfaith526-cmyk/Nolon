@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
-import { type ShipmentAmounts, byCustomer, byRoute, profitFigures } from './profitability.js';
+import {
+  type ShipmentAmounts,
+  byCategory,
+  byCustomer,
+  byOriginCountry,
+  byOutlet,
+  byRoute,
+  cycleTime,
+  daysBetween,
+  incompleteReasons,
+  marginPerUnit,
+  profitFigures,
+  shipmentCategory,
+  totalOf,
+  unitsIn,
+} from './profitability.js';
 
 const place = (id: string) => ({ id, code: id.toUpperCase(), nameEn: id, nameAr: id });
 
@@ -10,6 +25,7 @@ function shipment(
   to: string,
   revenue: string,
   cost: string,
+  extra: Partial<ShipmentAmounts> = {},
 ): ShipmentAmounts {
   return {
     customerId: customer,
@@ -18,8 +34,19 @@ function shipment(
     destination: place(to),
     revenueUsd: dec(revenue),
     costUsd: dec(cost),
+    salesOutlet: null,
+    originCountry: { code: 'SA', nameEn: 'Saudi Arabia', nameAr: 'السعودية' },
+    category: { kind: 'UNSPECIFIED' },
+    unit: null,
+    units: null,
+    incompleteReasons: [],
+    cycleDays: null,
+    ...extra,
   };
 }
+
+const carton = { code: 'CARTON', nameEn: 'Carton', nameAr: 'كرتون' };
+const barrel = { code: 'BARREL', nameEn: 'Barrel', nameAr: 'برميل' };
 
 describe('shipment profitability', () => {
   it('margin is revenue - cost; the percentage is of revenue, to 2 places', () => {
@@ -73,5 +100,129 @@ describe('shipment profitability', () => {
       ['PZU', 'KRT', 2, '1500'],
       ['JED', 'PZU', 1, '0.1'],
     ]);
+  });
+
+  it('puts a shipment in one category column, never split', () => {
+    expect(shipmentCategory([{ category: carton }, { category: carton }])).toEqual({
+      kind: 'SINGLE',
+      ...carton,
+    });
+    expect(shipmentCategory([{ category: carton }, { category: barrel }])).toEqual({
+      kind: 'MIXED',
+    });
+    // A line without a category beats a mix: the shipment is unspecified.
+    expect(
+      shipmentCategory([{ category: carton }, { category: barrel }, { category: null }]),
+    ).toEqual({ kind: 'UNSPECIFIED' });
+    expect(shipmentCategory([])).toEqual({ kind: 'UNSPECIFIED' });
+  });
+
+  it('adds the category columns up to the totals exactly, with a margin per unit for one unit', () => {
+    const single = { kind: 'SINGLE' as const, ...carton };
+    const list = [
+      shipment('a', 'jed', 'pzu', '1000', '400', {
+        category: single,
+        unit: 'PER_PIECE',
+        units: dec(10),
+      }),
+      shipment('b', 'jed', 'pzu', '500', '200', {
+        category: single,
+        unit: 'PER_PIECE',
+        units: dec(5),
+      }),
+      shipment('c', 'jed', 'pzu', '300', '0', { category: { kind: 'MIXED' } }),
+      // A reversal leaves a negative revenue on a shipment: it still counts in its column.
+      shipment('d', 'jed', 'pzu', '-50', '10', { incompleteReasons: ['NOT_CLOSED'] }),
+    ];
+    const columns = byCategory(list);
+    const total = totalOf(list);
+    const added = columns.reduce((a, c) => a.plus(c.revenueUsd.minus(c.costUsd)), dec(0));
+    expect(added.toFixed()).toBe(total.revenueUsd.minus(total.costUsd).toFixed());
+    expect(columns.reduce((a, c) => a + c.shipments, 0)).toBe(4);
+    const cartons = columns.find((c) => c.key.category.kind === 'SINGLE');
+    expect(cartons?.units?.toFixed()).toBe('15');
+    // (1500 - 600) / 15 = 60.
+    expect(marginPerUnit(cartons ?? total, cartons?.units ?? null)).toBe('60');
+    const mixed = columns.find((c) => c.key.category.kind === 'MIXED');
+    expect(mixed?.units).toBeNull();
+    expect(total.incompleteShipments).toBe(1);
+
+    // One carton shipment without its units: no margin per unit for the column.
+    const partial = byCategory([
+      ...list,
+      shipment('e', 'jed', 'pzu', '1', '0', { category: single, unit: 'PER_PIECE', units: null }),
+    ]);
+    expect(partial.find((c) => c.key.category.kind === 'SINGLE')?.units).toBeNull();
+  });
+
+  it('measures units in the category unit, null when a line lacks the measure', () => {
+    const line = (
+      quantity: number,
+      volume: string | null = null,
+      weight: string | null = null,
+    ) => ({
+      quantity,
+      volumeCbm: volume === null ? null : dec(volume),
+      weightKg: weight === null ? null : dec(weight),
+    });
+    expect(unitsIn('PER_PIECE', [line(3), line(4)])?.toFixed()).toBe('7');
+    expect(unitsIn('PER_CBM', [line(3, '1.5'), line(4, '0.25')])?.toFixed()).toBe('1.75');
+    expect(unitsIn('PER_CBM', [line(3, '1.5'), line(4)])).toBeNull();
+    expect(unitsIn('PER_KG', [line(1, null, '20')])?.toFixed()).toBe('20');
+    expect(unitsIn('PER_SHIPMENT', [line(3), line(4)])?.toFixed()).toBe('1');
+  });
+
+  it('rolls up by outlet (none together) and by origin country', () => {
+    const outlet = { id: 'o1', name: 'Outlet 1' };
+    const list = [
+      shipment('a', 'jed', 'pzu', '100', '50', { salesOutlet: outlet }),
+      shipment('b', 'jed', 'pzu', '100', '50', { salesOutlet: outlet }),
+      shipment('c', 'dxb', 'pzu', '100', '50', {
+        originCountry: { code: 'AE', nameEn: 'UAE', nameAr: 'الإمارات' },
+      }),
+    ];
+    expect(byOutlet(list).map((g) => [g.key.salesOutlet?.id ?? null, g.shipments])).toEqual([
+      ['o1', 2],
+      [null, 1],
+    ]);
+    expect(byOriginCountry(list).map((g) => [g.key.originCountry.code, g.shipments])).toEqual([
+      ['SA', 2],
+      ['AE', 1],
+    ]);
+  });
+
+  it('marks figures that are not final, with each reason', () => {
+    const money = (revenue: string, cost: string) => ({
+      revenueUsd: dec(revenue),
+      costUsd: dec(cost),
+    });
+    expect(
+      incompleteReasons({ amounts: money('100', '0'), openAccrual: true, status: 'DELIVERED' }),
+    ).toEqual(['NO_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED']);
+    expect(
+      incompleteReasons({ amounts: money('100', '40'), openAccrual: false, status: 'CLOSED' }),
+    ).toEqual([]);
+    // No revenue and no cost is not "revenue without cost".
+    expect(
+      incompleteReasons({ amounts: money('0', '0'), openAccrual: false, status: 'CANCELLED' }),
+    ).toEqual([]);
+  });
+
+  it('gives the cycle time over the measured shipments only', () => {
+    const day = (d: string) => new Date(`2026-10-${d}T00:00:00Z`);
+    const a = daysBetween(day('01'), day('11'));
+    const b = daysBetween(day('01'), new Date('2026-10-04T12:00:00Z'));
+    expect(cycleTime([a, b, null])).toEqual({
+      measured: 2,
+      averageDays: '6.8',
+      minDays: '3.5',
+      maxDays: '10',
+    });
+    expect(cycleTime([null])).toEqual({
+      measured: 0,
+      averageDays: null,
+      minDays: null,
+      maxDays: null,
+    });
   });
 });

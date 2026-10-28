@@ -16,6 +16,7 @@ import type {
   LoadType,
   Page,
   Permission,
+  RateUnit,
   ShipmentActionsDto,
   ShipmentContainerInput,
   ShipmentCloseCheckDto,
@@ -1065,6 +1066,106 @@ export class ShipmentsService {
       branchCode: branch.code,
       customerName: customer.name,
     }));
+  }
+
+  /**
+   * For the profitability report (business model plan 6.2-6.3): what the shipments among `ids` the
+   * user may see roll up by beyond their route: sales outlet, origin country, their booking's line
+   * categories with each line's measures, status, trips, and the instants of the cycle time (first
+   * receipt at the origin warehouse, latest proof of delivery once delivered).
+   */
+  async profitDetails(
+    user: AuthUser,
+    ids: readonly string[],
+  ): Promise<
+    {
+      id: string;
+      status: ShipmentStatus;
+      salesOutlet: { id: string; name: string } | null;
+      originCountry: { code: string; nameEn: string; nameAr: string };
+      lines: {
+        category: { code: string; nameEn: string; nameAr: string; unit: RateUnit } | null;
+        quantity: number;
+        volumeCbm: Prisma.Decimal | null;
+        weightKg: Prisma.Decimal | null;
+      }[];
+      tripIds: string[];
+      receivedAt: Date | null;
+      deliveredAt: Date | null;
+    }[]
+  > {
+    if (ids.length === 0) return [];
+    const shipments = await this.prisma.shipment.findMany({
+      where: { id: { in: [...ids] }, ...this.scope(user) },
+      select: {
+        id: true,
+        status: true,
+        salesOutlet: { select: { id: true, name: true } },
+        origin: { select: { countryCode: true } },
+        booking: {
+          select: {
+            items: {
+              select: {
+                quantity: true,
+                volumeCbm: true,
+                weightKg: true,
+                priceCategory: {
+                  select: { code: true, nameEn: true, nameAr: true, defaultUnit: true },
+                },
+              },
+              orderBy: { lineNo: 'asc' },
+            },
+          },
+        },
+        tripLinks: { select: { tripId: true } },
+        events: {
+          where: { status: 'RECEIVED_ORIGIN_WAREHOUSE', kind: 'STATUS' },
+          select: { occurredAt: true },
+          orderBy: { occurredAt: 'asc' },
+          take: 1,
+        },
+        pods: { select: { deliveredAt: true }, orderBy: { deliveredAt: 'desc' }, take: 1 },
+      },
+    });
+    const codes = [...new Set(shipments.map((s) => s.origin.countryCode))];
+    const countries = new Map(
+      (
+        await this.prisma.location.findMany({
+          where: { kind: 'COUNTRY', countryCode: { in: codes } },
+          select: { countryCode: true, nameEn: true, nameAr: true },
+        })
+      ).map((c) => [c.countryCode, c]),
+    );
+    const delivered = new Set<ShipmentStatus>(['DELIVERED', 'CLOSED']);
+    return shipments.map((s) => {
+      const country = countries.get(s.origin.countryCode);
+      return {
+        id: s.id,
+        status: s.status,
+        salesOutlet: s.salesOutlet,
+        originCountry: {
+          code: s.origin.countryCode,
+          nameEn: country?.nameEn ?? s.origin.countryCode,
+          nameAr: country?.nameAr ?? s.origin.countryCode,
+        },
+        lines: s.booking.items.map((i) => ({
+          category: i.priceCategory
+            ? {
+                code: i.priceCategory.code,
+                nameEn: i.priceCategory.nameEn,
+                nameAr: i.priceCategory.nameAr,
+                unit: i.priceCategory.defaultUnit,
+              }
+            : null,
+          quantity: i.quantity,
+          volumeCbm: i.volumeCbm,
+          weightKg: i.weightKg,
+        })),
+        tripIds: s.tripLinks.map((t) => t.tripId),
+        receivedAt: s.events[0]?.occurredAt ?? null,
+        deliveredAt: delivered.has(s.status) ? (s.pods[0]?.deliveredAt ?? null) : null,
+      };
+    });
   }
 
   /**
