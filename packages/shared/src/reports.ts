@@ -1,6 +1,7 @@
 import type { AccountType, JournalSource, ReceiptStatus } from './accounting.js';
 import type { BookingService, RateUnit } from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
+import type { ExpectedMarginDto } from './rate-costs.js';
 
 /**
  * Financial reports (annex D section 4). Every figure comes from POSTED journal entries (or from
@@ -346,6 +347,44 @@ export interface ShipmentProfitabilityDto {
   /** Every shipment in exactly one column: the columns add up to `totals` exactly. */
   categories: CategoryProfitDto[];
   totals: ProfitGroupFiguresDto;
+}
+
+/** A charge of the shipment's pricing that gives no expected figure, and why (plan 6.2). */
+export interface ExpectedGapDto {
+  chargeTypeCode: string;
+  /** NO_CARD: priced by hand, not from a rate card; QUANTITY_UNKNOWN: the cargo does not give it. */
+  reason: 'NO_CARD' | 'QUANTITY_UNKNOWN';
+}
+
+/**
+ * The shipment's expected margin from the rate cards it is priced from (plan 6.2): its
+ * quotation's cards while the quotation still prices it, else the cards its invoice suggestion
+ * fills. A planning figure: never moved into the actual one.
+ */
+export interface ShipmentExpectedDto {
+  source: 'QUOTATION' | 'RATE_CARDS';
+  /** Each card at the quantity the shipment is priced at, with its own gaps. */
+  cards: (ExpectedMarginDto & { chargeTypeCode: string })[];
+  gaps: ExpectedGapDto[];
+  /** The cards' currency when they share one; null otherwise. */
+  currency: CurrencyCode | null;
+  /** The sum of the cards' margins; null while any card or charge is incomplete, or currencies differ. */
+  expectedMargin: DecimalString | null;
+}
+
+/**
+ * GET /reports/shipment-profitability/shipments/:id (plan 6.2): the shipment's finance tab, two
+ * separate columns. Only a shipment of the user's branches (its owning branch).
+ */
+export interface ShipmentProfitViewDto {
+  shipmentId: string;
+  /** From the books: every posted line to date; null while nothing is posted on it. */
+  actual: ShipmentProfitDto | null;
+  /**
+   * From the rate cards; null without rate_costs:view in the shipment's branch (the costs are
+   * internal), or for a cancelled shipment.
+   */
+  expected: ShipmentExpectedDto | null;
 }
 
 // ---- 6. Invoices and receipts -----------------------------------------------------------------

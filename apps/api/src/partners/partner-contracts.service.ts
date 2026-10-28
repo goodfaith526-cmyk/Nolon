@@ -151,16 +151,23 @@ export class PartnerContractsService {
    * The commission a sales outlet earns on a card of `priceCategoryCode` on `date`, for its
    * expected margin: its approved contract of that category valid on the day, else its approved
    * contract for every category. The outlet must be an active sales outlet of the user's branches
-   * (400 OUTLET_NOT_USABLE).
+   * (400 OUTLET_NOT_USABLE); `recorded`: the outlet a shipment was sold through, which counts even
+   * if it was deactivated since.
    */
   async commissionFor(
     user: AuthUser,
     outletId: string,
     priceCategoryCode: string | null,
     date: string,
+    recorded = false,
   ): Promise<MarginCommission> {
     const outlet = await this.prisma.partner.findFirst({
-      where: { id: outletId, kind: 'SALES_OUTLET', isActive: true, ...branchScope(user) },
+      where: {
+        id: outletId,
+        kind: 'SALES_OUTLET',
+        ...(recorded ? {} : { isActive: true }),
+        ...branchScope(user),
+      },
     });
     if (!outlet) {
       throw codedRefusal(HttpStatus.BAD_REQUEST, 'OUTLET_NOT_USABLE', 'Not a usable sales outlet');

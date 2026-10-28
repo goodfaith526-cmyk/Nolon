@@ -20,6 +20,7 @@ import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/mas
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { ShipmentCustoms } from '../customs/ShipmentCustoms';
 import { ShipmentInvoices } from '../finance/ShipmentInvoices';
+import { ShipmentProfit } from '../finance/ShipmentProfit';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Tabs } from '../Tabs';
@@ -689,6 +690,15 @@ export function ShipmentDetail({ id }: { id: string }) {
                   key: 'invoices',
                   label: t('tabInvoices'),
                   content: <ShipmentInvoices shipmentId={s.id} />,
+                },
+              ]
+            : []),
+          ...(can(me, 'shipment_profitability:view')
+            ? [
+                {
+                  key: 'profit',
+                  label: t('tabProfit'),
+                  content: <ShipmentProfit shipmentId={s.id} />,
                 },
               ]
             : []),

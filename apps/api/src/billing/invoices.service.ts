@@ -760,6 +760,43 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   }
 
   /**
+   * The rate cards the shipment is priced from, for its expected margin (plan 6.2): its
+   * quotation's lines while the quotation still prices it (agreedPrices; a line typed by hand
+   * names no card), else the rate card lines its invoice suggestion fills (deriveForShipment, in
+   * its default currency): a tariff it only offers is not proof the charge applies. Each with the
+   * quantity it is priced at (null when the cargo does not give it exactly).
+   */
+  async pricedFrom(
+    user: AuthUser,
+    shipmentId: string,
+  ): Promise<{
+    source: 'QUOTATION' | 'RATE_CARDS';
+    lines: { chargeTypeCode: string; rateCardId: string | null; quantity: Decimal | null }[];
+  }> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    const { quotation } = await this.agreedPrices(shipment);
+    if (quotation !== null) {
+      return {
+        source: 'QUOTATION',
+        lines: quotation.lines.map((l) => ({
+          chargeTypeCode: l.chargeTypeCode,
+          rateCardId: l.rateCardId,
+          quantity: l.quantity,
+        })),
+      };
+    }
+    const derived = await this.deriveForShipment(user, shipmentId, {});
+    return {
+      source: 'RATE_CARDS',
+      lines: derived.lines.flatMap((l) =>
+        l.use === 'FILL'
+          ? [{ chargeTypeCode: l.chargeTypeCode, rateCardId: l.rateCardId, quantity: l.quantity }]
+          : [],
+      ),
+    };
+  }
+
+  /**
    * The checks of a draft invoice for a shipment with the given values (an assistant's invoice
    * draft), as update() checks them, without writing; insertInTx then records it. The fx rate is
    * the rate table's for the invoice date. A line without a unit price takes the system price

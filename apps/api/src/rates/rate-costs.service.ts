@@ -121,12 +121,57 @@ export class RateCostsService {
     query: { outletId?: string; quantity?: string },
   ): Promise<ExpectedMarginDto> {
     const rate = await this.findScoped(user, rateId);
-    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: rate.branchId } });
-    const asOf = todayIn(branch.timezone);
-    const costs = await this.prisma.rateCardCost.findMany({ where: { rateCardId: rateId } });
+    const asOf = await this.todayOf(rate);
     const commission: MarginCommission = query.outletId
       ? await this.contracts.commissionFor(user, query.outletId, rate.priceCategoryCode, asOf)
       : { kind: 'NO_OUTLET' };
+    return this.marginOf(rate, query.quantity ? dec(query.quantity) : null, commission, asOf);
+  }
+
+  /**
+   * The expected margin of each rate card a shipment the caller has checked is priced from (plan
+   * 6.2), at the quantity it is priced at: a card of any branch, as any branch's card may price
+   * it. The commission is the shipment's outlet's (`outletId`, even if deactivated since), or none
+   * for a shipment sold without an outlet. One margin per line, in order.
+   */
+  async shipmentMargins(
+    user: AuthUser,
+    lines: readonly { rateCardId: string; quantity: Decimal | null }[],
+    outletId: string | null,
+  ): Promise<ExpectedMarginDto[]> {
+    const cards = new Map(
+      (
+        await this.prisma.rateCard.findMany({
+          where: { id: { in: [...new Set(lines.map((l) => l.rateCardId))] } },
+        })
+      ).map((r) => [r.id, r]),
+    );
+    const margins: ExpectedMarginDto[] = [];
+    for (const line of lines) {
+      // The lines name cards that priced the shipment, so each exists (cards are never deleted).
+      const rate = cards.get(line.rateCardId);
+      if (!rate) throw new NotFoundException('Rate not found');
+      const asOf = await this.todayOf(rate);
+      const commission: MarginCommission = outletId
+        ? await this.contracts.commissionFor(user, outletId, rate.priceCategoryCode, asOf, true)
+        : { kind: 'DIRECT' };
+      margins.push(await this.marginOf(rate, line.quantity, commission, asOf));
+    }
+    return margins;
+  }
+
+  private async todayOf(rate: RateCard): Promise<string> {
+    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: rate.branchId } });
+    return todayIn(branch.timezone);
+  }
+
+  private async marginOf(
+    rate: RateCard,
+    quantity: Decimal | null,
+    commission: MarginCommission,
+    asOf: string,
+  ): Promise<ExpectedMarginDto> {
+    const costs = await this.prisma.rateCardCost.findMany({ where: { rateCardId: rate.id } });
     const currencies = new Set<string>([rate.currency]);
     for (const c of costs) if (c.currency) currencies.add(c.currency);
     if (commission.kind === 'CONTRACT' && commission.contract.currency) {
@@ -138,7 +183,6 @@ export class RateCostsService {
       rates.set(currency, found ? dec(found.rate) : null);
     }
     const { decimalPlaces } = await this.currencies.requireRecorded(rate.currency);
-    const quantity = query.quantity ? dec(query.quantity) : null;
     const result = computeExpectedMargin({
       card: {
         unit: rate.unit,

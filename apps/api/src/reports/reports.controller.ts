@@ -1,4 +1,12 @@
-import { Controller, Get, Query, Res, type StreamableFile } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+  Res,
+  type StreamableFile,
+} from '@nestjs/common';
 import {
   LEDGER_MAX_ACCOUNTS,
   LOCALES,
@@ -12,6 +20,7 @@ import {
   type OpenAccrualsDto,
   type ReportAccountOptionDto,
   type ShipmentProfitabilityDto,
+  type ShipmentProfitViewDto,
 } from '@nolon/shared';
 import type { Response } from 'express';
 import { z } from 'zod';
@@ -201,6 +210,16 @@ export class ReportsController {
       report: 'shipment-profitability',
       query: parse(customerPeriod, withoutLocale(query)),
     });
+  }
+
+  /** One shipment's finance tab: actual from the books, expected from its rate cards (plan 6.2). */
+  @Get('shipment-profitability/shipments/:id')
+  @RequirePermission('shipment_profitability:view')
+  shipmentProfit(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ShipmentProfitViewDto> {
+    return this.reports.shipmentProfit(user, id);
   }
 
   @AgentReadable()

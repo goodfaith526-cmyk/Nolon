@@ -138,6 +138,13 @@ describe('computeExpectedMargin', () => {
     expect(r.margin).toBe('30.83');
   });
 
+  it('pays no commission on a shipment sold without an outlet (plan 6.2)', () => {
+    const r = margin({ commission: { kind: 'DIRECT' } });
+    expect(r.line('OUTLET_COMMISSION')).toMatchObject({ notApplicable: true, gap: null });
+    expect(r.margin).toBe('100');
+    expect(r.missing).toEqual([]);
+  });
+
   it('prices a reference quantity under the minimum at the minimum, commission included', () => {
     const r = margin({
       card: { unit: 'PER_PIECE', price: dec(100), minimumCharge: dec(500), currency: 'USD' },

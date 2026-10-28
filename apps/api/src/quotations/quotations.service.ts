@@ -152,6 +152,7 @@ export class QuotationsService {
     mode: ShippingMode;
     lines: {
       priceCategoryCode: string | null;
+      rateCardId: string | null;
       chargeTypeCode: string;
       description: string | null;
       quantity: Prisma.Decimal;
@@ -175,6 +176,7 @@ export class QuotationsService {
       mode: quotation.mode,
       lines: quotation.lines.map((l) => ({
         priceCategoryCode: l.priceCategoryCode,
+        rateCardId: l.rateCardId,
         chargeTypeCode: l.chargeTypeCode,
         description: l.description,
         quantity: l.quantity,
