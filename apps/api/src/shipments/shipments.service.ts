@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
@@ -28,6 +29,7 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
@@ -42,7 +44,7 @@ import {
 import { toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { PageQuery } from '../common/validation.js';
+import { codedRefusal, fieldRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -59,6 +61,9 @@ import {
   permissionForTransition,
   replayHistory,
   revertTarget,
+  revertUndoes,
+  earliestEntryTime,
+  usualPlace,
   visitedStatuses,
 } from './state-machine.js';
 
@@ -86,6 +91,39 @@ const sharedBranchesSelect = {
   orderBy: { branchId: 'asc' },
 } satisfies Prisma.Shipment$sharedBranchesArgs;
 
+/**
+ * The closed container a shipment is in (stuffed and sealed, not cancelled): closing is final, so
+ * its consolidation is not undone from the shipment page (docs/reviews/shipment-status-history).
+ */
+const closedContainerLinks = {
+  where: { consolidation: { status: { notIn: ['OPEN', 'CANCELLED'] } } },
+  select: { consolidation: { select: { number: true } } },
+  take: 1,
+} satisfies Prisma.Shipment$consolidationLinksArgs;
+
+/**
+ * The containers a shipment is or was in, for its page (not cancelled). The closed one (any status
+ * but OPEN, unpacked included) blocks undoing its consolidation exactly as the locked check
+ * (closedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
+ * the shipment goes on by itself).
+ */
+const containerLinks = {
+  where: { consolidation: { status: { not: 'CANCELLED' } } },
+  select: { consolidation: { select: { number: true, status: true } } },
+} satisfies Prisma.Shipment$consolidationLinksArgs;
+
+/**
+ * The statuses a container's moves give its shipments (consolidation-rules shipmentStatusFor):
+ * recorded by hand on the page of a shipment in a container, they come with a warning (owner
+ * choice Q3, docs/reviews/shipment-status-history-2026-10-27.md).
+ */
+const CONTAINER_MOVED: readonly ShipmentStatus[] = [
+  'CONSOLIDATED',
+  'LOADED',
+  'DEPARTED',
+  'ARRIVED_PORT',
+];
+
 const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
 
 const details = {
@@ -95,6 +133,7 @@ const details = {
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
+  consolidationLinks: containerLinks,
 } satisfies Prisma.ShipmentInclude;
 
 type ShipmentWithDetails = Prisma.ShipmentGetPayload<{ include: typeof details }>;
@@ -126,6 +165,7 @@ export class ShipmentsService {
     private readonly customers: CustomersService,
     private readonly masterData: MasterDataService,
     private readonly bookingLifecycle: BookingLifecycleService,
+    private readonly invoices: ShipmentInvoicesRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -561,7 +601,11 @@ export class ShipmentsService {
       throw new BadRequestException('The time of a status change cannot be in the future');
     }
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEvent(user, id, this.statusPlan(user, { ...input, occurredAt }));
+    await this.applyEvent(
+      user,
+      id,
+      this.statusPlan(user, { ...input, occurredAt, entered: input.occurredAt !== undefined }),
+    );
     return this.get(user, id);
   }
 
@@ -624,6 +668,12 @@ export class ShipmentsService {
     input: {
       status: ShipmentStatus;
       occurredAt: Date;
+      /**
+       * The time was entered by the user: it may not be before the shipment's creation or a step
+       * it still stands on. A move recorded at "now" (an approved draft, an empty time) is never
+       * refused for its time, even after a step entered a few minutes ahead (FUTURE_TOLERANCE_MS).
+       */
+      entered?: boolean;
       locationId?: string | null;
       note?: string | null;
     },
@@ -633,6 +683,17 @@ export class ShipmentsService {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
       requireAny(user, permissionForTransition(input.status));
+      if (input.entered) {
+        const earliest = earliestEntryTime(shipment.createdAt, path);
+        if (input.occurredAt < earliest) {
+          throw fieldRefusal(
+            'STATUS_TIME_TOO_EARLY',
+            'The time of a status change cannot be before the shipment was created or its last status',
+            ['occurredAt'],
+            { earliest: earliest.toISOString() },
+          );
+        }
+      }
       return {
         kind: 'STATUS',
         status: input.status,
@@ -692,12 +753,35 @@ export class ShipmentsService {
   }
 
   /** Annex B: going back a status needs a permission and a reason, and is recorded. */
-  async revert(user: AuthUser, id: string, reason: string): Promise<ShipmentDto> {
+  async revert(
+    user: AuthUser,
+    id: string,
+    input: { reason: string; undoEventId: string },
+  ): Promise<ShipmentDto> {
+    const { reason, undoEventId } = input;
     await this.findScoped(user, id);
     await this.applyEvent(user, id, (shipment, path) => {
       requireAny(user, ['shipments:approve']);
       const target = revertTarget(path);
       if (!target) throw new ConflictException('There is no earlier status to go back to');
+      // The step the user saw and confirmed: if anything changed since, nothing is undone.
+      if (path.at(-1)?.eventId !== undoEventId) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'REVERT_STALE',
+          'The shipment changed since the revert was shown; check it again',
+        );
+      }
+      // Container closes lock their shipments, so the link read with the lock is current.
+      const link = shipment.consolidationLinks[0];
+      if (path.at(-1)?.status === 'CONSOLIDATED' && link) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'REVERT_CLOSED_CONTAINER',
+          `The shipment is in closed container ${link.consolidation.number}; its consolidation is final`,
+          { container: link.consolidation.number },
+        );
+      }
       const remaining = path.slice(0, -1);
       return {
         kind: 'REVERT',
@@ -1057,8 +1141,27 @@ export class ShipmentsService {
         statusBeforeHold: null,
         holdReason: null,
       },
-      after: (tx) => this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason),
+      after: async (tx) => {
+        await this.requireNoLiveInvoices(tx, shipment);
+        await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
+      },
     };
+  }
+
+  /**
+   * Annex B: a shipment that an invoice still bills is not cancelled (owner decision Q2). The
+   * caller holds the shipment's row lock exclusively; invoices lock it (share) before they are
+   * created or approved, so none appears or gets approved between this check and the commit.
+   */
+  private async requireNoLiveInvoices(tx: Tx, shipment: LockedShipment): Promise<void> {
+    const { approved, drafts } = await this.invoices.get().liveInvoicesInTx(tx, shipment.id);
+    if (approved.length === 0 && drafts === 0) return;
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'SHIPMENT_HAS_LIVE_INVOICES',
+      `Shipment ${shipment.number} still has invoices: cancel its draft invoices (${drafts}) and fully credit its approved ones (${approved.join(', ') || 'none'}); a paid invoice blocks the cancellation`,
+      { shipment: shipment.number, approved: approved.join(', ') || '—', drafts: String(drafts) },
+    );
   }
 
   private async applyEvent(user: AuthUser, id: string, plan: Planner): Promise<void> {
@@ -1080,7 +1183,7 @@ export class ShipmentsService {
     await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`;
     const shipment = await tx.shipment.findUniqueOrThrow({
       where: { id },
-      include: { events: { orderBy: { id: 'asc' } } },
+      include: { events: { orderBy: { id: 'asc' } }, consolidationLinks: closedContainerLinks },
     });
     const path = replayHistory(shipment.events);
     const event = plan(shipment, path);
@@ -1317,6 +1420,7 @@ export class ShipmentsService {
         source: e.source,
         note: e.note,
         reason: e.reason,
+        createdAt: e.createdAt.toISOString(),
       })),
       sharedBranches: s.sharedBranches.map((b) => b.branch),
       shareableBranches: [],
@@ -1325,7 +1429,9 @@ export class ShipmentsService {
   }
 }
 
-type LockedShipment = Prisma.ShipmentGetPayload<{ include: { events: true } }>;
+type LockedShipment = Prisma.ShipmentGetPayload<{
+  include: { events: true; consolidationLinks: typeof closedContainerLinks };
+}>;
 
 interface PlannedEvent {
   kind: ShipmentEventKind;
@@ -1361,13 +1467,46 @@ function actionsFor(
 ): ShipmentActionsDto {
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
+  const undoes = revertUndoes(path);
+  const links = s.consolidationLinks.map((link) => link.consolidation);
+  const inContainer = links.find((c) => c.status !== 'DECONSOLIDATED') ?? null;
+  const closed = links.find((c) => c.status !== 'OPEN') ?? null;
+  const container = undoes?.status === 'CONSOLIDATED' && closed ? closed.number : null;
+  const canRevert = has('shipments:approve') && undoes !== null && container === null;
+  const transitions = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
+    permissionForTransition(next).some(has),
+  );
+  const suggestedLocations: Partial<Record<ShipmentStatus, string>> = {};
+  for (const next of transitions) {
+    const place = usualPlace(next, s.mode);
+    if (place) {
+      suggestedLocations[next] = place === 'ORIGIN' ? s.originLocationId : s.destinationLocationId;
+    }
+  }
+  const byContainer = transitions.filter((next) => CONTAINER_MOVED.includes(next));
   return {
-    transitions: nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
-      permissionForTransition(next).some(has),
-    ),
+    transitions,
+    containerMoves:
+      inContainer && byContainer.length > 0
+        ? { container: inContainer.number, statuses: byContainer }
+        : null,
     canHold: canUpdate && canHold(s.status),
     canResume: canUpdate && s.status === 'ON_HOLD',
-    revertTo: has('shipments:approve') ? revertTarget(path) : null,
+    revertTo: canRevert ? revertTarget(path) : null,
+    revertUndoes:
+      canRevert && undoes?.eventId
+        ? {
+            eventId: undoes.eventId,
+            status: undoes.status,
+            occurredAt: undoes.occurredAt.toISOString(),
+            userName:
+              s.events.find((e) => e.id.toString() === undoes.eventId)?.user?.fullName ?? null,
+            byMe: undoes.userId === user.id,
+          }
+        : null,
+    revertBlockedByContainer: has('shipments:approve') ? container : null,
+    earliestStatusTime: earliestEntryTime(s.createdAt, path).toISOString(),
+    suggestedLocations,
     canCancel:
       has('shipments:cancel') &&
       canCancelStatus(s.status) &&

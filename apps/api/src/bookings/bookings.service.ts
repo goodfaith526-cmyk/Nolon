@@ -548,11 +548,11 @@ export class BookingsService {
   }
 
   /**
-   * Annex B: cancellation is allowed before COMPLETED, provided the booking has no non-cancelled
-   * invoices. Invoices arrive with billing (group 4), which adds that check here. A confirmed
-   * booking has a shipment: it is cancelled through the shipment's rules (not once delivery has
-   * started, and only by a Branch Manager after loading), which cancels the booking in the same
-   * transaction.
+   * Annex B: cancellation is allowed before COMPLETED, provided no invoice still bills the
+   * booking. Invoices bill its shipment: a confirmed booking is cancelled through the shipment's
+   * rules (not once delivery has started, only by a Branch Manager after loading, and not while an
+   * invoice still bills it), which cancel the booking in the same transaction. A draft booking has
+   * no shipment, so no invoice.
    */
   async cancel(user: AuthUser, id: string, reason: string): Promise<BookingDto> {
     const existing = await this.findScoped(user, id);

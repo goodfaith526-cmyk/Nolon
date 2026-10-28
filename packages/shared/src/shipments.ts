@@ -146,6 +146,28 @@ export interface ShipmentEventDto {
   source: EventSource;
   note: string | null;
   reason: string | null;
+  /** When the event was recorded; `occurredAt` may be entered after the fact. */
+  createdAt: string;
+}
+
+/** The step a revert undoes (the shipment's current one), shown before the user confirms. */
+export interface RevertStepDto {
+  /** Sent back as `undoEventId`: the revert is refused (409) if another step came since. */
+  eventId: string;
+  status: ShipmentStatus;
+  occurredAt: string;
+  userName: string | null;
+  /** Recorded by the signed-in user. */
+  byMe: boolean;
+}
+
+/** The shortest reason (trimmed) for holding, reverting or cancelling a shipment. */
+export const SHIPMENT_REASON_MIN_LENGTH = 3;
+
+/** POST /shipments/:id/revert. */
+export interface RevertRequest {
+  reason: string;
+  undoEventId: string;
 }
 
 /**
@@ -158,6 +180,26 @@ export interface ShipmentActionsDto {
   canResume: boolean;
   /** The status a revert would return to, when the user may revert. */
   revertTo: ShipmentStatus | null;
+  /** With revertTo: the step the revert undoes. */
+  revertUndoes: RevertStepDto | null;
+  /**
+   * The closed container whose consolidation is the current step: closing is final, so there is
+   * no revert (revertTo is null).
+   */
+  revertBlockedByContainer: string | null;
+  /** The earliest time a status change entered by hand may carry (ISO). */
+  earliestStatusTime: string;
+  /**
+   * For each offered transition that usually happens at the shipment's origin or destination: that
+   * location, suggested in the status form (any location may still be chosen).
+   */
+  suggestedLocations: Partial<Record<ShipmentStatus, string>>;
+  /**
+   * The shipment travels in a container (not cancelled, not unpacked) whose own moves give it
+   * these offered statuses: recording one here by hand is allowed, with a warning to move the
+   * container instead.
+   */
+  containerMoves: { container: string; statuses: ShipmentStatus[] } | null;
   canCancel: boolean;
   canEdit: boolean;
   /** Only users of the shipment's own branch choose the branches sharing it. */

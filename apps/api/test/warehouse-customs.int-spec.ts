@@ -1070,7 +1070,9 @@ describe('warehouse and customs', () => {
       await put(`/shipments/${s.id}/customs`, cookies.customsDxb, { status: 'PENDING' }).expect(
         200,
       );
-      await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, { reason: 'x' }).expect(200);
+      await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, { reason: 'Wrong entry' }).expect(
+        200,
+      );
       await put(`/shipments/${s.id}/customs`, cookies.customsDxb, { status: 'SUBMITTED' }).expect(
         409,
       );

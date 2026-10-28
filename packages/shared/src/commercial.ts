@@ -674,6 +674,9 @@ export const FORM_REFUSALS = [
   'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
+  // A shipment that an invoice still bills is not cancelled: `shipment`, `approved` (the numbers of
+  // the approved invoices, or a dash) and `drafts` (how many draft invoices).
+  'SHIPMENT_HAS_LIVE_INVOICES',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',
@@ -703,6 +706,12 @@ export const FORM_REFUSALS = [
   // every journal entry balances in, stays active (param `code`).
   'MASTER_CODE_TAKEN',
   'BASE_CURRENCY_STAYS_ACTIVE',
+  // Shipment status history: a time entered before the shipment's creation or last status (param
+  // `earliest`, ISO); a revert of a step that is no longer the current one; and a revert of the
+  // consolidation of a closed container (param `container`, its number).
+  'STATUS_TIME_TOO_EARLY',
+  'REVERT_STALE',
+  'REVERT_CLOSED_CONTAINER',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

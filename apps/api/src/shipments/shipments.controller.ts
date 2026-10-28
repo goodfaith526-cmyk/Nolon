@@ -17,6 +17,7 @@ import {
   BOOKING_SERVICES,
   CONTAINER_NUMBER_PATTERN,
   MAX_SHARED_BRANCHES,
+  SHIPMENT_REASON_MIN_LENGTH,
   SHIPMENT_STATUSES,
   SHIPPING_MODES,
   type Page,
@@ -59,9 +60,17 @@ const statusBody = z
   })
   .strict();
 
-const holdBody = z.object({ reason: requiredText(1000), note: optionalText(1000) }).strict();
+/**
+ * Why a shipment is held, reverted or cancelled: at least 3 characters once trimmed, so a stray
+ * key press is not recorded as a reason. The web form counts the same way.
+ */
+const shipmentReason = requiredText(1000).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH));
+const holdBody = z.object({ reason: shipmentReason, note: optionalText(1000) }).strict();
 const noteBody = z.object({ note: optionalText(1000) }).strict();
-const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+const reasonBody = z.object({ reason: shipmentReason }).strict();
+const revertBody = z
+  .object({ reason: shipmentReason, undoEventId: z.string().regex(/^[1-9]\d{0,18}$/) })
+  .strict();
 
 const containerBody = z
   .object({
@@ -198,7 +207,7 @@ export class ShipmentsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<ShipmentDto> {
-    return this.shipments.revert(user, id, parse(reasonBody, body).reason);
+    return this.shipments.revert(user, id, parse(revertBody, body));
   }
 
   @Post(':id/cancel')

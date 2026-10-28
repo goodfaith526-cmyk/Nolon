@@ -955,4 +955,110 @@ describe('consolidated LCL containers', () => {
       400,
     );
   });
+
+  it('closing is final: the shipment page does not undo the consolidation of a closed container', async () => {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const value = (ch: string) => {
+      const n = letters.indexOf(ch);
+      if (n < 0) return Number(ch);
+      const v = 10 + n;
+      return v + Math.floor((v - 1) / 10);
+    };
+    const body = `ZQRU${randomInt(100000, 999999)}`;
+    const check = ([...body].reduce((sum, ch, i) => sum + value(ch) * 2 ** i, 0) % 11) % 10;
+    const id = await lclShipment(customers[0], '2');
+    const created = (
+      await newContainer([id], { containerNumber: `${body}${check}`, sealNumber: 'S-1' }).expect(
+        201,
+      )
+    ).body as ConsolidationDto;
+    const view = async () =>
+      (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
+    await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+      status: 'CLOSED',
+      occurredAt: at('03-01'),
+    }).expect(200);
+    const closed = await view();
+    expect(closed.status).toBe('CONSOLIDATED');
+    expect(closed.actions.revertTo).toBeNull();
+    expect(closed.actions.revertUndoes).toBeNull();
+    expect(closed.actions.revertBlockedByContainer).toBe(created.number);
+    const consolidated = closed.events.at(-1);
+    if (!consolidated) throw new Error('No event');
+    const refused = await post(`/shipments/${id}/revert`, cookies.admin, {
+      reason: 'Wrong container',
+      undoEventId: consolidated.id,
+    }).expect(409);
+    expect((refused.body as { code?: string }).code).toBe('REVERT_CLOSED_CONTAINER');
+    const after = await view();
+    expect(after.status).toBe('CONSOLIDATED');
+    expect(after.events).toHaveLength(closed.events.length);
+    expect((await container(created.id)).status).toBe('CLOSED');
+    expect(
+      await t.prisma.consolidationShipment.count({ where: { consolidationId: created.id } }),
+    ).toBe(1);
+
+    // Still final once the container is unpacked: going back step by step down to the
+    // consolidation, the page and the revert agree that it stays.
+    for (const [status, day] of [
+      ['LOADED', '03-02'],
+      ['DEPARTED', '03-02'],
+      ['ARRIVED', '03-06'],
+      ['DECONSOLIDATED', '03-07'],
+    ] as const) {
+      await post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+        status,
+        occurredAt: at(day),
+      }).expect(200);
+    }
+    let unpacked = await view();
+    expect(unpacked.status).toBe('ARRIVED_PORT');
+    expect(unpacked.actions.containerMoves).toBeNull();
+    for (const expected of ['DEPARTED', 'LOADED', 'CONSOLIDATED'] as const) {
+      const step = unpacked.actions.revertUndoes;
+      if (!step) throw new Error('No step to undo');
+      unpacked = (
+        await post(`/shipments/${id}/revert`, cookies.admin, {
+          reason: 'Wrong entry',
+          undoEventId: step.eventId,
+        }).expect(200)
+      ).body as ShipmentDto;
+      expect(unpacked.status).toBe(expected);
+    }
+    unpacked = await view();
+    expect(unpacked.actions.revertTo).toBeNull();
+    expect(unpacked.actions.revertUndoes).toBeNull();
+    expect(unpacked.actions.revertBlockedByContainer).toBe(created.number);
+    const refusedAfterUnpacking = await post(`/shipments/${id}/revert`, cookies.admin, {
+      reason: 'Wrong container',
+      undoEventId: consolidated.id,
+    }).expect(409);
+    expect((refusedAfterUnpacking.body as { code?: string }).code).toBe('REVERT_CLOSED_CONTAINER');
+  });
+
+  it('an open container does not stop going back from a consolidation entered by hand', async () => {
+    const id = await lclShipment(customers[1], '1');
+    const before = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
+    expect(before.actions.containerMoves).toBeNull();
+    const created = (await newContainer([id]).expect(201)).body as ConsolidationDto;
+    // Allowed by hand, with a warning that the container's own move does it (owner choice Q3).
+    const inside = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
+    expect(inside.actions.containerMoves).toEqual({
+      container: created.number,
+      statuses: ['CONSOLIDATED'],
+    });
+    const moved = (
+      await post(`/shipments/${id}/status`, cookies.admin, { status: 'CONSOLIDATED' }).expect(200)
+    ).body as ShipmentDto;
+    expect(moved.actions.revertBlockedByContainer).toBeNull();
+    const step = moved.actions.revertUndoes;
+    expect(step?.status).toBe('CONSOLIDATED');
+    const reverted = (
+      await post(`/shipments/${id}/revert`, cookies.admin, {
+        reason: 'Not stuffed yet',
+        undoEventId: step?.eventId,
+      }).expect(200)
+    ).body as ShipmentDto;
+    expect(reverted.status).toBe('CREATED');
+  });
 });
