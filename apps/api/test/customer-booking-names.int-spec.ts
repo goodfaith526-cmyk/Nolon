@@ -263,6 +263,10 @@ describe('Customer Service booking requests by names (R3)', () => {
     ).body as CsCustomerTokenAnswer;
     if (answer.kind !== 'token') throw new Error(`Expected a token, got ${answer.kind}`);
     expect(code(await create(answer.token, body()).expect(400))).toBe('SENDER_WITH_TOKEN');
+    // A token the key issued never reads the key's requests by names: not its customer's (F126-5).
+    const named = (await create(bot.key, body()).expect(201)).body as CsBookingRequestCreated;
+    await read(bot.key, named.requestId).expect(200);
+    await read(answer.token, named.requestId).expect(404);
 
     for (const bad of [
       { quantity: 0 },

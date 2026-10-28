@@ -105,6 +105,21 @@ const sender = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('telegram'), id: telegramId }).strict(),
 ]);
 const name200 = requiredText(200);
+const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
+const digitsPhone = z
+  .string()
+  .trim()
+  .regex(/^\+?\d{6,15}$/, 'Phone digits');
+/** A number of pieces as a decimal string or a JSON number (up to 4 decimals), kept as a string. */
+const bodyQuantity = z.union([
+  quantity,
+  z
+    .number()
+    .positive()
+    .max(1e9)
+    .refine((n) => /^\d{1,14}(\.\d{1,4})?$/.test(String(n)), 'At most 4 decimals')
+    .transform(String),
+]);
 const requestBody = z
   .object({
     sender: sender.optional(),
@@ -112,14 +127,16 @@ const requestBody = z
     originId: z.uuid(),
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
-    quantity,
+    quantity: bodyQuantity,
     services: z
       .array(z.enum(CS_REQUEST_SERVICES))
       .max(CS_REQUEST_SERVICES.length)
       .refine((s) => new Set(s).size === s.length, 'Each service once'),
     senderName: name200,
     consigneeName: name200,
-    consigneePhone: phone,
+    // The receiver's number as the customer gave it (local or international): contact only, never
+    // a proof of anyone, so no country is guessed for it.
+    consigneePhone: digitsPhone,
     handover: z.enum(CS_HANDOVERS),
     requestedDate: dateString.optional(),
     quoteRef: z
@@ -130,11 +147,6 @@ const requestBody = z
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
   })
   .strict();
-const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
-const digitsPhone = z
-  .string()
-  .trim()
-  .regex(/^\+?\d{6,15}$/, 'Phone digits');
 /** A request in the bot's own words (erp-agents #247): names, a number of pieces, its price. */
 const namesBody = z
   .object({
@@ -143,14 +155,7 @@ const namesBody = z
     origin: botName,
     destination: botName,
     kind: botName,
-    quantity: z.union([
-      quantity,
-      z
-        .number()
-        .positive()
-        .max(1e9)
-        .refine((n) => /^\d{1,14}(\.\d{1,4})?$/.test(String(n)), 'At most 4 decimals'),
-    ]),
+    quantity: bodyQuantity,
     senderName: name200,
     senderPhone: digitsPhone,
     receiverName: name200,

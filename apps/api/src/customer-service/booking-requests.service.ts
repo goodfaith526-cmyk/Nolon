@@ -369,16 +369,18 @@ export class BookingRequestsService {
   ): Promise<CsBookingRequestDto> {
     const owner =
       caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
-    // A request by names belongs to the key that made it (its bot names no sender id to read by).
-    const byKey = { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } };
+    // A request by names belongs to the key that made it (its bot names no sender id to read by):
+    // only the key itself reads it so, never a customer token the key issued (F126-5).
+    const mine = owner === null ? null : { id, apiClientId: caller.client.id, ownerRef: owner };
+    const byKey =
+      caller.kind === 'key'
+        ? { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } }
+        : null;
+    const where = [mine, byKey].filter((w) => w !== null);
     const row =
-      owner === null
-        ? caller.kind === 'key'
-          ? await this.prisma.csBookingRequest.findFirst({ where: byKey })
-          : null
-        : await this.prisma.csBookingRequest.findFirst({
-            where: { OR: [{ id, apiClientId: caller.client.id, ownerRef: owner }, byKey] },
-          });
+      where.length === 0
+        ? null
+        : await this.prisma.csBookingRequest.findFirst({ where: { OR: where } });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
       await this.tokens.record(

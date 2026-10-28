@@ -466,5 +466,21 @@ describe('Customer Service booking requests (R3)', () => {
       }).expect(201)
     ).body as CsBookingRequestCreated;
     expect(telegram.status).toBe('pending');
+
+    // The shipping bot's body (erp-agents #247): a JSON number of pieces, no services, and the
+    // receiver's number as the customer wrote it, kept as written (F126-6).
+    const fromBot = (
+      await create(
+        bot.key,
+        body({ sender, quantity: 2, services: [], consigneePhone: '0912345678' }),
+      ).expect(201)
+    ).body as CsBookingRequestCreated;
+    const saved = await t.prisma.csBookingRequest.findUniqueOrThrow({
+      where: { id: fromBot.requestId },
+    });
+    expect(saved.quantity.toFixed()).toBe('2');
+    expect(saved.consigneePhone).toBe('0912345678');
+    await create(bot.key, body({ sender, quantity: 1.23456 })).expect(400);
+    await create(bot.key, body({ sender, consigneePhone: 'call me' })).expect(400);
   });
 });
