@@ -478,6 +478,12 @@ export interface ReceiptDto extends ReceiptSummaryDto {
 }
 
 export interface CreateReceiptRequest {
+  /**
+   * The client's id for this request; it becomes the receipt's id. A retry with the same id and
+   * the same content returns the receipt the first request posted; the same id with other content
+   * is refused (409). Left out, a retry posts another receipt (B1-3).
+   */
+  requestId?: string;
   customerId: string;
   receiptDate: string;
   currency: CurrencyCode;
