@@ -7,6 +7,7 @@ import type {
   ShipmentWarehouseDto,
   WarehouseDto,
   WarehouseMovementDto,
+  WarehouseStockDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/auth/auth-user.js';
@@ -1065,6 +1066,96 @@ describe('warehouse and customs', () => {
       expect(seen.movements.map((m) => m.number)).toEqual([kept.number]);
       expect(seen.heldPackages).toBe(4);
       expect(seen.actions.canCancelMovements).toBe(false);
+    });
+  });
+
+  describe('the warehouse screen: stock and shipments awaiting a receipt', () => {
+    const stock = async (cookie = cookies.warehouseDxb) =>
+      (await get('/warehouses/stock', cookie).expect(200)).body as WarehouseStockDto;
+    const held = (r: WarehouseStockDto, shipmentId: string) =>
+      r.rows.filter((x) => x.shipmentId === shipmentId);
+    const awaiting = (r: WarehouseStockDto, shipmentId: string) =>
+      r.awaitingReceipt.filter((x) => x.shipmentId === shipmentId);
+
+    it('a status changed to the warehouse without a receipt awaits one until it is recorded', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      expect(awaiting(await stock(), s.id)).toEqual([]);
+      await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(200);
+
+      const before = await stock();
+      expect(held(before, s.id)).toEqual([]);
+      expect(awaiting(before, s.id)).toEqual([
+        {
+          shipmentId: s.id,
+          shipmentNumber: s.number,
+          branchCode: 'DXB',
+          customerName: customer.name,
+          status: 'RECEIVED_ORIGIN_WAREHOUSE',
+          statusAt: expect.any(String) as string,
+        },
+      ]);
+
+      await receive(s.id, cookies.warehouseDxb, { packages: 10, weightKg: '1000' }).expect(201);
+      const after = await stock();
+      expect(awaiting(after, s.id)).toEqual([]);
+      expect(held(after, s.id)).toMatchObject([
+        { warehouseId: dxbWarehouse.id, shipmentNumber: s.number, packages: 10, weightKg: '1000' },
+      ]);
+
+      // Released in full: no longer in stock, and its receipt still stands behind the status.
+      await release(s.id, cookies.warehouseDxb, { packages: 10 }).expect(201);
+      const empty = await stock();
+      expect(held(empty, s.id)).toEqual([]);
+      expect(awaiting(empty, s.id)).toEqual([]);
+    });
+
+    it('a receipt that moves the status puts the shipment in stock at once', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await receive(s.id, cookies.warehouseDxb, {
+        packages: 6,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(201);
+      const r = await stock();
+      expect(held(r, s.id)).toMatchObject([{ warehouseId: dxbWarehouse.id, packages: 6 }]);
+      expect(awaiting(r, s.id)).toEqual([]);
+      // Released in full: the receipt made the status, so nothing awaits.
+      await release(s.id, cookies.warehouseDxb, { packages: 6 }).expect(201);
+      expect(awaiting(await stock(), s.id)).toEqual([]);
+    });
+
+    it('a cancelled receipt counts nowhere: the shipment awaits a receipt again', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(200);
+      const grn = (await receive(s.id, cookies.warehouseDxb, { packages: 10 }).expect(201))
+        .body as WarehouseMovementDto;
+      await post(`/shipments/${s.id}/warehouse/movements/${grn.id}/cancel`, cookies.warehouseDxb, {
+        reason: 'Wrong shipment',
+      }).expect(201);
+      const r = await stock();
+      expect(held(r, s.id)).toEqual([]);
+      expect(awaiting(r, s.id)).toHaveLength(1);
+    });
+
+    it('another branch sees neither; a role without warehouse view is refused (403)', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(200);
+      const other = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await receive(other.id, cookies.warehouseDxb, { packages: 3 }).expect(201);
+
+      const jed = await stock(cookies.warehouseJed);
+      expect(awaiting(jed, s.id)).toEqual([]);
+      expect(held(jed, other.id)).toEqual([]);
+      // A view-only role of the branch sees both.
+      const sales = await stock(cookies.salesDxb);
+      expect(awaiting(sales, s.id)).toHaveLength(1);
+      expect(held(sales, other.id)).toHaveLength(1);
+      await get('/warehouses/stock', cookies.driver).expect(403);
     });
   });
 

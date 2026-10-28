@@ -1,4 +1,5 @@
 import type { DecimalString } from './currencies.js';
+import type { WarehouseOnHandRowDto } from './operational-reports.js';
 import type { ShipmentStatus } from './shipments.js';
 
 /**
@@ -182,4 +183,31 @@ export interface GoodsReleaseRequest {
   partyName?: string | null;
   note?: string | null;
   occurredAt?: string;
+}
+
+/**
+ * A shipment whose status says its goods are in a warehouse, with no goods receipt behind it: the
+ * status was changed without one (or the receipt was cancelled). Recording the receipt puts it in
+ * the warehouse's stock.
+ */
+export interface AwaitingReceiptDto {
+  shipmentId: string;
+  shipmentNumber: string;
+  branchCode: string;
+  customerName: string;
+  status: WarehouseReceiptStatus;
+  /** When the shipment entered that status. */
+  statusAt: string;
+}
+
+/**
+ * GET /warehouses/stock: the shipments each warehouse holds now (live receipts less live
+ * releases, the stock's one source), and the shipments waiting for a goods receipt.
+ */
+export interface WarehouseStockDto {
+  /** Today, in the first of the user's branches' time zone (each row uses its own branch's). */
+  asOf: string;
+  rows: WarehouseOnHandRowDto[];
+  truncated: boolean;
+  awaitingReceipt: AwaitingReceiptDto[];
 }

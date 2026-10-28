@@ -29,6 +29,7 @@ import {
   type WarehouseMovementKind,
   type WarehouseMovementsDto,
   type WarehouseOnHandDto,
+  type WarehouseStockDto,
   seesTransportCosts,
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
@@ -52,6 +53,7 @@ import { ShipmentReportsService } from '../shipments/shipment-reports.service.js
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
+import { awaitsReceipt } from '../warehouse/warehouse-rules.js';
 import { type WorkbookSpec, buildWorkbook } from './excel.js';
 import { averageDays, conversionRate } from './operational-math.js';
 import {
@@ -384,6 +386,36 @@ export class OperationalReportsService {
       }),
       totals: { ...held.totals, weightKg: held.totals.weightKg.toFixed() },
       truncated: held.truncated,
+    };
+  }
+
+  /**
+   * The warehouse screen: what each warehouse holds now (report 6 over all the user's branches),
+   * and the shipments whose status says they are in a warehouse with no goods receipt behind it.
+   */
+  async warehouseStock(user: AuthUser): Promise<WarehouseStockDto> {
+    const [onHand, atWarehouse] = await Promise.all([
+      this.warehouseOnHand(user, {}),
+      this.shipments.atWarehouseStatus(user, LIMIT),
+    ]);
+    const state = await this.warehouse.receiptState(
+      user,
+      atWarehouse.map((s) => s.id),
+    );
+    return {
+      asOf: onHand.asOf,
+      rows: onHand.rows,
+      truncated: onHand.truncated,
+      awaitingReceipt: atWarehouse
+        .filter((s) => awaitsReceipt(s.status, s.recordedAt, state.get(s.id)))
+        .map((s) => ({
+          shipmentId: s.id,
+          shipmentNumber: s.number,
+          branchCode: s.branchCode,
+          customerName: s.customerName,
+          status: s.status,
+          statusAt: s.statusAt.toISOString(),
+        })),
     };
   }
 

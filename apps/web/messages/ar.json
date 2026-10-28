@@ -1102,7 +1102,22 @@
     "confirmCancelMovement": "تأكيد الإلغاء",
     "cancelledBadge": "ملغاة",
     "cancelledBy": "ألغاها {name} في {at}",
-    "movementCancelledNotice": "أُلغيت الحركة {number}."
+    "movementCancelledNotice": "أُلغيت الحركة {number}.",
+    "stockTitle": "الموجود في هذا المستودع الآن: {shipments} شحنة، {packages} طرد",
+    "stockNone": "لا توجد بضاعة في هذا المستودع الآن.",
+    "stockShipment": "الشحنة",
+    "stockCustomer": "العميل",
+    "stockSince": "محفوظة منذ",
+    "stockDays": "أيام الحفظ",
+    "stockTruncated": "تُعرض الصفوف الأولى فقط. تقرير البضاعة في المستودعات يعرضها كلها.",
+    "awaitingTitle": "بانتظار إذن استلام ({count})",
+    "awaitingHint": "حالتها تقول إنها في المستودع، لكن لم يُسجَّل لها إذن استلام، فلا تظهر في أي مستودع. افتح الشحنة واستلم البضاعة.",
+    "awaitingSince": "الحالة منذ",
+    "awaitingOpen": "استلام البضاعة",
+    "statusReceiptHint": "الحفظ يسجّل إذن استلام في هذا المستودع، فتظهر الشحنة في مخزونه. المتبقي للاستلام: {remaining} من {packages} طرد. عدّها وأكّد.",
+    "statusReceiptNotMoved": "استُلمت البضاعة: {number}، لكن تعذّر تغيير الحالة الآن. راجع حالة الشحنة.",
+    "statusAlreadyHeld": "البضاعة مستلمة في مستودع مسبقاً ({held} طرد محفوظ): ستتغير الحالة فقط.",
+    "statusWithoutReceipt": "لن يُسجَّل إذن استلام، فلن تظهر الشحنة في مخزون أي مستودع حتى تُستلم البضاعة."
   },
   "Customs": {
     "section": "الجمارك",

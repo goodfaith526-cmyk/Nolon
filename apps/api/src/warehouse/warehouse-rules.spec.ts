@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import {
+  awaitsReceipt,
   daysHeld,
   type MovementAmounts,
   canRelease,
@@ -291,5 +292,41 @@ describe('movementCancelBlocker (B3-1)', () => {
     const log = [mv('r1', 'RECEIPT', 'pts', 12, 1), mv('l1', 'RELEASE', 'pts', 2, 2)];
     expect(movementCancelBlocker(log, 'l1', 10)).toBeNull();
     expect(peakHeldPackages(log)).toBe(12);
+  });
+});
+
+describe('awaitsReceipt', () => {
+  const at = new Date('2026-10-28T10:00:00Z');
+  const before = new Date('2026-10-28T09:00:00Z');
+  const after = new Date('2026-10-28T11:00:00Z');
+
+  it('flags a warehouse status with no movement at all', () => {
+    expect(awaitsReceipt('RECEIVED_ORIGIN_WAREHOUSE', at, undefined)).toBe(true);
+  });
+
+  it('does not flag goods held now, whatever made the status', () => {
+    const state = { heldPackages: 3, receipts: [{ statusApplied: null, createdAt: before }] };
+    expect(awaitsReceipt('RECEIVED_ORIGIN_WAREHOUSE', at, state)).toBe(false);
+  });
+
+  it('does not flag a status the receipt itself made, even once all is released', () => {
+    const state = {
+      heldPackages: 0,
+      receipts: [{ statusApplied: 'RECEIVED_ORIGIN_WAREHOUSE' as const, createdAt: at }],
+    };
+    expect(awaitsReceipt('RECEIVED_ORIGIN_WAREHOUSE', at, state)).toBe(false);
+  });
+
+  it('does not flag a receipt recorded after the status, released since', () => {
+    const state = { heldPackages: 0, receipts: [{ statusApplied: null, createdAt: after }] };
+    expect(awaitsReceipt('RECEIVED_DESTINATION_WAREHOUSE', at, state)).toBe(false);
+  });
+
+  it('flags a destination status when only the origin receipt exists and was released', () => {
+    const state = {
+      heldPackages: 0,
+      receipts: [{ statusApplied: 'RECEIVED_ORIGIN_WAREHOUSE' as const, createdAt: before }],
+    };
+    expect(awaitsReceipt('RECEIVED_DESTINATION_WAREHOUSE', at, state)).toBe(true);
   });
 });
