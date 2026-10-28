@@ -668,6 +668,18 @@ export class MasterDataService {
     return category;
   }
 
+  /**
+   * As requirePriceCategory for any cargo type, inside the caller's transaction: the category is
+   * share-locked until it commits, so it cannot be deactivated under the write.
+   */
+  async requirePriceCategoryInTx(tx: Tx, code: string): Promise<void> {
+    const rows = await tx.$queryRaw<{ is_active: boolean }[]>`
+      SELECT "is_active" FROM "price_categories" WHERE "code" = ${code} FOR SHARE`;
+    if (!rows[0]?.is_active) {
+      throw new BadRequestException(`Unknown or inactive price category: ${code}`);
+    }
+  }
+
   /** 400 unless the customer segment exists and is active. */
   async requireCustomerSegment(code: string): Promise<void> {
     const segment = await this.prisma.customerSegment.findUnique({ where: { code } });

@@ -28,6 +28,7 @@ import type {
   ShipmentGoodsOnHand,
   ShipmentStockHandler,
 } from '../shipments/shipment-stock.registry.js';
+import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentStockRegistry } from '../shipments/shipment-stock.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
@@ -103,10 +104,22 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     private readonly warehouses: WarehousesService,
     private readonly documents: DocumentsService,
     private readonly shipmentStock: ShipmentStockRegistry,
+    private readonly shipmentLinks: ShipmentLinksRegistry,
   ) {}
 
   onModuleInit(): void {
     this.shipmentStock.register(this);
+    // B2: the status a receipt or release applied is not undone from the shipment.
+    this.shipmentLinks.register({
+      revertBlockerInTx: async (tx, shipmentId, step) => {
+        if (step.note === null) return null;
+        const movement = await tx.warehouseMovement.findFirst({
+          where: { shipmentId, number: step.note, statusApplied: step.status },
+          select: { number: true },
+        });
+        return movement ? { record: 'WAREHOUSE', number: movement.number } : null;
+      },
+    });
   }
 
   /** For a shipment's close (B1-5): the warehouses still holding its goods, in code order. */

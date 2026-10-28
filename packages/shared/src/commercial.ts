@@ -827,6 +827,11 @@ export const FORM_REFUSALS = [
   'QUOTED_OUTLET_FIXED',
   // A customer segment that is unknown or no longer in use.
   'CUSTOMER_SEGMENT_NOT_USABLE',
+  // Business model PR-4: two approved contracts of a partner and category whose dates overlap; a
+  // contract or cost unit, category or outlet that cannot be used.
+  'CONTRACT_OVERLAP',
+  'CONTRACT_PARTNER_INACTIVE',
+  'OUTLET_NOT_USABLE',
   // Master data screens: a code already in use (409, param `code`), and the base currency, which
   // every journal entry balances in, stays active (param `code`).
   'MASTER_CODE_TAKEN',
@@ -837,6 +842,16 @@ export const FORM_REFUSALS = [
   'STATUS_TIME_TOO_EARLY',
   'REVERT_STALE',
   'REVERT_CLOSED_CONTAINER',
+  // B2 (plan #110): a cancel that would strand a trip that has left or a closed container (params
+  // `shipment`, and `trip` or `container`: their numbers), and a revert of a step a record made
+  // (param `record`: that record's number).
+  'SHIPMENT_CANCEL_ON_TRIP',
+  'SHIPMENT_CANCEL_IN_CONTAINER',
+  'REVERT_BY_TRIP',
+  'REVERT_BY_CONTAINER',
+  'REVERT_BY_WAREHOUSE',
+  'REVERT_BY_POD',
+  'REVERT_BY_CUSTOMS',
   // An LCL booking or shared container numbered by its route (DXB-KRT-0001): a place on the route
   // has no letters (no short code, none on its city, and its code does not end in three letters).
   // Param `location`: the place's code.

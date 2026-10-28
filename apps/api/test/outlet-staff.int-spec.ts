@@ -1,4 +1,5 @@
 import type {
+  AuthMeResponse,
   BookingDto,
   CustomerDto,
   Page,
@@ -690,6 +691,8 @@ describe('outlet staff: isolation by sales outlet', () => {
       const open = await createTestApp({ OUTLET_STAFF_ASSIGNABLE: true });
       try {
         const admin = await signIn(open, (await createUser(open.prisma, ['ADMINISTRATOR'])).email);
+        const me = await open.http().get('/api/v1/auth/me').set('Cookie', admin).expect(200);
+        expect((me.body as AuthMeResponse).outletStaffAssignable).toBe(true);
         const send = (body: object) =>
           open
             .http()

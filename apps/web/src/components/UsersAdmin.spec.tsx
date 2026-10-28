@@ -25,8 +25,13 @@ vi.mock('@/lib/api', () => ({
   ApiError: class extends Error {},
   api: () => Promise.resolve(users),
 }));
+let assignable = false;
+vi.mock('./partners/PartnerSelect', () => ({
+  PartnerSelect: ({ branchIds }: { branchIds: string[] }) => `outlets of ${branchIds.join()}`,
+}));
 vi.mock('./StaffShell', () => ({
   useMe: () => ({
+    outletStaffAssignable: assignable,
     permissions: ['users:view', 'users:create', 'users:update'],
     branches: [{ id: 'b1', nameEn: 'Jeddah', nameAr: 'جدة' }],
   }),
@@ -39,6 +44,7 @@ let host: HTMLElement | null = null;
 afterEach(() => {
   host?.remove();
   host = null;
+  assignable = false;
 });
 
 async function show(): Promise<HTMLElement> {
@@ -69,5 +75,17 @@ describe('UsersAdmin', () => {
     act(() => button(shown, 'edit', 1)?.click());
     const outlet = shown.querySelector<HTMLInputElement>('input[value="OUTLET_STAFF"]');
     expect(outlet?.checked).toBe(true);
+  });
+
+  it('offers the role once opened, with the outlet picker of the one branch chosen', async () => {
+    assignable = true;
+    const shown = await show();
+    act(() => button(shown, 'add')?.click());
+    expect(roleChoices(shown)).toContain('OUTLET_STAFF');
+    expect(shown.textContent).not.toContain('outletHint');
+    act(() => shown.querySelector<HTMLInputElement>('input[value="OUTLET_STAFF"]')?.click());
+    expect(shown.textContent).toContain('outletOneBranch');
+    act(() => shown.querySelector<HTMLInputElement>('input[name="branchIds"]')?.click());
+    expect(shown.textContent).toContain('outlets of b1');
   });
 });

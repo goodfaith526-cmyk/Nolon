@@ -568,6 +568,87 @@ describe('inland transport: fleet, trips, POD', () => {
       await get(`/shipments/${mine.id}/pods`, cookies.customsDxb).expect(403);
     });
 
+    it('B2: a trip that has left keeps its shipments; steps it or a POD recorded stay', async () => {
+      const a = await roadShipment();
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))
+        .body as TripDto;
+      const undoable = async () =>
+        ((await get(`/shipments/${a.id}`, cookies.admin).expect(200)).body as ShipmentDto).actions
+          .revertUndoes?.eventId;
+      const revert = async () =>
+        post(`/shipments/${a.id}/revert`, cookies.admin, {
+          reason: 'Entered by mistake',
+          undoEventId: await undoable(),
+        });
+      const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+      // Scheduled by the trip: going back would leave the planned trip unable to depart.
+      const scheduled = await revert();
+      expect(scheduled.status).toBe(409);
+      expect(code(scheduled)).toBe('REVERT_BY_TRIP');
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+
+      const cancel = () => post(`/shipments/${a.id}/cancel`, cookies.admin, { reason: 'Lost' });
+      const onTrip = await cancel();
+      expect(onTrip.status).toBe(409);
+      expect(code(onTrip)).toBe('SHIPMENT_CANCEL_ON_TRIP');
+      expect((onTrip.body as { params?: object }).params).toEqual({
+        shipment: a.number,
+        trip: trip.number,
+      });
+      const departed = await revert();
+      expect(departed.status).toBe(409);
+      expect(code(departed)).toBe('REVERT_BY_TRIP');
+      expect(await status(a.id)).toBe('ROAD_DEPARTED');
+
+      // A step recorded by hand on the way is undone as before.
+      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_IN_TRANSIT' }).expect(
+        200,
+      );
+      expect((await revert()).status).toBe(200);
+      expect(await status(a.id)).toBe('ROAD_DEPARTED');
+
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'ARRIVED' }).expect(200);
+      expect(code(await cancel())).toBe('SHIPMENT_CANCEL_ON_TRIP');
+      await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'COMPLETED' }).expect(200);
+
+      // A proof of delivery's status stays, whatever its trip.
+      await recordPod(a.id, cookies.opsDxb, {
+        recipientName: 'Ahmed Ali',
+        recipientCapacity: 'Consignee',
+        shipmentStatus: 'DELIVERED',
+      })
+        .attach('signature', PNG, 'signature.png')
+        .expect(201);
+      const delivered = await revert();
+      expect(delivered.status).toBe(409);
+      expect(code(delivered)).toBe('REVERT_BY_POD');
+      const pod = await t.prisma.proofOfDelivery.findFirstOrThrow({ where: { shipmentId: a.id } });
+      expect((delivered.body as { params?: object }).params).toEqual({ record: pod.number });
+      expect(await status(a.id)).toBe('DELIVERED');
+      expect(await t.prisma.trip.count({ where: { id: trip.id, status: 'COMPLETED' } })).toBe(1);
+    });
+
+    it('B2: once its trip is completed, its steps can be undone and the shipment cancelled', async () => {
+      const a = await roadShipment();
+      const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))
+        .body as TripDto;
+      for (const step of ['DEPARTED', 'ARRIVED', 'COMPLETED']) {
+        await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: step }).expect(200);
+      }
+      const step = (
+        (await get(`/shipments/${a.id}`, cookies.admin).expect(200)).body as ShipmentDto
+      ).actions.revertUndoes;
+      await post(`/shipments/${a.id}/revert`, cookies.admin, {
+        reason: 'Arrival entered too early',
+        undoEventId: step?.eventId,
+      }).expect(200);
+      expect(await status(a.id)).toBe('ROAD_DEPARTED');
+      await post(`/shipments/${a.id}/cancel`, cookies.admin, {
+        reason: 'Customer withdrew',
+      }).expect(200);
+      expect(await status(a.id)).toBe('CANCELLED');
+    });
+
     it('a planned trip can be cancelled; its shipments go on another trip', async () => {
       const a = await roadShipment();
       const trip = (await post('/trips', cookies.opsDxb, ownTrip([a.id])).expect(201))

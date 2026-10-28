@@ -25,6 +25,7 @@ import { can, useMe } from '../StaffShell';
 import { Money } from '../finance/common';
 import { StatusBadge } from '../StatusBadge';
 import { ModePicker } from './ModePicker';
+import { RateCosts } from './RateCosts';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 export function Rates() {
@@ -39,6 +40,7 @@ export function Rates() {
   const [status, setStatus] = useState<RateStatus | ''>('');
   const [page, setPage] = useState<Page<RateCardDto> | null>(null);
   const [creating, setCreating] = useState(false);
+  const [costing, setCosting] = useState<RateCardDto | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const load = useCallback(() => {
@@ -106,6 +108,7 @@ export function Rates() {
           }}
         />
       )}
+      {costing && <RateCosts key={costing.id} rate={costing} onClose={() => setCosting(null)} />}
       <label className="field inline">
         {tc('status')}
         <select value={status} onChange={(e) => setStatus(e.target.value as RateStatus | '')}>
@@ -172,6 +175,11 @@ export function Rates() {
                   </td>
                   <td>
                     <div className="actions">
+                      {ofMine(r) && can(me, 'rate_costs:view') && (
+                        <button type="button" onClick={() => setCosting(r)}>
+                          {t('costsAndMargin')}
+                        </button>
+                      )}
                       {r.status === 'DRAFT' && ofMine(r) && can(me, 'rates:approve') && (
                         <button type="button" onClick={() => void act(r, 'approve')}>
                           {t('approve')}
