@@ -4,6 +4,8 @@ import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { RatesModule } from '../rates/rates.module.js';
 import { BookingRequestGuard } from './booking-request.guard.js';
+import { BookingReviewController, RejectReasonsController } from './booking-review.controller.js';
+import { BookingReviewService } from './booking-review.service.js';
 import { BookingRequestsService } from './booking-requests.service.js';
 import { CatalogService } from './catalog.service.js';
 import { ApiClientGuard } from './api-client.guard.js';
@@ -34,6 +36,8 @@ import { QuoteService } from './quote.service.js';
     BookingRequestsController,
     CustomerMeController,
     ApiClientsController,
+    BookingReviewController,
+    RejectReasonsController,
   ],
   providers: [
     ApiClientGuard,
@@ -46,6 +50,7 @@ import { QuoteService } from './quote.service.js';
     QuoteService,
     BookingRequestGuard,
     BookingRequestsService,
+    BookingReviewService,
   ],
 })
 export class CustomerServiceModule {}

@@ -5,6 +5,7 @@ import {
   type CsQuoteChoices,
   type CsQuoteDto,
   type CsQuoteRequest,
+  type CsRequestPriceCheck,
   type CurrencyCode,
   type LoadType,
   type ShippingMode,
@@ -15,6 +16,7 @@ import { FailureLimiter, type LimitRule } from '../common/failure-limiter.js';
 import { ZERO, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
+import type { CsQuote, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { computeQuotationAmounts } from '../quotations/quotation-totals.js';
 import { RatesService } from '../rates/rates.service.js';
@@ -227,6 +229,67 @@ export class QuoteService {
       quoteRefExpiresAt: expiresAt.toISOString(),
       customerNote: null,
       bookable,
+    };
+  }
+
+  /**
+   * The advisory check of a kept quote for staff (plan 04a section 1): the engine run again today
+   * on the quote's own inputs, for the request's branch and quantity. Current when it picks the
+   * same card, still approved and valid, in a currency still active, and gives the same total;
+   * anything else is stale, with today's total when one card still prices it. Never a price of
+   * record, and never a failure: the request it belongs to stays readable.
+   */
+  async recheck(
+    quote: CsQuote,
+    quantity: Prisma.Decimal,
+    branchId: string | null,
+  ): Promise<CsRequestPriceCheck> {
+    const offers = await this.rates.systemScopedRates({
+      branchId,
+      onDate: todayIn('UTC'),
+      currency: quote.currency,
+      originLocationId: quote.originLocationId,
+      destinationLocationId: quote.destinationLocationId,
+      mode: quote.mode,
+      loadType: quote.loadType,
+      cargoType: quote.cargoType,
+      priceCategoryCode: quote.priceCategoryCode,
+      chargeTypeCode: FREIGHT,
+    });
+    // The quote's currency as recorded, active or not (Codex F131-1/2): a saved request stays
+    // readable; a currency no longer offered only makes the quote stale.
+    const currency = await this.currencies.requireRecorded(quote.currency);
+    const inUnit = currency.isActive ? offers.filter((o) => o.rate.unit === quote.unit) : [];
+    const card = inUnit.length === 1 ? inUnit[0]?.rate : undefined;
+    const places = currency.decimalPlaces;
+    const totalNow = card
+      ? computeQuotationAmounts(
+          [
+            {
+              quantity,
+              unitPrice: card.price,
+              minimumCharge: card.minimumCharge,
+              discount: ZERO,
+            },
+          ],
+          places,
+        ).total
+      : null;
+    const same =
+      card !== undefined &&
+      card.id === quote.rateCardId &&
+      card.approvedAt !== null &&
+      totalNow !== null &&
+      quote.total !== null &&
+      totalNow.eq(quote.total);
+    return {
+      state: same ? 'current' : 'stale',
+      rateCardId: quote.rateCardId,
+      approvedAt: card?.id === quote.rateCardId ? (card.approvedAt?.toISOString() ?? null) : null,
+      currency: quote.currency,
+      unitPrice: toDecimalString(quote.price),
+      quotedTotal: quote.total === null ? null : quote.total.toFixed(places),
+      totalNow: totalNow === null ? null : totalNow.toFixed(places),
     };
   }
 }
