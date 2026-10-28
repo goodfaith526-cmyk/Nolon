@@ -625,6 +625,27 @@ describe('warehouse and customs', () => {
       expect(await t.prisma.shipmentEvent.count({ where: { shipmentId: s.id } })).toBe(2);
     });
 
+    it('B2: the status a receipt applied is not undone from the shipment page', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      const grn = (
+        await receive(s.id, cookies.warehouseDxb, {
+          packages: 4,
+          shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+        }).expect(201)
+      ).body as WarehouseMovementDto;
+      const refused = await post(`/shipments/${s.id}/revert`, cookies.admin, {
+        reason: 'Entered by mistake',
+        undoEventId: (
+          (await get(`/shipments/${s.id}`, cookies.admin).expect(200)).body as ShipmentDto
+        ).actions.revertUndoes?.eventId,
+      }).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'REVERT_BY_WAREHOUSE',
+        params: { record: grn.number },
+      });
+      expect(await status(s.id)).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+    });
+
     it("a receipt that moves the shipment records it at the warehouse's place (D9)", async () => {
       const placed = (
         await post('/warehouses', cookies.warehouseDxb, {
@@ -1008,6 +1029,31 @@ describe('warehouse and customs', () => {
         await save(s.id, { status: 'SUBMITTED' }).expect(200);
         expect(await status(s.id)).toBe('CUSTOMS_CLEARED');
         expect(await events(s.id)).toHaveLength(cleared.length);
+      });
+
+      it('B2: a step the customs file stands for is not undone from the shipment page', async () => {
+        const s = await atPort();
+        const revert = async () =>
+          post(`/shipments/${s.id}/revert`, cookies.admin, {
+            reason: 'Entered by mistake',
+            undoEventId: (
+              (await get(`/shipments/${s.id}`, cookies.admin).expect(200)).body as ShipmentDto
+            ).actions.revertUndoes?.eventId,
+          });
+        await save(s.id, { status: 'SUBMITTED', declarationNumber: 'D-B2' }).expect(200);
+        const inProgress = await revert();
+        expect(inProgress.status).toBe(409);
+        expect(inProgress.body).toMatchObject({
+          code: 'REVERT_BY_CUSTOMS',
+          params: { record: 'D-B2' },
+        });
+        await save(s.id, { status: 'CLEARED', clearedOn: today() }).expect(200);
+        expect((await revert()).status).toBe(409);
+        // The file set back to in progress no longer stands for cleared: that step can go back.
+        await save(s.id, { status: 'SUBMITTED' }).expect(200);
+        expect((await revert()).status).toBe(200);
+        expect(await status(s.id)).toBe('CUSTOMS_IN_PROGRESS');
+        expect((await revert()).status).toBe(409);
       });
 
       it('a cleared file moves a shipment at the port through customs to cleared', async () => {

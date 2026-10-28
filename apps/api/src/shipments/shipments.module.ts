@@ -8,6 +8,7 @@ import { PublicTrackingController } from './public-tracking.controller.js';
 import { PublicTrackingService } from './public-tracking.service.js';
 import { ShipmentsController } from './shipments.controller.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
+import { ShipmentLinksRegistry } from './shipment-links.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { ShipmentsService } from './shipments.service.js';
 import { ShipmentReportsService } from './shipment-reports.service.js';
@@ -25,6 +26,7 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
   controllers: [ShipmentsController, PublicTrackingController, ShipmentStatusDraftsController],
   providers: [
     ShipmentInvoicesRegistry,
+    ShipmentLinksRegistry,
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,
@@ -33,6 +35,7 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
   ],
   exports: [
     ShipmentInvoicesRegistry,
+    ShipmentLinksRegistry,
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,

@@ -2625,6 +2625,13 @@
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
     "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "SHIPMENT_CANCEL_ON_TRIP": "Shipment {shipment} is on trip {trip}, which has left: it cannot be cancelled from here. Complete the trip, or ask a manager for a correction.",
+    "SHIPMENT_CANCEL_IN_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or ask a manager for a correction.",
+    "REVERT_BY_TRIP": "Trip {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_CONTAINER": "Container {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_WAREHOUSE": "Warehouse movement {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_POD": "Proof of delivery {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_CUSTOMS": "The customs file ({record}) recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
     "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
     "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
@@ -2659,7 +2666,11 @@
     "countryFromCity": "The city's country: a place is in the country of its city.",
     "shortCode": "Route letters",
     "shortCodeHint": "Letters in route numbers (DXB in DXB-KRT-0001), 2 to 4. Empty: the city's, else the last three letters of the code.",
-    "kind_COUNTRY": "Country (pricing scope)"
+    "kind_COUNTRY": "Country (pricing scope)",
+    "aliases": "Other names",
+    "aliasesHint": "Names people write for this place, separated by commas (for example «Jeddah, Jedda»). The customer-service bot uses them to understand customers.",
+    "routing": "Branches serving the bot",
+    "routingHint": "Branches that take customer-service bot requests starting here (here, else the city's, else the country's). One branch: the request goes to it; several or none: staff route it."
   },
   "MasterData": {
     "title": "Master data",

@@ -20,6 +20,13 @@ const place = (id: string, kind: LocationDto['kind'], cityId: string | null = nu
   }) satisfies LocationDto;
 const locations = [place('dxb', 'CITY'), place('jea', 'PORT'), place('ruh', 'CITY')];
 locations[2] = { ...locations[2]!, countryCode: 'SA' };
+// One object, as the list: the screen reloads on each render of this mock (a new failure text).
+const aliases = { jea: ['Jebel Ali'] };
+const routing = { dxb: ['b-dxb'] };
+const branches = [
+  { id: 'b-dxb', code: 'DXB', nameEn: 'Dubai', nameAr: 'دبي' },
+  { id: 'b-jed', code: 'JED', nameEn: 'Jeddah', nameAr: 'جدة' },
+];
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'en',
@@ -32,7 +39,9 @@ vi.mock('@/lib/master-data', () => ({
 vi.mock('@/lib/api', () => ({
   api: (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, init });
-    return Promise.resolve(init ? {} : { locations });
+    if (path === '/master-data/location-aliases') return Promise.resolve(aliases);
+    if (path === '/master-data/routing-branches') return Promise.resolve(routing);
+    return Promise.resolve(init ? {} : { locations, branches });
   },
 }));
 vi.mock('./Notice', () => ({ Notice: () => null, useFailureText: () => () => 'failed' }));
@@ -127,5 +136,51 @@ describe('Locations', () => {
     expect(shown.querySelector('select')).toBeNull();
     expect(shown.querySelector('form')).toBeNull();
     expect(shown.querySelector('tbody')?.textContent).toContain('dxb');
+  });
+
+  it('saves the other names of a place as a list, only when they changed', async () => {
+    permissions = ['master_data:view', 'master_data:update'];
+    const shown = await show();
+    const inputs = shown.querySelectorAll<HTMLInputElement>('tbody input[aria-label="aliases"]');
+    expect([...inputs].map((i) => i.value)).toEqual(['', 'Jebel Ali', '']);
+    const jea = inputs[1]!;
+    act(() => {
+      jea.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+    expect(calls.some((c) => c.init?.method === 'PUT')).toBe(false);
+    act(() => {
+      jea.value = 'Jebel Ali، جبل علي , ';
+      jea.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+    await act(() => Promise.resolve());
+    expect(calls).toContainEqual({
+      path: '/master-data/locations/jea/aliases',
+      init: { method: 'PUT', body: { aliases: ['Jebel Ali', 'جبل علي'] } },
+    });
+  });
+
+  it('ticks the branches serving bot requests from a place', async () => {
+    permissions = ['master_data:view', 'master_data:update'];
+    const shown = await show();
+    const box = (code: string, row: number) =>
+      shown
+        .querySelectorAll('tbody tr')
+        [row]!.querySelector<HTMLInputElement>(`input[aria-label="routing ${code}"]`)!;
+    expect(box('DXB', 0).checked).toBe(true);
+    expect(box('JED', 0).checked).toBe(false);
+    act(() => {
+      box('JED', 0).click();
+    });
+    await act(() => Promise.resolve());
+    expect(calls).toContainEqual({
+      path: '/master-data/locations/dxb/routing-branches',
+      init: { method: 'PUT', body: { branchIds: ['b-dxb', 'b-jed'] } },
+    });
+  });
+
+  it('shows the serving branches as codes to those who may only view', async () => {
+    permissions = ['master_data:view'];
+    const shown = await show();
+    expect(shown.querySelector('tbody tr')?.textContent).toContain('DXB');
   });
 });

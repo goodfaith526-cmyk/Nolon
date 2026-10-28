@@ -2,12 +2,24 @@ import { Reflector } from '@nestjs/core';
 import { CS_SCOPES } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import { API_SCOPE_KEY, keyScopes, scopeRows } from './api-scopes.js';
-import { CustomerServiceController } from './customer-service.controller.js';
+import {
+  CatalogController,
+  CustomerServiceController,
+  CustomerTokensController,
+  QuoteController,
+  BookingRequestsController,
+} from './customer-service.controller.js';
 
 describe('Customer Service API scopes', () => {
-  it('names a scope on every /cs route', () => {
+  it.each([
+    CustomerServiceController,
+    CustomerTokensController,
+    CatalogController,
+    QuoteController,
+    BookingRequestsController,
+  ])('names a scope on every route of the API-key controller %o', (controller) => {
     const reflector = new Reflector();
-    const proto = CustomerServiceController.prototype as unknown as Record<string, unknown>;
+    const proto = controller.prototype as unknown as Record<string, unknown>;
     const routes = Object.getOwnPropertyNames(proto).filter((name) => name !== 'constructor');
     expect(routes.length).toBeGreaterThan(0);
     for (const name of routes) {
@@ -15,7 +27,7 @@ describe('Customer Service API scopes', () => {
       if (typeof handler !== 'function') continue;
       const scope = reflector.getAllAndOverride<string | undefined>(API_SCOPE_KEY, [
         handler,
-        CustomerServiceController,
+        controller,
       ]);
       expect(CS_SCOPES, name).toContain(scope);
     }

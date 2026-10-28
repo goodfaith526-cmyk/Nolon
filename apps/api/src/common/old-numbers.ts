@@ -24,3 +24,22 @@ export async function oldNumberTerm(
   });
   return rows.length > 0 ? [{ id: { in: rows.map((r) => r.recordId) } }] : [];
 }
+
+/**
+ * Which of `recordIds` (records of `kind`) were once numbered exactly `number`: a note written
+ * before a renumbering still names its record (B2: a container's moves).
+ */
+export async function onceNumbered(
+  db: Db,
+  kind: RenumberedKind,
+  number: string,
+  recordIds: readonly string[],
+): Promise<string[]> {
+  if (recordIds.length === 0) return [];
+  const rows = await db.referenceRenumbering.findMany({
+    where: { kind, oldNumber: number, recordId: { in: [...recordIds] } },
+    select: { recordId: true },
+    distinct: ['recordId'],
+  });
+  return rows.map((r) => r.recordId);
+}

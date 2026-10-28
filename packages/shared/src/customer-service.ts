@@ -1,4 +1,14 @@
-import type { CargoType, CustomerKind, DateString, LoadType, ShippingMode } from './commercial.js';
+import type {
+  BookingService,
+  CargoType,
+  CustomerKind,
+  DateString,
+  LoadType,
+  LocationKind,
+  PriceScope,
+  RateUnit,
+  ShippingMode,
+} from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type {
   PublicLocationDto,
@@ -138,4 +148,228 @@ export interface ApiClientScopesRequest {
 export interface ApiClientCreatedDto {
   client: ApiClientDto;
   key: string;
+}
+
+/** A token for one customer (docs/plans/04 section 3, N1): `Authorization: Bearer nolct_...`. */
+export const CS_TOKEN_PREFIX = 'nolct_';
+
+/** At most this long; every use rechecks the key, the customer and the match anyway. */
+export const CS_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+export type CsAccessLevel = 'L1' | 'L2';
+
+export interface CsCustomerTokenRequest {
+  /** The sender's number as the channel verified it, +E.164. Never a number the customer typed. */
+  phone: string;
+  /** The account the sender chose from a `choose` answer. */
+  customerNumber?: string;
+  /** A proof of an email code (N3). Until N3 exists, no proof is valid and the level is L1. */
+  verificationId?: string;
+}
+
+/** What the sender may choose between: no phone, email or balance. */
+export interface CsCustomerChoiceDto {
+  number: string;
+  label: string;
+}
+
+export type CsCustomerTokenAnswer =
+  | { kind: 'none' }
+  | { kind: 'choose'; customers: CsCustomerChoiceDto[] }
+  | {
+      kind: 'token';
+      token: string;
+      expiresAt: string;
+      customer: CsCustomerChoiceDto;
+      /** Stable for the reason of the match (the customer's phone, WhatsApp, or one contact). */
+      grantId: string;
+      /** Changes whenever the matched customer or contact record changes. */
+      grantVersion: number;
+      level: CsAccessLevel;
+    };
+
+/** The services a customer-service client may ask for in a booking request, with their names. */
+export const CS_CATALOG_SERVICES = [
+  { code: 'PICKUP', nameAr: 'استلام من عندك', nameEn: 'Pickup from you' },
+  { code: 'LAST_MILE', nameAr: 'التوصيل للمستلم', nameEn: 'Delivery to the receiver' },
+] as const;
+
+/** A place a shipment can start or end at (docs/plans/04 section 4), with the names people use. */
+export interface CsCatalogPlaceDto {
+  id: string;
+  code: string;
+  kind: LocationKind;
+  nameAr: string;
+  nameEn: string;
+  countryCode: string;
+  aliases: string[];
+}
+
+export interface CsCatalogCategoryDto {
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  unit: RateUnit;
+}
+
+/**
+ * What a customer-service bot needs to understand a customer (R1): the places with an approved
+ * price today, the shipment types and the services. No price, cost or staff name.
+ */
+export interface CsCatalogDto {
+  /** Changes whenever anything in the catalog does. */
+  version: string;
+  origins: CsCatalogPlaceDto[];
+  destinations: CsCatalogPlaceDto[];
+  categories: CsCatalogCategoryDto[];
+  services: { code: BookingService; nameAr: string; nameEn: string }[];
+}
+
+/** A location's other names, as the master-data screen sets them. */
+export interface LocationAliasesRequest {
+  aliases: string[];
+}
+
+/** What a quote prices in its first version: the main freight only; staff price the rest. */
+export const CS_QUOTE_INCLUDES = ['MAIN_FREIGHT'] as const;
+
+/** A quote's question (R2, docs/plans/04 section 5): a route, a shipment type, and what it narrows. */
+export interface CsQuoteRequest {
+  originId: string;
+  destinationId: string;
+  /** A price category code from the catalog. */
+  category: string;
+  /** In the category's unit. Without it the answer has no total. */
+  quantity?: DecimalString;
+  mode?: ShippingMode;
+  loadType?: LoadType;
+  currency?: CurrencyCode;
+  /** Today (UTC) or later; today when left out. */
+  onDate?: DateString;
+}
+
+/**
+ * NOLON's price for a route from its own engine (R2): a guide, not a formal quotation. No cost,
+ * margin, staff or internal note. `quoteRef` names it in a booking request (R3) until it expires.
+ */
+export interface CsQuoteDto {
+  price: DecimalString;
+  currency: CurrencyCode;
+  unit: RateUnit;
+  minimumCharge: DecimalString;
+  quantity: DecimalString | null;
+  /** max(quantity × price, minimum), rounded to the currency's places; null without a quantity. */
+  total: DecimalString | null;
+  includes: (typeof CS_QUOTE_INCLUDES)[number][];
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  transitDays: number | null;
+  validTo: DateString | null;
+  scope: { origin: PriceScope; destination: PriceScope };
+  source: { rateCardId: string; approvedAt: string; quotedOn: DateString };
+  quoteRef: string;
+  quoteRefExpiresAt: string;
+  /** A note for the customer on the card: none yet, so always null. */
+  customerNote: { ar: string; en: string } | null;
+  /**
+   * Whether a booking request from this origin can be made with this key: a branch that may serve
+   * the origin (its routing rules) is one of the key's. False: the client hands over to staff.
+   */
+  bookable: boolean;
+}
+
+/** `422 QUOTE_AMBIGUOUS`: the cards differ on `field`; the client asks the customer, or staff. */
+export interface CsQuoteChoices {
+  field: 'mode' | 'currency' | 'offer';
+  values: string[];
+}
+
+/** The services a booking request may ask for (the catalog's). */
+export const CS_REQUEST_SERVICES = ['PICKUP', 'LAST_MILE'] as const;
+
+export const CS_SENDER_CHANNELS = ['whatsapp', 'telegram'] as const;
+export type CsSenderChannel = (typeof CS_SENDER_CHANNELS)[number];
+
+export const CS_HANDOVERS = ['PICKUP', 'BRANCH_DROP'] as const;
+
+/** At most this many new booking requests per owner per day (UTC); a retry does not count. */
+export const CS_DAILY_REQUESTS = 5;
+
+/** A request nobody decided in this long is expired. */
+export const CS_REQUEST_TTL_DAYS = 14;
+
+/**
+ * A booking request (R3, docs/plans/04 section 7.1). With a customer token the owner is the
+ * token's customer, and `sender` is refused; without one `sender` is required: a channel identity
+ * the key vouches its channel verified, never linked to an account by itself.
+ */
+export interface CsBookingRequestCreate {
+  sender?: { channel: CsSenderChannel; id: string };
+  /** A number shared for contact only (Telegram's «share my number»). */
+  contactPhone?: string;
+  originId: string;
+  destinationId: string;
+  category: string;
+  quantity: DecimalString;
+  services: (typeof CS_REQUEST_SERVICES)[number][];
+  senderName: string;
+  consigneeName: string;
+  consigneePhone: string;
+  handover: (typeof CS_HANDOVERS)[number];
+  requestedDate?: DateString;
+  /** A quote (R2) of the same key whose inputs match this request. */
+  quoteRef?: string;
+  language: 'ar' | 'en';
+  idempotencyKey: string;
+}
+
+/**
+ * A booking request in the bot's own words (erp-agents #247, the agent project's
+ * nolon-request-ar.md R3): places and type by the names the customer saw, matched by NOLON; what
+ * does not match stays for staff. Key only, never with a customer token.
+ */
+export interface CsBookingRequestByNames {
+  idempotencyKey: string;
+  channel: CsSenderChannel;
+  origin: CsName;
+  destination: CsName;
+  kind: CsName;
+  quantity: number | DecimalString;
+  senderName: string;
+  /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
+  senderPhone: string;
+  receiverName: string;
+  receiverPhone: string;
+  handover: (typeof CS_BOT_HANDOVERS)[number];
+  /** The price the bot showed from its own material: kept for staff to check, never a price. */
+  quotedPrice?: { amount: DecimalString; currency: string } | null;
+}
+
+export interface CsName {
+  ar: string;
+  en: string;
+}
+
+export const CS_BOT_HANDOVERS = ['pickup', 'dropoff'] as const;
+
+/** A request by names reads `pending` while it awaits routing: its bot knows no such state. */
+export type CsBookingRequestState =
+  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface CsBookingRequestCreated {
+  requestId: string;
+  status: CsBookingRequestState;
+  reference: string;
+}
+
+/** What the owner reads back (section 7.2). Decisions fill the last three (R3, staff review). */
+export interface CsBookingRequestDto {
+  requestId: string;
+  reference: string;
+  status: CsBookingRequestState;
+  createdAt: string;
+  expiresAt: string;
+  bookingNumber: string | null;
+  customerReason: { ar: string; en: string } | null;
+  paymentInstructions: null;
 }

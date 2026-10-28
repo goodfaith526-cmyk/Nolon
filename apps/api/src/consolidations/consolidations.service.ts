@@ -47,7 +47,7 @@ import {
 } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { ROUTE_SEQUENCES, formatRouteNumber, nextSequenceValue } from '../common/numbering.js';
-import { oldNumberTerm } from '../common/old-numbers.js';
+import { oldNumberTerm, onceNumbered } from '../common/old-numbers.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
 import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -59,6 +59,7 @@ import {
   type ContainerBookingShape,
   ContainerBookingsRegistry,
 } from '../bookings/container-bookings.registry.js';
+import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive, stageApplies } from '../shipments/state-machine.js';
 import {
@@ -115,6 +116,20 @@ export const MAX_CONTAINER_SHIPMENTS = 100;
 /** A container change may be recorded after the fact, but not ahead of the clock. */
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
+/**
+ * B2: a container closed and not yet unpacked moves its shipments on and cannot drop one, so none
+ * of them is cancelled. Once unpacked, each shipment goes on by itself.
+ */
+const IN_TRANSIT_CONTAINER = ['CLOSED', 'LOADED', 'DEPARTED', 'ARRIVED'] as const;
+
+/** The statuses a container's moves give its shipments (shipmentStatusFor). */
+const CONTAINER_STEPS: readonly ShipmentStatus[] = [
+  'CONSOLIDATED',
+  'LOADED',
+  'DEPARTED',
+  'ARRIVED_PORT',
+];
+
 /** Statuses a shipment can be in when it is put in a container: before the sea leg. */
 const BEFORE_CONSOLIDATION: readonly ShipmentStatus[] = [
   'CREATED',
@@ -169,11 +184,43 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     private readonly costs: ContainerCostsRegistry,
     private readonly bookings: BookingsService,
     private readonly containerBookings: ContainerBookingsRegistry,
+    private readonly shipmentLinks: ShipmentLinksRegistry,
   ) {}
 
   onModuleInit(): void {
     // Booking drafts that name a container are checked and approved by the rules below.
     this.containerBookings.register(this);
+    // B2: while a container is under way (closed, not yet unpacked) it moves its shipments on, so
+    // none of them is cancelled and no step it recorded is undone from the shipment page (the
+    // container's next move would refuse that shipment). Once unpacked, both are as before (#109).
+    this.shipmentLinks.register({
+      cancelBlockerInTx: async (tx, shipmentId) => {
+        const link = await tx.consolidationShipment.findFirst({
+          where: { shipmentId, consolidation: { status: { in: [...IN_TRANSIT_CONTAINER] } } },
+          select: { consolidation: { select: { number: true } } },
+        });
+        return link ? { record: 'CONTAINER', number: link.consolidation.number } : null;
+      },
+      revertBlockerInTx: async (tx, shipmentId, step) => {
+        const note = step.note;
+        if (note === null || !CONTAINER_STEPS.includes(step.status)) return null;
+        const links = await tx.consolidationShipment.findMany({
+          where: { shipmentId, consolidation: { status: { in: [...IN_TRANSIT_CONTAINER] } } },
+          select: { consolidation: { select: { id: true, number: true } } },
+        });
+        const containers = links.map((l) => l.consolidation);
+        // The event keeps the number the container had then; a renumbered container (#115) is
+        // found through its old numbers.
+        const renamed = await onceNumbered(
+          tx,
+          'CONSOLIDATION',
+          note,
+          containers.filter((c) => c.number !== note).map((c) => c.id),
+        );
+        const made = containers.find((c) => c.number === note || renamed.includes(c.id));
+        return made ? { record: 'CONTAINER', number: made.number } : null;
+      },
+    });
   }
 
   async list(

@@ -134,6 +134,136 @@ export class MasterDataService {
     };
   }
 
+  /** Every location's other names (location_aliases), by location id, sorted. */
+  async locationAliases(): Promise<Record<string, string[]>> {
+    const rows = await this.prisma.locationAlias.findMany({
+      orderBy: [{ locationId: 'asc' }, { alias: 'asc' }],
+    });
+    const byLocation: Record<string, string[]> = {};
+    for (const r of rows) (byLocation[r.locationId] ??= []).push(r.alias);
+    return byLocation;
+  }
+
+  /**
+   * Replaces a location's other names: trimmed, inner spaces collapsed, and one of the names
+   * that differ only in case kept (the first given). Returns them sorted. Audited on the location.
+   */
+  async setLocationAliases(
+    user: AuthUser,
+    id: string,
+    given: readonly string[],
+  ): Promise<string[]> {
+    const seen = new Set<string>();
+    const aliases: string[] = [];
+    for (const raw of given) {
+      const alias = raw.trim().replace(/\s+/g, ' ');
+      const key = alias.toLowerCase();
+      if (alias && !seen.has(key)) {
+        seen.add(key);
+        aliases.push(alias);
+      }
+    }
+    aliases.sort();
+    return this.prisma.$transaction(async (tx) => {
+      const location = await lockLocation(tx, id, 'UPDATE');
+      if (!location) throw new NotFoundException('Location not found');
+      const before = await tx.locationAlias.findMany({
+        where: { locationId: id },
+        orderBy: { alias: 'asc' },
+      });
+      await tx.locationAlias.deleteMany({ where: { locationId: id } });
+      await tx.locationAlias.createMany({
+        data: aliases.map((alias) => ({ locationId: id, alias })),
+      });
+      await this.logLocationList(
+        tx,
+        user,
+        location,
+        'aliases',
+        before.map((a) => a.alias),
+        aliases,
+      );
+      return aliases;
+    });
+  }
+
+  /** Every location's routing branches (branch_routing_rules), by location id, as branch ids. */
+  async routingBranches(): Promise<Record<string, string[]>> {
+    const rows = await this.prisma.branchRoutingRule.findMany({
+      orderBy: [{ locationId: 'asc' }, { branchId: 'asc' }],
+    });
+    const byLocation: Record<string, string[]> = {};
+    for (const r of rows) (byLocation[r.locationId] ??= []).push(r.branchId);
+    return byLocation;
+  }
+
+  /**
+   * Replaces the branches that serve customer-service requests starting at a location (docs/plans/04
+   * section 6): active branches only. Audited on the location, as branch codes.
+   */
+  async setRoutingBranches(
+    user: AuthUser,
+    id: string,
+    branchIds: readonly string[],
+  ): Promise<string[]> {
+    const wanted = [...new Set(branchIds)];
+    return this.prisma.$transaction(async (tx) => {
+      const location = await lockLocation(tx, id, 'UPDATE');
+      if (!location) throw new NotFoundException('Location not found');
+      const branches = await tx.branch.findMany({
+        where: { id: { in: wanted }, isActive: true },
+        select: { id: true, code: true },
+      });
+      if (branches.length !== wanted.length) {
+        throw fieldRefusal(null, 'Unknown or inactive branch', ['branchIds']);
+      }
+      const before = await tx.branchRoutingRule.findMany({
+        where: { locationId: id },
+        select: { branch: { select: { code: true } } },
+      });
+      await tx.branchRoutingRule.deleteMany({ where: { locationId: id } });
+      await tx.branchRoutingRule.createMany({
+        data: wanted.map((branchId) => ({ locationId: id, branchId })),
+      });
+      await this.logLocationList(
+        tx,
+        user,
+        location,
+        'routingBranches',
+        before.map((r) => r.branch.code).sort(),
+        branches.map((b) => b.code).sort(),
+      );
+      return wanted.sort();
+    });
+  }
+
+  /**
+   * The branches that may serve a request starting at a place (docs/plans/04 section 6): the
+   * active branches of the rules on the place itself, else on its city, else on its country (the
+   * narrowest level that has rules). One branch is the branch; several or none is no branch.
+   * Read-only.
+   */
+  async routingCandidates(locationId: string): Promise<string[]> {
+    const place = await this.prisma.location.findUnique({ where: { id: locationId } });
+    if (!place) return [];
+    const country = await this.prisma.location.findFirst({
+      where: { kind: 'COUNTRY', countryCode: place.countryCode },
+      select: { id: true },
+    });
+    const levels = [place.id, place.cityId, country?.id ?? null].filter(
+      (l): l is string => l !== null,
+    );
+    const rules = await this.prisma.branchRoutingRule.findMany({
+      where: { locationId: { in: levels }, branch: { isActive: true } },
+      select: { locationId: true, branchId: true },
+    });
+    for (const level of levels) {
+      const here = rules.filter((r) => r.locationId === level).map((r) => r.branchId);
+      if (here.length > 0) return here.sort();
+    }
+    return [];
+  }
+
   /**
    * A new place, checked against its city under a share lock on the city row: a city's country
    * edit (which locks it for update) and the place's insert run one after the other, so a place
@@ -412,6 +542,28 @@ export class MasterDataService {
       reference: `${after.code} ${after.nameEn}`,
       action,
       changes,
+    });
+  }
+
+  /** A change of a list kept beside a location (its other names, its routing branches). */
+  private async logLocationList(
+    tx: Tx,
+    user: AuthUser,
+    location: Location,
+    field: string,
+    before: readonly string[],
+    after: readonly string[],
+  ): Promise<void> {
+    const was = before.join(', ');
+    const now = after.join(', ');
+    if (was === now) return;
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: 'LOCATION',
+      entityId: location.id,
+      reference: `${location.code} ${location.nameEn}`,
+      action: 'UPDATED',
+      changes: [{ field, before: was || null, after: now || null }],
     });
   }
 
