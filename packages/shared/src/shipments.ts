@@ -6,6 +6,7 @@ import type {
   Page,
   ShippingMode,
 } from './commercial.js';
+import type { PartnerRefDto } from './partners.js';
 
 /**
  * Shipment cycle (scope 8, annex B section 4). Internal statuses are what staff work with; the
@@ -246,6 +247,11 @@ export interface ShipmentDto extends ShipmentSummaryDto {
   etd: DateString | null;
   trackingToken: string;
   closedAt: string | null;
+  /** The sales outlet it was sold through, from its booking. */
+  salesOutlet: PartnerRefDto | null;
+  /** The partner consolidating the cargo at origin, and the one distributing it in Sudan. */
+  originConsolidator: PartnerRefDto | null;
+  distributor: PartnerRefDto | null;
   /** Packages on all cargo lines (the sum of their quantities): what the labels number up to. */
   packages: number;
   items: ShipmentItemDto[];
@@ -273,6 +279,12 @@ export interface ShipmentUpdateRequest {
   eta?: DateString | null;
   /** Replaces the other branches working on the shipment ([] removes them all). */
   sharedBranchIds?: string[];
+  /**
+   * An active origin consolidator, and an active distributor, of the shipment's branch or of a
+   * branch sharing it (one of the user's); null removes it. One the shipment holds stays.
+   */
+  originConsolidatorId?: string | null;
+  distributorId?: string | null;
 }
 
 /** At most this many other branches share one shipment. */

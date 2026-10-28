@@ -668,6 +668,14 @@ export class MasterDataService {
     return category;
   }
 
+  /** 400 unless the customer segment exists and is active. */
+  async requireCustomerSegment(code: string): Promise<void> {
+    const segment = await this.prisma.customerSegment.findUnique({ where: { code } });
+    if (!segment?.isActive) {
+      throw new BadRequestException(`Unknown or inactive customer segment: ${code}`);
+    }
+  }
+
   /** For a rate card: 400 unless the location exists and is active, a place or a country. */
   async requireRateLocation(id: string): Promise<Location> {
     const location = await this.prisma.location.findUnique({ where: { id } });

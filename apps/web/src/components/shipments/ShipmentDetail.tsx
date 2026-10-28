@@ -5,6 +5,8 @@ import {
   SHIPMENT_REASON_MIN_LENGTH,
   type BookingService,
   type CustomerDto,
+  type PartnerKind,
+  type PartnerRefDto,
   type ShipmentDto,
   type ShipmentStatus,
 } from '@nolon/shared';
@@ -28,6 +30,7 @@ import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
 import { ShipmentDocuments } from './ShipmentDocuments';
 import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
+import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -44,6 +47,7 @@ const LATE_ENTRY_MS = 60 * 60 * 1000;
 export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
   const tc = useTranslations('Common');
+  const tpa = useTranslations('Partners');
   const te = useTranslations('Enums');
   const tp = useTranslations('Print');
   const locale = useLocale();
@@ -158,6 +162,11 @@ export function ShipmentDetail({ id }: { id: string }) {
         etd: text('etd'),
         eta: text('eta'),
         services: form.getAll('services').filter((v): v is BookingService => typeof v === 'string'),
+        originConsolidatorId: partnerChange(
+          shipment?.originConsolidator ?? null,
+          field(form, 'originConsolidatorId'),
+        ),
+        distributorId: partnerChange(shipment?.distributor ?? null, field(form, 'distributorId')),
         ...(shipment?.actions.canShareBranches
           ? {
               sharedBranchIds: form
@@ -173,6 +182,10 @@ export function ShipmentDetail({ id }: { id: string }) {
 
   const s = shipment;
   const actions = s.actions;
+  // A partner of the shipment's branch or of one sharing it, among the user's branches.
+  const partnerBranchIds = [s.branchId, ...s.sharedBranchIds].filter((id) =>
+    me.branches.some((b) => b.id === id),
+  );
   const party = (partyId: string | null) =>
     partyId ? (customer?.parties.find((p) => p.id === partyId)?.name ?? '…') : '—';
   const trackingUrl = `${window.location.origin}/track/${s.trackingToken}`;
@@ -400,6 +413,20 @@ export function ShipmentDetail({ id }: { id: string }) {
               <span>{t('eta')}</span>
               <input name="eta" type="date" defaultValue={s.eta ?? ''} />
             </label>
+            <PartnerChoice
+              name="originConsolidatorId"
+              label={tpa('originConsolidator')}
+              kind="ORIGIN_CONSOLIDATOR"
+              branchIds={partnerBranchIds}
+              held={s.originConsolidator}
+            />
+            <PartnerChoice
+              name="distributorId"
+              label={tpa('distributor')}
+              kind="DISTRIBUTOR"
+              branchIds={partnerBranchIds}
+              held={s.distributor}
+            />
           </div>
           <fieldset>
             <legend>{t('services')}</legend>
@@ -472,6 +499,18 @@ export function ShipmentDetail({ id }: { id: string }) {
                       <dd>{party(s.consigneeId)}</dd>
                       <dt>{t('shipper')}</dt>
                       <dd>{party(s.shipperId)}</dd>
+                      <dt>{tpa('salesOutlet')}</dt>
+                      <dd>
+                        <PartnerName partner={s.salesOutlet} />
+                      </dd>
+                      <dt>{tpa('originConsolidator')}</dt>
+                      <dd>
+                        <PartnerName partner={s.originConsolidator} />
+                      </dd>
+                      <dt>{tpa('distributor')}</dt>
+                      <dd>
+                        <PartnerName partner={s.distributor} />
+                      </dd>
                       <dt>{t('sharedBranches')}</dt>
                       <dd>
                         {s.sharedBranches.length > 0
@@ -685,5 +724,35 @@ export function ShipmentDetail({ id }: { id: string }) {
         ]}
       />
     </section>
+  );
+}
+
+/** A partner field of the shipment's edit form, read from the form by `name` on save. */
+function PartnerChoice({
+  name,
+  label,
+  kind,
+  branchIds,
+  held,
+}: {
+  name: string;
+  label: string;
+  kind: PartnerKind;
+  branchIds: readonly string[];
+  held: PartnerRefDto | null;
+}) {
+  const [value, setValue] = useState(held?.id ?? '');
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <PartnerSelect
+        name={name}
+        kind={kind}
+        branchIds={branchIds}
+        held={held}
+        value={value}
+        onChange={setValue}
+      />
+    </label>
   );
 }

@@ -32,8 +32,18 @@ vi.mock('@/lib/master-data', () => ({
       { id: 'l2', code: 'PZU', nameEn: 'Port Sudan', isActive: true },
     ],
     containerTypes: [{ code: '20GP', nameEn: '20GP', isActive: true }],
+    priceCategories: [
+      { code: 'CARTON', nameEn: 'Carton', cargoType: 'GENERAL', isActive: true },
+      { code: 'OLDBOX', nameEn: 'Old box', cargoType: 'GENERAL', isActive: false },
+      { code: 'PALLET', nameEn: 'Pallet', cargoType: 'PALLET', isActive: true },
+    ],
   }),
   useLocalName: () => (x: { nameEn?: string }) => x.nameEn ?? '',
+}));
+vi.mock('../partners/PartnerSelect', async (actual) => ({
+  ...(await actual<typeof import('../partners/PartnerSelect')>()),
+  // Its own spec covers it; here it would take the api calls these tests queue.
+  PartnerSelect: () => null,
 }));
 vi.mock('../StaffShell', () => ({
   useMe: () => ({ permissions, branches: [{ id: 'b1', nameEn: 'Dubai', nameAr: 'دبي' }] }),
@@ -528,6 +538,7 @@ describe('BookingForm from a quotation (functional review B1)', () => {
           {
             cargoType: 'CONTAINER',
             containerTypeCode: '20GP',
+            priceCategoryCode: null,
             description: null,
             quantity: 2,
             lengthCm: null,
@@ -714,3 +725,59 @@ describe('BookingForm new booking: empty route and suggested parties (functional
 });
 
 const PARTY_SELECTS = ['shipperId', 'consigneeId', 'notifyPartyId'];
+
+describe('BookingForm price category on each cargo line (plan PR-3)', () => {
+  let root: ReturnType<typeof createRoot>;
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+  });
+
+  it('offers the categories of the line’s cargo type, drops one on a cargo change, and sends it', async () => {
+    api.mockReset();
+    api.mockImplementation((path: string) =>
+      path === '/customers/c1'
+        ? Promise.resolve(customer([]))
+        : Promise.resolve({ ...booking, id: 'bk1' }),
+    );
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const edited = {
+      ...booking,
+      cargoType: 'GENERAL',
+      loadType: 'LCL',
+      items: [{ lineNo: 1, cargoType: 'GENERAL', quantity: 3, priceCategoryCode: 'OLDBOX' }],
+    } as unknown as BookingDto;
+    act(() => {
+      root.render(<BookingForm booking={edited} />);
+    });
+    await flush();
+    const category = () =>
+      [...document.querySelectorAll('label.field')]
+        .find((l) => l.textContent?.startsWith('priceCategory'))
+        ?.querySelector('select') as HTMLSelectElement | undefined;
+    // The line's own category stays offered after it was deactivated; other cargo's are not.
+    expect([...(category()?.options ?? [])].map((o) => o.value)).toEqual(['', 'CARTON', 'OLDBOX']);
+    expect(category()?.value).toBe('OLDBOX');
+    changeValue(category() as HTMLSelectElement, 'CARTON');
+    const cargo = [...document.querySelectorAll('label.field')]
+      .find((l) => l.textContent?.startsWith('cargoType'))
+      ?.querySelector('select') as HTMLSelectElement;
+    changeValue(cargo, 'PALLET');
+    expect([...(category()?.options ?? [])].map((o) => o.value)).toEqual(['', 'PALLET']);
+    expect(category()?.value).toBe('');
+    changeValue(category() as HTMLSelectElement, 'PALLET');
+    act(() => {
+      (document.querySelector('form') as HTMLFormElement).requestSubmit();
+    });
+    await flush();
+    const sent = api.mock.calls.find((c) => c[0] === '/bookings/bk1')?.[1] as {
+      body: { items: { priceCategoryCode: string | null }[]; salesOutletId?: unknown };
+    };
+    expect(sent.body.items.map((i) => i.priceCategoryCode)).toEqual(['PALLET']);
+    // The outlet the booking holds is not sent back unchanged.
+    expect('salesOutletId' in sent.body && sent.body.salesOutletId !== undefined).toBe(false);
+  });
+});

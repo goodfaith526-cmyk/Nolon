@@ -28,7 +28,7 @@ compose up -d --wait postgres
 # Migrations that rewrite existing rows (not only add): applied only with a backup taken just before,
 # and with api and web stopped from before the migration until the new ones start, so no old code
 # writes in between (AGENTS.md rule 4; docs/reviews/lcl-numbering-capacity-plan-2026-10-27.md, F111-5).
-REWRITING_MIGRATIONS=(20261027235016_route_numbers_renumbering)
+REWRITING_MIGRATIONS=(20261027235015_legacy_booking_numbers 20261027235016_route_numbers_renumbering)
 
 # Sets `rewrites` to the rewriting migrations not applied yet to this database (none on an empty
 # one: no table yet). Run in this shell, not in $(...), so a failed query stops the deploy (set -e)

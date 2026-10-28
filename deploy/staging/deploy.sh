@@ -28,7 +28,7 @@ compose up -d --wait postgres
 # Migrations that rewrite existing rows (not only add): applied only with a backup taken just before,
 # and with api and web stopped from before the migration until the new ones start, so no old code
 # writes in between (AGENTS.md rule 4; docs/reviews/lcl-numbering-capacity-plan-2026-10-27.md, F111-5).
-REWRITING_MIGRATIONS=(20261027235016_route_numbers_renumbering)
+REWRITING_MIGRATIONS=(20261027235015_legacy_booking_numbers 20261027235016_route_numbers_renumbering)
 
 # Sets `rewrites` to the rewriting migrations not applied yet to this database (none on an empty
 # one: no table yet). Run in this shell, not in $(...), so a failed query stops the deploy (set -e)
@@ -66,6 +66,27 @@ if [ "$backups" = 1 ]; then
 else
   echo "WARNING: staging backups are not set up; migrating without a backup (DEPLOY.md, Backups)" >&2
 fi
+
+# 20261027235016 failed on staging on 2026-10-28 (bookings still numbered NOL-BK-...) and changed
+# nothing (one transaction), but Prisma keeps it as failed and applies nothing after it. Marked
+# rolled back here, it applies again, after 20261027235015 that fixes those bookings. Only this
+# migration, and only while it is recorded as failed: any other failed migration still stops here.
+RETRY_FAILED_MIGRATIONS=(20261027235016_route_numbers_renumbering)
+retry_failed_migrations() {
+  local exists failed name
+  exists=$(compose exec -T postgres psql -U nolon -d nolon -tAc \
+    "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")
+  [ "$exists" = t ] || return 0
+  failed=$(compose exec -T postgres psql -U nolon -d nolon -tAc \
+    "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL")
+  for name in "${RETRY_FAILED_MIGRATIONS[@]}"; do
+    if grep -qx "$name" <<<"$failed"; then
+      echo "==> Marking the failed $name as rolled back, to apply it again"
+      compose run --rm migrate node node_modules/prisma/build/index.js migrate resolve --rolled-back "$name"
+    fi
+  done
+}
+retry_failed_migrations
 
 echo "==> Applying migrations (prisma migrate deploy)"
 compose run --rm migrate

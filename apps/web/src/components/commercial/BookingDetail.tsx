@@ -5,17 +5,21 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
-import { useLocationName, useMasterData } from '@/lib/master-data';
+import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
 import { MoreMenu } from '../MoreMenu';
 import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
+import { PartnerName } from '../partners/PartnerSelect';
 
 export function BookingDetail({ id }: { id: string }) {
   const t = useTranslations('Bookings');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Partners');
+  const tq = useTranslations('Quotations');
+  const name = useLocalName();
   const locale = useLocale();
   const me = useMe();
   const master = useMasterData();
@@ -60,6 +64,10 @@ export function BookingDetail({ id }: { id: string }) {
   const party = (partyId: string | null) =>
     partyId ? (customer?.parties.find((p) => p.id === partyId)?.name ?? '…') : '—';
   const status = booking.status;
+  const categoryName = (code: string | null) => {
+    const category = master?.priceCategories.find((c) => c.code === code);
+    return category ? name(category) : (code ?? '—');
+  };
 
   return (
     <section className="stack">
@@ -154,6 +162,10 @@ export function BookingDetail({ id }: { id: string }) {
         <dd>{party(booking.notifyPartyId)}</dd>
         <dt>{t('requestedDeparture')}</dt>
         <dd dir="ltr">{booking.requestedDeparture ?? '—'}</dd>
+        <dt>{tp('salesOutlet')}</dt>
+        <dd>
+          <PartnerName partner={booking.salesOutlet} />
+        </dd>
         {booking.cancelReason && (
           <>
             <dt>{t('cancelReason')}</dt>
@@ -172,6 +184,7 @@ export function BookingDetail({ id }: { id: string }) {
               <tr>
                 <th>#</th>
                 <th>{t('cargoType')}</th>
+                <th>{tq('priceCategory')}</th>
                 <th>{t('quantity')}</th>
                 <th>{t('dimensions')}</th>
                 <th>{t('weightKg')}</th>
@@ -187,6 +200,7 @@ export function BookingDetail({ id }: { id: string }) {
                     {i.containerTypeCode ? ` · ${i.containerTypeCode}` : ''}
                     {i.description ? <div className="muted">{i.description}</div> : null}
                   </td>
+                  <td>{categoryName(i.priceCategoryCode)}</td>
                   <td>{i.quantity}</td>
                   <td dir="ltr">
                     {i.lengthCm ? `${i.lengthCm} × ${i.widthCm ?? ''} × ${i.heightCm ?? ''}` : '—'}
