@@ -1047,7 +1047,14 @@
     "weightHeldSuggested": "Suggested: the weight still held in this warehouse, for releasing all of it.",
     "place": "Place",
     "noPlace": "No place",
-    "placeHint": "A goods receipt that moves the shipment shows it at this place on the tracking page."
+    "placeHint": "A goods receipt that moves the shipment shows it at this place on the tracking page.",
+    "cancelMovement": "Cancel movement",
+    "cancelReason": "Reason for cancelling",
+    "cancelMovementHint": "The movement stays in the log marked cancelled and counts in no balance. If it moved the shipment's status, the status goes back.",
+    "confirmCancelMovement": "Confirm cancel",
+    "cancelledBadge": "Cancelled",
+    "cancelledBy": "Cancelled by {name} on {at}",
+    "movementCancelledNotice": "Movement {number} cancelled."
   },
   "Customs": {
     "section": "Customs",
@@ -2561,7 +2568,7 @@
     "SHIPMENT_CANCEL_IN_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or ask a manager for a correction.",
     "REVERT_BY_TRIP": "Trip {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "REVERT_BY_CONTAINER": "Container {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
-    "REVERT_BY_WAREHOUSE": "Warehouse movement {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_WAREHOUSE": "Warehouse movement {record} recorded this step: it cannot be undone from here. Cancel the movement on the Warehouse tab (with the permission to cancel warehouse movements).",
     "REVERT_BY_POD": "Proof of delivery {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "REVERT_BY_CUSTOMS": "The customs file ({record}) recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
@@ -2575,7 +2582,12 @@
     "CONTAINER_OVER_VOLUME": "Container {container} has no room for this volume: it holds {limit} CBM, has {used} and would have {after}.",
     "CONTAINER_OVER_WEIGHT": "Container {container} has no room for this weight: it takes {limit} kg, has {used} and would have {after}.",
     "CONTAINER_VOLUME_MISSING": "Enter the volume (CBM) of every cargo line before closing or loading container {container}: {shipments}.",
-    "CONTAINER_WEIGHT_MISSING": "Enter the weight of every cargo line before closing or loading container {container}: {shipments}."
+    "CONTAINER_WEIGHT_MISSING": "Enter the weight of every cargo line before closing or loading container {container}: {shipments}.",
+    "CORRECTION_ALREADY_DONE": "{record} was already cancelled for another reason.",
+    "MOVEMENT_CANCEL_NEGATIVE": "Without movement {movement}, warehouse {warehouse} would release goods it did not hold: cancel the later release first.",
+    "MOVEMENT_CANCEL_OVER_PACKAGES": "Without movement {movement}, the warehouses together would hold {peak} packages of {packages}: cancel the later receipt first.",
+    "MOVEMENT_CANCEL_STATUS_MOVED": "The shipment moved on from the status movement {movement} recorded: undo the later steps first.",
+    "MOVEMENT_CANCEL_CLOSED": "The shipment is closed: movement {movement} cannot be cancelled."
   },
   "Locations": {
     "title": "Ports and cities",

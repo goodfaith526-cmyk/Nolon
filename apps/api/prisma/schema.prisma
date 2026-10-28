@@ -62,24 +62,25 @@ model Branch {
   receipts            Receipt[]
   receiptApplications ReceiptApplication[]
 
-  warehouses                 Warehouse[]
-  storageLocations           StorageLocation[]
-  warehouseMovements         WarehouseMovement[]
-  grnDrafts                  GrnDraft[]
-  grnDraftLines              GrnDraftLine[]
-  grnDraftProposals          GrnDraftProposal[]
-  quotationDrafts            QuotationDraft[]
-  bookingDrafts              BookingDraft[]
-  tripDrafts                 TripDraft[]
-  releaseDrafts              GoodsReleaseDraft[]
-  invoiceDrafts              InvoiceDraft[]
-  receiptDrafts              ReceiptDraft[]
-  customerDrafts             CustomerDraft[]
-  statusDrafts               ShipmentStatusDraft[]
-  partyDrafts                PartyDraft[]
-  rateCardDrafts             RateCardDraft[]
-  newCustomerBookingDrafts   NewCustomerBookingDraft[]
-  newCustomerQuotationDrafts NewCustomerQuotationDraft[]
+  warehouses                     Warehouse[]
+  storageLocations               StorageLocation[]
+  warehouseMovements             WarehouseMovement[]
+  warehouseMovementCancellations WarehouseMovementCancellation[]
+  grnDrafts                      GrnDraft[]
+  grnDraftLines                  GrnDraftLine[]
+  grnDraftProposals              GrnDraftProposal[]
+  quotationDrafts                QuotationDraft[]
+  bookingDrafts                  BookingDraft[]
+  tripDrafts                     TripDraft[]
+  releaseDrafts                  GoodsReleaseDraft[]
+  invoiceDrafts                  InvoiceDraft[]
+  receiptDrafts                  ReceiptDraft[]
+  customerDrafts                 CustomerDraft[]
+  statusDrafts                   ShipmentStatusDraft[]
+  partyDrafts                    PartyDraft[]
+  rateCardDrafts                 RateCardDraft[]
+  newCustomerBookingDrafts       NewCustomerBookingDraft[]
+  newCustomerQuotationDrafts     NewCustomerQuotationDraft[]
 
   teamMembers        UserBranchTeam[]
   personPermissions  UserBranchPermission[]
@@ -209,37 +210,38 @@ model User {
   receiptApplicationsCreated  ReceiptApplication[] @relation("ReceiptApplicationCreatedBy")
   receiptApplicationsReversed ReceiptApplication[] @relation("ReceiptApplicationReversedBy")
 
-  warehouseMovements                WarehouseMovement[]         @relation("WarehouseMovementCreatedBy")
-  grnDraftsCreated                  GrnDraft[]                  @relation("GrnDraftCreatedBy")
-  grnDraftsDecided                  GrnDraft[]                  @relation("GrnDraftDecidedBy")
-  quotationDraftsCreated            QuotationDraft[]            @relation("QuotationDraftCreatedBy")
-  quotationDraftsDecided            QuotationDraft[]            @relation("QuotationDraftDecidedBy")
-  bookingDraftsCreated              BookingDraft[]              @relation("BookingDraftCreatedBy")
-  bookingDraftsDecided              BookingDraft[]              @relation("BookingDraftDecidedBy")
-  tripDraftsCreated                 TripDraft[]                 @relation("TripDraftCreatedBy")
-  tripDraftsDecided                 TripDraft[]                 @relation("TripDraftDecidedBy")
-  releaseDraftsCreated              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftCreatedBy")
-  releaseDraftsDecided              GoodsReleaseDraft[]         @relation("GoodsReleaseDraftDecidedBy")
-  invoiceDraftsCreated              InvoiceDraft[]              @relation("InvoiceDraftCreatedBy")
-  invoiceDraftsDecided              InvoiceDraft[]              @relation("InvoiceDraftDecidedBy")
-  receiptDraftsCreated              ReceiptDraft[]              @relation("ReceiptDraftCreatedBy")
-  receiptDraftsDecided              ReceiptDraft[]              @relation("ReceiptDraftDecidedBy")
-  customerDraftsCreated             CustomerDraft[]             @relation("CustomerDraftCreatedBy")
-  customerDraftsDecided             CustomerDraft[]             @relation("CustomerDraftDecidedBy")
-  statusDraftsCreated               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftCreatedBy")
-  statusDraftsDecided               ShipmentStatusDraft[]       @relation("ShipmentStatusDraftDecidedBy")
-  partyDraftsCreated                PartyDraft[]                @relation("PartyDraftCreatedBy")
-  partyDraftsDecided                PartyDraft[]                @relation("PartyDraftDecidedBy")
-  rateCardDraftsCreated             RateCardDraft[]             @relation("RateCardDraftCreatedBy")
-  rateCardDraftsDecided             RateCardDraft[]             @relation("RateCardDraftDecidedBy")
-  newCustomerBookingDraftsCreated   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftCreatedBy")
-  newCustomerBookingDraftsDecided   NewCustomerBookingDraft[]   @relation("NewCustomerBookingDraftDecidedBy")
-  newCustomerQuotationDraftsCreated NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftCreatedBy")
-  newCustomerQuotationDraftsDecided NewCustomerQuotationDraft[] @relation("NewCustomerQuotationDraftDecidedBy")
-  assistantApprovalGrants           AssistantApprovalGrant[]    @relation("AssistantApprovalGrantUser")
-  assistantApprovalsGranted         AssistantApprovalGrant[]    @relation("AssistantApprovalGrantedBy")
-  customsUpdated                    CustomsClearance[]          @relation("CustomsUpdatedBy")
-  customsFeesCreated                CustomsFee[]                @relation("CustomsFeeCreatedBy")
+  warehouseMovements                WarehouseMovement[]             @relation("WarehouseMovementCreatedBy")
+  warehouseMovementCancellations    WarehouseMovementCancellation[] @relation("WarehouseMovementCancelledBy")
+  grnDraftsCreated                  GrnDraft[]                      @relation("GrnDraftCreatedBy")
+  grnDraftsDecided                  GrnDraft[]                      @relation("GrnDraftDecidedBy")
+  quotationDraftsCreated            QuotationDraft[]                @relation("QuotationDraftCreatedBy")
+  quotationDraftsDecided            QuotationDraft[]                @relation("QuotationDraftDecidedBy")
+  bookingDraftsCreated              BookingDraft[]                  @relation("BookingDraftCreatedBy")
+  bookingDraftsDecided              BookingDraft[]                  @relation("BookingDraftDecidedBy")
+  tripDraftsCreated                 TripDraft[]                     @relation("TripDraftCreatedBy")
+  tripDraftsDecided                 TripDraft[]                     @relation("TripDraftDecidedBy")
+  releaseDraftsCreated              GoodsReleaseDraft[]             @relation("GoodsReleaseDraftCreatedBy")
+  releaseDraftsDecided              GoodsReleaseDraft[]             @relation("GoodsReleaseDraftDecidedBy")
+  invoiceDraftsCreated              InvoiceDraft[]                  @relation("InvoiceDraftCreatedBy")
+  invoiceDraftsDecided              InvoiceDraft[]                  @relation("InvoiceDraftDecidedBy")
+  receiptDraftsCreated              ReceiptDraft[]                  @relation("ReceiptDraftCreatedBy")
+  receiptDraftsDecided              ReceiptDraft[]                  @relation("ReceiptDraftDecidedBy")
+  customerDraftsCreated             CustomerDraft[]                 @relation("CustomerDraftCreatedBy")
+  customerDraftsDecided             CustomerDraft[]                 @relation("CustomerDraftDecidedBy")
+  statusDraftsCreated               ShipmentStatusDraft[]           @relation("ShipmentStatusDraftCreatedBy")
+  statusDraftsDecided               ShipmentStatusDraft[]           @relation("ShipmentStatusDraftDecidedBy")
+  partyDraftsCreated                PartyDraft[]                    @relation("PartyDraftCreatedBy")
+  partyDraftsDecided                PartyDraft[]                    @relation("PartyDraftDecidedBy")
+  rateCardDraftsCreated             RateCardDraft[]                 @relation("RateCardDraftCreatedBy")
+  rateCardDraftsDecided             RateCardDraft[]                 @relation("RateCardDraftDecidedBy")
+  newCustomerBookingDraftsCreated   NewCustomerBookingDraft[]       @relation("NewCustomerBookingDraftCreatedBy")
+  newCustomerBookingDraftsDecided   NewCustomerBookingDraft[]       @relation("NewCustomerBookingDraftDecidedBy")
+  newCustomerQuotationDraftsCreated NewCustomerQuotationDraft[]     @relation("NewCustomerQuotationDraftCreatedBy")
+  newCustomerQuotationDraftsDecided NewCustomerQuotationDraft[]     @relation("NewCustomerQuotationDraftDecidedBy")
+  assistantApprovalGrants           AssistantApprovalGrant[]        @relation("AssistantApprovalGrantUser")
+  assistantApprovalsGranted         AssistantApprovalGrant[]        @relation("AssistantApprovalGrantedBy")
+  customsUpdated                    CustomsClearance[]              @relation("CustomsUpdatedBy")
+  customsFeesCreated                CustomsFee[]                    @relation("CustomsFeeCreatedBy")
 
   driverProfile          Driver?
   tripsCreated           Trip[]             @relation("TripCreatedBy")
@@ -2066,11 +2068,32 @@ model WarehouseMovement {
   grnDraft        GrnDraft?
 
   releaseDraft GoodsReleaseDraft?
+  /// B3-1 (docs/plans/05-correction-contracts.md, 1): set once the movement is cancelled.
+  cancellation WarehouseMovementCancellation?
 
   @@index([shipmentId, warehouseId])
   @@index([warehouseId])
   @@index([branchId])
   @@map("warehouse_movements")
+}
+
+/// The cancellation of a goods receipt or release (B3-1, docs/plans/05-correction-contracts.md,
+/// section 1). The movement itself is never changed; once this row exists it no longer counts in
+/// any balance. One per movement; insert-only (a trigger refuses UPDATE, DELETE and TRUNCATE).
+model WarehouseMovementCancellation {
+  movementId    String   @id @map("movement_id") @db.Uuid
+  /// The movement's (and its shipment's) branch.
+  branchId      String   @map("branch_id") @db.Uuid
+  reason        String   @db.VarChar(500)
+  cancelledById String   @map("cancelled_by_id") @db.Uuid
+  cancelledAt   DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(3)
+
+  movement    WarehouseMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  branch      Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  cancelledBy User              @relation("WarehouseMovementCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  @@index([branchId])
+  @@map("warehouse_movement_cancellations")
 }
 
 /**

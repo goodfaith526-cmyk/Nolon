@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   type OnModuleInit,
@@ -19,6 +21,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
+import { codedRefusal } from '../common/validation.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService } from '../documents/documents.service.js';
@@ -37,6 +40,7 @@ import {
   defaultReceiptStatus,
   extraPackagesOnReceipt,
   heldPackages,
+  movementCancelBlocker,
   receiptStatusOptions,
   releasableAt,
   remainingWeightKg,
@@ -50,6 +54,7 @@ const movementDetails = {
   warehouse: { select: { code: true, nameEn: true, nameAr: true } },
   storageLocation: { select: { code: true } },
   createdBy: { select: { fullName: true } },
+  cancellation: { include: { cancelledBy: { select: { fullName: true } } } },
   photos: {
     where: { document: { deletedAt: null } },
     include: { document: { select: { id: true, fileName: true, uploadedAt: true } } },
@@ -114,7 +119,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
       revertBlockerInTx: async (tx, shipmentId, step) => {
         if (step.note === null) return null;
         const movement = await tx.warehouseMovement.findFirst({
-          where: { shipmentId, number: step.note, statusApplied: step.status },
+          where: { shipmentId, number: step.note, statusApplied: step.status, cancellation: null },
           select: { number: true },
         });
         return movement ? { record: 'WAREHOUSE', number: movement.number } : null;
@@ -125,7 +130,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
   /** For a shipment's close (B1-5): the warehouses still holding its goods, in code order. */
   async goodsOnHandInTx(tx: Tx, shipmentId: string): Promise<ShipmentGoodsOnHand[]> {
     const movements = await tx.warehouseMovement.findMany({
-      where: { shipmentId },
+      where: { shipmentId, cancellation: null },
       select: {
         kind: true,
         warehouseId: true,
@@ -146,11 +151,18 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
 
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentWarehouseDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
-    const movements = await this.prisma.warehouseMovement.findMany({
-      where: { shipmentId, shipment: shipmentScope(user) },
+    const logged = await this.prisma.warehouseMovement.findMany({
+      where: {
+        shipmentId,
+        shipment: shipmentScope(user),
+        // The assistant's field list knows no cancelled movement: it sees the live ones only.
+        ...(user.agent ? { cancellation: null } : {}),
+      },
       include: movementDetails,
       orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }],
     });
+    // A cancelled movement stays in the log, marked, and counts in no balance (B3-1).
+    const movements = logged.filter((m) => m.cancellation === null);
     const totals = totalsByWarehouse(movements);
     const balances: WarehouseBalanceDto[] = [];
     for (const [warehouseId, t] of totals) {
@@ -180,7 +192,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
       heldPackages: held,
       remainingPackages: Math.max(0, shipment.packages - held),
       balances,
-      movements: movements.map(toDto),
+      movements: logged.map(toDto),
       actions: {
         canReceive: has('warehouse:create') && active,
         canRelease:
@@ -189,6 +201,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
           balances.some((b) => b.onHandPackages > 0),
         canAddPhotos:
           has('warehouse:create') && has('documents:create') && shipment.status !== 'CANCELLED',
+        canCancelMovements: !user.agent && has('warehouse:cancel') && shipment.status !== 'CLOSED',
         receiptStatuses,
         defaultReceiptStatus: defaultReceiptStatus(receiptStatuses),
       },
@@ -217,7 +230,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
   > {
     await this.shipments.requireAccessible(user, shipmentId);
     const movements = await this.prisma.warehouseMovement.findMany({
-      where: { shipmentId, shipment: shipmentScope(user) },
+      where: { shipmentId, shipment: shipmentScope(user), cancellation: null },
       select: { kind: true, warehouseId: true, packages: true, weightKg: true },
     });
     const totals = totalsByWarehouse(movements);
@@ -301,7 +314,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     );
     // Under the exclusive shipment lock: every earlier receipt and release is counted.
     const logged = await tx.warehouseMovement.findMany({
-      where: { shipmentId, shipment: shipmentScope(user) },
+      where: { shipmentId, shipment: shipmentScope(user), cancellation: null },
       select: {
         kind: true,
         warehouseId: true,
@@ -399,7 +412,12 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
       'release',
     );
     const held = await tx.warehouseMovement.findMany({
-      where: { shipmentId, warehouseId: warehouse.id, shipment: shipmentScope(user) },
+      where: {
+        shipmentId,
+        warehouseId: warehouse.id,
+        shipment: shipmentScope(user),
+        cancellation: null,
+      },
       select: {
         kind: true,
         warehouseId: true,
@@ -433,6 +451,108 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
       select: { id: true },
     });
     return movement.id;
+  }
+
+  /**
+   * Cancels a goods receipt or release (B3-1, docs/plans/05-correction-contracts.md, section 1).
+   * The movement stays as recorded; a cancellation row is linked to it, and from then on it counts
+   * in no balance, report or check. warehouse:cancel in the movement's branch. Refused (409) on a
+   * closed shipment; when, without it, a warehouse would hold less than nothing at some time
+   * (cancel the release that took the goods first) or the warehouses together would hold more than
+   * the cargo lines and more than they ever did; and when the shipment moved on from the status the
+   * movement applied. That status is undone when it is the current step. Cancelling again for the
+   * same reason returns the cancelled movement; for another reason it is refused.
+   */
+  async cancel(
+    user: AuthUser,
+    shipmentId: string,
+    movementId: string,
+    reason: string,
+  ): Promise<WarehouseMovementDto> {
+    const found = await this.findMovement(user, shipmentId, movementId);
+    if (!user.access.has('warehouse:cancel', found.branchId)) {
+      throw new ForbiddenException('You may not cancel warehouse movements of this branch');
+    }
+    const label = { movement: found.number };
+    await this.prisma.$transaction(async (tx) => {
+      // The receipt's and release's order: the shipment exclusively, then the warehouse shared.
+      const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      const done = await tx.warehouseMovementCancellation.findUnique({
+        where: { movementId },
+        select: { reason: true },
+      });
+      if (done) {
+        if (done.reason === reason) return;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_ALREADY_DONE',
+          `Movement ${found.number} was already cancelled for another reason`,
+          { record: found.number },
+        );
+      }
+      if (status === 'CLOSED') {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'MOVEMENT_CANCEL_CLOSED',
+          `Shipment is closed: movement ${found.number} cannot be cancelled`,
+          label,
+        );
+      }
+      await tx.$queryRaw`SELECT 1 FROM "warehouses" WHERE "id" = ${found.warehouseId}::uuid FOR SHARE`;
+      const [live, expected] = await Promise.all([
+        tx.warehouseMovement.findMany({
+          where: { shipmentId, cancellation: null },
+          select: {
+            id: true,
+            kind: true,
+            warehouseId: true,
+            packages: true,
+            weightKg: true,
+            occurredAt: true,
+            createdAt: true,
+            warehouse: { select: { code: true } },
+          },
+        }),
+        this.shipments.packagesInTx(tx, shipmentId),
+      ]);
+      const blocker = movementCancelBlocker(live, movementId, expected);
+      if (blocker?.kind === 'NEGATIVE') {
+        const warehouse = live.find((m) => m.warehouseId === blocker.warehouseId)?.warehouse.code;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'MOVEMENT_CANCEL_NEGATIVE',
+          `Without movement ${found.number}, warehouse ${warehouse} would release goods it does not hold: cancel the later release first`,
+          { ...label, warehouse: warehouse ?? '' },
+        );
+      }
+      if (blocker?.kind === 'OVER_PACKAGES') {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'MOVEMENT_CANCEL_OVER_PACKAGES',
+          `Without movement ${found.number}, the warehouses would hold ${blocker.peak} packages of ${expected}: cancel the later receipt first`,
+          { ...label, peak: String(blocker.peak), packages: String(expected) },
+        );
+      }
+      if (found.statusApplied) {
+        await this.shipments.undoRecordStepInTx(
+          tx,
+          user,
+          shipmentId,
+          { status: found.statusApplied, numbers: [found.number], reason },
+          () =>
+            codedRefusal(
+              HttpStatus.CONFLICT,
+              'MOVEMENT_CANCEL_STATUS_MOVED',
+              `The shipment moved on from ${found.statusApplied}, which movement ${found.number} recorded: undo the later steps first`,
+              { ...label, status: found.statusApplied ?? '' },
+            ),
+        );
+      }
+      await tx.warehouseMovementCancellation.create({
+        data: { movementId, branchId: found.branchId, reason, cancelledById: user.id },
+      });
+    });
+    return this.getMovement(user, shipmentId, movementId);
   }
 
   /** Adds a photo to a movement. The photo is a shipment document of type PHOTO. */
@@ -524,5 +644,12 @@ function toDto(m: MovementWithDetails): WarehouseMovementDto {
     photos: [...m.photos]
       .sort((a, b) => a.document.uploadedAt.getTime() - b.document.uploadedAt.getTime())
       .map((p) => ({ documentId: p.document.id, fileName: p.document.fileName })),
+    cancellation: m.cancellation
+      ? {
+          reason: m.cancellation.reason,
+          cancelledAt: m.cancellation.cancelledAt.toISOString(),
+          cancelledByName: m.cancellation.cancelledBy.fullName,
+        }
+      : null,
   };
 }

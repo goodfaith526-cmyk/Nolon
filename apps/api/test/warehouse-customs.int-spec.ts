@@ -21,6 +21,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { AGENT_PREFIX, registerClient, tokenFor } from './agent-drafts-helpers.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 import { Access } from '../src/access-control/access.js';
 
@@ -792,6 +793,271 @@ describe('warehouse and customs', () => {
       }).expect(400);
       expect(await status(s.id)).toBe('CREATED');
       expect(await t.prisma.warehouseMovement.count({ where: { shipmentId: s.id } })).toBe(0);
+    });
+  });
+
+  describe('B3-1: cancelling a receipt or release', () => {
+    const cancel = (
+      id: string,
+      movementId: string,
+      cookie: string,
+      reason = 'Recorded by mistake',
+    ) => post(`/shipments/${id}/warehouse/movements/${movementId}/cancel`, cookie, { reason });
+    const movement = async (id: string, cookie: string, path: string, body: object) =>
+      (await post(`/shipments/${id}/warehouse/${path}`, cookie, body).expect(201))
+        .body as WarehouseMovementDto;
+
+    it('a receipt nothing was released from is cancelled: kept, marked, and counted nowhere', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const kept = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+      });
+      const wrong = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 6,
+      });
+      expect((await view(s.id)).actions.canCancelMovements).toBe(true);
+      const done = (await cancel(s.id, wrong.id, cookies.warehouseDxb).expect(201))
+        .body as WarehouseMovementDto;
+      expect(done.cancellation).toMatchObject({
+        reason: 'Recorded by mistake',
+        cancelledByName: 'Integration Test',
+      });
+      const after = await view(s.id);
+      expect(after).toMatchObject({ heldPackages: 4, remainingPackages: 6 });
+      expect(after.balances[0]).toMatchObject({ receivedPackages: 4, onHandPackages: 4 });
+      expect(after.movements.map((m) => [m.number, m.cancellation?.reason ?? null])).toEqual([
+        [kept.number, null],
+        [wrong.number, 'Recorded by mistake'],
+      ]);
+      // The 6 can be received again: the cancelled receipt holds nothing.
+      await receive(s.id, cookies.warehouseDxb, { packages: 6 }).expect(201);
+
+      // The same cancel again changes nothing; another reason is refused.
+      await cancel(s.id, wrong.id, cookies.warehouseDxb).expect(201);
+      const other = await cancel(s.id, wrong.id, cookies.warehouseDxb, 'Another reason').expect(
+        409,
+      );
+      expect(other.body).toMatchObject({
+        code: 'CORRECTION_ALREADY_DONE',
+        params: { record: wrong.number },
+      });
+      expect(
+        await t.prisma.warehouseMovementCancellation.count({ where: { movementId: wrong.id } }),
+      ).toBe(1);
+
+      // Reports leave it out; the audit log keeps the receipt and shows its cancel.
+      const day = (offset: number) =>
+        new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+      const report = (
+        await get(
+          `/reports/warehouse-movements?from=${day(-1)}&to=${day(1)}&branchId=${dxb}`,
+          cookies.managerDxb,
+        ).expect(200)
+      ).body as { movements: { number: string }[] };
+      const numbers = report.movements.map((m) => m.number);
+      expect(numbers).toContain(kept.number);
+      expect(numbers).not.toContain(wrong.number);
+      const onHand = (
+        await get(`/reports/warehouse-on-hand?branchId=${dxb}`, cookies.managerDxb).expect(200)
+      ).body as { rows: { shipmentId: string; packages: number }[] };
+      expect(onHand.rows.find((r) => r.shipmentId === s.id)?.packages).toBe(10);
+      const audit = (
+        await get(
+          `/reports/audit-log?from=${day(-1)}&to=${day(1)}&branchId=${dxb}`,
+          cookies.managerDxb,
+        ).expect(200)
+      ).body as { entries: { reference: string; action: string; detail: string | null }[] };
+      expect(
+        audit.entries
+          .filter((e) => e.reference === wrong.number)
+          .map((e) => [e.action, e.detail])
+          .sort(),
+      ).toEqual([
+        ['CANCELLED', 'Recorded by mistake'],
+        ['RECEIVED', null],
+      ]);
+
+      // The cancellation is insert-only.
+      await expect(
+        t.prisma.warehouseMovementCancellation.update({
+          where: { movementId: wrong.id },
+          data: { reason: 'Changed' },
+        }),
+      ).rejects.toThrow(/cannot be changed or deleted/);
+      await expect(
+        t.prisma.warehouseMovementCancellation.delete({ where: { movementId: wrong.id } }),
+      ).rejects.toThrow(/cannot be changed or deleted/);
+    });
+
+    it('a receipt a release took goods from stays until the release is cancelled', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const grn = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 10,
+      });
+      const out = await movement(s.id, cookies.warehouseDxb, 'releases', {
+        warehouseId: dxbWarehouse.id,
+        packages: 4,
+      });
+      const refused = await cancel(s.id, grn.id, cookies.warehouseDxb).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'MOVEMENT_CANCEL_NEGATIVE',
+        params: { movement: grn.number, warehouse: 'ZZ-DXB-1' },
+      });
+      await cancel(s.id, out.id, cookies.warehouseDxb).expect(201);
+      await cancel(s.id, grn.id, cookies.warehouseDxb).expect(201);
+      expect(await view(s.id)).toMatchObject({ heldPackages: 0, balances: [] });
+    });
+
+    it('a release cancel never holds the goods in two warehouses at once (F132-3)', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const cookie = cookies.warehouseDxbPts;
+      await movement(s.id, cookie, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 10,
+      });
+      const out = await movement(s.id, cookie, 'releases', {
+        warehouseId: dxbWarehouse.id,
+        packages: 10,
+      });
+      const there = await movement(s.id, cookie, 'receipts', {
+        warehouseId: ptsWarehouse.id,
+        condition: 'GOOD',
+        packages: 10,
+      });
+      const refused = await cancel(s.id, out.id, cookie).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'MOVEMENT_CANCEL_OVER_PACKAGES',
+        params: { movement: out.number, peak: '20', packages: '10' },
+      });
+      await cancel(s.id, there.id, cookie).expect(201);
+      await cancel(s.id, out.id, cookie).expect(201);
+      expect((await view(s.id, cookie)).heldPackages).toBe(10);
+    });
+
+    it('the status a receipt applied goes back while it is the current step', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      const grn = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      });
+      expect(await status(s.id)).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+      await cancel(s.id, grn.id, cookies.warehouseDxb, 'Wrong shipment').expect(201);
+      const back = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(back.status).toBe('CREATED');
+      expect(back.events.at(-1)).toMatchObject({
+        kind: 'REVERT',
+        status: 'CREATED',
+        fromStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+        reason: 'Wrong shipment',
+        note: grn.number,
+      });
+      // The receipt's step is gone: a new receipt moves the shipment again.
+      expect((await view(s.id)).actions.receiptStatuses).toEqual(['RECEIVED_ORIGIN_WAREHOUSE']);
+    });
+
+    it('a later step keeps the receipt (409) until it is undone', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      const grn = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      });
+      await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: 'Customer asked' }).expect(
+        200,
+      );
+      const refused = await cancel(s.id, grn.id, cookies.warehouseDxb).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'MOVEMENT_CANCEL_STATUS_MOVED',
+        params: { movement: grn.number, status: 'RECEIVED_ORIGIN_WAREHOUSE' },
+      });
+      expect(await status(s.id)).toBe('ON_HOLD');
+      expect(
+        await t.prisma.warehouseMovementCancellation.count({ where: { movementId: grn.id } }),
+      ).toBe(0);
+      await post(`/shipments/${s.id}/resume`, cookies.opsDxb, {}).expect(200);
+      await cancel(s.id, grn.id, cookies.warehouseDxb).expect(201);
+      expect(await status(s.id)).toBe('CREATED');
+    });
+
+    it('a closed shipment keeps its movements (409)', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const grn = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+      });
+      // Closing needs its own conditions; the guard under test is the cancel's.
+      await t.prisma.shipment.update({
+        where: { id: s.id },
+        data: { status: 'CLOSED', closedAt: new Date() },
+      });
+      expect((await view(s.id)).actions.canCancelMovements).toBe(false);
+      const refused = await cancel(s.id, grn.id, cookies.warehouseDxb).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'MOVEMENT_CANCEL_CLOSED',
+        params: { movement: grn.number },
+      });
+    });
+
+    it('needs warehouse:cancel in the branch, a reason, and the shipment in sight', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const grn = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+      });
+      expect((await view(s.id, cookies.salesDxb)).actions.canCancelMovements).toBe(false);
+      await cancel(s.id, grn.id, cookies.salesDxb).expect(403);
+      await cancel(s.id, grn.id, cookies.opsDxb).expect(403);
+      await cancel(s.id, grn.id, cookies.warehouseJed).expect(404);
+      await cancel(s.id, grn.id, cookies.warehouseDxb, 'x').expect(400);
+      // Another shipment's movement id is not found under this shipment.
+      const other = await confirmedShipment(['MAIN_FREIGHT']);
+      await cancel(other.id, grn.id, cookies.warehouseDxb).expect(404);
+      expect(
+        await t.prisma.warehouseMovementCancellation.count({ where: { movementId: grn.id } }),
+      ).toBe(0);
+    });
+
+    it("the assistant's warehouse read leaves cancelled movements out", async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      const kept = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 4,
+      });
+      const wrong = await movement(s.id, cookies.warehouseDxb, 'receipts', {
+        warehouseId: dxbWarehouse.id,
+        condition: 'GOOD',
+        packages: 6,
+      });
+      await cancel(s.id, wrong.id, cookies.warehouseDxb).expect(201);
+      // Users acting through the assistant are never deleted (agent_access_events references them).
+      const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX);
+      const agentUser = await createUser(t.prisma, ['WAREHOUSE'], ['DXB'], AGENT_PREFIX);
+      const client = await registerClient(t, await signIn(t, admin.email), 'B3-1 warehouse');
+      const token = await tokenFor(t, await signIn(t, agentUser.email), client);
+      const seen = (
+        await t
+          .http()
+          .get(`/api/v1/shipments/${s.id}/warehouse`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200)
+      ).body as ShipmentWarehouseDto;
+      expect(seen.movements.map((m) => m.number)).toEqual([kept.number]);
+      expect(seen.heldPackages).toBe(4);
+      expect(seen.actions.canCancelMovements).toBe(false);
     });
   });
 

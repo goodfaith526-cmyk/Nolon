@@ -38,6 +38,14 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.goodsReleaseDraft.deleteMany({ where: { shipment: createdBy } });
   await prisma.shipmentStatusDraft.deleteMany({ where: { shipment: createdBy } });
   await prisma.warehouseMovementPhoto.deleteMany({ where: { movement: { shipment: createdBy } } });
+  // Cancellations are insert-only (a trigger refuses DELETE). Test data only: the test database
+  // role is a superuser, and replica mode skips that trigger for this one statement's transaction.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+    await tx.warehouseMovementCancellation.deleteMany({
+      where: { movement: { shipment: createdBy } },
+    });
+  });
   await prisma.warehouseMovement.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsFee.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsClearance.deleteMany({ where: { shipment: createdBy } });

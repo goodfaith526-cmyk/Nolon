@@ -851,6 +851,16 @@ export const FORM_REFUSALS = [
   // has no letters (no short code, none on its city, and its code does not end in three letters).
   // Param `location`: the place's code.
   'ROUTE_CODE_MISSING',
+  // B3 corrections (docs/plans/05-correction-contracts.md). A record cancelled before for another
+  // reason (param `record`: its number). Cancelling a goods receipt or release (param `movement`:
+  // its number): a warehouse balance would go below zero at some time (`warehouse`: its code); the
+  // warehouses together would hold more than the cargo lines and more than they ever did (`peak`,
+  // `packages`); a later step than the one it recorded (`status`); the shipment is closed.
+  'CORRECTION_ALREADY_DONE',
+  'MOVEMENT_CANCEL_NEGATIVE',
+  'MOVEMENT_CANCEL_OVER_PACKAGES',
+  'MOVEMENT_CANCEL_STATUS_MOVED',
+  'MOVEMENT_CANCEL_CLOSED',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

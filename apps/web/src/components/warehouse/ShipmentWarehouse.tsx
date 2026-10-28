@@ -6,9 +6,11 @@ import {
   type GoodsCondition,
   type GoodsReceiptRequest,
   type GoodsReleaseRequest,
+  SHIPMENT_REASON_MIN_LENGTH,
   type ShipmentDto,
   type ShipmentWarehouseDto,
   type WarehouseDto,
+  type WarehouseMovementCancelRequest,
   type WarehouseMovementDto,
   type WarehouseReceiptStatus,
 } from '@nolon/shared';
@@ -91,6 +93,9 @@ export function ShipmentWarehouse({
   const [releaseWarehouse, setReleaseWarehouse] = useState('');
   const [releaseWeight, setReleaseWeight] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // B3-1: the movement whose cancel form is open, and the reason typed for it.
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const shipmentId = shipment.id;
 
@@ -225,6 +230,28 @@ export function ShipmentWarehouse({
         text:
           status === 413 ? t('photoTooLarge') : status === 400 ? t('photoRejected') : failure(e),
       });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCancelMovement(event: FormEvent<HTMLFormElement>, m: WarehouseMovementDto) {
+    event.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    try {
+      const body: WarehouseMovementCancelRequest = { reason: cancelReason.trim() };
+      await api<WarehouseMovementDto>(
+        `/shipments/${shipmentId}/warehouse/movements/${m.id}/cancel`,
+        { method: 'POST', body },
+      );
+      setCancelling(null);
+      setCancelReason('');
+      setNotice({ ok: true, text: t('movementCancelledNotice', { number: m.number }) });
+      load();
+      if (m.statusApplied) onShipmentChanged();
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
     } finally {
       setBusy(false);
     }
@@ -535,6 +562,7 @@ export function ShipmentWarehouse({
                     <span className={`badge badge-movement badge-${m.kind}`}>
                       {te(`movement_${m.kind}`)}
                     </span>
+                    {m.cancellation && <span className="badge">{t('cancelledBadge')}</span>}
                   </div>
                   <PrintLink
                     href={`/shipments/${shipmentId}/movements/${m.id}`}
@@ -561,6 +589,51 @@ export function ShipmentWarehouse({
                   )}
                   {m.statusApplied && <StatusBadge kind="shipment" status={m.statusApplied} />}
                   {m.note && <div className="pre">{m.note}</div>}
+                  {m.cancellation && (
+                    <div className="muted">
+                      {t('cancelledBy', {
+                        name: m.cancellation.cancelledByName,
+                        at: dateTime.format(new Date(m.cancellation.cancelledAt)),
+                      })}
+                      <div className="pre">{m.cancellation.reason}</div>
+                    </div>
+                  )}
+                  {!m.cancellation && actions.canCancelMovements && cancelling !== m.id && (
+                    <button
+                      type="button"
+                      className="button small"
+                      disabled={busy}
+                      onClick={() => {
+                        setCancelling(m.id);
+                        setCancelReason('');
+                      }}
+                    >
+                      {t('cancelMovement')}
+                    </button>
+                  )}
+                  {!m.cancellation && cancelling === m.id && (
+                    <form className="stack tight" onSubmit={(e) => void onCancelMovement(e, m)}>
+                      <label className="field">
+                        <span>{t('cancelReason')}</span>
+                        <textarea
+                          required
+                          minLength={SHIPMENT_REASON_MIN_LENGTH}
+                          maxLength={500}
+                          value={cancelReason}
+                          onChange={(e) => setCancelReason(e.target.value)}
+                        />
+                      </label>
+                      <p className="muted">{t('cancelMovementHint')}</p>
+                      <div className="actions">
+                        <button type="submit" className="danger small" disabled={busy}>
+                          {t('confirmCancelMovement')}
+                        </button>
+                        <button type="button" className="small" onClick={() => setCancelling(null)}>
+                          {tc('back')}
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </td>
                 <td>
                   <div className="stack tight">

@@ -84,6 +84,25 @@ export class PodService implements OnModuleInit {
         });
         return pod ? { record: 'POD', number: pod.number } : null;
       },
+      // B3: a proof of delivery that kept the status moved the shipment to where it was delivered
+      // (record): the trip's destination, or without a trip the shipment's. Neither changes once
+      // set, so the place is the one the POD recorded.
+      locationEffectsInTx: async (tx, shipmentId) => {
+        const pods = await tx.proofOfDelivery.findMany({
+          where: { shipmentId, statusApplied: null },
+          select: {
+            deliveredAt: true,
+            createdAt: true,
+            trip: { select: { destinationLocationId: true } },
+            shipment: { select: { destinationLocationId: true } },
+          },
+        });
+        return pods.map((p) => ({
+          at: p.deliveredAt,
+          createdAt: p.createdAt,
+          locationId: p.trip?.destinationLocationId ?? p.shipment.destinationLocationId,
+        }));
+      },
     });
   }
 
