@@ -290,7 +290,10 @@
     "validFrom": "Valid from",
     "validTo": "Valid to (optional)",
     "transitDays": "Transit days",
-    "import": "Import from Excel"
+    "import": "Import from Excel",
+    "priceCategory": "Price category",
+    "generalCategory": "General (every category)",
+    "countryScope": "country"
   },
   "Enums": {
     "rate_DRAFT": "Draft",
@@ -494,7 +497,14 @@
     "currencyFromCustomer": "Suggested: the customer's preferred currency.",
     "currencyFromBranch": "Suggested: the branch's currency.",
     "validUntilFromDays": "Suggested: {days} days from today.",
-    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed."
+    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed.",
+    "priceCategory": "Price category",
+    "noCategory": "No category",
+    "sourceTyped": "Price typed",
+    "sourceRate": "From a rate card · {category} · {unit} · {currency} · {from} → {to}",
+    "scope_PLACE": "place",
+    "scope_CITY": "city",
+    "scope_COUNTRY": "country"
   },
   "Bookings": {
     "title": "Bookings",
@@ -2491,7 +2501,12 @@
     "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country.",
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
-    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone."
+    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
+    "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
+    "PRICE_CATEGORY_NOT_USABLE": "This price category is unknown, no longer in use, or for another cargo type.",
+    "COUNTRY_KIND_FIXED": "A country pricing scope keeps its kind and country: add a new location instead.",
+    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2511,7 +2526,8 @@
     "kind_CITY": "City",
     "kind_BORDER": "Border point",
     "kind_OTHER": "Other",
-    "countryFromCity": "The city's country: a place is in the country of its city."
+    "countryFromCity": "The city's country: a place is in the country of its city.",
+    "kind_COUNTRY": "Country (pricing scope)"
   },
   "MasterData": {
     "title": "Master data",

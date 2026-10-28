@@ -29,6 +29,14 @@ export function useLocalName(): (item: { nameEn: string; nameAr: string }) => st
 }
 
 /** Looks up a location's name by id. */
+/**
+ * A location a document may name: a port, city or point. A country (kind COUNTRY) is a pricing
+ * scope for rate cards only (business model plan 5.3); NOLON refuses it anywhere else.
+ */
+export function isPlace(l: { kind: string }): boolean {
+  return l.kind !== 'COUNTRY';
+}
+
 export function useLocationName(data: MasterDataDto | null): (id: string) => string {
   const name = useLocalName();
   return useCallback(

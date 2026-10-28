@@ -33,6 +33,7 @@ vi.mock('@/i18n/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => null,
   useLocalName: () => (l: { nameEn: string }) => l.nameEn,
   useLocationName: () => (id: string) => id,

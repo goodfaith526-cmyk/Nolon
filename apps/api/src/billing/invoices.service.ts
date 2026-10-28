@@ -910,7 +910,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         rateCardId: null,
       };
     }
-    const rate = await this.rates.systemRate(
+    const { rate } = await this.rates.systemRate(
       {
         branchId: shipment.branchId,
         onDate: line.invoiceDate,

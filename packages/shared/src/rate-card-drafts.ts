@@ -15,7 +15,7 @@ import type {
  * approved as usual (rates:approve) before a quotation can use it. Or the person rejects it.
  */
 export type RateCardDraftRequest = DraftValues<
-  Omit<RateCardInput, 'minimumCharge' | 'chargeTypeCode'>,
+  Omit<RateCardInput, 'minimumCharge' | 'chargeTypeCode' | 'priceCategoryCode'>,
   | 'originLocationId'
   | 'destinationLocationId'
   | 'mode'

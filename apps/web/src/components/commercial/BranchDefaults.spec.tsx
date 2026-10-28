@@ -45,6 +45,7 @@ vi.mock('@/lib/master-data', async (actual) => ({
     ],
     containerTypes: [{ code: '20GP', nameEn: '20GP', isActive: true }],
     chargeTypes: [{ code: 'FREIGHT', nameEn: 'Freight', isActive: true }],
+    priceCategories: [],
   }),
   useLocalName: () => (x: { nameEn?: string }) => x.nameEn ?? '',
 }));

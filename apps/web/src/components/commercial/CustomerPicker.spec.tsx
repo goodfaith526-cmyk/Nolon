@@ -14,6 +14,7 @@ vi.mock('next-intl', () => ({
 vi.mock('@/i18n/navigation', () => ({ Link: () => null, useRouter: () => ({ push: () => {} }) }));
 vi.mock('@/lib/api', () => ({ api: (...args: unknown[]) => api(...args) as unknown }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => ({ currencies: [] }),
   useLocalName: () => (x: { nameEn?: string }) => x.nameEn ?? '',
 }));
