@@ -1082,6 +1082,21 @@ describe('consolidated LCL containers', () => {
     expect(loaded.status).toBe(409);
     expect(code(loaded)).toBe('REVERT_BY_CONTAINER');
     expect((loaded.body as { params?: object }).params).toEqual({ record: created.number });
+    // F129-1: renumbered since (#115), the container still owns the step its old number recorded.
+    const renamed = `${created.number}R`;
+    await t.prisma.consolidation.update({ where: { id: created.id }, data: { number: renamed } });
+    await t.prisma.referenceRenumbering.create({
+      data: {
+        kind: 'CONSOLIDATION',
+        recordId: created.id,
+        oldNumber: created.number,
+        newNumber: renamed,
+        reason: 'MIGRATION',
+      },
+    });
+    const renumbered = await revert();
+    expect(renumbered.status).toBe(409);
+    expect((renumbered.body as { params?: object }).params).toEqual({ record: renamed });
     await move('DEPARTED', '04-02');
     await move('ARRIVED', '04-06');
     expect(code(await cancel())).toBe('SHIPMENT_CANCEL_IN_CONTAINER');

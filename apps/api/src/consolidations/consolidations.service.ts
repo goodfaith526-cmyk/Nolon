@@ -47,7 +47,7 @@ import {
 } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { ROUTE_SEQUENCES, formatRouteNumber, nextSequenceValue } from '../common/numbering.js';
-import { oldNumberTerm } from '../common/old-numbers.js';
+import { oldNumberTerm, onceNumbered } from '../common/old-numbers.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
 import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -202,15 +202,23 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         return link ? { record: 'CONTAINER', number: link.consolidation.number } : null;
       },
       revertBlockerInTx: async (tx, shipmentId, step) => {
-        if (step.note === null || !CONTAINER_STEPS.includes(step.status)) return null;
-        const link = await tx.consolidationShipment.findFirst({
-          where: {
-            shipmentId,
-            consolidation: { number: step.note, status: { in: [...IN_TRANSIT_CONTAINER] } },
-          },
-          select: { consolidation: { select: { number: true } } },
+        const note = step.note;
+        if (note === null || !CONTAINER_STEPS.includes(step.status)) return null;
+        const links = await tx.consolidationShipment.findMany({
+          where: { shipmentId, consolidation: { status: { in: [...IN_TRANSIT_CONTAINER] } } },
+          select: { consolidation: { select: { id: true, number: true } } },
         });
-        return link ? { record: 'CONTAINER', number: link.consolidation.number } : null;
+        const containers = links.map((l) => l.consolidation);
+        // The event keeps the number the container had then; a renumbered container (#115) is
+        // found through its old numbers.
+        const renamed = await onceNumbered(
+          tx,
+          'CONSOLIDATION',
+          note,
+          containers.filter((c) => c.number !== note).map((c) => c.id),
+        );
+        const made = containers.find((c) => c.number === note || renamed.includes(c.id));
+        return made ? { record: 'CONTAINER', number: made.number } : null;
       },
     });
   }
