@@ -11,7 +11,9 @@ import {
   type InvoicesReceiptsDto,
   type Locale,
   type OpenAccrualsDto,
+  type ProfitCategoryDto,
   type ProfitFiguresDto,
+  type ShipmentProfitDto,
   type ShipmentProfitabilityDto,
   type TrialBalanceDto,
 } from '@nolon/shared';
@@ -317,6 +319,32 @@ export function profitabilitySheets(
     ],
     bold: true,
   });
+  const category = (c: ProfitCategoryDto) =>
+    c.kind === 'SINGLE'
+      ? localName(ctx.locale, c)
+      : t(c.kind === 'MIXED' ? 'mixed' : 'unspecified');
+  const notFinal = (s: ShipmentProfitDto) =>
+    s.incompleteReasons
+      .map((reason) =>
+        reason === 'MISSING_COST'
+          ? `${t('reason_MISSING_COST')} ${s.missingCosts.map((x) => t(`service_${x}`)).join(' / ')}`
+          : t(`reason_${reason}`),
+      )
+      .join(', ');
+  const counts = [
+    { header: t('shipmentCount'), kind: 'integer' } satisfies ColumnSpec,
+    { header: t('notFinalCount'), kind: 'integer' } satisfies ColumnSpec,
+  ];
+  const groupTotals = (leading: number): RowSpec => ({
+    cells: [
+      t('total'),
+      ...Array.from({ length: leading }, () => null),
+      r.totals.shipments,
+      r.totals.incompleteShipments,
+      ...profitCells(r.totals),
+    ],
+    bold: true,
+  });
   const shipments: SheetSpec = {
     name: t('shipments'),
     columns: [
@@ -325,7 +353,12 @@ export function profitabilitySheets(
       text(t('customer'), 30),
       text(t('origin'), 22),
       text(t('destination'), 22),
+      text(t('salesOutlet'), 24),
+      text(t('originCountry'), 18),
+      text(t('category'), 16),
       ...figures,
+      text(t('notFinal'), 30),
+      { header: t('cycleDays'), kind: 'amount' },
     ],
     rows: [
       ...r.shipments.map((s) => ({
@@ -335,18 +368,25 @@ export function profitabilitySheets(
           s.customerName,
           place(s.origin),
           place(s.destination),
+          s.salesOutlet?.name ?? t('unspecified'),
+          localName(ctx.locale, s.originCountry),
+          category(s.category),
           ...profitCells(s),
+          notFinal(s),
+          s.cycleDays,
         ],
       })),
-      totals(null, 4),
+      totals(null, 7),
     ],
   };
   const customers: SheetSpec = {
     name: t('customers'),
-    columns: [text(t('customer'), 36), { header: t('shipmentCount'), kind: 'integer' }, ...figures],
+    columns: [text(t('customer'), 36), ...counts, ...figures],
     rows: [
-      ...r.customers.map((c) => ({ cells: [c.customerName, c.shipments, ...profitCells(c)] })),
-      totals(r.shipments.length, 0),
+      ...r.customers.map((c) => ({
+        cells: [c.customerName, c.shipments, c.incompleteShipments, ...profitCells(c)],
+      })),
+      groupTotals(0),
     ],
   };
   const routes: SheetSpec = {
@@ -354,14 +394,81 @@ export function profitabilitySheets(
     columns: [
       text(t('origin'), 24),
       text(t('destination'), 24),
-      { header: t('shipmentCount'), kind: 'integer' },
+      ...counts,
       ...figures,
+      { header: t('cycleMeasured'), kind: 'integer' },
+      { header: t('cycleAverage'), kind: 'amount' },
+      { header: t('cycleMin'), kind: 'amount' },
+      { header: t('cycleMax'), kind: 'amount' },
     ],
     rows: [
       ...r.routes.map((x) => ({
-        cells: [place(x.origin), place(x.destination), x.shipments, ...profitCells(x)],
+        cells: [
+          place(x.origin),
+          place(x.destination),
+          x.shipments,
+          x.incompleteShipments,
+          ...profitCells(x),
+          x.cycle.measured,
+          x.cycle.averageDays,
+          x.cycle.minDays,
+          x.cycle.maxDays,
+        ],
       })),
-      totals(r.shipments.length, 1),
+      groupTotals(1),
+    ],
+  };
+  const outlets: SheetSpec = {
+    name: t('outlets'),
+    columns: [text(t('salesOutlet'), 30), ...counts, ...figures],
+    rows: [
+      ...r.outlets.map((o) => ({
+        cells: [
+          o.salesOutlet?.name ?? t('unspecified'),
+          o.shipments,
+          o.incompleteShipments,
+          ...profitCells(o),
+        ],
+      })),
+      groupTotals(0),
+    ],
+  };
+  const countries: SheetSpec = {
+    name: t('countries'),
+    columns: [text(t('originCountry'), 24), ...counts, ...figures],
+    rows: [
+      ...r.countries.map((c) => ({
+        cells: [
+          localName(ctx.locale, c.originCountry),
+          c.shipments,
+          c.incompleteShipments,
+          ...profitCells(c),
+        ],
+      })),
+      groupTotals(0),
+    ],
+  };
+  const categories: SheetSpec = {
+    name: t('categories'),
+    columns: [
+      text(t('category'), 20),
+      ...counts,
+      ...figures,
+      { header: t('units'), kind: 'amount' },
+      amount(t('marginPerUnitUsd')),
+    ],
+    rows: [
+      ...r.categories.map((c) => ({
+        cells: [
+          category(c.category),
+          c.shipments,
+          c.incompleteShipments,
+          ...profitCells(c),
+          c.units,
+          c.marginPerUnitUsd,
+        ],
+      })),
+      groupTotals(0),
     ],
   };
   const extra = customerName ? [`${t('customerFilter')}: ${customerName}`] : [];
@@ -369,7 +476,7 @@ export function profitabilitySheets(
     ctx,
     'profitability',
     periodLine(t, r.from, r.to),
-    [shipments, customers, routes],
+    [shipments, customers, routes, outlets, countries, categories],
     extra,
   );
 }

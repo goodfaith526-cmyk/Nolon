@@ -128,9 +128,9 @@ model Currency {
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branches             Branch[]
-  customersPreferred   Customer[]        @relation("CustomerPreferredCurrency")
+  customersPreferred   Customer[]         @relation("CustomerPreferredCurrency")
   partners             Partner[]
-  customersCreditLimit Customer[]        @relation("CustomerCreditLimitCurrency")
+  customersCreditLimit Customer[]         @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
   partnerContracts     PartnerContract[]
   rateCardCosts        RateCardCost[]
@@ -146,6 +146,8 @@ model Currency {
   supplierBills        SupplierBill[]
   supplierPayments     SupplierPayment[]
   expenses             Expense[]
+  csRequestsPaid       CsBookingRequest[] @relation("CsRequestPaymentCurrency")
+  csRequestsPriced     CsBookingRequest[] @relation("CsRequestApprovedCurrency")
 
   @@map("currencies")
 }
@@ -918,6 +920,7 @@ model PriceCategory {
   rateCards      RateCard[]
   quotationLines QuotationLine[]
   csRequests     CsBookingRequest[]
+  csApprovals    CsBookingRequest[] @relation("CsRequestApprovedCategory")
   bookingItems   BookingItem[]
   contracts      PartnerContract[]
 
@@ -1257,6 +1260,7 @@ model Booking {
   shipment         Shipment?
   draft            BookingDraft?            @relation("BookingDraftResult")
   newCustomerDraft NewCustomerBookingDraft?
+  csRequests       CsBookingRequest[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -3424,23 +3428,38 @@ model CsBookingRequest {
   rejectReasonCode      String?                @map("reject_reason_code") @db.VarChar(20)
   /// For staff only: never shown to the customer or the bot.
   internalNote          String?                @map("internal_note") @db.VarChar(1000)
+  /// The booking staff made when they approved the request (plan 04a section 3, R3-ج2).
+  bookingId             String?                @map("booking_id") @db.Uuid
+  /// The currency the customer pays in, set by staff on approval (the currencies master).
+  paymentCurrency       String?                @map("payment_currency") @db.Char(3)
+  /// What staff priced on approval (Codex F137-1): the booking is made with no line, so the
+  /// request keeps the category, quantity (in its unit), currency and total (none: no price).
+  approvedCategoryCode  String?                @map("approved_category_code") @db.VarChar(20)
+  approvedQuantity      Decimal?               @map("approved_quantity") @db.Decimal(18, 4)
+  approvedCurrency      String?                @map("approved_currency") @db.Char(3)
+  approvedTotal         Decimal?               @map("approved_total") @db.Decimal(18, 4)
   version               Int                    @default(1)
   expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  apiClient    ApiClient       @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  branch       Branch?         @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin       Location?       @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination  Location?       @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  category     PriceCategory?  @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  quote        CsQuote?        @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
-  routedBy     User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
-  decidedBy    User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
-  rejectReason CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
+  apiClient        ApiClient       @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer         Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch           Branch?         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin           Location?       @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination      Location?       @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category         PriceCategory?  @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote            CsQuote?        @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  routedBy         User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
+  decidedBy        User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  rejectReason     CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
+  booking          Booking?        @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  payCurrency      Currency?       @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
+  approvedCategory PriceCategory?  @relation("CsRequestApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
+  priceCurrency    Currency?       @relation("CsRequestApprovedCurrency", fields: [approvedCurrency], references: [code], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
+  @@index([bookingId])
   @@index([ownerRef, createdAt])
   @@index([branchId, status])
   @@index([status])

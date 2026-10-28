@@ -637,6 +637,69 @@ export class LedgerReportsService {
   }
 
   /**
+   * Of `shipmentIds`, the trips whose transport cost a shipment carries as of a date: a line of a
+   * posted trip expense (rule 10) or carrier accrual (rule 11) entry dated by then and not
+   * reversed by then, with the trip's two ends as places (a port or other place counts as the
+   * city it serves). For the profitability report's "not final" mark, which maps each trip to the
+   * one service its ends prove; flags for shipments the caller already scoped, so it reads every
+   * branch's lines and returns no amount.
+   */
+  async tripCostLegs(
+    shipmentIds: readonly string[],
+    asOf: string,
+  ): Promise<{ shipmentId: string; legFrom: string; legTo: string }[]> {
+    if (shipmentIds.length === 0) return [];
+    const at = toDbDate(asOf);
+    return this.prisma.$queryRaw<{ shipmentId: string; legFrom: string; legTo: string }[]>`
+      SELECT DISTINCT l."shipment_id" AS "shipmentId",
+             coalesce(lo."city_id", lo."id")::text AS "legFrom",
+             coalesce(ld."city_id", ld."id")::text AS "legTo"
+      FROM "journal_lines" l
+      JOIN "journal_entries" e ON e."id" = l."entry_id"
+      LEFT JOIN "trip_expenses" x ON e."source" = 'TRIP_EXPENSE' AND x."id" = e."source_id"
+      JOIN "trips" t ON t."id" = CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE x."trip_id" END
+      JOIN "locations" lo ON lo."id" = t."origin_location_id"
+      JOIN "locations" ld ON ld."id" = t."destination_location_id"
+      WHERE e."status" = 'POSTED'
+        AND e."source" IN ('TRIP_EXPENSE', 'TRIP_ACCRUAL')
+        AND e."entry_date" <= ${at}
+        AND l."shipment_id" = ANY(${[...shipmentIds]}::uuid[])
+        AND NOT EXISTS (
+          SELECT 1 FROM "journal_entries" r
+          WHERE r."reversal_of_id" = e."id" AND r."status" = 'POSTED' AND r."entry_date" <= ${at})`;
+  }
+
+  /**
+   * Of `tripIds`, the trips with a transport accrual still open as of a date (the same lines as
+   * `openTripAccruals`, any balance left). A flag for the profitability report's "incomplete"
+   * mark on shipments the caller already scoped: no amount leaves here, so it reads the trips'
+   * lines whatever their branch (a trip of another branch carrying a visible shipment counts).
+   */
+  async tripsWithOpenAccrual(tripIds: readonly string[], asOf: string): Promise<Set<string>> {
+    if (tripIds.length === 0) return new Set();
+    const rows = await this.prisma.$queryRaw<{ tripId: string }[]>`
+      SELECT t."trip_id" AS "tripId"
+      FROM (
+        SELECT coalesce(l."trip_id",
+                        CASE WHEN e."source" = 'TRIP_ACCRUAL' THEN e."source_id" ELSE o."source_id" END) AS "trip_id",
+               l."currency", l."credit", l."debit"
+        FROM "journal_lines" l
+        JOIN "journal_entries" e ON e."id" = l."entry_id"
+        LEFT JOIN "journal_entries" o ON o."id" = e."reversal_of_id"
+        JOIN "accounts" a ON a."id" = l."account_id"
+        WHERE e."status" = 'POSTED'
+          AND e."entry_date" <= ${toDbDate(asOf)}
+          AND (e."source" = 'TRIP_ACCRUAL' OR o."source" = 'TRIP_ACCRUAL' OR l."trip_id" IS NOT NULL)
+          AND l."shipment_id" IS NULL
+          AND a."type" = 'LIABILITY'
+      ) t
+      WHERE t."trip_id" = ANY(${[...tripIds]}::uuid[])
+      GROUP BY t."trip_id", t."currency"
+      HAVING sum(t."credit" - t."debit") <> 0`;
+    return new Set(rows.map((r) => r.tripId));
+  }
+
+  /**
    * Unapplied customer advances as of a date, per customer, credit - debit in USD: the liability
    * lines of receipt entries (the part of a receipt not allocated to an invoice), of the entries
    * applying that advance to a later invoice, and of their reversals, wherever they were posted,

@@ -1,6 +1,7 @@
 import type {
   BookingService,
   CargoType,
+  CreateBookingRequest,
   CustomerKind,
   DateString,
   LoadType,
@@ -455,7 +456,75 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   decidedAt: string | null;
   rejectReasonCode: string | null;
   internalNote: string | null;
-  actions: { canRoute: boolean; canReject: boolean };
+  /** The booking staff made on approval, and the currency the customer pays in. */
+  bookingId: string | null;
+  bookingNumber: string | null;
+  paymentCurrency: string | null;
+  /** What staff priced on approval: the booking is made with no line (Codex F137-1). */
+  approvedPricing: {
+    category: string;
+    quantity: DecimalString;
+    currency: string;
+    /** Null: approved with no approved price. */
+    total: DecimalString | null;
+  } | null;
+  actions: { canRoute: boolean; canReject: boolean; canApprove: boolean };
+}
+
+/**
+ * The pricing inputs of an approval (plan 04a section 1): the final booking's route and mode, and
+ * the category, quantity (in the category's unit) and currency staff confirm.
+ */
+export interface CsPriceInputs {
+  originId: string;
+  destinationId: string;
+  mode: ShippingMode;
+  loadType?: LoadType | null;
+  category: string;
+  quantity: DecimalString;
+  currency: CurrencyCode;
+}
+
+/**
+ * GET /cs-booking-requests/:id/price: the engine's price for these inputs, for staff to confirm.
+ * `priced`: one approved card in the category's unit prices it; its fingerprint is what approval
+ * sends back. `none`: no approved price (the reason says why), and the fingerprint is null. Never a
+ * price of record: the booking carries none.
+ */
+export interface CsApprovalPriceDto {
+  state: 'priced' | 'none';
+  reason: 'NO_RATE' | 'UNIT_MISMATCH' | 'AMBIGUOUS' | null;
+  rateCardId: string | null;
+  approvedAt: string | null;
+  currency: string;
+  unit: RateUnit | null;
+  unitPrice: DecimalString | null;
+  minimumCharge: DecimalString | null;
+  total: DecimalString | null;
+  pricingFingerprint: string | null;
+}
+
+/**
+ * The booking's own fields on approval. Its route, mode, load type and cargo type come from the
+ * pricing inputs, and it is made with no line (Codex F137-1): the booking approved is the cargo
+ * staff priced, never a second description of it.
+ */
+export type CsApproveBooking = Omit<
+  CreateBookingRequest,
+  'originLocationId' | 'destinationLocationId' | 'mode' | 'loadType' | 'cargoType' | 'items'
+>;
+
+/**
+ * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create checks, in the
+ * request's branch) and the request it approves, in one transaction.
+ */
+export interface CsApproveRequest {
+  version: number;
+  paymentCurrency: CurrencyCode;
+  pricing: CsPriceInputs;
+  /** The fingerprint of the price staff saw; null when they saw no approved price. */
+  pricingFingerprint: string | null;
+  booking: CsApproveBooking;
 }
 
 export interface CsRouteRequest {
