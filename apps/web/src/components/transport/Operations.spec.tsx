@@ -231,12 +231,15 @@ describe('own trip: arrived and completed in one step (D7)', () => {
       cashAccounts: [],
       accrualShares: [],
       showsCost: false,
+      departureRevision: 0,
+      departureUndos: [],
       actions: {
         moves: ['ARRIVED'],
         canCancel: false,
         canEditShipments: false,
         canAddExpense: false,
         canCancelExpense: false,
+        canUndoDeparture: false,
       },
       ...overrides,
     }) as unknown as TripDto;
@@ -277,6 +280,38 @@ describe('own trip: arrived and completed in one step (D7)', () => {
     expect(button('move_COMPLETED')).not.toBeNull();
     expect(button('arriveAndComplete')).toBeNull();
     expect(button('move_ARRIVED')).toBeNull();
+  });
+
+  it('B3-4: takes back a departure on the revision shown, keeping one request id per attempt', async () => {
+    const departed = trip({
+      departureRevision: 2,
+      actions: { ...trip({}).actions, canUndoDeparture: true },
+    });
+    api.mockImplementation((path: string, init?: object) => {
+      if (path === '/trips/t1' && !init) return Promise.resolve(departed);
+      return Promise.reject(new Error('refused'));
+    });
+    await render(<TripDetail id="t1" />);
+    await click(button('undoDeparture'));
+    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="reason"]');
+    if (!reason) throw new Error('No reason');
+    reason.value = 'Left by mistake';
+    const submit = async () => {
+      act(() => reason.form?.requestSubmit());
+      await flush();
+    };
+    await submit();
+    await submit();
+    const sent = api.mock.calls
+      .filter(([path]) => path === '/trips/t1/undo-departure')
+      .map(([, init]) => (init as { body: { requestId: string } }).body);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({
+      expectedRevision: 2,
+      expectedStatus: 'DEPARTED',
+      reason: 'Left by mistake',
+    });
+    expect(sent[1]?.requestId).toBe(sent[0]?.requestId);
   });
 
   it('is not offered on an external trip', async () => {

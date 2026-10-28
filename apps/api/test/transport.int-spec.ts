@@ -1128,6 +1128,186 @@ describe('inland transport: fleet, trips, POD', () => {
       });
     });
 
+    describe('B3-4: taking back a departure', () => {
+      const undo = (trip: TripDto, body: object = {}, cookie = cookies.opsDxb) =>
+        post(`/trips/${trip.id}/undo-departure`, cookie, {
+          requestId: randomUUID(),
+          expectedRevision: trip.departureRevision,
+          expectedStatus: 'DEPARTED',
+          reason: 'Left by mistake',
+          ...body,
+        });
+      const tripView = async (id: string, cookie = cookies.opsDxb) =>
+        (await get(`/trips/${id}`, cookie).expect(200)).body as TripDto;
+      async function departedTrip(count = 1): Promise<{ trip: TripDto; ids: string[] }> {
+        const ids: string[] = [];
+        for (let i = 0; i < count; i++) ids.push((await roadShipment()).id);
+        const planned = (await post('/trips', cookies.opsDxb, ownTrip(ids)).expect(201))
+          .body as TripDto;
+        const trip = (
+          await post(`/trips/${planned.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(
+            200,
+          )
+        ).body as TripDto;
+        return { trip, ids };
+      }
+
+      it('the trip goes back to planned and its shipments to scheduled, and can then be cancelled', async () => {
+        const { trip, ids } = await departedTrip(2);
+        expect(trip.actions.canUndoDeparture).toBe(true);
+        const back = (await undo(trip).expect(200)).body as TripDto;
+        expect(back).toMatchObject({
+          status: 'PLANNED',
+          actualDeparture: null,
+          departureRevision: 1,
+        });
+        expect(back.departureUndos).toEqual([
+          expect.objectContaining({ revision: 1, reason: 'Left by mistake', shipmentCount: 2 }),
+        ]);
+        expect(back.actions.canUndoDeparture).toBe(false);
+        for (const id of ids) {
+          expect([await status(id), await location(id)]).toEqual(['TRIP_SCHEDULED', null]);
+          const shown = (await get(`/shipments/${id}`, cookies.opsDxb).expect(200))
+            .body as ShipmentDto;
+          expect(shown.events.at(-1)).toMatchObject({
+            kind: 'REVERT',
+            status: 'TRIP_SCHEDULED',
+            reason: 'Left by mistake',
+            note: trip.number,
+          });
+        }
+        // The row is insert-only.
+        await expect(
+          t.prisma.tripDepartureUndo.updateMany({
+            where: { tripId: trip.id },
+            data: { reason: 'Changed' },
+          }),
+        ).rejects.toThrow(/cannot be changed or deleted/);
+        // A planned trip again: B2 lets it be cancelled, and its shipments go on another trip.
+        await post(`/trips/${trip.id}/cancel`, cookies.opsDxb, { reason: 'Rescheduled' }).expect(
+          200,
+        );
+        await post('/trips', cookies.opsDxb, ownTrip(ids)).expect(201);
+      });
+
+      it('a retry returns the trip as it is, even after it left again (ABA); a reused key or an old revision is refused', async () => {
+        const { trip } = await departedTrip();
+        const first = {
+          requestId: randomUUID(),
+          expectedRevision: 0,
+          expectedStatus: 'DEPARTED',
+          reason: 'Left by mistake',
+        };
+        await post(`/trips/${trip.id}/undo-departure`, cookies.opsDxb, first).expect(200);
+        await post(`/trips/${trip.id}/undo-departure`, cookies.opsDxb, first).expect(200);
+        expect((await tripView(trip.id)).departureRevision).toBe(1);
+        const reused = await post(`/trips/${trip.id}/undo-departure`, cookies.opsDxb, {
+          ...first,
+          reason: 'Another reason',
+        }).expect(409);
+        expect(reused.body).toMatchObject({ code: 'CORRECTION_KEY_REUSED' });
+
+        // It leaves again; the first request, late, changes nothing.
+        await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'DEPARTED' }).expect(200);
+        await post(`/trips/${trip.id}/undo-departure`, cookies.opsDxb, first).expect(200);
+        let shown = await tripView(trip.id);
+        expect([shown.status, shown.departureRevision]).toEqual(['DEPARTED', 1]);
+        // The same request under a new key is stale.
+        const stale = await post(`/trips/${trip.id}/undo-departure`, cookies.opsDxb, {
+          ...first,
+          requestId: randomUUID(),
+        }).expect(409);
+        expect(stale.body).toMatchObject({
+          code: 'CORRECTION_STALE',
+          params: { record: trip.number },
+        });
+        // On the revision shown now, it goes back again.
+        await undo(shown).expect(200);
+        shown = await tripView(trip.id);
+        expect([shown.status, shown.departureRevision]).toEqual(['PLANNED', 2]);
+      });
+
+      it('refuses while a live POD names the trip, until the POD is cancelled', async () => {
+        const { trip, ids } = await departedTrip();
+        const [id] = ids;
+        if (!id) throw new Error('No shipment');
+        const pod = (
+          await recordPod(id, cookies.opsDxb, {
+            recipientName: 'Ahmed Ali',
+            recipientCapacity: 'Consignee',
+          })
+            .attach('signature', PNG, 'signature.png')
+            .expect(201)
+        ).body as PodDto;
+        const refused = await undo(trip).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'TRIP_UNDO_HAS_POD',
+          params: { trip: trip.number, pods: pod.number },
+        });
+        await post(`/shipments/${id}/pods/${pod.id}/cancel`, cookies.opsDxb, {
+          reason: 'Wrong trip',
+        }).expect(201);
+        await undo(trip).expect(200);
+        expect(await status(id)).toBe('TRIP_SCHEDULED');
+      });
+
+      it('refuses when a shipment moved on since the trip left, and changes nothing', async () => {
+        const { trip, ids } = await departedTrip(2);
+        const [moved, kept] = [...ids].sort();
+        if (!moved || !kept) throw new Error('No shipments');
+        await post(`/shipments/${kept}/status`, cookies.admin, {
+          status: 'ROAD_IN_TRANSIT',
+        }).expect(200);
+        const shipment = (await get(`/shipments/${kept}`, cookies.opsDxb).expect(200))
+          .body as ShipmentDto;
+        const refused = await undo(trip).expect(409);
+        expect(refused.body).toMatchObject({
+          code: 'TRIP_UNDO_SHIPMENT_MOVED',
+          params: { trip: trip.number, shipments: shipment.number },
+        });
+        expect(await status(moved)).toBe('ROAD_DEPARTED');
+        expect((await tripView(trip.id)).status).toBe('DEPARTED');
+      });
+
+      it('an arrived trip is stale; the undo needs transport_trips:cancel in the trip’s branch and a reason', async () => {
+        const { trip } = await departedTrip();
+        await undo(trip, {}, cookies.salesDxb).expect(403);
+        await undo(trip, {}, cookies.driver).expect(403);
+        expect((await tripView(trip.id, cookies.driver)).actions.canUndoDeparture).toBe(false);
+        await undo(trip, {}, cookies.opsJed).expect(404);
+        await undo(trip, { reason: 'no' }).expect(400);
+        await undo(trip, { expectedStatus: 'ARRIVED' }).expect(400);
+        await undo(trip, { requestId: 'x' }).expect(400);
+        await post(`/trips/${trip.id}/status`, cookies.opsDxb, { status: 'ARRIVED' }).expect(200);
+        const arrived = await undo(trip).expect(409);
+        expect(arrived.body).toMatchObject({ code: 'CORRECTION_STALE' });
+        expect((await tripView(trip.id)).actions.canUndoDeparture).toBe(false);
+      });
+
+      it('races with a POD on the trip: one of them wins, the other is refused', async () => {
+        const { trip, ids } = await departedTrip();
+        const [id] = ids;
+        if (!id) throw new Error('No shipment');
+        const [podResult, undoResult] = await Promise.all([
+          recordPod(id, cookies.opsDxb, {
+            recipientName: 'Ahmed Ali',
+            recipientCapacity: 'Consignee',
+          })
+            .attach('signature', PNG, 'signature.png')
+            .then((r) => r.status),
+          undo(trip).then((r) => r.status),
+        ]);
+        const podWon = podResult === 201;
+        expect([podResult, undoResult]).toEqual(podWon ? [201, 409] : [409, 200]);
+        const live = await t.prisma.proofOfDelivery.count({
+          where: { shipmentId: id, cancellation: null },
+        });
+        expect([(await tripView(trip.id)).status, live]).toEqual(
+          podWon ? ['DEPARTED', 1] : ['PLANNED', 0],
+        );
+      });
+    });
+
     it('a driver record with trips keeps its user: relinking would expose the trips (409)', async () => {
       const driver3 = users.driver3?.id;
       if (!driver3) throw new Error('No user');
@@ -1432,6 +1612,49 @@ describe('inland transport: trip costs in the books', () => {
     }).expect(409);
     const original = await journal(posted.journalEntryId);
     expect(original.reversedById).not.toBeNull();
+  });
+
+  it('B3-4: a departure with a live expense is not taken back until the expense is cancelled', async () => {
+    const one = await shipment('1', '100');
+    const planned = await plannedTrip({ kind: 'OWN', vehicleId: vehicle.id, driverId: driver.id }, [
+      one,
+    ]);
+    await backdate(planned.id, [one]);
+    const trip = (
+      await post(`/trips/${planned.id}/status`, cookies.opsPts, {
+        status: 'DEPARTED',
+        occurredAt: at('04-01'),
+      }).expect(200)
+    ).body as TripDto;
+    const withExpense = (
+      await post(`/trips/${trip.id}/expenses`, cookies.opsPts, {
+        requestId: randomUUID(),
+        expenseDate: `${year}-04-01`,
+        description: 'Fuel',
+        amount: '1000',
+        currency: 'SDG',
+        cashAccountId: cashSdg.id,
+      }).expect(201)
+    ).body as TripDto;
+    const expense = withExpense.expenses[0];
+    if (!expense) throw new Error('No expense');
+    const undo = () =>
+      post(`/trips/${trip.id}/undo-departure`, cookies.opsPts, {
+        requestId: randomUUID(),
+        expectedRevision: 0,
+        expectedStatus: 'DEPARTED',
+        reason: 'Left by mistake',
+      });
+    const refused = await undo().expect(409);
+    expect(refused.body).toMatchObject({
+      code: 'TRIP_UNDO_HAS_EXPENSES',
+      params: { trip: trip.number, expenses: expense.number },
+    });
+    await post(`/trips/${trip.id}/expenses/${expense.id}/cancel`, cookies.financePts, {
+      reason: 'Trip did not leave',
+    }).expect(200);
+    const back = (await undo().expect(200)).body as TripDto;
+    expect(back.status).toBe('PLANNED');
   });
 
   it('an own trip’s expenses stay hidden from Sales, Warehouse and its Driver, who cannot add them', async () => {

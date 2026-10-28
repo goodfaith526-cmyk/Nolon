@@ -24,6 +24,7 @@ import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { Tabs } from '../Tabs';
 import { MoreMenu } from '../MoreMenu';
+import { ShipmentCargo } from './ShipmentCargo';
 import { ShipmentContainersTab } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
@@ -621,37 +622,7 @@ export function ShipmentDetail({ id }: { id: string }) {
                   </ol>
                 </div>
 
-                <div className="panel">
-                  <div className="panel-head">
-                    <h2>{t('items')}</h2>
-                  </div>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>{t('cargo')}</th>
-                        <th>{t('quantity')}</th>
-                        <th>{t('weightKg')}</th>
-                        <th>{t('volumeCbm')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {s.items.map((i) => (
-                        <tr key={i.lineNo}>
-                          <td>{i.lineNo}</td>
-                          <td>
-                            {te(`cargo_${i.cargoType}`)}
-                            {i.containerTypeCode ? ` · ${i.containerTypeCode}` : ''}
-                            {i.description ? <div className="muted">{i.description}</div> : null}
-                          </td>
-                          <td>{i.quantity}</td>
-                          <td dir="ltr">{i.weightKg ?? '—'}</td>
-                          <td dir="ltr">{i.volumeCbm ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ShipmentCargo shipment={s} onChange={setShipment} />
               </>
             ),
           },

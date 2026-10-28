@@ -303,6 +303,11 @@ export interface InvoicePaymentDto {
   applicationId: string | null;
 }
 
+export interface InvoicePricingNotice {
+  code: 'QUOTATION_ROUTE_CHANGED' | 'QUOTATION_CATEGORY_CHANGED';
+  quotationNumber: string;
+}
+
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   fxRate: FxRateString;
   /**
@@ -319,6 +324,12 @@ export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   journalEntryNumber: string | null;
   approvedAt: string | null;
   cancelReason: string | null;
+  /**
+   * On a draft of a shipment booked from a quotation the shipment no longer is (its route, mode
+   * or price categories changed, plan 5.2): its prices come from the rate cards, not the
+   * quotation, and the editor says so. Null otherwise, and on what an edit or action returns.
+   */
+  pricingNotice: InvoicePricingNotice | null;
   actions: {
     canEdit: boolean;
     canApprove: boolean;

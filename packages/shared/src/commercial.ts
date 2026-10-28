@@ -871,6 +871,25 @@ export const FORM_REFUSALS = [
   'POD_CANCEL_LATER_POD',
   'POD_CANCEL_STATUS_MOVED',
   'POD_CANCEL_CLOSED',
+  // Corrections with a request id and revision (B3-3 to B3-5): the record changed since the screen
+  // read it (param `record`: its number; reload); the same request id sent again with other
+  // content. Correcting a shipment's cargo lines (param `shipment`: its number): it is in a closed
+  // container (`container`); an approved invoice bills it (`invoices`, credit it first); fewer
+  // packages than its warehouses hold (`packages`, `onHand`); the shipment is closed or cancelled.
+  'CORRECTION_STALE',
+  'CORRECTION_KEY_REUSED',
+  'CARGO_IN_CLOSED_CONTAINER',
+  'CARGO_INVOICED',
+  'CARGO_BELOW_ON_HAND',
+  'CARGO_SHIPMENT_CLOSED',
+  'CARGO_LOAD_TYPE_CHANGE',
+  // Taking back a trip's departure (param `trip`: its number): it has live proofs of delivery
+  // (`pods`) or expenses (`expenses`); shipments moved on since it left, or went on a later trip
+  // (`shipments`).
+  'TRIP_UNDO_HAS_POD',
+  'TRIP_UNDO_HAS_EXPENSES',
+  'TRIP_UNDO_SHIPMENT_MOVED',
+  'TRIP_UNDO_LATER_TRIP',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

@@ -65,9 +65,11 @@ import { isLiveInvoice } from './live-invoice.js';
 import {
   type SuggestionSource,
   invoiceCurrency,
+  quotationDrift,
   quotedLine,
   ratedLine,
   ratedPrice,
+  shipmentPriceCategory,
   suggestionFingerprint,
   systemPriceGives,
   unitQuantity,
@@ -268,7 +270,25 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   }
 
   async get(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
-    return toDto(await this.findScoped(user, id), user);
+    return this.withPricingNotice(user, toDto(await this.findScoped(user, id), user));
+  }
+
+  /**
+   * A draft of a shipment whose quotation no longer prices it (agreedPrices) carries why, so the
+   * staff member editing it sees that its prices are the rate cards', not the quotation's (plan
+   * 5.2, Codex F139-1).
+   */
+  private async withPricingNotice(
+    user: AuthUser,
+    invoice: CustomerInvoiceDto,
+  ): Promise<CustomerInvoiceDto> {
+    if (invoice.status !== 'DRAFT' || invoice.shipmentId === null) return invoice;
+    const { drift } = await this.agreedPrices(
+      await this.shipments.billingSource(user, invoice.shipmentId),
+    );
+    return drift === null
+      ? invoice
+      : { ...invoice, pricingNotice: { code: drift.code, quotationNumber: drift.number } };
   }
 
   /**
@@ -542,7 +562,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         include: details,
       });
     });
-    return toDto(created, user);
+    return this.withPricingNotice(user, toDto(created, user));
   }
 
   /**
@@ -551,9 +571,10 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
    * not cancelled, its customer visible). The currency: the one asked for, else the quotation's,
    * the customer's preferred, the branch default. Dated `invoiceDate` (default today in the
    * branch), due after the customer's payment terms. The lines: the quotation's, priced as
-   * agreed (in the quotation's currency only); with no quotation, one per charge type with
-   * exactly one approved rate card matching the shipment in that currency, its quantity from the
-   * unit where exact. A rate card line is filled only for a charge whose service the shipment
+   * agreed (in the quotation's currency only); with no quotation, or one that no longer prices
+   * the shipment (its route, mode or categories changed: agreedPrices, said in `unresolved`), one
+   * per charge type with exactly one approved rate card matching the shipment (its one price
+   * category, if any) in that currency, its quantity from the unit where exact. A rate card line is filled only for a charge whose service the shipment
    * has: a matching tariff is not proof the charge happened; otherwise it is offered.
    */
   async deriveForShipment(
@@ -567,9 +588,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     }
     const customer = await this.customers.requireCustomer(user, shipment.customerId);
     const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: shipment.branchId } });
-    const quotation = shipment.quotationId
-      ? await this.quotations.invoiceSource(shipment.quotationId)
-      : null;
+    const { quotation, drift } = await this.agreedPrices(shipment);
     const chosen = invoiceCurrency({
       requested: asked.currency ?? null,
       quotation: quotation?.currency ?? null,
@@ -579,6 +598,18 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const currency = await this.currencies.requireActive(chosen.code);
     const invoiceDate = asked.invoiceDate ?? todayIn(branch.timezone);
     const unresolved: InvoiceSuggestionUnresolved[] = [];
+    if (drift !== null) {
+      unresolved.push({
+        path: 'lines',
+        code: drift.code,
+        message:
+          drift.code === 'QUOTATION_ROUTE_CHANGED'
+            ? `The shipment's route or mode is no longer quotation ${drift.number}'s: its ` +
+              'prices are not used, the lines come from the rate cards'
+            : `The shipment's price categories are no longer quotation ${drift.number}'s: its ` +
+              'prices are not used, the lines come from the rate cards',
+      });
+    }
     const lines: DerivedInvoiceLine[] = [];
     let source: SuggestionSource;
     if (quotation !== null) {
@@ -630,6 +661,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         mode: shipment.mode,
         loadType: shipment.loadType,
         cargoType: shipment.cargoType,
+        priceCategoryCode: shipmentPriceCategory(shipment.priceCategoryCodes),
       });
       source = { rateCards: rates.map((r) => ({ id: r.id, updatedAt: r.updatedAt })) };
       const charges = await this.masterData.activeChargeTypes(rates.map((r) => r.chargeTypeCode));
@@ -765,10 +797,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       }
     }
     const fxRate = await this.fxRates.resolve(currency.code, input.invoiceDate);
-    const quoted =
-      shipment.quotationId !== null && input.lines.some((l) => l.unitPrice === undefined)
-        ? await this.quotations.invoiceSource(shipment.quotationId)
-        : null;
+    const quoted = input.lines.some((l) => l.unitPrice === undefined)
+      ? (await this.agreedPrices(shipment)).quotation
+      : null;
     const lines = [];
     for (const [index, l] of input.lines.entries()) {
       if (unknownCharge.has(index)) continue;
@@ -853,10 +884,38 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   }
 
   /**
+   * The shipment's quotation as the source of its agreed prices (plan 5.2): null with no
+   * quotation, or when the shipment no longer is what it priced (quotationDrift), with the reason
+   * then, so the invoice is priced from the rate cards and says why.
+   */
+  private async agreedPrices(shipment: BillingSource): Promise<{
+    quotation: QuotedPrices;
+    drift: {
+      code: 'QUOTATION_ROUTE_CHANGED' | 'QUOTATION_CATEGORY_CHANGED';
+      number: string;
+    } | null;
+  }> {
+    const quotation = shipment.quotationId
+      ? await this.quotations.invoiceSource(shipment.quotationId)
+      : null;
+    if (quotation === null) return { quotation: null, drift: null };
+    const drift = quotationDrift(quotation, shipment);
+    if (drift === null) return { quotation, drift: null };
+    return {
+      quotation: null,
+      drift: {
+        code: drift === 'ROUTE' ? 'QUOTATION_ROUTE_CHANGED' : 'QUOTATION_CATEGORY_CHANGED',
+        number: quotation.number,
+      },
+    };
+  }
+
+  /**
    * The system price of an invoice line: the agreed price first, from the shipment's quotation
-   * line for this charge (in the quotation's currency only); a charge the quotation does not
-   * price takes the approved rate card that matches the shipment, the charge and the invoice
-   * date. Where a minimum or a discount makes the amount differ from quantity × price, the agreed
+   * line for this charge (in the quotation's currency only, and only while the quotation still
+   * prices the shipment: agreedPrices); a charge the quotation does not price takes the approved
+   * rate card that matches the shipment (its one price category, if any), the charge and the
+   * invoice date. Where a minimum or a discount makes the amount differ from quantity × price, the agreed
    * amount is invoiced as one unit, as createForShipment does. Refused, under the line's field,
    * whenever the price is not one clear value: the staff member then enters it.
    */
@@ -920,6 +979,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         mode: shipment.mode,
         loadType: shipment.loadType,
         cargoType: shipment.cargoType,
+        priceCategoryCode: shipmentPriceCategory(shipment.priceCategoryCodes),
         chargeTypeCode,
       },
       { noMatch: [`${path}.unitPrice`], several: [`${path}.unitPrice`] },
@@ -1266,6 +1326,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
     journalEntryNumber: i.journalEntry?.number ?? null,
     approvedAt: i.approvedAt?.toISOString() ?? null,
     cancelReason: i.cancelReason,
+    pricingNotice: null,
     actions: {
       canEdit: isDraft && user.access.has('customer_invoices:update', i.branchId),
       canApprove: isDraft && user.access.has('customer_invoices:approve', i.branchId),

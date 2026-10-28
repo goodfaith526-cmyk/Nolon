@@ -148,6 +148,18 @@ const moveBody = z
   .object({ status: z.enum(TRIP_MOVES), occurredAt: timestamp.optional() })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+/**
+ * B3-4: `requestId` is made once per attempt by the screen; `expectedRevision` is the
+ * `departureRevision` it read.
+ */
+const undoDepartureBody = z
+  .object({
+    requestId: z.uuid(),
+    expectedRevision: z.number().int().min(0),
+    expectedStatus: z.literal('DEPARTED'),
+    reason: requiredText(500).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH)),
+  })
+  .strict();
 const addShipmentBody = z.object({ shipmentId: z.uuid() }).strict();
 
 const expenseBody = z
@@ -355,6 +367,18 @@ export class TripsController {
     @Body() body: unknown,
   ): Promise<TripDto> {
     return this.trips.cancel(user, id, parse(reasonBody, body).reason);
+  }
+
+  /** Takes back a departure entered by mistake (B3-4); the trip's own branch only. */
+  @Post(':id/undo-departure')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('transport_trips:cancel')
+  undoDeparture(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<TripDto> {
+    return this.trips.undoDeparture(user, id, parse(undoDepartureBody, body));
   }
 
   @Post(':id/expenses')

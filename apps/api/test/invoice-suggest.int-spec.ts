@@ -134,7 +134,11 @@ async function directShipment(
 }
 
 /** A shipment of this run's route, booked from an approved quotation with these lines. */
-async function quotedShipment(lines: object[], currency = 'USD'): Promise<string> {
+async function quotedShipment(
+  lines: object[],
+  currency = 'USD',
+  items: BookingItemInput[] = [{ cargoType: 'GENERAL', quantity: 1, weightKg: '100' }],
+): Promise<string> {
   const quotation = (
     await r
       .post('/quotations', cookies.salesPts, {
@@ -155,7 +159,7 @@ async function quotedShipment(lines: object[], currency = 'USD'): Promise<string
     await r
       .post(`/bookings/from-quotation/${quotation.id}`, cookies.salesPts, {
         services: ['MAIN_FREIGHT'],
-        items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: '100' }],
+        items,
       })
       .expect(201)
   ).body as BookingDto;
@@ -374,6 +378,82 @@ describe('invoice suggestion: a shipment without a quotation', () => {
   });
 });
 
+describe('invoice suggestion after a cargo correction (B3-3, F138-1)', () => {
+  it('prices the corrected cargo type: barrels at the barrel tariff', async () => {
+    // Its own route and charge, so the other cases' rates are untouched.
+    const tag = `CT${randomUUID().slice(0, 6).toUpperCase()}`;
+    const place = async (suffix: string) =>
+      (
+        await t.prisma.location.create({
+          data: {
+            code: `${tag}${suffix}`,
+            kind: 'CITY',
+            nameEn: `Cargo type test ${tag}${suffix}`,
+            nameAr: 'مدينة اختبار نوع البضاعة',
+            countryCode: 'SD',
+          },
+        })
+      ).id;
+    const [origin, destination] = [await place('A'), await place('B')];
+    const code = `${tag}FR`;
+    await t.prisma.chargeType.create({
+      data: { code, nameEn: 'Cargo type test', nameAr: 'رسم اختبار', service: 'MAIN_FREIGHT' },
+    });
+    const by = (await t.prisma.user.findFirstOrThrow({ select: { id: true } })).id;
+    for (const [cargoType, price] of [
+      ['GENERAL', '10'],
+      ['BARREL', '20'],
+    ] as const) {
+      await t.prisma.rateCard.create({
+        data: {
+          branchId: pts,
+          originLocationId: origin,
+          destinationLocationId: destination,
+          mode: 'ROAD',
+          cargoType,
+          chargeTypeCode: code,
+          unit: 'PER_SHIPMENT',
+          price,
+          minimumCharge: '0',
+          currency: 'USD',
+          validFrom: new Date(`${day(-30)}T00:00:00Z`),
+          validTo: null,
+          status: 'APPROVED',
+          createdById: by,
+          approvedById: by,
+          approvedAt: new Date(),
+        },
+      });
+    }
+    const booking = (
+      await r
+        .post('/bookings', cookies.salesPts, {
+          customerId: customer.id,
+          originLocationId: origin,
+          destinationLocationId: destination,
+          mode: 'ROAD',
+          cargoType: 'GENERAL',
+          services: ['MAIN_FREIGHT'],
+          items: [{ cargoType: 'GENERAL', quantity: 3, weightKg: '30' }],
+        })
+        .expect(201)
+    ).body as BookingDto;
+    const shipmentId = await confirmed(booking);
+    const price = async () =>
+      (await suggestion({ shipmentId })).lines.find((l) => l.chargeTypeCode === code)?.unitPrice;
+    expect(await price()).toBe('10');
+    await r
+      .put(`/shipments/${shipmentId}/items`, cookies.admin, {
+        requestId: randomUUID(),
+        expectedRevision: 0,
+        reason: 'Barrels, not general cargo',
+        items: [{ cargoType: 'BARREL', quantity: 3, weightKg: '30' }],
+      })
+      .expect(200);
+    expect(await price()).toBe('20');
+  });
+});
+
 describe('invoice suggestion: a minimum charge above the price per unit (Codex N89-1, N89-3)', () => {
   it('fills 0.25 kg at 100 per kg with a minimum of 60 as 1 × 60 with its price, and prices 1 unit with no price as 100', async () => {
     // Its own route and charge, so the other cases' rates are untouched.
@@ -556,6 +636,157 @@ describe('invoice suggestion: a shipment with a quotation', () => {
     expect((await r.get(path, cookies.financePts).expect(200)).body).toMatchObject({
       currency: 'EUR',
     });
+  });
+});
+
+describe('invoice suggestion: a shipment that is no longer what its quotation priced (plan 5.2)', () => {
+  // A function: the charge codes are made in beforeAll.
+  const quoted = (priceCategoryCode?: string) => [
+    {
+      chargeTypeCode: charge.freight,
+      unit: 'PER_SHIPMENT',
+      quantity: '2',
+      unitPrice: '100',
+      ...(priceCategoryCode ? { priceCategoryCode } : {}),
+    },
+  ];
+
+  it('prices from the rate cards, and says why, when the categories changed', async () => {
+    // The quotation priced general cargo; the booking's line is a carton.
+    const shipmentId = await quotedShipment(quoted(), 'USD', [
+      { cargoType: 'GENERAL', quantity: 1, weightKg: '100', priceCategoryCode: 'CARTON' },
+    ]);
+    const derived = await suggestion({ shipmentId });
+    expect(derived.currencySource).toBe('CUSTOMER');
+    expect(derived.unresolved.map((u) => [u.path, u.code])).toContainEqual([
+      'lines',
+      'QUOTATION_CATEGORY_CHANGED',
+    ]);
+    expect(derived.lines.some((l) => l.priceSource === 'QUOTATION')).toBe(false);
+    // No carton card yet: the general freight card.
+    expect(derived.lines.find((l) => l.chargeTypeCode === charge.freight)?.rateCardId).toBe(
+      rates.freight,
+    );
+
+    // The staff member who opens the draft is told why too (Codex F139-1).
+    const draft = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    const notice = {
+      code: 'QUOTATION_CATEGORY_CHANGED',
+      quotationNumber: expect.stringMatching(/\S/) as unknown,
+    };
+    expect(draft.pricingNotice).toEqual(notice);
+    expect(
+      (await r.get(`/customer-invoices/${draft.id}`, cookies.financePts).expect(200)).body,
+    ).toMatchObject({ pricingNotice: notice });
+    await r
+      .post(`/customer-invoices/${draft.id}/cancel`, cookies.financePts, { reason: 'test' })
+      .expect(200);
+
+    // A carton card for the freight is the one the carton shipment is priced from.
+    const carton = await t.prisma.rateCard.create({
+      data: {
+        branchId: pts,
+        originLocationId: from,
+        destinationLocationId: to,
+        mode: 'ROAD',
+        cargoType: 'GENERAL',
+        priceCategoryCode: 'CARTON',
+        chargeTypeCode: charge.freight,
+        unit: 'PER_SHIPMENT',
+        price: '250',
+        minimumCharge: '0',
+        currency: 'USD',
+        validFrom: new Date(`${day(-30)}T00:00:00Z`),
+        status: 'APPROVED',
+        createdById: (await t.prisma.user.findFirstOrThrow()).id,
+        approvedById: (await t.prisma.user.findFirstOrThrow()).id,
+        approvedAt: new Date(),
+      },
+    });
+    try {
+      const again = await suggestion({ shipmentId });
+      expect(
+        again.lines
+          .filter((l) => l.chargeTypeCode === charge.freight)
+          .map((l) => [l.rateCardId, l.unitPrice, l.priceSource]),
+      ).toEqual([[carton.id, '250', 'RATE_CARD']]);
+      expect(again.fingerprint).not.toBe(derived.fingerprint);
+
+      // A line entered without a price takes the same price, not the quotation's 100.
+      const checked = (
+        await r
+          .agentPost('/invoice-drafts/check', tokens.finance, {
+            idempotencyKey: draftKey(),
+            shipmentId,
+            currency: 'USD',
+            invoiceDate: day(0),
+            dueDate: day(30),
+            notes: null,
+            lines: [{ chargeTypeCode: charge.freight, quantity: '1' }],
+          })
+          .expect(200)
+      ).body as DraftPreCheckDto;
+      expect(checked.ok && checked.total).toBe('250');
+    } finally {
+      await t.prisma.rateCard.update({ where: { id: carton.id }, data: { status: 'CANCELLED' } });
+    }
+  });
+
+  it('keeps the quotation while the categories are the same', async () => {
+    const shipmentId = await quotedShipment(quoted('CARTON'), 'USD', [
+      { cargoType: 'GENERAL', quantity: 1, weightKg: '60', priceCategoryCode: 'CARTON' },
+      { cargoType: 'GENERAL', quantity: 2, weightKg: '40', priceCategoryCode: 'CARTON' },
+    ]);
+    const derived = await suggestion({ shipmentId });
+    expect(derived).toMatchObject({ currencySource: 'QUOTATION', unresolved: [] });
+    expect(derived.lines.map((l) => [l.quantity, l.unitPrice, l.priceSource])).toEqual([
+      ['2', '100', 'QUOTATION'],
+    ]);
+    const draft = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(draft.pricingNotice).toBeNull();
+  });
+
+  it('prices from the rate cards, and says why, when the route changed', async () => {
+    const shipmentId = await quotedShipment(quoted());
+    // Changed after the booking (a correction of the destination): the quotation's prices
+    // were for the old route.
+    const elsewhere = await t.prisma.location.create({
+      data: {
+        code: `ISX${randomUUID().slice(0, 6).toUpperCase()}`,
+        kind: 'CITY',
+        nameEn: 'Another city',
+        nameAr: 'مدينة أخرى',
+        countryCode: 'SD',
+      },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipmentId },
+      data: { destinationLocationId: elsewhere.id },
+    });
+    const derived = await suggestion({ shipmentId });
+    expect(derived.unresolved.map((u) => u.code)).toContain('QUOTATION_ROUTE_CHANGED');
+    // No rate card prices the new route, and the quotation's lines are not used.
+    expect(derived.lines).toEqual([]);
+    const checked = (
+      await r
+        .agentPost('/invoice-drafts/check', tokens.finance, {
+          idempotencyKey: draftKey(),
+          shipmentId,
+          currency: 'USD',
+          invoiceDate: day(0),
+          dueDate: day(30),
+          notes: null,
+          lines: [{ chargeTypeCode: charge.freight, quantity: '1' }],
+        })
+        .expect(200)
+    ).body as DraftPreCheckDto;
+    expect(!checked.ok && checked.refusals.map((x) => [x.field, x.code])).toEqual([
+      ['lines.0.unitPrice', 'RATE_NO_MATCH'],
+    ]);
   });
 });
 

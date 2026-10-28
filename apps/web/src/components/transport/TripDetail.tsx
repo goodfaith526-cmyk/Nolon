@@ -1,17 +1,19 @@
 'use client';
 
-import type {
-  Page,
-  PodDto,
-  ShipmentPodsDto,
-  ShipmentSummaryDto,
-  TripCostShareDto,
-  TripDto,
-  TripExpenseRequest,
-  TripMove,
+import {
+  type Page,
+  type PodDto,
+  SHIPMENT_REASON_MIN_LENGTH,
+  type ShipmentPodsDto,
+  type ShipmentSummaryDto,
+  type TripCostShareDto,
+  type TripDto,
+  type TripExpenseRequest,
+  type TripMove,
+  type TripUndoDepartureRequest,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, Fragment, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
@@ -41,6 +43,8 @@ export function TripDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // B3-4: the revision the undo form was opened on, and one request id per attempt.
+  const [undoing, setUndoing] = useState<{ revision: number; requestId: string } | null>(null);
   const [addingExpense, setAddingExpense] = useState(false);
   // One id per expense form: a retry of the same submit cannot post the expense twice.
   const [expenseRequestId, setExpenseRequestId] = useState('');
@@ -126,6 +130,22 @@ export function TripDetail({ id }: { id: string }) {
       t('cancelledNotice'),
     );
     if (ok) setCancelling(false);
+  }
+
+  async function onUndoDeparture(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!undoing) return;
+    const body: TripUndoDepartureRequest = {
+      requestId: undoing.requestId,
+      expectedRevision: undoing.revision,
+      expectedStatus: 'DEPARTED',
+      reason: field(new FormData(event.currentTarget), 'reason').trim(),
+    };
+    const ok = await run(
+      () => api<TripDto>(`/trips/${id}/undo-departure`, { method: 'POST', body }),
+      t('departureUndone'),
+    );
+    if (ok) setUndoing(null);
   }
 
   async function searchShipments() {
@@ -261,7 +281,7 @@ export function TripDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
 
-      {(a.moves.length > 0 || a.canCancel) && (
+      {(a.moves.length > 0 || a.canCancel || a.canUndoDeparture) && (
         <div className="card stack">
           {a.moves.map((move) => (
             <form key={move} className="line trip-move" onSubmit={(e) => onMove(e, move)}>
@@ -303,6 +323,43 @@ export function TripDetail({ id }: { id: string }) {
               <div className="actions">
                 <button type="button" onClick={() => setCancelling(true)}>
                   {t('cancelTrip')}
+                </button>
+              </div>
+            ))}
+          {a.canUndoDeparture &&
+            (undoing ? (
+              <form className="stack" onSubmit={(e) => void onUndoDeparture(e)}>
+                <p className="muted">{t('undoDepartureHint')}</p>
+                <label className="field">
+                  <span>{t('undoDepartureReason')}</span>
+                  <textarea
+                    name="reason"
+                    required
+                    minLength={SHIPMENT_REASON_MIN_LENGTH}
+                    maxLength={500}
+                  />
+                </label>
+                <div className="actions">
+                  <button type="submit" className="danger" disabled={busy}>
+                    {t('confirmUndoDeparture')}
+                  </button>
+                  <button type="button" onClick={() => setUndoing(null)}>
+                    {tc('back')}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setUndoing({
+                      revision: trip.departureRevision,
+                      requestId: crypto.randomUUID(),
+                    })
+                  }
+                >
+                  {t('undoDeparture')}
                 </button>
               </div>
             ))}
@@ -359,6 +416,15 @@ export function TripDetail({ id }: { id: string }) {
             <dd className="pre">{trip.cancelReason}</dd>
           </>
         )}
+        {trip.departureUndos.map((u) => (
+          <Fragment key={u.revision}>
+            <dt>{t('departureUndoneAt', { time: dateTime(u.undoneAt) })}</dt>
+            <dd>
+              {t('departureUndoneBy', { user: u.undoneByName, departed: dateTime(u.departedAt) })}
+              <div className="pre">{u.reason}</div>
+            </dd>
+          </Fragment>
+        ))}
         {trip.notes && (
           <>
             <dt>{tc('notes')}</dt>

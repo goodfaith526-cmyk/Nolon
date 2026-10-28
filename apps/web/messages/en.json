@@ -706,7 +706,23 @@
     "closeGoodsOnHand": "This shipment's goods are still in the warehouse: {warehouses}. Release them first, then close the shipment.",
     "closeNotInvoiced": "No approved invoice bills this shipment. Approve its invoice first, or write why it is closed without charges.",
     "noChargeReason": "Reason to close without charges",
-    "closeCostsReminder": "Before closing, check that all the shipment's costs are recorded: supplier bills, trips and container costs."
+    "closeCostsReminder": "Before closing, check that all the shipment's costs are recorded: supplier bills, trips and container costs.",
+    "correctCargo": "Correct cargo lines",
+    "correctCargoHint": "The new lines replace the current ones. Trip expenses and container allocations already posted stay as posted; later ones use the new lines.",
+    "cargoCorrectionReason": "Reason for the correction",
+    "saveCargoCorrection": "Save correction",
+    "cargoCorrected": "Cargo lines corrected.",
+    "cargoCorrections": "Cargo line corrections",
+    "cargoCorrectionBy": "Correction {revision} by {user}, {time}",
+    "cargoCorrectionContainer": "In container {container}",
+    "cargoBefore": "Before",
+    "cargoAfter": "After",
+    "cargoLinesSummary": "{lines} lines, {packages} packages",
+    "addCargoLine": "Add cargo line",
+    "lengthCm": "Length (cm)",
+    "widthCm": "Width (cm)",
+    "heightCm": "Height (cm)",
+    "lineDescription": "Description"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -812,7 +828,9 @@
     "noCreditNotes": "No credit notes.",
     "creditNote": "Credit note",
     "creditDate": "Credit date",
-    "fromAdvance": "From advance"
+    "fromAdvance": "From advance",
+    "pricingNotice_QUOTATION_ROUTE_CHANGED": "The shipment's route or mode changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving.",
+    "pricingNotice_QUOTATION_CATEGORY_CHANGED": "The shipment's price categories changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving."
   },
   "Receipts": {
     "title": "Receipts",
@@ -1280,7 +1298,14 @@
     "confirmCancelPod": "Confirm cancel",
     "podCancelledBadge": "Cancelled",
     "podCancelledBy": "Cancelled by {name} on {at}",
-    "podCancelledNotice": "Proof of delivery {number} cancelled."
+    "podCancelledNotice": "Proof of delivery {number} cancelled.",
+    "undoDeparture": "Undo departure",
+    "undoDepartureHint": "The trip goes back to planned and its shipments to scheduled. Cancel its proofs of delivery and expenses first.",
+    "undoDepartureReason": "Why is the departure taken back?",
+    "confirmUndoDeparture": "Take back the departure",
+    "departureUndone": "The departure was taken back.",
+    "departureUndoneAt": "Departure taken back, {time}",
+    "departureUndoneBy": "By {user}; it had left {departed}."
   },
   "Consolidations": {
     "title": "Consolidated containers",
@@ -2655,9 +2680,9 @@
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
     "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
-    "SHIPMENT_CANCEL_ON_TRIP": "Shipment {shipment} is on trip {trip}, which has left: it cannot be cancelled from here. Complete the trip, or ask a manager for a correction.",
+    "SHIPMENT_CANCEL_ON_TRIP": "Shipment {shipment} is on trip {trip}, which has left: it cannot be cancelled from here. Complete the trip, or undo its departure on the trip's page while it has not arrived.",
     "SHIPMENT_CANCEL_IN_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or ask a manager for a correction.",
-    "REVERT_BY_TRIP": "Trip {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
+    "REVERT_BY_TRIP": "Trip {record} recorded this step: it cannot be undone from here. On the trip's page, take the shipment off the trip or cancel the trip while it is planned, or undo its departure while it has left and not arrived (with the permission to cancel trips).",
     "REVERT_BY_CONTAINER": "Container {record} recorded this step: it cannot be undone from here. Ask a manager for a correction.",
     "REVERT_BY_WAREHOUSE": "Warehouse movement {record} recorded this step: it cannot be undone from here. Cancel the movement on the Warehouse tab (with the permission to cancel warehouse movements).",
     "REVERT_BY_POD": "Proof of delivery {record} recorded this step: it cannot be undone from here. Cancel the proof of delivery in the Proofs of delivery section (with the permission to cancel them).",
@@ -2681,7 +2706,18 @@
     "MOVEMENT_CANCEL_CLOSED": "The shipment is closed: movement {movement} cannot be cancelled.",
     "POD_CANCEL_LATER_POD": "Proof of delivery {later} came after {pod}: cancel it first.",
     "POD_CANCEL_STATUS_MOVED": "The shipment moved on since proof of delivery {pod}: undo the later steps first.",
-    "POD_CANCEL_CLOSED": "The shipment is closed: proof of delivery {pod} cannot be cancelled."
+    "POD_CANCEL_CLOSED": "The shipment is closed: proof of delivery {pod} cannot be cancelled.",
+    "CORRECTION_STALE": "{record} changed since this page was opened: reload it and try again.",
+    "CORRECTION_KEY_REUSED": "This correction was already sent with other content: reload the page and try again.",
+    "CARGO_IN_CLOSED_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: its cargo lines can no longer be corrected.",
+    "CARGO_INVOICED": "Shipment {shipment} is billed by {invoices}: issue a full credit note first, then correct the cargo lines.",
+    "CARGO_BELOW_ON_HAND": "Shipment {shipment} has {onHand} packages in its warehouses: the cargo lines cannot count fewer ({packages}).",
+    "CARGO_SHIPMENT_CLOSED": "Shipment {shipment} is closed or cancelled: its cargo lines cannot be corrected.",
+    "CARGO_LOAD_TYPE_CHANGE": "Shipment {shipment} is booked as FCL or LCL, and the corrected lines would change that: correct the lines without changing it.",
+    "TRIP_UNDO_HAS_POD": "Trip {trip} has proofs of delivery ({pods}): cancel them first, then take back the departure.",
+    "TRIP_UNDO_HAS_EXPENSES": "Trip {trip} has expenses ({expenses}): cancel them first, then take back the departure.",
+    "TRIP_UNDO_SHIPMENT_MOVED": "These shipments of trip {trip} have moved on since it left: {shipments}. Undo their later steps first.",
+    "TRIP_UNDO_LATER_TRIP": "These shipments of trip {trip} are on a later trip: {shipments}."
   },
   "Locations": {
     "title": "Ports and cities",

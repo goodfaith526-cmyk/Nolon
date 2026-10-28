@@ -18,10 +18,13 @@ import type {
   Permission,
   RateUnit,
   ShipmentActionsDto,
+  ShipmentCargoCorrectionDto,
+  ShipmentCargoCorrectionRequest,
   ShipmentContainerInput,
   ShipmentCloseCheckDto,
   ShipmentDto,
   ShipmentEventKind,
+  ShipmentItemDto,
   ShipmentStatus,
   ShipmentStatusRequest,
   ShipmentPickPage,
@@ -33,6 +36,7 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import { ShipmentContainerRegistry } from './shipment-container.registry.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { currentLocationOf } from './location-timeline.js';
 import {
@@ -44,6 +48,8 @@ import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
+import { bookingCargoHeader } from '../bookings/booking-cargo.js';
+import { prepareCargoLine } from '../bookings/cargo-line.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   dateRange,
@@ -58,7 +64,8 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import { codedRefusal, fieldRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
+import { requestHash } from '../drafts/draft-rules.js';
+import type { Prisma, ShipmentItem } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import {
   PartnerRefsService,
@@ -150,6 +157,13 @@ const details = {
   distributor: partnerRefSelect,
   sharedBranches: { ...sharedBranchesSelect, select: { branchId: true, branch: branchRef } },
   items: { orderBy: { lineNo: 'asc' } },
+  cargoCorrections: {
+    orderBy: { revision: 'asc' },
+    include: {
+      correctedBy: { select: { fullName: true } },
+      container: { select: { number: true } },
+    },
+  },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
   consolidationLinks: containerLinks,
@@ -188,6 +202,7 @@ export class ShipmentsService {
     private readonly partnerRefs: PartnerRefsService,
     private readonly stock: ShipmentStockRegistry,
     private readonly links: ShipmentLinksRegistry,
+    private readonly containers: ShipmentContainerRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -370,6 +385,8 @@ export class ShipmentsService {
       weightKg: Prisma.Decimal | null;
       volumeCbm: Prisma.Decimal | null;
     }[];
+    /** The price category of each of its booking's cargo lines (null: none). */
+    priceCategoryCodes: (string | null)[];
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -396,12 +413,21 @@ export class ShipmentsService {
           },
           orderBy: { lineNo: 'asc' },
         },
-        booking: { select: { quotationId: true } },
+        booking: {
+          select: {
+            quotationId: true,
+            items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
+          },
+        },
       },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
     const { booking, ...rest } = shipment;
-    return { ...rest, quotationId: booking.quotationId };
+    return {
+      ...rest,
+      quotationId: booking.quotationId,
+      priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
+    };
   }
 
   /** For other modules (documents): 404 unless the user may see the shipment. */
@@ -653,6 +679,166 @@ export class ShipmentsService {
       };
       await tx.shipment.update({ where: { id }, data: { ...data, ...partners } });
       if (sharedBranchIds) await this.replaceSharedBranchesInTx(tx, id, sharedBranchIds);
+    });
+    return this.get(user, id);
+  }
+
+  /**
+   * B3-3 (docs/plans/05-correction-contracts.md, sections 0 and 3): replaces the cargo lines of a
+   * confirmed shipment, checked and measured as a booking's, and keeps the lines before and after
+   * with the reason. The booking keeps the lines it was confirmed with; posted trip expenses and
+   * container allocations stay as posted.
+   *
+   * Locks the shipment's container first (when it is in one), then the shipment, as adding to a
+   * container does. A retry with the same request id and content changes nothing; a request made
+   * on an older revision, or before the shipment moved to another container, is STALE.
+   */
+  async correctCargo(
+    user: AuthUser,
+    id: string,
+    input: ShipmentCargoCorrectionRequest,
+  ): Promise<ShipmentDto> {
+    const shipment = await this.findScoped(user, id);
+    // The shipment's own branch, not a branch sharing it.
+    if (!user.access.has('shipments:update', shipment.branchId)) {
+      throw new ForbiddenException('Missing permission');
+    }
+    // The request as sent (F138-2): a retry is answered from the stored correction before the
+    // lines are checked against master data that may have changed since.
+    const hash = requestHash({
+      expectedRevision: input.expectedRevision,
+      reason: input.reason,
+      items: input.items,
+    });
+    const label = shipment.number;
+    const containers = this.containers.get();
+    await this.prisma.$transaction(async (tx) => {
+      const seen = await containers.liveContainerInTx(tx, id);
+      const container = seen && (await containers.lockContainerInTx(tx, seen.id));
+      const status = await this.lockStatus(tx, id);
+      const stored = await tx.shipmentCargoCorrection.findUnique({
+        where: { shipmentId_requestId: { shipmentId: id, requestId: input.requestId } },
+        select: { requestHash: true },
+      });
+      if (stored) {
+        if (stored.requestHash === hash) return;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_KEY_REUSED',
+          'This request id was used for another correction',
+          { shipment: label },
+        );
+      }
+      const revision = await tx.shipmentCargoCorrection.count({ where: { shipmentId: id } });
+      const live = await containers.liveContainerInTx(tx, id);
+      if (revision !== input.expectedRevision || live?.id !== seen?.id) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_STALE',
+          `Shipment ${label} changed since it was read: reload it and try again`,
+          { record: label },
+        );
+      }
+      const lines: PreparedLine[] = [];
+      for (const [index, item] of input.items.entries()) {
+        lines.push(
+          withoutCategory(await prepareCargoLine(this.masterData, item, `items.${index}`)),
+        );
+      }
+      if (!isActive(status)) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_SHIPMENT_CLOSED',
+          `Shipment ${label} is closed or cancelled: its cargo lines cannot be corrected`,
+          { shipment: label },
+        );
+      }
+      if (container && container.status !== 'OPEN') {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_IN_CLOSED_CONTAINER',
+          `Shipment ${label} is in container ${container.number}, which is closed: its cargo lines are fixed`,
+          { shipment: label, container: container.number },
+        );
+      }
+      const { approved } = await this.invoices.get().liveInvoicesInTx(tx, id);
+      if (approved.length > 0) {
+        const invoices = approved.join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_INVOICED',
+          `Shipment ${label} is billed by ${invoices}: credit the invoice before correcting its cargo lines`,
+          { shipment: label, invoices },
+        );
+      }
+      const onHand = (await this.stock.get().goodsOnHandInTx(tx, id)).reduce(
+        (n, w) => n + w.packages,
+        0,
+      );
+      const packages = lines.reduce((n, line) => n + line.quantity, 0);
+      if (packages < onHand) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_BELOW_ON_HAND',
+          `Shipment ${label} has ${onHand} packages in its warehouses: the cargo lines cannot count fewer (${packages})`,
+          { shipment: label, packages: String(packages), onHand: String(onHand) },
+        );
+      }
+      const before = await tx.shipmentItem.findMany({
+        where: { shipmentId: id },
+        orderBy: { lineNo: 'asc' },
+      });
+      // F138-1: the shipment's cargo header follows its lines as a booking's does, so pricing
+      // reads the corrected cargo. FCL/LCL decides containers and numbering: not changed here.
+      const saved = await tx.shipment.findUniqueOrThrow({
+        where: { id },
+        select: { mode: true, loadType: true, cargoType: true, cargoDescription: true },
+      });
+      const header = bookingCargoHeader(
+        { mode: saved.mode, items: lines },
+        { ...saved, items: before },
+      );
+      if (header.loadType !== saved.loadType) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_LOAD_TYPE_CHANGE',
+          `Shipment ${label} is ${saved.loadType ?? 'not FCL or LCL'}: the corrected lines would make it ${header.loadType ?? 'neither'}`,
+          { shipment: label },
+        );
+      }
+      // A header kept apart from the lines stays while a line still has its cargo type.
+      const cargoType =
+        header.cargoType && lines.some((line) => line.cargoType === header.cargoType)
+          ? header.cargoType
+          : (lines[0]?.cargoType ?? saved.cargoType);
+      const write = async () => {
+        await tx.shipment.update({
+          where: { id },
+          data: { cargoType, cargoDescription: header.cargoDescription },
+        });
+        await tx.shipmentItem.deleteMany({ where: { shipmentId: id } });
+        await tx.shipmentItem.createMany({
+          data: lines.map((line, index) => ({ shipmentId: id, lineNo: index + 1, ...line })),
+        });
+      };
+      if (container) await containers.guardCapacityInTx(tx, container.id, write);
+      else await write();
+      await tx.shipmentCargoCorrection.create({
+        data: {
+          shipmentId: id,
+          branchId: shipment.branchId,
+          revision: revision + 1,
+          requestId: input.requestId,
+          requestHash: hash,
+          itemsBefore: before.map(toItemDto) as unknown as Prisma.InputJsonValue,
+          itemsAfter: lines.map((line, index) =>
+            toItemDto({ lineNo: index + 1, ...line }),
+          ) as unknown as Prisma.InputJsonValue,
+          reason: input.reason,
+          containerId: container?.id ?? null,
+          correctedById: user.id,
+        },
+      });
     });
     return this.get(user, id);
   }
@@ -1751,18 +1937,9 @@ export class ShipmentsService {
       originConsolidator: toPartnerRef(s.originConsolidator),
       distributor: toPartnerRef(s.distributor),
       packages: s.items.reduce((n, i) => n + i.quantity, 0),
-      items: s.items.map((i) => ({
-        lineNo: i.lineNo,
-        cargoType: i.cargoType,
-        containerTypeCode: i.containerTypeCode,
-        description: i.description,
-        quantity: i.quantity,
-        lengthCm: toDecimalStringOrNull(i.lengthCm),
-        widthCm: toDecimalStringOrNull(i.widthCm),
-        heightCm: toDecimalStringOrNull(i.heightCm),
-        weightKg: toDecimalStringOrNull(i.weightKg),
-        volumeCbm: toDecimalStringOrNull(i.volumeCbm),
-      })),
+      items: s.items.map(toItemDto),
+      cargoRevision: s.cargoCorrections.length,
+      cargoCorrections: s.cargoCorrections.map(toCargoCorrectionDto),
       containers: s.containers.map((c) => ({
         id: c.id,
         containerNumber: c.containerNumber,
@@ -1926,7 +2103,64 @@ function actionsFor(
       canCancelStatus(s.status) &&
       (!hasPassedLoading(path) || isLateCanceller(user)),
     canEdit: canUpdate && isActive(s.status),
+    canCorrectCargo: user.access.has('shipments:update', s.branchId) && isActive(s.status),
     canShareBranches: canUpdate && isActive(s.status) && canAccessBranch(user, s.branchId),
+  };
+}
+
+type PreparedBookingLine = Awaited<ReturnType<typeof prepareCargoLine>>;
+
+/** A cargo line as `prepareCargoLine` makes it, without the price category shipments do not keep. */
+type PreparedLine = Omit<PreparedBookingLine, 'priceCategoryCode'>;
+
+function withoutCategory({
+  priceCategoryCode: _category,
+  ...line
+}: PreparedBookingLine): PreparedLine {
+  return line;
+}
+
+type CargoLine = Pick<
+  ShipmentItem,
+  | 'lineNo'
+  | 'cargoType'
+  | 'containerTypeCode'
+  | 'description'
+  | 'quantity'
+  | 'lengthCm'
+  | 'widthCm'
+  | 'heightCm'
+  | 'weightKg'
+  | 'volumeCbm'
+>;
+
+function toItemDto(i: CargoLine): ShipmentItemDto {
+  return {
+    lineNo: i.lineNo,
+    cargoType: i.cargoType,
+    containerTypeCode: i.containerTypeCode,
+    description: i.description,
+    quantity: i.quantity,
+    lengthCm: toDecimalStringOrNull(i.lengthCm),
+    widthCm: toDecimalStringOrNull(i.widthCm),
+    heightCm: toDecimalStringOrNull(i.heightCm),
+    weightKg: toDecimalStringOrNull(i.weightKg),
+    volumeCbm: toDecimalStringOrNull(i.volumeCbm),
+  };
+}
+
+function toCargoCorrectionDto(
+  c: ShipmentWithDetails['cargoCorrections'][number],
+): ShipmentCargoCorrectionDto {
+  return {
+    revision: c.revision,
+    reason: c.reason,
+    correctedAt: c.correctedAt.toISOString(),
+    correctedByName: c.correctedBy.fullName,
+    containerNumber: c.container?.number ?? null,
+    // Written by correctCargo as ShipmentItemDto[] and never changed (insert-only).
+    itemsBefore: c.itemsBefore as unknown as ShipmentItemDto[],
+    itemsAfter: c.itemsAfter as unknown as ShipmentItemDto[],
   };
 }
 
