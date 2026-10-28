@@ -546,6 +546,7 @@ export class OperationalReportsService {
       wants('SUPPLIER_BILL', 'SUPPLIER_PAYMENT') ? this.payables.auditEntries(user, aq) : none,
       wants('EXPENSE') ? this.expenses.auditEntries(user, aq) : none,
       wants('TRIP', 'TRIP_EXPENSE', 'POD') ? this.trips.auditEntries(user, aq) : none,
+      wants('CONTAINER') ? this.consolidationReports.auditEntries(user, aq) : none,
       wants('DOCUMENT') ? this.documents.auditEntries(user, aq) : none,
       wants('RATE', 'CUSTOMER', 'USER', 'PARTNER', ...AUDITED_MASTER_DATA)
         ? this.audit.auditEntries(user, aq)

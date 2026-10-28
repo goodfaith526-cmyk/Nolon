@@ -746,6 +746,7 @@ describe('consolidated LCL containers', () => {
       canAddBooking: true,
       moves: [],
       canCancel: false,
+      canReopen: false,
     });
 
     // Only JED takes out, moves, edits, moves status or cancels: 403 with its reason code.

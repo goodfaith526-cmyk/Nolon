@@ -975,6 +975,7 @@ const STATUS_KINDS = {
   SHIPMENT: 'shipment',
   CUSTOMS: 'customs',
   TRIP: 'trip',
+  CONTAINER: 'consolidation',
   CREDIT_NOTE: 'creditNote',
   SUPPLIER_BILL: 'supplierBill',
   SUPPLIER_PAYMENT: 'supplierPayment',
