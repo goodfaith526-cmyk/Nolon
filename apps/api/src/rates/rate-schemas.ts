@@ -22,5 +22,14 @@ export const rateFields = {
   notes: optionalText(2000),
 };
 
-export const createRateBody = z.object({ branchId: z.uuid(), ...rateFields }).strict();
-export const updateRateBody = z.object(rateFields).partial().strict();
+/**
+ * NOLON screens only: the price category a card prices (plan 5.3). Not in rateFields, so rate card
+ * drafts and the Excel import keep their shapes (plan 7.2).
+ */
+const screenFields = {
+  ...rateFields,
+  priceCategoryCode: z.string().trim().toUpperCase().max(20).nullish(),
+};
+
+export const createRateBody = z.object({ branchId: z.uuid(), ...screenFields }).strict();
+export const updateRateBody = z.object(screenFields).partial().strict();

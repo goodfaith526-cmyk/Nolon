@@ -290,7 +290,10 @@
     "validFrom": "ساري من",
     "validTo": "ساري حتى (اختياري)",
     "transitDays": "أيام العبور",
-    "import": "استيراد من Excel"
+    "import": "استيراد من Excel",
+    "priceCategory": "فئة السعر",
+    "generalCategory": "عامة (كل الفئات)",
+    "countryScope": "دولة"
   },
   "Enums": {
     "rate_DRAFT": "مسودة",
@@ -494,7 +497,14 @@
     "currencyFromCustomer": "مقترح: العملة المفضلة للعميل.",
     "currencyFromBranch": "مقترح: عملة الفرع.",
     "validUntilFromDays": "مقترح: {days} يوم من اليوم.",
-    "currencySuggestionNotApplied": "العملة المقترحة لهذا العميل {currency}. ما اتطبقت لأن البنود فيها أسعار؛ غيّر العملة بنفسك لو محتاج."
+    "currencySuggestionNotApplied": "العملة المقترحة لهذا العميل {currency}. ما اتطبقت لأن البنود فيها أسعار؛ غيّر العملة بنفسك لو محتاج.",
+    "priceCategory": "فئة السعر",
+    "noCategory": "بدون فئة",
+    "sourceTyped": "سعر مكتوب",
+    "sourceRate": "من بطاقة سعر · {category} · {unit} · {currency} · {from} ← {to}",
+    "scope_PLACE": "المكان",
+    "scope_CITY": "مدينة",
+    "scope_COUNTRY": "دولة"
   },
   "Bookings": {
     "title": "الحجوزات",
@@ -2494,7 +2504,12 @@
     "STATUS_TIME_TOO_EARLY": "لا يكون الوقت قبل إنشاء الشحنة أو قبل آخر حالة لها.",
     "REVERT_STALE": "تغيّرت الشحنة منذ فتحتها. راجع سجل حالاتها وحاول مرة أخرى.",
     "REVERT_CLOSED_CONTAINER": "الشحنة في الحاوية المغلقة {container}: إغلاق الحاوية نهائي، فلا يُلغى تجميعها.",
-    "SUPPLIER_REFERENCE_DUPLICATE": "مرجع المورد {reference} مسجّل في فواتير أخرى (معتمدة: {approved}، مسودات: {drafts})، أو تغيّرت من آخر مرة شفتها. راجعها، ثم أكّد أن هذه فاتورة مختلفة."
+    "SUPPLIER_REFERENCE_DUPLICATE": "مرجع المورد {reference} مسجّل في فواتير أخرى (معتمدة: {approved}، مسودات: {drafts})، أو تغيّرت من آخر مرة شفتها. راجعها، ثم أكّد أن هذه فاتورة مختلفة.",
+    "RATE_SUPERSEDED": "في بطاقة سعر أضيق لهذا المسار (المدينة قبل الدولة، والمكان قبل المدينة): اخترها.",
+    "RATE_CATEGORY_REQUIRED": "بطاقة السعر دي لفئة معينة: اختار فئة السعر للسطر أولاً.",
+    "PRICE_CATEGORY_NOT_USABLE": "فئة السعر دي غير معروفة أو موقوفة أو لنوع بضاعة تاني.",
+    "COUNTRY_KIND_FIXED": "نطاق الدولة بيحتفظ بنوعه ودولته: أضف موقع جديد بدل التعديل.",
+    "COUNTRY_SCOPE_TAKEN": "{code} هو نطاق التسعير لـ {country} أصلاً."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2514,7 +2529,8 @@
     "kind_CITY": "مدينة",
     "kind_BORDER": "نقطة حدود",
     "kind_OTHER": "أخرى",
-    "countryFromCity": "دولة المدينة: الموقع في دولة مدينته."
+    "countryFromCity": "دولة المدينة: الموقع في دولة مدينته.",
+    "kind_COUNTRY": "دولة (نطاق تسعير)"
   },
   "MasterData": {
     "title": "البيانات الأساسية",

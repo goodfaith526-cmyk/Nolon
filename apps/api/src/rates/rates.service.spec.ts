@@ -18,8 +18,8 @@ function service() {
     id === OLD ? refuse('Unknown or inactive location') : Promise.resolve({ id }),
   );
   const masterData = {
-    requireLocation,
-    requireRoute: vi.fn(async (o: string, d: string) => {
+    requireRateLocation: requireLocation,
+    requireRateRoute: vi.fn(async (o: string, d: string) => {
       if (o === d) return refuse('Origin and destination must differ');
       await requireLocation(o);
       await requireLocation(d);
@@ -33,6 +33,11 @@ function service() {
       code === 'FREIGHT'
         ? Promise.resolve({ code })
         : refuse(`Unknown or inactive charge type: ${code}`),
+    ),
+    requirePriceCategory: vi.fn((code: string, cargoType: string | null) =>
+      code === 'PALLET' && (cargoType === null || cargoType === 'PALLET')
+        ? Promise.resolve({ code })
+        : refuse(`Price category ${code} is not usable for ${cargoType ?? 'any'} cargo`),
     ),
   };
   const currencies = {
@@ -100,11 +105,23 @@ describe('RatesService.ruleChecker', () => {
     ]);
   });
 
+  it('checks a category card against the category master and its cargo type', async () => {
+    const check = service().rates.ruleChecker();
+    const pallet = { ...good, cargoType: 'PALLET' as const, containerTypeCode: null };
+    expect(await check({ ...pallet, priceCategoryCode: 'PALLET' })).toEqual([]);
+    expect(
+      (await check({ ...good, priceCategoryCode: 'PALLET' })).map((i) => [i.field, i.code]),
+    ).toEqual([['priceCategoryCode', 'INVALID_VALUE']]);
+    expect(
+      (await check({ ...pallet, priceCategoryCode: 'NOPE' })).map((i) => [i.field, i.code]),
+    ).toEqual([['priceCategoryCode', 'INVALID_VALUE']]);
+  });
+
   it('asks the master data services once per distinct value', async () => {
     const { rates, masterData, currencies } = service();
     const check = rates.ruleChecker();
     for (let i = 0; i < 50; i++) await check(good);
-    expect(masterData.requireRoute).toHaveBeenCalledTimes(1);
+    expect(masterData.requireRateRoute).toHaveBeenCalledTimes(1);
     expect(masterData.requireContainerType).toHaveBeenCalledTimes(1);
     expect(currencies.requireActive).toHaveBeenCalledTimes(1);
   });
@@ -130,6 +147,9 @@ describe('rate duplicates', () => {
     expect(rateKey(offer)).not.toBe(rateKey({ ...offer, branchId: 'b2' }));
     expect(rateKey(offer)).not.toBe(rateKey({ ...offer, validFrom: '2031-01-02' }));
     expect(rateKey({ ...offer, loadType: null })).toBe(rateKey({ ...offer, loadType: undefined }));
+    // A category card and a general card of the same route are two offers (plan 5.3).
+    expect(rateKey(offer)).toBe(rateKey({ ...offer, priceCategoryCode: null }));
+    expect(rateKey(offer)).not.toBe(rateKey({ ...offer, priceCategoryCode: 'PALLET' }));
   });
 
   it('finds draft and approved rates of the offer, except the rate being edited', async () => {
