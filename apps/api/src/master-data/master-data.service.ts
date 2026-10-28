@@ -134,6 +134,43 @@ export class MasterDataService {
     };
   }
 
+  /** Every location's other names (location_aliases), by location id, sorted. */
+  async locationAliases(): Promise<Record<string, string[]>> {
+    const rows = await this.prisma.locationAlias.findMany({
+      orderBy: [{ locationId: 'asc' }, { alias: 'asc' }],
+    });
+    const byLocation: Record<string, string[]> = {};
+    for (const r of rows) (byLocation[r.locationId] ??= []).push(r.alias);
+    return byLocation;
+  }
+
+  /**
+   * Replaces a location's other names: trimmed, inner spaces collapsed, and one of the names
+   * that differ only in case kept (the first given). Returns them sorted.
+   */
+  async setLocationAliases(id: string, given: readonly string[]): Promise<string[]> {
+    const seen = new Set<string>();
+    const aliases: string[] = [];
+    for (const raw of given) {
+      const alias = raw.trim().replace(/\s+/g, ' ');
+      const key = alias.toLowerCase();
+      if (alias && !seen.has(key)) {
+        seen.add(key);
+        aliases.push(alias);
+      }
+    }
+    return this.prisma.$transaction(async (tx) => {
+      if (!(await lockLocation(tx, id, 'UPDATE'))) {
+        throw new NotFoundException('Location not found');
+      }
+      await tx.locationAlias.deleteMany({ where: { locationId: id } });
+      await tx.locationAlias.createMany({
+        data: aliases.map((alias) => ({ locationId: id, alias })),
+      });
+      return aliases.sort();
+    });
+  }
+
   /**
    * A new place, checked against its city under a share lock on the city row: a city's country
    * edit (which locks it for update) and the place's insert run one after the other, so a place

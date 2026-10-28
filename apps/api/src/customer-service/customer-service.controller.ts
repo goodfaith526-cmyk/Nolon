@@ -17,6 +17,7 @@ import {
   CS_INVOICE_STATES,
   CS_SCOPES,
   CS_SHIPMENT_STATES,
+  type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
   type CsInvoiceDto,
@@ -30,6 +31,7 @@ import { parse, phone, requiredText } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { RequireApiScope } from './api-scopes.js';
+import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
 import { CustomerServiceService } from './customer-service.service.js';
 import {
@@ -138,6 +140,20 @@ export class CustomerTokensController {
     @Body() body: unknown,
   ): Promise<CsCustomerTokenAnswer> {
     return this.tokens.issue(client, parse(tokenBody, body));
+  }
+}
+
+/** The places, shipment types and services a bot understands (R1): public master data only. */
+@Controller('cs/catalog')
+@Public()
+@UseGuards(ApiClientGuard)
+@RequireApiScope('cs:catalog:read')
+export class CatalogController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get()
+  get(): Promise<CsCatalogDto> {
+    return this.catalog.catalog();
   }
 }
 

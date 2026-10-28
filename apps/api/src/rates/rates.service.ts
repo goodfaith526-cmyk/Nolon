@@ -708,6 +708,27 @@ export class RatesService {
     return [...offers.values()];
   }
 
+  /**
+   * The locations APPROVED rate cards valid on `onDate` start and end at (any branch: rate cards
+   * are shared), for the customer-service catalog. Read-only.
+   */
+  async approvedRouteEnds(onDate: string): Promise<{ origins: string[]; destinations: string[] }> {
+    const day = toDbDate(onDate);
+    const rates = await this.prisma.rateCard.findMany({
+      where: {
+        status: 'APPROVED',
+        validFrom: { lte: day },
+        OR: [{ validTo: null }, { validTo: { gte: day } }],
+      },
+      select: { originLocationId: true, destinationLocationId: true },
+      distinct: ['originLocationId', 'destinationLocationId'],
+    });
+    return {
+      origins: [...new Set(rates.map((r) => r.originLocationId))],
+      destinations: [...new Set(rates.map((r) => r.destinationLocationId))],
+    };
+  }
+
   /** systemScopedRates, as the rate cards only. */
   async systemRates(context: RateMatchContext): Promise<RateCard[]> {
     return (await this.systemScopedRates(context)).map((r) => r.rate);

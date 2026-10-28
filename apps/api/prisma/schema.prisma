@@ -402,9 +402,23 @@ model Location {
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
   warehouses         Warehouse[]
   partners           Partner[]
+  aliases            LocationAlias[]
 
   @@index([cityId])
   @@map("locations")
+}
+
+/// Other names people write for a location («جده», «Jeddah»), for the customer-service bot to
+/// understand them (docs/plans/04 section 4). Master data the client extends.
+model LocationAlias {
+  locationId String   @map("location_id") @db.Uuid
+  alias      String   @db.VarChar(100)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([locationId, alias])
+  @@map("location_aliases")
 }
 
 /// 20GP, 40GP, 40HC, OTHER... Master data the client extends.

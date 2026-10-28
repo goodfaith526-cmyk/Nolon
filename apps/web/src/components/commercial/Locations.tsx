@@ -25,6 +25,7 @@ export function Locations() {
   const localName = useLocalName();
   const failure = useFailureText();
   const [locations, setLocations] = useState<LocationDto[] | null>(null);
+  const [aliases, setAliases] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<LocationKind>('PORT');
@@ -35,6 +36,9 @@ export function Locations() {
   const load = useCallback(() => {
     api<MasterDataDto>('/master-data')
       .then((d) => setLocations(d.locations))
+      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+    api<Record<string, string[]>>('/master-data/location-aliases')
+      .then(setAliases)
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
   }, [failure]);
 
@@ -85,6 +89,23 @@ export function Locations() {
 
   function update(l: LocationDto, body: Partial<LocationInput>) {
     void run(() => api(`/master-data/locations/${l.id}`, { method: 'PATCH', body }), tc('saved'));
+  }
+
+  /** Saves a location's other names when the comma-separated list changed. */
+  function saveAliases(l: LocationDto, text: string) {
+    const given = text
+      .split(/[,،]/)
+      .map((a) => a.trim())
+      .filter((a) => a !== '');
+    if (given.join(',') === (aliases[l.id] ?? []).join(',')) return;
+    void run(
+      () =>
+        api(`/master-data/locations/${l.id}/aliases`, {
+          method: 'PUT',
+          body: { aliases: given },
+        }),
+      tc('saved'),
+    );
   }
 
   const cities = (locations ?? []).filter((l) => l.kind === 'CITY');
@@ -219,6 +240,7 @@ export function Locations() {
                 <th>{t('country')}</th>
                 <th>{t('shortCode')}</th>
                 <th>{t('city')}</th>
+                <th>{t('aliases')}</th>
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
               </tr>
@@ -262,6 +284,21 @@ export function Locations() {
                       </select>
                     ) : (
                       cityName(l.cityId)
+                    )}
+                  </td>
+                  <td>
+                    {canUpdate ? (
+                      <input
+                        key={(aliases[l.id] ?? []).join(',')}
+                        aria-label={t('aliases')}
+                        title={t('aliasesHint')}
+                        defaultValue={(aliases[l.id] ?? []).join('، ')}
+                        maxLength={2000}
+                        disabled={busy}
+                        onBlur={(e) => saveAliases(l, e.target.value)}
+                      />
+                    ) : (
+                      (aliases[l.id] ?? []).join('، ') || '—'
                     )}
                   </td>
                   <td>{l.isActive ? tc('active') : tc('inactive')}</td>

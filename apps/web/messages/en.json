@@ -2567,7 +2567,9 @@
     "countryFromCity": "The city's country: a place is in the country of its city.",
     "shortCode": "Route letters",
     "shortCodeHint": "Letters in route numbers (DXB in DXB-KRT-0001), 2 to 4. Empty: the city's, else the last three letters of the code.",
-    "kind_COUNTRY": "Country (pricing scope)"
+    "kind_COUNTRY": "Country (pricing scope)",
+    "aliases": "Other names",
+    "aliasesHint": "Names people write for this place, separated by commas (for example «Jeddah, Jedda»). The customer-service bot uses them to understand customers."
   },
   "MasterData": {
     "title": "Master data",

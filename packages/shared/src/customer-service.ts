@@ -1,4 +1,13 @@
-import type { CargoType, CustomerKind, DateString, LoadType, ShippingMode } from './commercial.js';
+import type {
+  BookingService,
+  CargoType,
+  CustomerKind,
+  DateString,
+  LoadType,
+  LocationKind,
+  RateUnit,
+  ShippingMode,
+} from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type {
   PublicLocationDto,
@@ -177,3 +186,45 @@ export type CsCustomerTokenAnswer =
       grantVersion: number;
       level: CsAccessLevel;
     };
+
+/** The services a customer-service client may ask for in a booking request, with their names. */
+export const CS_CATALOG_SERVICES = [
+  { code: 'PICKUP', nameAr: 'استلام من عندك', nameEn: 'Pickup from you' },
+  { code: 'LAST_MILE', nameAr: 'التوصيل للمستلم', nameEn: 'Delivery to the receiver' },
+] as const;
+
+/** A place a shipment can start or end at (docs/plans/04 section 4), with the names people use. */
+export interface CsCatalogPlaceDto {
+  id: string;
+  code: string;
+  kind: LocationKind;
+  nameAr: string;
+  nameEn: string;
+  countryCode: string;
+  aliases: string[];
+}
+
+export interface CsCatalogCategoryDto {
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  unit: RateUnit;
+}
+
+/**
+ * What a customer-service bot needs to understand a customer (R1): the places with an approved
+ * price today, the shipment types and the services. No price, cost or staff name.
+ */
+export interface CsCatalogDto {
+  /** Changes whenever anything in the catalog does. */
+  version: string;
+  origins: CsCatalogPlaceDto[];
+  destinations: CsCatalogPlaceDto[];
+  categories: CsCatalogCategoryDto[];
+  services: { code: BookingService; nameAr: string; nameEn: string }[];
+}
+
+/** A location's other names, as the master-data screen sets them. */
+export interface LocationAliasesRequest {
+  aliases: string[];
+}

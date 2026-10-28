@@ -1,0 +1,72 @@
+import { createHash } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
+import {
+  CS_CATALOG_SERVICES,
+  type CsCatalogDto,
+  type CsCatalogPlaceDto,
+  type LocationDto,
+} from '@nolon/shared';
+import { todayIn } from '../common/dates.js';
+import { MasterDataService } from '../master-data/master-data.service.js';
+import { RatesService } from '../rates/rates.service.js';
+
+/**
+ * The Customer Service catalog (R1, docs/plans/04 section 4): the places a bot can quote and book
+ * between, the shipment types (price categories) and the services. Public master data only: no
+ * price, cost or staff name. A place is listed when an APPROVED rate card valid today (UTC) covers
+ * it: one on the place itself, on its city, or on its country (the pricing scopes of plan 5.3).
+ */
+@Injectable()
+export class CatalogService {
+  constructor(
+    private readonly masterData: MasterDataService,
+    private readonly rates: RatesService,
+  ) {}
+
+  async catalog(): Promise<CsCatalogDto> {
+    const [all, aliases, ends] = await Promise.all([
+      this.masterData.all(),
+      this.masterData.locationAliases(),
+      this.rates.approvedRouteEnds(todayIn('UTC')),
+    ]);
+    const active = all.locations.filter((l) => l.isActive);
+    const covered = (ids: readonly string[]) => {
+      const set = new Set(ids);
+      const countries = new Set(
+        all.locations
+          .filter((l) => l.kind === 'COUNTRY' && set.has(l.id))
+          .map((l) => l.countryCode),
+      );
+      return active
+        .filter(
+          (l) =>
+            set.has(l.id) ||
+            (l.cityId !== null && set.has(l.cityId)) ||
+            countries.has(l.countryCode),
+        )
+        .map((l) => place(l, aliases[l.id] ?? []));
+    };
+    const body: Omit<CsCatalogDto, 'version'> = {
+      origins: covered(ends.origins),
+      destinations: covered(ends.destinations),
+      categories: all.priceCategories
+        .filter((c) => c.isActive)
+        .map((c) => ({ code: c.code, nameAr: c.nameAr, nameEn: c.nameEn, unit: c.defaultUnit })),
+      services: CS_CATALOG_SERVICES.map((s) => ({ ...s })),
+    };
+    const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
+    return { version, ...body };
+  }
+}
+
+function place(l: LocationDto, aliases: string[]): CsCatalogPlaceDto {
+  return {
+    id: l.id,
+    code: l.code,
+    kind: l.kind,
+    nameAr: l.nameAr,
+    nameEn: l.nameEn,
+    countryCode: l.countryCode,
+    aliases,
+  };
+}

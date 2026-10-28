@@ -3,12 +3,13 @@ import { CS_SCOPES } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import { API_SCOPE_KEY, keyScopes, scopeRows } from './api-scopes.js';
 import {
+  CatalogController,
   CustomerServiceController,
   CustomerTokensController,
 } from './customer-service.controller.js';
 
 describe('Customer Service API scopes', () => {
-  it.each([CustomerServiceController, CustomerTokensController])(
+  it.each([CustomerServiceController, CustomerTokensController, CatalogController])(
     'names a scope on every route of the API-key controller %o',
     (controller) => {
       const reflector = new Reflector();

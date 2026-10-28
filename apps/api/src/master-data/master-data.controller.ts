@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import {
   CARGO_TYPES,
@@ -42,6 +43,10 @@ const code = (max: number) =>
     .regex(/^[A-Z0-9]+$/)
     .min(1)
     .max(max);
+
+const aliasesBody = z
+  .object({ aliases: z.array(z.string().trim().min(1).max(100)).max(20) })
+  .strict();
 
 const locationBody = z
   .object({
@@ -164,6 +169,22 @@ export class MasterDataController {
     @Body() body: unknown,
   ): Promise<LocationDto> {
     return this.masterData.updateLocation(user, id, parse(locationBody.partial(), body));
+  }
+
+  /** Other names of the locations, for the customer-service bot (docs/plans/04 section 4). */
+  @Get('location-aliases')
+  @RequirePermission('master_data:view')
+  locationAliases(): Promise<Record<string, string[]>> {
+    return this.masterData.locationAliases();
+  }
+
+  @Put('locations/:id/aliases')
+  @RequirePermission('master_data:update')
+  setLocationAliases(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<string[]> {
+    return this.masterData.setLocationAliases(id, parse(aliasesBody, body).aliases);
   }
 
   // Container, charge and document types, and currencies: add, rename, deactivate, reactivate.
