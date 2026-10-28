@@ -18,6 +18,11 @@ vi.mock('@/lib/master-data', () => ({
   useMasterData: () => ({ currencies: [] }),
   useLocalName: () => (x: { nameEn?: string }) => x.nameEn ?? '',
 }));
+vi.mock('../partners/PartnerSelect', async (actual) => ({
+  ...(await actual<typeof import('../partners/PartnerSelect')>()),
+  // Its own spec covers it; here it would take the api calls these tests queue.
+  PartnerSelect: () => null,
+}));
 vi.mock('../StaffShell', () => ({
   useMe: () => ({ permissions, branches: [{ id: 'b1', nameEn: 'Dubai', nameAr: 'دبي' }] }),
   can: (me: { permissions: string[] }, p: string) => me.permissions.includes(p),

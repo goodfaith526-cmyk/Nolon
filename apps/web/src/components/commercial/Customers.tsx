@@ -15,6 +15,7 @@ import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
 import { CountrySelect } from '../CountrySelect';
+import { PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 /** `startCreating`: open with the new-customer form showing (the home page's "New customer"). */
@@ -169,6 +170,11 @@ export function CustomerForm({
   const branchCurrency = me.branches.find((b) => b.id === branchId)?.defaultCurrency ?? '';
   const creditCurrency = creditCurrencyChoice ?? (preferredCurrency || branchCurrency);
   const [creditLimitText, setCreditLimitText] = useState(customer?.creditLimit ?? '');
+  const heldOutlet = customer?.acquiredViaOutlet ?? null;
+  const [outletId, setOutletId] = useState(heldOutlet?.id ?? '');
+  const segments = (master?.customerSegments ?? []).filter(
+    (s) => s.isActive || s.code === customer?.segmentCode,
+  );
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -191,6 +197,8 @@ export function CustomerForm({
       creditLimit,
       creditLimitCurrency: creditLimit ? opt(form, 'creditLimitCurrency') : null,
       notes: opt(form, 'notes'),
+      segmentCode: opt(form, 'segmentCode'),
+      acquiredViaOutletId: partnerChange(heldOutlet, outletId),
     };
     setBusy(true);
     setNotice(null);
@@ -357,6 +365,27 @@ export function CustomerForm({
               </option>
             ))}
           </select>
+        </label>
+        <label className="field">
+          {t('segment')}
+          <select name="segmentCode" defaultValue={customer?.segmentCode ?? ''}>
+            <option value="">{t('noSegment')}</option>
+            {segments.map((s) => (
+              <option key={s.code} value={s.code}>
+                {name(s)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          {t('acquiredViaOutlet')}
+          <PartnerSelect
+            kind="SALES_OUTLET"
+            branchIds={[branchId]}
+            held={heldOutlet}
+            value={outletId}
+            onChange={setOutletId}
+          />
         </label>
       </div>
       <label className="field">

@@ -39,6 +39,7 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import {
   type RuleIssue,
   memoAsync,
+  onFields,
   refusal,
   throwFirstConflict,
   throwFirstIssue,
@@ -46,6 +47,12 @@ import {
 import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Customer, CustomerContact, Party, Prisma } from '../generated/prisma/client.js';
+import { MasterDataService } from '../master-data/master-data.service.js';
+import {
+  PartnerRefsService,
+  partnerRefSelect,
+  toPartnerRef,
+} from '../partners/partner-refs.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
@@ -75,7 +82,11 @@ export interface CustomerKeys {
 const sameTaxNumber = (a: string, b: string | null) =>
   b !== null && normalizeTaxNumber(a) === normalizeTaxNumber(b);
 
-export type CustomerWithDetails = Customer & { contacts: CustomerContact[]; parties: Party[] };
+export type CustomerWithDetails = Customer & {
+  contacts: CustomerContact[];
+  parties: Party[];
+  acquiredViaOutlet: { id: string; number: string; name: string; isActive: boolean } | null;
+};
 
 /**
  * Customers, their authorized contacts and their shipper/consignee/notify address book (scope 6).
@@ -87,6 +98,8 @@ export class CustomersService {
     private readonly prisma: PrismaService,
     private readonly currencies: CurrenciesService,
     private readonly audit: AuditService,
+    private readonly masterData: MasterDataService,
+    private readonly partnerRefs: PartnerRefsService,
   ) {}
 
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
@@ -147,6 +160,7 @@ export class CustomersService {
   ): Promise<void> {
     assertBranchAccess(user, input.branchId);
     await this.checkReferences(input);
+    await this.checkSegment(input.segmentCode, null);
   }
 
   /** Records a customer checked by prepareCreate, under the branch's customer lock. */
@@ -156,13 +170,20 @@ export class CustomersService {
     input: CreateCustomerRequest,
   ): Promise<CustomerWithDetails> {
     assertBranchAccess(user, input.branchId);
-    const { branchId, ...fields } = input;
-    // Outlet Staff (plan 4.2): the customer is theirs; everyone else records none yet. Checked
-    // first, before any other lock of the write.
-    const outletId = await outletForWriteInTx(tx, user, branchId);
+    const { branchId, acquiredViaOutletId: requested, ...fields } = input;
+    // Outlet Staff (plan 4.2): the customer is theirs. Checked first, before any other lock of
+    // the write.
+    const ownOutletId = await outletForWriteInTx(tx, user, branchId);
     if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
       throw new BadRequestException('Unknown or inactive branch');
     }
+    const outletId = await this.partnerRefs.chooseInTx(tx, user, {
+      kind: 'SALES_OUTLET',
+      requested,
+      held: ownOutletId,
+      branchIds: [branchId],
+      field: 'acquiredViaOutletId',
+    });
     await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
     throwFirstConflict(await this.duplicateIssues(tx, [input], user));
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
@@ -334,6 +355,8 @@ export class CustomersService {
       ...input,
     });
     await this.checkReferences(withLimit(read));
+    await this.checkSegment(input.segmentCode, read.segmentCode);
+    const { acquiredViaOutletId: requested, ...fields } = input;
     const updated = await this.prisma.$transaction(async (tx) => {
       await assertOutletInTx(tx, user, read.acquiredViaOutletId, 'Customer not found');
       await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
@@ -363,9 +386,16 @@ export class CustomersService {
         await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
         throwFirstConflict(await this.duplicateIssues(tx, [keys], user));
       }
+      const acquiredViaOutletId = await this.partnerRefs.chooseInTx(tx, user, {
+        kind: 'SALES_OUTLET',
+        requested,
+        held: current.acquiredViaOutletId,
+        branchIds: [current.branchId],
+        field: 'acquiredViaOutletId',
+      });
       const changed = await tx.customer.update({
         where: { id: current.id },
-        data: toData(input),
+        data: { ...toData(fields), acquiredViaOutletId },
         include: details,
       });
       await this.audit.record(
@@ -637,6 +667,16 @@ export class CustomersService {
     return customer;
   }
 
+  /** A segment newly named must be active; one the customer already holds stays. */
+  private async checkSegment(code: string | null | undefined, held: string | null): Promise<void> {
+    if (!code || code === held) return;
+    await onFields(
+      ['segmentCode'],
+      () => this.masterData.requireCustomerSegment(code),
+      'CUSTOMER_SEGMENT_NOT_USABLE',
+    );
+  }
+
   private async checkReferences(input: Partial<CustomerInput>): Promise<void> {
     throwFirstIssue(await this.referenceChecker()(input));
   }
@@ -687,6 +727,7 @@ const inactiveBranch: RuleIssue = {
 const details = {
   contacts: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
   parties: { orderBy: { createdAt: 'asc' } },
+  acquiredViaOutlet: partnerRefSelect,
 } satisfies Prisma.CustomerInclude;
 
 function toData<T extends Partial<CustomerInput>>(
@@ -757,6 +798,8 @@ const AUDIT_FIELDS = [
   'creditLimit',
   'creditLimitCurrency',
   'notes',
+  'segmentCode',
+  'acquiredViaOutletId',
   'isActive',
 ] as const;
 
@@ -851,6 +894,8 @@ function toDto(c: CustomerWithDetails): CustomerDto {
     creditLimit: toDecimalStringOrNull(c.creditLimit),
     creditLimitCurrency: c.creditLimitCurrency,
     notes: c.notes,
+    segmentCode: c.segmentCode,
+    acquiredViaOutlet: toPartnerRef(c.acquiredViaOutlet),
     createdAt: c.createdAt.toISOString(),
     contacts: c.contacts.map(toContactDto),
     parties: c.parties.map(toPartyDto),

@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
+import type { MasterDataService } from '../master-data/master-data.service.js';
+import type { PartnerRefsService } from '../partners/partner-refs.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from './customers.service.js';
@@ -17,6 +19,8 @@ function service() {
     {} as PrismaService,
     { requireActive } as unknown as CurrenciesService,
     {} as AuditService,
+    {} as MasterDataService,
+    {} as PartnerRefsService,
   );
   return { customers, requireActive };
 }

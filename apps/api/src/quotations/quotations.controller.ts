@@ -71,9 +71,13 @@ export const quotationFields = {
     .max(50),
 };
 
-export const quotationCreateBody = z.object({ customerId: z.uuid(), ...quotationFields }).strict();
-/** A quotation without its customer (an update, or one for a new customer). */
-export const quotationInputBody = z.object(quotationFields).strict();
+/** NOLON screens only (plan 7.2): quotation drafts take no sales outlet. */
+const salesOutletId = z.uuid().nullish();
+export const quotationCreateBody = z
+  .object({ customerId: z.uuid(), ...quotationFields, salesOutletId })
+  .strict();
+/** A quotation without its customer (an update). */
+export const quotationInputBody = z.object({ ...quotationFields, salesOutletId }).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 const defaultsQuery = z.object({ customerId: z.uuid() }).strict();
 const listQuery = pageQuery

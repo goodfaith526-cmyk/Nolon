@@ -3,6 +3,7 @@ import { BookingLifecycleModule } from '../bookings/booking-lifecycle.module.js'
 import { CustomersModule } from '../customers/customers.module.js';
 import { DraftsModule } from '../drafts/drafts.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
+import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { PublicTrackingController } from './public-tracking.controller.js';
 import { PublicTrackingService } from './public-tracking.service.js';
 import { ShipmentsController } from './shipments.controller.js';
@@ -13,7 +14,13 @@ import { ShipmentStatusDraftsController } from './shipment-status-drafts.control
 import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js';
 
 @Module({
-  imports: [CustomersModule, MasterDataModule, BookingLifecycleModule, DraftsModule],
+  imports: [
+    CustomersModule,
+    MasterDataModule,
+    BookingLifecycleModule,
+    DraftsModule,
+    PartnerRefsModule,
+  ],
   controllers: [ShipmentsController, PublicTrackingController, ShipmentStatusDraftsController],
   providers: [
     ShipmentInvoicesRegistry,

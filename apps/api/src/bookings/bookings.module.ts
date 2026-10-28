@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module.js';
 import { DraftsModule } from '../drafts/drafts.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
+import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { BookingDraftsController } from './booking-drafts.controller.js';
@@ -14,7 +15,14 @@ import { NewCustomerBookingDraftsController } from './new-customer-booking-draft
 import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.service.js';
 
 @Module({
-  imports: [CustomersModule, QuotationsModule, MasterDataModule, ShipmentsModule, DraftsModule],
+  imports: [
+    CustomersModule,
+    QuotationsModule,
+    MasterDataModule,
+    ShipmentsModule,
+    DraftsModule,
+    PartnerRefsModule,
+  ],
   controllers: [BookingsController, BookingDraftsController, NewCustomerBookingDraftsController],
   providers: [
     BookingReportsService,

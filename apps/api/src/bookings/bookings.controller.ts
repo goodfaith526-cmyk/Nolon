@@ -87,15 +87,30 @@ export const bookingFields = {
   items,
 };
 
-export const bookingCreateBody = z.object({ customerId: z.uuid(), ...bookingFields }).strict();
-const updateBody = z.object(bookingFields).strict();
+/**
+ * NOLON screens only (plan 7.2): the sales outlet, and each line's price category. Booking drafts
+ * spread bookingFields and itemBody, so these stay out of them.
+ */
+const screenItems = z
+  .array(
+    itemBody
+      .extend({ priceCategoryCode: z.string().trim().toUpperCase().max(20).nullish() })
+      .strict(),
+  )
+  .max(100);
+const screenFields = { salesOutletId: z.uuid().nullish(), items: screenItems };
+
+export const bookingCreateBody = z
+  .object({ customerId: z.uuid(), ...bookingFields, ...screenFields })
+  .strict();
+const updateBody = z.object({ ...bookingFields, ...screenFields }).strict();
 export const bookingFromQuotationBody = z
   .object({
     services: services.optional(),
     ...partyRefs,
     requestedDeparture: dateString.nullish(),
     specialInstructions: optionalText(2000),
-    items: items.optional(),
+    items: screenItems.optional(),
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();

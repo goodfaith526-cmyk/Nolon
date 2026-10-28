@@ -262,7 +262,10 @@
     "addParty": "Add party",
     "partiesHint": "Parties are kept separately from the customer and chosen on each booking.",
     "import": "Import from Excel",
-    "country": "Country"
+    "country": "Country",
+    "segment": "Customer segment",
+    "noSegment": "No segment",
+    "acquiredViaOutlet": "Brought by outlet"
   },
   "Rates": {
     "title": "Rates",
@@ -1933,7 +1936,12 @@
     "noLocation": "No city or port",
     "chooseCountryFirst": "Choose the country first.",
     "noPlacesInCountry": "No city or port of this country is recorded yet.",
-    "addPlace": "Add one in Locations"
+    "addPlace": "Add one in Locations",
+    "noPartner": "None",
+    "inactivePartner": "no longer active",
+    "salesOutlet": "Sales outlet",
+    "originConsolidator": "Origin consolidator",
+    "distributor": "Distributor in Sudan"
   },
   "SupplierBills": {
     "title": "Supplier bills",
@@ -2519,6 +2527,9 @@
     "MASTER_CODE_TAKEN": "The code {code} is already in use: choose another code.",
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated.",
     "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country.",
+    "PARTNER_NOT_USABLE": "This partner is unknown, no longer active, or not one of this record's branches.",
+    "QUOTED_OUTLET_FIXED": "A booking made from a quotation keeps the quotation's sales outlet.",
+    "CUSTOMER_SEGMENT_NOT_USABLE": "This customer segment is unknown or no longer in use.",
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
     "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",

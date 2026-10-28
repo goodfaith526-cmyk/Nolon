@@ -48,6 +48,11 @@ import { draftBranch } from '../drafts/draft-rules.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, LoadType, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
+import {
+  PartnerRefsService,
+  partnerRefSelect,
+  toPartnerRef,
+} from '../partners/partner-refs.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -69,6 +74,7 @@ type BookingWithDetails = Booking & {
   items: BookingItem[];
   customer: { name: string };
   shipment: { id: string; number: string } | null;
+  salesOutlet: { id: string; number: string; name: string; isActive: boolean } | null;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -83,6 +89,7 @@ const details = {
   items: { orderBy: { lineNo: 'asc' } },
   customer: { select: { name: true } },
   shipment: { select: { id: true, number: true } },
+  salesOutlet: partnerRefSelect,
 } satisfies Prisma.BookingInclude;
 
 /**
@@ -98,6 +105,7 @@ export class BookingsService {
     private readonly quotations: QuotationsService,
     private readonly masterData: MasterDataService,
     private readonly shipments: ShipmentsService,
+    private readonly partnerRefs: PartnerRefsService,
   ) {}
 
   async list(user: AuthUser, filters: BookingFilters): Promise<Page<BookingSummaryDto>> {
@@ -293,7 +301,14 @@ export class BookingsService {
   async prepareCreate(user: AuthUser, input: CreateBookingRequest): Promise<PreparedBooking> {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     const prepared = await this.prepare(customer.id, input);
-    return { branchId: customer.branchId, customerId: customer.id, quotationId: null, ...prepared };
+    return {
+      branchId: customer.branchId,
+      customerId: customer.id,
+      quotationId: null,
+      ...prepared,
+      // Only when sent (NOLON screens, plan 7.2).
+      ...(input.salesOutletId !== undefined ? { salesOutletId: input.salesOutletId } : {}),
+    };
   }
 
   /**
@@ -475,8 +490,9 @@ export class BookingsService {
 
   /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
   async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
-    // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs. For
-    // Outlet Staff the outlet is checked as it is now, first in the transaction.
+    // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs, or
+    // the one of the branch's outlets the person names. For Outlet Staff the outlet is checked as
+    // it is now, first in the transaction.
     const fromQuotation = prepared.quotationId
       ? await tx.quotation.findUniqueOrThrow({
           where: { id: prepared.quotationId },
@@ -485,10 +501,22 @@ export class BookingsService {
       : null;
     if (fromQuotation) {
       await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+      requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
     }
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
-      : await this.customers.outletForSaleInTx(tx, user, prepared.branchId, prepared.customerId);
+      : await this.partnerRefs.chooseInTx(tx, user, {
+          kind: 'SALES_OUTLET',
+          requested: prepared.salesOutletId,
+          held: await this.customers.outletForSaleInTx(
+            tx,
+            user,
+            prepared.branchId,
+            prepared.customerId,
+          ),
+          branchIds: [prepared.branchId],
+          field: 'salesOutletId',
+        });
     const number = await this.allocateNumber(tx, prepared.header);
     try {
       const created = await tx.booking.create({
@@ -533,12 +561,24 @@ export class BookingsService {
           changed,
         );
       }
+      requireQuotedOutlet(input.salesOutletId, existing.salesOutletId);
     }
     const prepared = await this.prepare(existing.customerId, input, existing);
     await this.prisma.$transaction(async (tx) => {
       await assertOutletInTx(tx, user, existing.salesOutletId, 'Booking not found');
+      const salesOutletId = await this.partnerRefs.chooseInTx(tx, user, {
+        kind: 'SALES_OUTLET',
+        requested: input.salesOutletId,
+        held: existing.salesOutletId,
+        branchIds: [existing.branchId],
+        field: 'salesOutletId',
+      });
       const number = await this.renumberDraftInTx(tx, user, id, prepared.header);
-      await casStatus(tx, id, ['DRAFT'], { ...prepared.header, ...(number ? { number } : {}) });
+      await casStatus(tx, id, ['DRAFT'], {
+        ...prepared.header,
+        salesOutletId,
+        ...(number ? { number } : {}),
+      });
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
       await tx.bookingItem.createMany({
         data: prepared.items.map((item) => ({ ...item, bookingId: id })),
@@ -792,6 +832,14 @@ export class BookingsService {
         fields.map((k) => `${path}.${k}`),
       );
     }
+    const category = item.priceCategoryCode ?? null;
+    if (category) {
+      await onFields(
+        [`${path}.priceCategoryCode`],
+        () => this.masterData.requirePriceCategory(category, item.cargoType),
+        'PRICE_CATEGORY_NOT_USABLE',
+      );
+    }
     return {
       cargoType: item.cargoType,
       containerTypeCode: item.containerTypeCode ?? null,
@@ -802,6 +850,7 @@ export class BookingsService {
       heightCm: height,
       weightKg: item.weightKg ? dec(item.weightKg) : null,
       volumeCbm,
+      priceCategoryCode: category,
     };
   }
 }
@@ -810,6 +859,8 @@ export interface PreparedBooking {
   branchId: string;
   customerId: string;
   quotationId: string | null;
+  /** As sent from a NOLON screen: the sales outlet to record (insertInTx checks it). */
+  salesOutletId?: string | null;
   header: Awaited<ReturnType<BookingsService['prepare']>>['header'];
   items: Awaited<ReturnType<BookingsService['prepare']>>['items'];
 }
@@ -857,6 +908,7 @@ function toDto(b: BookingWithDetails): BookingDto {
     confirmedAt: b.confirmedAt?.toISOString() ?? null,
     shipmentId: b.shipment?.id ?? null,
     shipmentNumber: b.shipment?.number ?? null,
+    salesOutlet: toPartnerRef(b.salesOutlet),
     items: b.items.map((i) => ({
       lineNo: i.lineNo,
       cargoType: i.cargoType,
@@ -868,8 +920,20 @@ function toDto(b: BookingWithDetails): BookingDto {
       heightCm: toDecimalStringOrNull(i.heightCm),
       weightKg: toDecimalStringOrNull(i.weightKg),
       volumeCbm: toDecimalStringOrNull(i.volumeCbm),
+      priceCategoryCode: i.priceCategoryCode,
     })),
   };
+}
+
+/** A booking made from a quotation is sold through the quotation's outlet (400 for another). */
+function requireQuotedOutlet(requested: string | null | undefined, quoted: string | null): void {
+  if (requested !== undefined && requested !== quoted) {
+    throw fieldRefusal(
+      'QUOTED_OUTLET_FIXED',
+      "A booking made from a quotation keeps the quotation's sales outlet",
+      ['salesOutletId'],
+    );
+  }
 }
 
 /**
