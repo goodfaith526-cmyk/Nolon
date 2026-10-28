@@ -88,9 +88,11 @@ export function atOrPastOnSeaLeg(status: ShipmentStatus, target: ShipmentStatus)
  * Who may book into an open container, of any branch (POST /consolidations/:id/bookings, and a
  * booking draft that names a container).
  */
-export function canBookInto(user: Pick<AuthUser, 'permissions'>): boolean {
-  return (['container_booking:create', 'bookings:create', 'bookings:approve'] as const).every((p) =>
-    user.permissions.has(p),
+export function canBookInto(user: Pick<AuthUser, 'access'>): boolean {
+  // In one branch of theirs: the booking is theirs, the container may be any branch's.
+  return (
+    user.access.branchesWith(['container_booking:create', 'bookings:create', 'bookings:approve'])
+      .length > 0
   );
 }
 

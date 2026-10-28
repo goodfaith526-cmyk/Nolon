@@ -8,7 +8,7 @@ import type {
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { reportBranchIds } from '../auth/branch-scope.js';
+import { reportBranchIds, withPermissions } from '../auth/branch-scope.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
 import { todayIn } from '../common/dates.js';
 import { dec } from '../common/money.js';
@@ -66,7 +66,7 @@ export class DashboardFiguresService {
     // A branch outside the user's was refused above (403); here the user has no branch at all.
     if (!branch) throw new ForbiddenException('No branch assigned');
     const today = todayIn(branch.timezone);
-    const can = (permission: Permission) => user.permissions.has(permission);
+    const can = (permission: Permission) => user.access.has(permission, branch.id);
     const [figures, todayShipments, warehouse, trips] = await Promise.all([
       this.figures(user, {
         from: q.from ?? monthStart(q.to ?? today),
@@ -91,12 +91,17 @@ export class DashboardFiguresService {
     user: AuthUser,
     q: { from: string; to: string; branchId?: string },
   ): Promise<ManagementDashboardDto> {
-    const can = (permission: Permission) => user.permissions.has(permission);
+    // Each part covers the branches where its permission is held (plan 03, section 5.3).
+    const can = (permission: Permission) =>
+      q.branchId ? user.access.has(permission, q.branchId) : user.access.any(permission);
     const finance = can('financial_reports:view');
+    const financeUser = withPermissions(user, 'financial_reports:view');
     const [shipments, financeFigures, topCustomers] = await Promise.all([
-      can('shipments:view') ? this.shipments.dashboard(user, q) : null,
-      finance ? this.finance(user, q) : null,
-      finance ? this.billing.revenueByCustomer(user, q, TOP_CUSTOMERS) : null,
+      can('shipments:view')
+        ? this.shipments.dashboard(withPermissions(user, 'shipments:view'), q)
+        : null,
+      finance ? this.finance(financeUser, q) : null,
+      finance ? this.billing.revenueByCustomer(financeUser, q, TOP_CUSTOMERS) : null,
     ]);
     return {
       from: q.from,

@@ -413,6 +413,11 @@ export const AUDIT_ENTITIES = [
   'CUSTOMER_SEGMENT',
   'API_CLIENT',
   'LOCATION',
+  // Plan 03, section 7: the permissions screen.
+  'TEAM',
+  'USER_ACCESS',
+  'BRANCH_LIMIT',
+  'DELEGATION',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

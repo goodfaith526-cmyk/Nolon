@@ -51,12 +51,16 @@ interface NavLink {
     | 'locations'
     | 'masterData'
     | 'users'
+    | 'permissions'
+    | 'branchPermissions'
     | 'alertSettings'
     | 'apiKeys'
     | 'assistantDrafts';
   icon: keyof typeof icons;
   /** Shown with this permission, or with any of these. */
   permission?: Permission | readonly Permission[];
+  /** Shown to a person holding a live delegation (plan 03), whatever their permissions. */
+  delegates?: true;
 }
 
 type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
@@ -256,6 +260,13 @@ const NAV_SECTIONS: readonly {
         permission: 'alert_settings:view',
       },
       { href: '/users', label: 'users', icon: 'users', permission: 'users:view' },
+      {
+        href: '/permissions',
+        label: 'permissions',
+        icon: 'shield',
+        permission: 'access_control:view',
+      },
+      { href: '/branch-permissions', label: 'branchPermissions', icon: 'shield', delegates: true },
       { href: '/api-keys', label: 'apiKeys', icon: 'accounts', permission: 'users:view' },
     ],
   },
@@ -276,7 +287,9 @@ export function can(me: AuthMeResponse, permission: Permission): boolean {
   return me.permissions.includes(permission);
 }
 
-function canSee(me: AuthMeResponse, permission: NavLink['permission']): boolean {
+function canSee(me: AuthMeResponse, link: NavLink): boolean {
+  if (link.delegates) return (me.delegations?.length ?? 0) > 0;
+  const { permission } = link;
   if (permission === undefined) return true;
   if (typeof permission === 'string') return can(me, permission);
   return permission.some((p) => can(me, p));
@@ -371,7 +384,7 @@ export function StaffShell({ children }: { children: ReactNode }) {
           </Link>
           <nav className="sidebar-nav">
             {NAV_SECTIONS.map((section, index) => {
-              const links = section.links.filter((l) => canSee(me, l.permission));
+              const links = section.links.filter((l) => canSee(me, l));
               if (links.length === 0) return null;
               const { title } = section;
               // A section holding the current page never folds.

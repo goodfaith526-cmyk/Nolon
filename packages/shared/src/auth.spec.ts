@@ -85,6 +85,8 @@ describe('permission matrix (annex A)', () => {
     ['master_data', 'ك ع ع ع ع ع ع ع ع ع ع'],
     ['users', 'ك — — — — — — — — — —'],
     ['audit_log', 'ع ع ع — — — — — — — —'],
+    // Plan 03 (owner, 2026-10-27): the permissions screen, the Administrator only.
+    ['access_control', 'ك — — — — — — — — — —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 

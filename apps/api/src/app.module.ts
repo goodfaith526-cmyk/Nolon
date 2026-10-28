@@ -26,6 +26,7 @@ import { ReportsModule } from './reports/reports.module.js';
 import { ShipmentsModule } from './shipments/shipments.module.js';
 import { TransportModule } from './transport/transport.module.js';
 import { UsersModule } from './users/users.module.js';
+import { AccessControlModule } from './access-control/access-control.module.js';
 import { WarehouseModule } from './warehouse/warehouse.module.js';
 import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
 
@@ -37,6 +38,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     AuthModule,
     AgentAuthModule,
     UsersModule,
+    AccessControlModule,
     HealthModule,
     CurrenciesModule,
     MasterDataModule,

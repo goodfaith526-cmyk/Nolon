@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthUser } from '../auth/auth-user.js';
 import { listScope, pageWhere, reviewDraftItem } from './drafts.service.js';
+import { Access } from '../access-control/access.js';
 
 // Functional review هـ2: a page of the reviewers' list, never "my drafts".
 const user: AuthUser = {
@@ -11,7 +12,7 @@ const user: AuthUser = {
   sessionId: 's',
   credentialStamp: 'c',
   roles: ['SALES'],
-  permissions: new Set(),
+  access: Access.uniform([], []),
   allBranches: false,
   allowedBranchIds: [],
 };

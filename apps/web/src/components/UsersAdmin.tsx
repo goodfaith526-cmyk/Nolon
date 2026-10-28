@@ -70,6 +70,7 @@ export function UsersAdmin() {
   function errorText(e: unknown): string {
     if (!(e instanceof ApiError)) return t('failed');
     if (e.status === 409 && /email/i.test(e.message)) return t('emailTaken');
+    if (e.status === 409 && /permissions changed/i.test(e.message)) return t('permissionsChanged');
     if (e.status === 409) return t('lastAdmin');
     if (e.status === 400 && e.fields.length === 0 && /own account/i.test(e.message))
       return t('cannotDeactivateSelf');

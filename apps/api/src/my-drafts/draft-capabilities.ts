@@ -115,7 +115,8 @@ export function draftCapabilities(user: AuthUser): DraftCapabilitiesDto {
         path: route.path,
         preCheck: route.preCheck,
         review: route.review,
-        canCreate: route.create.every((p) => user.permissions.has(p)),
+        // Every permission of the create, in one branch of theirs (plan 03: held per branch).
+        canCreate: user.access.branchesWith(route.create).length > 0,
         approval: decidable.includes(kind) ? 'both' : 'screen',
       };
     }),

@@ -79,7 +79,7 @@ export class UsersController {
   @Post()
   @RequirePermission('users:create')
   create(@CurrentUser() actor: AuthUser, @Body() body: unknown): Promise<UserSummary> {
-    return this.users.create(actor.id, parse(createBody, body));
+    return this.users.create(actor, parse(createBody, body));
   }
 
   @Patch(':id')
@@ -89,7 +89,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<UserSummary> {
-    return this.users.update(actor.id, id, parse(updateBody, body));
+    return this.users.update(actor, id, parse(updateBody, body));
   }
 
   @Post(':id/deactivate')
@@ -99,7 +99,7 @@ export class UsersController {
     @CurrentUser() actor: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<UserSummary> {
-    return this.users.setActive(actor.id, id, false);
+    return this.users.setActive(actor, id, false);
   }
 
   @Post(':id/activate')
@@ -109,7 +109,7 @@ export class UsersController {
     @CurrentUser() actor: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<UserSummary> {
-    return this.users.setActive(actor.id, id, true);
+    return this.users.setActive(actor, id, true);
   }
 
   @Post(':id/password')
@@ -120,7 +120,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<void> {
-    return this.users.resetPassword(actor.id, id, parse(resetBody, body).password);
+    return this.users.resetPassword(actor, id, parse(resetBody, body).password);
   }
 
   /** Draft kinds the user may approve or reject from inside the assistant chat. */
@@ -137,10 +137,6 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<AssistantApprovalGrantsDto> {
-    return this.users.setAssistantApprovals(
-      actor.id,
-      id,
-      parse(assistantApprovalsBody, body).kinds,
-    );
+    return this.users.setAssistantApprovals(actor, id, parse(assistantApprovalsBody, body).kinds);
   }
 }

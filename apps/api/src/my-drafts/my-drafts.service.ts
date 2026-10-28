@@ -301,7 +301,8 @@ export class MyDraftsService {
 /** Whether the user may view a kind's drafts now (its view permission). */
 function visibleKind(user: AuthUser, permission: Permission): boolean {
   return (
-    user.permissions.has(permission) &&
+    // In some branch: each kind's list keeps to the branches where it is held.
+    user.access.any(permission) &&
     // A Driver neither sees nor decides trip drafts (TripDraftsService refuses them).
     !(permission === 'transport_trips:view' && limitedToOwnTrips(user, 'transport_trips'))
   );
