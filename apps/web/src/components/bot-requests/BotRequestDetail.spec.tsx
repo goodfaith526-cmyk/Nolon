@@ -43,7 +43,11 @@ const base: CsBookingRequestStaffDto = {
   decidedAt: null,
   rejectReasonCode: null,
   internalNote: null,
-  actions: { canRoute: true, canReject: true },
+  bookingId: null,
+  bookingNumber: null,
+  paymentCurrency: null,
+  approvedPricing: null,
+  actions: { canRoute: true, canReject: true, canApprove: false },
 };
 
 vi.mock('next-intl', () => ({
@@ -71,6 +75,11 @@ vi.mock('../finance/common', () => ({
   useRecord: () => ({ record: shownRecord, notice: null, status: null, setRecord: () => {} }),
 }));
 vi.mock('../commercial/Notice', () => ({ Notice: () => null, useFailureText: () => () => 'x' }));
+vi.mock('@/i18n/navigation', () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 vi.mock('../StaffShell', () => ({
   useMe: () => ({
     branches: [{ id: 'b-pts', code: 'PTS', nameEn: 'Port Sudan', nameAr: 'بورتسودان' }],
@@ -127,8 +136,28 @@ describe('BotRequestDetail', () => {
     expect([...reasons.options].map((o) => o.value).filter(Boolean)).toEqual(['DUPLICATE']);
   });
 
+  it('links the booking an approval made', async () => {
+    const shown = await show({
+      ...base,
+      status: 'approved',
+      branchId: 'b-pts',
+      bookingId: 'bk1',
+      bookingNumber: 'BK-000042',
+      paymentCurrency: 'SDG',
+      approvedPricing: { category: 'BARREL', quantity: '2', currency: 'USD', total: '90.00' },
+      actions: { canRoute: false, canReject: false, canApprove: false },
+    });
+    const link = shown.querySelector<HTMLAnchorElement>('a[href="/bookings/bk1"]');
+    expect(link?.textContent).toBe('BK-000042');
+    expect(shown.textContent).toContain('SDG');
+    expect(shown.textContent).toContain('BARREL × 2 = 90.00 USD');
+  });
+
   it('offers no action the API does not allow', async () => {
-    const shown = await show({ ...base, actions: { canRoute: false, canReject: false } });
+    const shown = await show({
+      ...base,
+      actions: { canRoute: false, canReject: false, canApprove: false },
+    });
     expect(shown.querySelector('form')).toBeNull();
   });
 });

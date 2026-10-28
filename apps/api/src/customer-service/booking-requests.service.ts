@@ -382,7 +382,7 @@ export class BookingRequestsService {
         ? null
         : await this.prisma.csBookingRequest.findFirst({
             where: { OR: where },
-            include: { rejectReason: true },
+            include: { rejectReason: true, booking: { select: { number: true } } },
           });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
@@ -401,7 +401,8 @@ export class BookingRequestsService {
       status: stateOf(row),
       createdAt: row.createdAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
-      bookingNumber: null,
+      // The booking's number as it is now (an edit may renumber a draft).
+      bookingNumber: row.status === 'APPROVED' ? (row.booking?.number ?? null) : null,
       // Plan 04a section 5: the approved reason only, never the internal note.
       customerReason:
         row.status === 'REJECTED' && row.rejectReason
