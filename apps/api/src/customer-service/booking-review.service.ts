@@ -20,7 +20,7 @@ import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { fromDbDateOrNull } from '../common/dates.js';
 import { toDecimalString } from '../common/money.js';
-import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
+import { type CsBookingRequest, type CsQuote, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
 import { QuoteService } from './quote.service.js';
@@ -35,6 +35,9 @@ const ROUTE: Permission = 'cs_booking_requests:update';
 const DECIDE: Permission = 'cs_booking_requests:approve';
 
 type Row = CsBookingRequest & { customer: { number: string } | null };
+type QuotedRow = Row & { quote: CsQuote | null };
+
+const withQuote = { customer: { select: { number: true } }, quote: true } as const;
 
 function undecided(r: Pick<CsBookingRequest, 'status' | 'expiresAt'>, now = new Date()): boolean {
   return (
@@ -127,26 +130,16 @@ export class BookingReviewService {
   }
 
   async detail(user: AuthUser, id: string): Promise<CsBookingRequestStaffDto> {
-    return this.read(user, id, true);
-  }
-
-  /**
-   * A request with its advisory price check. `checkVisible` false only for the answer to a write
-   * `user` just made on it (Codex F131-1): routing it to a branch where they may route but not
-   * view still answers with the request they routed, and opens no other.
-   */
-  private async read(
-    user: AuthUser,
-    id: string,
-    checkVisible: boolean,
-  ): Promise<CsBookingRequestStaffDto> {
     const row = await this.prisma.csBookingRequest.findUnique({
       where: { id },
-      include: { customer: { select: { number: true } }, quote: true },
+      include: withQuote,
     });
-    if (!row || (checkVisible && !visibleTo(user, row))) {
-      throw new NotFoundException('Booking request not found');
-    }
+    if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+    return this.format(user, row);
+  }
+
+  /** A request as staff see it, with the advisory price check of its quote. */
+  private async format(user: AuthUser, row: QuotedRow): Promise<CsBookingRequestStaffDto> {
     const priceCheck = row.quote
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
@@ -159,7 +152,7 @@ export class BookingReviewService {
     id: string,
     input: CsRouteRequest,
   ): Promise<CsBookingRequestStaffDto> {
-    await this.prisma.$transaction(async (tx) => {
+    const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       if (row.status !== 'AWAITING_ROUTING') {
         throw new ConflictException('Only a request awaiting routing is routed');
@@ -171,7 +164,7 @@ export class BookingReviewService {
         throw new ForbiddenException('You may not route this request to that branch');
       }
       await requireKeyServes(tx, row.apiClientId, input.branchId);
-      await tx.csBookingRequest.update({
+      return tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'PENDING',
@@ -180,9 +173,12 @@ export class BookingReviewService {
           routedAt: new Date(),
           version: { increment: 1 },
         },
+        include: withQuote,
       });
     });
-    return this.read(user, id, false);
+    // The row as this transaction wrote it (Codex F131-1, F131-3): routing to a branch where the
+    // person may not view still answers with what they wrote, and never with a later version.
+    return this.format(user, written);
   }
 
   /**
@@ -195,7 +191,7 @@ export class BookingReviewService {
     id: string,
     input: CsRejectRequest,
   ): Promise<CsBookingRequestStaffDto> {
-    await this.prisma.$transaction(async (tx) => {
+    const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       const branchId = decideBranches(user, row).sort()[0];
       if (branchId === undefined) throw new ForbiddenException('You may not decide this request');
@@ -206,7 +202,7 @@ export class BookingReviewService {
       if (reasons.length === 0) {
         throw new ConflictException(`Unknown or inactive reason: ${input.reasonCode}`);
       }
-      await tx.csBookingRequest.update({
+      return tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'REJECTED',
@@ -217,9 +213,11 @@ export class BookingReviewService {
           decidedAt: new Date(),
           version: { increment: 1 },
         },
+        include: withQuote,
       });
     });
-    return this.read(user, id, false);
+    // As route: the row this transaction wrote.
+    return this.format(user, written);
   }
 
   async reasons(): Promise<CsRejectReasonDto[]> {

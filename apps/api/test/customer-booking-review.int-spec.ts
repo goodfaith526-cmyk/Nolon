@@ -8,7 +8,7 @@ import type {
   CsQuoteDto,
   CsRejectReasonDto,
 } from '@nolon/shared';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   APP_ORIGIN,
   LEDGER_PREFIX,
@@ -430,6 +430,97 @@ describe('Customer Service booking request review (R3c1)', () => {
     // Nobody without any part of the review reaches it.
     await staff(cookies.finance).get('/cs-booking-requests').expect(403);
     await staff(cookies.finance).get('/cs-booking-requests/reject-reasons').expect(403);
+  });
+
+  it('answers a write with the row it wrote, never a later one (F131-3)', async () => {
+    const OWNER = '00000000-0000-0000-0000-000000000000';
+    const router = await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX);
+    await t.prisma.userBranchPermission.create({
+      data: {
+        userId: router.id,
+        branchId: pts,
+        permission: 'cs_booking_requests:update',
+        effect: 'ALLOW',
+        sourceKey: OWNER,
+        createdById: router.id,
+      },
+    });
+    await t.prisma.accessState.update({ where: { id: 1 }, data: { version: { increment: 1 } } });
+    const routerCookie = await signIn(t, router.email);
+    const approver = (await t.prisma.rateCard.findUniqueOrThrow({ where: { id: cardId } }))
+      .createdById;
+    // With a quote, so the answer carries a price check as well.
+    const card = await t.prisma.rateCard.create({
+      data: {
+        branchId: pts,
+        originLocationId: ids.two!,
+        destinationLocationId: ids.dest!,
+        mode: 'ROAD',
+        cargoType: 'GENERAL',
+        chargeTypeCode: 'FREIGHT',
+        unit: 'PER_SHIPMENT',
+        price: '40',
+        currency: 'USD',
+        validFrom: new Date(Date.now() - 86_400_000),
+        status: 'APPROVED',
+        createdById: approver,
+        approvedById: approver,
+        approvedAt: new Date(),
+      },
+    });
+    let transaction: { mockRestore: () => void } | null = null;
+    try {
+      const quote = (
+        await t
+          .http()
+          .get('/api/v1/cs/quote')
+          .query({ originId: ids.two, destinationId: ids.dest, category, quantity: '2' })
+          .set('Authorization', `Bearer ${bot.key}`)
+          .expect(200)
+      ).body as CsQuoteDto;
+      const awaiting = await request(ids.two!, { quoteRef: quote.quoteRef });
+      const { version } = await detail(cookies.salesPts, awaiting.id);
+      // Right after the route commits, before its answer is made, PTS's Sales reject the routed
+      // request with a private note.
+      let injected = false;
+      const rejectNow = async () => {
+        if (injected) return;
+        injected = true;
+        await staff(cookies.salesPts)
+          .post(`/cs-booking-requests/${awaiting.id}/reject`, {
+            version: version + 1,
+            reasonCode: 'DUPLICATE',
+            internalNote: 'PRIVATE NOTE AFTER ROUTING',
+          })
+          .expect(201);
+      };
+      // The first thing after the route's transaction commits: the rejection lands then.
+      const prisma = t.prisma;
+      const transactionOf = prisma.$transaction.bind(prisma);
+      transaction = vi.spyOn(prisma, '$transaction').mockImplementation((...args: unknown[]) =>
+        (transactionOf as (...a: unknown[]) => Promise<unknown>)(...args).then(async (result) => {
+          await rejectNow();
+          return result;
+        }),
+      );
+      const res = await staff(routerCookie)
+        .post(`/cs-booking-requests/${awaiting.id}/route`, { version, branchId: pts })
+        .expect(201);
+      transaction?.mockRestore();
+      expect(injected).toBe(true);
+      const routed = res.body as CsBookingRequestStaffDto;
+      expect(routed).toMatchObject({
+        status: 'pending',
+        version: version + 1,
+        internalNote: null,
+        rejectReasonCode: null,
+      });
+      expect(JSON.stringify(routed)).not.toContain('PRIVATE NOTE');
+      expect((await detail(cookies.salesPts, awaiting.id)).status).toBe('rejected');
+    } finally {
+      transaction?.mockRestore();
+      await t.prisma.rateCard.update({ where: { id: card.id }, data: { status: 'CANCELLED' } });
+    }
   });
 
   it('keeps a request readable when its quote’s currency is deactivated (F131-2)', async () => {
