@@ -910,6 +910,28 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(409);
     });
 
+    it('a quotation that expires while its booking is being made is refused (B1-6)', async () => {
+      const q = await approvedQuotation(customer.id);
+      let finish = () => {};
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      // The expiry commits after the booking was prepared from the approved quotation.
+      const expire = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE "quotations" SET "status" = 'EXPIRED' WHERE "id" = ${q.id}::uuid`;
+          await held;
+        },
+        { timeout: 20_000 },
+      );
+      const booking = post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).then((r) => r);
+      await waitForLockWaiter(t.prisma);
+      finish();
+      await expire;
+      expect((await booking).status).toBe(409);
+      expect(await t.prisma.booking.count({ where: { quotationId: q.id } })).toBe(0);
+    });
+
     it('keeps a quoted booking on the quotation’s route and mode; the cargo stays editable', async () => {
       const q = await approvedQuotation(customer.id);
       const booking = (await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(201))

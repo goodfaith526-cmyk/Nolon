@@ -349,7 +349,9 @@ export class ReceiptsService {
   ): Promise<string> {
     const { branchId, amount, fxRate, decimals } = prepared;
     const customer = { id: prepared.customerId };
-    const currency = { code: prepared.currency };
+    // Share-locked and checked again (B1-6): a currency deactivated since the receipt was prepared
+    // takes no receipt, and stays active until this one commits.
+    const currency = await this.currencies.requireActiveInTx(tx, prepared.currency);
     const invoiceIds = input.allocations.map((a) => a.invoiceId);
     const receiptId = input.requestId ?? randomUUID();
     await this.accounts.requireCash(tx, input.cashAccountId, branchId, currency.code);
