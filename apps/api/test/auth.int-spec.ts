@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AuthMeResponse } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/auth/auth-user.js';
@@ -135,7 +136,7 @@ describe('sign-in, sessions and permissions', () => {
       const auth = t.app.get(AuthService);
       const branches = await t.prisma.branch.findMany({ where: { code: { in: ['DXB', 'KRT'] } } });
       const user: AuthUser = {
-        id: 'u',
+        id: randomUUID(),
         email,
         fullName: 'Probe',
         preferredLocale: 'en',
