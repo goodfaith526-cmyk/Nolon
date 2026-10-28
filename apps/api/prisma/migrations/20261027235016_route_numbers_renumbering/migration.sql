@@ -62,7 +62,7 @@ WHERE "locations"."code" = v."code" AND "locations"."short_code" IS NULL;
 -- Each place's letters, as the API resolves them (MasterDataService.routeLetters): its own short
 -- code, else its city's, else the last three characters of its code when they are three letters.
 -- Null: the place has no letters, and records on its routes keep their numbers (listed below).
-CREATE TEMPORARY TABLE "tmp_letters" ON COMMIT DROP AS
+CREATE TEMPORARY TABLE "tmp_letters" AS
 SELECT l."id",
        COALESCE(l."short_code", c."short_code",
                 CASE WHEN right(l."code", 3) ~ '^[A-Z]{3}$' THEN right(l."code", 3) END) AS "letters"
@@ -79,7 +79,7 @@ CREATE TEMPORARY TABLE "tmp_renumber" (
     "doc_type"   VARCHAR(30),
     "pair"       VARCHAR(10),
     "serial"     BIGINT
-) ON COMMIT DROP;
+);
 
 -- LCL bookings: per rendered route pair, in creation order.
 INSERT INTO "tmp_renumber" ("kind", "record_id", "old_number", "new_number", "doc_type", "pair", "serial")
@@ -188,3 +188,7 @@ SELECT "doc_type", "pair", max("serial") + 1 FROM "tmp_renumber"
 WHERE "doc_type" IS NOT NULL GROUP BY 1, 2
 ON CONFLICT ("doc_type", "period_key")
 DO UPDATE SET "next_value" = GREATEST("number_sequences"."next_value", EXCLUDED."next_value");
+
+-- The working tables end with this session; dropped here so the session can run more.
+DROP TABLE "tmp_renumber";
+DROP TABLE "tmp_letters";
