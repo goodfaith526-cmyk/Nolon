@@ -129,6 +129,22 @@ export interface RateMatchContext extends RatePricingContext {
   unit?: RateUnit | null;
 }
 
+/**
+ * A system-price context with no document branch (the customer-service quote, when no single
+ * branch serves the route): the narrowest offers of every branch, never one branch's preferred.
+ */
+export type OpenRateMatchContext = Omit<RateMatchContext, 'branchId'> & { branchId: string | null };
+
+/** What the customer-service quote asks the cards for before mode, load and currency are known. */
+export interface RouteOfferQuery {
+  onDate: string;
+  originLocationId: string;
+  destinationLocationId: string;
+  cargoType: CargoType;
+  priceCategoryCode: string | null;
+  chargeTypeCode: string;
+}
+
 /** The fields a system-price refusal names: no rate card matches; several do. */
 export interface RateMatchFields {
   noMatch: readonly string[];
@@ -632,7 +648,7 @@ export class RatesService {
    * (scopesOf) and a category the line may use: a line without a category only general cards; a
    * line with one its category's cards and the general ones. Read-only.
    */
-  private async scopedRates(context: RateMatchContext): Promise<ScopedRate[]> {
+  private async scopedRates(context: OpenRateMatchContext): Promise<ScopedRate[]> {
     const day = toDbDate(context.onDate);
     const [origins, destinations] = await Promise.all([
       this.scopesOf(context.originLocationId),
@@ -677,7 +693,7 @@ export class RatesService {
    * (the latest started of rates that differ only by start date: two branches' rates are always
    * two offers). Read-only.
    */
-  async systemScopedRates(context: RateMatchContext): Promise<ScopedRate[]> {
+  async systemScopedRates(context: OpenRateMatchContext): Promise<ScopedRate[]> {
     const category = context.priceCategoryCode ?? null;
     const tier = (r: ScopedRate) => [
       SCOPE_RANK[r.originScope],
@@ -693,7 +709,10 @@ export class RatesService {
     const narrowest = all.filter(
       (r) => compareTiers(tier(r), best.get(r.rate.chargeTypeCode) ?? []) === 0,
     );
-    const own = narrowest.filter((r) => r.rate.branchId === context.branchId);
+    const own =
+      context.branchId === null
+        ? []
+        : narrowest.filter((r) => r.rate.branchId === context.branchId);
     const offers = new Map<string, ScopedRate>();
     for (const r of own.length > 0 ? own : narrowest) {
       // Per branch: two branches' rates are different offers (rateKey), never revisions of one.
@@ -727,6 +746,42 @@ export class RatesService {
       origins: [...new Set(rates.map((r) => r.originLocationId))],
       destinations: [...new Set(rates.map((r) => r.destinationLocationId))],
     };
+  }
+
+  /**
+   * The (mode, load type, currency) of the APPROVED cards valid on `onDate` that cover a route
+   * (scopesOf at each end), for a cargo type, a charge and a category the line may use (as
+   * scopedRates). The customer-service quote asks the customer when there is more than one, rather
+   * than choosing for them. Read-only.
+   */
+  async routeOfferKinds(
+    q: RouteOfferQuery,
+  ): Promise<{ mode: ShippingMode; loadType: LoadType | null; currency: string }[]> {
+    const day = toDbDate(q.onDate);
+    const [origins, destinations] = await Promise.all([
+      this.scopesOf(q.originLocationId),
+      this.scopesOf(q.destinationLocationId),
+    ]);
+    const rows = await this.prisma.rateCard.findMany({
+      where: {
+        status: 'APPROVED',
+        validFrom: { lte: day },
+        OR: [{ validTo: null }, { validTo: { gte: day } }],
+        originLocationId: { in: [...origins.keys()] },
+        destinationLocationId: { in: [...destinations.keys()] },
+        cargoType: q.cargoType,
+        chargeTypeCode: q.chargeTypeCode,
+        AND: [
+          q.priceCategoryCode === null
+            ? { priceCategoryCode: null }
+            : { OR: [{ priceCategoryCode: null }, { priceCategoryCode: q.priceCategoryCode }] },
+        ],
+      },
+      select: { mode: true, loadType: true, currency: true },
+      distinct: ['mode', 'loadType', 'currency'],
+      orderBy: [{ mode: 'asc' }, { loadType: 'asc' }, { currency: 'asc' }],
+    });
+    return rows;
   }
 
   /** systemScopedRates, as the rate cards only. */

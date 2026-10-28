@@ -767,7 +767,8 @@ model RateCard {
   quotationLines    QuotationLine[]
   invoiceDraftLines InvoiceDraftLine[]
 
-  draft RateCardDraft?
+  draft    RateCardDraft?
+  csQuotes CsQuote[]
 
   @@index([branchId, status])
   @@index([originLocationId, destinationLocationId, mode])
@@ -2807,6 +2808,7 @@ model ApiClient {
   scopes         ApiClientScope[]
   customerTokens CsCustomerToken[]
   accessEvents   CsAccessEvent[]
+  quotes         CsQuote[]
 
   @@map("api_clients")
 }
@@ -2901,6 +2903,42 @@ model CsAccessEvent {
   @@index([apiClientId, occurredAt])
   @@index([customerId, occurredAt])
   @@map("cs_access_events")
+}
+
+/// A price NOLON gave a customer-service client (R2, docs/plans/04 section 5): every input and
+/// what the engine answered, kept by NOLON so a booking request (R3) names it by `ref` and NOLON
+/// never trusts a price the client sends. Never changed after it is written.
+model CsQuote {
+  /// `q_` and 32 random URL-safe characters.
+  ref                   String       @id @db.VarChar(40)
+  apiClientId           String       @map("api_client_id") @db.Uuid
+  rateCardId            String       @map("rate_card_id") @db.Uuid
+  originLocationId      String       @map("origin_location_id") @db.Uuid
+  destinationLocationId String       @map("destination_location_id") @db.Uuid
+  priceCategoryCode     String       @map("price_category_code") @db.VarChar(20)
+  mode                  ShippingMode
+  loadType              LoadType?    @map("load_type")
+  cargoType             CargoType    @map("cargo_type")
+  currency              String       @db.Char(3)
+  unit                  RateUnit
+  quantity              Decimal?     @db.Decimal(18, 4)
+  price                 Decimal      @db.Decimal(18, 4)
+  minimumCharge         Decimal      @map("minimum_charge") @db.Decimal(18, 4)
+  total                 Decimal?     @db.Decimal(18, 4)
+  /// PLACE, CITY or COUNTRY: the scope each end of the card matched at.
+  originScope           String       @map("origin_scope") @db.VarChar(10)
+  destinationScope      String       @map("destination_scope") @db.VarChar(10)
+  quotedOn              DateTime     @map("quoted_on") @db.Date
+  expiresAt             DateTime     @map("expires_at") @db.Timestamptz(3)
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  apiClient ApiClient @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  rateCard  RateCard  @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+
+  @@index([apiClientId, createdAt])
+  @@index([rateCardId])
+  @@index([expiresAt])
+  @@map("cs_quotes")
 }
 
 /// The branches whose customers an API key may read (AGENTS.md rule 2).

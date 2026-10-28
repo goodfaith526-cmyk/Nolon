@@ -135,8 +135,9 @@ describe('Customer Service catalog (R1)', () => {
     const body = (await catalog(bot.key).expect(200)).body as CsCatalogDto;
     const origins = new Set(body.origins.map((p) => p.id));
     const destinations = new Set(body.destinations.map((p) => p.id));
-    // The country card covers the country itself, its city, the city's port and a lone port.
-    for (const id of [ids.country, ids.city, ids.port, ids.lonePort]) expect(origins).toContain(id);
+    // The country card covers its city, the city's port and a lone port; not the country itself.
+    for (const id of [ids.city, ids.port, ids.lonePort]) expect(origins).toContain(id);
+    expect(origins).not.toContain(ids.country);
     expect(origins).not.toContain(ids.off);
     expect(destinations).toContain(ids.dest);
     // A draft card and an ended one cover nothing.

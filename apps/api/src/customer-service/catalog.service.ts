@@ -15,6 +15,7 @@ import { RatesService } from '../rates/rates.service.js';
  * between, the shipment types (price categories) and the services. Public master data only: no
  * price, cost or staff name. A place is listed when an APPROVED rate card valid today (UTC) covers
  * it: one on the place itself, on its city, or on its country (the pricing scopes of plan 5.3).
+ * Countries themselves are not listed: a quote and a booking go between places.
  */
 @Injectable()
 export class CatalogService {
@@ -29,7 +30,8 @@ export class CatalogService {
       this.masterData.locationAliases(),
       this.rates.approvedRouteEnds(todayIn('UTC')),
     ]);
-    const active = all.locations.filter((l) => l.isActive);
+    // Places only: a country is a pricing scope, never a quote's or a booking's end.
+    const active = all.locations.filter((l) => l.isActive && l.kind !== 'COUNTRY');
     const covered = (ids: readonly string[]) => {
       const set = new Set(ids);
       const countries = new Set(

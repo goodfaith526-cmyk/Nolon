@@ -17,9 +17,12 @@ import {
   CS_INVOICE_STATES,
   CS_SCOPES,
   CS_SHIPMENT_STATES,
+  LOAD_TYPES,
+  SHIPPING_MODES,
   type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
+  type CsQuoteDto,
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
@@ -27,7 +30,14 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, Public, RequirePermission } from '../auth/decorators.js';
-import { parse, phone, requiredText } from '../common/validation.js';
+import {
+  currencyCode,
+  dateString,
+  parse,
+  phone,
+  quantity,
+  requiredText,
+} from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { RequireApiScope } from './api-scopes.js';
@@ -40,6 +50,7 @@ import {
   CustomerTokenGuard,
 } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
+import { QuoteService } from './quote.service.js';
 
 const reference = z.string().trim().min(1).max(30);
 const phoneQuery = z.object({ phone }).strict();
@@ -58,6 +69,18 @@ const tokenBody = z
       .string()
       .regex(/^[A-Za-z0-9_-]{8,200}$/)
       .optional(),
+  })
+  .strict();
+const quoteQuery = z
+  .object({
+    originId: z.uuid(),
+    destinationId: z.uuid(),
+    category: z.string().trim().min(1).max(20),
+    quantity: quantity.optional(),
+    mode: z.enum(SHIPPING_MODES).optional(),
+    loadType: z.enum(LOAD_TYPES).optional(),
+    currency: currencyCode.optional(),
+    onDate: dateString.optional(),
   })
   .strict();
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
@@ -154,6 +177,20 @@ export class CatalogController {
   @Get()
   get(): Promise<CsCatalogDto> {
     return this.catalog.catalog();
+  }
+}
+
+/** NOLON's price for a route (R2), from its own engine: public prices, so no customer token. */
+@Controller('cs/quote')
+@Public()
+@UseGuards(ApiClientGuard)
+@RequireApiScope('cs:quote:read')
+export class QuoteController {
+  constructor(private readonly quotes: QuoteService) {}
+
+  @Get()
+  get(@CurrentApiClient() client: ApiClientAuth, @Query() query: unknown): Promise<CsQuoteDto> {
+    return this.quotes.quote(client, parse(quoteQuery, query));
   }
 }
 

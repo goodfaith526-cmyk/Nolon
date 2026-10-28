@@ -5,6 +5,7 @@ import type {
   DateString,
   LoadType,
   LocationKind,
+  PriceScope,
   RateUnit,
   ShippingMode,
 } from './commercial.js';
@@ -227,4 +228,53 @@ export interface CsCatalogDto {
 /** A location's other names, as the master-data screen sets them. */
 export interface LocationAliasesRequest {
   aliases: string[];
+}
+
+/** What a quote prices in its first version: the main freight only; staff price the rest. */
+export const CS_QUOTE_INCLUDES = ['MAIN_FREIGHT'] as const;
+
+/** A quote's question (R2, docs/plans/04 section 5): a route, a shipment type, and what it narrows. */
+export interface CsQuoteRequest {
+  originId: string;
+  destinationId: string;
+  /** A price category code from the catalog. */
+  category: string;
+  /** In the category's unit. Without it the answer has no total. */
+  quantity?: DecimalString;
+  mode?: ShippingMode;
+  loadType?: LoadType;
+  currency?: CurrencyCode;
+  /** Today (UTC) or later; today when left out. */
+  onDate?: DateString;
+}
+
+/**
+ * NOLON's price for a route from its own engine (R2): a guide, not a formal quotation. No cost,
+ * margin, staff or internal note. `quoteRef` names it in a booking request (R3) until it expires.
+ */
+export interface CsQuoteDto {
+  price: DecimalString;
+  currency: CurrencyCode;
+  unit: RateUnit;
+  minimumCharge: DecimalString;
+  quantity: DecimalString | null;
+  /** max(quantity × price, minimum), rounded to the currency's places; null without a quantity. */
+  total: DecimalString | null;
+  includes: (typeof CS_QUOTE_INCLUDES)[number][];
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  transitDays: number | null;
+  validTo: DateString | null;
+  scope: { origin: PriceScope; destination: PriceScope };
+  source: { rateCardId: string; approvedAt: string; quotedOn: DateString };
+  quoteRef: string;
+  quoteRefExpiresAt: string;
+  /** A note for the customer on the card: none yet, so always null. */
+  customerNote: { ar: string; en: string } | null;
+}
+
+/** `422 QUOTE_AMBIGUOUS`: the cards differ on `field`; the client asks the customer, or staff. */
+export interface CsQuoteChoices {
+  field: 'mode' | 'currency' | 'offer';
+  values: string[];
 }
