@@ -149,6 +149,12 @@ export interface RateFilters extends PageQuery {
   branchId?: string;
   /** The origin and destination are a document's places: the cards covering them (plan 5.3). */
   covering?: boolean;
+  /**
+   * Leave out the cards of one price category. The assistant reads rates through contract v1,
+   * which has no category: it would show a category's price as a general one, so it gets the
+   * general cards only until its contract carries the category.
+   */
+  generalOnly?: boolean;
 }
 
 /**
@@ -178,6 +184,7 @@ export class RatesService {
       ...(filters.status ? { status: filters.status } : {}),
       ...routeWhere(route),
       ...(filters.mode ? { mode: filters.mode } : {}),
+      ...(filters.generalOnly ? { priceCategoryCode: null } : {}),
       AND: [
         ...(filters.validOn
           ? [
@@ -217,9 +224,12 @@ export class RatesService {
   }
 
   /** A rate of any branch (rate cards are read by every branch). */
-  async get(id: string): Promise<RateCardDto> {
+  /** One rate card; with `generalOnly` (RateFilters), a card of a price category is not found. */
+  async get(id: string, { generalOnly = false } = {}): Promise<RateCardDto> {
     const rate = await this.prisma.rateCard.findUnique({ where: { id } });
-    if (!rate) throw new NotFoundException('Rate not found');
+    if (!rate || (generalOnly && rate.priceCategoryCode !== null)) {
+      throw new NotFoundException('Rate not found');
+    }
     return toDto(rate);
   }
 

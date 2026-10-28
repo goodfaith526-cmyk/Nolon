@@ -44,7 +44,16 @@ let client: AgentClientCreatedDto;
 let salesId = '';
 const cookies = { admin: '', sales: '', pricing: '', agentSales: '' };
 const tokens = { sales: '' };
-const ids = { country: '', city: '', port: '', lonePort: '', dest: '', otherDest: '' };
+const ids = {
+  country: '',
+  city: '',
+  port: '',
+  lonePort: '',
+  dest: '',
+  otherDest: '',
+  kgDest: '',
+  dest2: '',
+};
 const cards: Record<string, string> = {};
 let countryCode = '';
 
@@ -61,7 +70,12 @@ async function card(
   from: string,
   to: string,
   price: string,
-  extra: { branchId?: string; priceCategoryCode?: string; currency?: string } = {},
+  extra: {
+    branchId?: string;
+    priceCategoryCode?: string;
+    currency?: string;
+    unit?: 'PER_SHIPMENT' | 'PER_KG';
+  } = {},
 ): Promise<void> {
   const created = await t.prisma.rateCard.create({
     data: {
@@ -72,7 +86,7 @@ async function card(
       cargoType: 'GENERAL',
       chargeTypeCode: 'FREIGHT',
       priceCategoryCode: extra.priceCategoryCode ?? null,
-      unit: 'PER_SHIPMENT',
+      unit: extra.unit ?? 'PER_SHIPMENT',
       price,
       currency: extra.currency ?? 'USD',
       validFrom: new Date(`${day(-30)}T00:00:00Z`),
@@ -155,6 +169,8 @@ beforeAll(async () => {
   ids.lonePort = await place('L', 'PORT');
   ids.dest = await place('D', 'CITY', { countryCode: 'SD' });
   ids.otherDest = await place('E', 'CITY', { countryCode: 'SD' });
+  ids.kgDest = await place('K', 'CITY', { countryCode: 'SD' });
+  ids.dest2 = await place('F', 'CITY', { countryCode: 'SD' });
   // The country scope, through the screen's API (the old one of a past run, if any, is reused).
   const existing = await t.prisma.location.findFirst({ where: { kind: 'COUNTRY', countryCode } });
   ids.country =
@@ -192,6 +208,9 @@ beforeAll(async () => {
   await card('countryCarton', ids.country, ids.dest, '60', { priceCategoryCode: 'CARTON' });
   await card('loneCarton', ids.lonePort, ids.dest, '70', { priceCategoryCode: 'CARTON' });
   await card('onlyCarton', ids.lonePort, ids.otherDest, '50', { priceCategoryCode: 'CARTON' });
+  // A route priced per kilogram only, and a second destination for the country alone.
+  await card('portKg', ids.port, ids.kgDest, '2', { unit: 'PER_KG' });
+  await card('country2', ids.country, ids.dest2, '100');
 });
 
 afterAll(async () => {
@@ -442,6 +461,45 @@ describe('price source and its invalidation (plan 5.2)', () => {
     expect(carton.lines[0]).toMatchObject({ rateCardId: cards.loneCarton, unitPrice: '70' });
   });
 
+  it('prices the line again in its saved unit, never reading its quantity in another (F120-2)', async () => {
+    const q = await quoted(ids.port, ids.dest, [systemLine()]);
+    expect(q.lines[0]).toMatchObject({ unit: 'PER_SHIPMENT', quantity: '1' });
+    // The new route has a card per kilogram only: the line keeps its unit, so no card matches.
+    const moved = await edit(q, ids.port, ids.kgDest, [{ rateCardId: cards.port, quantity: '1' }]);
+    expect(moved.status).toBe(400);
+    expect(code(moved)).toBe('RATE_NO_MATCH');
+    expect(fields(moved)).toEqual(['lines.0.unitPrice']);
+    // Naming the unit is how the person moves the line to kilograms.
+    const perKg = (
+      await edit(q, ids.port, ids.kgDest, [
+        { rateCardId: cards.port, unit: 'PER_KG', quantity: '250' },
+      ]).expect(200)
+    ).body as QuotationDto;
+    expect(perKg.lines[0]).toMatchObject({ rateCardId: cards.portKg, unit: 'PER_KG' });
+  });
+
+  it('keeps a saved broader card for its own line only, never for a line added later (F120-4)', async () => {
+    const q = await quoted(ids.lonePort, ids.dest2, [
+      { rateCardId: cards.country2, quantity: '1' },
+    ]);
+    // A narrower card arrives after the quotation was saved.
+    await card('lone2', ids.lonePort, ids.dest2, '75');
+    const added = await edit(q, ids.lonePort, ids.dest2, [
+      { rateCardId: cards.country2, quantity: '1' },
+      { rateCardId: cards.country2, quantity: '2' },
+    ]);
+    expect(added.status).toBe(400);
+    expect(code(added)).toBe('RATE_SUPERSEDED');
+    expect(fields(added)).toEqual(['lines.1.rateCardId']);
+    // The saved line alone keeps its card and price.
+    const kept = (
+      await edit(q, ids.lonePort, ids.dest2, [
+        { rateCardId: cards.country2, quantity: '3' },
+      ]).expect(200)
+    ).body as QuotationDto;
+    expect(kept.lines[0]).toMatchObject({ rateCardId: cards.country2, unitPrice: '100' });
+  });
+
   it('leaves a typed price alone, and a line saved before sources were kept', async () => {
     const typed = await quoted(ids.port, ids.dest, [
       { chargeTypeCode: 'FREIGHT', unit: 'PER_SHIPMENT', unitPrice: '55', quantity: '1' },
@@ -476,6 +534,18 @@ describe('price source and its invalidation (plan 5.2)', () => {
 });
 
 describe('assistant compatibility (plan 7.2)', () => {
+  it('shows the assistant general cards only: it has no category to show (F120-3)', async () => {
+    const query = `/rates?originLocationId=${ids.lonePort}&destinationLocationId=${ids.otherDest}`;
+    const onScreen = (await r.get(query, cookies.agentSales).expect(200)).body as Page<RateCardDto>;
+    expect(onScreen.items.map((c) => c.id)).toContain(cards.onlyCarton);
+    const forAgent = (await r.agentGet(query, tokens.sales).expect(200)).body as Page<RateCardDto>;
+    expect(forAgent.items.map((c) => c.id)).not.toContain(cards.onlyCarton);
+    expect(forAgent.items.every((c) => c.priceCategoryCode === null)).toBe(true);
+    await r.agentGet(`/rates/${cards.onlyCarton}`, tokens.sales).expect(404);
+    await r.agentGet(`/rates/${cards.port}`, tokens.sales).expect(200);
+    await r.get(`/rates/${cards.onlyCarton}`, cookies.agentSales).expect(200);
+  });
+
   it('keeps quotation draft shapes, and refuses a category from the assistant', async () => {
     const request = {
       idempotencyKey: draftKey(),

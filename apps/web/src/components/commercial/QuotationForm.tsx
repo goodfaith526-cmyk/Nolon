@@ -58,6 +58,12 @@ interface LineState {
 
 let nextKey = 1;
 /** A line that already holds an amount: a price or discount typed, or a rate card picked. */
+/**
+ * A line leaving its rate card leaves the card's price too (plan 5.2): the amount shown while the
+ * card priced the line is never sent as a typed price. The user types one, or picks a card again.
+ */
+const dropCard = { rateCardId: '', unitPrice: '' } as const;
+
 const hasAmount = (l: LineState) => l.unitPrice !== '' || l.discount !== '' || l.rateCardId !== '';
 
 const emptyLine = (): LineState => ({
@@ -192,7 +198,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
             setLines((all) =>
               all.some((l) => l.rateCardId && !ids.has(l.rateCardId))
                 ? all.map((l) =>
-                    l.rateCardId && !ids.has(l.rateCardId) ? { ...l, rateCardId: '' } : l,
+                    l.rateCardId && !ids.has(l.rateCardId) ? { ...l, ...dropCard } : l,
                   )
                 : all,
             );
@@ -525,7 +531,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                           !card || !card.priceCategoryCode || card.priceCategoryCode === code;
                         updateLine(l.key, {
                           priceCategoryCode: code,
-                          ...(keeps ? {} : { rateCardId: '' }),
+                          ...(keeps ? {} : dropCard),
                         });
                       }}
                     >
@@ -542,7 +548,14 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                     aria-label={t('rate')}
                     {...mark(`lines.${index}.rateCardId`)}
                     value={l.rateCardId}
-                    onChange={(e) => updateLine(l.key, { rateCardId: e.target.value })}
+                    onChange={(e) =>
+                      updateLine(
+                        l.key,
+                        e.target.value === '' && l.rateCardId !== ''
+                          ? dropCard
+                          : { rateCardId: e.target.value },
+                      )
+                    }
                   >
                     <option value="">{t('manualLine')}</option>
                     {ratesFor(l).map((r) => (

@@ -43,16 +43,16 @@ export class RatesController {
   @AgentReadable()
   @Get()
   @RequirePermission('rates:view')
-  list(@Query() query: unknown): Promise<Page<RateCardDto>> {
-    return this.rates.list(parse(listQuery, query));
+  list(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<Page<RateCardDto>> {
+    return this.rates.list({ ...parse(listQuery, query), generalOnly: user.agent !== undefined });
   }
 
   @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('rates:view')
-  get(@Param('id', ParseUUIDPipe) id: string): Promise<RateCardDto> {
-    return this.rates.get(id);
+  get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<RateCardDto> {
+    return this.rates.get(id, { generalOnly: user.agent !== undefined });
   }
 
   @Post()

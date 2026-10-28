@@ -479,6 +479,9 @@ export class QuotationsService {
       cargoType: input.cargoType,
     };
     const resolved = [];
+    // Saved card-backed lines not yet matched to an input line: each grants its keep-the-card
+    // exemption to one input line only, so an appended line never borrows another line's.
+    const unmatched = [...(stored?.lines ?? [])].filter((l) => l.rateCardId !== null);
     for (const [index, line] of input.lines.entries()) {
       const path = `lines.${index}`;
       const category = line.priceCategoryCode ?? null;
@@ -511,13 +514,25 @@ export class QuotationsService {
         );
       if (line.rateCardId) {
         const rateCardId = line.rateCardId;
-        // The line as saved, priced from this card (an edit sends the card back).
-        const was = stored?.lines?.find((l) => l.rateCardId === rateCardId);
+        // The line as saved, priced from this card (an edit sends the card back): the saved line
+        // of this card with the same unit and category if there is one, taken once.
+        const sameCard = unmatched.filter((l) => l.rateCardId === rateCardId);
+        const was =
+          sameCard.find(
+            (l) =>
+              (line.unit === undefined || l.unit === line.unit) &&
+              (l.priceCategoryCode ?? null) === category,
+          ) ?? sameCard[0];
+        if (was) unmatched.splice(unmatched.indexOf(was), 1);
         if (was && stored && sourceChanged(stored, was, context, line.unit)) {
           // Plan 5.2: a price suggested for another route, currency, mode, load, cargo, unit or
-          // category is never kept. Priced again from the card that matches now, or refused.
+          // category is never kept. Priced again from the card that matches now, in the line's
+          // unit (the one it was saved in unless the edit names another, so the quantity keeps
+          // its meaning), or refused.
           resolved.push(
-            rateLine(await suggest(line.chargeTypeCode ?? was.chargeTypeCode, line.unit ?? null)),
+            rateLine(
+              await suggest(line.chargeTypeCode ?? was.chargeTypeCode, line.unit ?? was.unit),
+            ),
           );
           continue;
         }
