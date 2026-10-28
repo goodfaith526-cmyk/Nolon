@@ -13,7 +13,7 @@ import {
 import { RATE_STATUSES, SHIPPING_MODES, type Page, type RateCardDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { dateString, pageQuery, parse } from '../common/validation.js';
 import { createRateBody, updateRateBody } from './rate-schemas.js';
 import { RatesService } from './rates.service.js';
@@ -32,6 +32,7 @@ const listQuery = pageQuery.extend({
 export class RatesController {
   constructor(private readonly rates: RatesService) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('rates:view')
@@ -39,6 +40,7 @@ export class RatesController {
     return this.rates.list(parse(listQuery, query));
   }
 
+  @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('rates:view')

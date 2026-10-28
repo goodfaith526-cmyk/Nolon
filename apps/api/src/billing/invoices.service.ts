@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpStatus,
   Injectable,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type {
   BookingService,
@@ -22,6 +24,7 @@ import type {
   Page,
   PaymentStatus,
   ReceiptOpenInvoiceDto,
+  ShipmentInvoiceRefDto,
   UpdateCustomerInvoiceRequest,
 } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
@@ -42,7 +45,7 @@ import {
   toDecimalStringOrNull,
 } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import { fieldRefusal, fieldRefusals, type PageQuery } from '../common/validation.js';
+import { codedRefusal, fieldRefusal, fieldRefusals, type PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
@@ -51,8 +54,14 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { RatesService } from '../rates/rates.service.js';
+import {
+  type LiveShipmentInvoices,
+  type ShipmentInvoicesHandler,
+  ShipmentInvoicesRegistry,
+} from '../shipments/shipment-invoices.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
+import { isLiveInvoice } from './live-invoice.js';
 import {
   type SuggestionSource,
   invoiceCurrency,
@@ -180,7 +189,7 @@ type InvoiceWithDetails = Prisma.CustomerInvoiceGetPayload<{ include: typeof det
  * same transaction. An approved invoice is not edited: it is corrected by a credit note.
  */
 @Injectable()
-export class InvoicesService {
+export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly autoJournal: AutoJournalService,
@@ -191,7 +200,26 @@ export class InvoicesService {
     private readonly currencies: CurrenciesService,
     private readonly masterData: MasterDataService,
     private readonly rates: RatesService,
+    private readonly shipmentInvoices: ShipmentInvoicesRegistry,
   ) {}
+
+  onModuleInit(): void {
+    this.shipmentInvoices.register(this);
+  }
+
+  /** For a shipment's cancellation, under its exclusive row lock: the invoices that still bill it. */
+  async liveInvoicesInTx(tx: Tx, shipmentId: string): Promise<LiveShipmentInvoices> {
+    const invoices = await tx.customerInvoice.findMany({
+      where: { shipmentId, status: { not: 'CANCELLED' } },
+      select: { number: true, status: true, total: true, paidAmount: true, creditedAmount: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const live = invoices.filter(isLiveInvoice);
+    return {
+      approved: live.flatMap((i) => (i.status === 'APPROVED' && i.number ? [i.number] : [])),
+      drafts: live.filter((i) => i.status === 'DRAFT').length,
+    };
+  }
 
   async list(user: AuthUser, filters: InvoiceFilters): Promise<Page<CustomerInvoiceSummaryDto>> {
     const branchIds = reportBranchIds(user, filters.branchId);
@@ -448,7 +476,23 @@ export class InvoicesService {
       })),
       unresolved: derived.unresolved,
       fingerprint: derived.fingerprint,
+      shipmentInvoices: await this.invoicesOfShipment(derived.shipmentId),
     };
+  }
+
+  /**
+   * The shipment's invoices that are not cancelled, oldest first: what a person confirms having
+   * seen before another invoice bills the shipment (Q3). The caller has checked access to it.
+   */
+  async invoicesOfShipment(
+    shipmentId: string,
+    tx: Tx | PrismaService = this.prisma,
+  ): Promise<ShipmentInvoiceRefDto[]> {
+    return tx.customerInvoice.findMany({
+      where: { shipmentId, status: { not: 'CANCELLED' } },
+      select: { id: true, number: true, status: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
   }
 
   /**
@@ -456,7 +500,11 @@ export class InvoicesService {
    * defaults: dated today in the branch, due after the customer's payment terms, with the lines
    * it fills (the quotation's; a rate card's only for a charge of a service the shipment has).
    */
-  async createForShipment(user: AuthUser, shipmentId: string): Promise<CustomerInvoiceDto> {
+  async createForShipment(
+    user: AuthUser,
+    shipmentId: string,
+    acknowledgedInvoiceIds: readonly string[] = [],
+  ): Promise<CustomerInvoiceDto> {
     const derived = await this.deriveForShipment(user, shipmentId, {});
     const { currency, invoiceDate } = derived;
     const fxRate = await this.fxRates.resolve(currency.code, invoiceDate);
@@ -466,30 +514,33 @@ export class InvoicesService {
         : [],
     );
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
-    const created = await this.prisma.customerInvoice.create({
-      data: {
-        branchId: derived.branchId,
-        customerId: derived.customerId,
-        shipmentId: derived.shipmentId,
-        currency: currency.code,
-        fxRate,
-        invoiceDate: toDbDate(invoiceDate),
-        dueDate: toDbDate(derived.dueDate),
-        total,
-        totalUsd: toUsd(total, fxRate, currency.code),
-        createdById: user.id,
-        lines: {
-          create: lines.map((l, index) => ({
-            lineNo: index + 1,
-            chargeTypeCode: l.chargeTypeCode,
-            description: l.description,
-            quantity: l.quantity,
-            unitPrice: l.unitPrice,
-            lineTotal: lineTotals[index] ?? dec(0),
-          })),
+    const created = await this.prisma.$transaction(async (tx) => {
+      await this.lockForNewInvoice(tx, derived.shipmentId, acknowledgedInvoiceIds);
+      return tx.customerInvoice.create({
+        data: {
+          branchId: derived.branchId,
+          customerId: derived.customerId,
+          shipmentId: derived.shipmentId,
+          currency: currency.code,
+          fxRate,
+          invoiceDate: toDbDate(invoiceDate),
+          dueDate: toDbDate(derived.dueDate),
+          total,
+          totalUsd: toUsd(total, fxRate, currency.code),
+          createdById: user.id,
+          lines: {
+            create: lines.map((l, index) => ({
+              lineNo: index + 1,
+              chargeTypeCode: l.chargeTypeCode,
+              description: l.description,
+              quantity: l.quantity,
+              unitPrice: l.unitPrice,
+              lineTotal: lineTotals[index] ?? dec(0),
+            })),
+          },
         },
-      },
-      include: details,
+        include: details,
+      });
     });
     return toDto(created, user);
   }
@@ -885,7 +936,18 @@ export class InvoicesService {
   }
 
   /** Records a prepared DRAFT invoice inside the caller's transaction; posts nothing. */
-  async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedInvoice): Promise<string> {
+  async insertInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedInvoice,
+    acknowledged: { invoiceIds: readonly string[]; listed: boolean },
+  ): Promise<string> {
+    await this.lockForNewInvoice(
+      tx,
+      prepared.shipmentId,
+      acknowledged.invoiceIds,
+      acknowledged.listed,
+    );
     const created = await tx.customerInvoice.create({
       data: {
         branchId: prepared.branchId,
@@ -985,19 +1047,24 @@ export class InvoicesService {
    */
   async approve(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
     const existing = await this.findScoped(user, id);
+    // An approved invoice (an opening item has no shipment at all) is not approved again; the
+    // status is checked again under the invoice's lock below.
+    if (existing.status !== 'DRAFT')
+      throw new ConflictException('Only a draft invoice is approved');
+    if (!existing.shipmentId) throw new Error('A draft bills a shipment');
+    const shipmentId = existing.shipmentId;
     await this.prisma.$transaction(async (tx) => {
+      // The shipment first, then the invoice: the order a shipment's cancellation takes them in.
+      await this.lockBilledShipment(tx, shipmentId);
       await lockStatus(tx, id, 'DRAFT');
       const invoice = await tx.customerInvoice.findUniqueOrThrow({
         where: { id },
-        include: { lines: { orderBy: { lineNo: 'asc' } }, shipment: { select: { status: true } } },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       if (invoice.lines.length === 0 || !invoice.total.gt(0)) {
         throw new BadRequestException('An invoice needs at least one line with an amount');
       }
-      if (!invoice.shipment || !invoice.shipmentId) throw new Error('A draft bills a shipment');
-      if (invoice.shipment.status === 'CANCELLED') {
-        throw new ConflictException('The shipment was cancelled');
-      }
+      if (invoice.shipmentId !== shipmentId) throw new Error('A draft keeps its shipment');
       const invoiceDate = fromDbDate(invoice.invoiceDate);
       const year = invoiceDate.slice(0, 4);
       const number = formatDocumentNumber(
@@ -1008,7 +1075,7 @@ export class InvoicesService {
       const totalUsd = toUsd(invoice.total, invoice.fxRate, invoice.currency);
       const { entry, receivableAccountId } = await this.autoJournal.customerInvoiceApproved(
         tx,
-        { ...invoice, shipmentId: invoice.shipmentId, number, totalUsd },
+        { ...invoice, shipmentId, number, totalUsd },
         user.id,
       );
       await tx.customerInvoice.update({
@@ -1041,6 +1108,51 @@ export class InvoicesService {
       });
     });
     return this.get(user, id);
+  }
+
+  /**
+   * Share-locks the shipment an invoice bills, inside the caller's transaction, and refuses a
+   * cancelled one (409). A shipment's cancellation takes this lock exclusively and refuses while an
+   * invoice still bills it, so an invoice cannot be created or approved under it as it goes.
+   */
+  /**
+   * Before another invoice bills a shipment (Q3): locks the shipment exclusively, so two new
+   * invoices queue behind each other, refuses a cancelled one, and refuses (409) unless
+   * `acknowledged` names exactly the shipment's invoices that are not cancelled, as the person saw
+   * them. `listed` is false where the invoices could not be shown to the person (the assistant's
+   * chat): there, a shipment with invoices sends the approval to NOLON's review screen.
+   */
+  private async lockForNewInvoice(
+    tx: Tx,
+    shipmentId: string,
+    acknowledged: readonly string[],
+    listed = true,
+  ): Promise<void> {
+    const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+    if (status === 'CANCELLED') throw new ConflictException('The shipment was cancelled');
+    const current = await this.invoicesOfShipment(shipmentId, tx);
+    const seen = new Set(acknowledged);
+    if (listed && current.length === seen.size && current.every((i) => seen.has(i.id))) return;
+    if (current.length === 0 && seen.size === 0) return;
+    const { number } = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      select: { number: true },
+    });
+    const approved = current.flatMap((i) => (i.number ? [i.number] : [])).join(', ') || '—';
+    const drafts = String(current.filter((i) => i.status === 'DRAFT').length);
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      listed ? 'SHIPMENT_ALREADY_INVOICED' : 'SHIPMENT_ALREADY_INVOICED_REVIEW',
+      listed
+        ? `Shipment ${number} has invoices other than those acknowledged (approved: ${approved}; drafts: ${drafts}): check them and send their ids to add another invoice`
+        : `Shipment ${number} already has invoices (approved: ${approved}; drafts: ${drafts}): approve this draft on its review screen in NOLON`,
+      { shipment: number, approved, drafts },
+    );
+  }
+
+  private async lockBilledShipment(tx: Tx, shipmentId: string): Promise<void> {
+    const status = await this.shipments.lockForChildWrite(tx, shipmentId);
+    if (status === 'CANCELLED') throw new ConflictException('The shipment was cancelled');
   }
 
   private async findScoped(user: AuthUser, id: string): Promise<InvoiceWithDetails> {

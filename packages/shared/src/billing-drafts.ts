@@ -1,4 +1,8 @@
-import type { CreateReceiptRequest, CustomerInvoiceInput } from './accounting.js';
+import type {
+  CreateReceiptRequest,
+  CustomerInvoiceInput,
+  ShipmentInvoiceRefDto,
+} from './accounting.js';
 import type { BookingService, RateUnit } from './commercial.js';
 import type { CustomerDraftFields, DraftPriceSource, PriceSource } from './commercial-drafts.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
@@ -165,6 +169,8 @@ export interface InvoiceSuggestionDto {
    * `updatedAt`) and each line's charge, unit and service. Equal fingerprints, same suggestion.
    */
   fingerprint: string;
+  /** The shipment's invoices that are not cancelled: another invoice would bill it again (Q3). */
+  shipmentInvoices: ShipmentInvoiceRefDto[];
 }
 
 /**
@@ -197,11 +203,23 @@ export interface InvoiceDraftDto
   invoiceId: string | null;
   /** Null until the created invoice is itself approved and numbered. */
   invoiceNumber: string | null;
+  /**
+   * While the draft is open, the invoices of its shipment that are not cancelled: approving it
+   * adds another one, and the approval repeats their ids (InvoiceDraftApproveRequest).
+   */
+  shipmentInvoices: ShipmentInvoiceRefDto[];
+}
+
+/** POST /invoice-drafts/:id/approve: the version reviewed, and the shipment's invoices seen. */
+export interface InvoiceDraftApproveRequest {
+  version: number;
+  /** As in CreateCustomerInvoiceRequest; left out, the shipment must have no invoice. */
+  acknowledgedInvoiceIds?: string[];
 }
 
 export type InvoiceDraftListItemDto = Omit<
   InvoiceDraftDto,
-  'request' | 'check' | 'priceSources'
+  'request' | 'check' | 'priceSources' | 'shipmentInvoices'
 > & {
   lineCount: number;
 };

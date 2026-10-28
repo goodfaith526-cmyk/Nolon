@@ -678,6 +678,14 @@ export const FORM_REFUSALS = [
   'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
+  // A shipment that an invoice still bills is not cancelled: `shipment`, `approved` (the numbers of
+  // the approved invoices, or a dash) and `drafts` (how many draft invoices).
+  'SHIPMENT_HAS_LIVE_INVOICES',
+  // Another invoice for a shipment that has invoices (Q3): the request did not name exactly the
+  // invoices it has. Params `shipment`, `approved` (numbers, or a dash) and `drafts` (a count).
+  // The assistant's chat cannot list them, so its approval is sent to NOLON's review screen.
+  'SHIPMENT_ALREADY_INVOICED',
+  'SHIPMENT_ALREADY_INVOICED_REVIEW',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',

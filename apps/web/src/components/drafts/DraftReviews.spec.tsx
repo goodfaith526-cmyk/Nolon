@@ -165,6 +165,7 @@ describe('review screens: a draft holding none of its values', () => {
     const draft: InvoiceDraftDto = {
       ...base,
       missingFields: ['shipmentId', 'currency', 'lines[0].quantity'],
+      shipmentInvoices: [],
       customerId: null,
       customerName: null,
       shipmentNumber: null,

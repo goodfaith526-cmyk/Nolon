@@ -176,7 +176,8 @@
     "WAREHOUSE": "Warehouse",
     "CUSTOMS": "Customs",
     "DRIVER": "Driver / Transport",
-    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager"
+    "SALES_MARKETING_MANAGER": "Sales & Marketing Manager",
+    "OUTLET_STAFF": "Outlet Staff"
   },
   "Common": {
     "invalidInput": "Check the fields and try again.",
@@ -216,7 +217,10 @@
     "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
     "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
     "openAssistant": "Open the assistant",
-    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it."
+    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it.",
+    "chooseCountry": "Choose a country",
+    "countriesInUse": "Countries in use",
+    "allCountries": "All countries"
   },
   "Customers": {
     "title": "Customers",
@@ -257,7 +261,8 @@
     "parties": "Shipper, consignee and notify party",
     "addParty": "Add party",
     "partiesHint": "Parties are kept separately from the customer and chosen on each booking.",
-    "import": "Import from Excel"
+    "import": "Import from Excel",
+    "country": "Country"
   },
   "Rates": {
     "title": "Rates",
@@ -321,7 +326,7 @@
     "service_INLAND_TRANSPORT": "Inland transport",
     "service_LAST_MILE": "Final delivery",
     "shipment_CREATED": "Created",
-    "shipment_PICKUP_SCHEDULED": "Pickup scheduled",
+    "shipment_PICKUP_SCHEDULED": "Pickup in progress",
     "shipment_RECEIVED_ORIGIN_WAREHOUSE": "At origin warehouse",
     "shipment_CONSOLIDATED": "Consolidated (LCL)",
     "shipment_LOADED": "Loaded",
@@ -646,7 +651,8 @@
     "revertReasonOther": "The reason, in words",
     "revertDetails": "Details (optional)",
     "recordedAt": "Recorded on {time}",
-    "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now."
+    "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now.",
+    "containerMoveWarning": "This shipment is in container {container}. «{status}» is normally recorded by moving the container, which moves all its shipments. Record it here only if this shipment alone is different."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -740,6 +746,8 @@
     "notEditable": "Only a draft invoice can be edited.",
     "create": "Create invoice",
     "noneForShipment": "No invoices for this shipment yet.",
+    "otherInvoicesWarning": "This shipment already has {count, plural, one {# invoice} other {# invoices}} that {count, plural, one {is} other {are}} not cancelled. Another invoice bills it again: check {count, plural, one {it} other {them}} first.",
+    "otherInvoicesConfirm": "I checked these invoices; add another invoice to the shipment.",
     "editDraftTitle": "Edit draft invoice",
     "newCreditNote": "New credit note",
     "creditNoteHint": "A credit note reduces what this invoice still owes, up to its open amount. It is approved separately, which posts the reversing entry.",
@@ -1889,13 +1897,16 @@
     "kind_DISTRIBUTOR": "Distributor in Sudan",
     "phone": "Phone",
     "email": "Email",
-    "countryCode": "Country (2 letters)",
-    "countryHint": "For example SA, AE, EG, CN, SD.",
+    "countryCode": "Country",
     "location": "City or port",
     "currency": "Currency",
     "branch": "Branch",
     "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step.",
-    "loadMore": "Show more"
+    "loadMore": "Show more",
+    "noLocation": "No city or port",
+    "chooseCountryFirst": "Choose the country first.",
+    "noPlacesInCountry": "No city or port of this country is recorded yet.",
+    "addPlace": "Add one in Locations"
   },
   "SupplierBills": {
     "title": "Supplier bills",
@@ -2456,6 +2467,9 @@
     "SHIPMENT_OTHER_PORT": "Container {container} loads at another port than shipment {shipment} leaves from.",
     "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
     "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first.",
+    "SHIPMENT_HAS_LIVE_INVOICES": "Shipment {shipment} still has invoices, so it cannot be cancelled. Cancel its draft invoices ({drafts}) and issue credit notes covering its approved invoices ({approved}) first. A paid or part-paid invoice blocks the cancellation.",
+    "SHIPMENT_ALREADY_INVOICED": "Shipment {shipment} already has invoices (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm to add another invoice.",
+    "SHIPMENT_ALREADY_INVOICED_REVIEW": "Shipment {shipment} already has invoices (approved: {approved}; drafts: {drafts}). Approve this draft on its review screen in NOLON, where they are listed.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
     "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",

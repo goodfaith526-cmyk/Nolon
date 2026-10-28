@@ -25,7 +25,15 @@ export interface LoginContext {
   userAgent: string | undefined;
 }
 
-const USER_ACCESS = { roles: true, branches: { select: { branchId: true } } } as const;
+const USER_ACCESS = {
+  roles: true,
+  branches: { select: { branchId: true } },
+  // Outlet Staff (plan 4.2): only active sales outlets count.
+  outlets: {
+    where: { partner: { isActive: true, kind: 'SALES_OUTLET' } },
+    select: { partnerId: true, partner: { select: { branchId: true } } },
+  },
+} as const;
 
 // lastSeenAt is a hint for admins, not a security control: refresh it at most this often.
 const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
@@ -196,6 +204,7 @@ export class AuthService {
       passwordHash: string;
       roles: { role: Role }[];
       branches: { branchId: string }[];
+      outlets: { partnerId: string; partner: { branchId: string } }[];
     },
     sessionId: string,
   ): Promise<AuthUser> {
@@ -215,6 +224,13 @@ export class AuthService {
       permissions: new Set(permissionsForRoles(roles)),
       allBranches,
       allowedBranchIds,
+      // Any Outlet Staff role limits the user to their outlets, whatever else they hold, and only
+      // to outlets of their own branches.
+      allowedOutletIds: roles.includes('OUTLET_STAFF')
+        ? user.outlets
+            .filter((o) => allowedBranchIds.includes(o.partner.branchId))
+            .map((o) => o.partnerId)
+        : null,
     };
   }
 

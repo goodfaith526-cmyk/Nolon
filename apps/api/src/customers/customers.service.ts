@@ -26,6 +26,12 @@ import {
 } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import {
+  assertOutletInTx,
+  customerOutletScope,
+  outletForWriteInTx,
+  outletLimited,
+} from '../auth/outlet-scope.js';
 import { lockActiveBranches, lockBranchRule } from '../common/branch-locks.js';
 import { type Decimal, dec, toDecimalStringOrNull } from '../common/money.js';
 import { formatShortNumber, nextSequenceRange, nextSequenceValue } from '../common/numbering.js';
@@ -86,6 +92,7 @@ export class CustomersService {
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
     const where: Prisma.CustomerWhereInput = {
       ...listBranchScope(user, query.branchId),
+      ...customerOutletScope(user),
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
     };
@@ -150,14 +157,23 @@ export class CustomersService {
   ): Promise<CustomerWithDetails> {
     assertBranchAccess(user, input.branchId);
     const { branchId, ...fields } = input;
+    // Outlet Staff (plan 4.2): the customer is theirs; everyone else records none yet. Checked
+    // first, before any other lock of the write.
+    const outletId = await outletForWriteInTx(tx, user, branchId);
     if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) {
       throw new BadRequestException('Unknown or inactive branch');
     }
     await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
-    throwFirstConflict(await this.duplicateIssues(tx, [input]));
+    throwFirstConflict(await this.duplicateIssues(tx, [input], user));
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
-      data: { ...toData(fields), number, branchId, createdById: user.id },
+      data: {
+        ...toData(fields),
+        number,
+        branchId,
+        acquiredViaOutletId: outletId,
+        createdById: user.id,
+      },
       include: details,
     });
     await this.audit.record(
@@ -190,6 +206,7 @@ export class CustomersService {
     const duplicates = await this.duplicateIssues(
       tx,
       rows.map((r) => r.input),
+      user,
     );
     const issues = rows.map(({ input }, i): RuleIssue[] => [
       ...(active.has(input.branchId) ? [] : [inactiveBranch]),
@@ -233,10 +250,15 @@ export class CustomersService {
    * For each candidate, the phone or tax number another customer of its branch already holds
    * (inactive customers included). Binding only while the caller holds the branch's customer lock
    * (create, update, import); without it (the import preview) it is advice.
+   *
+   * The message names the customer holding the value only when `user` may see that customer: for
+   * Outlet Staff (plan 4.2) a holder outside their outlets is "another customer", so the refusal
+   * reveals no record they cannot open. The value stays unique across the whole branch.
    */
   async duplicateIssues(
     client: Prisma.TransactionClient,
     candidates: readonly CustomerKeys[],
+    user: AuthUser,
   ): Promise<RuleIssue[][]> {
     const phones = [...new Set(candidates.flatMap((c) => (c.phone ? [c.phone] : [])))];
     const taxes = [...new Set(candidates.flatMap((c) => (c.taxNumber ? [c.taxNumber] : [])))];
@@ -249,10 +271,27 @@ export class CustomersService {
           ...(taxes.length > 0 ? [{ taxNumber: { in: taxes, mode: 'insensitive' as const } }] : []),
         ],
       },
-      select: { id: true, branchId: true, number: true, phone: true, taxNumber: true },
+      select: {
+        id: true,
+        branchId: true,
+        number: true,
+        phone: true,
+        taxNumber: true,
+        acquiredViaOutletId: true,
+      },
     });
-    const holder = (excludeId: string | undefined, matches: (c: (typeof existing)[0]) => boolean) =>
-      existing.find((c) => c.id !== excludeId && matches(c))?.number;
+    const visible = (c: (typeof existing)[0]) =>
+      !outletLimited(user) ||
+      (c.acquiredViaOutletId !== null &&
+        (user.allowedOutletIds ?? []).includes(c.acquiredViaOutletId));
+    const holder = (
+      excludeId: string | undefined,
+      matches: (c: (typeof existing)[0]) => boolean,
+    ) => {
+      const found = existing.find((c) => c.id !== excludeId && matches(c));
+      if (!found) return undefined;
+      return visible(found) ? `Customer ${found.number}` : 'Another customer';
+    };
     return candidates.map(({ branchId, phone, taxNumber, excludeId }) => {
       const issues: RuleIssue[] = [];
       const samePhone =
@@ -261,7 +300,7 @@ export class CustomersService {
         issues.push({
           field: 'phone',
           code: 'DUPLICATE_IN_DB',
-          message: `Customer ${samePhone} of this branch has this phone`,
+          message: `${samePhone} of this branch has this phone`,
         });
       }
       const sameTax =
@@ -271,7 +310,7 @@ export class CustomersService {
         issues.push({
           field: 'taxNumber',
           code: 'DUPLICATE_IN_DB',
-          message: `Customer ${sameTax} of this branch has this tax number`,
+          message: `${sameTax} of this branch has this tax number`,
         });
       }
       return issues;
@@ -296,8 +335,11 @@ export class CustomersService {
     });
     await this.checkReferences(withLimit(read));
     const updated = await this.prisma.$transaction(async (tx) => {
+      await assertOutletInTx(tx, user, read.acquiredViaOutletId, 'Customer not found');
       await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${read.id}::uuid FOR NO KEY UPDATE`;
-      const current = await tx.customer.findFirst({ where: { id: read.id, ...branchScope(user) } });
+      const current = await tx.customer.findFirst({
+        where: { id: read.id, ...branchScope(user), ...customerOutletScope(user) },
+      });
       if (!current) throw new NotFoundException('Customer not found');
       if (
         current.creditLimit?.toString() !== read.creditLimit?.toString() ||
@@ -319,7 +361,7 @@ export class CustomersService {
       };
       if (keys.phone !== undefined || keys.taxNumber) {
         await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [current.branchId]);
-        throwFirstConflict(await this.duplicateIssues(tx, [keys]));
+        throwFirstConflict(await this.duplicateIssues(tx, [keys], user));
       }
       const changed = await tx.customer.update({
         where: { id: current.id },
@@ -344,6 +386,7 @@ export class CustomersService {
     const existing = await this.findScoped(user, id);
     return toDto(
       await this.prisma.$transaction(async (tx) => {
+        await assertOutletInTx(tx, user, existing.acquiredViaOutletId, 'Customer not found');
         // Locked before `before` is read: two concurrent changes queue, and each logs what it
         // actually changed.
         await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${existing.id}::uuid FOR NO KEY UPDATE`;
@@ -418,6 +461,7 @@ export class CustomersService {
       tx.customerContact.findMany({ where: { customerId: customer.id } });
     try {
       await this.prisma.$transaction(async (tx) => {
+        await assertOutletInTx(tx, user, customer.acquiredViaOutletId, 'Customer not found');
         await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customer.id}::uuid FOR UPDATE`;
         const before = await read(tx);
         await write(tx);
@@ -510,6 +554,7 @@ export class CustomersService {
     write: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<void> {
     const read = () => tx.party.findMany({ where: { customerId: customer.id } });
+    await assertOutletInTx(tx, user, customer.acquiredViaOutletId, 'Customer not found');
     await this.lockForPartyWrite(tx, customer.id);
     const before = await read();
     await write(tx);
@@ -523,13 +568,41 @@ export class CustomersService {
    */
   /** For other modules: 404 unless the customer is in one of the user's branches. */
   async requireCustomer(user: AuthUser, id: string): Promise<Customer> {
-    const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
+    });
     if (!customer) throw new NotFoundException('Customer not found');
     return customer;
   }
 
+  /**
+   * The sales outlet a quotation or booking for this customer records, checked inside the write's
+   * transaction (plan 4.2): for Outlet Staff, their only outlet as it is now (locked until commit),
+   * and the customer must still be one of that outlet's (404 otherwise, as for a customer of
+   * another outlet). Null for every other user (their screens do not set an outlet yet).
+   */
+  async outletForSaleInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    branchId: string,
+    customerId: string,
+  ): Promise<string | null> {
+    const outletId = await outletForWriteInTx(tx, user, branchId);
+    if (outletId === null) return null;
+    const customer = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { acquiredViaOutletId: true },
+    });
+    if (customer?.acquiredViaOutletId !== outletId) {
+      throw new NotFoundException('Customer not found');
+    }
+    return outletId;
+  }
+
   async requireActiveCustomer(user: AuthUser, id: string): Promise<Customer> {
-    const customer = await this.prisma.customer.findFirst({ where: { id, ...branchScope(user) } });
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
+    });
     if (!customer) throw new NotFoundException('Customer not found');
     if (!customer.isActive) throw new BadRequestException('Customer is inactive');
     return customer;
@@ -557,7 +630,7 @@ export class CustomersService {
 
   private async findScoped(user: AuthUser, id: string): Promise<CustomerWithDetails> {
     const customer = await this.prisma.customer.findFirst({
-      where: { id, ...branchScope(user) },
+      where: { id, ...branchScope(user), ...customerOutletScope(user) },
       include: details,
     });
     if (!customer) throw new NotFoundException('Customer not found');

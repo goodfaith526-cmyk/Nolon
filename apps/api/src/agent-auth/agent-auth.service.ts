@@ -18,6 +18,7 @@ import type {
   AgentTokenRequest,
   AgentTokenResponse,
 } from '@nolon/shared';
+import { outletLimited } from '../auth/outlet-scope.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { credentialStamp, lockCredentials } from '../auth/credential-lock.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
@@ -69,6 +70,8 @@ export class AgentAuthService {
   async authorize(user: AuthUser, input: AgentAuthorizeRequest): Promise<AgentAuthorizeResponse> {
     // The assistant cannot mint codes for itself (the guard keeps it off POST routes as well).
     if (user.agent) throw new ForbiddenException('Not available to the assistant');
+    // Outlet Staff do not sign in to the assistant in this batch (business model plan 4.2).
+    if (outletLimited(user)) throw new ForbiddenException('Not available to outlet staff');
     const client = await this.prisma.agentClient.findUnique({
       where: { clientId: input.clientId },
     });

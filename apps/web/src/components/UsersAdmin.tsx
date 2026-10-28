@@ -310,17 +310,21 @@ function UserForm({
       <fieldset>
         <legend>{t('roles')}</legend>
         <div className="checks">
-          {ROLES.map((role) => (
-            <label key={role}>
-              <input
-                type="checkbox"
-                name="roles"
-                value={role}
-                defaultChecked={user?.roles.includes(role)}
-              />
-              {tRoles(role)}
-            </label>
-          ))}
+          {/* Outlet Staff stays locked (business model plan 4.2) until the owner opens it; a user
+              who already holds it keeps it. */}
+          {ROLES.filter((role) => role !== 'OUTLET_STAFF' || user?.roles.includes(role)).map(
+            (role) => (
+              <label key={role}>
+                <input
+                  type="checkbox"
+                  name="roles"
+                  value={role}
+                  defaultChecked={user?.roles.includes(role)}
+                />
+                {tRoles(role)}
+              </label>
+            ),
+          )}
         </div>
       </fieldset>
 

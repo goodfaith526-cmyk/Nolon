@@ -70,6 +70,7 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.partyDraft.deleteMany({ where: { customer: createdBy } });
   await prisma.party.deleteMany({ where: customers });
   await prisma.customer.deleteMany({ where: createdBy });
+  await prisma.userPartner.deleteMany({ where: { partner: createdBy } });
   await prisma.partner.deleteMany({ where: createdBy });
   await prisma.location.deleteMany({ where: { code: { startsWith: 'ZZ' } } });
   const testWarehouses = { warehouse: { code: { startsWith: 'ZZ' } } };

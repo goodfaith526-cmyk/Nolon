@@ -348,7 +348,12 @@ export class NewCustomerBookingDraftsService {
       await this.validate(user, branchId, customer, booking);
       // As the create would: a phone already taken in the branch refuses the pair.
       if (customer.phone) {
-        await this.customerDrafts.requirePhoneFree(branchId, customer.phone, 'customer.phone');
+        await this.customerDrafts.requirePhoneFree(
+          user,
+          branchId,
+          customer.phone,
+          'customer.phone',
+        );
       }
       return {
         total: null,

@@ -176,7 +176,8 @@
     "WAREHOUSE": "المستودع",
     "CUSTOMS": "الجمارك",
     "DRIVER": "سائق / نقل",
-    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق"
+    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق",
+    "OUTLET_STAFF": "موظف منفذ"
   },
   "Common": {
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
@@ -216,7 +217,10 @@
     "reviewWithAssistantHint": "المساعد يشرح لك سبب الرفض، ويقدر يجهّز الإدخال كمسودة لو حبيت.",
     "reviewWithAssistantFailed": "تعذّر فتح المساعد. حاول مرة أخرى.",
     "openAssistant": "افتح المساعد",
-    "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها."
+    "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها.",
+    "chooseCountry": "اختر الدولة",
+    "countriesInUse": "دول مستخدمة",
+    "allCountries": "كل الدول"
   },
   "Customers": {
     "title": "العملاء",
@@ -257,7 +261,8 @@
     "parties": "المرسل والمستلم والجهة المُخطَرة",
     "addParty": "إضافة جهة",
     "partiesHint": "الجهات منفصلة عن العميل وتُختار في كل حجز.",
-    "import": "استيراد من Excel"
+    "import": "استيراد من Excel",
+    "country": "الدولة"
   },
   "Rates": {
     "title": "الأسعار",
@@ -321,7 +326,7 @@
     "service_INLAND_TRANSPORT": "النقل الداخلي",
     "service_LAST_MILE": "التسليم النهائي",
     "shipment_CREATED": "تم التسجيل",
-    "shipment_PICKUP_SCHEDULED": "استلام مجدول من المرسل",
+    "shipment_PICKUP_SCHEDULED": "جاري الاستلام من المرسل",
     "shipment_RECEIVED_ORIGIN_WAREHOUSE": "استُلمت في مستودع المنشأ",
     "shipment_CONSOLIDATED": "مجمّعة (LCL)",
     "shipment_LOADED": "حُمّلت على السفينة",
@@ -646,7 +651,8 @@
     "revertReasonOther": "السبب كتابةً",
     "revertDetails": "تفاصيل (اختياري)",
     "recordedAt": "سُجّلت في {time}",
-    "revertTargetChanged": "تغيّرت الخطوة التي ستُلغى منذ فتح هذا النموذج. أغلقه وافتح «الرجوع لحالة سابقة» من جديد لمراجعة الخطوة الحالية."
+    "revertTargetChanged": "تغيّرت الخطوة التي ستُلغى منذ فتح هذا النموذج. أغلقه وافتح «الرجوع لحالة سابقة» من جديد لمراجعة الخطوة الحالية.",
+    "containerMoveWarning": "هذه الشحنة في الحاوية {container}. «{status}» تُسجَّل عادة بتحريك الحاوية، فتتحرك كل شحناتها. سجّلها هنا فقط إن كانت هذه الشحنة وحدها مختلفة."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -740,6 +746,8 @@
     "notEditable": "لا يمكن تعديل الفاتورة إلا وهي مسودة.",
     "create": "إنشاء فاتورة",
     "noneForShipment": "لا توجد فواتير لهذه الشحنة بعد.",
+    "otherInvoicesWarning": "على هذه الشحنة {count, plural, one {فاتورة واحدة غير ملغاة} two {فاتورتان غير ملغاتين} few {# فواتير غير ملغاة} many {# فاتورة غير ملغاة} other {# فاتورة غير ملغاة}}. الفاتورة الجديدة تُحاسب الشحنة مرة أخرى: راجعها أولاً.",
+    "otherInvoicesConfirm": "راجعت هذه الفواتير، وأريد إضافة فاتورة أخرى للشحنة.",
     "editDraftTitle": "تعديل مسودة الفاتورة",
     "newCreditNote": "إشعار دائن جديد",
     "creditNoteHint": "يخفض الإشعار الدائن المبلغ المتبقي على هذه الفاتورة بحد أقصى رصيدها المفتوح. يُعتمد لاحقاً فيُرحَّل القيد العكسي.",
@@ -1889,13 +1897,16 @@
     "kind_DISTRIBUTOR": "موزّع داخل السودان",
     "phone": "الهاتف",
     "email": "البريد الإلكتروني",
-    "countryCode": "الدولة (حرفان)",
-    "countryHint": "مثلاً SA أو AE أو EG أو CN أو SD.",
+    "countryCode": "الدولة",
     "location": "المدينة أو الميناء",
     "currency": "العملة",
     "branch": "الفرع",
     "commissionsLater": "عقود العمولات وتسويات الشركاء لم تُضبط بعد: تأتي في خطوة لاحقة.",
-    "loadMore": "عرض المزيد"
+    "loadMore": "عرض المزيد",
+    "noLocation": "بدون مدينة أو ميناء",
+    "chooseCountryFirst": "اختر الدولة أولاً.",
+    "noPlacesInCountry": "لا توجد مدينة أو ميناء مسجّل لهذه الدولة بعد.",
+    "addPlace": "أضِف من صفحة المواقع"
   },
   "SupplierBills": {
     "title": "فواتير الموردين",
@@ -2456,6 +2467,9 @@
     "SHIPMENT_OTHER_PORT": "الحاوية {container} تُحمَّل في ميناء غير الذي تغادر منه الشحنة {shipment}.",
     "SHIPMENT_PAST_LOADING": "الشحنة {shipment} تجاوزت مرحلة التجميع أو موقوفة أو ملغاة.",
     "SHIPMENT_IN_OTHER_CONTAINER": "الشحنة {shipment} موجودة في الحاوية {container}: أخرجها منها أو انقلها أولًا.",
+    "SHIPMENT_HAS_LIVE_INVOICES": "لا يمكن إلغاء الشحنة {shipment} لأن عليها فواتير قائمة. ألغِ مسودات فواتيرها ({drafts}) وأصدر إشعارات دائنة تغطي فواتيرها المعتمدة ({approved}) أولاً. الفاتورة المدفوعة أو المدفوعة جزئياً تمنع الإلغاء.",
+    "SHIPMENT_ALREADY_INVOICED": "الشحنة {shipment} عليها فواتير من قبل (معتمدة: {approved}، مسودات: {drafts})، أو تغيّرت من آخر مرة شفتها. راجعها، ثم أكّد إضافة فاتورة أخرى.",
+    "SHIPMENT_ALREADY_INVOICED_REVIEW": "الشحنة {shipment} عليها فواتير من قبل (معتمدة: {approved}، مسودات: {drafts}). اعتمد هذه المسودة من شاشة مراجعتها في نولون، حيث تظهر تلك الفواتير.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "الحاوية {container} تقبل حجوزات الشحن البحري المجمّع LCL فقط: اجعل الحجز بحريًا مجمّعًا.",
     "CONTAINER_BOOKING_OTHER_PORT": "الحاوية {container} تُحمَّل في ميناء آخر: يجب أن يغادر الحجز من ذلك الميناء.",
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "الحجز في الحاوية {container} يشمل الشحن الرئيسي: أضفه إلى الخدمات.",

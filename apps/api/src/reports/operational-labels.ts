@@ -163,7 +163,7 @@ const LABELS = {
 
 const SHIPMENT_STATUS = {
   CREATED: { en: 'Created', ar: 'تم التسجيل' },
-  PICKUP_SCHEDULED: { en: 'Pickup scheduled', ar: 'استلام مجدول من المرسل' },
+  PICKUP_SCHEDULED: { en: 'Pickup in progress', ar: 'جاري الاستلام من المرسل' },
   RECEIVED_ORIGIN_WAREHOUSE: { en: 'At origin warehouse', ar: 'استُلمت في مستودع المنشأ' },
   CONSOLIDATED: { en: 'Consolidated (LCL)', ar: 'مجمّعة (LCL)' },
   LOADED: { en: 'Loaded', ar: 'حُمّلت على السفينة' },

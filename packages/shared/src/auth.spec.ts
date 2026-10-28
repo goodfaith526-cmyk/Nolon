@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OUTLET_SCOPED,
   PERMISSION_MATRIX,
   PERMISSION_MODULES,
   ROLE_PERMISSIONS,
@@ -28,9 +29,9 @@ function can(role: Role, permission: Permission): boolean {
 describe('permission matrix (annex A)', () => {
   it('has one cell per role for every module, each a known level', () => {
     for (const module of PERMISSION_MODULES) {
-      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{10}$/);
+      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{11}$/);
     }
-    expect(ROLES).toHaveLength(10);
+    expect(ROLES).toHaveLength(11);
   });
 
   it('expands every cell to exactly the actions of its level', () => {
@@ -48,41 +49,42 @@ describe('permission matrix (annex A)', () => {
 
   // Spot checks against the annex table, row by row in its own words.
   const rows: [PermissionModule, string][] = [
-    ['customers', 'ك ع ك ك ع ع ع ع — ك'],
+    ['customers', 'ك ع ك ك ع ع ع ع — ك إ'],
     // Changed after the annex (owner, 2026-10-19): rate cards belong to the Sales & Marketing
-    // Manager, the tenth column (Sales' cells elsewhere).
-    ['rates', 'ك ع ع ع ع ع — — — ك'],
-    ['quotations', 'ك ع م ك ع ع — — — ك'],
-    ['bookings', 'ك ع م ك ك ع ع ع — ك'],
-    ['shipments', 'ك ع ك ع ك ع ع ع ع ع'],
-    ['consolidation', 'ك ع ك — ك ع ع — — —'],
+    // Manager, the tenth column (Sales' cells elsewhere). The eleventh column is Outlet Staff
+    // (business model plan 4.2, owner 2026-10-21).
+    ['rates', 'ك ع ع ع ع ع — — — ك ع'],
+    ['quotations', 'ك ع م ك ع ع — — — ك إ'],
+    ['bookings', 'ك ع م ك ك ع ع ع — ك إ'],
+    ['shipments', 'ك ع ك ع ك ع ع ع ع ع ع'],
+    ['consolidation', 'ك ع ك — ك ع ع — — — —'],
     // Added after the annex (owner, 2026-10-14): booking into an open container.
-    ['container_booking', 'ك — — إ إ — — — — إ'],
-    ['warehouse', 'ك ع ك ع ع ع ك ع — ع'],
-    ['customs', 'ك ع ك ع ع ع — ك — ع'],
-    ['transport_fleet', 'ك ع ك — ك ع — — — —'],
-    ['transport_trips', 'ك ع ك ع ك ع ع — إ ع'],
-    ['pod', 'ك ع ك ع ك ع ك — إ ع'],
-    ['documents', 'ك ع ك إ إ إ إ إ إ إ'],
-    ['customer_invoices', 'ك ع م ع ع ك — — — ع'],
-    ['credit_notes', 'ك ع م — — إ — — — —'],
-    ['receipts', 'ك ع ع ع — ك — — — ع'],
-    ['suppliers', 'ك ع م — إ ك — — — —'],
+    ['container_booking', 'ك — — إ إ — — — — إ —'],
+    ['warehouse', 'ك ع ك ع ع ع ك ع — ع —'],
+    ['customs', 'ك ع ك ع ع ع — ك — ع —'],
+    ['transport_fleet', 'ك ع ك — ك ع — — — — —'],
+    ['transport_trips', 'ك ع ك ع ك ع ع — إ ع —'],
+    ['pod', 'ك ع ك ع ك ع ك — إ ع —'],
+    ['documents', 'ك ع ك إ إ إ إ إ إ إ إ'],
+    ['customer_invoices', 'ك ع م ع ع ك — — — ع —'],
+    ['credit_notes', 'ك ع م — — إ — — — — —'],
+    ['receipts', 'ك ع ع ع — ك — — — ع —'],
+    ['suppliers', 'ك ع م — إ ك — — — — —'],
     // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
-    ['partners', 'ك ع ك ع ع ع — — — ك'],
-    ['supplier_payments', 'ك ع م — — ك — — — —'],
-    ['expenses', 'ك ع م — إ ك إ إ إ —'],
-    ['manual_journals', 'ك ع — — — ك — — — —'],
-    ['chart_of_accounts', 'ك ع — — — م — — — —'],
-    ['fx_rates', 'ك ع — — — ك — — — —'],
-    ['shipment_profitability', 'ك ع ع — — ع — — — —'],
-    ['financial_reports', 'ك ع ع — — ع — — — —'],
-    ['operational_reports', 'ك ع ع ع ع ع ع ع — ع'],
-    ['dashboards', 'ك ع ع ع ع ع — — — ع'],
-    ['alert_settings', 'ك — — — — — — — — —'],
-    ['master_data', 'ك ع ع ع ع ع ع ع ع ع'],
-    ['users', 'ك — — — — — — — — —'],
-    ['audit_log', 'ع ع ع — — — — — — —'],
+    ['partners', 'ك ع ك ع ع ع — — — ك ع'],
+    ['supplier_payments', 'ك ع م — — ك — — — — —'],
+    ['expenses', 'ك ع م — إ ك إ إ إ — —'],
+    ['manual_journals', 'ك ع — — — ك — — — — —'],
+    ['chart_of_accounts', 'ك ع — — — م — — — — —'],
+    ['fx_rates', 'ك ع — — — ك — — — — —'],
+    ['shipment_profitability', 'ك ع ع — — ع — — — — —'],
+    ['financial_reports', 'ك ع ع — — ع — — — — —'],
+    ['operational_reports', 'ك ع ع ع ع ع ع ع — ع —'],
+    ['dashboards', 'ك ع ع ع ع ع — — — ع —'],
+    ['alert_settings', 'ك — — — — — — — — — —'],
+    ['master_data', 'ك ع ع ع ع ع ع ع ع ع ع'],
+    ['users', 'ك — — — — — — — — — —'],
+    ['audit_log', 'ع ع ع — — — — — — — —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 
@@ -120,6 +122,26 @@ describe('permission matrix (annex A)', () => {
     expect(can('SALES', 'consolidation:view')).toBe(false);
     expect(can('SALES', 'consolidation:update')).toBe(false);
     expect(can('BRANCH_MANAGER', 'container_booking:create')).toBe(false);
+    // Outlet staff (plan 4.2): no approving, no money, no costs, no reports, no administration.
+    expect(can('OUTLET_STAFF', 'quotations:approve')).toBe(false);
+    expect(can('OUTLET_STAFF', 'bookings:approve')).toBe(false);
+    expect(can('OUTLET_STAFF', 'shipments:update')).toBe(false);
+    expect(can('OUTLET_STAFF', 'rates:create')).toBe(false);
+    expect(can('OUTLET_STAFF', 'partners:update')).toBe(false);
+    expect(can('OUTLET_STAFF', 'customer_invoices:view')).toBe(false);
+    expect(can('OUTLET_STAFF', 'shipment_profitability:view')).toBe(false);
+    expect(can('OUTLET_STAFF', 'operational_reports:view')).toBe(false);
+    expect(can('OUTLET_STAFF', 'users:view')).toBe(false);
+  });
+
+  it('gives Outlet Staff only outlet-scoped modules, rates and master data', () => {
+    const modules = new Set(
+      [...ROLE_PERMISSIONS.OUTLET_STAFF].map((p) => p.slice(0, p.indexOf(':'))),
+    );
+    for (const module of modules) {
+      expect([...OUTLET_SCOPED, 'rates', 'master_data'], module).toContain(module);
+    }
+    expect(hasAllBranchAccess(['OUTLET_STAFF'])).toBe(false);
   });
 });
 

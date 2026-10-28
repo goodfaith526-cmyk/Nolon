@@ -3,9 +3,9 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Inject,
   Injectable,
-  HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
 import type {
@@ -29,6 +29,7 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { shipmentScope } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
@@ -100,6 +101,29 @@ const closedContainerLinks = {
   take: 1,
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
+/**
+ * The containers a shipment is or was in, for its page (not cancelled). The closed one (any status
+ * but OPEN, unpacked included) blocks undoing its consolidation exactly as the locked check
+ * (closedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
+ * the shipment goes on by itself).
+ */
+const containerLinks = {
+  where: { consolidation: { status: { not: 'CANCELLED' } } },
+  select: { consolidation: { select: { number: true, status: true } } },
+} satisfies Prisma.Shipment$consolidationLinksArgs;
+
+/**
+ * The statuses a container's moves give its shipments (consolidation-rules shipmentStatusFor):
+ * recorded by hand on the page of a shipment in a container, they come with a warning (owner
+ * choice Q3, docs/reviews/shipment-status-history-2026-10-27.md).
+ */
+const CONTAINER_MOVED: readonly ShipmentStatus[] = [
+  'CONSOLIDATED',
+  'LOADED',
+  'DEPARTED',
+  'ARRIVED_PORT',
+];
+
 const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
 
 const details = {
@@ -109,7 +133,7 @@ const details = {
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
-  consolidationLinks: closedContainerLinks,
+  consolidationLinks: containerLinks,
 } satisfies Prisma.ShipmentInclude;
 
 type ShipmentWithDetails = Prisma.ShipmentGetPayload<{ include: typeof details }>;
@@ -141,6 +165,7 @@ export class ShipmentsService {
     private readonly customers: CustomersService,
     private readonly masterData: MasterDataService,
     private readonly bookingLifecycle: BookingLifecycleService,
+    private readonly invoices: ShipmentInvoicesRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -363,10 +388,17 @@ export class ShipmentsService {
     branchId: string;
     sharedBranchIds: string[];
     status: ShipmentStatus;
+    salesOutletId: string | null;
   }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id, ...this.scope(user) },
-      select: { id: true, branchId: true, status: true, sharedBranches: sharedBranchesSelect },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        salesOutletId: true,
+        sharedBranches: sharedBranchesSelect,
+      },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
     const { sharedBranches, ...rest } = shipment;
@@ -431,8 +463,9 @@ export class ShipmentsService {
 
   /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
-   * customer, parties, route, services and cargo lines are copied from the booking, and so is its
-   * number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among shipments).
+   * customer, parties, route, services, cargo lines and sales outlet are copied from the booking,
+   * and so is its number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among
+   * shipments).
    */
   async createForBooking(tx: Tx, user: AuthUser, bookingId: string): Promise<{ id: string }> {
     const booking = await tx.booking.findUniqueOrThrow({
@@ -456,6 +489,7 @@ export class ShipmentsService {
         shipperId: booking.shipperId,
         consigneeId: booking.consigneeId,
         notifyPartyId: booking.notifyPartyId,
+        salesOutletId: booking.salesOutletId,
         trackingToken: newTrackingToken(),
         createdById: user.id,
         items: {
@@ -1109,8 +1143,27 @@ export class ShipmentsService {
         statusBeforeHold: null,
         holdReason: null,
       },
-      after: (tx) => this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason),
+      after: async (tx) => {
+        await this.requireNoLiveInvoices(tx, shipment);
+        await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
+      },
     };
+  }
+
+  /**
+   * Annex B: a shipment that an invoice still bills is not cancelled (owner decision Q2). The
+   * caller holds the shipment's row lock exclusively; invoices lock it (share) before they are
+   * created or approved, so none appears or gets approved between this check and the commit.
+   */
+  private async requireNoLiveInvoices(tx: Tx, shipment: LockedShipment): Promise<void> {
+    const { approved, drafts } = await this.invoices.get().liveInvoicesInTx(tx, shipment.id);
+    if (approved.length === 0 && drafts === 0) return;
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'SHIPMENT_HAS_LIVE_INVOICES',
+      `Shipment ${shipment.number} still has invoices: cancel its draft invoices (${drafts}) and fully credit its approved ones (${approved.join(', ') || 'none'}); a paid invoice blocks the cancellation`,
+      { shipment: shipment.number, approved: approved.join(', ') || '—', drafts: String(drafts) },
+    );
   }
 
   private async applyEvent(user: AuthUser, id: string, plan: Planner): Promise<void> {
@@ -1417,10 +1470,10 @@ function actionsFor(
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
   const undoes = revertUndoes(path);
-  const container =
-    undoes?.status === 'CONSOLIDATED'
-      ? (s.consolidationLinks[0]?.consolidation.number ?? null)
-      : null;
+  const links = s.consolidationLinks.map((link) => link.consolidation);
+  const inContainer = links.find((c) => c.status !== 'DECONSOLIDATED') ?? null;
+  const closed = links.find((c) => c.status !== 'OPEN') ?? null;
+  const container = undoes?.status === 'CONSOLIDATED' && closed ? closed.number : null;
   const canRevert = has('shipments:approve') && undoes !== null && container === null;
   const transitions = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
     permissionForTransition(next).some(has),
@@ -1432,8 +1485,13 @@ function actionsFor(
       suggestedLocations[next] = place === 'ORIGIN' ? s.originLocationId : s.destinationLocationId;
     }
   }
+  const byContainer = transitions.filter((next) => CONTAINER_MOVED.includes(next));
   return {
     transitions,
+    containerMoves:
+      inContainer && byContainer.length > 0
+        ? { container: inContainer.number, statuses: byContainer }
+        : null,
     canHold: canUpdate && canHold(s.status),
     canResume: canUpdate && s.status === 'ON_HOLD',
     revertTo: canRevert ? revertTarget(path) : null,
