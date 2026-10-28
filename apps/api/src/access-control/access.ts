@@ -3,6 +3,7 @@ import {
   NON_GRANTABLE_MODULES,
   RESTRICTED_ROLES,
   ROLE_PERMISSIONS,
+  takesAddedPermissions,
   isPermission,
   permissionModule,
   type Permission,
@@ -141,8 +142,10 @@ export function teamPermissions(team: AccessRows['teams'][number]): Set<Permissi
   for (const change of team.changes) {
     if (!isPermission(change.permission)) continue;
     if (change.effect === 'DENY') result.delete(change.permission);
-    // A restricted team takes no added permission (also refused by a trigger).
-    else if (!team.restricted && grantable(change.permission)) result.add(change.permission);
+    // The Driver's restricted team takes no added permission (also refused by a trigger); the
+    // Outlet Staff team does, its outlet filter applying whatever it holds.
+    else if (takesAddedPermissions(team) && grantable(change.permission))
+      result.add(change.permission);
   }
   return result;
 }

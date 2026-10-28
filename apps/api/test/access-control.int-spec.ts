@@ -226,13 +226,38 @@ describe('access control (plan 03, P-1)', () => {
       ).rejects.toThrow();
     });
 
-    it('never widens a restricted team (driver, outlet staff)', async () => {
-      for (const teamId of [TEAM.DRIVER, TEAM.OUTLET_STAFF]) {
+    it('never widens the driver team, nor gives a restricted team to anyone directly', async () => {
+      await expect(
+        t.prisma.teamPermissionChange.create({
+          data: {
+            teamId: TEAM.DRIVER,
+            permission: 'customers:view',
+            effect: 'ALLOW',
+            createdById: admin.id,
+          },
+        }),
+      ).rejects.toThrow();
+      // The outlet staff team is the owner's to widen (2026-10-28), never with user or access
+      // management.
+      for (const permission of ['users:view', 'access_control:update']) {
         await expect(
           t.prisma.teamPermissionChange.create({
-            data: { teamId, permission: 'customers:view', effect: 'ALLOW', createdById: admin.id },
+            data: { teamId: TEAM.OUTLET_STAFF, permission, effect: 'ALLOW', createdById: admin.id },
           }),
         ).rejects.toThrow();
+      }
+      await t.prisma.teamPermissionChange.create({
+        data: {
+          teamId: TEAM.OUTLET_STAFF,
+          permission: 'customer_invoices:view',
+          effect: 'ALLOW',
+          createdById: admin.id,
+        },
+      });
+      await t.prisma.teamPermissionChange.deleteMany({
+        where: { teamId: TEAM.OUTLET_STAFF, permission: 'customer_invoices:view' },
+      });
+      for (const teamId of [TEAM.DRIVER, TEAM.OUTLET_STAFF]) {
         const user = await person(['SALES'], ['DXB']);
         await expect(
           t.prisma.userBranchTeam.create({
