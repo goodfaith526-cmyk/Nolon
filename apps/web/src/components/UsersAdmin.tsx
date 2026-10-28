@@ -16,6 +16,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { ApiError, api } from '@/lib/api';
 import { field } from '@/lib/form';
+import { PartnerSelect } from './partners/PartnerSelect';
 import { can, useMe } from './StaffShell';
 
 type Mode =
@@ -234,6 +235,8 @@ interface UserFormBody {
   preferredLocale: Locale;
   roles: Role[];
   branchIds: string[];
+  /** Outlet Staff only: their one sales outlet, of their one branch. */
+  outletIds?: string[];
 }
 
 function UserForm({
@@ -250,6 +253,9 @@ function UserForm({
   const locale = useLocale();
   const me = useMe();
   const [busy, setBusy] = useState(false);
+  const [outletStaff, setOutletStaff] = useState(user?.roles.includes('OUTLET_STAFF') ?? false);
+  const [branchIds, setBranchIds] = useState<string[]>(user?.branchIds ?? []);
+  const [outletId, setOutletId] = useState(user?.outletIds[0] ?? '');
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -260,6 +266,7 @@ function UserForm({
       roles: ROLES.filter((role) => form.getAll('roles').includes(role)),
       branchIds: form.getAll('branchIds').map(String),
     };
+    if (outletStaff) body.outletIds = outletId ? [outletId] : [];
     if (!user) {
       body.email = field(form, 'email');
       body.password = field(form, 'password');
@@ -311,21 +318,25 @@ function UserForm({
       <fieldset>
         <legend>{t('roles')}</legend>
         <div className="checks">
-          {/* Outlet Staff stays locked (business model plan 4.2) until the owner opens it; a user
-              who already holds it keeps it. */}
-          {ROLES.filter((role) => role !== 'OUTLET_STAFF' || user?.roles.includes(role)).map(
-            (role) => (
-              <label key={role}>
-                <input
-                  type="checkbox"
-                  name="roles"
-                  value={role}
-                  defaultChecked={user?.roles.includes(role)}
-                />
-                {tRoles(role)}
-              </label>
-            ),
-          )}
+          {/* Outlet Staff is offered once the owner opens it (business model plan 4.2); a user
+              who already holds it keeps it. The API checks either way. */}
+          {ROLES.filter(
+            (role) =>
+              role !== 'OUTLET_STAFF' || me.outletStaffAssignable || user?.roles.includes(role),
+          ).map((role) => (
+            <label key={role}>
+              <input
+                type="checkbox"
+                name="roles"
+                value={role}
+                defaultChecked={user?.roles.includes(role)}
+                onChange={
+                  role === 'OUTLET_STAFF' ? (e) => setOutletStaff(e.target.checked) : undefined
+                }
+              />
+              {tRoles(role)}
+            </label>
+          ))}
         </div>
       </fieldset>
 
@@ -340,12 +351,35 @@ function UserForm({
                 name="branchIds"
                 value={branch.id}
                 defaultChecked={user?.branchIds.includes(branch.id)}
+                onChange={(e) =>
+                  setBranchIds((ids) =>
+                    e.target.checked ? [...ids, branch.id] : ids.filter((id) => id !== branch.id),
+                  )
+                }
               />
               {locale === 'ar' ? branch.nameAr : branch.nameEn}
             </label>
           ))}
         </div>
       </fieldset>
+
+      {outletStaff && (
+        <label className="field">
+          <span>{t('outlet')}</span>
+          <span className="muted">{t('outletHint')}</span>
+          {branchIds.length === 1 ? (
+            <PartnerSelect
+              kind="SALES_OUTLET"
+              branchIds={branchIds}
+              held={null}
+              value={outletId}
+              onChange={setOutletId}
+            />
+          ) : (
+            <span className="error">{t('outletOneBranch')}</span>
+          )}
+        </label>
+      )}
 
       <div className="actions">
         <button type="submit" className="primary" disabled={busy}>

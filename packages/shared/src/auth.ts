@@ -308,4 +308,6 @@ export interface AuthMeResponse {
    * true when the assistant allows NOLON's address to frame it; false: the button opens a new tab.
    */
   assistantPanel: boolean;
+  /** Whether the users screen offers the Outlet Staff role (OUTLET_STAFF_ASSIGNABLE). */
+  outletStaffAssignable: boolean;
 }
