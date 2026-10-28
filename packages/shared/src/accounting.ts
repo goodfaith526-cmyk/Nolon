@@ -366,6 +366,12 @@ export interface ShipmentInvoiceRefDto {
   status: InvoiceStatus;
 }
 
+/**
+ * The most invoice ids a request may acknowledge. A shipment with more invoices that are not
+ * cancelled takes no further invoice until some are cancelled.
+ */
+export const MAX_ACKNOWLEDGED_INVOICES = 1000;
+
 /** A draft for the shipment, prefilled from its quotation when it has one. */
 export interface CreateCustomerInvoiceRequest {
   shipmentId: string;

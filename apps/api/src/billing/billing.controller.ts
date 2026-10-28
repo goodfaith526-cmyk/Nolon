@@ -13,6 +13,7 @@ import {
 import {
   CREDIT_NOTE_STATUSES,
   INVOICE_STATUSES,
+  MAX_ACKNOWLEDGED_INVOICES,
   PAYMENT_STATUSES,
   RECEIPT_STATUSES,
   type CreditNoteDto,
@@ -56,7 +57,10 @@ export const invoiceLine = z
   })
   .strict();
 const createInvoiceBody = z
-  .object({ shipmentId: z.uuid(), acknowledgedInvoiceIds: z.array(z.uuid()).max(100).optional() })
+  .object({
+    shipmentId: z.uuid(),
+    acknowledgedInvoiceIds: z.array(z.uuid()).max(MAX_ACKNOWLEDGED_INVOICES).optional(),
+  })
   .strict();
 const updateInvoiceBody = z
   .object({

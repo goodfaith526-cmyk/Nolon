@@ -14,6 +14,7 @@ import {
   type AssistantDraftDto,
   DRAFT_IDEMPOTENCY_KEY_PATTERN,
   DRAFT_STATUSES,
+  MAX_ACKNOWLEDGED_INVOICES,
   type DraftPreCheckDto,
   type EntryDraftSummaryDto,
   type InvoiceDraftDto,
@@ -85,7 +86,7 @@ const updateBody = z
 const approveBody = z
   .object({
     version: z.number().int().min(1),
-    acknowledgedInvoiceIds: z.array(z.uuid()).max(100).optional(),
+    acknowledgedInvoiceIds: z.array(z.uuid()).max(MAX_ACKNOWLEDGED_INVOICES).optional(),
   })
   .strict();
 const assistantApproveBody = z
