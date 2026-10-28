@@ -87,6 +87,8 @@ describe('permission matrix (annex A)', () => {
     ['audit_log', 'ع ع ع — — — — — — — —'],
     // Plan 03 (owner, 2026-10-27): the permissions screen, the Administrator only.
     ['access_control', 'ك — — — — — — — — — —'],
+    // Plan 04a section 2 (2026-10-28): staff review of the shipping bot's requests.
+    ['cs_booking_requests', 'ك ع ك ك ع — — — — ك —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 
