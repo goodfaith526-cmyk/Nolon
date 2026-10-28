@@ -2,13 +2,14 @@
 
 import type { CustomerInvoiceDto, CustomerInvoiceSummaryDto, Page } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { InvoiceNumber } from './Invoices';
+import { OtherInvoicesCheck } from './OtherInvoicesCheck';
 import { Money } from './common';
 
 /** The shipment's customer invoices, and a button that starts a draft prefilled from the quote. */
@@ -20,12 +21,23 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
   const [invoices, setInvoices] = useState<CustomerInvoiceSummaryDto[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  // The invoices another invoice would bill the shipment on top of (Q3).
+  const live = (invoices ?? []).filter((i) => i.status !== 'CANCELLED');
+
+  const load = useCallback(
+    () =>
+      api<Page<CustomerInvoiceSummaryDto>>(
+        `/customer-invoices?shipmentId=${shipmentId}&pageSize=50`,
+      ).then((page) => page.items),
+    [shipmentId],
+  );
 
   useEffect(() => {
     let cancelled = false;
-    api<Page<CustomerInvoiceSummaryDto>>(`/customer-invoices?shipmentId=${shipmentId}&pageSize=50`)
-      .then((page) => {
-        if (!cancelled) setInvoices(page.items);
+    load()
+      .then((items) => {
+        if (!cancelled) setInvoices(items);
       })
       .catch((e: unknown) => {
         if (!cancelled) setNotice({ ok: false, text: failure(e) });
@@ -33,7 +45,7 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [shipmentId, failure]);
+  }, [load, failure]);
 
   async function create() {
     setBusy(true);
@@ -41,12 +53,17 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
     try {
       const draft = await api<CustomerInvoiceDto>('/customer-invoices', {
         method: 'POST',
-        body: { shipmentId },
+        body: { shipmentId, acknowledgedInvoiceIds: live.map((i) => i.id) },
       });
       router.push(`/invoices/${draft.id}/edit`);
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
       setBusy(false);
+      // The shipment's invoices changed meanwhile: show them as they are now, to be checked again.
+      setConfirmed(false);
+      load()
+        .then(setInvoices)
+        .catch(() => undefined);
     }
   }
 
@@ -55,7 +72,12 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
       <div className="panel-head">
         <h2>{t('title')}</h2>
         {can(me, 'customer_invoices:create') && (
-          <button type="button" className="primary" disabled={busy} onClick={() => void create()}>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy || invoices === null || (live.length > 0 && !confirmed)}
+            onClick={() => void create()}
+          >
             {t('create')}
           </button>
         )}
@@ -63,6 +85,16 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
       {notice && (
         <div className="panel-body">
           <Notice notice={notice} />
+        </div>
+      )}
+      {can(me, 'customer_invoices:create') && live.length > 0 && (
+        <div className="panel-body">
+          <OtherInvoicesCheck
+            invoices={live}
+            checked={confirmed}
+            onChange={setConfirmed}
+            disabled={busy}
+          />
         </div>
       )}
       {invoices === null ? null : invoices.length === 0 ? (

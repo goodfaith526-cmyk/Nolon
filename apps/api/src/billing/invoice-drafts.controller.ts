@@ -82,7 +82,12 @@ const updateBody = z
   .partial()
   .extend({ version: z.number().int().min(1) })
   .strict();
-const approveBody = z.object({ version: z.number().int().min(1) }).strict();
+const approveBody = z
+  .object({
+    version: z.number().int().min(1),
+    acknowledgedInvoiceIds: z.array(z.uuid()).max(100).optional(),
+  })
+  .strict();
 const assistantApproveBody = z
   .object({ version: z.number().int().min(1), contentHash: z.string().regex(/^[0-9a-f]{64}$/) })
   .strict();
@@ -195,7 +200,8 @@ export class InvoiceDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<InvoiceDraftDto> {
-    return this.drafts.approve(user, id, parse(approveBody, body).version);
+    const { version, acknowledgedInvoiceIds } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, 'SESSION', acknowledgedInvoiceIds);
   }
 
   @Post(':id/reject')

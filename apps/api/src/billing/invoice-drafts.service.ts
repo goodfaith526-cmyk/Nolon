@@ -534,6 +534,10 @@ export class InvoiceDraftsService {
         rateCardId: l.rateCardId,
       })),
       check,
+      shipmentInvoices:
+        draft.shipmentId && draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
+          ? await this.invoices.invoicesOfShipment(draft.shipmentId)
+          : [],
     };
   }
 
@@ -546,6 +550,7 @@ export class InvoiceDraftsService {
     id: string,
     version: number,
     via: DecisionVia = 'SESSION',
+    acknowledgedInvoiceIds: readonly string[] = [],
   ): Promise<InvoiceDraftDto> {
     this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
@@ -568,7 +573,12 @@ export class InvoiceDraftsService {
           requireApprovable(invoiceDraftCompleteness(row));
         },
         record: async () => {
-          invoiceId = await this.invoices.insertInTx(tx, user, prepared);
+          // The shipment's other invoices (Q3): the review screen lists them and the person
+          // confirms them; the assistant's chat cannot, so it sends a shipment with invoices there.
+          invoiceId = await this.invoices.insertInTx(tx, user, prepared, {
+            invoiceIds: acknowledgedInvoiceIds,
+            listed: via === 'SESSION',
+          });
         },
       });
       if (decided) {
@@ -705,7 +715,7 @@ function baseFields(
   d: DraftRow,
   user: AuthUser,
   now: Date,
-): Omit<InvoiceDraftDto, 'request' | 'check' | 'priceSources'> {
+): Omit<InvoiceDraftDto, 'request' | 'check' | 'priceSources' | 'shipmentInvoices'> {
   const status = draftStatus(d.state, d.expiresAt, now);
   const open =
     status === 'DRAFT' && !user.agent && user.permissions.has('customer_invoices:create');

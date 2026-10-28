@@ -55,7 +55,9 @@ export const invoiceLine = z
     unitPrice: amount,
   })
   .strict();
-const createInvoiceBody = z.object({ shipmentId: z.uuid() }).strict();
+const createInvoiceBody = z
+  .object({ shipmentId: z.uuid(), acknowledgedInvoiceIds: z.array(z.uuid()).max(100).optional() })
+  .strict();
 const updateInvoiceBody = z
   .object({
     currency: currencyCode,
@@ -176,7 +178,8 @@ export class InvoicesController {
   @Post()
   @RequirePermission('customer_invoices:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerInvoiceDto> {
-    return this.invoices.createForShipment(user, parse(createInvoiceBody, body).shipmentId);
+    const { shipmentId, acknowledgedInvoiceIds } = parse(createInvoiceBody, body);
+    return this.invoices.createForShipment(user, shipmentId, acknowledgedInvoiceIds);
   }
 
   /** A customer's open invoice at go-live (annex C rule 15), approved and posted at once. */

@@ -355,9 +355,26 @@ export interface UpdateCustomerInvoiceRequest extends CustomerInvoiceInput {
   repriced?: boolean;
 }
 
+/**
+ * An invoice of a shipment that is not cancelled, as the person sees them before adding another
+ * invoice to the shipment (owner decision Q3).
+ */
+export interface ShipmentInvoiceRefDto {
+  id: string;
+  /** Null while the invoice is a draft. */
+  number: string | null;
+  status: InvoiceStatus;
+}
+
 /** A draft for the shipment, prefilled from its quotation when it has one. */
 export interface CreateCustomerInvoiceRequest {
   shipmentId: string;
+  /**
+   * The ids of the shipment's invoices that are not cancelled, as the person saw them (Q3). The
+   * API compares them with the shipment's invoices under the shipment's lock and refuses (409
+   * SHIPMENT_ALREADY_INVOICED) when they differ. Left out: the shipment must have none.
+   */
+  acknowledgedInvoiceIds?: string[];
 }
 
 export interface ReceiptAllocationDto {

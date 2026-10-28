@@ -811,6 +811,64 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('a second invoice for a shipment names the invoices it has (decision Q3)', () => {
+    const create = (
+      shipmentId: string,
+      acknowledgedInvoiceIds?: string[],
+      cookie = cookies.financePts,
+    ) =>
+      post('/customer-invoices', cookie, {
+        shipmentId,
+        ...(acknowledgedInvoiceIds ? { acknowledgedInvoiceIds } : {}),
+      });
+    const refused = (res: Response, approved: string, drafts: string) => {
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'SHIPMENT_ALREADY_INVOICED',
+        params: { approved, drafts },
+      });
+    };
+
+    it('is refused until the request names exactly the invoices that are not cancelled', async () => {
+      const invoice = await approvedInvoice();
+      const shipmentId = invoice.shipmentId ?? '';
+      // Another branch and a missing permission are refused first.
+      await create(shipmentId, [invoice.id], cookies.financeJed).expect(404);
+      await create(shipmentId, [invoice.id], cookies.salesPts).expect(403);
+      refused(await create(shipmentId), invoice.number ?? '', '0');
+      refused(await create(shipmentId, []), invoice.number ?? '', '0');
+      refused(await create(shipmentId, [randomUUID()]), invoice.number ?? '', '0');
+      refused(await create(shipmentId, [invoice.id, randomUUID()]), invoice.number ?? '', '0');
+      const second = (await create(shipmentId, [invoice.id]).expect(201))
+        .body as CustomerInvoiceDto;
+      // A third one names both; once the second draft is cancelled, the first alone.
+      refused(await create(shipmentId, [invoice.id]), invoice.number ?? '', '1');
+      await post(`/customer-invoices/${second.id}/cancel`, cookies.financePts, {
+        reason: 'Duplicate',
+      }).expect(200);
+      await create(shipmentId, [invoice.id]).expect(201);
+      // A shipment without invoices takes none named, and refuses a list.
+      const fresh = await shipment();
+      refused(await create(fresh, [invoice.id]), '—', '0');
+      await create(fresh).expect(201);
+    });
+
+    it('two first invoices created at once: one is created, the other is refused', async () => {
+      const shipmentId = await shipment();
+      const { pending } = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipmentId}::uuid FOR UPDATE`;
+          const started = Promise.all([create(shipmentId), create(shipmentId)]);
+          await waitForLockWaiter(t.prisma, 2);
+          return { pending: started };
+        },
+        { timeout: 15_000 },
+      );
+      expect((await pending).map((r) => r.status).sort()).toEqual([201, 409]);
+      expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+    });
+  });
+
   describe('suppliers and bills', () => {
     it('suppliers are permissioned master data; carriers are linked to them', async () => {
       await post('/suppliers', cookies.salesPts, { name: 'Nope' }).expect(403);

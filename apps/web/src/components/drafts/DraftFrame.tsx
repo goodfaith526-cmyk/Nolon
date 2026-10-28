@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { type ReactNode, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
+import { failureStatus } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { Money, ReasonForm } from '../finance/common';
 import { DRAFT_KINDS } from './draft-kinds';
@@ -69,6 +70,13 @@ export function DraftFrame<
       onChanged(saved);
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
+      // Refused because something changed since the draft was read (another version, or the
+      // shipment's invoices): show it as it is now, so the person decides on that.
+      if (action === 'approve' && failureStatus(e) === 409) {
+        api<D>(`${apiPath}/${draft.id}`)
+          .then(onChanged)
+          .catch(() => undefined);
+      }
     } finally {
       setBusy(false);
     }
