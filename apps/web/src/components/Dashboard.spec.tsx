@@ -92,7 +92,10 @@ describe('Home page', () => {
     data = {
       ...NONE,
       drafts: { awaitingReview: 3 },
-      quotations: { draft: 0, sent: 0, approved: 0, recent: [] },
+      // Branch- or company-wide counts, not work assigned to this user: never listed.
+      rates: { draft: 3, approved: 0 },
+      quotations: { draft: 0, sent: 0, approved: 2, recent: [] },
+      bookings: { draft: 4, confirmed: 0, recent: [] },
       alerts: {
         total: 6,
         byKind: [
@@ -108,8 +111,9 @@ describe('Home page', () => {
       ['/drafts', 'draftsAwaitingReview3'],
       ['/alerts', 'kind_SHIPMENT_ARRIVING_SOON2'],
     ]);
-    // Approved quotations: none, so no row.
+    expect(page.textContent).not.toContain('draftRates');
     expect(page.textContent).not.toContain('approvedToBook');
+    expect(page.textContent).not.toContain('draftBookings');
   });
 
   it('says nothing waits when the user may see the sources but all are empty', async () => {

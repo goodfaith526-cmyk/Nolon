@@ -97,10 +97,7 @@
     "draftsAwaitingReview": "Assistant drafts to review",
     "shortcuts": "Shortcuts",
     "needsAction": "Needs your action",
-    "allClear": "Nothing is waiting for you right now.",
-    "approvedToBook": "Approved quotations to book",
-    "draftBookings": "Draft bookings",
-    "draftRates": "Draft rates to approve"
+    "allClear": "Nothing is waiting for you right now."
   },
   "Account": {
     "title": "Change password",

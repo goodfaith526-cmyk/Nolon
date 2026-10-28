@@ -108,11 +108,13 @@ export function Dashboard() {
     ? t('allBranches')
     : list.format(me.branches.map((b) => (locale === 'ar' ? b.nameAr : b.nameEn)));
 
-  // What waits for the user, most pressing first. A source the API sent as null is one the user
-  // has no permission for; a source with nothing waiting adds no row.
+  // What waits for the user, most pressing first: only figures already scoped to them, their
+  // alerts and the assistant drafts they may decide now. Branch- or company-wide counts (draft
+  // rates, approved quotations, draft bookings) say nothing about what this user must act on, so
+  // they are not listed. A source the API sent as null is one the user has no permission for; a
+  // source with nothing waiting adds no row.
   const actions: ActionItem[] = [];
-  const hasActionSource =
-    !!data && !!(data.alerts || data.drafts || data.quotations || data.bookings || data.rates);
+  const hasActionSource = !!data && !!(data.alerts || data.drafts);
   if (data) {
     for (const a of data.alerts?.byKind ?? []) {
       actions.push({
@@ -123,36 +125,13 @@ export function Dashboard() {
         href: '/alerts',
       });
     }
-    actions.push(
-      {
-        key: 'drafts',
-        tone: 'warn',
-        label: t('draftsAwaitingReview'),
-        count: data.drafts?.awaitingReview ?? 0,
-        href: '/drafts',
-      },
-      {
-        key: 'quotations',
-        tone: 'info',
-        label: t('approvedToBook'),
-        count: data.quotations?.approved ?? 0,
-        href: '/quotations',
-      },
-      {
-        key: 'bookings',
-        tone: 'info',
-        label: t('draftBookings'),
-        count: data.bookings?.draft ?? 0,
-        href: '/bookings',
-      },
-      {
-        key: 'rates',
-        tone: 'info',
-        label: t('draftRates'),
-        count: data.rates?.draft ?? 0,
-        href: '/rates',
-      },
-    );
+    actions.push({
+      key: 'drafts',
+      tone: 'warn',
+      label: t('draftsAwaitingReview'),
+      count: data.drafts?.awaitingReview ?? 0,
+      href: '/drafts',
+    });
   }
   const waiting = actions
     .filter((a) => a.count > 0)

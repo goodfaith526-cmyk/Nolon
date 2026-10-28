@@ -97,10 +97,7 @@
     "draftsAwaitingReview": "مسودات المساعد للمراجعة",
     "shortcuts": "اختصارات",
     "needsAction": "يحتاج إجراءك",
-    "allClear": "لا شيء ينتظرك الآن.",
-    "approvedToBook": "عروض موافق عليها تنتظر الحجز",
-    "draftBookings": "حجوزات مسودة",
-    "draftRates": "أسعار مسودة تنتظر الاعتماد"
+    "allClear": "لا شيء ينتظرك الآن."
   },
   "Account": {
     "title": "تغيير كلمة المرور",
