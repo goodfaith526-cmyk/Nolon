@@ -1,5 +1,5 @@
 import type { AccountType, JournalSource, ReceiptStatus } from './accounting.js';
-import type { RateUnit } from './commercial.js';
+import type { BookingService, RateUnit } from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 
 /**
@@ -246,10 +246,11 @@ export interface ReportLocationDto {
 }
 
 /**
- * Why a shipment's actual profit may not be final yet (business model plan 6.2): revenue posted
- * without any cost, a transport accrual still open on one of its trips, or not closed yet.
+ * Why a shipment's actual profit may not be final yet (business model plan 6.2): a booked service
+ * without any cost recorded for it (`missingCosts` names them), a transport accrual still open on
+ * one of its trips, or not closed yet.
  */
-export const PROFIT_INCOMPLETE_REASONS = ['NO_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED'] as const;
+export const PROFIT_INCOMPLETE_REASONS = ['MISSING_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED'] as const;
 export type ProfitIncompleteReason = (typeof PROFIT_INCOMPLETE_REASONS)[number];
 
 /**
@@ -282,6 +283,8 @@ export interface ShipmentProfitDto extends ProfitFiguresDto {
   category: ProfitCategoryDto;
   /** Empty when the figures are final. */
   incompleteReasons: ProfitIncompleteReason[];
+  /** The booked services with no cost recorded for them yet (MISSING_COST). */
+  missingCosts: BookingService[];
   /** Days from first receipt at origin to proof of delivery, to 1 place; null: not measured. */
   cycleDays: DecimalString | null;
 }

@@ -1070,9 +1070,10 @@ export class ShipmentsService {
 
   /**
    * For the profitability report (business model plan 6.2-6.3): what the shipments among `ids` the
-   * user may see roll up by beyond their route: sales outlet, origin country, their booking's line
-   * categories with each line's measures, status, trips, and the instants of the cycle time (first
-   * receipt at the origin warehouse, latest proof of delivery once delivered).
+   * user may see roll up by beyond their route: sales outlet, origin country, booked services,
+   * mode, cargo type, their booking's lines (category and measures), status, trips, and the instants of
+   * the cycle time: the first receipt at the origin warehouse still on the shipment's path (a
+   * reverted receipt no longer counts), and the latest proof of delivery once delivered.
    */
   async profitDetails(
     user: AuthUser,
@@ -1081,10 +1082,15 @@ export class ShipmentsService {
     {
       id: string;
       status: ShipmentStatus;
+      mode: ShippingMode;
+      services: BookingService[];
+      cargoType: CargoType;
       salesOutlet: { id: string; name: string } | null;
       originCountry: { code: string; nameEn: string; nameAr: string };
       lines: {
         category: { code: string; nameEn: string; nameAr: string; unit: RateUnit } | null;
+        cargoType: CargoType;
+        containerTypeCode: string | null;
         quantity: number;
         volumeCbm: Prisma.Decimal | null;
         weightKg: Prisma.Decimal | null;
@@ -1100,12 +1106,17 @@ export class ShipmentsService {
       select: {
         id: true,
         status: true,
+        mode: true,
+        services: true,
+        cargoType: true,
         salesOutlet: { select: { id: true, name: true } },
         origin: { select: { countryCode: true } },
         booking: {
           select: {
             items: {
               select: {
+                cargoType: true,
+                containerTypeCode: true,
                 quantity: true,
                 volumeCbm: true,
                 weightKg: true,
@@ -1119,10 +1130,8 @@ export class ShipmentsService {
         },
         tripLinks: { select: { tripId: true } },
         events: {
-          where: { status: 'RECEIVED_ORIGIN_WAREHOUSE', kind: 'STATUS' },
-          select: { occurredAt: true },
-          orderBy: { occurredAt: 'asc' },
-          take: 1,
+          select: { id: true, kind: true, status: true, occurredAt: true, locationId: true },
+          orderBy: { id: 'asc' },
         },
         pods: { select: { deliveredAt: true }, orderBy: { deliveredAt: 'desc' }, take: 1 },
       },
@@ -1139,9 +1148,15 @@ export class ShipmentsService {
     const delivered = new Set<ShipmentStatus>(['DELIVERED', 'CLOSED']);
     return shipments.map((s) => {
       const country = countries.get(s.origin.countryCode);
+      const received = replayHistory(s.events).find(
+        (step) => step.status === 'RECEIVED_ORIGIN_WAREHOUSE',
+      );
       return {
         id: s.id,
         status: s.status,
+        mode: s.mode,
+        services: s.services,
+        cargoType: s.cargoType,
         salesOutlet: s.salesOutlet,
         originCountry: {
           code: s.origin.countryCode,
@@ -1157,12 +1172,14 @@ export class ShipmentsService {
                 unit: i.priceCategory.defaultUnit,
               }
             : null,
+          cargoType: i.cargoType,
+          containerTypeCode: i.containerTypeCode,
           quantity: i.quantity,
           volumeCbm: i.volumeCbm,
           weightKg: i.weightKg,
         })),
         tripIds: s.tripLinks.map((t) => t.tripId),
-        receivedAt: s.events[0]?.occurredAt ?? null,
+        receivedAt: received?.occurredAt ?? null,
         deliveredAt: delivered.has(s.status) ? (s.pods[0]?.deliveredAt ?? null) : null,
       };
     });

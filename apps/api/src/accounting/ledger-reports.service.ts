@@ -637,6 +637,29 @@ export class LedgerReportsService {
   }
 
   /**
+   * Of `shipmentIds`, the shipments carrying a trip's transport cost as of a date: a line of a
+   * posted trip expense (rule 10) or carrier accrual (rule 11) entry dated by then and not
+   * reversed by then. For the profitability report's "not final" mark (it covers the road
+   * services); a flag for shipments the caller already scoped, so it reads every branch's lines.
+   */
+  async shipmentsWithTripCost(shipmentIds: readonly string[], asOf: string): Promise<Set<string>> {
+    if (shipmentIds.length === 0) return new Set();
+    const at = toDbDate(asOf);
+    const rows = await this.prisma.$queryRaw<{ shipmentId: string }[]>`
+      SELECT DISTINCT l."shipment_id" AS "shipmentId"
+      FROM "journal_lines" l
+      JOIN "journal_entries" e ON e."id" = l."entry_id"
+      WHERE e."status" = 'POSTED'
+        AND e."source" IN ('TRIP_EXPENSE', 'TRIP_ACCRUAL')
+        AND e."entry_date" <= ${at}
+        AND l."shipment_id" = ANY(${[...shipmentIds]}::uuid[])
+        AND NOT EXISTS (
+          SELECT 1 FROM "journal_entries" r
+          WHERE r."reversal_of_id" = e."id" AND r."status" = 'POSTED' AND r."entry_date" <= ${at})`;
+    return new Set(rows.map((r) => r.shipmentId));
+  }
+
+  /**
    * Of `tripIds`, the trips with a transport accrual still open as of a date (the same lines as
    * `openTripAccruals`, any balance left). A flag for the profitability report's "incomplete"
    * mark on shipments the caller already scoped: no amount leaves here, so it reads the trips'

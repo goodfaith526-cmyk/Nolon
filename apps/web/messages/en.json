@@ -1585,7 +1585,7 @@
     "unspecified": "Unspecified",
     "categoryMixed": "Mixed",
     "notFinalCount": "Not final",
-    "includesNotFinal": "Includes {count} shipments whose figures are not final yet (no cost posted, an open transport accrual, or not closed).",
+    "includesNotFinal": "Includes {count} shipments whose figures are not final yet (a booked service without its cost, an open transport accrual, or not closed).",
     "cycleAverage": "Cycle time (days)",
     "cycleOf": "{days} avg ({min}–{max}, {count} shipments)",
     "byOutlet": "By sales outlet",
@@ -1599,7 +1599,7 @@
     "categoryHint": "Each shipment counts whole in one column: its one category, Mixed when its lines have more than one, Unspecified when a line has none. Margin per unit only when every shipment has its units.",
     "notFinal": "Not final",
     "cycleDays": "Cycle (days)",
-    "notFinal_NO_COST": "No cost posted",
+    "notFinal_MISSING_COST": "Cost missing: {services}",
     "notFinal_OPEN_ACCRUAL": "Open transport accrual",
     "notFinal_NOT_CLOSED": "Not closed"
   },

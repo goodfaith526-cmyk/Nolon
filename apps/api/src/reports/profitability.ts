@@ -1,4 +1,5 @@
 import type {
+  BookingService,
   CycleTimeDto,
   ProfitCategoryDto,
   ProfitFiguresDto,
@@ -6,6 +7,7 @@ import type {
   RateUnit,
   ReportCountryDto,
   ReportLocationDto,
+  ShippingMode,
 } from '@nolon/shared';
 import { type Decimal, ZERO, dec, roundMoney } from '../common/money.js';
 
@@ -51,6 +53,7 @@ export interface ShipmentAmounts extends ProfitAmounts {
   /** The shipment's units in `unit`; null when a line lacks the measure (or no single unit). */
   units: Decimal | null;
   incompleteReasons: readonly ProfitIncompleteReason[];
+  missingCosts: readonly BookingService[];
   cycleDays: Decimal | null;
 }
 
@@ -140,22 +143,6 @@ export function shipmentCategory(
   return { kind: 'SINGLE', ...first };
 }
 
-/** The lines' measure in a category's unit; null when a line lacks it. Whole shipments count 1. */
-export function unitsIn(
-  unit: RateUnit,
-  lines: readonly { quantity: number; volumeCbm: Decimal | null; weightKg: Decimal | null }[],
-): Decimal | null {
-  if (unit === 'PER_SHIPMENT') return dec(1);
-  let total = ZERO;
-  for (const line of lines) {
-    const measure =
-      unit === 'PER_CBM' ? line.volumeCbm : unit === 'PER_KG' ? line.weightKg : dec(line.quantity);
-    if (!measure) return null;
-    total = total.plus(measure);
-  }
-  return total;
-}
-
 /**
  * Per category, each shipment in exactly one column, so the columns add up to the report's totals
  * exactly. Margin per unit only for a single category whose every shipment has its units.
@@ -210,16 +197,42 @@ export function cycleTime(days: readonly (Decimal | null)[]): CycleTimeDto {
 }
 
 /**
- * Why a shipment's figures may not be final (plan 6.2): revenue without any cost, an open
- * transport accrual on one of its trips, or the shipment not closed (a cancelled one is final).
+ * The services a supplier's trip line or a trip's own cost covers: the road legs, and the main
+ * freight of a shipment that goes by road (its truck is the trip).
+ */
+const ROAD_SERVICES: readonly BookingService[] = ['PICKUP', 'INLAND_TRANSPORT', 'LAST_MILE'];
+const roadServices = (mode: ShippingMode): readonly BookingService[] =>
+  mode === 'ROAD' ? [...ROAD_SERVICES, 'MAIN_FREIGHT'] : ROAD_SERVICES;
+
+/**
+ * The booked services with no cost recorded for them (plan 6.2): each booked service needs a cost
+ * of its own, so an unrelated small cost never makes the shipment final. A service is covered by
+ * a supplier cost of a charge type of that service (on the shipment or its container); the road
+ * legs also by a carrier's trip line or a trip cost carrying the shipment.
+ */
+export function missingCosts(
+  booked: readonly BookingService[],
+  mode: ShippingMode,
+  coverage: readonly { service: BookingService | null; road: boolean }[],
+  tripCost: boolean,
+): BookingService[] {
+  const covered = new Set(coverage.flatMap((c) => (c.service ? [c.service] : [])));
+  const road = tripCost || coverage.some((c) => c.road) ? roadServices(mode) : [];
+  return booked.filter((service) => !covered.has(service) && !road.includes(service));
+}
+
+/**
+ * Why a shipment's figures may not be final (plan 6.2): a booked service without its cost, an
+ * open transport accrual on one of its trips, or the shipment not closed (a cancelled one is
+ * final).
  */
 export function incompleteReasons(input: {
-  amounts: ProfitAmounts;
+  missingCosts: readonly BookingService[];
   openAccrual: boolean;
   status: string;
 }): ProfitIncompleteReason[] {
   const reasons: ProfitIncompleteReason[] = [];
-  if (input.amounts.revenueUsd.gt(0) && input.amounts.costUsd.isZero()) reasons.push('NO_COST');
+  if (input.missingCosts.length > 0) reasons.push('MISSING_COST');
   if (input.openAccrual) reasons.push('OPEN_ACCRUAL');
   if (input.status !== 'CLOSED' && input.status !== 'CANCELLED') reasons.push('NOT_CLOSED');
   return reasons;

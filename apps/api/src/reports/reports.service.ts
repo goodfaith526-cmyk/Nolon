@@ -40,14 +40,15 @@ import {
   daysBetween,
   incompleteReasons,
   marginPerUnit,
+  missingCosts,
   NO_AMOUNTS,
   profitFigures,
   type ShipmentAmounts,
   shipmentCategory,
   showDays,
   totalOf,
-  unitsIn,
 } from './profitability.js';
+import { unitQuantity } from '../billing/invoice-suggestion.js';
 import {
   type ExportContext,
   apAgingSheets,
@@ -184,16 +185,27 @@ export class ReportsService {
         )
       ).map((d) => [d.id, d]),
     );
-    const open = await this.ledger.tripsWithOpenAccrual(
-      [...new Set([...details.values()].flatMap((d) => d.tripIds))],
-      q.to,
-    );
+    const detailIds = [...details.keys()];
+    const [open, coverage, tripCost] = await Promise.all([
+      this.ledger.tripsWithOpenAccrual(
+        [...new Set([...details.values()].flatMap((d) => d.tripIds))],
+        q.to,
+      ),
+      this.payables.costCoverage(detailIds, q.to),
+      this.ledger.shipmentsWithTripCost(detailIds, q.to),
+    ]);
     const shipments = summaries.flatMap((s) => {
       const d = details.get(s.id);
       if (!d) return [];
       const money = amounts.get(s.id) ?? NO_AMOUNTS;
       const category = shipmentCategory(d.lines);
       const unit = category.kind === 'SINGLE' ? (d.lines[0]?.category?.unit ?? null) : null;
+      const missing = missingCosts(
+        d.services,
+        d.mode,
+        coverage.filter((c) => c.shipmentId === s.id),
+        tripCost.has(s.id),
+      );
       const row: ShipmentAmounts & { id: string; number: string; branchCode: string } = {
         ...s,
         ...money,
@@ -201,9 +213,11 @@ export class ReportsService {
         originCountry: d.originCountry,
         category,
         unit,
-        units: unit ? unitsIn(unit, d.lines) : null,
+        // Only where the unit is exact on this cargo (a count unit counts its own cargo lines).
+        units: unit ? unitQuantity(unit, d.lines, null, d.cargoType) : null,
+        missingCosts: missing,
         incompleteReasons: incompleteReasons({
-          amounts: money,
+          missingCosts: missing,
           openAccrual: d.tripIds.some((id) => open.has(id)),
           status: d.status,
         }),
@@ -237,6 +251,7 @@ export class ReportsService {
         originCountry: s.originCountry,
         category: s.category,
         incompleteReasons: [...s.incompleteReasons],
+        missingCosts: [...s.missingCosts],
         cycleDays: showDays(s.cycleDays),
         ...profitFigures(s),
       })),

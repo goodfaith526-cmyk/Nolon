@@ -654,7 +654,17 @@ export function ShipmentProfitability() {
                   <td>
                     {s.incompleteReasons.length === 0
                       ? '—'
-                      : s.incompleteReasons.map((x) => t(`notFinal_${x}`)).join('، ')}
+                      : s.incompleteReasons
+                          .map((x) =>
+                            x === 'MISSING_COST'
+                              ? t('notFinal_MISSING_COST', {
+                                  services: s.missingCosts
+                                    .map((service) => te(`service_${service}`))
+                                    .join('، '),
+                                })
+                              : t(`notFinal_${x}`),
+                          )
+                          .join('، ')}
                   </td>
                   <td dir="ltr">{s.cycleDays ?? '—'}</td>
                 </tr>

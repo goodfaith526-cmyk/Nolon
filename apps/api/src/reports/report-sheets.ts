@@ -13,7 +13,7 @@ import {
   type OpenAccrualsDto,
   type ProfitCategoryDto,
   type ProfitFiguresDto,
-  type ProfitIncompleteReason,
+  type ShipmentProfitDto,
   type ShipmentProfitabilityDto,
   type TrialBalanceDto,
 } from '@nolon/shared';
@@ -323,8 +323,14 @@ export function profitabilitySheets(
     c.kind === 'SINGLE'
       ? localName(ctx.locale, c)
       : t(c.kind === 'MIXED' ? 'mixed' : 'unspecified');
-  const notFinal = (reasons: readonly ProfitIncompleteReason[]) =>
-    reasons.map((reason) => t(`reason_${reason}`)).join(', ');
+  const notFinal = (s: ShipmentProfitDto) =>
+    s.incompleteReasons
+      .map((reason) =>
+        reason === 'MISSING_COST'
+          ? `${t('reason_MISSING_COST')} ${s.missingCosts.map((x) => t(`service_${x}`)).join(' / ')}`
+          : t(`reason_${reason}`),
+      )
+      .join(', ');
   const counts = [
     { header: t('shipmentCount'), kind: 'integer' } satisfies ColumnSpec,
     { header: t('notFinalCount'), kind: 'integer' } satisfies ColumnSpec,
@@ -366,7 +372,7 @@ export function profitabilitySheets(
           localName(ctx.locale, s.originCountry),
           category(s.category),
           ...profitCells(s),
-          notFinal(s.incompleteReasons),
+          notFinal(s),
           s.cycleDays,
         ],
       })),

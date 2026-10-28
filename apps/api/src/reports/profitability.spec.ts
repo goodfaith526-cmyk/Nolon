@@ -11,10 +11,10 @@ import {
   daysBetween,
   incompleteReasons,
   marginPerUnit,
+  missingCosts,
   profitFigures,
   shipmentCategory,
   totalOf,
-  unitsIn,
 } from './profitability.js';
 
 const place = (id: string) => ({ id, code: id.toUpperCase(), nameEn: id, nameAr: id });
@@ -40,6 +40,7 @@ function shipment(
     unit: null,
     units: null,
     incompleteReasons: [],
+    missingCosts: [],
     cycleDays: null,
     ...extra,
   };
@@ -155,23 +156,6 @@ describe('shipment profitability', () => {
     expect(partial.find((c) => c.key.category.kind === 'SINGLE')?.units).toBeNull();
   });
 
-  it('measures units in the category unit, null when a line lacks the measure', () => {
-    const line = (
-      quantity: number,
-      volume: string | null = null,
-      weight: string | null = null,
-    ) => ({
-      quantity,
-      volumeCbm: volume === null ? null : dec(volume),
-      weightKg: weight === null ? null : dec(weight),
-    });
-    expect(unitsIn('PER_PIECE', [line(3), line(4)])?.toFixed()).toBe('7');
-    expect(unitsIn('PER_CBM', [line(3, '1.5'), line(4, '0.25')])?.toFixed()).toBe('1.75');
-    expect(unitsIn('PER_CBM', [line(3, '1.5'), line(4)])).toBeNull();
-    expect(unitsIn('PER_KG', [line(1, null, '20')])?.toFixed()).toBe('20');
-    expect(unitsIn('PER_SHIPMENT', [line(3), line(4)])?.toFixed()).toBe('1');
-  });
-
   it('rolls up by outlet (none together) and by origin country', () => {
     const outlet = { id: 'o1', name: 'Outlet 1' };
     const list = [
@@ -191,20 +175,42 @@ describe('shipment profitability', () => {
     ]);
   });
 
-  it('marks figures that are not final, with each reason', () => {
-    const money = (revenue: string, cost: string) => ({
-      revenueUsd: dec(revenue),
-      costUsd: dec(cost),
+  it('lists each booked service no cost covers yet', () => {
+    const cost = (service: 'MAIN_FREIGHT' | 'WAREHOUSE' | null, road = false) => ({
+      service,
+      road,
     });
+    // A storage bill alone does not cover the freight (Codex F134-1).
+    expect(missingCosts(['MAIN_FREIGHT', 'WAREHOUSE'], 'SEA', [cost('WAREHOUSE')], false)).toEqual([
+      'MAIN_FREIGHT',
+    ]);
+    expect(missingCosts(['MAIN_FREIGHT'], 'SEA', [cost('MAIN_FREIGHT')], false)).toEqual([]);
+    // A trip's cost (its bill line or its expense) covers the road legs; by sea, not the freight.
+    expect(missingCosts(['PICKUP', 'LAST_MILE', 'MAIN_FREIGHT'], 'SEA', [], true)).toEqual([
+      'MAIN_FREIGHT',
+    ]);
+    expect(missingCosts(['PICKUP', 'MAIN_FREIGHT'], 'SEA_ROAD', [cost(null, true)], false)).toEqual(
+      ['MAIN_FREIGHT'],
+    );
+    // By road the truck is the main freight.
+    expect(missingCosts(['MAIN_FREIGHT', 'INLAND_TRANSPORT'], 'ROAD', [], true)).toEqual([]);
+    expect(missingCosts(['MAIN_FREIGHT', 'CUSTOMS'], 'ROAD', [cost(null, true)], false)).toEqual([
+      'CUSTOMS',
+    ]);
+    // Without a trip cost the road legs stay missing; a cost line with no service covers nothing.
+    expect(missingCosts(['MAIN_FREIGHT'], 'ROAD', [cost(null)], false)).toEqual(['MAIN_FREIGHT']);
+    expect(missingCosts([], 'ROAD', [], false)).toEqual([]);
+  });
+
+  it('marks figures that are not final, with each reason', () => {
     expect(
-      incompleteReasons({ amounts: money('100', '0'), openAccrual: true, status: 'DELIVERED' }),
-    ).toEqual(['NO_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED']);
+      incompleteReasons({ missingCosts: ['CUSTOMS'], openAccrual: true, status: 'DELIVERED' }),
+    ).toEqual(['MISSING_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED']);
+    expect(incompleteReasons({ missingCosts: [], openAccrual: false, status: 'CLOSED' })).toEqual(
+      [],
+    );
     expect(
-      incompleteReasons({ amounts: money('100', '40'), openAccrual: false, status: 'CLOSED' }),
-    ).toEqual([]);
-    // No revenue and no cost is not "revenue without cost".
-    expect(
-      incompleteReasons({ amounts: money('0', '0'), openAccrual: false, status: 'CANCELLED' }),
+      incompleteReasons({ missingCosts: [], openAccrual: false, status: 'CANCELLED' }),
     ).toEqual([]);
   });
 

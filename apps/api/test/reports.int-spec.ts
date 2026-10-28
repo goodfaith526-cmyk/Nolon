@@ -17,6 +17,8 @@ import type {
   ReceiptDto,
   ReportAccountOptionDto,
   ShipmentProfitabilityDto,
+  SupplierBillDto,
+  SupplierDto,
   TripDto,
 } from '@nolon/shared';
 import ExcelJS from 'exceljs';
@@ -728,15 +730,19 @@ describe('financial reports', () => {
       const margins = r.categories.reduce((a, c) => a.plus(c.marginUsd), new Prisma.Decimal(0));
       expect(margins.toFixed()).toBe(r.totals.marginUsd);
 
-      // Not final: S1 and S2 wait on the carrier bill (open accrual); S3 has no cost; none closed.
+      // Not final: S1 and S2 go by road and their truck's cost covers the main freight, but waits
+      // on the carrier bill (open accrual); S3's freight has no cost; none is closed.
       const reasons = Object.fromEntries(
         r.shipments.map((s) => [s.shipmentId, s.incompleteReasons]),
       );
       expect(reasons).toEqual({
         [shipments.s1]: ['OPEN_ACCRUAL', 'NOT_CLOSED'],
         [shipments.s2]: ['OPEN_ACCRUAL', 'NOT_CLOSED'],
-        [shipments.s3]: ['NO_COST', 'NOT_CLOSED'],
+        [shipments.s3]: ['MISSING_COST', 'NOT_CLOSED'],
       });
+      expect(r.shipments.find((x) => x.shipmentId === shipments.s3)?.missingCosts).toEqual([
+        'MAIN_FREIGHT',
+      ]);
       expect(r.outlets.map((o) => o.incompleteShipments)).toEqual([1, 2]);
     });
 
@@ -746,7 +752,8 @@ describe('financial reports', () => {
         cookies.managerPts,
       );
       expect(before.routes.every((x) => x.cycle.measured === 0)).toBe(true);
-      // Fixture: S1 received at origin on 1 January, delivered with a POD on 11 January 12:00.
+      // Fixture: S1 received at origin on 1 January, reverted on 2 January, received again on
+      // 3 January, delivered with a POD on 11 January 12:00.
       const s1 = await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipments.s1 } });
       const user = await t.prisma.user.findFirstOrThrow({ where: { id: s1.createdById } });
       await t.prisma.shipmentEvent.createMany({
@@ -759,6 +766,18 @@ describe('financial reports', () => {
             branchId: s1.branchId,
             userId: user.id,
             source: 'USER',
+          },
+          // Codex F134-2: a receipt undone by a revert no longer starts the cycle.
+          {
+            shipmentId: s1.id,
+            kind: 'REVERT',
+            status: 'CREATED',
+            fromStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+            occurredAt: new Date(`${d('01-02')}T00:00:00Z`),
+            branchId: s1.branchId,
+            userId: user.id,
+            source: 'USER',
+            reason: 'Entered too early',
           },
           {
             shipmentId: s1.id,
@@ -807,16 +826,90 @@ describe('financial reports', () => {
         `/reports/shipment-profitability?${yearQuery()}&branchId=${pts}&customerId=${customer.id}`,
         cookies.managerPts,
       );
-      // From the first receipt (1 January), not the second.
-      expect(after.shipments.find((s) => s.shipmentId === s1.id)?.cycleDays).toBe('10.5');
+      // From the receipt still on the path (3 January), not the reverted one.
+      expect(after.shipments.find((s) => s.shipmentId === s1.id)?.cycleDays).toBe('8.5');
       const khartoum = after.routes.find((x) => x.destination.code === 'SDKRT');
       expect(khartoum?.cycle).toEqual({
         measured: 1,
-        averageDays: '10.5',
-        minDays: '10.5',
-        maxDays: '10.5',
+        averageDays: '8.5',
+        minDays: '8.5',
+        maxDays: '8.5',
       });
       expect(after.routes.find((x) => x.destination.code === 'SDATB')?.cycle.measured).toBe(0);
+    });
+
+    it('stays not final until each booked service has its own cost; units only where they fit', async () => {
+      // Codex F134-1: a storage bill alone does not make a freight shipment final. Codex F134-3:
+      // a category counted per container gives no units to a general cargo shipment. The bills
+      // are dated the next year, so the figures above are untouched.
+      const tag = randomUUID().slice(0, 6).toUpperCase();
+      const next = `${year + 1}`;
+      await t.prisma.priceCategory.create({
+        data: {
+          code: `ZK${tag}`,
+          nameEn: 'Per container',
+          nameAr: 'بالحاوية',
+          cargoType: 'GENERAL',
+          defaultUnit: 'PER_CONTAINER',
+        },
+      });
+      for (const [code, service] of [
+        [`ZW${tag}`, 'WAREHOUSE'],
+        [`ZF${tag}`, 'MAIN_FREIGHT'],
+      ] as const) {
+        await t.prisma.chargeType.create({
+          data: { code, nameEn: `Z ${service}`, nameAr: 'رسم اختبار', service },
+        });
+      }
+      const s4 = await shipment('SDKRT', '2', { categories: [`ZK${tag}`] });
+      const supplier = (
+        await post('/suppliers', cookies.financePts, { name: `Ledger Supplier ${tag}` }).expect(201)
+      ).body as SupplierDto;
+      const bill = async (chargeTypeCode: string, amount: string) => {
+        const draft = (
+          await post('/supplier-bills', cookies.financePts, {
+            requestId: randomUUID(),
+            supplierId: supplier.id,
+            branchId: pts,
+            currency: 'USD',
+            billDate: `${next}-04-10`,
+            dueDate: `${next}-05-10`,
+            lines: [{ kind: 'SHIPMENT_COST', shipmentId: s4, chargeTypeCode, amount }],
+          }).expect(201)
+        ).body as SupplierBillDto;
+        await post(`/supplier-bills/${draft.id}/approve`, cookies.financePts).expect(200);
+      };
+      const profit = async () =>
+        (
+          await report<ShipmentProfitabilityDto>(
+            `/reports/shipment-profitability?from=${next}-01-01&to=${next}-12-31&branchId=${pts}&customerId=${customer.id}`,
+            cookies.managerPts,
+          )
+        ).shipments.find((x) => x.shipmentId === s4);
+
+      await bill(`ZW${tag}`, '40');
+      const storageOnly = await profit();
+      expect(storageOnly?.costUsd).toBe('40');
+      expect(storageOnly?.missingCosts).toEqual(['MAIN_FREIGHT']);
+      expect(storageOnly?.incompleteReasons).toEqual(['MISSING_COST', 'NOT_CLOSED']);
+
+      await bill(`ZF${tag}`, '300');
+      const covered = await profit();
+      expect(covered?.missingCosts).toEqual([]);
+      expect(covered?.incompleteReasons).toEqual(['NOT_CLOSED']);
+
+      const r = await report<ShipmentProfitabilityDto>(
+        `/reports/shipment-profitability?from=${next}-01-01&to=${next}-12-31&branchId=${pts}&customerId=${customer.id}`,
+        cookies.managerPts,
+      );
+      const column = r.categories.find(
+        (c) => c.category.kind === 'SINGLE' && c.category.code === `ZK${tag}`,
+      );
+      expect([column?.unit, column?.units, column?.marginPerUnitUsd]).toEqual([
+        'PER_CONTAINER',
+        null,
+        null,
+      ]);
     });
 
     it('is empty for another branch; needs its own permission', async () => {
