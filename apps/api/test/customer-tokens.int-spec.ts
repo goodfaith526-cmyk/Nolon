@@ -247,6 +247,35 @@ describe('Customer tokens (N1/N2)', () => {
         data: { number: betaShipment },
       });
     }
+
+    // A number from before a renumbering (the log), for the customer's shipment only.
+    const ids = await t.prisma.shipment.findMany({
+      where: { number: { in: [alphaShipment, betaShipment] } },
+      select: { id: true, number: true },
+    });
+    const idOf = (n: string) => ids.find((r) => r.number === n)?.id ?? '';
+    await t.prisma.referenceRenumbering.createMany({
+      data: [
+        {
+          kind: 'SHIPMENT',
+          recordId: idOf(alphaShipment),
+          oldNumber: old,
+          newNumber: alphaShipment,
+          reason: 'MIGRATION',
+        },
+        {
+          kind: 'SHIPMENT',
+          recordId: idOf(betaShipment),
+          oldNumber: oldBeta,
+          newNumber: betaShipment,
+          reason: 'MIGRATION',
+        },
+      ],
+    });
+    const viaAlias = (await me(`/shipments/${old}`, alphaToken).expect(200)).body as CsShipmentDto;
+    expect(viaAlias.number).toBe(alphaShipment);
+    await me(`/shipments/${old.slice('NOL-'.length).toLowerCase()}`, alphaToken).expect(200);
+    await me(`/shipments/${oldBeta}`, alphaToken).expect(404);
   });
 
   it('needs L2 for invoices', async () => {

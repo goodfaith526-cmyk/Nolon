@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { CS_SCOPES, type CsAccessLevel } from '@nolon/shared';
 import type { Request } from 'express';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import { hashApiKey } from './api-key.js';
@@ -44,6 +45,100 @@ function refused(code: 'TOKEN_EXPIRED' | 'GRANT_REVOKED'): UnauthorizedException
   });
 }
 
+/** What a token's grant is checked on: its key, its customer and its contact. */
+const grantInclude = {
+  apiClient: {
+    include: {
+      branches: { select: { branchId: true } },
+      scopes: { select: { scope: true } },
+    },
+  },
+  customer: {
+    select: {
+      id: true,
+      number: true,
+      branchId: true,
+      isActive: true,
+      phone: true,
+      whatsapp: true,
+      updatedAt: true,
+    },
+  },
+  contact: {
+    select: {
+      customerId: true,
+      phone: true,
+      isActive: true,
+      canInquire: true,
+      updatedAt: true,
+    },
+  },
+} as const satisfies Prisma.CsCustomerTokenInclude;
+
+type GrantRow = Prisma.CsCustomerTokenGetPayload<{ include: typeof grantInclude }>;
+
+/**
+ * Whether a token's grant still holds (expiry aside): the key is active, holds
+ * cs:customer_tokens:issue and serves the customer's branch; the customer is active; the phone
+ * still matches the same record; and that record has not changed since (grantVersion).
+ */
+function grantHolds(row: GrantRow): boolean {
+  const key = row.apiClient;
+  const scopes = keyScopes(key.customersRead, key.scopes, CS_SCOPES);
+  const { customer, contact } = row;
+  const matched =
+    row.grantKind === 'CUSTOMER_PHONE'
+      ? sha256(customer.phone) === row.phoneHash
+      : row.grantKind === 'CUSTOMER_WHATSAPP'
+        ? customer.whatsapp !== null && sha256(customer.whatsapp) === row.phoneHash
+        : contact !== null &&
+          contact.customerId === customer.id &&
+          contact.isActive &&
+          contact.canInquire &&
+          sha256(contact.phone) === row.phoneHash;
+  const version = grantVersion(
+    customer.updatedAt,
+    row.grantKind === 'CONTACT_PHONE' ? (contact?.updatedAt ?? null) : null,
+  );
+  return (
+    key.isActive &&
+    scopes.includes('cs:customer_tokens:issue') &&
+    key.branches.some((b) => b.branchId === customer.branchId) &&
+    customer.isActive &&
+    matched &&
+    BigInt(version) === row.grantVersion
+  );
+}
+
+/**
+ * The grant of a token checked again inside a write's transaction, with its key, customer and
+ * contact rows share-locked: a revocation, a customer or contact change, or a key change either
+ * commits first and is seen here, or waits for the write. False when the grant no longer holds
+ * or the token expired.
+ */
+export async function grantHoldsInTx(
+  tx: Prisma.TransactionClient,
+  tokenId: string,
+): Promise<boolean> {
+  await tx.$queryRaw`
+    SELECT 1 FROM "api_clients" WHERE "id" = (
+      SELECT "api_client_id" FROM "cs_customer_tokens" WHERE "id" = ${tokenId}::uuid)
+    FOR SHARE`;
+  await tx.$queryRaw`
+    SELECT 1 FROM "customers" WHERE "id" = (
+      SELECT "customer_id" FROM "cs_customer_tokens" WHERE "id" = ${tokenId}::uuid)
+    FOR SHARE`;
+  await tx.$queryRaw`
+    SELECT 1 FROM "customer_contacts" WHERE "id" = (
+      SELECT "contact_id" FROM "cs_customer_tokens" WHERE "id" = ${tokenId}::uuid)
+    FOR SHARE`;
+  const row = await tx.csCustomerToken.findUnique({
+    where: { id: tokenId },
+    include: grantInclude,
+  });
+  return row !== null && row.expiresAt.getTime() > Date.now() && grantHolds(row);
+}
+
 /**
  * Authenticates /cs/me requests by a customer token (N2), and rechecks everything the token was
  * issued on, on every request (nothing is cached): the key is active, still holds
@@ -65,34 +160,7 @@ export class CustomerTokenGuard implements CanActivate {
     const row = presented
       ? await this.prisma.csCustomerToken.findUnique({
           where: { tokenHash: hashApiKey(presented) },
-          include: {
-            apiClient: {
-              include: {
-                branches: { select: { branchId: true } },
-                scopes: { select: { scope: true } },
-              },
-            },
-            customer: {
-              select: {
-                id: true,
-                number: true,
-                branchId: true,
-                isActive: true,
-                phone: true,
-                whatsapp: true,
-                updatedAt: true,
-              },
-            },
-            contact: {
-              select: {
-                customerId: true,
-                phone: true,
-                isActive: true,
-                canInquire: true,
-                updatedAt: true,
-              },
-            },
-          },
+          include: grantInclude,
         })
       : null;
     if (!row) throw new UnauthorizedException('A valid customer token is required');
@@ -109,34 +177,11 @@ export class CustomerTokenGuard implements CanActivate {
     };
     if (row.expiresAt.getTime() <= Date.now()) throw await reject('TOKEN_EXPIRED');
 
+    if (!grantHolds(row)) throw await reject('GRANT_REVOKED');
     const key = row.apiClient;
     const branchIds = key.branches.map((b) => b.branchId);
     const scopes = keyScopes(key.customersRead, key.scopes, CS_SCOPES);
-    const { customer, contact } = row;
-    const matched =
-      row.grantKind === 'CUSTOMER_PHONE'
-        ? sha256(customer.phone) === row.phoneHash
-        : row.grantKind === 'CUSTOMER_WHATSAPP'
-          ? customer.whatsapp !== null && sha256(customer.whatsapp) === row.phoneHash
-          : contact !== null &&
-            contact.customerId === customer.id &&
-            contact.isActive &&
-            contact.canInquire &&
-            sha256(contact.phone) === row.phoneHash;
-    const version = grantVersion(
-      customer.updatedAt,
-      row.grantKind === 'CONTACT_PHONE' ? (contact?.updatedAt ?? null) : null,
-    );
-    if (
-      !key.isActive ||
-      !scopes.includes('cs:customer_tokens:issue') ||
-      !branchIds.includes(customer.branchId) ||
-      !customer.isActive ||
-      !matched ||
-      BigInt(version) !== row.grantVersion
-    ) {
-      throw await reject('GRANT_REVOKED');
-    }
+    const { customer } = row;
     request.customerToken = {
       tokenId: row.id,
       client: { id: key.id, name: key.name, allowedBranchIds: branchIds, scopes },

@@ -304,8 +304,8 @@ describe('Customer Service booking requests (R3)', () => {
 
     // The key no longer serves the request's branch: as if it did not exist.
     const narrow = await makeKey([pts], ['cs:booking_requests:create']);
-    const mine = (await create(narrow.key, body({ sender })).expect(201))
-      .body as CsBookingRequestCreated;
+    const mineBody = body({ sender });
+    const mine = (await create(narrow.key, mineBody).expect(201)).body as CsBookingRequestCreated;
     await t.prisma.apiClientBranch.create({
       data: { apiClientId: narrow.client.id, branchId: jed },
     });
@@ -313,6 +313,76 @@ describe('Customer Service booking requests (R3)', () => {
       where: { apiClientId_branchId: { apiClientId: narrow.client.id, branchId: pts } },
     });
     await read(narrow.key, mine.requestId, header).expect(404);
+    // A retry reads the saved request too (F126-2).
+    await create(narrow.key, mineBody).expect(404);
+  });
+
+  it('leaves no request when the key or the grant changes while it is being saved (F126-1)', async () => {
+    /**
+     * Holds a row lock as a revocation (or a customer change) does, sends the request while it is
+     * held, then commits the change: the request waits for it, sees it, and saves nothing.
+     */
+    async function whileChanging(
+      lock: string,
+      change: (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) => Promise<unknown>,
+      send: () => Promise<{ status: number; body: unknown }>,
+    ) {
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let locked = () => {};
+      const held = new Promise<void>((resolve) => (locked = resolve));
+      const changing = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(lock);
+          locked();
+          await gate;
+          await change(tx);
+        },
+        { timeout: 20_000 },
+      );
+      await held;
+      const sent = Promise.resolve(send());
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      release();
+      await changing;
+      return sent;
+    }
+
+    const key = await makeKey([pts], ['cs:booking_requests:create']);
+    const sender = newSender();
+    const revoked = await whileChanging(
+      `SELECT 1 FROM "api_clients" WHERE "id" = '${key.client.id}' FOR UPDATE`,
+      (tx) =>
+        tx.apiClient.update({
+          where: { id: key.client.id },
+          data: { isActive: false, revokedAt: new Date(), revokedById: salesId },
+        }),
+      () => create(key.key, body({ sender })),
+    );
+    expect(revoked.status).toBe(401);
+    expect(
+      await t.prisma.csBookingRequest.count({ where: { ownerRef: `s:whatsapp:${sender.id}` } }),
+    ).toBe(0);
+
+    const phone = uniquePhone();
+    const gamma = (
+      await post('/customers', cookies.sales, {
+        branchId: pts,
+        kind: 'INDIVIDUAL',
+        preferredCurrency: 'USD',
+        phone,
+        name: 'Gamma Requests',
+      }).expect(201)
+    ).body as CustomerDto;
+    const token = await tokenFor(bot.key, phone);
+    const changed = await whileChanging(
+      `SELECT 1 FROM "customers" WHERE "id" = '${gamma.id}' FOR UPDATE`,
+      (tx) => tx.customer.update({ where: { id: gamma.id }, data: { phone: uniquePhone() } }),
+      () => create(token, body()),
+    );
+    expect(changed.status).toBe(401);
+    expect(code(changed)).toBe('GRANT_REVOKED');
+    expect(await t.prisma.csBookingRequest.count({ where: { customerId: gamma.id } })).toBe(0);
   });
 
   it("is a customer token's customer's, and refuses naming an owner beside the token", async () => {

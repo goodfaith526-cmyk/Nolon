@@ -12,7 +12,8 @@ import { CustomerTokensService } from './customer-tokens.service.js';
 
 /**
  * A shipment number as a customer may write it: any case, and the older NOL-SHP-2026-000125 also
- * without `NOL-`. The newer BK00125 and DXB-KRT-0001 are kept as they are.
+ * without `NOL-`. The newer BK00125 and DXB-KRT-0001 are kept as they are. A number from before a
+ * renumbering is then found through the renumbering log (CustomerServiceService.shipment).
  */
 export function customerShipmentNumber(raw: string): string {
   const number = raw.trim().toUpperCase();
@@ -48,6 +49,7 @@ export class CustomerMeService {
         auth.client,
         customerShipmentNumber(number),
         auth.customerId,
+        true,
       );
       await this.record(auth, 'OK', route);
       return found;

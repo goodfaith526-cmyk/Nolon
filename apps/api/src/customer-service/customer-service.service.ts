@@ -149,20 +149,36 @@ export class CustomerServiceService {
    * shipments only (a customer token: another customer's shipment is not found, as one that does
    * not exist).
    */
+  /**
+   * One shipment of the key's branches (and of `customerId`, when given). With `oldNumbers`, a
+   * number the shipment had before a renumbering finds it too (the renumbering log), within the
+   * same scope; its current number wins, and an old number two shipments had finds neither.
+   */
   async shipment(
     client: ApiClientAuth,
     number: string,
     customerId?: string,
+    oldNumbers = false,
   ): Promise<CsShipmentDto> {
     if (client.allowedBranchIds.length === 0) throw new NotFoundException('Shipment not found');
-    const [row] = await this.prisma.$queryRaw<ShipmentRow[]>`
+    const matches = oldNumbers
+      ? Prisma.sql`(s."number" = ${number} OR s."id" IN (
+          SELECT r."record_id" FROM "reference_renumberings" r
+          WHERE r."kind" = 'SHIPMENT' AND upper(r."old_number") = ${number}))`
+      : Prisma.sql`s."number" = ${number}`;
+    const rows = await this.prisma.$queryRaw<ShipmentRow[]>`
       SELECT s.*, c."number" AS "customerNumber"
       FROM "cs_shipments" s
       JOIN "cs_customers" c ON c."id" = s."customer_id"
-      WHERE s."number" = ${number}
+      WHERE ${matches}
         AND s."branch_id" IN ${uuidList(client.allowedBranchIds)}
-        ${customerId ? Prisma.sql`AND s."customer_id" = ${customerId}::uuid` : Prisma.empty}`;
-    if (!row) throw new NotFoundException('Shipment not found');
+        ${customerId ? Prisma.sql`AND s."customer_id" = ${customerId}::uuid` : Prisma.empty}
+      ORDER BY (s."number" = ${number}) DESC
+      LIMIT 2`;
+    const [row, other] = rows;
+    if (!row || (other && row.number !== number)) {
+      throw new NotFoundException('Shipment not found');
+    }
     const events = await this.prisma.$queryRaw<
       {
         kind: ShipmentEventKind;

@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
-import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import {
   CS_DAILY_REQUESTS,
+  CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
   type CsBookingRequestByNames,
   type CsBookingRequestCreate,
@@ -18,7 +26,9 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
+import { keyScopes } from './api-scopes.js';
 import { matchCategory, matchPlace } from './bot-names.js';
+import { grantHoldsInTx } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
 
 const DAY_MS = 86_400_000;
@@ -99,6 +109,16 @@ export function namesSender(channel: CsBookingRequestByNames['channel'], phone: 
   return channel === 'whatsapp' ? `+${digits}` : `tel:${digits}`;
 }
 
+/** Whether a key with these branches serves a request: its branch, or one it may be routed to. */
+export function servedBy(
+  r: Pick<CsBookingRequest, 'branchId' | 'allowedBranchIds'>,
+  branchIds: readonly string[],
+): boolean {
+  return r.branchId === null
+    ? r.allowedBranchIds.some((b) => branchIds.includes(b))
+    : branchIds.includes(r.branchId);
+}
+
 function coded(status: HttpStatus, code: string, message: string): HttpException {
   return new HttpException({ message, code, statusCode: status }, status);
 }
@@ -134,7 +154,7 @@ export class BookingRequestsService {
     const client = caller.client;
     const owner = ownerRef(caller, input.sender);
     const hash = contentHash(input);
-    const replay = await this.replay(client.id, owner, input.idempotencyKey, hash);
+    const replay = await this.replay(client, owner, input.idempotencyKey, hash);
     if (replay) return { created: false, body: replay };
 
     await this.masterData.requireRoute(input.originId, input.destinationId);
@@ -149,15 +169,11 @@ export class BookingRequestsService {
     const candidates = await this.masterData.routingCandidates(input.originId);
     const allowed = candidates.filter((id) => client.allowedBranchIds.includes(id));
     if (allowed.length === 0) {
-      throw coded(
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        'ORIGIN_NOT_SERVED',
-        'No branch of this key serves the origin: hand over to staff',
-      );
+      throw notServed();
     }
     const branchId = candidates.length === 1 ? (allowed[0] ?? null) : null;
 
-    const result = await this.save(client, owner, input.idempotencyKey, {
+    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
       ...(caller.kind === 'customer'
         ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
         : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
@@ -165,7 +181,6 @@ export class BookingRequestsService {
       contentHash: hash,
       status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
       branchId,
-      allowedBranchIds: allowed,
       originLocationId: input.originId,
       destinationLocationId: input.destinationId,
       priceCategoryCode: category.code,
@@ -209,7 +224,7 @@ export class BookingRequestsService {
     const senderId = namesSender(input.channel, input.senderPhone);
     const owner = `s:${input.channel}:${senderId}`;
     const hash = namesHash(input);
-    const replay = await this.replay(client.id, owner, input.idempotencyKey, hash);
+    const replay = await this.replay(client, owner, input.idempotencyKey, hash);
     if (replay) return { created: false, body: replay };
 
     const [all, aliases] = await Promise.all([
@@ -229,14 +244,13 @@ export class BookingRequestsService {
 
     const { allowed, branchId } = await this.namesRouting(client, originId);
     const quoted = input.quotedPrice ?? null;
-    const result = await this.save(client, owner, input.idempotencyKey, {
+    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
       senderChannel: input.channel,
       senderId,
       contactPhone: input.senderPhone,
       contentHash: hash,
       status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
       branchId,
-      allowedBranchIds: allowed,
       originLocationId: originId,
       destinationLocationId: destinationId,
       priceCategoryCode: categoryCode,
@@ -274,41 +288,49 @@ export class BookingRequestsService {
         ? [...client.allowedBranchIds].sort()
         : candidates.filter((id) => client.allowedBranchIds.includes(id));
     if (allowed.length === 0) {
-      throw coded(
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        'ORIGIN_NOT_SERVED',
-        'No branch of this key serves the origin: hand over to staff',
-      );
+      throw notServed();
     }
     return { allowed, branchId: candidates.length === 1 ? (allowed[0] ?? null) : null };
   }
 
   /**
    * Saves a new request once: one owner's requests one at a time, so the retry check and the daily
-   * count see every row. Returns the row already saved under the key when there is one.
+   * count see every row. The key (and a customer token's grant) is checked again inside the
+   * transaction, share-locked against its revocation or change, and its current branches cap the
+   * request: a key revoked or changed before the insert leaves no request (F126-1). Returns the row
+   * already saved under the idempotency key when there is one and the key still serves it.
    */
   private async save(
-    client: ApiClientAuth,
+    caller: BookingRequestCaller,
     owner: string,
     idempotencyKey: string,
+    allowed: readonly string[],
     data: Omit<
       Prisma.CsBookingRequestUncheckedCreateInput,
-      'reference' | 'apiClientId' | 'ownerRef' | 'idempotencyKey' | 'expiresAt'
+      'reference' | 'apiClientId' | 'ownerRef' | 'idempotencyKey' | 'expiresAt' | 'allowedBranchIds'
     >,
   ): Promise<{ created: boolean; row: CsBookingRequest }> {
     const now = new Date();
+    const apiClientId = caller.client.id;
     return this.prisma.$transaction(async (tx) => {
+      const branchIds = await currentBranches(tx, caller);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
-          apiClientId_ownerRef_idempotencyKey: {
-            apiClientId: client.id,
-            ownerRef: owner,
-            idempotencyKey,
-          },
+          apiClientId_ownerRef_idempotencyKey: { apiClientId, ownerRef: owner, idempotencyKey },
         },
       });
-      if (again) return { created: false, row: again };
+      if (again) {
+        if (!servedBy(again, branchIds)) throw new NotFoundException('Booking request not found');
+        return { created: false, row: again };
+      }
+      const still = allowed.filter((b) => branchIds.includes(b));
+      if (
+        still.length === 0 ||
+        (typeof data.branchId === 'string' && !branchIds.includes(data.branchId))
+      ) {
+        throw notServed();
+      }
       const dayStart = toDbDate(todayIn('UTC', now));
       const today = await tx.csBookingRequest.count({
         where: { ownerRef: owner, createdAt: { gte: dayStart } },
@@ -324,8 +346,9 @@ export class BookingRequestsService {
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
+          allowedBranchIds: still,
           reference: requestReference(number),
-          apiClientId: client.id,
+          apiClientId,
           ownerRef: owner,
           idempotencyKey,
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
@@ -356,11 +379,7 @@ export class BookingRequestsService {
         : await this.prisma.csBookingRequest.findFirst({
             where: { OR: [{ id, apiClientId: caller.client.id, ownerRef: owner }, byKey] },
           });
-    const served =
-      row !== null &&
-      (row.branchId === null
-        ? row.allowedBranchIds.some((b) => caller.client.allowedBranchIds.includes(b))
-        : caller.client.allowedBranchIds.includes(row.branchId));
+    const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
       await this.tokens.record(
         caller.client.id,
@@ -383,19 +402,30 @@ export class BookingRequestsService {
     };
   }
 
-  /** The request this key and owner already made with this idempotency key, when there is one. */
+  /**
+   * The request this key and owner already made with this idempotency key, when there is one. A
+   * retry reads the saved request, so it is 404 like a read once the key no longer serves it
+   * (F126-2).
+   */
   private async replay(
-    apiClientId: string,
+    client: ApiClientAuth,
     owner: string,
     idempotencyKey: string,
     hash: string,
   ): Promise<CsBookingRequestCreated | null> {
     const row = await this.prisma.csBookingRequest.findUnique({
       where: {
-        apiClientId_ownerRef_idempotencyKey: { apiClientId, ownerRef: owner, idempotencyKey },
+        apiClientId_ownerRef_idempotencyKey: {
+          apiClientId: client.id,
+          ownerRef: owner,
+          idempotencyKey,
+        },
       },
     });
     if (!row) return null;
+    if (!servedBy(row, client.allowedBranchIds)) {
+      throw new NotFoundException('Booking request not found');
+    }
     if (row.contentHash !== hash) throw conflict();
     return createdBody(row);
   }
@@ -431,6 +461,51 @@ export class BookingRequestsService {
       );
     }
   }
+}
+
+function notServed(): HttpException {
+  return coded(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'ORIGIN_NOT_SERVED',
+    'No branch of this key serves the origin: hand over to staff',
+  );
+}
+
+/**
+ * The caller's key read again inside a write's transaction and share-locked, so a revocation or a
+ * scope change commits before it (and is seen) or waits for the write: still active, still holding
+ * cs:booking_requests:create, and, for a customer token, a grant that still holds. Its branches.
+ */
+async function currentBranches(
+  tx: Prisma.TransactionClient,
+  caller: BookingRequestCaller,
+): Promise<string[]> {
+  const id = caller.client.id;
+  await tx.$queryRaw`SELECT 1 FROM "api_clients" WHERE "id" = ${id}::uuid FOR SHARE`;
+  const key = await tx.apiClient.findUnique({
+    where: { id },
+    include: { branches: { select: { branchId: true } }, scopes: { select: { scope: true } } },
+  });
+  if (!key?.isActive) {
+    throw new UnauthorizedException('A valid Customer Service API key is required');
+  }
+  if (!keyScopes(key.customersRead, key.scopes, CS_SCOPES).includes('cs:booking_requests:create')) {
+    throw new ForbiddenException({
+      message: 'This API key does not hold the scope cs:booking_requests:create',
+      code: 'SCOPE_REQUIRED',
+      error: 'Forbidden',
+      statusCode: 403,
+    });
+  }
+  if (caller.kind === 'customer' && !(await grantHoldsInTx(tx, caller.token.tokenId))) {
+    throw new UnauthorizedException({
+      message: 'The token is no longer valid',
+      code: 'GRANT_REVOKED',
+      error: 'Unauthorized',
+      statusCode: 401,
+    });
+  }
+  return key.branches.map((b) => b.branchId);
 }
 
 function conflict(): HttpException {
