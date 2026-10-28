@@ -84,7 +84,7 @@ CREATE TEMPORARY TABLE "tmp_renumber" (
 -- LCL bookings: per rendered route pair, in creation order.
 INSERT INTO "tmp_renumber" ("kind", "record_id", "old_number", "new_number", "doc_type", "pair", "serial")
 SELECT 'BOOKING', b."id", b."number",
-       r."pair" || '-' || lpad(r."serial"::text, 4, '0'), 'LCL_BOOKING', r."pair", r."serial"
+       r."pair" || '-' || lpad(r."serial"::text, greatest(4, length(r."serial"::text)), '0'), 'LCL_BOOKING', r."pair", r."serial"
 FROM (
     SELECT b."id", o."letters" || '-' || d."letters" AS "pair",
            row_number() OVER (PARTITION BY o."letters", d."letters" ORDER BY b."created_at", b."id") AS "serial"
@@ -99,7 +99,7 @@ JOIN "bookings" b ON b."id" = r."id";
 -- Shared containers: their own counter per rendered route pair, with C before the serial.
 INSERT INTO "tmp_renumber" ("kind", "record_id", "old_number", "new_number", "doc_type", "pair", "serial")
 SELECT 'CONSOLIDATION', c."id", c."number",
-       r."pair" || '-C' || lpad(r."serial"::text, 4, '0'), 'LCL_CONTAINER', r."pair", r."serial"
+       r."pair" || '-C' || lpad(r."serial"::text, greatest(4, length(r."serial"::text)), '0'), 'LCL_CONTAINER', r."pair", r."serial"
 FROM (
     SELECT c."id", o."letters" || '-' || d."letters" AS "pair",
            row_number() OVER (PARTITION BY o."letters", d."letters" ORDER BY c."created_at", c."id") AS "serial"
