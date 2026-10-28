@@ -178,7 +178,7 @@ export interface ContainerContentRowDto extends ReportCustomerRefDto {
 
 export interface ContainerReportRowDto {
   consolidationId: string;
-  /** NOL-CON-2026-000001 */
+  /** DXB-PTS-C0001 (its route, then C and a serial) */
   number: string;
   branchCode: string;
   status: ConsolidationStatus;
@@ -412,6 +412,7 @@ export const AUDIT_ENTITIES = [
   'PRICE_CATEGORY',
   'CUSTOMER_SEGMENT',
   'API_CLIENT',
+  'LOCATION',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

@@ -20,6 +20,7 @@ export const AUDITED_MASTER_DATA = [
   'CURRENCY',
   'PRICE_CATEGORY',
   'CUSTOMER_SEGMENT',
+  'LOCATION',
 ] as const satisfies readonly AuditEntity[];
 export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
