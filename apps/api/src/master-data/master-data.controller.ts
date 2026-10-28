@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import {
   CARGO_TYPES,
@@ -42,6 +43,11 @@ const code = (max: number) =>
     .regex(/^[A-Z0-9]+$/)
     .min(1)
     .max(max);
+
+const routingBody = z.object({ branchIds: z.array(z.uuid()).max(20) }).strict();
+const aliasesBody = z
+  .object({ aliases: z.array(z.string().trim().min(1).max(100)).max(20) })
+  .strict();
 
 const locationBody = z
   .object({
@@ -164,6 +170,40 @@ export class MasterDataController {
     @Body() body: unknown,
   ): Promise<LocationDto> {
     return this.masterData.updateLocation(user, id, parse(locationBody.partial(), body));
+  }
+
+  /** Other names of the locations, for the customer-service bot (docs/plans/04 section 4). */
+  @Get('location-aliases')
+  @RequirePermission('master_data:view')
+  locationAliases(): Promise<Record<string, string[]>> {
+    return this.masterData.locationAliases();
+  }
+
+  @Put('locations/:id/aliases')
+  @RequirePermission('master_data:update')
+  setLocationAliases(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<string[]> {
+    return this.masterData.setLocationAliases(user, id, parse(aliasesBody, body).aliases);
+  }
+
+  /** The branches serving customer-service requests from each location (docs/plans/04 section 6). */
+  @Get('routing-branches')
+  @RequirePermission('master_data:view')
+  routingBranches(): Promise<Record<string, string[]>> {
+    return this.masterData.routingBranches();
+  }
+
+  @Put('locations/:id/routing-branches')
+  @RequirePermission('master_data:update')
+  setRoutingBranches(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<string[]> {
+    return this.masterData.setRoutingBranches(user, id, parse(routingBody, body).branchIds);
   }
 
   // Container, charge and document types, and currencies: add, rename, deactivate, reactivate.

@@ -43,6 +43,8 @@ model Branch {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   users               UserBranch[]
+  routingRules        BranchRoutingRule[]
+  csRequests          CsBookingRequest[]
   customers           Customer[]
   partners            Partner[]
   rateCards           RateCard[]
@@ -577,9 +579,42 @@ model Location {
   consolidationsTo   Consolidation[]       @relation("ConsolidationDestination")
   warehouses         Warehouse[]
   partners           Partner[]
+  aliases            LocationAlias[]
+  routingRules       BranchRoutingRule[]
+  csRequestsFrom     CsBookingRequest[]    @relation("CsRequestOrigin")
+  csRequestsTo       CsBookingRequest[]    @relation("CsRequestDestination")
 
   @@index([cityId])
   @@map("locations")
+}
+
+/// Other names people write for a location («جده», «Jeddah»), for the customer-service bot to
+/// understand them (docs/plans/04 section 4). Master data the client extends.
+model LocationAlias {
+  locationId String   @map("location_id") @db.Uuid
+  alias      String   @db.VarChar(100)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([locationId, alias])
+  @@map("location_aliases")
+}
+
+/// Which branch serves a customer-service request starting at a location (docs/plans/04 section
+/// 6): a place, a city or a country. The narrowest level with rules decides; one branch there is
+/// the branch, several or none is no branch (staff route it).
+model BranchRoutingRule {
+  locationId String   @map("location_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([locationId, branchId])
+  @@index([branchId])
+  @@map("branch_routing_rules")
 }
 
 /// 20GP, 40GP, 40HC, OTHER... Master data the client extends.
@@ -732,6 +767,10 @@ model Customer {
   partyDrafts               PartyDraft[]
   newCustomerQuotationDraft NewCustomerQuotationDraft?
 
+  csTokens       CsCustomerToken[]
+  csAccessEvents CsAccessEvent[]
+  csRequests     CsBookingRequest[]
+
   @@index([branchId])
   @@index([phone])
   @@index([acquiredViaOutletId])
@@ -756,7 +795,8 @@ model CustomerContact {
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  csTokens CsCustomerToken[]
 
   @@index([customerId])
   @@index([phone])
@@ -863,6 +903,7 @@ model PriceCategory {
 
   rateCards      RateCard[]
   quotationLines QuotationLine[]
+  csRequests     CsBookingRequest[]
   bookingItems   BookingItem[]
 
   @@map("price_categories")
@@ -933,7 +974,8 @@ model RateCard {
   quotationLines    QuotationLine[]
   invoiceDraftLines InvoiceDraftLine[]
 
-  draft RateCardDraft?
+  draft    RateCardDraft?
+  csQuotes CsQuote[]
 
   @@index([branchId, status])
   @@index([originLocationId, destinationLocationId, mode])
@@ -2978,10 +3020,14 @@ model ApiClient {
   /// key made before scopes existed keeps it (the default); a new key has it only when given.
   customersRead Boolean   @default(true) @map("customers_read")
 
-  createdBy User              @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  revokedBy User?             @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
-  branches  ApiClientBranch[]
-  scopes    ApiClientScope[]
+  createdBy       User               @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy       User?              @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  branches        ApiClientBranch[]
+  scopes          ApiClientScope[]
+  customerTokens  CsCustomerToken[]
+  accessEvents    CsAccessEvent[]
+  quotes          CsQuote[]
+  bookingRequests CsBookingRequest[]
 
   @@map("api_clients")
 }
@@ -3009,6 +3055,190 @@ model ApiClientScope {
 
   @@id([apiClientId, scope])
   @@map("api_client_scopes")
+}
+
+/// Why a number matched a customer (docs/plans/04 section 3): the customer's phone or WhatsApp,
+/// or an authorized person's phone (may inquire).
+enum CsGrantKind {
+  CUSTOMER_PHONE
+  CUSTOMER_WHATSAPP
+  CONTACT_PHONE
+
+  @@map("cs_grant_kind")
+}
+
+enum CsAccessLevel {
+  L1
+  L2
+
+  @@map("cs_access_level")
+}
+
+/// A short-lived token for one customer (N1), issued to an API key for a phone its channel
+/// verified. Stored as SHA-256 only. Every use rechecks the key, the customer and the match.
+model CsCustomerToken {
+  id           String        @id @default(uuid()) @db.Uuid
+  tokenHash    String        @unique @map("token_hash") @db.Char(64)
+  apiClientId  String        @map("api_client_id") @db.Uuid
+  customerId   String        @map("customer_id") @db.Uuid
+  grantKind    CsGrantKind   @map("grant_kind")
+  /// The authorized person whose phone matched (CONTACT_PHONE only).
+  contactId    String?       @map("contact_id") @db.Uuid
+  /// SHA-256 of the phone that matched: the match is rechecked against it, the phone is not kept.
+  phoneHash    String        @map("phone_hash") @db.Char(64)
+  grantVersion BigInt        @map("grant_version")
+  level        CsAccessLevel
+  issuedAt     DateTime      @default(now()) @map("issued_at") @db.Timestamptz(3)
+  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(3)
+
+  apiClient    ApiClient        @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer     Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  contact      CustomerContact? @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  accessEvents CsAccessEvent[]
+
+  @@index([apiClientId])
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("cs_customer_tokens")
+}
+
+/// One row per customer-token request (N1) and per read with a token (N2), for NOLON's audit
+/// (N4). Append-only (trigger). Never a full phone, a code or a query value.
+model CsAccessEvent {
+  id          BigInt   @id @default(autoincrement())
+  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  apiClientId String   @map("api_client_id") @db.Uuid
+  tokenId     String?  @map("token_id") @db.Uuid
+  customerId  String?  @map("customer_id") @db.Uuid
+  channel     String   @db.VarChar(20)
+  route       String   @db.VarChar(100)
+  /// TOKEN, CHOOSE, NONE, OK, NOT_FOUND, EXPIRED, REVOKED, L2_REQUIRED, LIMITED.
+  outcome     String   @db.VarChar(20)
+
+  apiClient ApiClient        @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  token     CsCustomerToken? @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+  customer  Customer?        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([apiClientId, occurredAt])
+  @@index([customerId, occurredAt])
+  @@map("cs_access_events")
+}
+
+/// A price NOLON gave a customer-service client (R2, docs/plans/04 section 5): every input and
+/// what the engine answered, kept by NOLON so a booking request (R3) names it by `ref` and NOLON
+/// never trusts a price the client sends. Never changed after it is written.
+model CsQuote {
+  /// `q_` and 32 random URL-safe characters.
+  ref                   String       @id @db.VarChar(40)
+  apiClientId           String       @map("api_client_id") @db.Uuid
+  rateCardId            String       @map("rate_card_id") @db.Uuid
+  originLocationId      String       @map("origin_location_id") @db.Uuid
+  destinationLocationId String       @map("destination_location_id") @db.Uuid
+  priceCategoryCode     String       @map("price_category_code") @db.VarChar(20)
+  mode                  ShippingMode
+  loadType              LoadType?    @map("load_type")
+  cargoType             CargoType    @map("cargo_type")
+  currency              String       @db.Char(3)
+  unit                  RateUnit
+  quantity              Decimal?     @db.Decimal(18, 4)
+  price                 Decimal      @db.Decimal(18, 4)
+  minimumCharge         Decimal      @map("minimum_charge") @db.Decimal(18, 4)
+  total                 Decimal?     @db.Decimal(18, 4)
+  /// PLACE, CITY or COUNTRY: the scope each end of the card matched at.
+  originScope           String       @map("origin_scope") @db.VarChar(10)
+  destinationScope      String       @map("destination_scope") @db.VarChar(10)
+  quotedOn              DateTime     @map("quoted_on") @db.Date
+  expiresAt             DateTime     @map("expires_at") @db.Timestamptz(3)
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  apiClient ApiClient          @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  rateCard  RateCard           @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  requests  CsBookingRequest[]
+
+  @@index([apiClientId, createdAt])
+  @@index([rateCardId])
+  @@index([expiresAt])
+  @@map("cs_quotes")
+}
+
+/// A booking request's state (docs/plans/04 section 7). Expired is read from expires_at.
+enum CsBookingRequestStatus {
+  AWAITING_ROUTING
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("cs_booking_request_status")
+}
+
+/// How the goods reach NOLON: picked up from the sender, or brought to the branch.
+enum CsHandover {
+  PICKUP
+  BRANCH_DROP
+
+  @@map("cs_handover")
+}
+
+/// A booking request from a customer-service client (R3, docs/plans/04 section 7): a draft only,
+/// never a booking, shipment, invoice or journal entry. Its owner is a customer (through a customer
+/// token) or a channel identity (sender), exactly one. Every value is the customer's, as sent.
+model CsBookingRequest {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  /// BR-000001.
+  reference             String                 @unique @db.VarChar(20)
+  apiClientId           String                 @map("api_client_id") @db.Uuid
+  /// c:<customer id>:<grant id> or s:<channel>:<id>: whom the request belongs to.
+  ownerRef              String                 @map("owner_ref") @db.VarChar(200)
+  customerId            String?                @map("customer_id") @db.Uuid
+  grantId               String?                @map("grant_id") @db.VarChar(41)
+  senderChannel         String?                @map("sender_channel") @db.VarChar(20)
+  senderId              String?                @map("sender_id") @db.VarChar(64)
+  /// A number the sender shared for contact only (Telegram): never a proof of an account.
+  contactPhone          String?                @map("contact_phone") @db.VarChar(20)
+  idempotencyKey        String                 @map("idempotency_key") @db.VarChar(100)
+  /// SHA-256 of the request body without its idempotency key.
+  contentHash           String                 @map("content_hash") @db.Char(64)
+  status                CsBookingRequestStatus
+  /// The branch the request is for; null while it awaits routing.
+  branchId              String?                @map("branch_id") @db.Uuid
+  /// The branches staff may route it to (its routing candidates the key served when made).
+  allowedBranchIds      String[]               @map("allowed_branch_ids") @db.Uuid
+  /// Null only on a request by names that did not match: staff choose.
+  originLocationId      String?                @map("origin_location_id") @db.Uuid
+  destinationLocationId String?                @map("destination_location_id") @db.Uuid
+  priceCategoryCode     String?                @map("price_category_code") @db.VarChar(20)
+  /// A request by names: { origin, destination, kind }, each { ar, en }, as the customer saw them.
+  botNames              Json?                  @map("bot_names")
+  quantity              Decimal                @db.Decimal(18, 4)
+  services              BookingService[]
+  senderName            String                 @map("sender_name") @db.VarChar(200)
+  consigneeName         String                 @map("consignee_name") @db.VarChar(200)
+  consigneePhone        String                 @map("consignee_phone") @db.VarChar(20)
+  handover              CsHandover
+  requestedDate         DateTime?              @map("requested_date") @db.Date
+  quoteRef              String?                @map("quote_ref") @db.VarChar(40)
+  /// The price the bot says it showed, from its own material: for staff to check, never a price.
+  botQuotedAmount       Decimal?               @map("bot_quoted_amount") @db.Decimal(18, 4)
+  botQuotedCurrency     String?                @map("bot_quoted_currency") @db.Char(3)
+  language              String?                @db.VarChar(2)
+  version               Int                    @default(1)
+  expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  apiClient   ApiClient      @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer    Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch      Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin      Location?      @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location?      @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category    PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote       CsQuote?       @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+
+  @@unique([apiClientId, ownerRef, idempotencyKey])
+  @@index([ownerRef, createdAt])
+  @@index([branchId, status])
+  @@index([status])
+  @@map("cs_booking_requests")
 }
 
 /// The branches whose customers an API key may read (AGENTS.md rule 2).
