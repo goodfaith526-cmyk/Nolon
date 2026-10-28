@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type {
   BookingDto,
   BookingSummaryDto,
@@ -344,5 +345,86 @@ describe('old numbers', () => {
     ).rejects.toThrow();
     await expect(t.prisma.referenceRenumbering.delete({ where: { id: row.id } })).rejects.toThrow();
     await expect(t.prisma.$executeRawUnsafe('TRUNCATE "reference_renumberings"')).rejects.toThrow();
+  });
+});
+
+// F128-1: a database where 20261027235016 succeeded while old NOL-BK bookings (without shipments)
+// remained. The two later migrations must still give them their final numbers. Replayed here on
+// the migrated test database inside a transaction that is rolled back.
+describe('old NOL-BK bookings after the renumbering already ran', () => {
+  const migration = (name: string) =>
+    readFile(new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url), 'utf8');
+
+  it('get their route or BK number, their shipment follows, and the old number is logged', async () => {
+    const lcl = await book(loc.SAJED!, loc.SDPZU!);
+    const fcl = await book(loc.SAJED!, loc.SDPZU!, 'FCL');
+    const confirmed = (await post(`/bookings/${fcl.id}/confirm`, cookies.salesJed).expect(200))
+      .body as BookingDto;
+    const digits = randomUUID().replace(/\D/g, '').padEnd(12, '3');
+    const oldLcl = `NOL-BK-2026-${digits.slice(0, 6)}`;
+    const oldFcl = `NOL-BK-2026-${digits.slice(6, 12)}`;
+    const sql = [
+      await migration('20261027235015_legacy_booking_numbers'),
+      await migration('20261028050000_log_legacy_booking_numbers'),
+    ];
+    const rollback = new Error('rollback');
+
+    await expect(
+      t.prisma.$transaction(async (tx) => {
+        await tx.booking.update({ where: { id: lcl.id }, data: { number: oldLcl } });
+        await tx.booking.update({ where: { id: fcl.id }, data: { number: oldFcl } });
+        await tx.shipment.update({
+          where: { id: confirmed.shipmentId! },
+          data: { number: oldFcl },
+        });
+        const counters = async () =>
+          Object.fromEntries(
+            (
+              await tx.numberSequence.findMany({
+                where: {
+                  OR: [
+                    { docType: 'BOOKING', periodKey: '' },
+                    { docType: 'LCL_BOOKING', periodKey: 'JED-PTS' },
+                  ],
+                },
+              })
+            ).map((row) => [row.docType, row.nextValue]),
+          );
+        const before = await counters();
+
+        for (const file of sql) await tx.$executeRawUnsafe(file);
+
+        const lclNow = await tx.booking.findUniqueOrThrow({ where: { id: lcl.id } });
+        const fclNow = await tx.booking.findUniqueOrThrow({ where: { id: fcl.id } });
+        const shipmentNow = await tx.shipment.findUniqueOrThrow({
+          where: { id: confirmed.shipmentId! },
+        });
+        expect(lclNow.number).toBe(`JED-PTS-${String(before.LCL_BOOKING).padStart(4, '0')}`);
+        expect(fclNow.number).toBe(`BK${String(before.BOOKING).padStart(5, '0')}`);
+        expect(shipmentNow.number).toBe(fclNow.number);
+        const after = await counters();
+        expect(after.LCL_BOOKING).toBe(before.LCL_BOOKING! + 1n);
+        expect(after.BOOKING).toBe(before.BOOKING! + 1n);
+
+        const logged = await tx.referenceRenumbering.findMany({
+          where: { oldNumber: { in: [oldLcl, oldFcl] } },
+          orderBy: [{ kind: 'asc' }, { oldNumber: 'asc' }],
+        });
+        expect(logged.map((r) => [r.kind, r.recordId, r.oldNumber, r.newNumber])).toEqual(
+          [
+            ['BOOKING', lcl.id, oldLcl, lclNow.number],
+            ['BOOKING', fcl.id, oldFcl, fclNow.number],
+            ['SHIPMENT', confirmed.shipmentId, oldFcl, fclNow.number],
+          ].sort((a, b) => `${a[0]}${a[2]}`.localeCompare(`${b[0]}${b[2]}`)),
+        );
+        const left = await tx.$queryRaw<{ name: string | null }[]>`
+          SELECT to_regclass('"legacy_booking_numbers"')::text AS "name"`;
+        expect(left[0]?.name).toBeNull();
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+
+    const kept = await t.prisma.booking.findUniqueOrThrow({ where: { id: lcl.id } });
+    expect(kept.number).toBe(lcl.number);
   });
 });

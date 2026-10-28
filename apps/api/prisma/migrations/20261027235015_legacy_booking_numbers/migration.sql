@@ -12,6 +12,10 @@
 -- records them in the renumbering log (created by the renumbering) and drops that table, so staff
 -- search still finds a booking by its first number. On a database without such bookings (every new
 -- one) this changes no row. The whole file runs as one transaction.
+--
+-- Where the renumbering already succeeded (its log table exists: old bookings without shipments
+-- let it pass), this takes no booking: the renumbering will not run again, so a BK number here
+-- would stay. 20261028050000_log_legacy_booking_numbers numbers those bookings by their route.
 -- ---------------------------------------------------------------------------------------------
 
 CREATE TABLE "legacy_booking_numbers" AS
@@ -27,7 +31,8 @@ CROSS JOIN (
                   WHERE "number" ~ '^BK[0-9]+$'), 1)
     ) AS "start"
 ) s
-WHERE b."number" ~ '^NOL-BK-';
+WHERE b."number" ~ '^NOL-BK-'
+  AND to_regclass('"reference_renumberings"') IS NULL;
 
 UPDATE "bookings" b
 SET "number" = 'BK' || lpad(t."serial"::text, greatest(5, length(t."serial"::text)), '0')
