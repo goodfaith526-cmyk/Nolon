@@ -2678,7 +2678,8 @@
     "CARGO_IN_CLOSED_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: its cargo lines can no longer be corrected.",
     "CARGO_INVOICED": "Shipment {shipment} is billed by {invoices}: issue a full credit note first, then correct the cargo lines.",
     "CARGO_BELOW_ON_HAND": "Shipment {shipment} has {onHand} packages in its warehouses: the cargo lines cannot count fewer ({packages}).",
-    "CARGO_SHIPMENT_CLOSED": "Shipment {shipment} is closed or cancelled: its cargo lines cannot be corrected."
+    "CARGO_SHIPMENT_CLOSED": "Shipment {shipment} is closed or cancelled: its cargo lines cannot be corrected.",
+    "CARGO_LOAD_TYPE_CHANGE": "Shipment {shipment} is booked as FCL or LCL, and the corrected lines would change that: correct the lines without changing it."
   },
   "Locations": {
     "title": "Ports and cities",

@@ -263,6 +263,64 @@ describe('cargo line corrections (B3-3)', () => {
     expect([shown.cargoRevision, shown.packages]).toEqual([2, 1]);
   });
 
+  it('replays a stored correction even once its container type is deactivated (F138-2)', async () => {
+    const type = await containerType(null, null);
+    const booking = (
+      await post('/bookings', cookies.salesJed, {
+        customerId: customer.id,
+        originLocationId: jeddahPort,
+        destinationLocationId: portSudan,
+        mode: 'SEA',
+        loadType: 'FCL',
+        cargoType: 'CONTAINER',
+        services: ['MAIN_FREIGHT'],
+        items: [{ cargoType: 'CONTAINER', containerTypeCode: type, quantity: 1 }],
+      }).expect(201)
+    ).body as BookingDto;
+    const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.salesJed).expect(200))
+      .body as BookingDto;
+    const id = confirmed.shipmentId;
+    if (!id) throw new Error('No shipment');
+    const body = {
+      requestId: randomUUID(),
+      expectedRevision: (await view(id)).cargoRevision,
+      reason: 'Two containers, not one',
+      items: [{ cargoType: 'CONTAINER', containerTypeCode: type, quantity: 2 }],
+    };
+    await correct(id, body).expect(200);
+    await post(`/master-data/container-types/${type}/deactivate`, cookies.admin).expect(200);
+    // The same request again: the stored result, not a check of today's master data.
+    const replayed = (await correct(id, body).expect(200)).body as ShipmentDto;
+    expect([replayed.cargoRevision, replayed.packages]).toEqual([1, 2]);
+    // A new correction naming the inactive type is checked as any other.
+    const fresh = await correct(id, { ...body, requestId: randomUUID(), expectedRevision: 1 });
+    expect(fresh.status).toBe(400);
+  });
+
+  it('moves the cargo type of the shipment with its lines, and keeps FCL or LCL (F138-1)', async () => {
+    const id = await shipment({ quantity: 1, volumeCbm: '1' });
+    expect((await view(id)).cargoType).toBe('GENERAL');
+    const barrels = (
+      await correct(id, {
+        requestId: randomUUID(),
+        expectedRevision: 0,
+        reason: 'Barrels, not general cargo',
+        items: [{ cargoType: 'BARREL', quantity: 3, volumeCbm: '1' }],
+      }).expect(200)
+    ).body as ShipmentDto;
+    expect(barrels.cargoType).toBe('BARREL');
+    // A container line would make this LCL shipment FCL: refused, nothing changes.
+    const fcl = await correct(id, {
+      requestId: randomUUID(),
+      expectedRevision: 1,
+      reason: 'A whole container',
+      items: [{ cargoType: 'CONTAINER', containerTypeCode: '20GP', quantity: 1 }],
+    }).expect(409);
+    expect(fcl.body).toMatchObject({ code: 'CARGO_LOAD_TYPE_CHANGE' });
+    const after = await view(id);
+    expect([after.cargoType, after.loadType, after.cargoRevision]).toEqual(['BARREL', 'LCL', 1]);
+  });
+
   it('keeps an open container within its limits, by volume and by weight, and lets a closed one fix the lines', async () => {
     const type = await containerType('67', '1000');
     const big = await shipment({ quantity: 1, volumeCbm: '60', weightKg: '500' });

@@ -47,6 +47,7 @@ import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
+import { bookingCargoHeader } from '../bookings/booking-cargo.js';
 import { prepareCargoLine } from '../bookings/cargo-line.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
@@ -690,14 +691,12 @@ export class ShipmentsService {
     if (!user.access.has('shipments:update', shipment.branchId)) {
       throw new ForbiddenException('Missing permission');
     }
-    const lines: PreparedLine[] = [];
-    for (const [index, item] of input.items.entries()) {
-      lines.push(withoutCategory(await prepareCargoLine(this.masterData, item, `items.${index}`)));
-    }
+    // The request as sent (F138-2): a retry is answered from the stored correction before the
+    // lines are checked against master data that may have changed since.
     const hash = requestHash({
       expectedRevision: input.expectedRevision,
       reason: input.reason,
-      items: lines.map((line, index) => toItemDto({ lineNo: index + 1, ...line })),
+      items: input.items,
     });
     const label = shipment.number;
     const containers = this.containers.get();
@@ -726,6 +725,12 @@ export class ShipmentsService {
           'CORRECTION_STALE',
           `Shipment ${label} changed since it was read: reload it and try again`,
           { shipment: label },
+        );
+      }
+      const lines: PreparedLine[] = [];
+      for (const [index, item] of input.items.entries()) {
+        lines.push(
+          withoutCategory(await prepareCargoLine(this.masterData, item, `items.${index}`)),
         );
       }
       if (!isActive(status)) {
@@ -771,7 +776,34 @@ export class ShipmentsService {
         where: { shipmentId: id },
         orderBy: { lineNo: 'asc' },
       });
+      // F138-1: the shipment's cargo header follows its lines as a booking's does, so pricing
+      // reads the corrected cargo. FCL/LCL decides containers and numbering: not changed here.
+      const saved = await tx.shipment.findUniqueOrThrow({
+        where: { id },
+        select: { mode: true, loadType: true, cargoType: true, cargoDescription: true },
+      });
+      const header = bookingCargoHeader(
+        { mode: saved.mode, items: lines },
+        { ...saved, items: before },
+      );
+      if (header.loadType !== saved.loadType) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CARGO_LOAD_TYPE_CHANGE',
+          `Shipment ${label} is ${saved.loadType ?? 'not FCL or LCL'}: the corrected lines would make it ${header.loadType ?? 'neither'}`,
+          { shipment: label },
+        );
+      }
+      // A header kept apart from the lines stays while a line still has its cargo type.
+      const cargoType =
+        header.cargoType && lines.some((line) => line.cargoType === header.cargoType)
+          ? header.cargoType
+          : (lines[0]?.cargoType ?? saved.cargoType);
       const write = async () => {
+        await tx.shipment.update({
+          where: { id },
+          data: { cargoType, cargoDescription: header.cargoDescription },
+        });
         await tx.shipmentItem.deleteMany({ where: { shipmentId: id } });
         await tx.shipmentItem.createMany({
           data: lines.map((line, index) => ({ shipmentId: id, lineNo: index + 1, ...line })),

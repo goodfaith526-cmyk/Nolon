@@ -2678,7 +2678,8 @@
     "CARGO_IN_CLOSED_CONTAINER": "الشحنة {shipment} في الحاوية {container} وهي مقفلة: لم يعد ممكناً تصحيح بنود بضاعتها.",
     "CARGO_INVOICED": "الشحنة {shipment} عليها الفاتورة {invoices}: أصدر إشعاراً دائناً كاملاً أولاً، ثم صحّح بنود البضاعة.",
     "CARGO_BELOW_ON_HAND": "في مخازن الشحنة {shipment} {onHand} طرداً: لا يمكن أن تقل بنود البضاعة عنها ({packages}).",
-    "CARGO_SHIPMENT_CLOSED": "الشحنة {shipment} مغلقة أو ملغاة: لا يمكن تصحيح بنود بضاعتها."
+    "CARGO_SHIPMENT_CLOSED": "الشحنة {shipment} مغلقة أو ملغاة: لا يمكن تصحيح بنود بضاعتها.",
+    "CARGO_LOAD_TYPE_CHANGE": "الشحنة {shipment} محددة كحاوية كاملة (FCL) أو مشتركة (LCL)، والبنود المصححة تغيّر ذلك: صحّح البنود دون تغيير نوع الشحن."
   },
   "Locations": {
     "title": "الموانئ والمدن",

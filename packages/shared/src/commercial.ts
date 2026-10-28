@@ -882,6 +882,7 @@ export const FORM_REFUSALS = [
   'CARGO_INVOICED',
   'CARGO_BELOW_ON_HAND',
   'CARGO_SHIPMENT_CLOSED',
+  'CARGO_LOAD_TYPE_CHANGE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

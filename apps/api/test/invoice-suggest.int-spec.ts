@@ -374,6 +374,82 @@ describe('invoice suggestion: a shipment without a quotation', () => {
   });
 });
 
+describe('invoice suggestion after a cargo correction (B3-3, F138-1)', () => {
+  it('prices the corrected cargo type: barrels at the barrel tariff', async () => {
+    // Its own route and charge, so the other cases' rates are untouched.
+    const tag = `CT${randomUUID().slice(0, 6).toUpperCase()}`;
+    const place = async (suffix: string) =>
+      (
+        await t.prisma.location.create({
+          data: {
+            code: `${tag}${suffix}`,
+            kind: 'CITY',
+            nameEn: `Cargo type test ${tag}${suffix}`,
+            nameAr: 'مدينة اختبار نوع البضاعة',
+            countryCode: 'SD',
+          },
+        })
+      ).id;
+    const [origin, destination] = [await place('A'), await place('B')];
+    const code = `${tag}FR`;
+    await t.prisma.chargeType.create({
+      data: { code, nameEn: 'Cargo type test', nameAr: 'رسم اختبار', service: 'MAIN_FREIGHT' },
+    });
+    const by = (await t.prisma.user.findFirstOrThrow({ select: { id: true } })).id;
+    for (const [cargoType, price] of [
+      ['GENERAL', '10'],
+      ['BARREL', '20'],
+    ] as const) {
+      await t.prisma.rateCard.create({
+        data: {
+          branchId: pts,
+          originLocationId: origin,
+          destinationLocationId: destination,
+          mode: 'ROAD',
+          cargoType,
+          chargeTypeCode: code,
+          unit: 'PER_SHIPMENT',
+          price,
+          minimumCharge: '0',
+          currency: 'USD',
+          validFrom: new Date(`${day(-30)}T00:00:00Z`),
+          validTo: null,
+          status: 'APPROVED',
+          createdById: by,
+          approvedById: by,
+          approvedAt: new Date(),
+        },
+      });
+    }
+    const booking = (
+      await r
+        .post('/bookings', cookies.salesPts, {
+          customerId: customer.id,
+          originLocationId: origin,
+          destinationLocationId: destination,
+          mode: 'ROAD',
+          cargoType: 'GENERAL',
+          services: ['MAIN_FREIGHT'],
+          items: [{ cargoType: 'GENERAL', quantity: 3, weightKg: '30' }],
+        })
+        .expect(201)
+    ).body as BookingDto;
+    const shipmentId = await confirmed(booking);
+    const price = async () =>
+      (await suggestion({ shipmentId })).lines.find((l) => l.chargeTypeCode === code)?.unitPrice;
+    expect(await price()).toBe('10');
+    await r
+      .put(`/shipments/${shipmentId}/items`, cookies.admin, {
+        requestId: randomUUID(),
+        expectedRevision: 0,
+        reason: 'Barrels, not general cargo',
+        items: [{ cargoType: 'BARREL', quantity: 3, weightKg: '30' }],
+      })
+      .expect(200);
+    expect(await price()).toBe('20');
+  });
+});
+
 describe('invoice suggestion: a minimum charge above the price per unit (Codex N89-1, N89-3)', () => {
   it('fills 0.25 kg at 100 per kg with a minimum of 60 as 1 × 60 with its price, and prices 1 unit with no price as 100', async () => {
     // Its own route and charge, so the other cases' rates are untouched.
