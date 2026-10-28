@@ -21,6 +21,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { newApiKey } from '../src/customer-service/api-key.js';
 import { uniquePhone } from './test-data.js';
 
 /** Every field the Customer Service API may return (scenario 23): Public or Customer-visible. */
@@ -122,6 +123,8 @@ describe('Customer Service API', () => {
     t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
   const patch = (path: string, cookie: string, body: object) =>
     t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+  const put = (path: string, cookie: string, body: object) =>
+    t.http().put(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
   const cs = (path: string, key: string) =>
     t.http().get(`/api/v1/cs${path}`).set('Authorization', `Bearer ${key}`);
 
@@ -218,12 +221,14 @@ describe('Customer Service API', () => {
       await post('/api-clients', cookies.admin, {
         name: `CS test PTS ${secret}`,
         branchIds: [pts],
+        scopes: ['cs:customers:read'],
       }).expect(201)
     ).body as ApiClientCreatedDto;
     jedKey = (
       await post('/api-clients', cookies.admin, {
         name: `CS test JED ${secret}`,
         branchIds: [jed],
+        scopes: ['cs:customers:read'],
       }).expect(201)
     ).body as ApiClientCreatedDto;
   });
@@ -348,15 +353,34 @@ describe('Customer Service API', () => {
   });
 
   it('lets only the Administrator make and revoke keys, shown once', async () => {
-    await post('/api-clients', cookies.management, { name: 'x', branchIds: [pts] }).expect(403);
-    await post('/api-clients', cookies.financePts, { name: 'x', branchIds: [pts] }).expect(403);
+    const read = ['cs:customers:read'];
+    await post('/api-clients', cookies.management, {
+      name: 'x',
+      branchIds: [pts],
+      scopes: read,
+    }).expect(403);
+    await post('/api-clients', cookies.financePts, {
+      name: 'x',
+      branchIds: [pts],
+      scopes: read,
+    }).expect(403);
     await get('/api-clients', cookies.management).expect(403);
-    await post('/api-clients', cookies.admin, { name: 'x', branchIds: [] }).expect(400);
-    await post('/api-clients', cookies.admin, { name: 'x', branchIds: [randomUUID()] }).expect(403);
+    await post('/api-clients', cookies.admin, { name: 'x', branchIds: [], scopes: read }).expect(
+      400,
+    );
+    await post('/api-clients', cookies.admin, {
+      name: 'x',
+      branchIds: [randomUUID()],
+      scopes: read,
+    }).expect(403);
 
     const listed = (await get('/api-clients', cookies.admin).expect(200)).body as ApiClientDto[];
     const mine = listed.find((c) => c.id === ptsKey.client.id);
-    expect(mine).toMatchObject({ branchCodes: ['PTS'], isActive: true });
+    expect(mine).toMatchObject({
+      branchCodes: ['PTS'],
+      scopes: ['cs:customers:read'],
+      isActive: true,
+    });
     expect(mine?.lastUsedAt).not.toBeNull();
     expect(JSON.stringify(listed)).not.toContain(ptsKey.key);
     const row = await t.prisma.apiClient.findUniqueOrThrow({ where: { id: ptsKey.client.id } });
@@ -370,5 +394,105 @@ describe('Customer Service API', () => {
     await cs(`/customers?phone=${encodeURIComponent(contactPhone)}`, jedKey.key).expect(401);
     await post(`/api-clients/${ptsKey.client.id}/revoke`, cookies.financePts).expect(403);
     await cs(`/customers/${customer.number}`, ptsKey.key).expect(200);
+  });
+
+  describe('scopes', () => {
+    it('refuses every route whose scope the key does not hold, with no default', async () => {
+      const bot = (
+        await post('/api-clients', cookies.admin, {
+          name: `CS bot ${secret}`,
+          branchIds: [pts],
+          scopes: ['cs:customer_tokens:issue'],
+        }).expect(201)
+      ).body as ApiClientCreatedDto;
+      expect(bot.client.scopes).toEqual(['cs:customer_tokens:issue']);
+      for (const path of [
+        `/customers?phone=${encodeURIComponent(contactPhone)}`,
+        `/customers/${customer.number}`,
+        `/customers/${customer.number}/shipments`,
+        `/customers/${customer.number}/invoices`,
+        `/shipments/${shipment.number}`,
+      ]) {
+        const refused = await cs(path, bot.key).expect(403);
+        expect(refused.body).toMatchObject({ code: 'SCOPE_REQUIRED' });
+      }
+      // Asking for no scope, or one that does not exist, is refused.
+      await post('/api-clients', cookies.admin, { name: 'x', branchIds: [pts], scopes: [] }).expect(
+        400,
+      );
+      await post('/api-clients', cookies.admin, { name: 'x', branchIds: [pts] }).expect(400);
+      await post('/api-clients', cookies.admin, {
+        name: 'x',
+        branchIds: [pts],
+        scopes: ['cs:everything'],
+      }).expect(400);
+    });
+
+    it('keeps the reads of a key made before scopes existed', async () => {
+      const { key, prefix, hash } = newApiKey();
+      const { createdById } = await t.prisma.apiClient.findUniqueOrThrow({
+        where: { id: ptsKey.client.id },
+      });
+      // As the migration leaves an old key: no scope rows, customers_read at its default.
+      await t.prisma.apiClient.create({
+        data: {
+          name: `CS old ${secret}`,
+          keyPrefix: prefix,
+          keyHash: hash,
+          createdById,
+          branches: { create: [{ branchId: pts }] },
+        },
+      });
+      await cs(`/customers/${customer.number}`, key).expect(200);
+    });
+
+    it('lets only the Administrator change scopes of an active key, at once and audited', async () => {
+      const bot = (
+        await post('/api-clients', cookies.admin, {
+          name: `CS bot 2 ${secret}`,
+          branchIds: [pts],
+          scopes: ['cs:catalog:read'],
+        }).expect(201)
+      ).body as ApiClientCreatedDto;
+      const path = `/api-clients/${bot.client.id}/scopes`;
+      await cs(`/customers/${customer.number}`, bot.key).expect(403);
+
+      await put(path, cookies.financePts, { scopes: ['cs:customers:read'] }).expect(403);
+      await put(path, cookies.management, { scopes: ['cs:customers:read'] }).expect(403);
+      await put(path, cookies.admin, { scopes: [] }).expect(400);
+      await put(`/api-clients/${randomUUID()}/scopes`, cookies.admin, {
+        scopes: ['cs:catalog:read'],
+      }).expect(404);
+
+      const granted = (
+        await put(path, cookies.admin, {
+          scopes: ['cs:quote:read', 'cs:customers:read', 'cs:quote:read'],
+        }).expect(200)
+      ).body as ApiClientDto;
+      expect(granted.scopes).toEqual(['cs:customers:read', 'cs:quote:read']);
+      await cs(`/customers/${customer.number}`, bot.key).expect(200);
+
+      const taken = (await put(path, cookies.admin, { scopes: ['cs:catalog:read'] }).expect(200))
+        .body as ApiClientDto;
+      expect(taken.scopes).toEqual(['cs:catalog:read']);
+      await cs(`/customers/${customer.number}`, bot.key).expect(403);
+
+      const events = await t.prisma.auditEvent.findMany({
+        where: { entity: 'API_CLIENT', entityId: bot.client.id },
+        orderBy: { id: 'asc' },
+      });
+      expect(events.map((e) => e.action)).toEqual(['CREATED', 'UPDATED', 'UPDATED']);
+      expect(events[1]?.changes).toEqual([
+        { field: 'scopes', before: 'cs:catalog:read', after: 'cs:customers:read, cs:quote:read' },
+      ]);
+
+      await post(`/api-clients/${bot.client.id}/revoke`, cookies.admin).expect(200);
+      await put(path, cookies.admin, { scopes: ['cs:customers:read'] }).expect(409);
+      const last = await t.prisma.auditEvent.findFirstOrThrow({
+        where: { entity: 'API_CLIENT', entityId: bot.client.id },
+        orderBy: { id: 'desc' },
+      });
+      expect(last.action).toBe('CANCELLED');
+    });
   });
 });

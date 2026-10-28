@@ -434,11 +434,44 @@ describe('warehouse and customs', () => {
       expect((await view(s.id)).balances[0]?.onHandPackages).toBe(1);
     });
 
+    it('a shipment with goods in a warehouse does not close until they are released (B1-5)', async () => {
+      const s = await confirmedShipment(['MAIN_FREIGHT']);
+      await receive(s.id, cookies.warehouseDxb, { packages: 4 }).expect(201);
+      for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
+        await post(`/shipments/${s.id}/status`, cookies.opsDxb, { status: next }).expect(200);
+      }
+      const delivered = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(delivered.actions.closeCheck).toEqual({
+        goodsOnHand: [{ warehouseCode: 'ZZ-DXB-1', packages: 4 }],
+        invoiced: false,
+      });
+      const close = () =>
+        post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+          status: 'CLOSED',
+          noChargeReason: 'Test shipment',
+        });
+      const refused = await close().expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'SHIPMENT_CLOSE_GOODS_ON_HAND',
+        params: { shipment: s.number, warehouses: 'ZZ-DXB-1 (4)' },
+      });
+      await release(s.id, cookies.warehouseDxb, { packages: 3 }).expect(201);
+      await close().expect(409);
+      await release(s.id, cookies.warehouseDxb, { packages: 1 }).expect(201);
+      await close().expect(200);
+      expect(await status(s.id)).toBe('CLOSED');
+    });
+
     it('a closed or cancelled shipment takes no receipt (409); a cancelled one can return goods', async () => {
       const closed = await confirmedShipment(['MAIN_FREIGHT']);
-      for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED', 'CLOSED']) {
+      for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
         await post(`/shipments/${closed.id}/status`, cookies.opsDxb, { status: next }).expect(200);
       }
+      await post(`/shipments/${closed.id}/status`, cookies.opsDxb, {
+        status: 'CLOSED',
+        noChargeReason: 'Test shipment',
+      }).expect(200);
       await receive(closed.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
       await release(closed.id, cookies.warehouseDxb, { packages: 1 }).expect(409);
 

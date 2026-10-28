@@ -201,10 +201,24 @@ export interface ShipmentActionsDto {
    * container instead.
    */
   containerMoves: { container: string; statuses: ShipmentStatus[] } | null;
+  /** With CLOSED among the transitions: what closing needs (B1-5); otherwise null. */
+  closeCheck: ShipmentCloseCheckDto | null;
   canCancel: boolean;
   canEdit: boolean;
   /** Only users of the shipment's own branch choose the branches sharing it. */
   canShareBranches: boolean;
+}
+
+/**
+ * Closing a delivered shipment (owner decision Q1): no goods left in any warehouse, and an
+ * approved invoice billing it, or a reason it is closed without charges. Checked again under the
+ * shipment's lock when it closes.
+ */
+export interface ShipmentCloseCheckDto {
+  /** Warehouses still holding its goods, with the packages on hand; empty when none. */
+  goodsOnHand: { warehouseCode: string; packages: number }[];
+  /** An approved invoice bills it (not fully credited, or paid). */
+  invoiced: boolean;
 }
 
 /** A branch named on a shipment (one sharing it, or one it may be shared with). */
@@ -282,6 +296,12 @@ export interface ShipmentStatusRequest {
   occurredAt?: string;
   locationId?: string | null;
   note?: string | null;
+  /**
+   * Closing only: why a shipment no approved invoice bills is closed without charges (at least
+   * SHIPMENT_REASON_MIN_LENGTH characters). Recorded as the reason of the closing event; refused
+   * on any other status, and when an approved invoice bills the shipment (B1-5).
+   */
+  noChargeReason?: string | null;
 }
 
 export interface ShipmentHoldRequest {

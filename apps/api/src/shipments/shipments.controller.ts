@@ -53,20 +53,24 @@ const updateBody = z
   })
   .strict();
 
+/**
+ * Why a shipment is held, reverted or cancelled: at least 3 characters once trimmed, so a stray
+ * key press is not recorded as a reason. The web form counts the same way.
+ */
+const shipmentReason = requiredText(1000).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH));
 const statusBody = z
   .object({
     status: z.enum(SHIPMENT_STATUSES),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     locationId: z.uuid().nullish(),
     note: optionalText(1000),
+    noChargeReason: shipmentReason.nullish(),
   })
-  .strict();
-
-/**
- * Why a shipment is held, reverted or cancelled: at least 3 characters once trimmed, so a stray
- * key press is not recorded as a reason. The web form counts the same way.
- */
-const shipmentReason = requiredText(1000).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH));
+  .strict()
+  .refine((b) => !b.noChargeReason || b.status === 'CLOSED', {
+    message: 'A no-charge reason is given only when closing',
+    path: ['noChargeReason'],
+  });
 const holdBody = z.object({ reason: shipmentReason, note: optionalText(1000) }).strict();
 const noteBody = z.object({ note: optionalText(1000) }).strict();
 const reasonBody = z.object({ reason: shipmentReason }).strict();

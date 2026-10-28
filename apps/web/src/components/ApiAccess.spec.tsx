@@ -12,6 +12,7 @@ const key: ApiClientDto = {
   name: 'WhatsApp desk',
   keyPrefix: 'nlk_abc',
   branchCodes: ['DXB'],
+  scopes: ['cs:customers:read'],
   isActive: true,
   createdByName: 'Admin',
   createdAt: '2026-10-01T00:00:00Z',

@@ -134,6 +134,7 @@ export function ShipmentDetail({ id }: { id: string }) {
         occurredAt: toIso(field(form, 'occurredAt')),
         locationId: field(form, 'locationId') || null,
         note: field(form, 'note') || null,
+        noChargeReason: field(form, 'noChargeReason').trim() || null,
       },
       t('statusChanged'),
     );
@@ -194,6 +195,10 @@ export function ShipmentDetail({ id }: { id: string }) {
   const canRevert = actions.revertTo !== null && actions.revertUndoes !== null && !refreshing;
   const earliestMinute = earliestLocalMinute(actions.earliestStatusTime);
   const chosenStatus = nextStatus || actions.transitions[0] || '';
+  // Closing (B1-5): goods left in a warehouse block it; no approved invoice needs a reason.
+  const closing = chosenStatus === 'CLOSED';
+  const closeCheck = actions.closeCheck;
+  const goodsBlockClose = closing && (closeCheck?.goodsOnHand.length ?? 0) > 0;
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
   const chosenLocation = pickedLocation ?? suggested ?? '';
 
@@ -320,6 +325,30 @@ export function ShipmentDetail({ id }: { id: string }) {
             <span>{t('note')}</span>
             <textarea name="note" maxLength={1000} />
           </label>
+          {closing && closeCheck && closeCheck.goodsOnHand.length > 0 && (
+            <p className="warning">
+              {t('closeGoodsOnHand', {
+                warehouses: closeCheck.goodsOnHand
+                  .map((g) => `${g.warehouseCode} (${g.packages})`)
+                  .join(', '),
+              })}
+            </p>
+          )}
+          {closing && closeCheck && !closeCheck.invoiced && (
+            <>
+              <p className="warning">{t('closeNotInvoiced')}</p>
+              <label className="field">
+                <span>{t('noChargeReason')}</span>
+                <textarea
+                  name="noChargeReason"
+                  required
+                  minLength={SHIPMENT_REASON_MIN_LENGTH}
+                  maxLength={1000}
+                />
+              </label>
+            </>
+          )}
+          {closing && <p className="muted">{t('closeCostsReminder')}</p>}
           {chosenStatus && actions.containerMoves?.statuses.includes(chosenStatus) && (
             <p className="warning">
               {t('containerMoveWarning', {
@@ -342,7 +371,7 @@ export function ShipmentDetail({ id }: { id: string }) {
             })}
           </p>
           <div className="actions">
-            <button type="submit" className="primary" disabled={busy}>
+            <button type="submit" className="primary" disabled={busy || goodsBlockClose}>
               {tc('save')}
             </button>
             <button type="button" onClick={() => setPanel(null)}>
