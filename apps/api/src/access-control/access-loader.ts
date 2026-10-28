@@ -1,6 +1,6 @@
 import { hasAllBranchAccess, type Role } from '@nolon/shared';
 import type { Prisma } from '../generated/prisma/client.js';
-import { type Access, type AccessRows, computeAccess } from './access.js';
+import { type Access, type AccessRows, computeAccess, mayHoldDelegation } from './access.js';
 
 type Db = Pick<
   Prisma.TransactionClient,
@@ -100,6 +100,7 @@ export async function loadAccessRows(
             delegate: {
               select: {
                 isActive: true,
+                roles: { select: { role: true } },
                 branches: { select: { branchId: true } },
               },
             },
@@ -127,6 +128,7 @@ export async function loadAccessRows(
       live:
         d.revokedAt === null &&
         d.delegate.isActive &&
+        mayHoldDelegation(d.delegate.roles.map((r) => r.role)) &&
         // A member of the branch (user_branches), as when the delegation was made.
         d.delegate.branches.some((b) => b.branchId === d.branchId),
       permissions: d.permissions.map((p) => p.permission),

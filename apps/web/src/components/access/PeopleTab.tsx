@@ -20,8 +20,20 @@ import {
   useAccessNotice,
 } from './AccessCommon';
 
+/** The form's fields; the tab adds the version the person was read at (F118-3). */
+type PersonBranchFields = Omit<SetPersonBranchAccessRequest, 'expectedVersion'>;
+
 /** People: a person's access in each of their branches, with why, and the owner's own rows. */
-export function PeopleTab({ catalog, canEdit }: { catalog: AccessCatalogDto; canEdit: boolean }) {
+export function PeopleTab({
+  catalog,
+  canEdit,
+  onChanged,
+}: {
+  catalog: AccessCatalogDto;
+  canEdit: boolean;
+  /** After a save: the catalog is read again at the new version (F118-3). */
+  onChanged?: () => void;
+}) {
   const t = useTranslations('Access');
   const tRoles = useTranslations('Roles');
   const { name, list, teamName } = useAccessLabels();
@@ -59,15 +71,17 @@ export function PeopleTab({ catalog, canEdit }: { catalog: AccessCatalogDto; can
       return team ? name(team) : tRoles(role);
     });
 
-  async function save(branchId: string, body: SetPersonBranchAccessRequest) {
+  async function save(branchId: string, body: PersonBranchFields) {
+    if (!shown) return;
     setNotice(null);
     try {
       const next = await api<PersonAccessDto>(
         `/access-control/people/${userId}/branches/${branchId}`,
-        { method: 'PUT', body },
+        { method: 'PUT', body: { ...body, expectedVersion: shown.version } },
       );
       setPerson(next);
       setNotice({ ok: true, text: t('saved') });
+      onChanged?.();
     } catch (e) {
       setNotice(failure(e));
     }
@@ -134,7 +148,7 @@ function PersonBranch({
   catalog: AccessCatalogDto;
   canEdit: boolean;
   teamName: (id: string) => string;
-  onSave: (body: SetPersonBranchAccessRequest) => Promise<void>;
+  onSave: (body: PersonBranchFields) => Promise<void>;
 }) {
   const t = useTranslations('Access');
   const { list, name, permissionLabel } = useAccessLabels();

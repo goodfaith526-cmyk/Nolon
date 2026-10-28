@@ -28,15 +28,20 @@ interface Pending {
   /** The new ceiling; null revokes the delegation. */
   permissions: Permission[] | null;
   dropped: DroppedGrantDto[];
+  /** The preview's version: the change applies only if nothing changed since (F118-3). */
+  version: string;
 }
 
 /** Delegation: per branch, who may hand out what; a smaller ceiling or a revocation is previewed. */
 export function DelegationsTab({
   catalog,
   canEdit,
+  onChanged,
 }: {
   catalog: AccessCatalogDto;
   canEdit: boolean;
+  /** After a save: the catalog is read again at the new version (F118-3). */
+  onChanged?: () => void;
 }) {
   const t = useTranslations('Access');
   const locale = useLocale();
@@ -65,6 +70,7 @@ export function DelegationsTab({
       setEditing(null);
       setPending(null);
       load();
+      onChanged?.();
     } catch (e) {
       setNotice(failure(e));
     }
@@ -76,7 +82,8 @@ export function DelegationsTab({
     const shrinks =
       permissions === null || removedPermissions(delegation.permissions, permissions).length > 0;
     if (!shrinks) {
-      await run(() => setCeiling(delegation, permissions), t('saved'));
+      if (!branch) return;
+      await run(() => setCeiling(delegation, permissions, branch.version), t('saved'));
       return;
     }
     setBusy(true);
@@ -86,17 +93,17 @@ export function DelegationsTab({
         `/access-control/delegations/${delegation.id}/preview`,
         { method: 'POST', body: { permissions } },
       );
-      setPending({ delegation, permissions, dropped: preview.dropped });
+      setPending({ delegation, permissions, dropped: preview.dropped, version: preview.version });
     } catch (e) {
       setNotice(failure(e));
     }
     setBusy(false);
   }
 
-  function setCeiling(delegation: DelegationDto, permissions: Permission[]) {
+  function setCeiling(delegation: DelegationDto, permissions: Permission[], version: string) {
     return api<DelegationChangeDto>(`/access-control/delegations/${delegation.id}/permissions`, {
       method: 'PUT',
-      body: { permissions },
+      body: { permissions, expectedVersion: version },
     });
   }
 
@@ -107,8 +114,9 @@ export function DelegationsTab({
         permissions === null
           ? api<DelegationChangeDto>(`/access-control/delegations/${p.delegation.id}/revoke`, {
               method: 'POST',
+              body: { expectedVersion: p.version },
             })
-          : setCeiling(p.delegation, permissions),
+          : setCeiling(p.delegation, permissions, p.version),
       permissions === null ? t('revoked') : t('saved'),
     );
   }
@@ -165,7 +173,11 @@ export function DelegationsTab({
                   () =>
                     api<DelegationDto>('/access-control/delegations', {
                       method: 'POST',
-                      body: { ...body, branchId: branch.branchId },
+                      body: {
+                        ...body,
+                        branchId: branch.branchId,
+                        expectedVersion: branch.version,
+                      },
                     }),
                   t('delegationCreated'),
                 )
@@ -273,7 +285,7 @@ function NewDelegationForm({
   people: { userId: string; fullName: string }[];
   busy: boolean;
   onCancel: () => void;
-  onSubmit: (body: Omit<CreateDelegationRequest, 'branchId'>) => Promise<void>;
+  onSubmit: (body: Omit<CreateDelegationRequest, 'branchId' | 'expectedVersion'>) => Promise<void>;
 }) {
   const t = useTranslations('Access');
   const [delegateUserId, setDelegate] = useState('');

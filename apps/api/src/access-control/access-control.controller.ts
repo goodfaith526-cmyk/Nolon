@@ -41,9 +41,12 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 
 const permissions = z.array(z.enum(PERMISSIONS)).max(PERMISSIONS.length);
 const name = z.string().trim().min(1).max(100);
+/** The access_state.version of the read the change was made from (F118-3). */
+const expectedVersion = z.string().regex(/^\d{1,19}$/);
 
 const createTeamBody = z
   .object({
+    expectedVersion,
     code: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/),
     nameAr: name,
     nameEn: name,
@@ -51,17 +54,30 @@ const createTeamBody = z
   })
   .strict();
 const updateTeamBody = z
-  .object({ nameAr: name.optional(), nameEn: name.optional(), isActive: z.boolean().optional() })
+  .object({
+    expectedVersion,
+    nameAr: name.optional(),
+    nameEn: name.optional(),
+    isActive: z.boolean().optional(),
+  })
   .strict();
-const permissionsBody = z.object({ permissions }).strict();
+const permissionsBody = z.object({ expectedVersion, permissions }).strict();
 const previewBody = z.object({ permissions: permissions.nullable() }).strict();
 const personBranchBody = z
-  .object({ teamIds: z.array(z.uuid()).max(50), allow: permissions, deny: permissions })
+  .object({
+    expectedVersion,
+    teamIds: z.array(z.uuid()).max(50),
+    allow: permissions,
+    deny: permissions,
+  })
   .strict();
 const delegationBody = z
-  .object({ branchId: z.uuid(), delegateUserId: z.uuid(), permissions })
+  .object({ expectedVersion, branchId: z.uuid(), delegateUserId: z.uuid(), permissions })
   .strict();
-const delegatedBody = z.object({ teamIds: z.array(z.uuid()).max(50), allow: permissions }).strict();
+const delegatedBody = z
+  .object({ expectedVersion, teamIds: z.array(z.uuid()).max(50), allow: permissions })
+  .strict();
+const revokeBody = z.object({ expectedVersion }).strict();
 
 /** The owner's permissions screen (plan 03, section 6): the Administrator only. */
 @Controller('access-control')
@@ -97,7 +113,8 @@ export class AccessControlController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<AccessTeamDto> {
-    return this.access.setTeamPermissions(actor, id, parse(permissionsBody, body).permissions);
+    const input = parse(permissionsBody, body);
+    return this.access.setTeamPermissions(actor, id, input.permissions, input.expectedVersion);
   }
 
   @Get('branches/:id')
@@ -113,7 +130,8 @@ export class AccessControlController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<BranchAccessDto> {
-    return this.access.setBranchBlocked(actor, id, parse(permissionsBody, body).permissions);
+    const input = parse(permissionsBody, body);
+    return this.access.setBranchBlocked(actor, id, input.permissions, input.expectedVersion);
   }
 
   @Get('people/:userId')
@@ -157,10 +175,12 @@ export class AccessControlController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<DelegationChangeDto> {
+    const input = parse(permissionsBody, body);
     return this.access.setDelegationPermissions(
       actor,
       id,
-      parse(permissionsBody, body).permissions,
+      input.permissions,
+      input.expectedVersion,
     );
   }
 
@@ -170,8 +190,9 @@ export class AccessControlController {
   revokeDelegation(
     @CurrentUser() actor: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
   ): Promise<DelegationChangeDto> {
-    return this.access.revokeDelegation(actor, id);
+    return this.access.revokeDelegation(actor, id, parse(revokeBody, body).expectedVersion);
   }
 
   @Get('log')

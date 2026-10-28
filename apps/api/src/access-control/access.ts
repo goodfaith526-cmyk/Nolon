@@ -1,12 +1,23 @@
 import {
   GLOBAL_MODULES,
   NON_GRANTABLE_MODULES,
+  RESTRICTED_ROLES,
   ROLE_PERMISSIONS,
   isPermission,
   permissionModule,
   type Permission,
   type Role,
 } from '@nolon/shared';
+
+/**
+ * Whether a person with these roles may hold a branch delegation: not the Administrator (who needs
+ * none) and no restricted role (Driver, Outlet Staff: given through the role only). Checked when
+ * the delegation is made and again wherever it is used, so a later role change ends what it gives
+ * (Codex F118-4).
+ */
+export function mayHoldDelegation(roles: readonly Role[]): boolean {
+  return !roles.includes('ADMINISTRATOR') && !roles.some((r) => RESTRICTED_ROLES.includes(r));
+}
 
 /**
  * Who may do what, per branch (docs/plans/03-permissions-screen.md, section 4). Built once per

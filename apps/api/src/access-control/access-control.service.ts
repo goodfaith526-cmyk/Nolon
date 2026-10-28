@@ -39,9 +39,9 @@ import { AuditService, type AuditRecord } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { explainAccess, teamPermissions } from './access.js';
-import { loadAccess, loadAccessRows } from './access-loader.js';
-import { requireActorInTx } from './access-lock.js';
+import { explainAccess, mayHoldDelegation, teamPermissions } from './access.js';
+import { loadAccess, loadAccessRows, readAccessVersion } from './access-loader.js';
+import { AccessChangedException, requireActorInTx } from './access-lock.js';
 
 type Tx = Prisma.TransactionClient;
 type Db = Tx | PrismaService;
@@ -121,6 +121,9 @@ function requireGrantable(values: readonly string[]): Permission[] {
 }
 
 const isAdministrator = (roles: readonly Role[]) => roles.includes('ADMINISTRATOR');
+
+/** The access_state.version a change made under the lock at `version` leaves behind. */
+const nextVersion = (version: string) => (BigInt(version) + 1n).toString();
 const holdsRestricted = (roles: readonly Role[]) => roles.some((r) => RESTRICTED_ROLES.includes(r));
 
 /**
@@ -138,7 +141,11 @@ export class AccessControlService {
 
   // ---- Reads (owner) -------------------------------------------------------------------------
 
+  // Every read takes access_state.version first: a change committed after it leaves the screen
+  // with the older version, so its next change is refused (F118-3).
+
   async catalog(): Promise<AccessCatalogDto> {
+    const version = await readAccessVersion(this.prisma);
     const [teams, branches] = await Promise.all([
       this.prisma.team.findMany({
         select: TEAM_SELECT,
@@ -147,6 +154,7 @@ export class AccessControlService {
       this.branches(this.prisma),
     ]);
     return {
+      version,
       modules: [...PERMISSION_MODULES],
       actions: [...PERMISSION_ACTIONS],
       grantable: PERMISSIONS.filter(grantable),
@@ -156,11 +164,11 @@ export class AccessControlService {
   }
 
   async branch(branchId: string): Promise<BranchAccessDto> {
-    return this.branchView(this.prisma, branchId);
+    return this.branchView(this.prisma, branchId, await readAccessVersion(this.prisma));
   }
 
   async person(userId: string): Promise<PersonAccessDto> {
-    return this.personView(this.prisma, userId);
+    return this.personView(this.prisma, userId, await readAccessVersion(this.prisma));
   }
 
   log(limit: number): Promise<AuditLogEntryDto[]> {
@@ -170,7 +178,7 @@ export class AccessControlService {
   // ---- Teams ---------------------------------------------------------------------------------
 
   async createTeam(actor: Actor, input: CreateTeamRequest): Promise<AccessTeamDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, input.expectedVersion, async (tx) => {
       if (await tx.team.findUnique({ where: { code: input.code } })) {
         throw new ConflictException('A team with this code already exists');
       }
@@ -212,7 +220,7 @@ export class AccessControlService {
   }
 
   async updateTeam(actor: Actor, id: string, input: UpdateTeamRequest): Promise<AccessTeamDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, input.expectedVersion, async (tx) => {
       const before = await this.teamOrThrow(tx, id);
       if (input.isActive !== undefined && before.systemRole) {
         throw new BadRequestException('A role team is always active');
@@ -254,8 +262,9 @@ export class AccessControlService {
     actor: Actor,
     id: string,
     wanted: readonly string[],
+    expectedVersion: string,
   ): Promise<AccessTeamDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, expectedVersion, async (tx) => {
       const team = await this.teamOrThrow(tx, id);
       if (team.systemRole === 'ADMINISTRATOR') {
         throw new BadRequestException('The Administrator team holds every permission');
@@ -303,8 +312,9 @@ export class AccessControlService {
     actor: Actor,
     branchId: string,
     wanted: readonly string[],
+    expectedVersion: string,
   ): Promise<BranchAccessDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, expectedVersion, async (tx) => {
       const branch = await this.branchOrThrow(tx, branchId);
       const next = requireGrantable(wanted);
       const before = await tx.branchBlockedPermission.findMany({ where: { branchId } });
@@ -326,7 +336,7 @@ export class AccessControlService {
           },
         ].filter((c) => c.before !== c.after),
       });
-      return this.branchView(tx, branchId);
+      return this.branchView(tx, branchId, nextVersion(actor.access.version));
     });
   }
 
@@ -339,7 +349,7 @@ export class AccessControlService {
     branchId: string,
     input: SetPersonBranchAccessRequest,
   ): Promise<PersonAccessDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, input.expectedVersion, async (tx) => {
       const person = await this.personOrThrow(tx, userId);
       const branch = await this.branchOrThrow(tx, branchId);
       if (!personBranchIds(person, await this.allBranchIds(tx)).includes(branchId)) {
@@ -396,14 +406,14 @@ export class AccessControlService {
           { field: 'via', before: null, after: 'owner' },
         ].filter((c) => c.field === 'via' || c.before !== c.after),
       });
-      return this.personView(tx, userId);
+      return this.personView(tx, userId, nextVersion(actor.access.version));
     });
   }
 
   // ---- Delegations (owner) -------------------------------------------------------------------
 
   async createDelegation(actor: Actor, input: CreateDelegationRequest): Promise<DelegationDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, input.expectedVersion, async (tx) => {
       const branch = await this.branchOrThrow(tx, input.branchId);
       const delegate = await this.personOrThrow(tx, input.delegateUserId);
       const roles = delegate.roles.map((r) => r.role);
@@ -411,7 +421,7 @@ export class AccessControlService {
       if (!delegate.branches.some((b) => b.branchId === input.branchId)) {
         throw new BadRequestException('The delegate must work in this branch');
       }
-      if (holdsRestricted(roles) || isAdministrator(roles)) {
+      if (!mayHoldDelegation(roles)) {
         throw new BadRequestException('This person cannot hold a delegation');
       }
       // One live delegation per person and branch (kept here under the access_state lock).
@@ -448,14 +458,19 @@ export class AccessControlService {
     });
   }
 
-  /** What a new ceiling (or a revocation, `null`) would drop, without changing anything. */
+  /**
+   * What a new ceiling (or a revocation, `null`) would drop, without changing anything. The change
+   * itself is applied only from this preview's `version` (F118-3).
+   */
   async previewDelegation(
     id: string,
     permissions: readonly string[] | null,
   ): Promise<DelegationChangeDto> {
+    const version = await readAccessVersion(this.prisma);
     const delegation = await this.liveDelegationOrThrow(this.prisma, id);
     const ceiling = permissions === null ? null : new Set(requireGrantable(permissions));
     return {
+      version,
       delegation: toDelegation(delegation),
       dropped: await this.dropped(this.prisma, id, ceiling),
     };
@@ -466,8 +481,9 @@ export class AccessControlService {
     actor: Actor,
     id: string,
     permissions: readonly string[],
+    expectedVersion: string,
   ): Promise<DelegationChangeDto> {
-    return this.asOwner(actor, async (tx) => {
+    return this.asOwner(actor, expectedVersion, async (tx) => {
       const before = await this.liveDelegationOrThrow(tx, id);
       const next = requireGrantable(permissions);
       const dropped = await this.drop(tx, actor, before, new Set(next));
@@ -489,13 +505,21 @@ export class AccessControlService {
           },
         ].filter((c) => c.before !== c.after),
       });
-      return { delegation: toDelegation(await this.delegationOrThrow(tx, id)), dropped };
+      return {
+        version: nextVersion(actor.access.version),
+        delegation: toDelegation(await this.delegationOrThrow(tx, id)),
+        dropped,
+      };
     });
   }
 
   /** Ends a delegation: everything handed out through it is dropped, each drop recorded. */
-  async revokeDelegation(actor: Actor, id: string): Promise<DelegationChangeDto> {
-    return this.asOwner(actor, async (tx) => {
+  async revokeDelegation(
+    actor: Actor,
+    id: string,
+    expectedVersion: string,
+  ): Promise<DelegationChangeDto> {
+    return this.asOwner(actor, expectedVersion, async (tx) => {
       const before = await this.liveDelegationOrThrow(tx, id);
       const dropped = await this.drop(tx, actor, before, null);
       await tx.branchDelegation.update({
@@ -510,13 +534,18 @@ export class AccessControlService {
         action: 'CANCELLED',
         changes: [{ field: 'revoked', before: null, after: 'yes' }],
       });
-      return { delegation: toDelegation(await this.delegationOrThrow(tx, id)), dropped };
+      return {
+        version: nextVersion(actor.access.version),
+        delegation: toDelegation(await this.delegationOrThrow(tx, id)),
+        dropped,
+      };
     });
   }
 
   // ---- The delegate's screen -----------------------------------------------------------------
 
   async mine(user: AuthUser): Promise<MyDelegationDto[]> {
+    const version = await readAccessVersion(this.prisma);
     const delegations = await this.prisma.branchDelegation.findMany({
       where: { delegateUserId: user.id, revokedAt: null },
       select: DELEGATION_SELECT,
@@ -536,6 +565,7 @@ export class AccessControlService {
     for (const d of live) {
       const branch = await this.branchOrThrow(this.prisma, d.branchId);
       result.push({
+        version,
         delegation: toDelegation(d),
         branch: { id: branch.id, code: branch.code, nameAr: branch.nameAr, nameEn: branch.nameEn },
         teams: teams.map(toTeam),
@@ -552,6 +582,7 @@ export class AccessControlService {
     userId: string,
     input: SetDelegatedAccessRequest,
   ): Promise<DelegatedPersonDto> {
+    requireExpectedVersion(actor, input.expectedVersion);
     return this.prisma.changeAccess(actor.access.version, async (tx) => {
       // Under the lock: the delegation is live and the actor still holds it.
       const delegation = await tx.branchDelegation.findUnique({
@@ -625,8 +656,16 @@ export class AccessControlService {
 
   // ---- Helpers -------------------------------------------------------------------------------
 
-  /** A change by the owner: the actor is still an active Administrator under the lock. */
-  private asOwner<R>(actor: Actor, fn: (tx: Tx) => Promise<R>): Promise<R> {
+  /**
+   * A change by the owner, made from a read at `expectedVersion` with nothing changed since, and
+   * the actor still an active Administrator under the lock.
+   */
+  private asOwner<R>(
+    actor: Actor,
+    expectedVersion: string,
+    fn: (tx: Tx) => Promise<R>,
+  ): Promise<R> {
+    requireExpectedVersion(actor, expectedVersion);
     return this.prisma.changeAccess(actor.access.version, async (tx) => {
       await requireActorInTx(tx, actor.id, isAdministrator);
       return fn(tx);
@@ -720,7 +759,7 @@ export class AccessControlService {
     };
   }
 
-  private async branchView(db: Db, branchId: string): Promise<BranchAccessDto> {
+  private async branchView(db: Db, branchId: string, version: string): Promise<BranchAccessDto> {
     await this.branchOrThrow(db, branchId);
     const [blocked, people, delegations] = await Promise.all([
       db.branchBlockedPermission.findMany({ where: { branchId }, select: { permission: true } }),
@@ -736,6 +775,7 @@ export class AccessControlService {
       }),
     ]);
     return {
+      version,
       branchId,
       blocked: blocked
         .map((b) => b.permission)
@@ -751,13 +791,14 @@ export class AccessControlService {
     };
   }
 
-  private async personView(db: Db, userId: string): Promise<PersonAccessDto> {
+  private async personView(db: Db, userId: string, version: string): Promise<PersonAccessDto> {
     const person = await this.personOrThrow(db, userId);
     const roles = person.roles.map((r) => r.role);
     const memberBranchIds = person.branches.map((b) => b.branchId);
-    const rows = await loadAccessRows(db, userId, roles, memberBranchIds);
+    const rows = await loadAccessRows(db, userId, roles, memberBranchIds, version);
     const branchIds = [...rows.branchIds].sort();
     return {
+      version,
       userId,
       fullName: person.fullName,
       isActive: person.isActive,
@@ -801,13 +842,24 @@ export class AccessControlService {
     return d;
   }
 
-  /** The delegate is active and still works in the branch (else their delegation gives nothing). */
+  /**
+   * The delegate is active, still works in the branch and still holds roles that allow a
+   * delegation (else their delegation gives nothing; F118-4).
+   */
   private async delegateStillHolds(db: Db, userId: string, branchId: string): Promise<boolean> {
     const user = await db.user.findUnique({
       where: { id: userId },
-      select: { isActive: true, branches: { where: { branchId }, select: { branchId: true } } },
+      select: {
+        isActive: true,
+        roles: { select: { role: true } },
+        branches: { where: { branchId }, select: { branchId: true } },
+      },
     });
-    return Boolean(user?.isActive && user.branches.length > 0);
+    return Boolean(
+      user?.isActive &&
+      user.branches.length > 0 &&
+      mayHoldDelegation(user.roles.map((r) => r.role)),
+    );
   }
 
   /** Rows handed out through `delegationId` that `ceiling` (null: none) leaves without effect. */
@@ -955,6 +1007,15 @@ export class AccessControlService {
     }
     return result;
   }
+}
+
+/**
+ * A change is made from the screen's read at `expectedVersion`: refused (409) when any change of
+ * access came in between, so a whole set read before it never silently restores what another
+ * change took away (F118-3). The lock then checks the request's own version against the database.
+ */
+function requireExpectedVersion(actor: Actor, expectedVersion: string): void {
+  if (expectedVersion !== actor.access.version) throw new AccessChangedException();
 }
 
 /** The branches a person's access is computed for (every branch for an all-branch role). */

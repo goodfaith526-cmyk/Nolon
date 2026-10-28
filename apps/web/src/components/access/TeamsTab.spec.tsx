@@ -30,6 +30,7 @@ const team = (over: Partial<AccessTeamDto>): AccessTeamDto => ({
 });
 
 const catalog: AccessCatalogDto = {
+  version: '3',
   modules: ['customers', 'rates'],
   actions: ['view', 'create', 'update', 'approve', 'cancel'],
   grantable: ['customers:view', 'customers:create', 'customers:update', 'rates:view'],

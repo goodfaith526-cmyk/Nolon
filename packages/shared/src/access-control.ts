@@ -32,6 +32,12 @@ export interface AccessBranchDto {
 
 /** GET /access-control/catalog: what the owner's screen offers. */
 export interface AccessCatalogDto {
+  /**
+   * access_state.version this was read at. Every change sends it back as `expectedVersion` and
+   * is refused (409) when any change of access came in between: reload and redo (F118-3).
+   */
+  version: string;
+
   modules: PermissionModule[];
   actions: PermissionAction[];
   /** The permissions a team, a person, a branch limit or a delegation may name. */
@@ -43,6 +49,9 @@ export interface AccessCatalogDto {
 
 /** POST /access-control/teams. `copyFromTeamId` starts it with that team's permissions. */
 export interface CreateTeamRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   /** Upper case letters, digits and `_`, unique. */
   code: string;
   nameAr: string;
@@ -52,6 +61,9 @@ export interface CreateTeamRequest {
 
 /** PATCH /access-control/teams/:id. A team is never deleted, only made inactive. */
 export interface UpdateTeamRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   nameAr?: string;
   nameEn?: string;
   /** Added teams only. */
@@ -64,6 +76,9 @@ export interface UpdateTeamRequest {
  * /access-control/branches/:id/blocked (the branch limit).
  */
 export interface SetPermissionsRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   permissions: Permission[];
 }
 
@@ -76,6 +91,12 @@ export interface AccessPersonRefDto {
 
 /** GET /access-control/branches/:id: the branch limit, who works there, its delegations. */
 export interface BranchAccessDto {
+  /**
+   * access_state.version this was read at. Every change sends it back as `expectedVersion` and
+   * is refused (409) when any change of access came in between: reload and redo (F118-3).
+   */
+  version: string;
+
   branchId: string;
   blocked: Permission[];
   people: AccessPersonRefDto[];
@@ -109,6 +130,12 @@ export interface PersonBranchAccessDto {
 
 /** GET /access-control/people/:userId. */
 export interface PersonAccessDto {
+  /**
+   * access_state.version this was read at. Every change sends it back as `expectedVersion` and
+   * is refused (409) when any change of access came in between: reload and redo (F118-3).
+   */
+  version: string;
+
   userId: string;
   fullName: string;
   isActive: boolean;
@@ -125,6 +152,9 @@ export interface PersonAccessDto {
  * this branch (rows given through a delegation are left as they are).
  */
 export interface SetPersonBranchAccessRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   teamIds: string[];
   allow: Permission[];
   deny: Permission[];
@@ -144,6 +174,9 @@ export interface DelegationDto {
 
 /** POST /access-control/delegations. One live delegation per person and branch. */
 export interface CreateDelegationRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   branchId: string;
   delegateUserId: string;
   permissions: Permission[];
@@ -161,12 +194,25 @@ export interface DroppedGrantDto {
 
 /**
  * POST /access-control/delegations/:id/preview with a new ceiling (or none, for a revocation):
- * what would stop counting. PUT /access-control/delegations/:id/permissions and POST
- * /access-control/delegations/:id/revoke apply it and answer the same list.
+ * what would stop counting, at `version`. PUT /access-control/delegations/:id/permissions and
+ * POST /access-control/delegations/:id/revoke apply it from that `version` (expectedVersion) and
+ * answer the same list.
  */
 export interface DelegationChangeDto {
+  /**
+   * access_state.version this was read at. Every change sends it back as `expectedVersion` and
+   * is refused (409) when any change of access came in between: reload and redo (F118-3).
+   */
+  version: string;
+
   delegation: DelegationDto;
   dropped: DroppedGrantDto[];
+}
+
+/** POST /access-control/delegations/:id/revoke. */
+export interface RevokeDelegationRequest {
+  /** The `version` of the preview the revocation was confirmed from. */
+  expectedVersion: string;
 }
 
 /** A person the delegate sees on the branch-permissions screen. */
@@ -183,6 +229,12 @@ export interface DelegatedPersonDto extends AccessPersonRefDto {
 
 /** GET /branch-access: one entry per live delegation the signed-in person holds. */
 export interface MyDelegationDto {
+  /**
+   * access_state.version this was read at. Every change sends it back as `expectedVersion` and
+   * is refused (409) when any change of access came in between: reload and redo (F118-3).
+   */
+  version: string;
+
   delegation: DelegationDto;
   branch: AccessBranchDto;
   /** Active, not restricted teams. A team gives only what is inside the ceiling. */
@@ -195,6 +247,9 @@ export interface MyDelegationDto {
  * permission in `allow` is inside the ceiling.
  */
 export interface SetDelegatedAccessRequest {
+  /** The `version` of the read the change was made from (F118-3). */
+  expectedVersion: string;
+
   teamIds: string[];
   allow: Permission[];
 }

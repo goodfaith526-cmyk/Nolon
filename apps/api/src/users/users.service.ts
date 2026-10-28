@@ -16,6 +16,7 @@ import {
   type UpdateUserRequest,
   type UserSummary,
 } from '@nolon/shared';
+import { mayHoldDelegation } from '../access-control/access.js';
 import { requireActorInTx } from '../access-control/access-lock.js';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { AuditService, changedFields } from '../audit/audit.service.js';
@@ -168,6 +169,7 @@ export class UsersService {
         await this.assertOutletStaff(tx, roles, branchIds, outletIds, newlyOutletStaff);
       }
       if (input.roles) await assertNoExtrasForRestricted(tx, id, input.roles);
+      if (input.roles) await assertDelegationStillAllowed(tx, id, input.roles);
 
       if (input.roles) {
         await tx.userRole.deleteMany({ where: { userId: id } });
@@ -451,6 +453,18 @@ export async function revokeSessions(tx: Tx, userId: string, exceptSessionId?: s
     },
     data: { revokedAt: new Date() },
   });
+}
+
+/**
+ * A live branch delegation needs roles that may hold one (F118-4): refuse making its holder the
+ * Administrator or giving them a restricted role until the owner revokes it. The access loader
+ * also stops counting such a delegation, for rows that predate this check.
+ */
+async function assertDelegationStillAllowed(tx: Tx, userId: string, roles: readonly Role[]) {
+  if (mayHoldDelegation(roles)) return;
+  if (await tx.branchDelegation.count({ where: { delegateUserId: userId, revokedAt: null } })) {
+    throw new BadRequestException("Revoke this person's branch delegation before giving this role");
+  }
 }
 
 /**

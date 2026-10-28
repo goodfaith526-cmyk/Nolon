@@ -57,17 +57,17 @@ export function PermissionsAdmin() {
             {
               key: 'branches',
               label: t('tabBranches'),
-              content: <BranchesTab catalog={catalog} canEdit={canEdit} />,
+              content: <BranchesTab catalog={catalog} canEdit={canEdit} onChanged={load} />,
             },
             {
               key: 'people',
               label: t('tabPeople'),
-              content: <PeopleTab catalog={catalog} canEdit={canEdit} />,
+              content: <PeopleTab catalog={catalog} canEdit={canEdit} onChanged={load} />,
             },
             {
               key: 'delegation',
               label: t('tabDelegation'),
-              content: <DelegationsTab catalog={catalog} canEdit={canEdit} />,
+              content: <DelegationsTab catalog={catalog} canEdit={canEdit} onChanged={load} />,
             },
             { key: 'log', label: t('tabLog'), content: <LogTab /> },
           ]}

@@ -21,6 +21,10 @@ import {
   useAccessNotice,
 } from './AccessCommon';
 
+/** The forms' fields; the tab adds the catalog's version (F118-3). */
+type NewTeamFields = Omit<CreateTeamRequest, 'expectedVersion'>;
+type TeamFields = Omit<UpdateTeamRequest, 'expectedVersion'>;
+
 type Selection =
   { kind: 'team'; teamId: string; module: PermissionModule | null } | { kind: 'new' } | null;
 
@@ -73,7 +77,11 @@ export function TeamsTab({
           onCancel={() => setSelected(null)}
           onSubmit={(body) =>
             run(
-              () => api<AccessTeamDto>('/access-control/teams', { method: 'POST', body }),
+              () =>
+                api<AccessTeamDto>('/access-control/teams', {
+                  method: 'POST',
+                  body: { ...body, expectedVersion: catalog.version },
+                }),
               t('teamCreated'),
               true,
             )
@@ -94,15 +102,18 @@ export function TeamsTab({
               () =>
                 api<AccessTeamDto>(`/access-control/teams/${team.id}/permissions`, {
                   method: 'PUT',
-                  body: { permissions },
+                  body: { permissions, expectedVersion: catalog.version },
                 }),
               t('saved'),
             )
           }
-          onUpdate={(body: UpdateTeamRequest) =>
+          onUpdate={(body: TeamFields) =>
             run(
               () =>
-                api<AccessTeamDto>(`/access-control/teams/${team.id}`, { method: 'PATCH', body }),
+                api<AccessTeamDto>(`/access-control/teams/${team.id}`, {
+                  method: 'PATCH',
+                  body: { ...body, expectedVersion: catalog.version },
+                }),
               t('saved'),
             )
           }
@@ -173,7 +184,7 @@ function TeamEditor({
   highlight: PermissionModule | null;
   onClose: () => void;
   onSave: (permissions: Permission[]) => Promise<void>;
-  onUpdate: (body: UpdateTeamRequest) => Promise<void>;
+  onUpdate: (body: TeamFields) => Promise<void>;
 }) {
   const t = useTranslations('Access');
   const { name } = useAccessLabels();
@@ -296,7 +307,7 @@ function NewTeamForm({
 }: {
   teams: readonly AccessTeamDto[];
   onCancel: () => void;
-  onSubmit: (body: CreateTeamRequest) => Promise<void>;
+  onSubmit: (body: NewTeamFields) => Promise<void>;
 }) {
   const t = useTranslations('Access');
   const { name } = useAccessLabels();
@@ -306,7 +317,7 @@ function NewTeamForm({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const copy = field(form, 'copyFrom');
-    const body: CreateTeamRequest = {
+    const body: NewTeamFields = {
       code: field(form, 'code'),
       nameAr: field(form, 'nameAr'),
       nameEn: field(form, 'nameEn'),

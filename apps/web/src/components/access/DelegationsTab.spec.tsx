@@ -33,12 +33,15 @@ const delegation: DelegationDto = {
   grantedCount: 2,
 };
 const branch: BranchAccessDto = {
+  version: '7',
   branchId: 'b1',
   blocked: [],
   people: [{ userId: 'u-mgr', fullName: 'Manager', roles: ['BRANCH_MANAGER'], isActive: true }],
   delegations: [delegation],
 };
+// The preview is read at a later version than the branch: the change applies from the preview's.
 const change: DelegationChangeDto = {
+  version: '8',
   delegation,
   dropped: [{ userId: 'u-sales', fullName: 'Sami', permission: 'customers:create' }],
 };
@@ -54,6 +57,7 @@ vi.mock('@/lib/api', async (actual) => ({
 const { DelegationsTab } = await import('./DelegationsTab');
 
 const catalog: AccessCatalogDto = {
+  version: '7',
   modules: ['customers', 'rates'],
   actions: ['view', 'create', 'update', 'approve', 'cancel'],
   grantable: ['customers:view', 'customers:create', 'rates:view'] satisfies Permission[],
@@ -121,7 +125,7 @@ describe('DelegationsTab', () => {
     expect(writes().at(-1)).toEqual({
       path: '/access-control/delegations/d1/permissions',
       method: 'PUT',
-      body: { permissions: ['customers:view'] },
+      body: { permissions: ['customers:view'], expectedVersion: '8' },
     });
   });
 
@@ -148,6 +152,7 @@ describe('DelegationsTab', () => {
       'POST /access-control/delegations/d1/preview',
       'POST /access-control/delegations/d1/revoke',
     ]);
+    expect(writes().at(-1)?.body).toEqual({ expectedVersion: '8' });
   });
 
   it('applies a ceiling that only grows without a preview', async () => {
@@ -159,7 +164,10 @@ describe('DelegationsTab', () => {
       {
         path: '/access-control/delegations/d1/permissions',
         method: 'PUT',
-        body: { permissions: ['customers:create', 'customers:view', 'rates:view'] },
+        body: {
+          permissions: ['customers:create', 'customers:view', 'rates:view'],
+          expectedVersion: '7',
+        },
       },
     ]);
   });

@@ -23,6 +23,9 @@ import {
  * The branch-permissions screen of a person the owner delegated to (plan 03, section 6): the
  * people of their branch, and what this delegation gave them. What the owner gave is read only.
  */
+/** The form's fields; the section adds the version the screen was read at (F118-3). */
+type DelegatedFields = Omit<SetDelegatedAccessRequest, 'expectedVersion'>;
+
 export function BranchPermissions() {
   const t = useTranslations('Access');
   const failure = useAccessNotice();
@@ -94,16 +97,18 @@ function DelegationSection({
   const teams = mine.teams.filter((x) => x.isActive && !x.restricted);
   const teamLabel = (id: string) => teamName(mine.teams, id);
 
-  async function save(userId: string, body: SetDelegatedAccessRequest) {
+  async function save(userId: string, body: DelegatedFields) {
     setNotice(null);
     try {
       const person = await api<DelegatedPersonDto>(
         `/branch-access/${delegation.id}/people/${userId}`,
-        { method: 'PUT', body },
+        { method: 'PUT', body: { ...body, expectedVersion: mine.version } },
       );
       onSaved(person);
       setEditing(null);
       setNotice({ ok: true, text: t('saved') });
+      // The save raised the version: read the screen again before the next change (F118-3).
+      onReload();
     } catch (e) {
       setNotice(failure(e));
     }
@@ -208,7 +213,7 @@ function DelegatedForm({
   teams: MyDelegationDto['teams'];
   ceiling: Permission[];
   onCancel: () => void;
-  onSubmit: (body: SetDelegatedAccessRequest) => Promise<void>;
+  onSubmit: (body: DelegatedFields) => Promise<void>;
 }) {
   const t = useTranslations('Access');
   const { name } = useAccessLabels();

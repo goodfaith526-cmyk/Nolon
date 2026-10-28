@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { hasAllBranchAccess, type AuthMeResponse, type Role } from '@nolon/shared';
+import { mayHoldDelegation } from '../access-control/access.js';
 import { loadAccess, readAccessVersion } from '../access-control/access-loader.js';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { sha256Hex } from '../agent-auth/agent-secrets.js';
@@ -312,8 +313,12 @@ export class AuthService {
     };
   }
 
-  /** Plan 03: the delegations this person holds in a branch they still work in. */
+  /**
+   * Plan 03: the delegations this person holds in a branch they still work in, while their roles
+   * still allow one (F118-4).
+   */
   private async liveDelegations(user: AuthUser): Promise<{ id: string; branchId: string }[]> {
+    if (!mayHoldDelegation(user.roles)) return [];
     const rows = await this.prisma.branchDelegation.findMany({
       where: {
         delegateUserId: user.id,

@@ -61,7 +61,16 @@ export function useBranchAccess(branchId: string) {
 }
 
 /** Branches: the permissions blocked in a branch, and who works there. */
-export function BranchesTab({ catalog, canEdit }: { catalog: AccessCatalogDto; canEdit: boolean }) {
+export function BranchesTab({
+  catalog,
+  canEdit,
+  onChanged,
+}: {
+  catalog: AccessCatalogDto;
+  canEdit: boolean;
+  /** After a save: the catalog is read again at the new version (F118-3). */
+  onChanged?: () => void;
+}) {
   const t = useTranslations('Access');
   const tRoles = useTranslations('Roles');
   const { list } = useAccessLabels();
@@ -88,12 +97,13 @@ export function BranchesTab({ catalog, canEdit }: { catalog: AccessCatalogDto; c
         `/access-control/branches/${branch.branchId}/blocked`,
         {
           method: 'PUT',
-          body: { permissions: value },
+          body: { permissions: value, expectedVersion: branch.version },
         },
       );
       setBranch(next);
       setBlocked(null);
       setNotice({ ok: true, text: t('saved') });
+      onChanged?.();
     } catch (e) {
       setNotice(failure(e));
     }
