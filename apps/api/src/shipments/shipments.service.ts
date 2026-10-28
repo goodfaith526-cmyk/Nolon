@@ -51,6 +51,11 @@ import { APP_ENV, type AppEnv } from '../config/env.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
+import {
+  PartnerRefsService,
+  partnerRefSelect,
+  toPartnerRef,
+} from '../partners/partner-refs.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   FINISHED,
@@ -131,6 +136,9 @@ const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true }
 const details = {
   customer: { select: { name: true } },
   booking: { select: { number: true } },
+  salesOutlet: partnerRefSelect,
+  originConsolidator: partnerRefSelect,
+  distributor: partnerRefSelect,
   sharedBranches: { ...sharedBranchesSelect, select: { branchId: true, branch: branchRef } },
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
@@ -168,6 +176,7 @@ export class ShipmentsService {
     private readonly masterData: MasterDataService,
     private readonly bookingLifecycle: BookingLifecycleService,
     private readonly invoices: ShipmentInvoicesRegistry,
+    private readonly partnerRefs: PartnerRefsService,
     private readonly stock: ShipmentStockRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
@@ -581,7 +590,14 @@ export class ShipmentsService {
       // have committed in between.
       const current = await tx.shipment.findUniqueOrThrow({
         where: { id },
-        select: { services: true, etd: true, eta: true },
+        select: {
+          services: true,
+          etd: true,
+          eta: true,
+          branchId: true,
+          originConsolidatorId: true,
+          distributorId: true,
+        },
       });
       const etd = input.etd === undefined ? fromDbDateOrNull(current.etd) : input.etd;
       const eta = input.eta === undefined ? fromDbDateOrNull(current.eta) : input.eta;
@@ -595,7 +611,28 @@ export class ShipmentsService {
       if (changed && status !== 'CREATED') {
         throw new ConflictException('Services can change only before the shipment moves');
       }
-      await tx.shipment.update({ where: { id }, data });
+      // Plan 3.3: partners of the shipment's branch or of a branch sharing it (as it will be).
+      const branchIds = [
+        current.branchId,
+        ...(sharedBranchIds ?? (await this.sharedBranchIdsInTx(tx, id))),
+      ];
+      const partners = {
+        originConsolidatorId: await this.partnerRefs.chooseInTx(tx, user, {
+          kind: 'ORIGIN_CONSOLIDATOR',
+          requested: input.originConsolidatorId,
+          held: current.originConsolidatorId,
+          branchIds,
+          field: 'originConsolidatorId',
+        }),
+        distributorId: await this.partnerRefs.chooseInTx(tx, user, {
+          kind: 'DISTRIBUTOR',
+          requested: input.distributorId,
+          held: current.distributorId,
+          branchIds,
+          field: 'distributorId',
+        }),
+      };
+      await tx.shipment.update({ where: { id }, data: { ...data, ...partners } });
       if (sharedBranchIds) await this.replaceSharedBranchesInTx(tx, id, sharedBranchIds);
     });
     return this.get(user, id);
@@ -1458,6 +1495,9 @@ export class ShipmentsService {
       etd: fromDbDateOrNull(s.etd),
       trackingToken: s.trackingToken,
       closedAt: s.closedAt?.toISOString() ?? null,
+      salesOutlet: toPartnerRef(s.salesOutlet),
+      originConsolidator: toPartnerRef(s.originConsolidator),
+      distributor: toPartnerRef(s.distributor),
       packages: s.items.reduce((n, i) => n + i.quantity, 0),
       items: s.items.map((i) => ({
         lineNo: i.lineNo,

@@ -25,6 +25,7 @@ import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { todayString } from '@/lib/money';
 import { icons } from '../Icons';
 import { useMe } from '../StaffShell';
+import { PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { CustomerPicker } from './CustomerPicker';
 import { cargoChoices } from './cargo';
 import { ModePicker } from './ModePicker';
@@ -83,6 +84,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   const t = useTranslations('Quotations');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Partners');
   const me = useMe();
   const name = useLocalName();
   const master = useMasterData();
@@ -91,6 +93,8 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
 
   const isEdit = quotation !== undefined;
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  const heldOutlet = quotation?.salesOutlet ?? null;
+  const [outletId, setOutletId] = useState(heldOutlet?.id ?? '');
   const [originChoice, setOrigin] = useState(quotation?.originLocationId ?? '');
   const [destinationChoice, setDestination] = useState(quotation?.destinationLocationId ?? '');
   const [mode, setMode] = useState<ShippingMode>(quotation?.mode ?? 'SEA');
@@ -234,6 +238,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
       currency,
       validUntil: text('validUntil') ?? '',
       terms: text('terms'),
+      salesOutletId: partnerChange(heldOutlet, outletId),
       lines: lines.map((l) =>
         l.rateCardId
           ? {
@@ -490,6 +495,18 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
               </small>
             )}
             <FieldNote note={note} path="validUntil" />
+          </label>
+          <label className="field">
+            {tp('salesOutlet')}
+            <PartnerSelect
+              {...mark('salesOutletId')}
+              kind="SALES_OUTLET"
+              branchIds={branchId ? [branchId] : []}
+              held={heldOutlet}
+              value={outletId}
+              onChange={setOutletId}
+            />
+            <FieldNote note={note} path="salesOutletId" />
           </label>
         </div>
       </section>

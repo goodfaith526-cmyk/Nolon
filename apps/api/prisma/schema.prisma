@@ -701,12 +701,15 @@ model Customer {
   isActive            Boolean      @default(true) @map("is_active")
   /// The partner sales outlet that brought the customer (plan 3.3); Outlet Staff see only theirs.
   acquiredViaOutletId String?      @map("acquired_via_outlet_id") @db.Uuid
+  /// The customer's segment (plan 3.3), from the customer_segments master.
+  segmentCode         String?      @map("segment_code") @db.VarChar(20)
   createdById         String       @map("created_by_id") @db.Uuid
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch                 Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
   acquiredViaOutlet      Partner?          @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
+  segment                CustomerSegment?  @relation(fields: [segmentCode], references: [code], onDelete: Restrict)
   preferredCurrencyRef   Currency?         @relation("CustomerPreferredCurrency", fields: [preferredCurrency], references: [code], onDelete: Restrict)
   creditLimitCurrencyRef Currency?         @relation("CustomerCreditLimitCurrency", fields: [creditLimitCurrency], references: [code], onDelete: Restrict)
   createdBy              User              @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -732,6 +735,7 @@ model Customer {
   @@index([branchId])
   @@index([phone])
   @@index([acquiredViaOutletId])
+  @@index([segmentCode])
   @@map("customers")
 }
 
@@ -831,11 +835,13 @@ model Partner {
   currencyRef Currency  @relation(fields: [currency], references: [code], onDelete: Restrict)
   createdBy   User      @relation("PartnerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
-  staff             UserPartner[]
-  customersAcquired Customer[]
-  quotationsSold    Quotation[]
-  bookingsSold      Booking[]
-  shipmentsSold     Shipment[]
+  staff                 UserPartner[]
+  customersAcquired     Customer[]
+  quotationsSold        Quotation[]
+  bookingsSold          Booking[]
+  shipmentsSold         Shipment[]
+  shipmentsConsolidated Shipment[]    @relation("ShipmentOriginConsolidator")
+  shipmentsDistributed  Shipment[]    @relation("ShipmentDistributor")
 
   @@index([branchId, kind])
   @@index([locationId])
@@ -857,6 +863,7 @@ model PriceCategory {
 
   rateCards      RateCard[]
   quotationLines QuotationLine[]
+  bookingItems   BookingItem[]
 
   @@map("price_categories")
 }
@@ -869,6 +876,8 @@ model CustomerSegment {
   nameAr    String   @map("name_ar")
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  customers Customer[]
 
   @@map("customer_segments")
 }
@@ -1113,11 +1122,15 @@ model BookingItem {
   weightKg          Decimal?  @map("weight_kg") @db.Decimal(12, 3)
   /// Total for the line (CBM calculator output, or entered).
   volumeCbm         Decimal?  @map("volume_cbm") @db.Decimal(12, 4)
+  /// NOLON screens only (plan 3.3, 7.2): the line's price category, of the line's cargo type.
+  priceCategoryCode String?   @map("price_category_code") @db.VarChar(20)
 
   booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   containerType ContainerType? @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  priceCategory PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
 
   @@unique([bookingId, lineNo])
+  @@index([priceCategoryCode])
   @@map("booking_items")
 }
 
@@ -1216,6 +1229,9 @@ model Shipment {
   trackingToken         String           @unique @map("tracking_token") @db.VarChar(64)
   /// The partner sales outlet it was sold through, from its booking (plan 3.3).
   salesOutletId         String?          @map("sales_outlet_id") @db.Uuid
+  /// The partner consolidating the cargo at origin, and the one distributing it in Sudan (plan 3.3).
+  originConsolidatorId  String?          @map("origin_consolidator_id") @db.Uuid
+  distributorId         String?          @map("distributor_id") @db.Uuid
   createdById           String           @map("created_by_id") @db.Uuid
   closedAt              DateTime?        @map("closed_at") @db.Timestamptz(3)
   cancelledAt           DateTime?        @map("cancelled_at") @db.Timestamptz(3)
@@ -1233,6 +1249,8 @@ model Shipment {
   notifyParty        Party?                  @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
   createdBy          User                    @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   salesOutlet        Partner?                @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
+  originConsolidator Partner?                @relation("ShipmentOriginConsolidator", fields: [originConsolidatorId], references: [id], onDelete: Restrict)
+  distributor        Partner?                @relation("ShipmentDistributor", fields: [distributorId], references: [id], onDelete: Restrict)
   items              ShipmentItem[]
   containers         ShipmentContainer[]
   events             ShipmentEvent[]
@@ -1258,6 +1276,8 @@ model Shipment {
   @@index([branchId, status])
   @@index([customerId])
   @@index([salesOutletId])
+  @@index([originConsolidatorId])
+  @@index([distributorId])
   @@map("shipments")
 }
 

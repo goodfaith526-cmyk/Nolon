@@ -54,8 +54,24 @@ export const customerDraftFields = {
   notes: customerFields.notes,
 };
 
-export const createCustomerBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
-export const updateCustomerBody = z.object(customerFields).partial().strict();
+/**
+ * NOLON screens only (plan 7.2): the customer's segment and the sales outlet that brought it.
+ * Customer drafts and the Excel import do not take them.
+ */
+const screenFields = {
+  segmentCode: z.string().trim().toUpperCase().max(20).nullish(),
+  acquiredViaOutletId: z.uuid().nullish(),
+};
+
+/** A customer row of the Excel import. */
+export const importCustomerBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
+export const createCustomerBody = z
+  .object({ branchId: z.uuid(), ...customerFields, ...screenFields })
+  .strict();
+export const updateCustomerBody = z
+  .object({ ...customerFields, ...screenFields })
+  .partial()
+  .strict();
 
 /** A party of a customer (shipper, consignee, notify party): its endpoint and party drafts. */
 export const partyBody = z

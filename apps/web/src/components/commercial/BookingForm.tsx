@@ -43,12 +43,15 @@ import {
   useRefusalReason,
 } from './Notice';
 import { PartyForm } from './PartyForm';
+import { PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
 interface ItemState {
   key: number;
   cargoType: CargoType;
   containerTypeCode: string;
+  /** '' for none. NOLON screens only (plan 7.2). */
+  priceCategoryCode: string;
   description: string;
   quantity: string;
   lengthCm: string;
@@ -63,6 +66,7 @@ const itemState = (i: BookingItemInput): ItemState => ({
   key: nextKey++,
   cargoType: i.cargoType,
   containerTypeCode: i.containerTypeCode ?? '',
+  priceCategoryCode: i.priceCategoryCode ?? '',
   description: i.description ?? '',
   quantity: String(i.quantity),
   lengthCm: i.lengthCm ?? '',
@@ -75,6 +79,7 @@ const emptyItem = (cargoType: CargoType): ItemState => ({
   key: nextKey++,
   cargoType,
   containerTypeCode: cargoType === 'CONTAINER' ? '20GP' : '',
+  priceCategoryCode: '',
   description: '',
   quantity: '1',
   lengthCm: '',
@@ -115,11 +120,15 @@ export function BookingForm({
   const t = useTranslations('Bookings');
   const tc = useTranslations('Common');
   const te = useTranslations('Enums');
+  const tp = useTranslations('Partners');
+  const tq = useTranslations('Quotations');
   const name = useLocalName();
   const master = useMasterData();
   const failure = useFailureText();
   const router = useRouter();
   const me = useMe();
+  const heldOutlet = booking?.salesOutlet ?? null;
+  const [outletId, setOutletId] = useState(heldOutlet?.id ?? '');
 
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
@@ -248,9 +257,11 @@ export function BookingForm({
       notifyPartyId: text('notifyPartyId'),
       requestedDeparture: text('requestedDeparture'),
       specialInstructions: text('specialInstructions'),
+      salesOutletId: partnerChange(heldOutlet, outletId),
       items: items.map((i) => ({
         cargoType: i.cargoType,
         containerTypeCode: i.cargoType === 'CONTAINER' ? i.containerTypeCode : null,
+        priceCategoryCode: i.priceCategoryCode || null,
         description: orNull(i.description),
         quantity: Number.parseInt(i.quantity, 10),
         lengthCm: orNull(i.lengthCm),
@@ -331,6 +342,12 @@ export function BookingForm({
 
   if (!master) return <p className="muted">{tc('loading')}</p>;
   const locations = master.locations.filter((l) => l.isActive && isPlace(l));
+  const outletBranchId = booking?.branchId ?? customer?.branchId ?? consolidation?.branchId;
+  // The categories of a line's cargo type (and one the line holds).
+  const categoriesFor = (i: ItemState) =>
+    master.priceCategories.filter(
+      (c) => c.cargoType === i.cargoType && (c.isActive || c.code === i.priceCategoryCode),
+    );
   const parties = (details?.id === customerId ? details?.parties : undefined) ?? [];
   // The suggestion's source, said while a suggested party is still selected.
   const suggestedNote = (() => {
@@ -417,6 +434,29 @@ export function BookingForm({
               }}
               allowCreate
             />
+          </div>
+        </section>
+      )}
+      {!fromQuotation && (
+        <section className="form-section">
+          <header>
+            <h2>{tp('salesOutlet')}</h2>
+          </header>
+          <div className="form-section-body form-grid">
+            <label className="field">
+              {tp('salesOutlet')}
+              <PartnerSelect
+                {...mark('salesOutletId')}
+                kind="SALES_OUTLET"
+                branchIds={outletBranchId ? [outletBranchId] : []}
+                held={heldOutlet}
+                value={outletId}
+                onChange={setOutletId}
+                // A booking made from a quotation keeps the quotation's outlet.
+                disabled={quoted}
+              />
+              <FieldNote note={note} path="salesOutletId" />
+            </label>
           </div>
         </section>
       )}
@@ -557,6 +597,8 @@ export function BookingForm({
                     updateItem(i.key, {
                       cargoType: next,
                       containerTypeCode: next === 'CONTAINER' ? '20GP' : '',
+                      // A category prices one cargo type.
+                      priceCategoryCode: '',
                     });
                   }}
                 >
@@ -585,6 +627,24 @@ export function BookingForm({
                       ))}
                   </select>
                   <FieldNote note={note} path={`items.${index}.containerTypeCode`} />
+                </label>
+              )}
+              {categoriesFor(i).length > 0 && (
+                <label className="field">
+                  {tq('priceCategory')}
+                  <select
+                    {...mark(`items.${index}.priceCategoryCode`)}
+                    value={i.priceCategoryCode}
+                    onChange={(e) => updateItem(i.key, { priceCategoryCode: e.target.value })}
+                  >
+                    <option value="">{tq('noCategory')}</option>
+                    {categoriesFor(i).map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {name(c)}
+                      </option>
+                    ))}
+                  </select>
+                  <FieldNote note={note} path={`items.${index}.priceCategoryCode`} />
                 </label>
               )}
               <label className="field">
