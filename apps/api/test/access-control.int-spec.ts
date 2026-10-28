@@ -9,6 +9,8 @@ import {
   setRequestAccessVersion,
 } from '../src/access-control/request-access.js';
 import { UsersService } from '../src/users/users.service.js';
+import { AGENT_PREFIX, draftKey, registerClient, tokenFor } from './agent-drafts-helpers.js';
+import { uniquePhone } from './test-data.js';
 import {
   type TestApp,
   actorAt,
@@ -16,6 +18,7 @@ import {
   createTestApp,
   createUser,
   deleteTestUsers,
+  APP_ORIGIN,
   signIn,
 } from './auth-test-app.js';
 
@@ -339,6 +342,77 @@ describe('access control (plan 03, P-1)', () => {
       const before = BigInt(await currentVersion());
       await users.update(await actorAt(t.prisma, admin.id), user.id, { fullName: 'Renamed' });
       expect(BigInt(await currentVersion())).toBe(before + 1n);
+    });
+  });
+
+  describe('a request authorized just before a change of access (Codex F118-1)', () => {
+    /**
+     * Runs `demote` right after the next `findUnique` of `model` returned its snapshot: the
+     * request goes on with the user as they were, while the change has committed.
+     */
+    function changeAfterSnapshot(model: 'session' | 'agentToken', demote: () => Promise<unknown>) {
+      const delegate = t.prisma[model] as unknown as { findUnique: (args: unknown) => unknown };
+      const original = delegate.findUnique;
+      delegate.findUnique = async (args: unknown) => {
+        delegate.findUnique = original;
+        const snapshot = await (original.call(delegate, args) as Promise<unknown>);
+        await demote();
+        return snapshot;
+      };
+    }
+
+    const customer = (phone: string) => ({
+      branchId: dxb,
+      kind: 'COMPANY',
+      name: 'Demoted Mid-request Trading',
+      phone,
+      preferredCurrency: 'USD',
+    });
+
+    it('cannot write through a session read before the demotion', async () => {
+      const users = t.app.get(UsersService);
+      const seller = await person(['SALES'], ['DXB']);
+      const cookie = await signIn(t, seller.email);
+      const phone = uniquePhone();
+      changeAfterSnapshot('session', async () =>
+        users.update(await actorAt(t.prisma, admin.id), seller.id, { roles: ['WAREHOUSE'] }),
+      );
+      await t
+        .http()
+        .post('/api/v1/customers')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send(customer(phone))
+        .expect(409);
+      expect(await t.prisma.customer.count({ where: { phone } })).toBe(0);
+      // The next request sees the new role.
+      await t
+        .http()
+        .post('/api/v1/customers')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send(customer(phone))
+        .expect(403);
+    });
+
+    it('cannot write through an assistant token read before the demotion', async () => {
+      const users = t.app.get(UsersService);
+      // Rows of the assistant's append-only access log keep these users: the agent tests' prefix.
+      const owner = await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX);
+      const client = await registerClient(t, await signIn(t, owner.email), `f118-${randomUUID()}`);
+      const seller = await createUser(t.prisma, ['SALES'], ['DXB'], AGENT_PREFIX);
+      const token = await tokenFor(t, await signIn(t, seller.email), client);
+      const phone = uniquePhone();
+      changeAfterSnapshot('agentToken', async () =>
+        users.update(await actorAt(t.prisma, admin.id), seller.id, { roles: ['WAREHOUSE'] }),
+      );
+      await t
+        .http()
+        .post('/api/v1/customer-drafts')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ idempotencyKey: draftKey(), branchId: dxb, kind: 'INDIVIDUAL', name: 'X', phone })
+        .expect(409);
+      expect(await t.prisma.customerDraft.count({ where: { createdById: seller.id } })).toBe(0);
     });
   });
 

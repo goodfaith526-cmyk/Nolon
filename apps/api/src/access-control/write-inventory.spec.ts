@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
@@ -79,11 +79,19 @@ function writeRoutes(file: string, source: string): Row[] {
   return rows;
 }
 
+/** A repository path as the document writes it, with `/` on every platform. */
+function posix(path: string, separator: string = sep): string {
+  return path.split(separator).join('/');
+}
+
 function codeRows(): Row[] {
   return readdirSync(SRC, { recursive: true, encoding: 'utf8' })
     .filter((f) => f.endsWith('.controller.ts'))
     .sort()
-    .flatMap((f) => writeRoutes(relative(SRC, join(SRC, f)), readFileSync(join(SRC, f), 'utf8')));
+    .flatMap((f) =>
+      // The document writes paths with `/`; Windows gives `\` (Codex F118-2).
+      writeRoutes(posix(relative(SRC, join(SRC, f))), readFileSync(join(SRC, f), 'utf8')),
+    );
 }
 
 function docRows(): Row[] {
@@ -122,6 +130,15 @@ describe('the write inventory gate', () => {
     expect(rows.map(key)).toEqual(['POST /a/:id/photos A.addPhoto', 'DELETE /b B.remove']);
     expect(rows[0]?.permissions).toBe('pod:create, documents:create');
     expect(rows[1]?.permissions).toBe('—');
+  });
+
+  it('writes file paths with / whatever the platform (Windows gives \\)', () => {
+    expect(posix('accounting\\accounting.controller.ts', '\\')).toBe(
+      'accounting/accounting.controller.ts',
+    );
+    expect(posix('accounting/accounting.controller.ts', '/')).toBe(
+      'accounting/accounting.controller.ts',
+    );
   });
 
   it('matches the code both ways, with its permissions, and no route twice', () => {

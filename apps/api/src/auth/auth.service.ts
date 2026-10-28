@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { hasAllBranchAccess, type AuthMeResponse, type Role } from '@nolon/shared';
-import { loadAccess } from '../access-control/access-loader.js';
+import { loadAccess, readAccessVersion } from '../access-control/access-loader.js';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { todayIn } from '../common/dates.js';
@@ -125,6 +125,8 @@ export class AuthService {
    * revoked session, or an inactive user. Runs on every authenticated request (plan S3).
    */
   async resolveSession(token: string): Promise<AuthUser | null> {
+    // First, before the session and user snapshot (F118-1): see readAccessVersion.
+    const version = await readAccessVersion(this.prisma);
     const session = await this.prisma.session.findUnique({
       where: { tokenHash: hashSessionToken(token) },
       include: { user: { include: USER_ACCESS } },
@@ -136,7 +138,7 @@ export class AuthService {
     if (now.getTime() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
       await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
     }
-    return this.toAuthUser(session.user, session.id);
+    return this.toAuthUser(session.user, session.id, version);
   }
 
   /**
@@ -149,6 +151,8 @@ export class AuthService {
   async resolveAgentToken(
     token: string,
   ): Promise<{ tokenId: string; user: AuthUser | null } | null> {
+    // First, before the token and user snapshot (F118-1): see readAccessVersion.
+    const version = await readAccessVersion(this.prisma);
     const row = await this.prisma.agentToken.findUnique({
       where: { tokenHash: sha256Hex(token) },
       include: {
@@ -167,7 +171,7 @@ export class AuthService {
       row.session.expiresAt > now &&
       row.user.isActive;
     if (!valid) return { tokenId: row.id, user: null };
-    const user = await this.toAuthUser(row.user, row.sessionId);
+    const user = await this.toAuthUser(row.user, row.sessionId, version);
     return {
       tokenId: row.id,
       user: { ...user, agent: { clientId: row.agentClient.clientId, tokenId: row.id } },
@@ -203,6 +207,8 @@ export class AuthService {
       outlets: { partnerId: string; partner: { branchId: string } }[];
     },
     sessionId: string,
+    /** access_state.version, read before `user` was loaded. */
+    version: string,
   ): Promise<AuthUser> {
     const roles: Role[] = user.roles.map((r) => r.role);
     const allBranches = hasAllBranchAccess(roles);
@@ -211,6 +217,7 @@ export class AuthService {
       user.id,
       roles,
       user.branches.map((b) => b.branchId),
+      version,
     );
     const allowedBranchIds = access.branchIds();
     return {

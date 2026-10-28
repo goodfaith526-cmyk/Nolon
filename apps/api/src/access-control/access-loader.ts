@@ -23,8 +23,23 @@ export async function loadAccess(
   userId: string,
   roles: readonly Role[],
   memberBranchIds: readonly string[],
+  version?: string,
 ): Promise<Access> {
-  return computeAccess(await loadAccessRows(db, userId, roles, memberBranchIds));
+  return computeAccess(await loadAccessRows(db, userId, roles, memberBranchIds, version));
+}
+
+/**
+ * access_state.version now. A request reads it BEFORE any of its authorization inputs (session,
+ * user, roles, branches, the rows below): a change of access committed after this read leaves the
+ * request stamped with the older version, so its writes are refused (409), whatever newer rows it
+ * may have read (Codex F118-1).
+ */
+export async function readAccessVersion(db: Pick<Db, 'accessState'>): Promise<string> {
+  const state = await db.accessState.findUniqueOrThrow({
+    where: { id: 1 },
+    select: { version: true },
+  });
+  return state.version.toString();
 }
 
 /** The rows `loadAccess` computes from (the permissions screen explains them). */
@@ -33,9 +48,11 @@ export async function loadAccessRows(
   userId: string,
   roles: readonly Role[],
   memberBranchIds: readonly string[],
+  /** Read before the caller loaded `roles` and `memberBranchIds`; read here when omitted. */
+  version?: string,
 ): Promise<AccessRows> {
   const [state, branchIds, branchTeams, branchPermissions] = await Promise.all([
-    db.accessState.findUniqueOrThrow({ where: { id: 1 }, select: { version: true } }),
+    version ?? readAccessVersion(db),
     hasAllBranchAccess([...roles])
       ? db.branch.findMany({ select: { id: true } }).then((rows) => rows.map((b) => b.id))
       : Promise.resolve([...memberBranchIds]),
@@ -91,7 +108,7 @@ export async function loadAccessRows(
         }),
   ]);
   const rows: AccessRows = {
-    version: state.version.toString(),
+    version: state,
     roles,
     branchIds,
     teams: teams.map((t) => ({
