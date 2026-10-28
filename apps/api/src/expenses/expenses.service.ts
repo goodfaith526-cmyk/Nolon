@@ -343,7 +343,7 @@ function toSummary(e: {
 }
 
 function toDto(e: ExpenseWithDetails, user: AuthUser): ExpenseDto {
-  const can = (p: 'update' | 'approve' | 'cancel') => user.permissions.has(`expenses:${p}`);
+  const can = (p: 'update' | 'approve' | 'cancel') => user.access.has(`expenses:${p}`, e.branchId);
   const isDraft = e.status === 'DRAFT';
   return {
     ...toSummary(e),

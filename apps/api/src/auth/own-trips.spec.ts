@@ -2,6 +2,7 @@ import { permissionsForRoles, type Role } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import type { AuthUser } from './auth-user.js';
 import { limitedToOwnTrips } from './own-trips.js';
+import { Access } from '../access-control/access.js';
 
 function user(roles: Role[]): AuthUser {
   return {
@@ -12,7 +13,7 @@ function user(roles: Role[]): AuthUser {
     sessionId: 's',
     credentialStamp: 'c',
     roles,
-    permissions: new Set(permissionsForRoles(roles)),
+    access: Access.uniform(permissionsForRoles(roles), ['b']),
     allBranches: false,
     allowedBranchIds: [],
   };

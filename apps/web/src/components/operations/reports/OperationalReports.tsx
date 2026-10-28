@@ -989,7 +989,7 @@ function AuditStatus({ entry }: { entry: AuditLogEntryDto }) {
 }
 
 /** What an audit entry changed, field by field (a field without a label shows its code). */
-function AuditChanges({ entry }: { entry: AuditLogEntryDto }) {
+export function AuditChanges({ entry }: { entry: AuditLogEntryDto }) {
   const t = useTranslations('OpsReports');
   if (!entry.changes?.length) return null;
   const name = (field: string) => (t.has(`field_${field}`) ? t(`field_${field}`) : field);

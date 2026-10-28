@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MY_DRAFT_KINDS, SETTLE_DRAFT_KINDS, type Permission } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
+import { Access } from '../access-control/access.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { REVIEW_PAGES } from '../drafts/drafts.service.js';
 import { DRAFT_KIND_ROUTES, draftCapabilities } from './draft-capabilities.js';
@@ -46,8 +47,26 @@ describe('draft capabilities', () => {
     }
   });
 
+  it('need every create permission in one branch, never spread over two', () => {
+    const spread = new Access(
+      '0',
+      new Map<string, ReadonlySet<Permission>>([
+        ['dxb', new Set<Permission>(['quotations:create'])],
+        ['jed', new Set<Permission>(['customers:create'])],
+      ]),
+    );
+    const can = (access: Access) =>
+      draftCapabilities({ access } as unknown as AuthUser)
+        .kinds.filter((k) => k.canCreate)
+        .map((k) => k.kind);
+    expect(can(spread)).not.toContain('new_customer_quotation');
+    expect(can(spread)).toEqual(expect.arrayContaining(['quotation', 'customer']));
+    const together = Access.uniform(['quotations:create', 'customers:create'], ['dxb']);
+    expect(can(together)).toContain('new_customer_quotation');
+  });
+
   it("say which kinds this user may create, from the user's permissions now", () => {
-    const user = { permissions: new Set<Permission>(['quotations:create']) } as unknown as AuthUser;
+    const user = { access: Access.uniform(['quotations:create'], ['b']) } as unknown as AuthUser;
     const kinds = draftCapabilities(user).kinds;
     const can = kinds.filter((k) => k.canCreate).map((k) => k.kind);
     expect(can).toEqual(['quotation']);

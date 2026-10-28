@@ -7,6 +7,7 @@ import {
   type AlertKind,
   type AlertSettingDto,
   type AlertsDto,
+  ALERT_PERMISSIONS,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
@@ -18,6 +19,7 @@ import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
 import { concerns } from './alert-rules.js';
+import { withPermissions } from '../auth/branch-scope.js';
 
 /**
  * Starting waits of alerts added after alert_settings was created: used until the Administrator
@@ -53,8 +55,10 @@ export class AlertsService {
     const groups = await Promise.all(
       kinds.map(async (kind): Promise<AlertGroupDto> => {
         const thresholdDays = waits.get(kind) ?? 0;
-        const found = await this.rows(user, kind, thresholdDays);
-        const items = await this.withNumbers(user, kind, found);
+        // Only the branches where they hold the alert's permission (plan 03, section 5.3).
+        const scoped = withPermissions(user, ALERT_PERMISSIONS[kind]);
+        const found = await this.rows(scoped, kind, thresholdDays);
+        const items = await this.withNumbers(scoped, kind, found);
         return { kind, thresholdDays, count: found.count, items };
       }),
     );
@@ -68,7 +72,8 @@ export class AlertsService {
     const waits = await this.waits();
     return Promise.all(
       kinds.map(async (kind) => {
-        const found = await this.rows(user, kind, waits.get(kind) ?? 0);
+        const scoped = withPermissions(user, ALERT_PERMISSIONS[kind]);
+        const found = await this.rows(scoped, kind, waits.get(kind) ?? 0);
         return { kind, count: found.count };
       }),
     );

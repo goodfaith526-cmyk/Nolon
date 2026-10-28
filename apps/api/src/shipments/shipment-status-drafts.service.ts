@@ -14,7 +14,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, withPermissions } from '../auth/branch-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import {
   changedFields,
@@ -163,14 +163,18 @@ export class ShipmentStatusDraftsService {
     branchId: string | null | undefined,
   ): Promise<{ branchId: string }> {
     const { shipmentId, status } = values;
-    if (status && !canMove(user, status)) {
+    if (status && !canMove(user, status, null)) {
       throw new ForbiddenException('Missing permission for this status change');
     }
     const shipment =
       shipmentId && status
         ? await this.shipments.prepareStatusChange(user, shipmentId, { ...values, status })
         : await this.shipments.checkStatusPresent(user, shipmentId ?? null, values);
-    return { branchId: draftBranch(user, branchId, shipment.branchId) };
+    const draftBranchId = draftBranch(user, branchId, shipment.branchId);
+    if (status && !canMove(user, status, draftBranchId)) {
+      throw new ForbiddenException('Missing permission for this status change');
+    }
+    return { branchId: draftBranchId };
   }
 
   /**
@@ -334,8 +338,10 @@ export class ShipmentStatusDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('shipments:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'shipments:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -433,7 +439,7 @@ export class ShipmentStatusDraftsService {
     this.drafts.requireDecider(user, 'SESSION', HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
     // Whoever could make the move decides on it (anyone who sees it, while it names no status).
-    if (current.status !== null && !canMove(user, current.status)) {
+    if (current.status !== null && !canMove(user, current.status, current.branchId)) {
       throw new ForbiddenException('Missing permission for this status change');
     }
     await this.prisma.$transaction(async (tx) => {
@@ -482,9 +488,14 @@ export class ShipmentStatusDraftsService {
   }
 }
 
-/** The permissions a status change to `status` needs: any one of them. */
-function canMove(user: AuthUser, status: ShipmentStatus): boolean {
-  return permissionForTransition(status).some((p) => user.permissions.has(p));
+/**
+ * The permissions a status change to `status` needs: any one of them, in the draft's branch (or,
+ * before the branch is known, in some branch: checked again once it is).
+ */
+function canMove(user: AuthUser, status: ShipmentStatus, branchId: string | null): boolean {
+  return permissionForTransition(status).some((p) =>
+    branchId === null ? user.access.any(p) : user.access.has(p, branchId),
+  );
 }
 
 function toSummary(d: DraftRow, now: Date): EntryDraftSummaryDto {
@@ -508,7 +519,7 @@ function baseFields(
   const editable = status === 'DRAFT' && !user.agent;
   // Whoever could make the move decides on it; with no status yet, anyone who sees the draft
   // may fill it in, and the approval waits for it (422).
-  const open = editable && (d.status === null || canMove(user, d.status));
+  const open = editable && (d.status === null || canMove(user, d.status, d.branchId));
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,

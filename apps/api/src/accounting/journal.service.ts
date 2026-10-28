@@ -324,7 +324,8 @@ function toSummary(
 
 function toDto(e: EntryWithDetails, user: AuthUser): JournalEntryDto {
   const isManualDraft = e.source === 'MANUAL' && e.status === 'DRAFT';
-  const can = (p: 'update' | 'approve' | 'cancel') => user.permissions.has(`manual_journals:${p}`);
+  const can = (p: 'update' | 'approve' | 'cancel') =>
+    user.access.has(`manual_journals:${p}`, e.branchId);
   return {
     ...toSummary(e, e.lines, e.reversedBy?.id ?? null),
     sourceNumber:

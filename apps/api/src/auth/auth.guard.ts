@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Permission } from '@nolon/shared';
-import type { AuthenticatedRequest } from './auth-user.js';
+import { setRequestAccessVersion } from '../access-control/request-access.js';
+import type { AuthUser, AuthenticatedRequest } from './auth-user.js';
 import { AuthService } from './auth.service.js';
 import { isAgentAuthorization, readAgentToken } from '../agent-auth/agent-secrets.js';
 import {
@@ -55,11 +56,10 @@ export class AuthGuard implements CanActivate {
     const token = readCookie(request.headers.cookie, SESSION_COOKIE);
     const user = token ? await this.auth.resolveSession(token) : null;
     if (!user) throw new UnauthorizedException('Not signed in');
-    request.authUser = user;
-
-    if (required?.some((permission) => !user.permissions.has(permission))) {
-      throw new ForbiddenException('Missing permission');
-    }
+    const scoped = forRoute(user, required);
+    setRequestAccessVersion(user.access.version);
+    request.authUser = scoped ?? user;
+    if (!scoped) throw new ForbiddenException('Missing permission');
     // Outlet Staff (plan 4.2): only routes built for the outlet filter.
     if (
       outletLimited(user) &&
@@ -92,10 +92,8 @@ export class AuthGuard implements CanActivate {
           marked(AGENT_DRAFT_DECIDABLE) ||
           marked(AGENT_DRAFT_CHECKABLE)));
     // Outlet Staff cannot use the assistant in this batch (plan 4.2 item 5).
-    const permitted =
-      user !== null &&
-      !outletLimited(user) &&
-      !required?.some((permission) => !user.permissions.has(permission));
+    const scoped = user && !outletLimited(user) ? forRoute(user, required) : null;
+    const permitted = scoped !== null;
     await this.auth.recordAgentAccess(
       tokenId,
       request.method,
@@ -104,10 +102,28 @@ export class AuthGuard implements CanActivate {
     );
     if (!user) throw new UnauthorizedException('Not signed in');
     if (!open) throw new ForbiddenException('Not available to the assistant');
-    if (!permitted) throw new ForbiddenException('Missing permission');
-    request.authUser = user;
+    if (!scoped) throw new ForbiddenException('Missing permission');
+    setRequestAccessVersion(user.access.version);
+    request.authUser = scoped;
     return true;
   }
+}
+
+/**
+ * The user as this route sees them (plan 03, section 5.2): null when they lack a required
+ * permission in every branch; otherwise their branch list narrowed to the branches where they
+ * hold every required permission, so `branchScope` and `listBranchScope` cover only those.
+ * A route that needs a branch-owned permission held in no single branch is refused.
+ */
+export function forRoute(
+  user: AuthUser,
+  required: readonly Permission[] | undefined,
+): AuthUser | null {
+  if (!required || required.length === 0) return user;
+  if (required.some((permission) => !user.access.any(permission))) return null;
+  const branches = new Set(user.access.branchesWith(required));
+  if (branches.size === 0) return null;
+  return { ...user, allowedBranchIds: user.allowedBranchIds.filter((id) => branches.has(id)) };
 }
 
 /** The matched route pattern (e.g. /api/v1/shipments/:id), never the path with its values. */

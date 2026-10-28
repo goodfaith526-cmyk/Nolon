@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { Access } from '../access-control/access.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { AuthUser } from './auth-user.js';
 import {
@@ -85,7 +86,7 @@ const user = (allowedOutletIds?: string[] | null): AuthUser => ({
   sessionId: 's',
   credentialStamp: 'c',
   roles: ['OUTLET_STAFF'],
-  permissions: new Set(),
+  access: Access.uniform([], ['b']),
   allBranches: false,
   allowedBranchIds: ['b'],
   ...(allowedOutletIds !== undefined && { allowedOutletIds }),

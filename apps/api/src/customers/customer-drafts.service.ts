@@ -15,7 +15,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, withPermissions } from '../auth/branch-scope.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
 import {
   changedFields,
@@ -553,7 +553,7 @@ export class CustomerDraftsService {
         ...branchScope(user),
         ...stateFilter(status, now),
         ...scope.where,
-        ...(hidePaired && reviewsWithBooking(user) ? notPairedWithOpenBooking(now) : {}),
+        ...(hidePaired ? hidePairedWhere(user, now) : {}),
       },
       include: details,
       orderBy: MY_DRAFTS_ORDER,
@@ -576,8 +576,10 @@ export class CustomerDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('customers:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'customers:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -724,13 +726,26 @@ export class CustomerDraftsService {
  * customer. A reviewer who cannot keeps the customer draft in their own list (the two-step path:
  * the customer first, then someone who books approves the booking), so it never goes unreviewed.
  */
-export function reviewsWithBooking(user: AuthUser): boolean {
+export function reviewsWithBooking(user: AuthUser, branchId: string): boolean {
   return (
     !user.agent &&
-    user.permissions.has('bookings:view') &&
-    user.permissions.has('bookings:create') &&
-    user.permissions.has('customers:create')
+    user.access.has('bookings:view', branchId) &&
+    user.access.has('bookings:create', branchId) &&
+    user.access.has('customers:create', branchId)
   );
+}
+
+/**
+ * The drafts paired with an open booking draft are hidden in the branches where this reviewer
+ * approves them in one step from the booking (reviewsWithBooking); elsewhere they stay listed.
+ */
+function hidePairedWhere(user: AuthUser, now: Date): Prisma.CustomerDraftWhereInput {
+  const oneStep = user.allowedBranchIds.filter((b) => reviewsWithBooking(user, b));
+  if (oneStep.length === 0) return {};
+  const paired = notPairedWithOpenBooking(now);
+  return {
+    AND: [{ OR: [{ branchId: { notIn: oneStep } }, { branchId: { in: oneStep }, ...paired }] }],
+  };
 }
 
 /**
@@ -776,7 +791,7 @@ function baseFields(
   now: Date,
 ): Omit<CustomerDraftDto, 'request' | 'check' | 'evidence'> {
   const status = draftStatus(d.state, d.expiresAt, now);
-  const open = status === 'DRAFT' && !user.agent && user.permissions.has('customers:create');
+  const open = status === 'DRAFT' && !user.agent && user.access.has('customers:create', d.branchId);
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,

@@ -13,7 +13,7 @@ import {
   seesCustomsCosts,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { shipmentScope } from '../shipments/shipment-scope.js';
+import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
@@ -71,7 +71,7 @@ export class CustomsService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
-    const has = (permission: Permission) => user.permissions.has(permission);
+    const has = (permission: Permission) => holdsOnShipment(user, permission, shipment);
     const active = isActive(shipment.status);
     const brokerSupplierId = clearance?.brokerSupplierId ?? null;
     const showsCost = seesCustomsCosts(has);

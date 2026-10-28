@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { Access } from '../access-control/access.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { CurrenciesService } from '../currencies/currencies.service.js';
@@ -71,7 +72,7 @@ describe('CustomersService.duplicateIssues', () => {
     sessionId: 's',
     credentialStamp: 'c',
     roles: allowedOutletIds ? ['OUTLET_STAFF'] : ['SALES'],
-    permissions: new Set(),
+    access: Access.uniform([], ['b1']),
     allBranches: false,
     allowedBranchIds: ['b1'],
     ...(allowedOutletIds && { allowedOutletIds }),
