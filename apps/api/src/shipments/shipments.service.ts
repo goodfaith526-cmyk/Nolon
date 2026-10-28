@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   HttpStatus,
   Inject,
   Injectable,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import type {
   BookingService,
+  FormRefusal,
   CargoType,
   LoadType,
   Page,
@@ -31,6 +33,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
+import { ShipmentLinksRegistry, type ShipmentLinkBlocker } from './shipment-links.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -178,6 +181,7 @@ export class ShipmentsService {
     private readonly invoices: ShipmentInvoicesRegistry,
     private readonly partnerRefs: PartnerRefsService,
     private readonly stock: ShipmentStockRegistry,
+    private readonly links: ShipmentLinksRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -837,6 +841,8 @@ export class ShipmentsService {
         );
       }
       const remaining = path.slice(0, -1);
+      const undone = path.at(-1);
+      const note = shipment.events.find((e) => e.id.toString() === undone?.eventId)?.note ?? null;
       return {
         kind: 'REVERT',
         status: target,
@@ -844,6 +850,16 @@ export class ShipmentsService {
         update: {
           status: target,
           currentLocationId: remaining.findLast((entry) => entry.locationId)?.locationId ?? null,
+        },
+        // B2: a step that a trip, container, warehouse movement, proof of delivery or customs
+        // file made stays; undoing it here would leave the record and the status disagreeing.
+        after: async (tx) => {
+          if (!undone) return;
+          const blocker = await this.links.revertBlockerInTx(tx, shipment.id, {
+            status: undone.status,
+            note,
+          });
+          if (blocker) throw revertRefusal(blocker);
         },
       };
     });
@@ -1196,6 +1212,10 @@ export class ShipmentsService {
         holdReason: null,
       },
       after: async (tx) => {
+        // B2: a trip under way or a container in transit cannot drop the shipment, so cancelling
+        // it would strand them.
+        const blocker = await this.links.cancelBlockerInTx(tx, shipment.id);
+        if (blocker) throw cancelRefusal(shipment.number, blocker);
         await this.requireNoLiveInvoices(tx, shipment);
         await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
       },
@@ -1577,6 +1597,43 @@ function requireAny(
 
 function sharedIds(s: { sharedBranches: readonly { branchId: string }[] }): string[] {
   return s.sharedBranches.map((b) => b.branchId);
+}
+
+/**
+ * B2 (F110-6): no way exists yet to take a shipment off a trip that has left or out of a closed
+ * container, so the refusal says what can be done now instead of promising a correction.
+ */
+function cancelRefusal(shipment: string, blocker: ShipmentLinkBlocker): HttpException {
+  return blocker.record === 'TRIP'
+    ? codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_CANCEL_ON_TRIP',
+        `Shipment ${shipment} is on trip ${blocker.number}, which has left: it cannot be cancelled from here. Complete the trip, or ask a manager for a correction`,
+        { shipment, trip: blocker.number },
+      )
+    : codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_CANCEL_IN_CONTAINER',
+        `Shipment ${shipment} is in container ${blocker.number}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or ask a manager for a correction`,
+        { shipment, container: blocker.number },
+      );
+}
+
+const REVERT_REFUSALS = {
+  TRIP: 'REVERT_BY_TRIP',
+  CONTAINER: 'REVERT_BY_CONTAINER',
+  WAREHOUSE: 'REVERT_BY_WAREHOUSE',
+  POD: 'REVERT_BY_POD',
+  CUSTOMS: 'REVERT_BY_CUSTOMS',
+} as const satisfies Record<ShipmentLinkBlocker['record'], FormRefusal>;
+
+function revertRefusal(blocker: ShipmentLinkBlocker): HttpException {
+  return codedRefusal(
+    HttpStatus.CONFLICT,
+    REVERT_REFUSALS[blocker.record],
+    `This step was recorded by ${blocker.record.toLowerCase()} ${blocker.number}: it cannot be undone from here. Ask a manager for a correction`,
+    { record: blocker.number },
+  );
 }
 
 function isLateCanceller(user: AuthUser): boolean {

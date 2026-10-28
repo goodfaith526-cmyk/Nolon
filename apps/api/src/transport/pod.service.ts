@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   MAX_POD_PHOTOS,
@@ -18,6 +19,7 @@ import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js'
 import { DocumentsService, type PreparedUpload } from '../documents/documents.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
 import { isDriverOnly, lockTripShared, tripScope } from './trip-scope.js';
@@ -63,12 +65,27 @@ export interface PodUpload {
  * the shipment's latest event.
  */
 @Injectable()
-export class PodService {
+export class PodService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
     private readonly documents: DocumentsService,
+    private readonly shipmentLinks: ShipmentLinksRegistry,
   ) {}
+
+  onModuleInit(): void {
+    // B2: the status a proof of delivery applied is not undone from the shipment.
+    this.shipmentLinks.register({
+      revertBlockerInTx: async (tx, shipmentId, step) => {
+        if (step.note === null) return null;
+        const pod = await tx.proofOfDelivery.findFirst({
+          where: { shipmentId, number: step.note, statusApplied: step.status },
+          select: { number: true },
+        });
+        return pod ? { record: 'POD', number: pod.number } : null;
+      },
+    });
+  }
 
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentPodsDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
