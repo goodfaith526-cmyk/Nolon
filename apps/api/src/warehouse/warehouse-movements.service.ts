@@ -201,7 +201,12 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
           balances.some((b) => b.onHandPackages > 0),
         canAddPhotos:
           has('warehouse:create') && has('documents:create') && shipment.status !== 'CANCELLED',
-        canCancelMovements: !user.agent && has('warehouse:cancel') && shipment.status !== 'CLOSED',
+        // The cancel's own rule (F133-1): a branch sharing the shipment sees the button only
+        // when it holds the permission in the owning branch too.
+        canCancelMovements:
+          !user.agent &&
+          mayCancelMovements(user, shipment.branchId) &&
+          shipment.status !== 'CLOSED',
         receiptStatuses,
         defaultReceiptStatus: defaultReceiptStatus(receiptStatuses),
       },
@@ -470,7 +475,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     reason: string,
   ): Promise<WarehouseMovementDto> {
     const found = await this.findMovement(user, shipmentId, movementId);
-    if (!user.access.has('warehouse:cancel', found.branchId)) {
+    if (!mayCancelMovements(user, found.branchId)) {
       throw new ForbiddenException('You may not cancel warehouse movements of this branch');
     }
     const label = { movement: found.number };
@@ -652,4 +657,12 @@ function toDto(m: MovementWithDetails): WarehouseMovementDto {
         }
       : null,
   };
+}
+
+/**
+ * warehouse:cancel in the branch that owns the movements (the shipment's own branch, where every
+ * movement is recorded): the cancel and the button that offers it (F133-1).
+ */
+function mayCancelMovements(user: AuthUser, branchId: string): boolean {
+  return user.access.has('warehouse:cancel', branchId);
 }

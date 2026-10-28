@@ -1021,6 +1021,13 @@ describe('warehouse and customs', () => {
       await cancel(s.id, grn.id, cookies.salesDxb).expect(403);
       await cancel(s.id, grn.id, cookies.opsDxb).expect(403);
       await cancel(s.id, grn.id, cookies.warehouseJed).expect(404);
+      // F133-1: a branch sharing the shipment sees it, but the cancel needs the owning branch, and
+      // the button follows the same rule.
+      const jed = await branchId(t.prisma, 'JED');
+      await patch(`/shipments/${s.id}`, cookies.opsDxb, { sharedBranchIds: [jed] }).expect(200);
+      expect((await view(s.id, cookies.warehouseJed)).actions.canCancelMovements).toBe(false);
+      await cancel(s.id, grn.id, cookies.warehouseJed).expect(403);
+      expect((await view(s.id, cookies.warehouseDxb)).actions.canCancelMovements).toBe(true);
       await cancel(s.id, grn.id, cookies.warehouseDxb, 'x').expect(400);
       // Another shipment's movement id is not found under this shipment.
       const other = await confirmedShipment(['MAIN_FREIGHT']);
