@@ -1766,6 +1766,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
         totalUsd: '500',
       });
       expect(invoice.number).toMatch(new RegExp(`^NOL-OBI-${year}-\\d{6}$`));
+      // An opening item is approved as it is created: approving it again is refused (409), not
+      // an error, and leaves it as it was.
+      await post(`/customer-invoices/${invoice.id}/approve`, cookies.financePts).expect(409);
+      expect(
+        (await get(`/customer-invoices/${invoice.id}`, cookies.financePts).expect(200)).body,
+      ).toMatchObject({ status: 'APPROVED', journalEntryId: invoice.journalEntryId });
       const invoiceEntry = await journal(invoice.journalEntryId ?? '');
       balanced(invoiceEntry);
       expect(lineOf(invoiceEntry, account('1200').id)).toMatchObject({ debitUsd: '500' });

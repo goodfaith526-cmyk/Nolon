@@ -1015,6 +1015,10 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
    */
   async approve(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
     const existing = await this.findScoped(user, id);
+    // An approved invoice (an opening item has no shipment at all) is not approved again; the
+    // status is checked again under the invoice's lock below.
+    if (existing.status !== 'DRAFT')
+      throw new ConflictException('Only a draft invoice is approved');
     if (!existing.shipmentId) throw new Error('A draft bills a shipment');
     const shipmentId = existing.shipmentId;
     await this.prisma.$transaction(async (tx) => {
