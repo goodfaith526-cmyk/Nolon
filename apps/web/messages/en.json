@@ -1314,7 +1314,24 @@
     "move": "Move",
     "moveTo": "Move to container",
     "moveNone": "No other open container in your branches.",
-    "shipmentMovedNotice": "Shipment {shipment} moved to container {container}."
+    "shipmentMovedNotice": "Shipment {shipment} moved to container {container}.",
+    "capacitySection": "Space in the container",
+    "capacityHint": "CBM and weight of the cargo in it against the limits of its container type. A shipment that would take it over a limit is refused.",
+    "capacityAsOfNow": "The cargo in it now against the current limits of its container type.",
+    "capacity_volumeCbm": "Volume",
+    "capacity_weightKg": "Weight",
+    "unit_volumeCbm": "CBM",
+    "unit_weightKg": "kg",
+    "capacityRemaining": "{remaining} {unit} left",
+    "capacityNoLimit": "{used} {unit} (no limit set for this container type)",
+    "capacityNotChecked": "Not checked in full: some cargo has no such measure yet.",
+    "capacityIncomplete": "Cargo without CBM or weight (enter it before closing):",
+    "capacityIncompleteShort": "incomplete",
+    "fill": "Fill",
+    "fitOver": "Would exceed: {measures}",
+    "fitLeft": "Fits, leaving {left}",
+    "fitNoLimit": "No limit set",
+    "fitUnchecked": "not checked: {measures}"
   },
   "Alerts": {
     "title": "Alerts",
@@ -2516,7 +2533,11 @@
     "COUNTRY_KIND_FIXED": "A country pricing scope keeps its kind and country: add a new location instead.",
     "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}.",
     "SHIPMENT_CLOSE_GOODS_ON_HAND": "Shipment {shipment} still has goods in the warehouse: {warehouses}. Release them before closing it.",
-    "SHIPMENT_CLOSE_NOT_INVOICED": "No approved invoice bills shipment {shipment} (draft invoices: {drafts}). Approve its invoice, or write why it closes without charges."
+    "SHIPMENT_CLOSE_NOT_INVOICED": "No approved invoice bills shipment {shipment} (draft invoices: {drafts}). Approve its invoice, or write why it closes without charges.",
+    "CONTAINER_OVER_VOLUME": "Container {container} has no room for this volume: it holds {limit} CBM, has {used} and would have {after}.",
+    "CONTAINER_OVER_WEIGHT": "Container {container} has no room for this weight: it takes {limit} kg, has {used} and would have {after}.",
+    "CONTAINER_VOLUME_MISSING": "Enter the volume (CBM) of every cargo line before closing or loading container {container}: {shipments}.",
+    "CONTAINER_WEIGHT_MISSING": "Enter the weight of every cargo line before closing or loading container {container}: {shipments}."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2569,6 +2590,10 @@
     "add_customerSegments": "Add customer segment",
     "cargoType": "Cargo type",
     "defaultUnit": "Suggested unit",
-    "cargoTypeFixed": "The cargo type cannot be changed after it is saved."
+    "cargoTypeFixed": "The cargo type cannot be changed after it is saved.",
+    "maxVolumeCbm": "Usable volume (CBM)",
+    "maxPayloadKg": "Payload (kg)",
+    "noLimit": "No limit",
+    "capacityHint": "The values given at first are defaults: set the real limits you load to. Empty means no limit."
   }
 }

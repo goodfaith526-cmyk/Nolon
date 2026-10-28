@@ -9,7 +9,16 @@ const calls: { path: string; init?: { method?: string; body?: unknown } }[] = []
 const data = {
   branches: [],
   locations: [],
-  containerTypes: [{ code: '20GP', nameEn: '20 ft', nameAr: '20 قدم', isActive: true }],
+  containerTypes: [
+    {
+      code: '20GP',
+      nameEn: '20 ft',
+      nameAr: '20 قدم',
+      isActive: true,
+      maxVolumeCbm: '28',
+      maxPayloadKg: '28000',
+    },
+  ],
   chargeTypes: [{ code: 'THC', nameEn: 'THC', nameAr: 'مناولة', isActive: false }],
   documentTypes: [],
   currencies: [
@@ -165,6 +174,40 @@ describe('MasterData', () => {
       path: '/master-data/container-types/20GP',
       init: { method: 'PATCH', body: { nameEn: '20 foot', nameAr: '20 قدم' } },
     });
+  });
+
+  it("shows a container type's space and sends only the limits changed, empty as no limit", async () => {
+    permissions = ['master_data:view', 'master_data:update'];
+    const shown = await show();
+    const containers = panel(shown, 'containerTypes');
+    expect(containers.textContent).toContain('28000');
+    click(containers.querySelectorAll('tbody button')[0]);
+    const dialog = document.querySelector('dialog form')!;
+    expect(dialog.textContent).toContain('capacityHint');
+    dialog.querySelector<HTMLInputElement>('input[name="maxVolumeCbm"]')!.value = '27.5';
+    dialog.querySelector<HTMLInputElement>('input[name="maxPayloadKg"]')!.value = '';
+    act(() => {
+      dialog.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    await act(() => Promise.resolve());
+    expect(calls).toContainEqual({
+      path: '/master-data/container-types/20GP/capacity',
+      init: { method: 'PATCH', body: { maxVolumeCbm: '27.5', maxPayloadKg: null } },
+    });
+  });
+
+  it('sends no capacity change when the limits stay', async () => {
+    permissions = ['master_data:view', 'master_data:update'];
+    const shown = await show();
+    click(panel(shown, 'containerTypes').querySelectorAll('tbody button')[0]);
+    const dialog = document.querySelector('dialog form')!;
+    act(() => {
+      dialog.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    await act(() => Promise.resolve());
+    expect(calls.some((c) => c.path.endsWith('/capacity'))).toBe(false);
   });
 
   it('adds a price category with its cargo type and unit, and edits its unit only', async () => {
