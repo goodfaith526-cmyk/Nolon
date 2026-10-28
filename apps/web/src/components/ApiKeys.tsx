@@ -1,6 +1,11 @@
 'use client';
 
-import type { ApiClientCreatedDto, ApiClientDto } from '@nolon/shared';
+import {
+  type ApiClientCreatedDto,
+  type ApiClientDto,
+  CS_SCOPES,
+  type CsScope,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
@@ -11,7 +16,20 @@ import { useRecord } from './finance/common';
 import { can, useMe } from './StaffShell';
 import { useDateTime } from './transport/common';
 
-/** Customer Service API keys (the /cs/* routes, a key per client): made, listed and revoked here. */
+/** The message key of a scope's label: `cs:customers:read` is `scope_customers_read`. */
+function scopeKey(scope: CsScope): string {
+  return `scope_${scope.slice('cs:'.length).replaceAll(':', '_')}`;
+}
+
+function checkedScopes(f: FormData): CsScope[] {
+  const given = new Set(f.getAll('scopes'));
+  return CS_SCOPES.filter((s) => given.has(s));
+}
+
+/**
+ * Customer Service API keys (the /cs/* routes, a key per client): made, listed, given scopes and
+ * revoked here. A key holds no scope until one is ticked.
+ */
 export function ApiKeys() {
   const t = useTranslations('ApiKeys');
   const tc = useTranslations('Common');
@@ -27,6 +45,7 @@ export function ApiKeys() {
   const [created, setCreated] = useState<ApiClientCreatedDto | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
 
   if (!can(me, 'users:view')) return <p className="error">{tc('noAccess')}</p>;
   if (!clients) {
@@ -43,7 +62,7 @@ export function ApiKeys() {
     try {
       const made = await api<ApiClientCreatedDto>('/api-clients', {
         method: 'POST',
-        body: { name: field(f, 'name').trim(), branchIds },
+        body: { name: field(f, 'name').trim(), branchIds, scopes: checkedScopes(f) },
       });
       setCreated(made);
       setRecord([made.client, ...(clients ?? [])]);
@@ -53,6 +72,43 @@ export function ApiKeys() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onScopes(event: FormEvent<HTMLFormElement>, id: string) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    setBusy(true);
+    setNotice(null);
+    try {
+      const done = await api<ApiClientDto>(`/api-clients/${id}/scopes`, {
+        method: 'PUT',
+        body: { scopes: checkedScopes(f) },
+      });
+      setRecord((clients ?? []).map((c) => (c.id === id ? done : c)));
+      setEditing(null);
+      setNotice({ ok: true, text: t('scopesSaved') });
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function scopeChecks(held: readonly CsScope[]) {
+    return (
+      <fieldset>
+        <legend>{t('scopes')}</legend>
+        <p className="muted">{t('scopesHint')}</p>
+        <div className="checks">
+          {CS_SCOPES.map((s) => (
+            <label key={s}>
+              <input type="checkbox" name="scopes" value={s} defaultChecked={held.includes(s)} />
+              {t(scopeKey(s))}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    );
   }
 
   async function revoke(id: string) {
@@ -113,6 +169,7 @@ export function ApiKeys() {
               ))}
             </div>
           </fieldset>
+          {scopeChecks([])}
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {t('create')}
@@ -130,6 +187,7 @@ export function ApiKeys() {
                 <th>{t('name')}</th>
                 <th>{t('key')}</th>
                 <th>{t('branches')}</th>
+                <th>{t('scopes')}</th>
                 <th>{t('lastUsed')}</th>
                 <th>{tc('status')}</th>
                 <th />
@@ -146,11 +204,46 @@ export function ApiKeys() {
                   </td>
                   <td dir="ltr">{c.keyPrefix}…</td>
                   <td dir="ltr">{c.branchCodes.join(', ')}</td>
+                  <td>
+                    {editing === c.id ? (
+                      <form className="stack" onSubmit={(e) => void onScopes(e, c.id)}>
+                        {scopeChecks(c.scopes)}
+                        <div className="actions">
+                          <button type="submit" className="button small primary" disabled={busy}>
+                            {t('saveScopes')}
+                          </button>
+                          <button
+                            type="button"
+                            className="button small"
+                            onClick={() => setEditing(null)}
+                          >
+                            {t('cancel')}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <ul className="plain">
+                        {c.scopes.map((s) => (
+                          <li key={s}>{t(scopeKey(s))}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
                   <td>{dateTime(c.lastUsedAt)}</td>
                   <td>
                     {c.isActive ? t('active') : t('revokedAt', { at: dateTime(c.revokedAt) })}
                   </td>
                   <td>
+                    {c.isActive && can(me, 'users:update') && editing !== c.id && (
+                      <button
+                        type="button"
+                        className="button small"
+                        disabled={busy}
+                        onClick={() => setEditing(c.id)}
+                      >
+                        {t('editScopes')}
+                      </button>
+                    )}
                     {c.isActive && can(me, 'users:update') && (
                       <button
                         type="button"
