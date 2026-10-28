@@ -194,6 +194,12 @@ export interface ShipmentActionsDto {
    * location, suggested in the status form (any location may still be chosen).
    */
   suggestedLocations: Partial<Record<ShipmentStatus, string>>;
+  /**
+   * The shipment travels in a container (not cancelled, not unpacked) whose own moves give it
+   * these offered statuses: recording one here by hand is allowed, with a warning to move the
+   * container instead.
+   */
+  containerMoves: { container: string; statuses: ShipmentStatus[] } | null;
   canCancel: boolean;
   canEdit: boolean;
   /** Only users of the shipment's own branch choose the branches sharing it. */

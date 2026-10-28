@@ -321,7 +321,7 @@
     "service_INLAND_TRANSPORT": "Inland transport",
     "service_LAST_MILE": "Final delivery",
     "shipment_CREATED": "Created",
-    "shipment_PICKUP_SCHEDULED": "Pickup scheduled",
+    "shipment_PICKUP_SCHEDULED": "Pickup in progress",
     "shipment_RECEIVED_ORIGIN_WAREHOUSE": "At origin warehouse",
     "shipment_CONSOLIDATED": "Consolidated (LCL)",
     "shipment_LOADED": "Loaded",
@@ -646,7 +646,8 @@
     "revertReasonOther": "The reason, in words",
     "revertDetails": "Details (optional)",
     "recordedAt": "Recorded on {time}",
-    "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now."
+    "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now.",
+    "containerMoveWarning": "This shipment is in container {container}. «{status}» is normally recorded by moving the container, which moves all its shipments. Record it here only if this shipment alone is different."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",

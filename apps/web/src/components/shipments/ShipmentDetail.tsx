@@ -307,6 +307,14 @@ export function ShipmentDetail({ id }: { id: string }) {
             <span>{t('note')}</span>
             <textarea name="note" maxLength={1000} />
           </label>
+          {chosenStatus && actions.containerMoves?.statuses.includes(chosenStatus) && (
+            <p className="warning">
+              {t('containerMoveWarning', {
+                container: actions.containerMoves.container,
+                status: te(`shipment_${chosenStatus}`),
+              })}
+            </p>
+          )}
           {suggested && chosenLocation !== suggested && (
             <p className="warning">
               {t('locationNotUsual', {

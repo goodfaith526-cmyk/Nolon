@@ -101,6 +101,29 @@ const closedContainerLinks = {
   take: 1,
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
+/**
+ * The containers a shipment is or was in, for its page (not cancelled). The closed one (any status
+ * but OPEN, unpacked included) blocks undoing its consolidation exactly as the locked check
+ * (closedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
+ * the shipment goes on by itself).
+ */
+const containerLinks = {
+  where: { consolidation: { status: { not: 'CANCELLED' } } },
+  select: { consolidation: { select: { number: true, status: true } } },
+} satisfies Prisma.Shipment$consolidationLinksArgs;
+
+/**
+ * The statuses a container's moves give its shipments (consolidation-rules shipmentStatusFor):
+ * recorded by hand on the page of a shipment in a container, they come with a warning (owner
+ * choice Q3, docs/reviews/shipment-status-history-2026-10-27.md).
+ */
+const CONTAINER_MOVED: readonly ShipmentStatus[] = [
+  'CONSOLIDATED',
+  'LOADED',
+  'DEPARTED',
+  'ARRIVED_PORT',
+];
+
 const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
 
 const details = {
@@ -110,7 +133,7 @@ const details = {
   items: { orderBy: { lineNo: 'asc' } },
   containers: { orderBy: { createdAt: 'asc' } },
   events: { orderBy: { id: 'asc' }, include: { user: { select: { fullName: true } } } },
-  consolidationLinks: closedContainerLinks,
+  consolidationLinks: containerLinks,
 } satisfies Prisma.ShipmentInclude;
 
 type ShipmentWithDetails = Prisma.ShipmentGetPayload<{ include: typeof details }>;
@@ -1437,10 +1460,10 @@ function actionsFor(
   const has = (permission: Permission) => user.permissions.has(permission);
   const canUpdate = has('shipments:update');
   const undoes = revertUndoes(path);
-  const container =
-    undoes?.status === 'CONSOLIDATED'
-      ? (s.consolidationLinks[0]?.consolidation.number ?? null)
-      : null;
+  const links = s.consolidationLinks.map((link) => link.consolidation);
+  const inContainer = links.find((c) => c.status !== 'DECONSOLIDATED') ?? null;
+  const closed = links.find((c) => c.status !== 'OPEN') ?? null;
+  const container = undoes?.status === 'CONSOLIDATED' && closed ? closed.number : null;
   const canRevert = has('shipments:approve') && undoes !== null && container === null;
   const transitions = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
     permissionForTransition(next).some(has),
@@ -1452,8 +1475,13 @@ function actionsFor(
       suggestedLocations[next] = place === 'ORIGIN' ? s.originLocationId : s.destinationLocationId;
     }
   }
+  const byContainer = transitions.filter((next) => CONTAINER_MOVED.includes(next));
   return {
     transitions,
+    containerMoves:
+      inContainer && byContainer.length > 0
+        ? { container: inContainer.number, statuses: byContainer }
+        : null,
     canHold: canUpdate && canHold(s.status),
     canResume: canUpdate && s.status === 'ON_HOLD',
     revertTo: canRevert ? revertTarget(path) : null,
