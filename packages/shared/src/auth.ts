@@ -38,6 +38,7 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export const PERMISSION_MODULES = [
   'customers',
   'rates',
+  'rate_costs',
   'quotations',
   'bookings',
   'shipments',
@@ -54,6 +55,7 @@ export const PERMISSION_MODULES = [
   'receipts',
   'suppliers',
   'partners',
+  'partner_contracts',
   'supplier_payments',
   'expenses',
   'manual_journals',
@@ -107,6 +109,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Owner, 2026-10-19: only the Sales & Marketing Manager (and the Administrator) make, edit,
   // approve and cancel rate cards; every other role reads them, for every branch.
   rates: 'FVVVVVNNNFV',
+  // Business model plan 4.1: a rate card's reference costs and expected margin, apart from `rates`
+  // so Sales and Operations see a price without its cost and margin.
+  rate_costs: 'FVVNNVNNNFN',
   quotations: 'FVAFVVNNNFE',
   bookings: 'FVAFFVVVNFE',
   shipments: 'FVFVFVVVVVV',
@@ -129,6 +134,8 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Business model (docs/plans/02-business-model-batch-1.md 4.1): the network's partners, owned by
   // a branch. Sales and Operations read them; Branch Manager and Sales & Marketing Mgr keep them.
   partners: 'FVFVVVNNNFV',
+  // Business model plan 3.4 and 4.1: a partner's commission contracts (settings only in batch 1).
+  partner_contracts: 'FVVNNVNNNFN',
   supplier_payments: 'FVANNFNNNNN',
   expenses: 'FVANEFEEENN',
   manual_journals: 'FVNNNFNNNNN',
