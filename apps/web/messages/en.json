@@ -808,7 +808,9 @@
     "noCreditNotes": "No credit notes.",
     "creditNote": "Credit note",
     "creditDate": "Credit date",
-    "fromAdvance": "From advance"
+    "fromAdvance": "From advance",
+    "pricingNotice_QUOTATION_ROUTE_CHANGED": "The shipment's route or mode changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving.",
+    "pricingNotice_QUOTATION_CATEGORY_CHANGED": "The shipment's price categories changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving."
   },
   "Receipts": {
     "title": "Receipts",

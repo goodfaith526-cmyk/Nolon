@@ -270,7 +270,25 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   }
 
   async get(user: AuthUser, id: string): Promise<CustomerInvoiceDto> {
-    return toDto(await this.findScoped(user, id), user);
+    return this.withPricingNotice(user, toDto(await this.findScoped(user, id), user));
+  }
+
+  /**
+   * A draft of a shipment whose quotation no longer prices it (agreedPrices) carries why, so the
+   * staff member editing it sees that its prices are the rate cards', not the quotation's (plan
+   * 5.2, Codex F139-1).
+   */
+  private async withPricingNotice(
+    user: AuthUser,
+    invoice: CustomerInvoiceDto,
+  ): Promise<CustomerInvoiceDto> {
+    if (invoice.status !== 'DRAFT' || invoice.shipmentId === null) return invoice;
+    const { drift } = await this.agreedPrices(
+      await this.shipments.billingSource(user, invoice.shipmentId),
+    );
+    return drift === null
+      ? invoice
+      : { ...invoice, pricingNotice: { code: drift.code, quotationNumber: drift.number } };
   }
 
   /**
@@ -544,7 +562,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         include: details,
       });
     });
-    return toDto(created, user);
+    return this.withPricingNotice(user, toDto(created, user));
   }
 
   /**
@@ -1308,6 +1326,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
     journalEntryNumber: i.journalEntry?.number ?? null,
     approvedAt: i.approvedAt?.toISOString() ?? null,
     cancelReason: i.cancelReason,
+    pricingNotice: null,
     actions: {
       canEdit: isDraft && user.access.has('customer_invoices:update', i.branchId),
       canApprove: isDraft && user.access.has('customer_invoices:approve', i.branchId),

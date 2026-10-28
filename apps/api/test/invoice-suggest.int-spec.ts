@@ -592,6 +592,22 @@ describe('invoice suggestion: a shipment that is no longer what its quotation pr
       rates.freight,
     );
 
+    // The staff member who opens the draft is told why too (Codex F139-1).
+    const draft = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    const notice = {
+      code: 'QUOTATION_CATEGORY_CHANGED',
+      quotationNumber: expect.stringMatching(/\S/) as unknown,
+    };
+    expect(draft.pricingNotice).toEqual(notice);
+    expect(
+      (await r.get(`/customer-invoices/${draft.id}`, cookies.financePts).expect(200)).body,
+    ).toMatchObject({ pricingNotice: notice });
+    await r
+      .post(`/customer-invoices/${draft.id}/cancel`, cookies.financePts, { reason: 'test' })
+      .expect(200);
+
     // A carton card for the freight is the one the carton shipment is priced from.
     const carton = await t.prisma.rateCard.create({
       data: {
@@ -652,6 +668,10 @@ describe('invoice suggestion: a shipment that is no longer what its quotation pr
     expect(derived.lines.map((l) => [l.quantity, l.unitPrice, l.priceSource])).toEqual([
       ['2', '100', 'QUOTATION'],
     ]);
+    const draft = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(draft.pricingNotice).toBeNull();
   });
 
   it('prices from the rate cards, and says why, when the route changed', async () => {
