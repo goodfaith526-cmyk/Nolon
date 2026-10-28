@@ -24,7 +24,10 @@ const row = (n: number): PartnerSummaryDto => ({
   isActive: true,
 });
 
-vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
+vi.mock('next-intl', () => ({
+  useLocale: () => 'en',
+  useTranslations: () => (key: string) => key,
+}));
 vi.mock('@/i18n/navigation', () => ({
   Link: ({ children }: { children: unknown }) => children,
   useRouter: () => ({ push: vi.fn() }),
