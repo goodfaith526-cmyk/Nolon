@@ -33,6 +33,7 @@ import {
   branchScope,
   canAccessBranch,
   listBranchScope,
+  withPermissions,
 } from '../auth/branch-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import {
@@ -411,9 +412,10 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     const container = await this.prisma.consolidation.findUnique({ where: { id } });
     if (!container) return null;
     if (isOpen(container.status) && canBookInto(user)) return container;
-    if (!user.permissions.has('consolidation:view')) return null;
+    const viewer = withPermissions(user, 'consolidation:view');
+    if (viewer.allowedBranchIds.length === 0) return null;
     try {
-      await this.findViewable(user, id);
+      await this.findViewable(viewer, id);
       return container;
     } catch (error) {
       if (error instanceof NotFoundException) return null;
@@ -967,7 +969,9 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     c: ContainerWithDetails,
     own: boolean,
   ): Promise<ConsolidationDto> {
-    const has = (permission: Permission) => user.permissions.has(permission);
+    // The container's own branch decides its actions; another branch only adds its shipments.
+    const has = (permission: Permission) =>
+      own ? user.access.has(permission, c.branchId) : user.access.any(permission);
     // Another branch sees its own shipments (tripSummaries is scoped) and no costs.
     const showsCost = own && seesConsolidationCosts(has);
     const shipmentIds = c.shipments.map((l) => l.shipmentId);

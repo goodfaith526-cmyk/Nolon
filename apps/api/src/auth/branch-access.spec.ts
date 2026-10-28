@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { AuthUser } from './auth-user.js';
 import { requireBranchMemberInTx } from './branch-access.js';
+import { Access } from '../access-control/access.js';
 
 const user: AuthUser = {
   id: '0b6f6c1e-5f0e-4a43-9a51-6c3c6b0f0aff',
@@ -12,7 +13,7 @@ const user: AuthUser = {
   sessionId: 's',
   credentialStamp: 'c',
   roles: ['SALES'],
-  permissions: new Set(),
+  access: Access.uniform([], ['dxb']),
   allBranches: false,
   allowedBranchIds: ['dxb'],
 };

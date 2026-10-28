@@ -15,7 +15,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, withPermissions } from '../auth/branch-scope.js';
 import { dec, toDecimalStringOrNull } from '../common/money.js';
 import {
   approvedFields,
@@ -297,7 +297,7 @@ export class TripDraftsService {
     const { version, ...patch } = input;
     requireOpen(current, version, LABEL);
     const costs = patch.agreedCost !== undefined || patch.currency !== undefined;
-    if (costs && !seesTransportCosts((p) => user.permissions.has(p))) {
+    if (costs && !seesTransportCosts((p) => user.access.has(p, current.branchId))) {
       throw new ForbiddenException('You may not see or change transport costs');
     }
     const values = patched(requestOf(current), patch);
@@ -377,8 +377,10 @@ export class TripDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('transport_trips:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'transport_trips:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -399,7 +401,7 @@ export class TripDraftsService {
     const draft = await this.findScoped(user, id);
     const now = new Date();
     // Trip costs are Restricted (annex A): hidden from those who may not see them, as on a trip.
-    const showsCost = seesTransportCosts((p) => user.permissions.has(p));
+    const showsCost = seesTransportCosts((p) => user.access.has(p, draft.branchId));
     let check =
       draftStatus(draft.state, draft.expiresAt, now) === 'DRAFT'
         ? await this.check(user, draft)
@@ -630,7 +632,8 @@ function baseFields(
   routes: ReadonlyMap<string, string>,
 ): TripDraftReviewFields {
   const status = draftStatus(d.state, d.expiresAt, now);
-  const open = status === 'DRAFT' && !user.agent && user.permissions.has('transport_trips:create');
+  const open =
+    status === 'DRAFT' && !user.agent && user.access.has('transport_trips:create', d.branchId);
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,

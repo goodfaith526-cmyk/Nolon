@@ -279,7 +279,11 @@ export class OperationalReportsService {
    * only for users who may see financial reports, as on the dashboards.
    */
   async customerActivity(user: AuthUser, q: CustomerPeriod): Promise<CustomerActivityDto> {
-    const revenueShown = user.permissions.has('financial_reports:view');
+    // Permissions are held per branch (plan 03): revenue shows only when held in every branch
+    // the report covers, so no figure of a branch without it is mixed in.
+    const revenueShown = reportBranchIds(user, q.branchId).every((b) =>
+      user.access.has('financial_reports:view', b),
+    );
     const [activity, revenue] = await Promise.all([
       this.shipmentReports.activityByCustomer(user, q),
       revenueShown ? this.billing.revenueByCustomer(user, q) : Promise.resolve([]),
@@ -454,7 +458,10 @@ export class OperationalReportsService {
   async tripsReport(user: AuthUser, q: TripsQuery, limit = LIMIT): Promise<TripsReportDto> {
     const r = await this.trips.trips(user, q, limit);
     // Costs are restricted (annex A): users who do not see them get the trips without any cost.
-    const showsCost = seesTransportCosts((p) => user.permissions.has(p));
+    // Held in every branch the report covers (plan 03: permissions are held per branch).
+    const showsCost = reportBranchIds(user, q.branchId).every((b) =>
+      seesTransportCosts((p) => user.access.has(p, b)),
+    );
     // Totals and groups cover every matching trip; only the listed rows are cut at the limit.
     const costs = showsCost
       ? await this.ledger.entryCostsUsd(

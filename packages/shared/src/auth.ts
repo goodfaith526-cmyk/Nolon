@@ -1,6 +1,7 @@
 /**
- * Roles and permissions, transcribed from annex A (02a-annex-permissions.md). Roles are fixed:
- * there is no role editor, and changing this table after sign-off is a change request.
+ * Roles and permissions, transcribed from annex A (02a-annex-permissions.md). The matrix is each
+ * role's default: the owner changes a role's team, a branch or a person from the permissions
+ * screen (docs/plans/03-permissions-screen.md), stored as changes on top of these defaults.
  */
 
 export const ROLES = [
@@ -157,6 +158,47 @@ export const OUTLET_SCOPED: readonly PermissionModule[] = [
   'partners',
 ];
 
+/** Every permission, in module order. */
+export const PERMISSIONS: readonly Permission[] = PERMISSION_MODULES.flatMap((module) =>
+  PERMISSION_ACTIONS.map((action): Permission => `${module}:${action}`),
+);
+
+const PERMISSION_SET: ReadonlySet<string> = new Set(PERMISSIONS);
+
+export function isPermission(value: unknown): value is Permission {
+  return typeof value === 'string' && PERMISSION_SET.has(value);
+}
+
+/** The module of a permission (`customers:create` -> `customers`). */
+export function permissionModule(permission: Permission): PermissionModule {
+  return permission.slice(0, permission.indexOf(':')) as PermissionModule;
+}
+
+/**
+ * Access control (docs/plans/03-permissions-screen.md, section 4). Permissions are held per
+ * branch. These modules hold no branch-owned rows: a person holds them when they hold them in
+ * any of their branches.
+ */
+export const GLOBAL_MODULES: readonly PermissionModule[] = [
+  'master_data',
+  'fx_rates',
+  'alert_settings',
+  'users',
+];
+
+/**
+ * Modules only the Administrator team holds: no team change, branch grant or delegation gives
+ * them, so nobody but an Administrator can raise anyone's access (plan 03, section 4).
+ */
+export const NON_GRANTABLE_MODULES: readonly PermissionModule[] = ['users'];
+
+/**
+ * Roles that are security scopes, not only sets of permissions (plan 03, F114-2): their row
+ * filters read the role (the Driver's own trips, Outlet Staff's own outlets). They are given through user_roles only, their
+ * team takes no added permission, and their holders take no other team or added permission.
+ */
+export const RESTRICTED_ROLES: readonly Role[] = ['DRIVER', 'OUTLET_STAFF'];
+
 /** Modules where the Driver sees and edits only the trips assigned to them. */
 export const DRIVER_OWN_TRIPS_ONLY: readonly PermissionModule[] = [
   'shipments',
@@ -238,6 +280,11 @@ export interface AuthMeResponse {
     /** The branch's default currency (ISO 4217), from the currencies master. */
     defaultCurrency: string;
   }[];
+  /**
+   * Permissions are held per branch (plan 03): `permissions` above is their union, for menus;
+   * a page about one branch's record shows its actions from that branch's list here.
+   */
+  branchPermissions?: { branchId: string; permissions: Permission[] }[];
   /**
    * The staff AI assistant's address, or null when none is configured. The assistant reads only
    * what this user may read: NOLON rechecks the user's roles and branches on every request.

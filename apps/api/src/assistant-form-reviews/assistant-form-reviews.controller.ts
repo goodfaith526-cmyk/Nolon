@@ -24,7 +24,8 @@ export class AssistantFormReviewsController {
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<FormReviewDto> {
     const parsed = parse(createFormReviewBody, body);
     const needed = formReviewPermissions(parsed.form, parsed.mode);
-    if (needed.length === 0 || needed.some((p) => !user.permissions.has(p))) {
+    // Every permission the form needs, in one branch of theirs (plan 03: held per branch).
+    if (needed.length === 0 || user.access.branchesWith(needed).length === 0) {
       throw new ForbiddenException('Not allowed to save this form');
     }
     return this.reviews.create(user, parsed);

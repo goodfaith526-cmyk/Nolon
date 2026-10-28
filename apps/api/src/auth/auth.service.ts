@@ -1,10 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import {
-  hasAllBranchAccess,
-  permissionsForRoles,
-  type AuthMeResponse,
-  type Role,
-} from '@nolon/shared';
+import { hasAllBranchAccess, type AuthMeResponse, type Role } from '@nolon/shared';
+import { loadAccess } from '../access-control/access-loader.js';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { todayIn } from '../common/dates.js';
@@ -210,9 +206,13 @@ export class AuthService {
   ): Promise<AuthUser> {
     const roles: Role[] = user.roles.map((r) => r.role);
     const allBranches = hasAllBranchAccess(roles);
-    const allowedBranchIds = allBranches
-      ? (await this.prisma.branch.findMany({ select: { id: true } })).map((b) => b.id)
-      : user.branches.map((b) => b.branchId);
+    const access = await loadAccess(
+      this.prisma,
+      user.id,
+      roles,
+      user.branches.map((b) => b.branchId),
+    );
+    const allowedBranchIds = access.branchIds();
     return {
       id: user.id,
       email: user.email,
@@ -221,7 +221,7 @@ export class AuthService {
       sessionId,
       credentialStamp: credentialStamp(user.passwordHash),
       roles,
-      permissions: new Set(permissionsForRoles(roles)),
+      access,
       allBranches,
       allowedBranchIds,
       // Any Outlet Staff role limits the user to their outlets, whatever else they hold, and only
@@ -292,9 +292,13 @@ export class AuthService {
       fullName: user.fullName,
       preferredLocale: user.preferredLocale,
       roles: user.roles,
-      permissions: [...user.permissions].sort(),
+      permissions: user.access.all(),
       allBranches: user.allBranches,
       branches,
+      branchPermissions: branches.map((b) => ({
+        branchId: b.id,
+        permissions: user.access.inBranch(b.id),
+      })),
       assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
       assistantPanel: Boolean(this.env.AGENT_ASSISTANT_URL) && this.env.AGENT_ASSISTANT_PANEL,
     };

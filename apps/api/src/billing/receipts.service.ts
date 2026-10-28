@@ -584,9 +584,10 @@ function toDto(r: ReceiptWithDetails, user: AuthUser): ReceiptDto {
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     actions: {
       canCancel:
-        posted && !r.applications.some(isActive) && user.permissions.has('receipts:cancel'),
-      canApply: posted && dec(summary.unallocated).gt(0) && user.permissions.has('receipts:create'),
-      canReverseApplication: user.permissions.has('receipts:cancel'),
+        posted && !r.applications.some(isActive) && user.access.has('receipts:cancel', r.branchId),
+      canApply:
+        posted && dec(summary.unallocated).gt(0) && user.access.has('receipts:create', r.branchId),
+      canReverseApplication: user.access.has('receipts:cancel', r.branchId),
     },
   };
 }

@@ -11,10 +11,11 @@ import {
   shipmentStatusFor,
   splitContainerCost,
 } from './consolidation-rules.js';
+import { Access } from '../access-control/access.js';
 
 describe('consolidation rules', () => {
   it('books into a container with container_booking and both booking rights, whatever else', () => {
-    const user = (...permissions: Permission[]) => ({ permissions: new Set(permissions) });
+    const user = (...permissions: Permission[]) => ({ access: Access.uniform(permissions, ['b']) });
     expect(
       canBookInto(user('container_booking:create', 'bookings:create', 'bookings:approve')),
     ).toBe(true);
@@ -23,7 +24,9 @@ describe('consolidation rules', () => {
       false,
     );
     expect(canBookInto(user('container_booking:create', 'bookings:create'))).toBe(false);
-    const role = (r: keyof typeof ROLE_PERMISSIONS) => ({ permissions: ROLE_PERMISSIONS[r] });
+    const role = (r: keyof typeof ROLE_PERMISSIONS) => ({
+      access: Access.uniform(ROLE_PERMISSIONS[r], ['b']),
+    });
     expect(
       ['SALES', 'OPERATIONS', 'ADMINISTRATOR'].map((r) => canBookInto(role(r as 'SALES'))),
     ).toEqual([true, true, true]);

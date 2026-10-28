@@ -862,7 +862,7 @@ function toSummary(b: BillWithDetails): SupplierBillSummaryDto {
 
 function toDto(b: BillWithDetails, user: AuthUser): SupplierBillDto {
   const isDraft = b.status === 'DRAFT';
-  const can = (p: 'update' | 'approve' | 'cancel') => user.permissions.has(`suppliers:${p}`);
+  const can = (p: 'update' | 'approve' | 'cancel') => user.access.has(`suppliers:${p}`, b.branchId);
   const cancellable = isDraft || (b.status === 'APPROVED' && !b.isOpening && b.paidAmount.isZero());
   return {
     ...toSummary(b),

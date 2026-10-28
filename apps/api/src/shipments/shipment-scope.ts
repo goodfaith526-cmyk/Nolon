@@ -1,3 +1,4 @@
+import type { Permission } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { salesOutletScope } from '../auth/outlet-scope.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -59,4 +60,18 @@ export function shipmentIdVisibleIn(column: Prisma.Sql, branchIds: readonly stri
  */
 export function shipmentIdOwnedBy(column: Prisma.Sql, branchIds: readonly string[]): Prisma.Sql {
   return Prisma.sql`${column} IN (SELECT os."id" FROM "shipments" os WHERE os."branch_id" IN ${uuidList(branchIds)})`;
+}
+
+/**
+ * Whether the user holds `permission` for this shipment (plan 03, section 5.3): in its own branch
+ * or a branch sharing it, among the branches this request covers.
+ */
+export function holdsOnShipment(
+  user: AuthUser,
+  permission: Permission,
+  s: { branchId: string; sharedBranchIds: readonly string[] },
+): boolean {
+  return shipmentBranches(s).some(
+    (b) => user.allowedBranchIds.includes(b) && user.access.has(permission, b),
+  );
 }

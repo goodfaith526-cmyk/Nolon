@@ -1200,11 +1200,13 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
     approvedAt: i.approvedAt?.toISOString() ?? null,
     cancelReason: i.cancelReason,
     actions: {
-      canEdit: isDraft && user.permissions.has('customer_invoices:update'),
-      canApprove: isDraft && user.permissions.has('customer_invoices:approve'),
-      canCancel: isDraft && user.permissions.has('customer_invoices:cancel'),
+      canEdit: isDraft && user.access.has('customer_invoices:update', i.branchId),
+      canApprove: isDraft && user.access.has('customer_invoices:approve', i.branchId),
+      canCancel: isDraft && user.access.has('customer_invoices:cancel', i.branchId),
       canCreditNote:
-        i.status === 'APPROVED' && balance(i).gt(0) && user.permissions.has('credit_notes:create'),
+        i.status === 'APPROVED' &&
+        balance(i).gt(0) &&
+        user.access.has('credit_notes:create', i.branchId),
     },
   };
 }

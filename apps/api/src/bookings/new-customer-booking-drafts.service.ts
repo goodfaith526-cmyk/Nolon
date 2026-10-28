@@ -28,7 +28,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, withPermissions } from '../auth/branch-scope.js';
 import { dec } from '../common/money.js';
 import {
   CustomerDraftsService,
@@ -395,13 +395,13 @@ export class NewCustomerBookingDraftsService {
     replacesDraftId: string | null = null,
   ): Promise<NewCustomerBookingDraftSummaryDto> {
     const agentClientId = await this.drafts.agentClientOf(user, ASSISTANT_ONLY);
-    // The route asks for bookings:create; the customer part is a customer draft, which needs
-    // customers:create of its own.
-    if (!user.permissions.has('customers:create')) {
-      throw new ForbiddenException('Proposing a new customer needs permission to add customers');
-    }
     const { idempotencyKey, ...rest } = body;
     const { branchId, customer, booking, evidence } = valuesOfCreate(rest);
+    // The route asks for bookings:create; the customer part is a customer draft, which needs
+    // customers:create of its own, in the draft's branch.
+    if (!user.access.has('customers:create', branchId)) {
+      throw new ForbiddenException('Proposing a new customer needs permission to add customers');
+    }
     const hash = withReplaced(
       newCustomerBookingHash(branchId, customer, booking, evidence),
       replacesDraftId,
@@ -540,8 +540,10 @@ export class NewCustomerBookingDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('bookings:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'bookings:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -685,7 +687,7 @@ export class NewCustomerBookingDraftsService {
     if (customer.status !== 'DRAFT' || withCustomer === null) {
       throw new ConflictException(customerNotReady(customer) ?? 'Approve the new customer first');
     }
-    if (!user.permissions.has('customers:create')) {
+    if (!user.access.has('customers:create', current.branchId)) {
       throw new ForbiddenException(CUSTOMER_PERMISSION_REFUSAL);
     }
     const customerRequest = await this.customerDrafts.prepareLinkedApproval(
@@ -871,7 +873,7 @@ function baseFields(
   'request' | 'check' | 'evidence' | 'container' | 'missingFields'
 > {
   const status = draftStatus(d.state, d.expiresAt, now);
-  const open = status === 'DRAFT' && !user.agent && user.permissions.has('bookings:create');
+  const open = status === 'DRAFT' && !user.agent && user.access.has('bookings:create', d.branchId);
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,

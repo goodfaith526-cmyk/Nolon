@@ -13,6 +13,7 @@ import {
   deleteTestUsers,
   signIn,
 } from './auth-test-app.js';
+import { Access } from '../src/access-control/access.js';
 
 describe('sign-in, sessions and permissions', () => {
   let t: TestApp;
@@ -141,7 +142,10 @@ describe('sign-in, sessions and permissions', () => {
         sessionId: 's',
         credentialStamp: 'c',
         roles: ['SALES'],
-        permissions: new Set(),
+        access: Access.uniform(
+          [],
+          branches.map((b) => b.id),
+        ),
         allBranches: false,
         allowedBranchIds: branches.map((b) => b.id),
       };

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  RESTRICTED_ROLES,
   hasAllBranchAccess,
   type AssistantApprovalGrantsDto,
   type AssistantDecidableKind,
@@ -15,8 +16,10 @@ import {
   type UpdateUserRequest,
   type UserSummary,
 } from '@nolon/shared';
+import { requireActorInTx } from '../access-control/access-lock.js';
 import { revokeAgentAccess } from '../agent-auth/agent-auth.service.js';
 import { AuditService, changedFields } from '../audit/audit.service.js';
+import type { AuthUser } from '../auth/auth-user.js';
 import { normalizeEmail } from '../auth/email.js';
 import { lockCredentials } from '../auth/credential-lock.js';
 import { hashPassword } from '../auth/password.js';
@@ -25,6 +28,9 @@ import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 type Tx = Prisma.TransactionClient;
+
+/** Who makes a change of access: their id, and the access version their request was checked at. */
+type Actor = Pick<AuthUser, 'id' | 'access'>;
 
 const USER_INCLUDE = {
   roles: { select: { role: true } },
@@ -57,6 +63,9 @@ function toSummary(user: UserRow): UserSummary {
  * - Outlet Staff (business model plan 4.2) is assignable only once the owner opens it, holds no
  *   other role, and works in one branch for one active sales outlet of that branch,
  * - deactivation and password reset end the user's open sessions.
+ * Every change here is a change of access (plan 03, section 5.4): it runs under the access_state
+ * FOR UPDATE lock, refuses a request checked at an older version, rechecks that the actor is
+ * still an active Administrator, and raises the version.
  */
 @Injectable()
 export class UsersService {
@@ -112,10 +121,10 @@ export class UsersService {
     return users.map(toSummary);
   }
 
-  async create(actorId: string, input: CreateUserRequest): Promise<UserSummary> {
+  async create(actor: Actor, input: CreateUserRequest): Promise<UserSummary> {
     const email = normalizeEmail(input.email);
     const passwordHash = await hashPassword(input.password);
-    return this.prisma.$transaction(async (tx) => {
+    return this.change(actor, async (tx) => {
       assertBranchesForRoles(input.roles, input.branchIds);
       await assertBranchesExist(tx, input.branchIds);
       const outletIds = input.outletIds ?? [];
@@ -136,13 +145,13 @@ export class UsersService {
         include: USER_INCLUDE,
       });
       const created = toSummary(user);
-      await this.log(tx, actorId, 'CREATED', null, created);
+      await this.log(tx, actor.id, 'CREATED', null, created);
       return created;
     });
   }
 
-  async update(actorId: string, id: string, input: UpdateUserRequest): Promise<UserSummary> {
-    return this.prisma.$transaction(async (tx) => {
+  async update(actor: Actor, id: string, input: UpdateUserRequest): Promise<UserSummary> {
+    return this.change(actor, async (tx) => {
       await lockAdministratorSet(tx);
       const current = await findOrThrow(tx, id);
       const before = toSummary(current);
@@ -158,6 +167,7 @@ export class UsersService {
       if (input.roles || input.branchIds || input.outletIds) {
         await this.assertOutletStaff(tx, roles, branchIds, outletIds, newlyOutletStaff);
       }
+      if (input.roles) await assertNoExtrasForRestricted(tx, id, input.roles);
 
       if (input.roles) {
         await tx.userRole.deleteMany({ where: { userId: id } });
@@ -185,16 +195,16 @@ export class UsersService {
       });
       await assertActiveAdministratorRemains(tx);
       const after = toSummary(await findOrThrow(tx, id));
-      await this.log(tx, actorId, 'UPDATED', before, after);
+      await this.log(tx, actor.id, 'UPDATED', before, after);
       return after;
     });
   }
 
-  async setActive(actorId: string, id: string, isActive: boolean): Promise<UserSummary> {
-    if (!isActive && actorId === id) {
+  async setActive(actor: Actor, id: string, isActive: boolean): Promise<UserSummary> {
+    if (!isActive && actor.id === id) {
       throw new BadRequestException('You cannot deactivate your own account');
     }
-    return this.prisma.$transaction(async (tx) => {
+    return this.change(actor, async (tx) => {
       await lockAdministratorSet(tx);
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       const before = toSummary(await findOrThrow(tx, id));
@@ -204,7 +214,7 @@ export class UsersService {
         await assertActiveAdministratorRemains(tx);
       }
       const after = toSummary(await findOrThrow(tx, id));
-      await this.log(tx, actorId, 'UPDATED', before, after);
+      await this.log(tx, actor.id, 'UPDATED', before, after);
       return after;
     });
   }
@@ -221,12 +231,12 @@ export class UsersService {
    * administrator in a session; the change is audited on the user account.
    */
   async setAssistantApprovals(
-    actorId: string,
+    actor: Actor,
     id: string,
     kinds: readonly AssistantDecidableKind[],
   ): Promise<AssistantApprovalGrantsDto> {
     const wanted = unique(kinds).sort();
-    return this.prisma.$transaction(async (tx) => {
+    return this.change(actor, async (tx) => {
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       const user = toSummary(await findOrThrow(tx, id));
       const before = await grantedKinds(tx, id);
@@ -236,10 +246,10 @@ export class UsersService {
       await tx.assistantApprovalGrant.createMany({
         data: wanted
           .filter((kind) => !before.includes(kind))
-          .map((kind) => ({ userId: id, kind, grantedById: actorId })),
+          .map((kind) => ({ userId: id, kind, grantedById: actor.id })),
       });
       if (before.join(',') !== wanted.join(',')) {
-        await this.log(tx, actorId, 'UPDATED', user, user, [
+        await this.log(tx, actor.id, 'UPDATED', user, user, [
           {
             field: 'assistantApprovals',
             before: before.join(', ') || null,
@@ -255,18 +265,26 @@ export class UsersService {
    * Admin reset: sets a new password and ends every open session and assistant token of that
    * user.
    */
-  async resetPassword(actorId: string, id: string, password: string): Promise<void> {
+  async resetPassword(actor: Actor, id: string, password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
-    await this.prisma.$transaction(async (tx) => {
+    await this.change(actor, async (tx) => {
       if (!(await lockCredentials(tx, id))) throw new NotFoundException('User not found');
       await tx.user.update({ where: { id }, data: { passwordHash } });
       await revokeSessions(tx, id);
       await revokeAgentAccess(tx, id);
       const user = toSummary(await findOrThrow(tx, id));
       // The log says a reset happened, never anything about the password itself.
-      await this.log(tx, actorId, 'UPDATED', user, user, [
+      await this.log(tx, actor.id, 'UPDATED', user, user, [
         { field: 'password', before: null, after: 'reset' },
       ]);
+    });
+  }
+
+  /** A change of access by an Administrator who still is one (plan 03, AccessTx.change). */
+  private change<R>(actor: Actor, fn: (tx: Tx) => Promise<R>): Promise<R> {
+    return this.prisma.changeAccess(actor.access.version, async (tx) => {
+      await requireActorInTx(tx, actor.id, (roles) => roles.includes('ADMINISTRATOR'));
+      return fn(tx);
     });
   }
 
@@ -433,4 +451,21 @@ export async function revokeSessions(tx: Tx, userId: string, exceptSessionId?: s
     },
     data: { revokedAt: new Date() },
   });
+}
+
+/**
+ * A holder of a restricted role (driver) takes nothing beyond it (plan 03, F114-2): refuse giving
+ * that role to a person who holds a team or an added permission in a branch.
+ */
+async function assertNoExtrasForRestricted(tx: Tx, userId: string, roles: readonly Role[]) {
+  if (!roles.some((r) => RESTRICTED_ROLES.includes(r))) return;
+  const [teams, allows] = await Promise.all([
+    tx.userBranchTeam.count({ where: { userId } }),
+    tx.userBranchPermission.count({ where: { userId, effect: 'ALLOW' } }),
+  ]);
+  if (teams + allows > 0) {
+    throw new BadRequestException(
+      'Remove this person from their teams and added permissions before giving this role',
+    );
+  }
 }

@@ -136,8 +136,8 @@ export class AuditService {
     const branchIds = reportBranchIds(user, q.branchId);
     const unbranched: AuditedEntity[] = [];
     if (!q.branchId) {
-      if (user.permissions.has('users:view')) unbranched.push('USER');
-      if (user.permissions.has('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
+      if (user.access.any('users:view')) unbranched.push('USER');
+      if (user.access.any('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
     }
     if (branchIds.length === 0 && unbranched.length === 0) return [];
     const inBranches =
