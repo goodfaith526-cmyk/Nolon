@@ -27,7 +27,10 @@ export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
 /** The records this log keeps (the others keep their own history). */
 export type AuditedEntity =
-  | Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER' | 'API_CLIENT'>
+  | Extract<
+      AuditEntity,
+      'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER' | 'API_CLIENT' | 'PAYMENT_INSTRUCTION'
+    >
   | AuditedMasterData
   | AuditedAccess;
 

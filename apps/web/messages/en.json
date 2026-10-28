@@ -81,7 +81,8 @@
     "masterData": "Master data",
     "partners": "Partners",
     "permissions": "Permissions",
-    "branchPermissions": "Branch permissions"
+    "branchPermissions": "Branch permissions",
+    "paymentInstructions": "Payment instructions"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -476,7 +477,10 @@
     "consolidation_CANCELLED": "Cancelled",
     "billLineKind_CONSOLIDATION": "Consolidated container",
     "journalSource_CONSOLIDATION_ALLOCATION": "Container cost sharing",
-    "journalSource_RECEIPT_APPLICATION": "Advance applied to invoice"
+    "journalSource_RECEIPT_APPLICATION": "Advance applied to invoice",
+    "paymentInstruction_DRAFT": "Draft",
+    "paymentInstruction_APPROVED": "Approved",
+    "paymentInstruction_RETIRED": "Retired"
   },
   "Quotations": {
     "title": "Quotations",
@@ -1819,7 +1823,8 @@
     "entity_BRANCH_LIMIT": "Branch limit",
     "entity_DELEGATION": "Delegation",
     "entity_CS_REJECT_REASON": "Bot request rejection reason",
-    "entity_API_CLIENT": "API key"
+    "entity_API_CLIENT": "API key",
+    "entity_PAYMENT_INSTRUCTION": "Payment instructions"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -2899,7 +2904,8 @@
     "level_N": "—",
     "levelName_N": "No access",
     "level_C": "*",
-    "levelName_C": "Another mix of actions"
+    "levelName_C": "Another mix of actions",
+    "module_payment_instructions": "Payment instructions"
   },
   "BotRequests": {
     "title": "Bot booking requests",
@@ -2978,5 +2984,24 @@
     "approveAction": "Approve and open the booking",
     "booking": "Booking",
     "approvedPricing": "Priced on approval"
+  },
+  "PaymentInstructions": {
+    "title": "Payment instructions",
+    "hint": "How a customer pays, for each branch and currency. The shipping bot shows the approved text of an approved request word for word; without one it tells the customer that staff will send how to pay. Another person than the one who wrote it approves it, and an approved text is only retired, never edited.",
+    "add": "New draft",
+    "branch": "Branch",
+    "currency": "Currency",
+    "textAr": "Text in Arabic",
+    "textEn": "Text in English",
+    "none": "No payment instructions yet.",
+    "created": "Draft saved.",
+    "saved": "Draft saved.",
+    "approved": "Approved: it replaces the one before it.",
+    "retired": "Retired.",
+    "edit": "Edit",
+    "approve": "Approve",
+    "retire": "Retire",
+    "madeBy": "Written by {name}",
+    "approvedBy": "approved by {name}"
   }
 }

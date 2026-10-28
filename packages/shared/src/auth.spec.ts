@@ -93,6 +93,8 @@ describe('permission matrix (annex A)', () => {
     ['access_control', 'ك — — — — — — — — — —'],
     // Plan 04a section 2 (2026-10-28): staff review of the shipping bot's requests.
     ['cs_booking_requests', 'ك ع ك ك ع — — — — ك —'],
+    // Plan 04 section 4.1 (2026-10-28): payment instructions, two people per approval.
+    ['payment_instructions', 'ك م ك ع — إ — — — — —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 

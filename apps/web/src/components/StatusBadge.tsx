@@ -24,7 +24,8 @@ export function StatusBadge({
     | 'creditNote'
     | 'supplierBill'
     | 'supplierPayment'
-    | 'expense';
+    | 'expense'
+    | 'paymentInstruction';
   status: string;
 }) {
   const te = useTranslations('Enums');

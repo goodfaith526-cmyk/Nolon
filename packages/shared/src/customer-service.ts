@@ -372,7 +372,65 @@ export interface CsBookingRequestDto {
   expiresAt: string;
   bookingNumber: string | null;
   customerReason: { ar: string; en: string } | null;
-  paymentInstructions: null;
+  /**
+   * Plan 04 section 4.1: the approved instructions of the request's branch and payment currency,
+   * once approved; null when there are none (the bot says staff will send how to pay).
+   */
+  paymentInstructions: CsPaymentInstructionsDto | null;
+}
+
+/** How the customer pays, as the bot shows it word for word with its version (plan 04, 4.1). */
+export interface CsPaymentInstructionsDto {
+  id: string;
+  version: number;
+  branchCode: string;
+  currency: string;
+  textAr: string;
+  textEn: string;
+}
+
+export const PAYMENT_INSTRUCTION_STATUSES = ['DRAFT', 'APPROVED', 'RETIRED'] as const;
+export type PaymentInstructionStatus = (typeof PAYMENT_INSTRUCTION_STATUSES)[number];
+
+/**
+ * Payment instructions of a branch and currency (plan 04 section 4.1), for staff. A draft is
+ * edited; another person approves it, which retires the approved one of its branch and currency;
+ * an approved one is never edited, only retired.
+ */
+export interface PaymentInstructionDto {
+  id: string;
+  branchId: string;
+  branchCode: string;
+  currency: string;
+  textAr: string;
+  textEn: string;
+  status: PaymentInstructionStatus;
+  version: number;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  retiredAt: string | null;
+  actions: { canEdit: boolean; canApprove: boolean; canRetire: boolean };
+}
+
+export interface PaymentInstructionInput {
+  branchId: string;
+  currency: CurrencyCode;
+  textAr: string;
+  textEn: string;
+}
+
+export interface PaymentInstructionUpdate {
+  version: number;
+  textAr: string;
+  textEn: string;
+}
+
+/** Approve or retire: the version the person saw. */
+export interface PaymentInstructionDecision {
+  version: number;
 }
 
 /** Why staff reject a bot's booking request, as the customer reads it (plan 04a section 4). */

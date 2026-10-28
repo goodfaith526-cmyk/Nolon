@@ -30,6 +30,7 @@ import { keyScopes } from './api-scopes.js';
 import { matchCategory, matchPlace } from './bot-names.js';
 import { grantHoldsInTx } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
+import { PaymentInstructionsService } from './payment-instructions.service.js';
 
 const DAY_MS = 86_400_000;
 
@@ -135,6 +136,7 @@ export class BookingRequestsService {
     private readonly prisma: PrismaService,
     private readonly masterData: MasterDataService,
     private readonly tokens: CustomerTokensService,
+    private readonly payments: PaymentInstructionsService,
   ) {}
 
   async create(
@@ -408,7 +410,11 @@ export class BookingRequestsService {
         row.status === 'REJECTED' && row.rejectReason
           ? { ar: row.rejectReason.textAr, en: row.rejectReason.textEn }
           : null,
-      paymentInstructions: null,
+      // Plan 04 section 4.1: exactly the request's branch and payment currency, or none.
+      paymentInstructions:
+        row.status === 'APPROVED' && row.branchId !== null && row.paymentCurrency !== null
+          ? await this.payments.approvedFor(row.branchId, row.paymentCurrency)
+          : null,
     };
   }
 
