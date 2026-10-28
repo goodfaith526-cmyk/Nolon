@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
+  CS_BOT_HANDOVERS,
   CS_INVOICE_STATES,
   CS_HANDOVERS,
   CS_REQUEST_SERVICES,
@@ -39,6 +40,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, Public, RequirePermission } from '../auth/decorators.js';
 import {
+  amount,
   currencyCode,
   dateString,
   parse,
@@ -126,6 +128,35 @@ const requestBody = z
       .optional(),
     language: z.enum(['ar', 'en']),
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+  })
+  .strict();
+const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
+const digitsPhone = z
+  .string()
+  .trim()
+  .regex(/^\+?\d{6,15}$/, 'Phone digits');
+/** A request in the bot's own words (erp-agents #247): names, a number of pieces, its price. */
+const namesBody = z
+  .object({
+    idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+    channel: z.enum(CS_SENDER_CHANNELS),
+    origin: botName,
+    destination: botName,
+    kind: botName,
+    quantity: z.union([
+      quantity,
+      z
+        .number()
+        .positive()
+        .max(1e9)
+        .refine((n) => /^\d{1,14}(\.\d{1,4})?$/.test(String(n)), 'At most 4 decimals'),
+    ]),
+    senderName: name200,
+    senderPhone: digitsPhone,
+    receiverName: name200,
+    receiverPhone: digitsPhone,
+    handover: z.enum(CS_BOT_HANDOVERS),
+    quotedPrice: z.object({ amount, currency: currencyCode }).strict().nullable().optional(),
   })
   .strict();
 /** `X-Cs-Sender: whatsapp:+2499...` or `telegram:123`: the owner a key-only read names. */
@@ -265,7 +296,11 @@ export class BookingRequestsController {
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CsBookingRequestCreated> {
-    const { created, body: answer } = await this.requests.create(caller, parse(requestBody, body));
+    // Names (origin as { ar, en }) are the bot's form; ids are the catalog's.
+    const byNames = typeof body === 'object' && body !== null && 'channel' in body;
+    const { created, body: answer } = byNames
+      ? await this.requests.createByNames(caller, parse(namesBody, body))
+      : await this.requests.create(caller, parse(requestBody, body));
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     return answer;
   }

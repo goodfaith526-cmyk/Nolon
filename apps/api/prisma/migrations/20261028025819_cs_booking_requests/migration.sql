@@ -20,9 +20,10 @@ CREATE TABLE "cs_booking_requests" (
     "status" "cs_booking_request_status" NOT NULL,
     "branch_id" UUID,
     "allowed_branch_ids" UUID[],
-    "origin_location_id" UUID NOT NULL,
-    "destination_location_id" UUID NOT NULL,
-    "price_category_code" VARCHAR(20) NOT NULL,
+    "origin_location_id" UUID,
+    "destination_location_id" UUID,
+    "price_category_code" VARCHAR(20),
+    "bot_names" JSONB,
     "quantity" DECIMAL(18,4) NOT NULL,
     "services" "booking_service"[],
     "sender_name" VARCHAR(200) NOT NULL,
@@ -31,7 +32,9 @@ CREATE TABLE "cs_booking_requests" (
     "handover" "cs_handover" NOT NULL,
     "requested_date" DATE,
     "quote_ref" VARCHAR(40),
-    "language" VARCHAR(2) NOT NULL,
+    "bot_quoted_amount" DECIMAL(18,4),
+    "bot_quoted_currency" CHAR(3),
+    "language" VARCHAR(2),
     "version" INTEGER NOT NULL DEFAULT 1,
     "expires_at" TIMESTAMPTZ(3) NOT NULL,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -88,3 +91,15 @@ ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_branch_che
 
 ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_quantity_check"
     CHECK ("quantity" > 0);
+
+-- A request by ids names its route, type and language; one by names (the bot's own words) keeps
+-- them, and the ids it matched, if any, for staff to complete.
+ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_form_check"
+    CHECK ("bot_names" IS NOT NULL
+        OR ("origin_location_id" IS NOT NULL AND "destination_location_id" IS NOT NULL
+            AND "price_category_code" IS NOT NULL AND "language" IS NOT NULL));
+
+-- The price the bot says it showed: both parts or neither, never negative, never a price of record.
+ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_bot_quoted_check"
+    CHECK (("bot_quoted_amount" IS NULL) = ("bot_quoted_currency" IS NULL)
+        AND ("bot_quoted_amount" IS NULL OR "bot_quoted_amount" >= 0));

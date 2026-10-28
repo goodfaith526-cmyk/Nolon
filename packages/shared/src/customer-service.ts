@@ -323,6 +323,36 @@ export interface CsBookingRequestCreate {
   idempotencyKey: string;
 }
 
+/**
+ * A booking request in the bot's own words (erp-agents #247, the agent project's
+ * nolon-request-ar.md R3): places and type by the names the customer saw, matched by NOLON; what
+ * does not match stays for staff. Key only, never with a customer token.
+ */
+export interface CsBookingRequestByNames {
+  idempotencyKey: string;
+  channel: CsSenderChannel;
+  origin: CsName;
+  destination: CsName;
+  kind: CsName;
+  quantity: number | DecimalString;
+  senderName: string;
+  /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
+  senderPhone: string;
+  receiverName: string;
+  receiverPhone: string;
+  handover: (typeof CS_BOT_HANDOVERS)[number];
+  /** The price the bot showed from its own material: kept for staff to check, never a price. */
+  quotedPrice?: { amount: DecimalString; currency: string } | null;
+}
+
+export interface CsName {
+  ar: string;
+  en: string;
+}
+
+export const CS_BOT_HANDOVERS = ['pickup', 'dropoff'] as const;
+
+/** A request by names reads `pending` while it awaits routing: its bot knows no such state. */
 export type CsBookingRequestState =
   'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired';
 

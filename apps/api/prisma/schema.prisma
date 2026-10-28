@@ -3008,9 +3008,12 @@ model CsBookingRequest {
   branchId              String?                @map("branch_id") @db.Uuid
   /// The branches staff may route it to (its routing candidates the key served when made).
   allowedBranchIds      String[]               @map("allowed_branch_ids") @db.Uuid
-  originLocationId      String                 @map("origin_location_id") @db.Uuid
-  destinationLocationId String                 @map("destination_location_id") @db.Uuid
-  priceCategoryCode     String                 @map("price_category_code") @db.VarChar(20)
+  /// Null only on a request by names that did not match: staff choose.
+  originLocationId      String?                @map("origin_location_id") @db.Uuid
+  destinationLocationId String?                @map("destination_location_id") @db.Uuid
+  priceCategoryCode     String?                @map("price_category_code") @db.VarChar(20)
+  /// A request by names: { origin, destination, kind }, each { ar, en }, as the customer saw them.
+  botNames              Json?                  @map("bot_names")
   quantity              Decimal                @db.Decimal(18, 4)
   services              BookingService[]
   senderName            String                 @map("sender_name") @db.VarChar(200)
@@ -3019,19 +3022,22 @@ model CsBookingRequest {
   handover              CsHandover
   requestedDate         DateTime?              @map("requested_date") @db.Date
   quoteRef              String?                @map("quote_ref") @db.VarChar(40)
-  language              String                 @db.VarChar(2)
+  /// The price the bot says it showed, from its own material: for staff to check, never a price.
+  botQuotedAmount       Decimal?               @map("bot_quoted_amount") @db.Decimal(18, 4)
+  botQuotedCurrency     String?                @map("bot_quoted_currency") @db.Char(3)
+  language              String?                @db.VarChar(2)
   version               Int                    @default(1)
   expiresAt             DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  apiClient   ApiClient     @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  branch      Branch?       @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin      Location      @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination Location      @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  category    PriceCategory @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  quote       CsQuote?      @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  apiClient   ApiClient      @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer    Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch      Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin      Location?      @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination Location?      @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category    PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote       CsQuote?       @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
   @@index([ownerRef, createdAt])

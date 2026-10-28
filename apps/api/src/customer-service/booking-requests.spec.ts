@@ -1,6 +1,6 @@
 import type { CsBookingRequestCreate } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
-import { contentHash, requestReference, stateOf } from './booking-requests.service.js';
+import { contentHash, namesSender, requestReference, stateOf } from './booking-requests.service.js';
 
 const base: CsBookingRequestCreate = {
   originId: 'o',
@@ -36,6 +36,19 @@ describe('booking requests', () => {
     expect(stateOf({ status: 'AWAITING_ROUTING', expiresAt: future })).toBe('awaiting_routing');
     expect(stateOf({ status: 'APPROVED', expiresAt: past })).toBe('approved');
     expect(stateOf({ status: 'REJECTED', expiresAt: past })).toBe('rejected');
+    // A request by names: its bot knows no routing state.
+    const named = { botNames: { origin: {} } };
+    expect(stateOf({ status: 'AWAITING_ROUTING', expiresAt: future, ...named })).toBe('pending');
+    expect(stateOf({ status: 'AWAITING_ROUTING', expiresAt: past, ...named })).toBe('expired');
+    expect(stateOf({ status: 'AWAITING_ROUTING', expiresAt: future, botNames: null })).toBe(
+      'awaiting_routing',
+    );
+  });
+
+  it('owns a request by names by its channel and number, a number as one wherever written', () => {
+    expect(namesSender('whatsapp', '966500000000')).toBe('+966500000000');
+    expect(namesSender('whatsapp', '+966500000000')).toBe('+966500000000');
+    expect(namesSender('telegram', '0912345678')).toBe('tel:0912345678');
   });
 
   it('numbers requests BR-000001', () => {

@@ -3,6 +3,7 @@ import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestj
 import {
   CS_DAILY_REQUESTS,
   CS_REQUEST_TTL_DAYS,
+  type CsBookingRequestByNames,
   type CsBookingRequestCreate,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
@@ -12,10 +13,12 @@ import {
 import { todayIn, toDbDate } from '../common/dates.js';
 import { dec } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
-import type { CsBookingRequest } from '../generated/prisma/client.js';
+import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
+import { matchCategory, matchPlace } from './bot-names.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
 
 const DAY_MS = 86_400_000;
@@ -62,11 +65,38 @@ export function contentHash(input: CsBookingRequestCreate): string {
     .digest('hex');
 }
 
-/** What the owner sees of a request's state: one undecided past its time is expired. */
-export function stateOf(r: Pick<CsBookingRequest, 'status' | 'expiresAt'>, now = new Date()) {
+/** SHA-256 of a request by names, as contentHash: without its key, the quantity as a number. */
+export function namesHash(input: CsBookingRequestByNames): string {
+  const normal = {
+    ...input,
+    idempotencyKey: undefined,
+    quantity: dec(String(input.quantity)).toFixed(),
+    quotedPrice: input.quotedPrice ?? null,
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(canonical({ form: 'names', ...normal })))
+    .digest('hex');
+}
+
+/**
+ * What the owner sees of a request's state: one undecided past its time is expired. A request by
+ * names reads pending while it awaits routing (its bot knows pending, approved and rejected).
+ */
+export function stateOf(
+  r: Pick<CsBookingRequest, 'status' | 'expiresAt'> & { botNames?: unknown },
+  now = new Date(),
+): CsBookingRequestState {
   const undecided = r.status === 'PENDING' || r.status === 'AWAITING_ROUTING';
   if (undecided && r.expiresAt.getTime() <= now.getTime()) return 'expired';
+  if (r.status === 'AWAITING_ROUTING' && r.botNames !== null && r.botNames !== undefined)
+    return 'pending';
   return r.status.toLowerCase() as CsBookingRequestState;
+}
+
+/** The sender of a request by names: WhatsApp's verified number, or a number typed on Telegram. */
+export function namesSender(channel: CsBookingRequestByNames['channel'], phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return channel === 'whatsapp' ? `+${digits}` : `tel:${digits}`;
 }
 
 function coded(status: HttpStatus, code: string, message: string): HttpException {
@@ -127,16 +157,154 @@ export class BookingRequestsService {
     }
     const branchId = candidates.length === 1 ? (allowed[0] ?? null) : null;
 
+    const result = await this.save(client, owner, input.idempotencyKey, {
+      ...(caller.kind === 'customer'
+        ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
+        : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
+      contactPhone: input.contactPhone ?? null,
+      contentHash: hash,
+      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+      branchId,
+      allowedBranchIds: allowed,
+      originLocationId: input.originId,
+      destinationLocationId: input.destinationId,
+      priceCategoryCode: category.code,
+      quantity: dec(input.quantity),
+      services: input.services,
+      senderName: input.senderName,
+      consigneeName: input.consigneeName,
+      consigneePhone: input.consigneePhone,
+      handover: input.handover,
+      requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
+      quoteRef: input.quoteRef ?? null,
+      language: input.language,
+    });
+    if (!result.created && result.row.contentHash !== hash) throw conflict();
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        result.created ? 'CREATED' : 'REPLAYED',
+        'POST /cs/booking-requests',
+      );
+    }
+    return { created: result.created, body: createdBody(result.row) };
+  }
+
+  /**
+   * A request in the bot's own words (CsBookingRequestByNames), with the key only. Places and type
+   * are matched to NOLON's by name; whatever does not match is kept as written, and the request
+   * awaits staff. The branch still comes from the matched origin's routing rules only: an origin
+   * without rules, or without a match, may go to any branch of the key, and staff route it.
+   */
+  async createByNames(
+    caller: BookingRequestCaller,
+    input: CsBookingRequestByNames,
+  ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
+    if (caller.kind === 'customer') {
+      throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
+    }
+    const client = caller.client;
+    const senderId = namesSender(input.channel, input.senderPhone);
+    const owner = `s:${input.channel}:${senderId}`;
+    const hash = namesHash(input);
+    const replay = await this.replay(client.id, owner, input.idempotencyKey, hash);
+    if (replay) return { created: false, body: replay };
+
+    const [all, aliases] = await Promise.all([
+      this.masterData.all(),
+      this.masterData.locationAliases(),
+    ]);
+    const places = all.locations
+      .filter((l) => l.isActive && l.kind !== 'COUNTRY')
+      .map((l) => ({ ...l, aliases: aliases[l.id] ?? [] }));
+    const originId = matchPlace(input.origin, places);
+    const matchedTo = matchPlace(input.destination, places);
+    const destinationId = matchedTo === originId ? null : matchedTo;
+    const categoryCode = matchCategory(
+      input.kind,
+      all.priceCategories.filter((c) => c.isActive),
+    );
+
+    const { allowed, branchId } = await this.namesRouting(client, originId);
+    const quoted = input.quotedPrice ?? null;
+    const result = await this.save(client, owner, input.idempotencyKey, {
+      senderChannel: input.channel,
+      senderId,
+      contactPhone: input.senderPhone,
+      contentHash: hash,
+      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+      branchId,
+      allowedBranchIds: allowed,
+      originLocationId: originId,
+      destinationLocationId: destinationId,
+      priceCategoryCode: categoryCode,
+      botNames: {
+        origin: { ...input.origin },
+        destination: { ...input.destination },
+        kind: { ...input.kind },
+      },
+      quantity: dec(String(input.quantity)),
+      services: [],
+      senderName: input.senderName,
+      consigneeName: input.receiverName,
+      consigneePhone: input.receiverPhone,
+      handover: input.handover === 'pickup' ? 'PICKUP' : 'BRANCH_DROP',
+      botQuotedAmount: quoted ? dec(quoted.amount) : null,
+      botQuotedCurrency: quoted?.currency ?? null,
+      language: null,
+    });
+    if (!result.created && result.row.contentHash !== hash) throw conflict();
+    return { created: result.created, body: createdBody(result.row) };
+  }
+
+  /**
+   * The branches of a request by names. A matched origin with routing rules: its candidates the
+   * key serves (none = 422, another branch serves it), and the branch when there is one. No match,
+   * or no rule: every branch of the key, for staff to route.
+   */
+  private async namesRouting(
+    client: ApiClientAuth,
+    originId: string | null,
+  ): Promise<{ allowed: string[]; branchId: string | null }> {
+    const candidates = originId === null ? [] : await this.masterData.routingCandidates(originId);
+    const allowed =
+      candidates.length === 0
+        ? [...client.allowedBranchIds].sort()
+        : candidates.filter((id) => client.allowedBranchIds.includes(id));
+    if (allowed.length === 0) {
+      throw coded(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'ORIGIN_NOT_SERVED',
+        'No branch of this key serves the origin: hand over to staff',
+      );
+    }
+    return { allowed, branchId: candidates.length === 1 ? (allowed[0] ?? null) : null };
+  }
+
+  /**
+   * Saves a new request once: one owner's requests one at a time, so the retry check and the daily
+   * count see every row. Returns the row already saved under the key when there is one.
+   */
+  private async save(
+    client: ApiClientAuth,
+    owner: string,
+    idempotencyKey: string,
+    data: Omit<
+      Prisma.CsBookingRequestUncheckedCreateInput,
+      'reference' | 'apiClientId' | 'ownerRef' | 'idempotencyKey' | 'expiresAt'
+    >,
+  ): Promise<{ created: boolean; row: CsBookingRequest }> {
     const now = new Date();
-    const result = await this.prisma.$transaction(async (tx) => {
-      // One owner's requests one at a time: the retry check and the daily count see every row.
+    return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
           apiClientId_ownerRef_idempotencyKey: {
             apiClientId: client.id,
             ownerRef: owner,
-            idempotencyKey: input.idempotencyKey,
+            idempotencyKey,
           },
         },
       });
@@ -155,46 +323,16 @@ export class BookingRequestsService {
       const number = await nextSequenceValue(tx, 'CS_BOOKING_REQUEST');
       const row = await tx.csBookingRequest.create({
         data: {
+          ...data,
           reference: requestReference(number),
           apiClientId: client.id,
           ownerRef: owner,
-          ...(caller.kind === 'customer'
-            ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
-            : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
-          contactPhone: input.contactPhone ?? null,
-          idempotencyKey: input.idempotencyKey,
-          contentHash: hash,
-          status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
-          branchId,
-          allowedBranchIds: allowed,
-          originLocationId: input.originId,
-          destinationLocationId: input.destinationId,
-          priceCategoryCode: category.code,
-          quantity: dec(input.quantity),
-          services: input.services,
-          senderName: input.senderName,
-          consigneeName: input.consigneeName,
-          consigneePhone: input.consigneePhone,
-          handover: input.handover,
-          requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
-          quoteRef: input.quoteRef ?? null,
-          language: input.language,
+          idempotencyKey,
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
         },
       });
       return { created: true, row };
     });
-    if (!result.created && result.row.contentHash !== hash) throw conflict();
-    if (caller.kind === 'customer') {
-      await this.tokens.record(
-        client.id,
-        caller.token.tokenId,
-        caller.token.customerId,
-        result.created ? 'CREATED' : 'REPLAYED',
-        'POST /cs/booking-requests',
-      );
-    }
-    return { created: result.created, body: createdBody(result.row) };
   }
 
   /**
@@ -208,11 +346,15 @@ export class BookingRequestsService {
   ): Promise<CsBookingRequestDto> {
     const owner =
       caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
+    // A request by names belongs to the key that made it (its bot names no sender id to read by).
+    const byKey = { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } };
     const row =
       owner === null
-        ? null
+        ? caller.kind === 'key'
+          ? await this.prisma.csBookingRequest.findFirst({ where: byKey })
+          : null
         : await this.prisma.csBookingRequest.findFirst({
-            where: { id, apiClientId: caller.client.id, ownerRef: owner },
+            where: { OR: [{ id, apiClientId: caller.client.id, ownerRef: owner }, byKey] },
           });
     const served =
       row !== null &&
