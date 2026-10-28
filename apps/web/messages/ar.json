@@ -665,7 +665,11 @@
     "revertDetails": "تفاصيل (اختياري)",
     "recordedAt": "سُجّلت في {time}",
     "revertTargetChanged": "تغيّرت الخطوة التي ستُلغى منذ فتح هذا النموذج. أغلقه وافتح «الرجوع لحالة سابقة» من جديد لمراجعة الخطوة الحالية.",
-    "containerMoveWarning": "هذه الشحنة في الحاوية {container}. «{status}» تُسجَّل عادة بتحريك الحاوية، فتتحرك كل شحناتها. سجّلها هنا فقط إن كانت هذه الشحنة وحدها مختلفة."
+    "containerMoveWarning": "هذه الشحنة في الحاوية {container}. «{status}» تُسجَّل عادة بتحريك الحاوية، فتتحرك كل شحناتها. سجّلها هنا فقط إن كانت هذه الشحنة وحدها مختلفة.",
+    "closeGoodsOnHand": "بضاعة هذه الشحنة ما زالت في المخزن: {warehouses}. أخرجها أولاً، ثم أغلق الشحنة.",
+    "closeNotInvoiced": "لا توجد فاتورة معتمدة لهذه الشحنة. اعتمد فاتورتها أولاً، أو اكتب سبب إغلاقها بلا رسوم.",
+    "noChargeReason": "سبب الإغلاق بلا رسوم",
+    "closeCostsReminder": "قبل الإغلاق تأكد أن كل تكاليف الشحنة مسجّلة: فواتير الموردين، والرحلات، وتكاليف الحاوية."
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -1313,7 +1317,24 @@
     "move": "نقل",
     "moveTo": "انقل إلى حاوية",
     "moveNone": "لا توجد حاوية مفتوحة أخرى في فروعك.",
-    "shipmentMovedNotice": "نُقلت الشحنة {shipment} إلى الحاوية {container}."
+    "shipmentMovedNotice": "نُقلت الشحنة {shipment} إلى الحاوية {container}.",
+    "capacitySection": "المساحة في الحاوية",
+    "capacityHint": "الحجم والوزن للبضاعة التي فيها مقابل حدود نوع الحاوية. الشحنة التي تتجاوز بها الحد تُرفض.",
+    "capacityAsOfNow": "البضاعة التي فيها الآن مقابل الحدود الحالية لنوع الحاوية.",
+    "capacity_volumeCbm": "الحجم",
+    "capacity_weightKg": "الوزن",
+    "unit_volumeCbm": "م³",
+    "unit_weightKg": "كجم",
+    "capacityRemaining": "المتبقي {remaining} {unit}",
+    "capacityNoLimit": "{used} {unit} (لا حد محدد لهذا النوع من الحاويات)",
+    "capacityNotChecked": "غير مكتمل الفحص: بعض البضاعة بلا هذا القياس بعد.",
+    "capacityIncomplete": "بضاعة بلا حجم أو وزن (أدخله قبل إغلاق الحاوية):",
+    "capacityIncompleteShort": "غير مكتمل",
+    "fill": "الامتلاء",
+    "fitOver": "تتجاوز الحد: {measures}",
+    "fitLeft": "تتسع، ويبقى {left}",
+    "fitNoLimit": "لا حد محدد",
+    "fitUnchecked": "غير مفحوص: {measures}"
   },
   "Alerts": {
     "title": "التنبيهات",
@@ -1365,7 +1386,7 @@
   },
   "ApiKeys": {
     "title": "مفاتيح Customer Service API",
-    "hint": "مستخدمة حالياً: المفتاح يتيح لعميل خدمة العملاء (مثل وكيل واتساب) استدعاء Customer Service API (‎/cs/…) وقراءة شحنات عملاء فروعه ومراحلها وفواتيرها، بالحقول الآمنة للعميل فقط. لا يستطيع تعديل أي شيء.",
+    "hint": "مستخدمة حالياً: المفتاح يتيح لعميل خدمة العملاء (مثل وكيل واتساب) استدعاء Customer Service API (‎/cs/…) لعملاء فروعه، بالحقول الآمنة للعميل فقط. المفتاح يعمل فقط ما تسمح به صلاحياته، ولا توجد صلاحية افتراضية.",
     "name": "الاسم",
     "namePlaceholder": "مثلاً: وكيل واتساب",
     "branches": "الفروع",
@@ -1381,7 +1402,19 @@
     "createdTitle": "انسخ المفتاح الآن",
     "createdHint": "هذه المرة الوحيدة التي يظهر فيها. احفظه في إعدادات العميل السرية، لا في الكود ولا في المحادثات.",
     "copy": "نسخ",
-    "done": "تم"
+    "done": "تم",
+    "scopes": "الصلاحيات",
+    "scopesHint": "أعطِ بوت العملاء ما يحتاجه فقط. «قراءة العملاء» تقرأ كل عملاء فروع المفتاح: لا تعطها لبوت يخدم عميلاً واحداً في كل مرة.",
+    "scope_customers_read": "قراءة العملاء وشحناتهم وفواتيرهم بالرقم",
+    "scope_customer_tokens_issue": "إصدار رمز لعميل واحد",
+    "scope_catalog_read": "قراءة الأماكن وأنواع الشحن",
+    "scope_quote_read": "قراءة أسعار طريق",
+    "scope_booking_requests_create": "إرسال طلبات حجز",
+    "scope_tracking_lookup": "التتبّع برقم الشحنة والهاتف",
+    "editScopes": "تغيير الصلاحيات",
+    "saveScopes": "حفظ الصلاحيات",
+    "cancel": "إلغاء",
+    "scopesSaved": "حُفظت صلاحيات المفتاح."
   },
   "Reports": {
     "title": "التقارير المالية",
@@ -1717,7 +1750,8 @@
     "entity_TEAM": "فريق",
     "entity_USER_ACCESS": "صلاحيات شخص",
     "entity_BRANCH_LIMIT": "حد الفرع",
-    "entity_DELEGATION": "تفويض"
+    "entity_DELEGATION": "تفويض",
+    "entity_API_CLIENT": "مفتاح API"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -2517,7 +2551,13 @@
     "RATE_CATEGORY_REQUIRED": "بطاقة السعر دي لفئة معينة: اختار فئة السعر للسطر أولاً.",
     "PRICE_CATEGORY_NOT_USABLE": "فئة السعر دي غير معروفة أو موقوفة أو لنوع بضاعة تاني.",
     "COUNTRY_KIND_FIXED": "نطاق الدولة بيحتفظ بنوعه ودولته: أضف موقع جديد بدل التعديل.",
-    "COUNTRY_SCOPE_TAKEN": "{code} هو نطاق التسعير لـ {country} أصلاً."
+    "COUNTRY_SCOPE_TAKEN": "{code} هو نطاق التسعير لـ {country} أصلاً.",
+    "SHIPMENT_CLOSE_GOODS_ON_HAND": "الشحنة {shipment} ما زالت لها بضاعة في المخزن: {warehouses}. أخرجها قبل إغلاق الشحنة.",
+    "SHIPMENT_CLOSE_NOT_INVOICED": "لا توجد فاتورة معتمدة للشحنة {shipment} (مسودات الفواتير: {drafts}). اعتمد فاتورتها، أو اكتب سبب إغلاقها بلا رسوم.",
+    "CONTAINER_OVER_VOLUME": "الحاوية {container} لا تتسع لهذا الحجم: سعتها {limit} م³، فيها {used} وستصبح {after}.",
+    "CONTAINER_OVER_WEIGHT": "الحاوية {container} لا تتحمل هذا الوزن: حدها {limit} كجم، فيها {used} وستصبح {after}.",
+    "CONTAINER_VOLUME_MISSING": "أدخل حجم (م³) كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}.",
+    "CONTAINER_WEIGHT_MISSING": "أدخل وزن كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2570,7 +2610,11 @@
     "add_customerSegments": "إضافة شريحة عملاء",
     "cargoType": "نوع البضاعة",
     "defaultUnit": "الوحدة المقترحة",
-    "cargoTypeFixed": "لا يمكن تغيير نوع البضاعة بعد الحفظ."
+    "cargoTypeFixed": "لا يمكن تغيير نوع البضاعة بعد الحفظ.",
+    "maxVolumeCbm": "الحجم المتاح (م³)",
+    "maxPayloadKg": "الحمولة (كجم)",
+    "noLimit": "بلا حد",
+    "capacityHint": "القيم الأولى افتراضية: ضع الحدود الحقيقية التي تحمّل بها. الحقل الفارغ يعني بلا حد."
   },
   "Access": {
     "title": "الصلاحيات",

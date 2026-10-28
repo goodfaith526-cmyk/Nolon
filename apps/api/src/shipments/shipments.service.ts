@@ -16,6 +16,7 @@ import type {
   Permission,
   ShipmentActionsDto,
   ShipmentContainerInput,
+  ShipmentCloseCheckDto,
   ShipmentDto,
   ShipmentEventKind,
   ShipmentStatus,
@@ -30,6 +31,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
+import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
@@ -166,6 +168,7 @@ export class ShipmentsService {
     private readonly masterData: MasterDataService,
     private readonly bookingLifecycle: BookingLifecycleService,
     private readonly invoices: ShipmentInvoicesRegistry,
+    private readonly stock: ShipmentStockRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -298,6 +301,9 @@ export class ShipmentsService {
   async get(user: AuthUser, id: string): Promise<ShipmentDto> {
     const shipment = await this.findScoped(user, id);
     const dto = this.toDto(user, shipment);
+    if (dto.actions.transitions.includes('CLOSED')) {
+      dto.actions.closeCheck = await this.closeCheck(this.prisma, shipment.id);
+    }
     if (dto.actions.canShareBranches) {
       dto.shareableBranches = await this.prisma.branch.findMany({
         where: { isActive: true, id: { not: shipment.branchId } },
@@ -682,6 +688,7 @@ export class ShipmentsService {
       entered?: boolean;
       locationId?: string | null;
       note?: string | null;
+      noChargeReason?: string | null;
     },
   ): Planner {
     return (shipment, path) => {
@@ -706,13 +713,17 @@ export class ShipmentsService {
         occurredAt: input.occurredAt,
         locationId: input.locationId ?? null,
         note: input.note ?? null,
+        reason: input.status === 'CLOSED' ? (input.noChargeReason ?? null) : null,
         update: {
           status: input.status,
           ...(input.status === 'CLOSED' ? { closedAt: new Date() } : {}),
         },
         after:
           input.status === 'CLOSED'
-            ? (tx) => this.bookingLifecycle.completeForShipment(tx, shipment.bookingId)
+            ? async (tx) => {
+                await this.requireCloseConditions(tx, shipment, input.noChargeReason ?? null);
+                await this.bookingLifecycle.completeForShipment(tx, shipment.bookingId);
+              }
             : undefined,
       };
     };
@@ -1170,6 +1181,54 @@ export class ShipmentsService {
     );
   }
 
+  /** What closing the shipment needs now (B1-5): its goods on hand, and whether it is invoiced. */
+  private async closeCheck(tx: Tx, shipmentId: string): Promise<ShipmentCloseCheckDto> {
+    const [goodsOnHand, { approved }] = await Promise.all([
+      this.stock.get().goodsOnHandInTx(tx, shipmentId),
+      this.invoices.get().liveInvoicesInTx(tx, shipmentId),
+    ]);
+    return { goodsOnHand, invoiced: approved.length > 0 };
+  }
+
+  /**
+   * Owner decision Q1: a shipment closes with none of its goods in any warehouse, and with an
+   * approved invoice billing it or a reason it is closed without charges (recorded on the closing
+   * event). The caller holds the shipment's row lock exclusively; warehouse movements and invoice
+   * approvals lock it before they write, so neither changes between this check and the commit.
+   */
+  private async requireCloseConditions(
+    tx: Tx,
+    shipment: LockedShipment,
+    noChargeReason: string | null,
+  ): Promise<void> {
+    const goods = await this.stock.get().goodsOnHandInTx(tx, shipment.id);
+    if (goods.length > 0) {
+      const warehouses = goods.map((g) => `${g.warehouseCode} (${g.packages})`).join(', ');
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_CLOSE_GOODS_ON_HAND',
+        `Shipment ${shipment.number} still has goods in ${warehouses}: release them before closing it`,
+        { shipment: shipment.number, warehouses },
+      );
+    }
+    const { approved, drafts } = await this.invoices.get().liveInvoicesInTx(tx, shipment.id);
+    if (approved.length > 0) {
+      if (noChargeReason) {
+        throw new BadRequestException(
+          `Shipment ${shipment.number} is invoiced (${approved.join(', ')}): close it without a no-charge reason`,
+        );
+      }
+      return;
+    }
+    if (noChargeReason) return;
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'SHIPMENT_CLOSE_NOT_INVOICED',
+      `No approved invoice bills shipment ${shipment.number} (draft invoices: ${drafts}): approve its invoice, or give the reason it closes without charges`,
+      { shipment: shipment.number, drafts: String(drafts) },
+    );
+  }
+
   private async applyEvent(user: AuthUser, id: string, plan: Planner): Promise<void> {
     await this.prisma.$transaction((tx) => this.applyEventInTx(tx, user, id, plan));
   }
@@ -1515,6 +1574,7 @@ function actionsFor(
       inContainer && byContainer.length > 0
         ? { container: inContainer.number, statuses: byContainer }
         : null,
+    closeCheck: null,
     canHold: canUpdate && canHold(s.status),
     canResume: canUpdate && s.status === 'ON_HOLD',
     revertTo: canRevert ? revertTarget(path) : null,

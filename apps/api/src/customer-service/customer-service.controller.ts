@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import {
   type ApiClientCreatedDto,
   type ApiClientDto,
   CS_INVOICE_STATES,
+  CS_SCOPES,
   CS_SHIPMENT_STATES,
   type CsCustomerDto,
   type CsInvoiceDto,
@@ -26,6 +28,7 @@ import { CurrentUser, Public, RequirePermission } from '../auth/decorators.js';
 import { parse, phone, requiredText } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
+import { RequireApiScope } from './api-scopes.js';
 import { CustomerServiceService } from './customer-service.service.js';
 
 const reference = z.string().trim().min(1).max(30);
@@ -37,9 +40,11 @@ const shipmentsQuery = z
 const invoicesQuery = z
   .object({ state: z.enum(CS_INVOICE_STATES).default('open'), limit })
   .strict();
+const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const createBody = z
-  .object({ name: requiredText(100), branchIds: z.array(z.uuid()).min(1).max(20) })
+  .object({ name: requiredText(100), branchIds: z.array(z.uuid()).min(1).max(20), scopes })
   .strict();
+const scopesBody = z.object({ scopes }).strict();
 
 /**
  * Customer Service API (scope section 17): read-only, customer-safe, with an API key instead of a
@@ -48,6 +53,7 @@ const createBody = z
 @Controller('cs')
 @Public()
 @UseGuards(ApiClientGuard)
+@RequireApiScope('cs:customers:read')
 export class CustomerServiceController {
   constructor(private readonly cs: CustomerServiceService) {}
 
@@ -111,6 +117,16 @@ export class ApiClientsController {
   @RequirePermission('users:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<ApiClientCreatedDto> {
     return this.clients.create(user, parse(createBody, body));
+  }
+
+  @Put(':id/scopes')
+  @RequirePermission('users:update')
+  setScopes(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ApiClientDto> {
+    return this.clients.setScopes(user, id, parse(scopesBody, body).scopes);
   }
 
   @Post(':id/revoke')

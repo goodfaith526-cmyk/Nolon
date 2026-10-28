@@ -18,6 +18,21 @@ import type {
 /** Requests carry the key as `Authorization: Bearer <key>`. */
 export const CS_KEY_PREFIX = 'nolcs_';
 
+/**
+ * What a key may do (docs/plans/04 section 2). Each /cs route needs one; a key holds only the
+ * scopes the Administrator gave it. `cs:customers:read` is the original reads of every customer of
+ * the key's branches; a customer-facing bot's key should not hold it.
+ */
+export const CS_SCOPES = [
+  'cs:customers:read',
+  'cs:customer_tokens:issue',
+  'cs:catalog:read',
+  'cs:quote:read',
+  'cs:booking_requests:create',
+  'cs:tracking:lookup',
+] as const;
+export type CsScope = (typeof CS_SCOPES)[number];
+
 export interface CsContactDto {
   name: string;
   position: string | null;
@@ -99,6 +114,8 @@ export interface ApiClientDto {
   /** The key's public part, to tell keys apart. */
   keyPrefix: string;
   branchCodes: string[];
+  /** In CS_SCOPES order. */
+  scopes: CsScope[];
   isActive: boolean;
   createdByName: string;
   createdAt: string;
@@ -109,6 +126,12 @@ export interface ApiClientDto {
 export interface ApiClientCreateRequest {
   name: string;
   branchIds: string[];
+  scopes: CsScope[];
+}
+
+/** Replaces a key's scopes. */
+export interface ApiClientScopesRequest {
+  scopes: CsScope[];
 }
 
 /** The key is shown once, at creation; only its hash is kept. */

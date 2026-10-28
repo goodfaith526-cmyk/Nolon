@@ -411,6 +411,7 @@ export const AUDIT_ENTITIES = [
   'PARTNER',
   'PRICE_CATEGORY',
   'CUSTOMER_SEGMENT',
+  'API_CLIENT',
   'LOCATION',
   // Plan 03, section 7: the permissions screen.
   'TEAM',

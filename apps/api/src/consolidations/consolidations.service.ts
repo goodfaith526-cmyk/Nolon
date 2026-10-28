@@ -9,6 +9,9 @@ import {
 } from '@nestjs/common';
 import type {
   BillableConsolidationDto,
+  ContainerCapacityDto,
+  ContainerFitDto,
+  ContainerMeasure,
   BookingService,
   ConsolidationBookingDto,
   ConsolidationBookingRequest,
@@ -69,6 +72,19 @@ import {
   shipmentStatusFor,
   takesCosts,
 } from './consolidation-rules.js';
+import {
+  type CargoShipment,
+  type ContainerLimits,
+  type ContainerLoad,
+  MEASURES,
+  containerLoad,
+  dimensionDto,
+  fillOf,
+  knownMeasure,
+  missingMeasures,
+  overLimits,
+  unmeasured,
+} from './container-capacity.js';
 import { type ClosedContainer, ContainerCostsRegistry } from './container-costs.registry.js';
 
 type Tx = Prisma.TransactionClient;
@@ -109,6 +125,7 @@ const BEFORE_CONSOLIDATION: readonly ShipmentStatus[] = [
 
 const summaryInclude = {
   _count: { select: { shipments: true } },
+  containerType: { select: { maxVolumeCbm: true, maxPayloadKg: true } },
 } satisfies Prisma.ConsolidationInclude;
 
 type ContainerWithSummary = Prisma.ConsolidationGetPayload<{ include: typeof summaryInclude }>;
@@ -195,8 +212,12 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       }),
       this.prisma.consolidation.count({ where }),
     ]);
+    const loads = await loadsOf(
+      this.prisma,
+      items.map((c) => c.id),
+    );
     return {
-      items: items.map(toSummary),
+      items: items.map((c) => toSummary(c, loads.get(c.id) ?? containerLoad([]))),
       total,
       page: filters.page,
       pageSize: filters.pageSize,
@@ -321,6 +342,9 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         isClosed(container.status)
       ) {
         throw new BadRequestException('A closed container keeps its number');
+      }
+      if (input.containerTypeCode && input.containerTypeCode !== container.containerTypeCode) {
+        await requireTypeFits(tx, container, input.containerTypeCode);
       }
       const pick = <T>(sent: T | undefined, current: T): T => (sent === undefined ? current : sent);
       const etd = pick(input.etd, fromDbDateOrNull(container.etd));
@@ -612,6 +636,9 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       });
       const shipmentIds = links.map((l) => l.shipmentId).sort();
       const data: Prisma.ConsolidationUncheckedUpdateManyInput = { status: input.status };
+      if (input.status === 'CLOSED' || input.status === 'LOADED') {
+        await this.requireMeasuredFit(tx, container, shipmentIds, numbers);
+      }
       if (input.status === 'CLOSED') {
         if (shipmentIds.length === 0) {
           throw new ConflictException('An empty container cannot be closed');
@@ -832,6 +859,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     numbers: ReadonlyMap<string, string>,
     options: { moving?: boolean } = {},
   ): Promise<void> {
+    // The container's lock keeps its shipments as read: the load before the write is exact.
+    const before = containerLoad(await cargoOf(tx, container.id));
     for (const shipmentId of [...shipmentIds].sort()) {
       const label = numbers.get(shipmentId) ?? shipmentId;
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
@@ -890,7 +919,92 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         data: { consolidationId: container.id, shipmentId, branchId: container.branchId },
       });
     }
+    const after = containerLoad(await cargoOf(tx, container.id));
+    const limits = await limitsInTx(tx, container.containerTypeCode);
+    const over = overLimits(limits, before, after)[0];
+    if (over) throw overRefusal(container, over, limits, before, after);
     await this.shipments.setVoyageInTx(tx, shipmentIds, knownVoyage(container));
+  }
+
+  /**
+   * Closing and loading (F111-6): every cargo line carries each measure the container's type
+   * limits (400 naming the shipments without it), and the load is within the limits (409). The
+   * shipments are locked in id order under the container's lock.
+   */
+  private async requireMeasuredFit(
+    tx: Tx,
+    container: Consolidation,
+    shipmentIds: readonly string[],
+    numbers: ReadonlyMap<string, string>,
+  ): Promise<void> {
+    for (const id of shipmentIds) {
+      await this.shipments.lockForChildWrite(tx, id, { exclusive: true });
+    }
+    const limits = await limitsInTx(tx, container.containerTypeCode);
+    const load = containerLoad(await cargoOf(tx, container.id));
+    const missing = unmeasured(limits, load)[0];
+    if (missing) {
+      const shipments = missing.shipmentIds.map((id) => numbers.get(id) ?? id).join(', ');
+      throw codedRefusal(
+        HttpStatus.BAD_REQUEST,
+        missing.measure === 'volumeCbm' ? 'CONTAINER_VOLUME_MISSING' : 'CONTAINER_WEIGHT_MISSING',
+        `Enter the ${missing.measure === 'volumeCbm' ? 'volume (CBM)' : 'weight'} of every ` +
+          `cargo line before container ${container.number} is closed or loaded: ${shipments}`,
+        { container: container.number, shipments },
+      );
+    }
+    const empty = containerLoad([]);
+    const over = overLimits(limits, empty, load)[0];
+    if (over) throw overRefusal(container, over, limits, load, load);
+  }
+
+  /**
+   * Whether each shipment would fit in the container now, by the rule adding enforces
+   * (overLimits): for the picker's estimate. The same visibility as the container and the
+   * shipments' own pages; the load is the container's whole cargo, as its page shows.
+   */
+  async fit(
+    user: AuthUser,
+    id: string,
+    shipmentIds: readonly string[],
+  ): Promise<ContainerFitDto[]> {
+    const { container } = await this.findViewable(user, id);
+    const unique = [...new Set(shipmentIds)];
+    await this.requireVisibleShipments(user, unique);
+    const limits = limitsOf(container);
+    const [current, candidates] = await Promise.all([
+      cargoOf(this.prisma, id),
+      this.prisma.shipment.findMany({
+        where: { id: { in: unique } },
+        select: { id: true, items: { select: { volumeCbm: true, weightKg: true } } },
+      }),
+    ]);
+    const before = containerLoad(current);
+    const byId = new Map(candidates.map((s) => [s.id, s]));
+    return unique.map((shipmentId) => {
+      const shipment = byId.get(shipmentId) ?? { id: shipmentId, items: [] };
+      const after = containerLoad([...current, shipment]);
+      const over = overLimits(limits, before, after);
+      const missing = missingMeasures(shipment);
+      const measure = (m: ContainerMeasure) =>
+        missing.includes(m) && knownMeasure(shipment, m).isZero()
+          ? null
+          : toDecimalString(knownMeasure(shipment, m));
+      const remaining = (m: ContainerMeasure) => {
+        const limit = limits[m];
+        return limit === null ? null : toDecimalString(limit.minus(after[m].used));
+      };
+      return {
+        shipmentId,
+        fits: over.length === 0,
+        over,
+        unchecked: missing,
+        volumeCbm: measure('volumeCbm'),
+        weightKg: measure('weightKg'),
+        remainingVolumeCbm: remaining('volumeCbm'),
+        remainingWeightKg: remaining('weightKg'),
+      };
+    });
   }
 
   /**
@@ -981,9 +1095,10 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     // Another branch sees its own shipments (tripSummaries is scoped) and no costs.
     const showsCost = own && seesConsolidationCosts(has);
     const shipmentIds = c.shipments.map((l) => l.shipmentId);
-    const [summaries, view] = await Promise.all([
+    const [summaries, view, cargo] = await Promise.all([
       this.shipments.tripSummaries(user, shipmentIds),
       showsCost ? this.costs.get().view(c.id) : Promise.resolve(null),
+      cargoOf(this.prisma, c.id),
     ]);
     const byId = new Map(summaries.map((s) => [s.id, s]));
     const shipments: ConsolidationShipmentDto[] = [];
@@ -1009,8 +1124,25 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         allocatedUsd: view ? toDecimalString(view.allocatedUsd.get(link.shipmentId) ?? ZERO) : null,
       });
     }
+    // The space is the whole container's, whoever looks (F111-1); the shipments named as missing a
+    // measure are only those the viewer sees.
+    const load = containerLoad(cargo);
+    const limits = limitsOf(c);
+    const capacity: ContainerCapacityDto = {
+      volumeCbm: dimensionDto(limits.volumeCbm, load.volumeCbm),
+      weightKg: dimensionDto(limits.weightKg, load.weightKg),
+      incomplete: cargo.flatMap((s) => {
+        const visible = byId.get(s.id);
+        const missing = missingMeasures(s);
+        return visible && missing.length > 0
+          ? [{ shipmentId: s.id, shipmentNumber: visible.number, missing }]
+          : [];
+      }),
+      asOfNow: isClosed(c.status),
+    };
     return {
-      ...toSummary(c),
+      ...toSummary(c, load),
+      capacity,
       sealNumber: c.sealNumber,
       carrierName: c.carrierName,
       voyageNumber: c.voyageNumber,
@@ -1132,7 +1264,7 @@ function checkDates(etd: string | null, eta: string | null): void {
   }
 }
 
-function toSummary(c: ContainerWithSummary): ConsolidationSummaryDto {
+function toSummary(c: ContainerWithSummary, load: ContainerLoad): ConsolidationSummaryDto {
   return {
     id: c.id,
     number: c.number,
@@ -1146,5 +1278,92 @@ function toSummary(c: ContainerWithSummary): ConsolidationSummaryDto {
     etd: fromDbDateOrNull(c.etd),
     eta: fromDbDateOrNull(c.eta),
     shipmentCount: c._count.shipments,
+    ...fillOf(limitsOf(c), load),
   };
+}
+
+type WithLimits = { containerType: { maxVolumeCbm: Decimal | null; maxPayloadKg: Decimal | null } };
+
+function limitsOf(c: WithLimits): ContainerLimits {
+  return { volumeCbm: c.containerType.maxVolumeCbm, weightKg: c.containerType.maxPayloadKg };
+}
+
+async function limitsInTx(tx: Tx, code: string): Promise<ContainerLimits> {
+  const type = await tx.containerType.findUniqueOrThrow({
+    where: { code },
+    select: { maxVolumeCbm: true, maxPayloadKg: true },
+  });
+  return limitsOf({ containerType: type });
+}
+
+/** The cargo lines of every shipment in the container, whoever's branch it is. */
+async function cargoOf(db: Tx, id: string): Promise<CargoShipment[]> {
+  const links = await db.consolidationShipment.findMany({
+    where: { consolidationId: id },
+    select: { shipment: { select: { id: true, items: { select: CARGO_MEASURES } } } },
+    orderBy: { shipmentId: 'asc' },
+  });
+  return links.map((l) => l.shipment);
+}
+
+const CARGO_MEASURES = { volumeCbm: true, weightKg: true } as const;
+
+/**
+ * A new container type must hold the container's known load where it limits less than the old
+ * one (or the old one had no limit); a type that limits more, or as much, is always accepted
+ * (condition 5: only what adds to an overload is refused).
+ */
+async function requireTypeFits(tx: Tx, container: Consolidation, code: string): Promise<void> {
+  const [before, after] = await Promise.all([
+    limitsInTx(tx, container.containerTypeCode),
+    limitsInTx(tx, code),
+  ]);
+  const load = containerLoad(await cargoOf(tx, container.id));
+  for (const m of MEASURES) {
+    const limit = after[m];
+    const old = before[m];
+    if (limit === null || !load[m].used.gt(limit)) continue;
+    if (old !== null && limit.gte(old)) continue;
+    throw overRefusal(container, m, after, load, load);
+  }
+}
+
+/** 409: the write would take the container over its type's limit on `measure`. */
+function overRefusal(
+  container: Pick<Consolidation, 'number'>,
+  measure: ContainerMeasure,
+  limits: ContainerLimits,
+  before: ContainerLoad,
+  after: ContainerLoad,
+): Error {
+  const limit = limits[measure] ?? ZERO;
+  const unit = measure === 'volumeCbm' ? 'CBM' : 'kg';
+  return codedRefusal(
+    HttpStatus.CONFLICT,
+    measure === 'volumeCbm' ? 'CONTAINER_OVER_VOLUME' : 'CONTAINER_OVER_WEIGHT',
+    `Container ${container.number} holds ${toDecimalString(limit)} ${unit}: it has ` +
+      `${toDecimalString(before[measure].used)} and would have ${toDecimalString(after[measure].used)}`,
+    {
+      container: container.number,
+      used: toDecimalString(before[measure].used),
+      limit: toDecimalString(limit),
+      after: toDecimalString(after[measure].used),
+    },
+  );
+}
+
+/** The known load of each container, for the list's fill column. */
+async function loadsOf(db: Tx, ids: readonly string[]): Promise<Map<string, ContainerLoad>> {
+  const links = await db.consolidationShipment.findMany({
+    where: { consolidationId: { in: [...ids] } },
+    select: {
+      consolidationId: true,
+      shipment: { select: { id: true, items: { select: CARGO_MEASURES } } },
+    },
+  });
+  const cargo = new Map<string, CargoShipment[]>();
+  for (const l of links) {
+    cargo.set(l.consolidationId, [...(cargo.get(l.consolidationId) ?? []), l.shipment]);
+  }
+  return new Map(ids.map((id) => [id, containerLoad(cargo.get(id) ?? [])]));
 }

@@ -26,7 +26,7 @@ export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
 /** The records this log keeps (the others keep their own history). */
 export type AuditedEntity =
-  | Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER'>
+  | Extract<AuditEntity, 'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER' | 'API_CLIENT'>
   | AuditedMasterData
   | AuditedAccess;
 
@@ -180,14 +180,14 @@ export class AuditService {
   /**
    * For the audit log report: the changes recorded in the period, newest first, in the report's
    * branches. Records of no branch are listed only when no single branch is asked for: changes to
-   * user accounts for those who manage users (users:view), changes to master data for those who
+   * user accounts and API keys for those who manage users (users:view), changes to master data for those who
    * read it (master_data:view, every role).
    */
   async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
     const branchIds = reportBranchIds(user, q.branchId);
     const unbranched: AuditedEntity[] = [];
     if (!q.branchId) {
-      if (user.access.any('users:view')) unbranched.push('USER');
+      if (user.access.any('users:view')) unbranched.push('USER', 'API_CLIENT');
       if (user.access.any('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
       if (user.access.any('access_control:view')) unbranched.push(...AUDITED_ACCESS);
     }

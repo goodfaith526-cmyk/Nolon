@@ -1,4 +1,5 @@
 import type {
+  ShipmentDto,
   AccountDto,
   ApAgingDto,
   ArAgingDto,
@@ -866,6 +867,53 @@ describe('credit notes, payables, expenses and opening balances', () => {
       );
       expect((await pending).map((r) => r.status).sort()).toEqual([201, 409]);
       expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+    });
+  });
+
+  describe('closing a delivered shipment needs an approved invoice or a reason (B1-5, Q1)', () => {
+    const deliver = (shipmentId: string) =>
+      t.prisma.shipment.update({ where: { id: shipmentId }, data: { status: 'DELIVERED' } });
+    const close = (shipmentId: string, noChargeReason?: string) =>
+      post(`/shipments/${shipmentId}/status`, cookies.opsPts, {
+        status: 'CLOSED',
+        ...(noChargeReason ? { noChargeReason } : {}),
+      });
+    const closeCheck = async (shipmentId: string) =>
+      ((await get(`/shipments/${shipmentId}`, cookies.opsPts).expect(200)).body as ShipmentDto)
+        .actions.closeCheck;
+
+    it('an approved invoice closes it without a reason; a reason is then refused', async () => {
+      const invoice = await approvedInvoice();
+      const shipmentId = invoice.shipmentId ?? '';
+      await deliver(shipmentId);
+      expect(await closeCheck(shipmentId)).toEqual({ goodsOnHand: [], invoiced: true });
+      await close(shipmentId, 'No charges').expect(400);
+      await close(shipmentId).expect(200);
+      const event = await t.prisma.shipmentEvent.findFirstOrThrow({
+        where: { shipmentId, status: 'CLOSED' },
+      });
+      expect(event.reason).toBeNull();
+    });
+
+    it('a draft or fully credited invoice does not bill it', async () => {
+      const draftOnly = await shipment();
+      await post('/customer-invoices', cookies.financePts, { shipmentId: draftOnly }).expect(201);
+      await deliver(draftOnly);
+      expect(await closeCheck(draftOnly)).toEqual({ goodsOnHand: [], invoiced: false });
+      const refused = await close(draftOnly).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'SHIPMENT_CLOSE_NOT_INVOICED',
+        params: { drafts: '1' },
+      });
+
+      const invoice = await approvedInvoice();
+      const credited = invoice.shipmentId ?? '';
+      const note = await creditNoteDraft(invoice.id, '1000000.5');
+      await post(`/credit-notes/${note.id}/approve`, cookies.managerPts).expect(200);
+      await deliver(credited);
+      expect(await closeCheck(credited)).toEqual({ goodsOnHand: [], invoiced: false });
+      await close(credited).expect(409);
+      await close(credited, 'Credited in full').expect(200);
     });
   });
 

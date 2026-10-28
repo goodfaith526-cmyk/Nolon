@@ -10,6 +10,8 @@ import type {
   CodeNameDto,
   CodeNameInput,
   CodeNameUpdate,
+  ContainerTypeCapacityInput,
+  ContainerTypeDto,
   CurrencyDto,
   LocationDto,
   LocationInput,
@@ -31,6 +33,7 @@ import {
   type Location,
   type PriceCategory,
 } from '../generated/prisma/client.js';
+import { toDecimalStringOrNull } from '../common/money.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RouteFilters } from '../common/list-filters.js';
@@ -66,6 +69,9 @@ const LOCATION_FIELDS = [
 
 /** The fields the audit log shows for a code type, in this order. */
 const AUDITED_FIELDS = ['code', 'nameEn', 'nameAr', 'isActive'] as const;
+
+/** A container type's usable space, as the audit log shows it. */
+const CAPACITY_FIELDS = ['maxVolumeCbm', 'maxPayloadKg'] as const;
 
 const CODE_TYPE_NAMES: Record<CodeType, string> = {
   CONTAINER_TYPE: 'Container type',
@@ -112,7 +118,7 @@ export class MasterDataService {
     return {
       branches,
       locations: locations.map(toLocationDto),
-      containerTypes: containerTypes.map(toCodeNameDto),
+      containerTypes: containerTypes.map(toContainerTypeDto),
       chargeTypes: chargeTypes.map(toCodeNameDto),
       documentTypes: documentTypes.map(toCodeNameDto),
       currencies: currencies.map((c): CurrencyDto => ({
@@ -252,6 +258,51 @@ export class MasterDataService {
       const after = await codeTable(tx, type).update(code, input);
       await this.logCodeType(tx, user, type, 'UPDATED', before, after);
       return toCodeNameDto(after);
+    });
+  }
+
+  /**
+   * Sets a container type's usable space (plan 2026-10-27, section 1), in the audit log. A limit
+   * lowered below a container's load does not change the container: only what would add to it
+   * is refused afterwards (condition 5).
+   */
+  async setContainerTypeCapacity(
+    user: AuthUser,
+    code: string,
+    input: ContainerTypeCapacityInput,
+  ): Promise<ContainerTypeDto> {
+    return this.prisma.$transaction(async (tx) => {
+      await lockCodeType(tx, 'CONTAINER_TYPE', code);
+      const before = await tx.containerType.findUniqueOrThrow({ where: { code } });
+      const after = await tx.containerType.update({
+        where: { code },
+        data: {
+          ...(input.maxVolumeCbm !== undefined
+            ? {
+                maxVolumeCbm:
+                  input.maxVolumeCbm === null ? null : new Prisma.Decimal(input.maxVolumeCbm),
+              }
+            : {}),
+          ...(input.maxPayloadKg !== undefined
+            ? {
+                maxPayloadKg:
+                  input.maxPayloadKg === null ? null : new Prisma.Decimal(input.maxPayloadKg),
+              }
+            : {}),
+        },
+      });
+      const changes = changedFields(before, after, CAPACITY_FIELDS);
+      if (changes.length > 0) {
+        await this.audit.record(tx, user, {
+          branchId: null,
+          entity: 'CONTAINER_TYPE',
+          entityId: codeEntityId('CONTAINER_TYPE', after.code),
+          reference: `${after.code} ${after.nameEn}`,
+          action: 'UPDATED',
+          changes,
+        });
+      }
+      return toContainerTypeDto(after);
     });
   }
 
@@ -720,4 +771,12 @@ function toPriceCategoryDto(c: PriceCategory): PriceCategoryDto {
 
 function toCodeNameDto(t: CodeRow): CodeNameDto {
   return { code: t.code, nameEn: t.nameEn, nameAr: t.nameAr, isActive: t.isActive };
+}
+
+function toContainerTypeDto(t: ContainerType): ContainerTypeDto {
+  return {
+    ...toCodeNameDto(t),
+    maxVolumeCbm: toDecimalStringOrNull(t.maxVolumeCbm),
+    maxPayloadKg: toDecimalStringOrNull(t.maxPayloadKg),
+  };
 }

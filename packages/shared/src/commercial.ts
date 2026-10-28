@@ -146,6 +146,18 @@ export interface CodeNameDto {
   isActive: boolean;
 }
 
+/** A container type and its usable space (null: no limit set). */
+export interface ContainerTypeDto extends CodeNameDto {
+  maxVolumeCbm: DecimalString | null;
+  maxPayloadKg: DecimalString | null;
+}
+
+/** An administrator's change of a container type's usable space; null clears the limit. */
+export interface ContainerTypeCapacityInput {
+  maxVolumeCbm?: DecimalString | null;
+  maxPayloadKg?: DecimalString | null;
+}
+
 export interface CurrencyDto extends CodeNameDto {
   symbol: string | null;
   decimalPlaces: number;
@@ -164,7 +176,7 @@ export interface MasterDataDto {
   /** Every branch, by name only. */
   branches: BranchNameDto[];
   locations: LocationDto[];
-  containerTypes: CodeNameDto[];
+  containerTypes: ContainerTypeDto[];
   chargeTypes: CodeNameDto[];
   documentTypes: CodeNameDto[];
   currencies: CurrencyDto[];
@@ -719,6 +731,13 @@ export const FORM_REFUSALS = [
   'CONTAINER_BRANCH_ONLY',
   'CONTAINER_NOT_OPEN',
   'CONTAINER_FULL',
+  // Space (plan 2026-10-27): `container`, and `used`, `limit`, `after` (CBM or kg, as text).
+  'CONTAINER_OVER_VOLUME',
+  'CONTAINER_OVER_WEIGHT',
+  // Closing or loading a container whose type limits CBM or weight needs that measure on every
+  // cargo line: `container` and `shipments` (their numbers).
+  'CONTAINER_VOLUME_MISSING',
+  'CONTAINER_WEIGHT_MISSING',
   'SAME_CONTAINER',
   'SHIPMENT_OTHER_BRANCH',
   'SHIPMENT_NOT_LCL_SEA',
@@ -737,6 +756,11 @@ export const FORM_REFUSALS = [
   // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
   // dash) and `drafts` (a count).
   'SUPPLIER_REFERENCE_DUPLICATE',
+  // Closing a shipment (owner decision Q1). Goods still in a warehouse: params `shipment` and
+  // `warehouses` ("code (packages)", comma separated). No approved invoice bills it and no
+  // reason to close it without charges was given: params `shipment` and `drafts` (a count).
+  'SHIPMENT_CLOSE_GOODS_ON_HAND',
+  'SHIPMENT_CLOSE_NOT_INVOICED',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',
