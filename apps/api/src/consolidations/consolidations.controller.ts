@@ -20,6 +20,7 @@ import {
   type ConsolidationBookingDto,
   type ConsolidationDto,
   type ConsolidationSummaryDto,
+  type ContainerFitDto,
   type Page,
   type ShipmentConsolidationDto,
 } from '@nolon/shared';
@@ -92,6 +93,15 @@ const bookingBody = bookingCreateBody.omit({
 const addShipmentBody = z.object({ shipmentId: z.uuid() }).strict();
 const moveShipmentBody = z.object({ consolidationId: z.uuid() }).strict();
 const billableQuery = z.object({ branchId: z.uuid().optional() }).strict();
+/** `shipmentIds`: comma-separated, 1 to MAX_CONTAINER_SHIPMENTS of them. */
+const fitQuery = z
+  .object({
+    shipmentIds: z
+      .string()
+      .transform((v) => v.split(',').map((id) => id.trim()))
+      .pipe(z.array(z.uuid()).min(1).max(MAX_CONTAINER_SHIPMENTS)),
+  })
+  .strict();
 
 /** Consolidated (LCL) containers: their shipments and status (annex B, consolidation). */
 @Controller('consolidations')
@@ -140,6 +150,17 @@ export class ConsolidationsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ConsolidationDto> {
     return this.consolidations.get(user, id);
+  }
+
+  /** Whether shipments would fit in the container now: the picker's estimate (adding decides). */
+  @Get(':id/fit')
+  @RequirePermission('consolidation:update')
+  fit(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: unknown,
+  ): Promise<ContainerFitDto[]> {
+    return this.consolidations.fit(user, id, parse(fitQuery, query).shipmentIds);
   }
 
   @Post()

@@ -408,11 +408,14 @@ model Location {
 
 /// 20GP, 40GP, 40HC, OTHER... Master data the client extends.
 model ContainerType {
-  code      String   @id @db.VarChar(10)
-  nameEn    String   @map("name_en")
-  nameAr    String   @map("name_ar")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  code         String   @id @db.VarChar(10)
+  nameEn       String   @map("name_en")
+  nameAr       String   @map("name_ar")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Usable space of a shared (LCL) container of this type; null: no limit set. Positive (CHECK).
+  maxVolumeCbm Decimal? @map("max_volume_cbm") @db.Decimal(18, 4)
+  maxPayloadKg Decimal? @map("max_payload_kg") @db.Decimal(18, 4)
 
   rates              RateCard[]
   bookingItems       BookingItem[]

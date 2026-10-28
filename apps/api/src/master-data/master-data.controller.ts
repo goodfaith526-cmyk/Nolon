@@ -14,6 +14,7 @@ import {
   LOCATION_KINDS,
   RATE_UNITS,
   type CodeNameDto,
+  type ContainerTypeDto,
   type CurrencyDto,
   type LocationDto,
   type MasterDataDto,
@@ -27,6 +28,7 @@ import {
   countryCode,
   optionalText,
   parse,
+  quantity,
   requiredText,
 } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
@@ -84,6 +86,15 @@ const codeNameBody = (type: CodeType) => z.object({ code: CODES[type], ...names 
 
 /** An edit names only what may change: the code is fixed (strict, so `code` is a 400). */
 const codeNameUpdate = z.object(names).partial().strict();
+
+/** A container type's usable space: positive, or null to clear the limit; at least one sent. */
+const capacityBody = z
+  .object({ maxVolumeCbm: quantity.nullable(), maxPayloadKg: quantity.nullable() })
+  .partial()
+  .strict()
+  .refine((v) => v.maxVolumeCbm !== undefined || v.maxPayloadKg !== undefined, {
+    message: 'Send maxVolumeCbm or maxPayloadKg',
+  });
 
 const priceCategoryBody = z
   .object({
@@ -172,6 +183,21 @@ export class MasterDataController {
     @Body() body: unknown,
   ): Promise<CodeNameDto> {
     return this.updateCodeType(user, 'CONTAINER_TYPE', code, body);
+  }
+
+  /** The usable space of a shared container of this type (the seeded values are defaults). */
+  @Patch('container-types/:code/capacity')
+  @RequirePermission('master_data:update')
+  setContainerTypeCapacity(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+    @Body() body: unknown,
+  ): Promise<ContainerTypeDto> {
+    return this.masterData.setContainerTypeCapacity(
+      user,
+      codeParam(code),
+      parse(capacityBody, body),
+    );
   }
 
   @Post('container-types/:code/deactivate')

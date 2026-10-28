@@ -7,6 +7,8 @@ import {
   type CodeNameDto,
   type CodeNameInput,
   type CodeNameUpdate,
+  type ContainerTypeCapacityInput,
+  type ContainerTypeDto,
   type CurrencyDto,
   type CurrencyInput,
   type CurrencyUpdate,
@@ -58,6 +60,7 @@ const LISTS: readonly ListSpec[] = [
 ];
 
 type Entry = CodeNameDto &
+  Partial<Pick<ContainerTypeDto, 'maxVolumeCbm' | 'maxPayloadKg'>> &
   Partial<Pick<CurrencyDto, 'symbol' | 'decimalPlaces'>> &
   Partial<Pick<PriceCategoryDto, 'cargoType' | 'defaultUnit'>>;
 
@@ -162,6 +165,7 @@ function MasterList({
   const te = useTranslations('Enums');
   const isCurrency = spec.key === 'currencies';
   const isCategory = spec.key === 'priceCategories';
+  const isContainerType = spec.key === 'containerTypes';
   const base = `/master-data/${spec.path}`;
 
   async function onCreate(event: FormEvent<HTMLFormElement>) {
@@ -203,7 +207,21 @@ function MasterList({
         ? { ...names, defaultUnit: field(form, 'defaultUnit') as RateUnit }
         : names;
     const path = `${base}/${encodeURIComponent(entry.code)}`;
-    if (await run(() => api(path, { method: 'PATCH', body }), tc('saved'))) setEditing(null);
+    // A container type's space has its own route (its own audit entry); sent only when changed.
+    const limit = (name: 'maxVolumeCbm' | 'maxPayloadKg') => field(form, name).trim() || null;
+    const capacity: ContainerTypeCapacityInput = {};
+    if (isContainerType) {
+      for (const name of ['maxVolumeCbm', 'maxPayloadKg'] as const) {
+        if (limit(name) !== (entry[name] ?? null)) capacity[name] = limit(name);
+      }
+    }
+    const save = async () => {
+      await api(path, { method: 'PATCH', body });
+      if (Object.keys(capacity).length > 0) {
+        await api(`${path}/capacity`, { method: 'PATCH', body: capacity });
+      }
+    };
+    if (await run(save, tc('saved'))) setEditing(null);
   }
 
   function setActive(entry: Entry, active: boolean) {
@@ -304,6 +322,8 @@ function MasterList({
                 {isCurrency && <th>{t('decimalPlaces')}</th>}
                 {isCategory && <th>{t('cargoType')}</th>}
                 {isCategory && <th>{t('defaultUnit')}</th>}
+                {isContainerType && <th>{t('maxVolumeCbm')}</th>}
+                {isContainerType && <th>{t('maxPayloadKg')}</th>}
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
               </tr>
@@ -319,6 +339,8 @@ function MasterList({
                   {isCategory && (
                     <td>{entry.defaultUnit ? te(`unit_${entry.defaultUnit}`) : '—'}</td>
                   )}
+                  {isContainerType && <td dir="ltr">{entry.maxVolumeCbm ?? t('noLimit')}</td>}
+                  {isContainerType && <td dir="ltr">{entry.maxPayloadKg ?? t('noLimit')}</td>}
                   <td>{entry.isActive ? tc('active') : tc('inactive')}</td>
                   {canUpdate && (
                     <td>
@@ -380,7 +402,26 @@ function MasterList({
                 </label>
               )}
               {isCategory && <UnitField defaultValue={editing.defaultUnit} />}
+              {isContainerType &&
+                (['maxVolumeCbm', 'maxPayloadKg'] as const).map((name) => (
+                  <label key={name} className="field">
+                    <span>{t(name)}</span>
+                    <input
+                      name={name}
+                      inputMode="decimal"
+                      dir="ltr"
+                      pattern="\d{1,14}(\.\d{1,4})?"
+                      defaultValue={editing[name] ?? ''}
+                      aria-describedby="master-capacity"
+                    />
+                  </label>
+                ))}
             </div>
+            {isContainerType && (
+              <p id="master-capacity" className="muted">
+                {t('capacityHint')}
+              </p>
+            )}
             <div className="actions">
               <button type="submit" className="primary" disabled={busy}>
                 {tc('save')}

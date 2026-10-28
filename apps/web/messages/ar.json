@@ -1310,7 +1310,24 @@
     "move": "نقل",
     "moveTo": "انقل إلى حاوية",
     "moveNone": "لا توجد حاوية مفتوحة أخرى في فروعك.",
-    "shipmentMovedNotice": "نُقلت الشحنة {shipment} إلى الحاوية {container}."
+    "shipmentMovedNotice": "نُقلت الشحنة {shipment} إلى الحاوية {container}.",
+    "capacitySection": "المساحة في الحاوية",
+    "capacityHint": "الحجم والوزن للبضاعة التي فيها مقابل حدود نوع الحاوية. الشحنة التي تتجاوز بها الحد تُرفض.",
+    "capacityAsOfNow": "البضاعة التي فيها الآن مقابل الحدود الحالية لنوع الحاوية.",
+    "capacity_volumeCbm": "الحجم",
+    "capacity_weightKg": "الوزن",
+    "unit_volumeCbm": "م³",
+    "unit_weightKg": "كجم",
+    "capacityRemaining": "المتبقي {remaining} {unit}",
+    "capacityNoLimit": "{used} {unit} (لا حد محدد لهذا النوع من الحاويات)",
+    "capacityNotChecked": "غير مكتمل الفحص: بعض البضاعة بلا هذا القياس بعد.",
+    "capacityIncomplete": "بضاعة بلا حجم أو وزن (أدخله قبل إغلاق الحاوية):",
+    "capacityIncompleteShort": "غير مكتمل",
+    "fill": "الامتلاء",
+    "fitOver": "تتجاوز الحد: {measures}",
+    "fitLeft": "تتسع، ويبقى {left}",
+    "fitNoLimit": "لا حد محدد",
+    "fitUnchecked": "غير مفحوص: {measures}"
   },
   "Alerts": {
     "title": "التنبيهات",
@@ -2510,7 +2527,11 @@
     "RATE_CATEGORY_REQUIRED": "بطاقة السعر دي لفئة معينة: اختار فئة السعر للسطر أولاً.",
     "PRICE_CATEGORY_NOT_USABLE": "فئة السعر دي غير معروفة أو موقوفة أو لنوع بضاعة تاني.",
     "COUNTRY_KIND_FIXED": "نطاق الدولة بيحتفظ بنوعه ودولته: أضف موقع جديد بدل التعديل.",
-    "COUNTRY_SCOPE_TAKEN": "{code} هو نطاق التسعير لـ {country} أصلاً."
+    "COUNTRY_SCOPE_TAKEN": "{code} هو نطاق التسعير لـ {country} أصلاً.",
+    "CONTAINER_OVER_VOLUME": "الحاوية {container} لا تتسع لهذا الحجم: سعتها {limit} م³، فيها {used} وستصبح {after}.",
+    "CONTAINER_OVER_WEIGHT": "الحاوية {container} لا تتحمل هذا الوزن: حدها {limit} كجم، فيها {used} وستصبح {after}.",
+    "CONTAINER_VOLUME_MISSING": "أدخل حجم (م³) كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}.",
+    "CONTAINER_WEIGHT_MISSING": "أدخل وزن كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -2563,6 +2584,10 @@
     "add_customerSegments": "إضافة شريحة عملاء",
     "cargoType": "نوع البضاعة",
     "defaultUnit": "الوحدة المقترحة",
-    "cargoTypeFixed": "لا يمكن تغيير نوع البضاعة بعد الحفظ."
+    "cargoTypeFixed": "لا يمكن تغيير نوع البضاعة بعد الحفظ.",
+    "maxVolumeCbm": "الحجم المتاح (م³)",
+    "maxPayloadKg": "الحمولة (كجم)",
+    "noLimit": "بلا حد",
+    "capacityHint": "القيم الأولى افتراضية: ضع الحدود الحقيقية التي تحمّل بها. الحقل الفارغ يعني بلا حد."
   }
 }
