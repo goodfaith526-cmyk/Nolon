@@ -58,6 +58,56 @@ export interface ConsolidationSummaryDto {
   etd: DateString | null;
   eta: DateString | null;
   shipmentCount: number;
+  /**
+   * How full it is: the higher of its CBM and weight fill (percent, one decimal), from the cargo
+   * known now. Null when its type has no limit set.
+   */
+  fillPercent: DecimalString | null;
+  /** True when a limited dimension has cargo whose measure is not entered yet. */
+  fillIncomplete: boolean;
+}
+
+/** One dimension (CBM or weight) of a container's space. */
+export interface ContainerCapacityDimensionDto {
+  /** The container type's usable limit; null when none is set (no limit applies). */
+  limit: DecimalString | null;
+  /** The known load: the sum of the cargo lines that carry this measure. */
+  used: DecimalString;
+  /** limit - used (negative when over); null without a limit. */
+  remaining: DecimalString | null;
+  /** used / limit, percent, one decimal (display only); null without a limit. */
+  fillPercent: DecimalString | null;
+  /** False while a cargo line of a shipment in the container has no such measure. */
+  complete: boolean;
+}
+
+/**
+ * The container's space (plan 2026-10-27, section 1 and F111-1): computed over every shipment in
+ * it, whoever looks. `incomplete` lists only shipments the viewer can see.
+ */
+export interface ContainerCapacityDto {
+  volumeCbm: ContainerCapacityDimensionDto;
+  weightKg: ContainerCapacityDimensionDto;
+  incomplete: { shipmentId: string; shipmentNumber: string; missing: ContainerMeasure[] }[];
+  /** A closed container: its current cargo against its type's current limits, not at closing. */
+  asOfNow: boolean;
+}
+
+export type ContainerMeasure = 'volumeCbm' | 'weightKg';
+
+/** Whether a shipment would fit in the container, by the same rule the service enforces. */
+export interface ContainerFitDto {
+  shipmentId: string;
+  fits: boolean;
+  /** The dimensions the shipment's known cargo would take over the limit. */
+  over: ContainerMeasure[];
+  /** The dimensions the shipment has a line without a measure for (not checked). */
+  unchecked: ContainerMeasure[];
+  volumeCbm: DecimalString | null;
+  weightKg: DecimalString | null;
+  /** Space left after adding it, per dimension (null without a limit). */
+  remainingVolumeCbm: DecimalString | null;
+  remainingWeightKg: DecimalString | null;
 }
 
 export interface ConsolidationShipmentDto {
@@ -106,6 +156,7 @@ export interface ConsolidationDto extends ConsolidationSummaryDto {
   cancelReason: string | null;
   createdByName: string;
   shipments: ConsolidationShipmentDto[];
+  capacity: ContainerCapacityDto;
   /** Whether costs are shown (seesConsolidationCosts); otherwise `costs` is empty. */
   showsCost: boolean;
   costs: ConsolidationCostDto[];
