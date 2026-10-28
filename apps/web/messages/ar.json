@@ -702,7 +702,23 @@
     "closeGoodsOnHand": "بضاعة هذه الشحنة ما زالت في المخزن: {warehouses}. أخرجها أولاً، ثم أغلق الشحنة.",
     "closeNotInvoiced": "لا توجد فاتورة معتمدة لهذه الشحنة. اعتمد فاتورتها أولاً، أو اكتب سبب إغلاقها بلا رسوم.",
     "noChargeReason": "سبب الإغلاق بلا رسوم",
-    "closeCostsReminder": "قبل الإغلاق تأكد أن كل تكاليف الشحنة مسجّلة: فواتير الموردين، والرحلات، وتكاليف الحاوية."
+    "closeCostsReminder": "قبل الإغلاق تأكد أن كل تكاليف الشحنة مسجّلة: فواتير الموردين، والرحلات، وتكاليف الحاوية.",
+    "correctCargo": "تصحيح بنود البضاعة",
+    "correctCargoHint": "البنود الجديدة تحل محل الحالية. مصروفات الرحلات وتوزيعات الحاويات المرحّلة تبقى كما رُحّلت؛ وما يأتي بعدها يستخدم البنود الجديدة.",
+    "cargoCorrectionReason": "سبب التصحيح",
+    "saveCargoCorrection": "حفظ التصحيح",
+    "cargoCorrected": "صُحّحت بنود البضاعة.",
+    "cargoCorrections": "تصحيحات بنود البضاعة",
+    "cargoCorrectionBy": "التصحيح {revision} بواسطة {user}، {time}",
+    "cargoCorrectionContainer": "في الحاوية {container}",
+    "cargoBefore": "قبل",
+    "cargoAfter": "بعد",
+    "cargoLinesSummary": "{lines} بنود، {packages} طرداً",
+    "addCargoLine": "إضافة بند",
+    "lengthCm": "الطول (سم)",
+    "widthCm": "العرض (سم)",
+    "heightCm": "الارتفاع (سم)",
+    "lineDescription": "الوصف"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -2656,7 +2672,13 @@
     "MOVEMENT_CANCEL_CLOSED": "الشحنة مغلقة: لا يمكن إلغاء الحركة {movement}.",
     "POD_CANCEL_LATER_POD": "إثبات التسليم {later} جاء بعد {pod}: ألغه أولاً.",
     "POD_CANCEL_STATUS_MOVED": "الشحنة تحركت بعد إثبات التسليم {pod}: تراجع عن الخطوات اللاحقة أولاً.",
-    "POD_CANCEL_CLOSED": "الشحنة مغلقة: لا يمكن إلغاء إثبات التسليم {pod}."
+    "POD_CANCEL_CLOSED": "الشحنة مغلقة: لا يمكن إلغاء إثبات التسليم {pod}.",
+    "CORRECTION_STALE": "تغيّرت الشحنة {shipment} منذ فتح هذه الصفحة: أعد تحميلها وحاول مرة أخرى.",
+    "CORRECTION_KEY_REUSED": "أُرسل هذا التصحيح من قبل بمحتوى آخر: أعد تحميل الصفحة وحاول مرة أخرى.",
+    "CARGO_IN_CLOSED_CONTAINER": "الشحنة {shipment} في الحاوية {container} وهي مقفلة: لم يعد ممكناً تصحيح بنود بضاعتها.",
+    "CARGO_INVOICED": "الشحنة {shipment} عليها الفاتورة {invoices}: أصدر إشعاراً دائناً كاملاً أولاً، ثم صحّح بنود البضاعة.",
+    "CARGO_BELOW_ON_HAND": "في مخازن الشحنة {shipment} {onHand} طرداً: لا يمكن أن تقل بنود البضاعة عنها ({packages}).",
+    "CARGO_SHIPMENT_CLOSED": "الشحنة {shipment} مغلقة أو ملغاة: لا يمكن تصحيح بنود بضاعتها."
   },
   "Locations": {
     "title": "الموانئ والمدن",

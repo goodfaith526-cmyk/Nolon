@@ -67,6 +67,7 @@ model Branch {
   warehouseMovements             WarehouseMovement[]
   warehouseMovementCancellations WarehouseMovementCancellation[]
   podCancellations               PodCancellation[]
+  shipmentCargoCorrections       ShipmentCargoCorrection[]
   grnDrafts                      GrnDraft[]
   grnDraftLines                  GrnDraftLine[]
   grnDraftProposals              GrnDraftProposal[]
@@ -219,6 +220,7 @@ model User {
   warehouseMovements                WarehouseMovement[]             @relation("WarehouseMovementCreatedBy")
   warehouseMovementCancellations    WarehouseMovementCancellation[] @relation("WarehouseMovementCancelledBy")
   podCancellations                  PodCancellation[]               @relation("PodCancelledBy")
+  shipmentCargoCorrections          ShipmentCargoCorrection[]       @relation("CargoCorrectedBy")
   grnDraftsCreated                  GrnDraft[]                      @relation("GrnDraftCreatedBy")
   grnDraftsDecided                  GrnDraft[]                      @relation("GrnDraftDecidedBy")
   quotationDraftsCreated            QuotationDraft[]                @relation("QuotationDraftCreatedBy")
@@ -1394,20 +1396,22 @@ model Shipment {
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch             Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  customer           Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  booking            Booking                 @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  origin             Location                @relation("ShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination        Location                @relation("ShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  currentLocation    Location?               @relation("ShipmentCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
-  shipper            Party?                  @relation("ShipmentShipper", fields: [shipperId], references: [id], onDelete: Restrict)
-  consignee          Party?                  @relation("ShipmentConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
-  notifyParty        Party?                  @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
-  createdBy          User                    @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  salesOutlet        Partner?                @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
-  originConsolidator Partner?                @relation("ShipmentOriginConsolidator", fields: [originConsolidatorId], references: [id], onDelete: Restrict)
-  distributor        Partner?                @relation("ShipmentDistributor", fields: [distributorId], references: [id], onDelete: Restrict)
+  branch             Branch                    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  booking            Booking                   @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  origin             Location                  @relation("ShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination        Location                  @relation("ShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currentLocation    Location?                 @relation("ShipmentCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
+  shipper            Party?                    @relation("ShipmentShipper", fields: [shipperId], references: [id], onDelete: Restrict)
+  consignee          Party?                    @relation("ShipmentConsignee", fields: [consigneeId], references: [id], onDelete: Restrict)
+  notifyParty        Party?                    @relation("ShipmentNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
+  createdBy          User                      @relation("ShipmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  salesOutlet        Partner?                  @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
+  originConsolidator Partner?                  @relation("ShipmentOriginConsolidator", fields: [originConsolidatorId], references: [id], onDelete: Restrict)
+  distributor        Partner?                  @relation("ShipmentDistributor", fields: [distributorId], references: [id], onDelete: Restrict)
   items              ShipmentItem[]
+  /// B3-3: corrections of the cargo lines after confirmation, in revision order.
+  cargoCorrections   ShipmentCargoCorrection[]
   containers         ShipmentContainer[]
   events             ShipmentEvent[]
   documents          Document[]
@@ -1478,6 +1482,39 @@ model ShipmentItem {
 
   @@unique([shipmentId, lineNo])
   @@map("shipment_items")
+}
+
+/// A correction of a shipment's cargo lines after confirmation (B3-3,
+/// docs/plans/05-correction-contracts.md, sections 0 and 3): the lines before and after, whole,
+/// and why. `revision` counts the corrections (the version a request names); `request_id` and
+/// `request_hash` make a retry return the stored result. Insert-only (trigger).
+model ShipmentCargoCorrection {
+  id            String   @id @default(uuid()) @db.Uuid
+  shipmentId    String   @map("shipment_id") @db.Uuid
+  /// The shipment's branch.
+  branchId      String   @map("branch_id") @db.Uuid
+  /// 1 for the first correction of the shipment, then 2, 3...
+  revision      Int
+  requestId     String   @map("request_id") @db.Uuid
+  /// SHA-256 (hex) of the request without its id.
+  requestHash   String   @map("request_hash") @db.Char(64)
+  itemsBefore   Json     @map("items_before")
+  itemsAfter    Json     @map("items_after")
+  reason        String   @db.VarChar(500)
+  /// The open container the shipment was in, when it was in one.
+  containerId   String?  @map("container_id") @db.Uuid
+  correctedById String   @map("corrected_by_id") @db.Uuid
+  correctedAt   DateTime @default(now()) @map("corrected_at") @db.Timestamptz(3)
+
+  shipment    Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  branch      Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  container   Consolidation? @relation(fields: [containerId], references: [id], onDelete: Restrict)
+  correctedBy User           @relation("CargoCorrectedBy", fields: [correctedById], references: [id], onDelete: Restrict)
+
+  @@unique([shipmentId, revision])
+  @@unique([shipmentId, requestId])
+  @@index([branchId])
+  @@map("shipment_cargo_corrections")
 }
 
 /**
@@ -2622,15 +2659,16 @@ model Consolidation {
   createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch        Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin        Location                @relation("ConsolidationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination   Location                @relation("ConsolidationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  containerType ContainerType           @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
-  createdBy     User                    @relation("ConsolidationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  shipments     ConsolidationShipment[]
-  billLines     SupplierBillLine[]
-  journalLines  JournalLine[]
-  bookingDrafts BookingDraft[]
+  branch           Branch                    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin           Location                  @relation("ConsolidationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination      Location                  @relation("ConsolidationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  containerType    ContainerType             @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  createdBy        User                      @relation("ConsolidationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  shipments        ConsolidationShipment[]
+  cargoCorrections ShipmentCargoCorrection[]
+  billLines        SupplierBillLine[]
+  journalLines     JournalLine[]
+  bookingDrafts    BookingDraft[]
 
   @@index([branchId, status])
   @@map("consolidations")
