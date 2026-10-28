@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AuthUser } from '../auth/auth-user.js';
 import { changedFields, evidenceAfterEdit } from './draft-evidence.js';
 import { draftBranch, requestHash, withBranch } from './draft-rules.js';
+import { Access } from '../access-control/access.js';
 
 const DXB = '0b6f6c1e-5f0e-4a43-9a51-6c3c6b0f0a01';
 const JED = '0b6f6c1e-5f0e-4a43-9a51-6c3c6b0f0a02';
@@ -15,7 +16,7 @@ const user: AuthUser = {
   sessionId: 's',
   credentialStamp: 'c',
   roles: ['SALES'],
-  permissions: new Set(),
+  access: Access.uniform([], [DXB]),
   allBranches: false,
   allowedBranchIds: [DXB],
 };

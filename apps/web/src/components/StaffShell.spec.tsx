@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let permissions: Permission[] = [];
+let delegations: AuthMeResponse['delegations'];
 let assistantUrl: string | null = null;
 let assistantPanel = false;
 const router = { replace: () => {} };
@@ -37,6 +38,7 @@ vi.mock('@/lib/api', async (actual) => ({
       branches: [],
       assistantUrl,
       assistantPanel,
+      delegations,
     } as unknown as AuthMeResponse),
 }));
 vi.mock('./alerts/Alerts', () => ({ AlertsBell: () => null }));
@@ -64,6 +66,7 @@ afterEach(() => {
   host = null;
   assistantUrl = null;
   assistantPanel = false;
+  delegations = undefined;
   Reflect.deleteProperty(window, 'matchMedia');
 });
 
@@ -73,6 +76,43 @@ describe('StaffShell menu', () => {
     const shown = await links();
     expect(shown).toContain('/reports');
     expect(shown).not.toContain('/accounting/trial-balance');
+  });
+});
+
+describe('StaffShell permissions menu', () => {
+  /** Every menu link, with the folded sections opened. */
+  async function allLinks(): Promise<string[]> {
+    const page = await render();
+    for (const title of page.querySelectorAll<HTMLButtonElement>('.nav-title')) {
+      if (title.getAttribute('aria-expanded') === 'false') act(() => title.click());
+    }
+    return [...page.querySelectorAll<HTMLAnchorElement>('nav a')].map(
+      (a) => a.getAttribute('href') ?? '',
+    );
+  }
+
+  it('shows the permissions screen to who may view access control, next to users', async () => {
+    permissions = ['users:view', 'access_control:view'];
+    const shown = await allLinks();
+    expect(shown).toContain('/permissions');
+    expect(shown.indexOf('/permissions')).toBe(shown.indexOf('/users') + 1);
+    expect(shown).not.toContain('/branch-permissions');
+  });
+
+  it('shows the branch permissions screen to a delegate only', async () => {
+    permissions = ['customers:view'];
+    delegations = [{ id: 'd1', branchId: 'b1' }];
+    const shown = await allLinks();
+    expect(shown).toContain('/branch-permissions');
+    expect(shown).not.toContain('/permissions');
+  });
+
+  it('shows neither to someone without access control or a delegation', async () => {
+    permissions = ['customers:view', 'users:view'];
+    delegations = [];
+    const shown = await allLinks();
+    expect(shown).not.toContain('/permissions');
+    expect(shown).not.toContain('/branch-permissions');
   });
 });
 

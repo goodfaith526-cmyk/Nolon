@@ -42,6 +42,7 @@ import {
   signIn,
 } from './auth-test-app.js';
 import { uniquePhone } from './test-data.js';
+import { Access } from '../src/access-control/access.js';
 
 /**
  * Operational reports and dashboards (annex D sections 2 and 3) against PostgreSQL. Invoices and
@@ -879,7 +880,7 @@ describe('operational reports and dashboards', () => {
         sessionId: randomUUID(),
         credentialStamp: 'c',
         roles: ['BRANCH_MANAGER'],
-        permissions: ROLE_PERMISSIONS.BRANCH_MANAGER,
+        access: Access.uniform(ROLE_PERMISSIONS.BRANCH_MANAGER, [pts]),
         allBranches: false,
         allowedBranchIds: [pts],
       };
@@ -1025,7 +1026,7 @@ describe('operational reports and dashboards', () => {
         sessionId: randomUUID(),
         credentialStamp: 'c',
         roles: ['BRANCH_MANAGER'],
-        permissions: ROLE_PERMISSIONS.BRANCH_MANAGER,
+        access: Access.uniform(ROLE_PERMISSIONS.BRANCH_MANAGER, [pts]),
         allBranches: false,
         allowedBranchIds: [pts],
       };

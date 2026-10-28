@@ -1,5 +1,6 @@
-import type { Permission, Role } from '@nolon/shared';
+import type { Role } from '@nolon/shared';
 import type { Request } from 'express';
+import type { Access } from '../access-control/access.js';
 
 /** The signed-in user, rebuilt from the database on every request (plan S3). */
 export interface AuthUser {
@@ -16,10 +17,17 @@ export interface AuthUser {
    */
   credentialStamp: string;
   roles: Role[];
-  permissions: ReadonlySet<Permission>;
+  /**
+   * What this user may do in each branch (docs/plans/03-permissions-screen.md): permissions are
+   * held per branch. Check a record's actions with `access.has(permission, record.branchId)`.
+   */
+  access: Access;
   /** Administrator / Management: true, and allowedBranchIds lists every branch. */
   allBranches: boolean;
-  /** The only branches this user may read or write. Services filter on this list. */
+  /**
+   * The only branches this request may read or write. Services filter on this list. The guard
+   * narrows it to the branches where the user holds every permission the route requires.
+   */
   allowedBranchIds: readonly string[];
   /**
    * Outlet Staff (business model plan 4.2): the partner sales outlets whose records this user may

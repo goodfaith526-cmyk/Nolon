@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type {
   GoodsReceiptRequest,
@@ -16,13 +17,18 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
-import { shipmentScope } from '../shipments/shipment-scope.js';
+import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService } from '../documents/documents.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type {
+  ShipmentGoodsOnHand,
+  ShipmentStockHandler,
+} from '../shipments/shipment-stock.registry.js';
+import { ShipmentStockRegistry } from '../shipments/shipment-stock.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
 import {
@@ -90,13 +96,40 @@ export interface PhotoUpload {
  * in the same transaction (WarehousesService.requireForMovement).
  */
 @Injectable()
-export class WarehouseMovementsService {
+export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHandler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
     private readonly warehouses: WarehousesService,
     private readonly documents: DocumentsService,
+    private readonly shipmentStock: ShipmentStockRegistry,
   ) {}
+
+  onModuleInit(): void {
+    this.shipmentStock.register(this);
+  }
+
+  /** For a shipment's close (B1-5): the warehouses still holding its goods, in code order. */
+  async goodsOnHandInTx(tx: Tx, shipmentId: string): Promise<ShipmentGoodsOnHand[]> {
+    const movements = await tx.warehouseMovement.findMany({
+      where: { shipmentId },
+      select: {
+        kind: true,
+        warehouseId: true,
+        packages: true,
+        weightKg: true,
+        warehouse: { select: { code: true } },
+      },
+    });
+    const totals = totalsByWarehouse(movements);
+    return [...totals]
+      .filter(([, t]) => t.onHandPackages > 0)
+      .map(([warehouseId, t]) => ({
+        warehouseCode: movements.find((m) => m.warehouseId === warehouseId)?.warehouse.code ?? '',
+        packages: t.onHandPackages,
+      }))
+      .sort((a, b) => a.warehouseCode.localeCompare(b.warehouseCode));
+  }
 
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentWarehouseDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
@@ -123,7 +156,7 @@ export class WarehouseMovementsService {
         remainingWeightKg: toDecimalStringOrNull(remainingWeightKg(movements, warehouseId)),
       });
     }
-    const has = (permission: Permission) => user.permissions.has(permission);
+    const has = (permission: Permission) => holdsOnShipment(user, permission, shipment);
     const active = isActive(shipment.status);
     const receiptStatuses = has('warehouse:create')
       ? receiptStatusOptions(shipment.transitions)

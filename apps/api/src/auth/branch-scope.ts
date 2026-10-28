@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import type { Permission } from '@nolon/shared';
 import type { AuthUser } from './auth-user.js';
 
 /**
@@ -44,4 +45,14 @@ export function listBranchScope(
   branchId?: string | null,
 ): { branchId: { in: string[] } } {
   return { branchId: { in: reportBranchIds(user, branchId) } };
+}
+
+/**
+ * The user narrowed to the branches where they hold every one of `permissions`, as the guard
+ * narrows a route's user (plan 03, section 5.2): for a part of a page or list that needs another
+ * permission than the route's. Never wider than the user passed in.
+ */
+export function withPermissions(user: AuthUser, ...permissions: Permission[]): AuthUser {
+  const held = new Set(user.access.branchesWith(permissions));
+  return { ...user, allowedBranchIds: user.allowedBranchIds.filter((id) => held.has(id)) };
 }

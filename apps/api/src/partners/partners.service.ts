@@ -236,6 +236,6 @@ function toDto(p: PartnerWithDetails, user: AuthUser): PartnerDto {
     supplierName: p.supplier?.name ?? null,
     currency: p.currency,
     notes: p.notes,
-    actions: { canEdit: user.permissions.has('partners:update') },
+    actions: { canEdit: user.access.has('partners:update', p.branchId) },
   };
 }

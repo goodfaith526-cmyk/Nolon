@@ -54,6 +54,7 @@ import {
   storedValues,
 } from './grn-draft-rules.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
+import { withPermissions } from '../auth/branch-scope.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -148,8 +149,10 @@ export class GrnDraftsService {
    * "My drafts": the GRN drafts the assistant made for this user, on shipments the user sees now.
    * Each is reviewed on its shipment's page.
    */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('warehouse:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'warehouse:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const now = new Date();
     const drafts = await this.prisma.grnDraft.findMany({
       where: {
@@ -190,9 +193,9 @@ export class GrnDraftsService {
    * whoever they were made for, when they may record a receipt (warehouse:create); each is
    * reviewed on its shipment's page. None for the assistant.
    */
-  async reviewList(user: AuthUser, page: ReviewPage): Promise<ReviewDraftRow[]> {
-    const p = user.permissions;
-    if (user.agent || !p.has('warehouse:view') || !p.has('warehouse:create')) return [];
+  async reviewList(requester: AuthUser, page: ReviewPage): Promise<ReviewDraftRow[]> {
+    const user = withPermissions(requester, 'warehouse:view', 'warehouse:create');
+    if (user.agent || user.allowedBranchIds.length === 0) return [];
     const now = new Date();
     const drafts = await this.prisma.grnDraft.findMany({
       where: {
@@ -639,7 +642,7 @@ function toDto(
   now: Date,
 ): GrnDraftDto {
   const summary = toSummary(d, now);
-  const open = summary.status === 'DRAFT' && user.permissions.has('warehouse:create');
+  const open = summary.status === 'DRAFT' && user.access.has('warehouse:create', d.branchId);
   return {
     ...summary,
     documentId: d.documentId,

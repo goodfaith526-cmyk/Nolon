@@ -80,9 +80,14 @@ model Branch {
   rateCardDrafts             RateCardDraft[]
   newCustomerBookingDrafts   NewCustomerBookingDraft[]
   newCustomerQuotationDrafts NewCustomerQuotationDraft[]
-  movementPhotos             WarehouseMovementPhoto[]
-  customsClearances          CustomsClearance[]
-  customsFees                CustomsFee[]
+
+  teamMembers        UserBranchTeam[]
+  personPermissions  UserBranchPermission[]
+  blockedPermissions BranchBlockedPermission[]
+  delegations        BranchDelegation[]
+  movementPhotos     WarehouseMovementPhoto[]
+  customsClearances  CustomsClearance[]
+  customsFees        CustomsFee[]
 
   vehicles           Vehicle[]
   drivers            Driver[]
@@ -265,6 +270,17 @@ model User {
   expensesApproved         Expense[]         @relation("ExpenseApprovedBy")
   expensesCancelled        Expense[]         @relation("ExpenseCancelledBy")
 
+  teamsCreated             Team[]                    @relation("TeamCreatedBy")
+  teamPermissionChanges    TeamPermissionChange[]    @relation("TeamPermissionChangeCreatedBy")
+  branchTeams              UserBranchTeam[]          @relation("UserBranchTeamUser")
+  branchTeamsGranted       UserBranchTeam[]          @relation("UserBranchTeamCreatedBy")
+  branchPermissions        UserBranchPermission[]    @relation("UserBranchPermissionUser")
+  branchPermissionsGranted UserBranchPermission[]    @relation("UserBranchPermissionCreatedBy")
+  branchBlocksCreated      BranchBlockedPermission[] @relation("BranchBlockedPermissionCreatedBy")
+  delegationsHeld          BranchDelegation[]        @relation("BranchDelegationDelegate")
+  delegationsCreated       BranchDelegation[]        @relation("BranchDelegationCreatedBy")
+  delegationsRevoked       BranchDelegation[]        @relation("BranchDelegationRevokedBy")
+
   @@map("users")
 }
 
@@ -308,6 +324,165 @@ model UserPartner {
   @@id([userId, partnerId])
   @@index([partnerId])
   @@map("user_partners")
+}
+
+/// ALLOW adds a permission, DENY takes it away (access-control, docs/plans/03-permissions-screen.md).
+enum AccessEffect {
+  ALLOW
+  DENY
+
+  @@map("access_effect")
+}
+
+/// A named set of permissions (plan 03, section 2). System teams are the roles (`systemRole`):
+/// their permissions are the code defaults (PERMISSION_MATRIX) changed by TeamPermissionChange
+/// rows; a new team holds only its ALLOW rows. Restricted teams (Driver) are security scopes:
+/// assigned only through user_roles, never widened (PostgreSQL triggers, migration 20261028).
+model Team {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(40)
+  nameAr      String   @map("name_ar") @db.VarChar(100)
+  nameEn      String   @map("name_en") @db.VarChar(100)
+  systemRole  Role?    @unique @map("system_role")
+  restricted  Boolean  @default(false)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy         User?                  @relation("TeamCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  permissionChanges TeamPermissionChange[]
+  members           UserBranchTeam[]
+
+  @@map("teams")
+}
+
+/// One permission added to or taken from a team. Restricted teams take DENY only (trigger).
+model TeamPermissionChange {
+  teamId      String       @map("team_id") @db.Uuid
+  /// `module:action` from PERMISSIONS in @nolon/shared; checked by the service.
+  permission  String       @db.VarChar(80)
+  effect      AccessEffect
+  createdById String       @map("created_by_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  team      Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy User @relation("TeamPermissionChangeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([teamId, permission])
+  @@map("team_permission_changes")
+}
+
+/// A person in a team in one branch. `delegationId` null: given by the owner; otherwise given
+/// through that delegation and limited to its permissions when access is computed. A team for
+/// all of a person's branches is user_roles (system teams). One row per (user, team, branch,
+/// source).
+model UserBranchTeam {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  teamId       String   @map("team_id") @db.Uuid
+  branchId     String   @map("branch_id") @db.Uuid
+  delegationId String?  @map("delegation_id") @db.Uuid
+  /// delegation_id, or the zero uuid for the owner: the unique key below (CHECK in the migration).
+  sourceKey    String   @map("source_key") @db.Uuid
+  createdById  String   @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User              @relation("UserBranchTeamUser", fields: [userId], references: [id], onDelete: Cascade)
+  team       Team              @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  branch     Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  delegation BranchDelegation? @relation(fields: [delegationId], references: [id], onDelete: Restrict)
+  createdBy  User              @relation("UserBranchTeamCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([userId, teamId, branchId, sourceKey])
+  @@index([teamId])
+  @@index([branchId])
+  @@index([delegationId])
+  @@map("user_branch_teams")
+}
+
+/// One permission added to (ALLOW) or taken from (DENY) a person in one branch. DENY comes from
+/// the owner only: a CHECK refuses DENY with a delegation (plan 03, F114-3).
+model UserBranchPermission {
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  branchId     String       @map("branch_id") @db.Uuid
+  permission   String       @db.VarChar(80)
+  effect       AccessEffect
+  delegationId String?      @map("delegation_id") @db.Uuid
+  /// delegation_id, or the zero uuid for the owner: the unique key below (CHECK in the migration).
+  sourceKey    String       @map("source_key") @db.Uuid
+  createdById  String       @map("created_by_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User              @relation("UserBranchPermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  branch     Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  delegation BranchDelegation? @relation(fields: [delegationId], references: [id], onDelete: Restrict)
+  createdBy  User              @relation("UserBranchPermissionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([userId, branchId, permission, sourceKey])
+  @@index([branchId])
+  @@index([delegationId])
+  @@map("user_branch_permissions")
+}
+
+/// A permission nobody holds in this branch (the Administrator team excepted).
+model BranchBlockedPermission {
+  branchId    String   @map("branch_id") @db.Uuid
+  permission  String   @db.VarChar(80)
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdBy User   @relation("BranchBlockedPermissionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([branchId, permission])
+  @@map("branch_blocked_permissions")
+}
+
+/// The owner lets a person of a branch hand out a set of permissions inside that branch. One
+/// active delegation per (branch, person), kept by the service under the access_state lock that
+/// every change of access takes.
+model BranchDelegation {
+  id             String    @id @default(uuid()) @db.Uuid
+  branchId       String    @map("branch_id") @db.Uuid
+  delegateUserId String    @map("delegate_user_id") @db.Uuid
+  createdById    String    @map("created_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById    String?   @map("revoked_by_id") @db.Uuid
+
+  branch      Branch                       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  delegate    User                         @relation("BranchDelegationDelegate", fields: [delegateUserId], references: [id], onDelete: Restrict)
+  createdBy   User                         @relation("BranchDelegationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy   User?                        @relation("BranchDelegationRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  permissions BranchDelegationPermission[]
+  teams       UserBranchTeam[]
+  grants      UserBranchPermission[]
+
+  @@index([branchId])
+  @@index([delegateUserId])
+  @@map("branch_delegations")
+}
+
+model BranchDelegationPermission {
+  delegationId String @map("delegation_id") @db.Uuid
+  permission   String @db.VarChar(80)
+
+  delegation BranchDelegation @relation(fields: [delegationId], references: [id], onDelete: Cascade)
+
+  @@id([delegationId, permission])
+  @@map("branch_delegation_permissions")
+}
+
+/// One row (id 1). Every write transaction of a signed-in request locks it FOR SHARE first and
+/// compares `version` with the one its access was computed at; every change of who may do what
+/// locks it FOR UPDATE first and raises `version` (plan 03, section 5.4).
+model AccessState {
+  id      Int    @id @db.SmallInt
+  version BigInt
+
+  @@map("access_state")
 }
 
 /// Server-side sign-in session. The browser holds a random token in an httpOnly cookie; only its

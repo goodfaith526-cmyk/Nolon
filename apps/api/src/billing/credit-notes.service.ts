@@ -384,9 +384,9 @@ function toDto(n: CreditNoteWithDetails, user: AuthUser): CreditNoteDto {
     approvedAt: n.approvedAt?.toISOString() ?? null,
     cancelReason: n.cancelReason,
     actions: {
-      canEdit: isDraft && user.permissions.has('credit_notes:update'),
-      canApprove: isDraft && user.permissions.has('credit_notes:approve'),
-      canCancel: isDraft && user.permissions.has('credit_notes:cancel'),
+      canEdit: isDraft && user.access.has('credit_notes:update', n.branchId),
+      canApprove: isDraft && user.access.has('credit_notes:approve', n.branchId),
+      canCancel: isDraft && user.access.has('credit_notes:cancel', n.branchId),
     },
   };
 }

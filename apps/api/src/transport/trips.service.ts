@@ -643,7 +643,7 @@ export class TripsService {
   }
 
   private async toDto(user: AuthUser, t: TripWithDetails): Promise<TripDto> {
-    const has = (permission: Permission) => user.permissions.has(permission);
+    const has = (permission: Permission) => user.access.has(permission, t.branchId);
     const driverOnly = isDriverOnly(user);
     const showsCost = seesTransportCosts(has);
     const shipmentIds = t.shipments.map((l) => l.shipmentId);

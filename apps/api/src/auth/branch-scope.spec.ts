@@ -8,6 +8,7 @@ import {
   listBranchScope,
   reportBranchIds,
 } from './branch-scope.js';
+import { Access } from '../access-control/access.js';
 
 const user: AuthUser = {
   id: 'u',
@@ -17,7 +18,7 @@ const user: AuthUser = {
   sessionId: 's',
   credentialStamp: 'c',
   roles: ['SALES'],
-  permissions: new Set(),
+  access: Access.uniform([], ['dxb']),
   allBranches: false,
   allowedBranchIds: ['dxb'],
 };

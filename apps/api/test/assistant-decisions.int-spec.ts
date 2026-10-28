@@ -1,3 +1,4 @@
+import { Access } from '../src/access-control/access.js';
 import type {
   AgentClientCreatedDto,
   AssistantApprovalGrantsDto,
@@ -198,7 +199,10 @@ describe('the chat card', () => {
 
   it('names only what the user may see, leaving out another branch’s records', async () => {
     const jed = await branchId(t.prisma, 'JED');
-    const outsider = { allowedBranchIds: [jed], permissions: new Set() } as unknown as AuthUser;
+    const outsider = {
+      allowedBranchIds: [jed],
+      access: Access.uniform([], [jed]),
+    } as unknown as AuthUser;
     const names = await referenceNames(t.prisma, outsider, {
       customerId: customer.id,
       originLocationId: route.origin,

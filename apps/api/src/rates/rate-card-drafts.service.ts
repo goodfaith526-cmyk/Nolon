@@ -15,7 +15,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess, branchScope, withPermissions } from '../auth/branch-scope.js';
 import { fromDbDate, fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { throwFirstConflict } from '../common/rule-issues.js';
@@ -375,8 +375,10 @@ export class RateCardDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('rates:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'rates:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -547,7 +549,7 @@ function baseFields(
   now: Date,
 ): Omit<RateCardDraftDto, 'request' | 'check' | 'evidence'> {
   const status = draftStatus(d.state, d.expiresAt, now);
-  const open = status === 'DRAFT' && !user.agent && user.permissions.has('rates:create');
+  const open = status === 'DRAFT' && !user.agent && user.access.has('rates:create', d.branchId);
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,
