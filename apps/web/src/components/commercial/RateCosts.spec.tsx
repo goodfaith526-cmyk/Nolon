@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const calls: { path: string; method?: string; body?: unknown }[] = [];
 let permissions = ['rate_costs:view', 'rate_costs:update'];
+/** When set, margin replies wait here, by path, until the test answers them. */
+let heldMargins: Map<string, (m: ExpectedMarginDto) => void> | null = null;
 const costs: RateCardCostDto[] = [
   {
     component: 'SEA_FREIGHT',
@@ -14,6 +16,7 @@ const costs: RateCardCostDto[] = [
     currency: 'USD',
     unit: 'PER_CBM',
     unitsPerCostUnit: null,
+    conversionCardUnit: null,
     note: null,
     updatedAt: '2026-10-28T00:00:00.000Z',
   },
@@ -47,7 +50,11 @@ vi.mock('@/lib/master-data', () => ({ useMasterData: () => null }));
 vi.mock('@/lib/api', () => ({
   api: (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, ...init });
-    if (path.includes('/expected-margin')) return Promise.resolve(margin);
+    if (path.includes('/expected-margin')) {
+      const queue = heldMargins;
+      if (!queue) return Promise.resolve(margin);
+      return new Promise((resolve) => queue.set(path, resolve));
+    }
     return Promise.resolve(costs);
   },
 }));
@@ -71,6 +78,7 @@ afterEach(() => {
   host = null;
   calls.length = 0;
   permissions = ['rate_costs:view', 'rate_costs:update'];
+  heldMargins = null;
 });
 
 async function show(card: RateCardDto = rate): Promise<HTMLElement> {
@@ -121,5 +129,41 @@ describe('RateCosts', () => {
     expect(buttons(await show(), 'edit')).toHaveLength(0);
     permissions = ['rate_costs:view', 'rate_costs:update'];
     expect(buttons(await show({ ...rate, status: 'CANCELLED' }), 'edit')).toHaveLength(0);
+  });
+
+  it('shows the margin of the quantity on screen, dropping a late reply for an earlier one', async () => {
+    const shown = await show();
+    heldMargins = new Map();
+    const quantity = [...shown.querySelectorAll('input')].find(
+      (i) => i.getAttribute('placeholder') === 'oneUnit',
+    );
+    const type = (value: string) =>
+      act(() => {
+        if (!quantity) return;
+        // React tracks the value it last rendered: set it through the prototype, as typing does.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+          quantity,
+          value,
+        );
+        quantity.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    type('1');
+    type('2');
+    const complete = (value: string): ExpectedMarginDto => ({
+      ...margin,
+      expectedMargin: value,
+      incomplete: false,
+      missing: [],
+    });
+    const answer = async (q: string, value: string) =>
+      act(async () => {
+        heldMargins?.get(`/rates/r1/expected-margin?quantity=${q}`)?.(complete(value));
+        await Promise.resolve();
+      });
+    // While the new quantity's margin is on its way, no earlier figure is shown.
+    expect(shown.querySelector('strong')).toBeNull();
+    await answer('2', '160');
+    await answer('1', '80');
+    expect(shown.querySelector('strong')?.textContent).toBe('160');
   });
 });

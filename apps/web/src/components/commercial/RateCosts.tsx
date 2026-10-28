@@ -35,7 +35,7 @@ export function RateCosts({ rate, onClose }: { rate: RateCardDto; onClose: () =>
   const [editing, setEditing] = useState<RateCostComponent | null>(null);
   const [outletId, setOutletId] = useState('');
   const [quantity, setQuantity] = useState('');
-  const [margin, setMargin] = useState<ExpectedMarginDto | null>(null);
+  const [answer, setAnswer] = useState<MarginAnswer | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const editable = rate.status !== 'CANCELLED' && can(me, 'rate_costs:update');
 
@@ -45,18 +45,37 @@ export function RateCosts({ rate, onClose }: { rate: RateCardDto; onClose: () =>
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
   }, [rate.id, failure]);
 
-  const loadMargin = useCallback(() => {
+  // The margin shown always belongs to the inputs on screen: a reply to inputs since changed is
+  // dropped, and a reply is shown only while its card, outlet, quantity and costs are still the
+  // ones on screen, so the previous figure is never shown while a new one loads or after it fails.
+  useEffect(() => {
+    let current = true;
+    const asked = { rateId: rate.id, outletId, quantity, costs };
     const query = new URLSearchParams();
     if (outletId) query.set('outletId', outletId);
     if (quantity) query.set('quantity', quantity);
     const suffix = query.size > 0 ? `?${query.toString()}` : '';
     api<ExpectedMarginDto>(`/rates/${rate.id}/expected-margin${suffix}`)
-      .then(setMargin)
-      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
-  }, [rate.id, outletId, quantity, failure]);
+      .then((margin) => {
+        if (current) setAnswer({ ...asked, margin });
+      })
+      .catch((e: unknown) => {
+        if (current) setNotice({ ok: false, text: failure(e) });
+      });
+    return () => {
+      current = false;
+    };
+  }, [rate.id, outletId, quantity, costs, failure]);
+  const margin =
+    answer &&
+    answer.rateId === rate.id &&
+    answer.outletId === outletId &&
+    answer.quantity === quantity &&
+    answer.costs === costs
+      ? answer.margin
+      : null;
 
   useEffect(loadCosts, [loadCosts]);
-  useEffect(loadMargin, [loadMargin, costs]);
 
   async function save(component: RateCostComponent, body: RateCardCostInput) {
     setNotice(null);
@@ -136,10 +155,12 @@ export function RateCosts({ rate, onClose }: { rate: RateCardDto; onClose: () =>
                         <>
                           <Money value={cost.amount ?? '0'} currency={cost.currency ?? undefined} />
                           {cost.unit ? ` / ${te(`unit_${cost.unit}`)}` : ''}
-                          {cost.unitsPerCostUnit ? (
+                          {cost.unitsPerCostUnit && cost.conversionCardUnit === rate.unit ? (
                             <div className="muted">
                               {t('unitsPer', { count: cost.unitsPerCostUnit })}
                             </div>
+                          ) : cost.unit !== rate.unit ? (
+                            <div className="error">{t('needsConversion')}</div>
                           ) : null}
                         </>
                       )}
@@ -211,6 +232,15 @@ export function RateCosts({ rate, onClose }: { rate: RateCardDto; onClose: () =>
       )}
     </section>
   );
+}
+
+/** A margin reply with the inputs it was asked for. */
+interface MarginAnswer {
+  rateId: string;
+  outletId: string;
+  quantity: string;
+  costs: RateCardCostDto[] | null;
+  margin: ExpectedMarginDto;
 }
 
 /** A component's share of the margin in the card's currency, or why it has none. */
@@ -323,7 +353,9 @@ function CostForm({
                 name="unitsPerCostUnit"
                 inputMode="decimal"
                 dir="ltr"
-                defaultValue={cost?.unitsPerCostUnit ?? ''}
+                defaultValue={
+                  cost?.conversionCardUnit === cardUnit ? (cost.unitsPerCostUnit ?? '') : ''
+                }
               />
             </label>
           )}

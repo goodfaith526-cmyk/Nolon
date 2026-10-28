@@ -14,6 +14,7 @@ const notApplicable = (component: MarginCost['component']): MarginCost => ({
   currency: null,
   unit: null,
   unitsPerCostUnit: null,
+  conversionCardUnit: null,
 });
 const entered = (
   component: MarginCost['component'],
@@ -27,6 +28,7 @@ const entered = (
   currency: 'USD',
   unit,
   unitsPerCostUnit: null,
+  conversionCardUnit: null,
   ...extra,
 });
 const percent = (value: string): MarginCommission => ({
@@ -76,11 +78,27 @@ describe('computeExpectedMargin', () => {
   it('spreads a container cost over the pieces a container holds', () => {
     const r = margin({
       costs: withCost(
-        entered('SEA_FREIGHT', '1000', 'PER_CONTAINER', { unitsPerCostUnit: dec(400) }),
+        entered('SEA_FREIGHT', '1000', 'PER_CONTAINER', {
+          unitsPerCostUnit: dec(400),
+          conversionCardUnit: 'PER_PIECE',
+        }),
       ),
     });
     expect(r.line('SEA_FREIGHT')?.amount?.toFixed()).toBe('2.5');
     expect(r.margin).toBe('97.5');
+  });
+
+  it('drops a factor entered for another card unit: 400 pieces a container is not 400 CBM', () => {
+    const r = margin({
+      costs: withCost(
+        entered('SEA_FREIGHT', '1000', 'PER_CONTAINER', {
+          unitsPerCostUnit: dec(400),
+          conversionCardUnit: 'PER_CBM',
+        }),
+      ),
+    });
+    expect(r.margin).toBeNull();
+    expect(r.line('SEA_FREIGHT')?.gap).toBe('UNIT_NOT_CONVERTIBLE');
   });
 
   it('needs the pieces of a reference shipment for a per-shipment cost', () => {

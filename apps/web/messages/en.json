@@ -313,6 +313,7 @@
     "notEntered": "Not entered",
     "notApplicable": "Not applicable",
     "unitsPer": "{count} card units in one cost unit",
+    "needsConversion": "Not in the card's unit: enter how many card units one cost unit holds.",
     "marginTitle": "Expected margin (estimate)",
     "outlet": "Sales outlet",
     "quantity": "Reference quantity",

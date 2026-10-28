@@ -947,21 +947,24 @@ enum RateCostStatus {
 /// is missing, and the margin is incomplete. The outlet's commission is not stored: it comes from
 /// the outlet's approved contract.
 model RateCardCost {
-  id               String            @id @default(uuid()) @db.Uuid
-  rateCardId       String            @map("rate_card_id") @db.Uuid
-  component        RateCostComponent
-  status           RateCostStatus
+  id                 String            @id @default(uuid()) @db.Uuid
+  rateCardId         String            @map("rate_card_id") @db.Uuid
+  component          RateCostComponent
+  status             RateCostStatus
   /// Entered costs only.
-  amount           Decimal?          @db.Decimal(18, 4)
-  currency         String?           @db.Char(3)
-  unit             RateUnit?
+  amount             Decimal?          @db.Decimal(18, 4)
+  currency           String?           @db.Char(3)
+  unit               RateUnit?
   /// How many of the card's units one cost unit holds (400 pieces in a container), when the cost's
   /// unit is not the card's.
-  unitsPerCostUnit Decimal?          @map("units_per_cost_unit") @db.Decimal(18, 4)
-  note             String?
-  updatedById      String            @map("updated_by_id") @db.Uuid
-  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  unitsPerCostUnit   Decimal?          @map("units_per_cost_unit") @db.Decimal(18, 4)
+  /// The card unit `unitsPerCostUnit` was entered for. The factor converts only while the card
+  /// still has that unit: after the card's unit changes, the cost needs a new conversion.
+  conversionCardUnit RateUnit?         @map("conversion_card_unit")
+  note               String?
+  updatedById        String            @map("updated_by_id") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   rateCard    RateCard  @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
   currencyRef Currency? @relation(fields: [currency], references: [code], onDelete: Restrict)

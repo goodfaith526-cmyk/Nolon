@@ -26,6 +26,8 @@ export interface RateCardCostDto {
   unit: RateUnit | null;
   /** How many of the card's units one cost unit holds, when the cost's unit is not the card's. */
   unitsPerCostUnit: DecimalString | null;
+  /** The card unit the factor was entered for; once the card's unit differs, it no longer counts. */
+  conversionCardUnit: RateUnit | null;
   note: string | null;
   updatedAt: string;
 }

@@ -352,6 +352,33 @@ describe('partner contracts, rate card costs and the expected margin', () => {
         .get(`/rates/${rate.id}/expected-margin?outletId=${outlets.dxb.id}`, cookies.pricingJed)
         .expect(400);
       expect(refused.body).toMatchObject({ code: 'OUTLET_NOT_USABLE' });
+
+      // F130-1: the card's unit changes. 400 pieces a container says nothing about CBM, and the
+      // per-piece costs are no longer in the card's unit: they stop counting until entered again.
+      await r.patch(`/rates/${rate.id}`, cookies.pricingJed, { unit: 'PER_CBM' }).expect(200);
+      const changed = await margin(rate, `?outletId=${outlets.carton.id}`);
+      expect(changed).toMatchObject({
+        expectedMargin: null,
+        missing: ['ORIGIN_HANDLING', 'SEA_FREIGHT', 'OTHER'],
+      });
+      expect(line(changed, 'SEA_FREIGHT')?.gap).toBe('UNIT_NOT_CONVERTIBLE');
+      const costs = (await r.get(`/rates/${rate.id}/costs`, cookies.pricingJed).expect(200))
+        .body as RateCardCostDto[];
+      expect(costs.find((c) => c.component === 'SEA_FREIGHT')).toMatchObject({
+        unitsPerCostUnit: '400',
+        conversionCardUnit: 'PER_PIECE',
+      });
+      await enter(rate, 'ORIGIN_HANDLING', usd('10', 'PER_CBM'));
+      await enter(rate, 'SEA_FREIGHT', usd('1000', 'PER_CONTAINER', { unitsPerCostUnit: '25' }));
+      // A factor sent for a cost already in the card's unit is not kept.
+      await enter(rate, 'OTHER', usd('0', 'PER_CBM', { unitsPerCostUnit: '7' }));
+      // 100 - 10 (commission) - 10 - 40 (1000 over 25 CBM) - 0 = 40.
+      expect((await margin(rate, `?outletId=${outlets.carton.id}`)).expectedMargin).toBe('40');
+      const other = (
+        (await r.get(`/rates/${rate.id}/costs`, cookies.pricingJed).expect(200))
+          .body as RateCardCostDto[]
+      ).find((c) => c.component === 'OTHER');
+      expect(other).toMatchObject({ unitsPerCostUnit: null, conversionCardUnit: null });
     });
 
     it('needs an exchange rate for a cost in another currency', async () => {

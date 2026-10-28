@@ -42,6 +42,7 @@ CREATE TABLE "rate_card_costs" (
     "currency" CHAR(3),
     "unit" "rate_unit",
     "units_per_cost_unit" DECIMAL(18,4),
+    "conversion_card_unit" "rate_unit",
     "note" TEXT,
     "updated_by_id" UUID NOT NULL,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -109,4 +110,10 @@ ALTER TABLE "rate_card_costs" ADD CONSTRAINT "rate_card_costs_amount_check" CHEC
 );
 ALTER TABLE "rate_card_costs" ADD CONSTRAINT "rate_card_costs_units_check" CHECK (
     "units_per_cost_unit" IS NULL OR "units_per_cost_unit" > 0
+);
+-- A conversion factor names the card unit it was entered for, which is never the cost's own unit.
+ALTER TABLE "rate_card_costs" ADD CONSTRAINT "rate_card_costs_conversion_check" CHECK (
+    ("units_per_cost_unit" IS NULL AND "conversion_card_unit" IS NULL)
+    OR ("units_per_cost_unit" IS NOT NULL AND "conversion_card_unit" IS NOT NULL
+        AND "conversion_card_unit" <> "unit")
 );

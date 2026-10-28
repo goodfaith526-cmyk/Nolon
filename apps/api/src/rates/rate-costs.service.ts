@@ -26,6 +26,7 @@ const AUDITED_FIELDS = [
   'currency',
   'unit',
   'unitsPerCostUnit',
+  'conversionCardUnit',
   'note',
 ] as const;
 
@@ -80,12 +81,16 @@ export class RateCostsService {
       if (entered && input.currency !== before?.currency) {
         await this.currencies.requireActiveInTx(tx, input.currency);
       }
+      // A factor is kept only for a cost in another unit than the card's, bound to the card's
+      // unit now: if the card's unit changes later, the factor no longer converts.
+      const converts = entered && input.unit !== rate.unit && !!input.unitsPerCostUnit;
       const data = {
         status: input.status,
         amount: entered ? dec(input.amount) : null,
         currency: entered ? input.currency : null,
         unit: entered ? input.unit : null,
-        unitsPerCostUnit: entered && input.unitsPerCostUnit ? dec(input.unitsPerCostUnit) : null,
+        unitsPerCostUnit: converts && input.unitsPerCostUnit ? dec(input.unitsPerCostUnit) : null,
+        conversionCardUnit: converts ? rate.unit : null,
         note: input.note ?? null,
         updatedById: user.id,
       };
@@ -181,6 +186,7 @@ function toDto(c: RateCardCost): RateCardCostDto {
     currency: c.currency,
     unit: c.unit,
     unitsPerCostUnit: c.unitsPerCostUnit?.toFixed() ?? null,
+    conversionCardUnit: c.conversionCardUnit,
     note: c.note,
     updatedAt: c.updatedAt.toISOString(),
   };

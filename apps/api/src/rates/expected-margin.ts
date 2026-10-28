@@ -32,6 +32,8 @@ export interface MarginCost {
   currency: string | null;
   unit: RateUnit | null;
   unitsPerCostUnit: Decimal | null;
+  /** The card unit the factor was entered for; it converts only while the card has that unit. */
+  conversionCardUnit: RateUnit | null;
 }
 
 export interface MarginContract {
@@ -98,7 +100,8 @@ export function computeExpectedMargin(input: MarginInput): MarginResult {
     }
     let perUnit: Decimal;
     if (cost.unit === card.unit) perUnit = cost.amount;
-    else if (cost.unitsPerCostUnit?.gt(0)) perUnit = cost.amount.div(cost.unitsPerCostUnit);
+    else if (cost.unitsPerCostUnit?.gt(0) && cost.conversionCardUnit === card.unit)
+      perUnit = cost.amount.div(cost.unitsPerCostUnit);
     else return { component, amount: null, notApplicable: false, gap: 'UNIT_NOT_CONVERTIBLE' };
     const converted = inCardCurrency(perUnit.mul(units), cost.currency);
     return 'gap' in converted
