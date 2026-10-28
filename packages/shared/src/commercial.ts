@@ -674,6 +674,9 @@ export const FORM_REFUSALS = [
   'SHIPMENT_OTHER_PORT',
   'SHIPMENT_PAST_LOADING',
   'SHIPMENT_IN_OTHER_CONTAINER',
+  // A shipment that an invoice still bills is not cancelled: `shipment`, `approved` (the numbers of
+  // the approved invoices, or a dash) and `drafts` (how many draft invoices).
+  'SHIPMENT_HAS_LIVE_INVOICES',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',

@@ -635,6 +635,182 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
+  describe('a shipment an invoice still bills is not cancelled (annex B, decision Q2)', () => {
+    const bookingOf = async (shipmentId: string) =>
+      (await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipmentId } })).bookingId;
+    const refusedForInvoices = (res: Response, approved: string, drafts: string) => {
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'SHIPMENT_HAS_LIVE_INVOICES',
+        params: { approved, drafts },
+      });
+    };
+
+    it('a draft invoice blocks it until the draft is cancelled', async () => {
+      const shipmentId = await shipment();
+      const bookingId = await bookingOf(shipmentId);
+      const draft = (
+        await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+      ).body as CustomerInvoiceDto;
+      // Missing permission and another branch are refused before the invoices are looked at.
+      await post(`/shipments/${shipmentId}/cancel`, cookies.salesPts, {
+        reason: 'Withdrawn',
+      }).expect(403);
+      await post(`/shipments/${shipmentId}/cancel`, cookies.managerJed, {
+        reason: 'Withdrawn',
+      }).expect(404);
+      refusedForInvoices(
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
+        '—',
+        '1',
+      );
+      refusedForInvoices(
+        await post(`/bookings/${bookingId}/cancel`, cookies.salesPts, { reason: 'Withdrawn' }),
+        '—',
+        '1',
+      );
+      // Nothing changed.
+      const row = await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipmentId } });
+      expect(row.status).not.toBe('CANCELLED');
+      expect(await t.prisma.shipmentEvent.count({ where: { shipmentId, kind: 'CANCEL' } })).toBe(0);
+
+      await post(`/customer-invoices/${draft.id}/cancel`, cookies.financePts, {
+        reason: 'Wrong shipment',
+      }).expect(200);
+      await post(`/bookings/${bookingId}/cancel`, cookies.salesPts, { reason: 'Withdrawn' }).expect(
+        200,
+      );
+      expect(
+        (await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipmentId } })).status,
+      ).toBe('CANCELLED');
+      // A cancelled shipment takes no new invoice.
+      await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(409);
+    });
+
+    it('an approved invoice blocks it until approved credit notes cover all of it', async () => {
+      const invoice = await approvedInvoice();
+      const shipmentId = invoice.shipmentId ?? '';
+      const number = invoice.number ?? '';
+      refusedForInvoices(
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
+        number,
+        '0',
+      );
+      // A draft credit note and a partial credit do not release it.
+      const part = await creditNoteDraft(invoice.id, '400000');
+      refusedForInvoices(
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
+        number,
+        '0',
+      );
+      await post(`/credit-notes/${part.id}/approve`, cookies.managerPts).expect(200);
+      refusedForInvoices(
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
+        number,
+        '0',
+      );
+      const rest = await creditNoteDraft(invoice.id, '600000.5');
+      await post(`/credit-notes/${rest.id}/approve`, cookies.managerPts).expect(200);
+      const cancelled = (
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, {
+          reason: 'Credited',
+        }).expect(200)
+      ).body as { status: string };
+      expect(cancelled.status).toBe('CANCELLED');
+    });
+
+    it('a paid or part-paid invoice keeps blocking it, even when the rest is credited', async () => {
+      const invoice = await approvedInvoice();
+      const shipmentId = invoice.shipmentId ?? '';
+      const number = invoice.number ?? '';
+      await post('/receipts', cookies.financePts, {
+        customerId: customer.id,
+        receiptDate: d('03-25'),
+        currency: 'SDG',
+        fxRate: '600',
+        amount: '100',
+        cashAccountId: cashSdg.id,
+        allocations: [{ invoiceId: invoice.id, amount: '100' }],
+      }).expect(201);
+      refusedForInvoices(
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
+        number,
+        '0',
+      );
+      const rest = await creditNoteDraft(invoice.id, '999900.5', d('03-26'));
+      await post(`/credit-notes/${rest.id}/approve`, cookies.managerPts).expect(200);
+      expect((await invoiceRow(invoice.id)).creditedAmount.toFixed()).toBe('999900.5');
+      refusedForInvoices(
+        await post(`/bookings/${await bookingOf(shipmentId)}/cancel`, cookies.salesPts, {
+          reason: 'Withdrawn',
+        }),
+        number,
+        '0',
+      );
+    });
+
+    it('an invoice created or approved waits for a cancellation in progress, then is refused', async () => {
+      const shipmentId = await shipment();
+      const draft = (
+        await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+      ).body as CustomerInvoiceDto;
+      await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
+        currency: 'SDG',
+        fxRate: '600',
+        invoiceDate: d('03-10'),
+        dueDate: d('03-10'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '1000' }],
+      }).expect(200);
+      // The test plays the cancellation: it holds the shipment's row lock, as a cancel does, and
+      // commits the shipment cancelled while the approval and a second invoice wait on it.
+      const { pending } = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipmentId}::uuid FOR UPDATE`;
+          const started = Promise.all([
+            post(`/customer-invoices/${draft.id}/approve`, cookies.financePts),
+            post('/customer-invoices', cookies.financePts, { shipmentId }),
+          ]);
+          await waitForLockWaiter(t.prisma, 2);
+          await tx.$executeRaw`UPDATE "shipments" SET "status" = 'CANCELLED', "cancel_reason" = 'Race', "cancelled_at" = now() WHERE "id" = ${shipmentId}::uuid`;
+          return { pending: started };
+        },
+        { timeout: 15_000 },
+      );
+      expect((await pending).map((r) => r.status)).toEqual([409, 409]);
+      const invoices = await t.prisma.customerInvoice.findMany({ where: { shipmentId } });
+      expect(invoices.map((i) => [i.status, i.number])).toEqual([['DRAFT', null]]);
+    });
+
+    it('a cancellation racing a new invoice: exactly one of them succeeds', async () => {
+      const shipmentId = await shipment();
+      const { pending } = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipmentId}::uuid FOR UPDATE`;
+          const started = Promise.all([
+            post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Race' }),
+            post('/customer-invoices', cookies.financePts, { shipmentId }),
+          ]);
+          await waitForLockWaiter(t.prisma, 2);
+          return { pending: started };
+        },
+        { timeout: 15_000 },
+      );
+      const [cancel, create] = await pending;
+      const row = await t.prisma.shipment.findUniqueOrThrow({ where: { id: shipmentId } });
+      const live = await t.prisma.customerInvoice.count({
+        where: { shipmentId, status: { not: 'CANCELLED' } },
+      });
+      if (cancel?.status === 200) {
+        expect(create?.status).toBe(409);
+        expect([row.status, live]).toEqual(['CANCELLED', 0]);
+      } else {
+        expect([cancel?.status, create?.status]).toEqual([409, 201]);
+        expect(row.status).not.toBe('CANCELLED');
+        expect(live).toBe(1);
+      }
+    });
+  });
+
   describe('suppliers and bills', () => {
     it('suppliers are permissioned master data; carriers are linked to them', async () => {
       await post('/suppliers', cookies.salesPts, { name: 'Nope' }).expect(403);
@@ -1592,6 +1768,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
         totalUsd: '500',
       });
       expect(invoice.number).toMatch(new RegExp(`^NOL-OBI-${year}-\\d{6}$`));
+      // An opening item is approved as it is created: approving it again is refused (409), not
+      // an error, and leaves it as it was.
+      await post(`/customer-invoices/${invoice.id}/approve`, cookies.financePts).expect(409);
+      expect(
+        (await get(`/customer-invoices/${invoice.id}`, cookies.financePts).expect(200)).body,
+      ).toMatchObject({ status: 'APPROVED', journalEntryId: invoice.journalEntryId });
       const invoiceEntry = await journal(invoice.journalEntryId ?? '');
       balanced(invoiceEntry);
       expect(lineOf(invoiceEntry, account('1200').id)).toMatchObject({ debitUsd: '500' });
