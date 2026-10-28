@@ -585,8 +585,27 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
       await move(s.id, cookies.salesDxb, 'CLOSED').expect(403);
-      const closed = (await move(s.id, cookies.opsDxb, 'CLOSED').expect(200)).body as ShipmentDto;
+      // Owner decision Q1 (B1-5): no approved invoice bills it, so it closes only with a reason.
+      const delivered = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(delivered.actions.closeCheck).toEqual({ goodsOnHand: [], invoiced: false });
+      const refused = await move(s.id, cookies.opsDxb, 'CLOSED').expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'SHIPMENT_CLOSE_NOT_INVOICED',
+        params: { shipment: s.number, drafts: '0' },
+      });
+      await move(s.id, cookies.opsDxb, 'CLOSED', { noChargeReason: 'x ' }).expect(400);
+      const closed = (
+        await move(s.id, cookies.opsDxb, 'CLOSED', { noChargeReason: 'Sample, no charge' }).expect(
+          200,
+        )
+      ).body as ShipmentDto;
       expect(closed.status).toBe('CLOSED');
+      expect(closed.actions.closeCheck).toBeNull();
+      expect(closed.events.at(-1)).toMatchObject({
+        status: 'CLOSED',
+        reason: 'Sample, no charge',
+      });
       expect(closed.closedAt).not.toBeNull();
       const booking = (await get(`/bookings/${s.bookingId}`, cookies.opsDxb).expect(200))
         .body as BookingDto;
@@ -594,6 +613,12 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       await patch(`/shipments/${s.id}`, cookies.opsDxb, { vesselName: 'x' }).expect(409);
       await revert(s.id, cookies.managerDxb, 'Wrong entry', 409);
       await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: 'Wrong entry' }).expect(409);
+    });
+
+    it('a no-charge reason is taken only when closing', async () => {
+      const s = await confirmedShipment();
+      expect(s.actions.closeCheck).toBeNull();
+      await move(s.id, cookies.opsDxb, 'LOADED', { noChargeReason: 'Not closing' }).expect(400);
     });
 
     it('two concurrent changes of the same status: one wins, the other is refused', async () => {

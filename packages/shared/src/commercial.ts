@@ -737,6 +737,11 @@ export const FORM_REFUSALS = [
   // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
   // dash) and `drafts` (a count).
   'SUPPLIER_REFERENCE_DUPLICATE',
+  // Closing a shipment (owner decision Q1). Goods still in a warehouse: params `shipment` and
+  // `warehouses` ("code (packages)", comma separated). No approved invoice bills it and no
+  // reason to close it without charges was given: params `shipment` and `drafts` (a count).
+  'SHIPMENT_CLOSE_GOODS_ON_HAND',
+  'SHIPMENT_CLOSE_NOT_INVOICED',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',

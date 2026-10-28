@@ -662,7 +662,11 @@
     "revertDetails": "Details (optional)",
     "recordedAt": "Recorded on {time}",
     "revertTargetChanged": "The step to undo has changed since this form opened. Close it and open “Go back a status” again to review the step shown now.",
-    "containerMoveWarning": "This shipment is in container {container}. «{status}» is normally recorded by moving the container, which moves all its shipments. Record it here only if this shipment alone is different."
+    "containerMoveWarning": "This shipment is in container {container}. «{status}» is normally recorded by moving the container, which moves all its shipments. Record it here only if this shipment alone is different.",
+    "closeGoodsOnHand": "This shipment's goods are still in the warehouse: {warehouses}. Release them first, then close the shipment.",
+    "closeNotInvoiced": "No approved invoice bills this shipment. Approve its invoice first, or write why it is closed without charges.",
+    "noChargeReason": "Reason to close without charges",
+    "closeCostsReminder": "Before closing, check that all the shipment's costs are recorded: supplier bills, trips and container costs."
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -2510,7 +2514,9 @@
     "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
     "PRICE_CATEGORY_NOT_USABLE": "This price category is unknown, no longer in use, or for another cargo type.",
     "COUNTRY_KIND_FIXED": "A country pricing scope keeps its kind and country: add a new location instead.",
-    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}."
+    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}.",
+    "SHIPMENT_CLOSE_GOODS_ON_HAND": "Shipment {shipment} still has goods in the warehouse: {warehouses}. Release them before closing it.",
+    "SHIPMENT_CLOSE_NOT_INVOICED": "No approved invoice bills shipment {shipment} (draft invoices: {drafts}). Approve its invoice, or write why it closes without charges."
   },
   "Locations": {
     "title": "Ports and cities",
