@@ -478,13 +478,11 @@ export class BookingsService {
     // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs. For
     // Outlet Staff the outlet is checked as it is now, first in the transaction.
     const fromQuotation = prepared.quotationId
-      ? await tx.quotation.findUniqueOrThrow({
-          where: { id: prepared.quotationId },
-          select: { salesOutletId: true },
-        })
+      ? await lockApprovedQuotation(tx, prepared.quotationId)
       : null;
     if (fromQuotation) {
       await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+      await this.customers.lockActiveCustomerInTx(tx, prepared.branchId, prepared.customerId);
     }
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
@@ -881,4 +879,25 @@ function requireSameBranch(quotationBranchId: string, customerBranchId: string):
   if (quotationBranchId !== customerBranchId) {
     throw new ConflictException("This quotation is not in its customer's branch");
   }
+}
+
+/**
+ * The quotation a booking is made from, share-locked and checked again in the booking's
+ * transaction (B1-6): it was approved when the booking was prepared, but an expiry, a rejection
+ * or a change may have committed since. Status changes update the row, so they wait for this
+ * lock and then find the booking.
+ */
+async function lockApprovedQuotation(
+  tx: Tx,
+  id: string,
+): Promise<{ salesOutletId: string | null }> {
+  const rows = await tx.$queryRaw<{ status: string; salesOutletId: string | null }[]>`
+    SELECT "status"::text AS "status", "sales_outlet_id" AS "salesOutletId"
+    FROM "quotations" WHERE "id" = ${id}::uuid FOR SHARE`;
+  const row = rows[0];
+  if (!row) throw new NotFoundException('Quotation not found');
+  if (row.status !== 'APPROVED') {
+    throw new ConflictException('Only an approved quotation can become a booking');
+  }
+  return { salesOutletId: row.salesOutletId };
 }

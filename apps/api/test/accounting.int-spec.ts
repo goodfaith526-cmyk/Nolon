@@ -614,6 +614,52 @@ describe('accounting: journals, invoices, receipts, periods', () => {
       await post('/receipts', cookies.financePts, { ...body, requestId: randomUUID() }).expect(400);
     });
 
+    it('a currency deactivated while a receipt is being saved takes no receipt (B1-6)', async () => {
+      const cashAed = (
+        await post('/accounting/accounts', cookies.admin, {
+          code: `T${randomUUID().slice(0, 6).toUpperCase()}A`,
+          nameEn: 'Test cash PTS (AED)',
+          nameAr: 'نقدية اختبار درهم',
+          type: 'ASSET',
+          isPostable: true,
+          isCash: true,
+          currency: 'AED',
+          branchId: pts,
+        }).expect(201)
+      ).body as AccountDto;
+      const body = {
+        customerId: customer.id,
+        receiptDate: d('05-10'),
+        currency: 'AED',
+        fxRate: '3.6725',
+        amount: '100',
+        cashAccountId: cashAed.id,
+        allocations: [],
+      };
+      try {
+        let finish = () => {};
+        const held = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const deactivate = t.prisma.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`UPDATE "currencies" SET "is_active" = false WHERE "code" = 'AED'`;
+            await held;
+          },
+          { timeout: 20_000 },
+        );
+        const receipt = post('/receipts', cookies.financePts, body).then((r) => r);
+        await waitForLockWaiter(t.prisma);
+        finish();
+        await deactivate;
+        expect((await receipt).status).toBe(400);
+        expect(await t.prisma.receipt.count({ where: { cashAccountId: cashAed.id } })).toBe(0);
+      } finally {
+        await t.prisma.currency.update({ where: { code: 'AED' }, data: { isActive: true } });
+      }
+      await post('/receipts', cookies.financePts, body).expect(201);
+    });
+
     it('permissions and branch scope', async () => {
       const body = {
         customerId: customer.id,
