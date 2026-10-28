@@ -24,8 +24,9 @@ import { uniquePhone, waitForLockWaiter } from './test-data.js';
  * under the card's lock and matched to the fingerprint staff saw. The bot then reads the booking's
  * number. Negative cases: a missing permission, another branch, a stale version, a decided request
  * or one awaiting routing, a customer of another branch or not the request's own, a price for
- * another route, a changed or cancelled price (also while the approval waits on the card), and an
- * inactive payment currency; none of them makes a booking.
+ * a booking describing cargo of its own, a changed or cancelled price (also while the approval waits
+ * on the card), a pricing currency withdrawn (also while the approval waits on it), and an inactive
+ * payment currency; none of them makes a booking.
  */
 describe('Customer Service booking request approval (R3c2)', () => {
   let t: TestApp;
@@ -87,14 +88,10 @@ describe('Customer Service booking request approval (R3c2)', () => {
   const priceOf = async (cookie: string, id: string, inputs: object) =>
     (await staff(cookie).get(`/cs-booking-requests/${id}/price`, inputs).expect(200))
       .body as CsApprovalPriceDto;
-  const booking = (origin: string, customerId: string, extra: object = {}) => ({
+  // The booking's own fields: route, mode and cargo come from the pricing inputs (F137-1).
+  const booking = (customerId: string, extra: object = {}) => ({
     customerId,
-    originLocationId: origin,
-    destinationLocationId: ids.dest!,
-    mode: 'ROAD',
-    cargoType: 'GENERAL',
     services: [],
-    items: [],
     ...extra,
   });
   const approve = (cookie: string, id: string, body: object) =>
@@ -252,7 +249,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       paymentCurrency: 'USD',
       pricing: pricing(ids.served!),
       pricingFingerprint: price.pricingFingerprint,
-      booking: booking(ids.served!, ids.customerPts!),
+      booking: booking(ids.customerPts!),
     };
     const before = await bookingsOf(ids.customerPts!);
 
@@ -271,11 +268,23 @@ describe('Customer Service booking request approval (R3c2)', () => {
     });
     expect(done.bookingNumber).not.toBeNull();
     const made1 = await t.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
+    // F137-1: the booking is the cargo priced, with no line; the request keeps what was priced.
     expect(made1).toMatchObject({
       branchId: pts,
       customerId: ids.customerPts,
       status: 'DRAFT',
       originLocationId: ids.served,
+      destinationLocationId: ids.dest,
+      mode: 'ROAD',
+      loadType: null,
+      cargoType: 'GENERAL',
+    });
+    expect(await t.prisma.bookingItem.count({ where: { bookingId: made1.id } })).toBe(0);
+    expect(done.approvedPricing).toEqual({
+      category,
+      quantity: '2',
+      currency: 'USD',
+      total: '80', // price.total, 80.00, as a decimal string
     });
     expect(await bookingsOf(ids.customerPts!)).toBe(before + 1);
 
@@ -313,7 +322,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       paymentCurrency: 'USD',
       pricing: pricing(ids.served!),
       pricingFingerprint: price.pricingFingerprint,
-      booking: booking(ids.served!, ids.customerPts!),
+      booking: booking(ids.customerPts!),
     };
     const ptsBefore = await bookingsOf(ids.customerPts!);
     const jedBefore = await bookingsOf(ids.customerJed!);
@@ -322,21 +331,19 @@ describe('Customer Service booking request approval (R3c2)', () => {
       if (code) expect((res.body as { code?: string }).code).toBe(code);
     };
 
-    // The price is for another route than the booking.
-    await refused(
-      cookies.salesPts,
-      { booking: booking(ids.two!, ids.customerPts!) },
-      400,
-      'PRICING_MISMATCH',
-    );
+    // The booking describes no cargo of its own: route, mode, cargo and lines are the priced ones.
+    for (const extra of [
+      { originLocationId: ids.two },
+      { mode: 'SEA' },
+      { loadType: 'FCL' },
+      { cargoType: 'PALLET' },
+      { items: [{ cargoType: 'GENERAL', quantity: 99 }] },
+    ]) {
+      await refused(cookies.salesPts, { booking: booking(ids.customerPts!, extra) }, 400);
+    }
     // A customer of another branch: not one of PTS Sales', and not the request's branch.
-    await refused(cookies.salesPts, { booking: booking(ids.served!, ids.customerJed!) }, 404);
-    await refused(
-      cookies.admin,
-      { booking: booking(ids.served!, ids.customerJed!) },
-      400,
-      'BRANCH_MISMATCH',
-    );
+    await refused(cookies.salesPts, { booking: booking(ids.customerJed!) }, 404);
+    await refused(cookies.admin, { booking: booking(ids.customerJed!) }, 400, 'BRANCH_MISMATCH');
     // A request of a customer is booked for that customer only.
     const owner = await t.prisma.csBookingRequest.findUniqueOrThrow({ where: { id: made.id } });
     await t.prisma.csBookingRequest.update({
@@ -384,7 +391,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       version: v,
       pricing: pricing(ids.two!),
       pricingFingerprint: null,
-      booking: booking(ids.two!, ids.customerPts!),
+      booking: booking(ids.customerPts!),
     }).expect(409);
     // Once routed, with no approved price for its route, it is approved with no fingerprint.
     await staff(cookies.salesPts)
@@ -395,7 +402,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       version: v + 1,
       pricing: pricing(ids.two!),
       pricingFingerprint: null,
-      booking: booking(ids.two!, ids.customerPts!),
+      booking: booking(ids.customerPts!),
     }).expect(201);
     expect(await bookingsOf(ids.customerPts!)).toBe(ptsBefore + 1);
   });
@@ -409,7 +416,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       paymentCurrency: 'USD',
       pricing: pricing(ids.served!),
       pricingFingerprint: price.pricingFingerprint,
-      booking: booking(ids.served!, ids.customerPts!),
+      booking: booking(ids.customerPts!),
     };
     const before = await bookingsOf(ids.customerPts!);
     try {
@@ -436,6 +443,75 @@ describe('Customer Service booking request approval (R3c2)', () => {
       expect((waited.body as { code?: string }).code).toBe('PRICE_STALE');
     } finally {
       await t.prisma.rateCard.update({ where: { id: cardId }, data: { status: 'APPROVED' } });
+    }
+    expect(await bookingsOf(ids.customerPts!)).toBe(before);
+    expect((await detail(cookies.salesPts, made.id)).status).toBe('pending');
+  });
+
+  it('refuses a pricing currency withdrawn after staff saw the price, also while approval waits on it (F137-2)', async () => {
+    const code = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    await t.prisma.currency.upsert({
+      where: { code },
+      create: { code, nameEn: `Test ${code}`, nameAr: `تجربة ${code}`, decimalPlaces: 2 },
+      update: { isActive: true },
+    });
+    const card = await t.prisma.rateCard.create({
+      data: {
+        branchId: pts,
+        originLocationId: ids.served!,
+        destinationLocationId: ids.dest!,
+        mode: 'ROAD',
+        cargoType: 'GENERAL',
+        chargeTypeCode: 'FREIGHT',
+        unit: 'PER_SHIPMENT',
+        price: '30',
+        currency: code,
+        validFrom: new Date(Date.now() - 30 * 86_400_000),
+        status: 'APPROVED',
+        createdById,
+        approvedById: createdById,
+        approvedAt: new Date(),
+      },
+    });
+    const made = await request(ids.served!);
+    const { version } = await detail(cookies.salesPts, made.id);
+    const inputs = pricing(ids.served!, { currency: code });
+    const price = await priceOf(cookies.salesPts, made.id, inputs);
+    expect(price).toMatchObject({ state: 'priced', currency: code });
+    // Priced in one currency, paid in another: locking the payment currency alone is not enough.
+    const body = {
+      version,
+      paymentCurrency: 'USD',
+      pricing: inputs,
+      pricingFingerprint: price.pricingFingerprint,
+      booking: booking(ids.customerPts!),
+    };
+    const before = await bookingsOf(ids.customerPts!);
+    try {
+      // Withdrawn before: the price staff saw is stale.
+      await t.prisma.currency.update({ where: { code }, data: { isActive: false } });
+      const gone = await approve(cookies.salesPts, made.id, body).expect(409);
+      expect(gone.body).toMatchObject({ code: 'PRICE_STALE', price: null });
+      await t.prisma.currency.update({ where: { code }, data: { isActive: true } });
+
+      // Withdrawn while the approval waits on the currency's lock: it sees the withdrawal.
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const withdrawing = t.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "currencies" WHERE "code" = ${code} FOR UPDATE`;
+        await tx.currency.update({ where: { code }, data: { isActive: false } });
+        await held;
+      });
+      const approving = Promise.resolve(approve(cookies.salesPts, made.id, body));
+      await waitForLockWaiter(t.prisma);
+      release();
+      await withdrawing;
+      const waited = await approving;
+      expect(waited.status).toBe(409);
+      expect((waited.body as { code?: string }).code).toBe('PRICE_STALE');
+    } finally {
+      await t.prisma.currency.update({ where: { code }, data: { isActive: true } });
+      await t.prisma.rateCard.update({ where: { id: card.id }, data: { status: 'CANCELLED' } });
     }
     expect(await bookingsOf(ids.customerPts!)).toBe(before);
     expect((await detail(cookies.salesPts, made.id)).status).toBe('pending');

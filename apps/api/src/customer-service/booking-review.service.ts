@@ -18,12 +18,13 @@ import type {
   CsReviewFilter,
   CsRouteRequest,
   CsSenderChannel,
+  CreateBookingRequest,
   Permission,
 } from '@nolon/shared';
 import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
-import { toDecimalString } from '../common/money.js';
+import { dec, toDecimalString } from '../common/money.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { type CsBookingRequest, type CsQuote, Prisma } from '../generated/prisma/client.js';
@@ -253,26 +254,28 @@ export class BookingReviewService {
    * person's permissions, and the request approved, in one transaction. Inside it, with the
    * request row locked: the version, the state (PENDING, not expired), the booking in the
    * request's branch and (a request of a customer) for that customer, the person's approve
-   * permission there, the key still active and serving it, the payment currency active, and the
-   * price again (requireSamePrice). Any refusal makes neither the booking nor the approval.
+   * permission there, the key still active and serving it, the payment and pricing currencies
+   * active, and the price again (requireSamePrice). The booking is the cargo priced (Codex F137-1):
+   * route, mode, cargo and load type from the pricing inputs, no line; the request keeps what was
+   * priced. Any refusal makes neither the booking nor the approval.
    */
   async approve(
     user: AuthUser,
     id: string,
     input: CsApproveRequest,
   ): Promise<CsBookingRequestStaffDto> {
-    const { booking, pricing } = input;
-    if (
-      booking.originLocationId !== pricing.originId ||
-      booking.destinationLocationId !== pricing.destinationId ||
-      booking.mode !== pricing.mode ||
-      ((booking.loadType ?? null) !== null && (pricing.loadType ?? null) !== booking.loadType)
-    ) {
-      throw new BadRequestException({
-        message: 'The price is for another route, mode or load type than the booking',
-        code: 'PRICING_MISMATCH',
-      });
-    }
+    const { pricing } = input;
+    // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
+    const cargo = await this.quotes.cargoOf(pricing);
+    const booking: CreateBookingRequest = {
+      ...input.booking,
+      originLocationId: pricing.originId,
+      destinationLocationId: pricing.destinationId,
+      mode: pricing.mode,
+      loadType: cargo.loadType,
+      cargoType: cargo.cargoType,
+      items: [],
+    };
     await this.currencies.requireActive(input.paymentCurrency);
     const prepared = await this.bookings.prepareCreate(user, booking);
     const written = await this.prisma.$transaction(async (tx) => {
@@ -297,11 +300,11 @@ export class BookingReviewService {
       }
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       await this.currencies.requireActiveInTx(tx, input.paymentCurrency);
-      await requireSamePrice(
-        tx,
-        await this.quotes.priceFor(pricing, row.branchId),
-        input.pricingFingerprint,
-      );
+      // F137-2: the pricing currency share-locked through commit, before the price is computed
+      // again; one withdrawn since staff saw the price makes it stale.
+      await requirePriceCurrency(tx, pricing.currency);
+      const now = await this.quotes.priceFor(pricing, row.branchId);
+      await requireSamePrice(tx, now, input.pricingFingerprint);
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
       return tx.csBookingRequest.update({
         where: { id },
@@ -309,6 +312,10 @@ export class BookingReviewService {
           status: 'APPROVED',
           bookingId,
           paymentCurrency: input.paymentCurrency,
+          approvedCategoryCode: cargo.category,
+          approvedQuantity: dec(pricing.quantity),
+          approvedCurrency: pricing.currency,
+          approvedTotal: now.dto.total === null ? null : dec(now.dto.total),
           decidedById: user.id,
           decidedAt: new Date(),
           version: { increment: 1 },
@@ -406,12 +413,7 @@ async function requireKeyServes(tx: Tx, apiClientId: string, branchId: string): 
  * when staff saw none.
  */
 async function requireSamePrice(tx: Tx, now: ApprovalPrice, seen: string | null): Promise<void> {
-  const stale = () =>
-    new ConflictException({
-      message: 'The price changed: check it again before approving',
-      code: 'PRICE_STALE',
-      price: now.dto,
-    });
+  const stale = () => priceStale(now.dto);
   if (now.dto.pricingFingerprint !== seen) throw stale();
   if (now.card === null) return;
   const cards = await tx.$queryRaw<
@@ -438,6 +440,24 @@ async function requireSamePrice(tx: Tx, now: ApprovalPrice, seen: string | null)
   ) {
     throw stale();
   }
+}
+
+function priceStale(price: CsApprovalPriceDto | null): ConflictException {
+  return new ConflictException({
+    message: 'The price changed: check it again before approving',
+    code: 'PRICE_STALE',
+    price,
+  });
+}
+
+/**
+ * 409 PRICE_STALE unless the pricing currency, share-locked here, is active: a deactivation either
+ * committed before (and is seen) or waits for this transaction (Codex F137-2).
+ */
+async function requirePriceCurrency(tx: Tx, code: string): Promise<void> {
+  const rows = await tx.$queryRaw<{ is_active: boolean }[]>`
+    SELECT "is_active" FROM "currencies" WHERE "code" = ${code} FOR SHARE`;
+  if (rows[0]?.is_active !== true) throw priceStale(null);
 }
 
 function reasonDto(r: {
@@ -501,6 +521,15 @@ function staffDto(
     bookingId: r.bookingId,
     bookingNumber: r.booking?.number ?? null,
     paymentCurrency: r.paymentCurrency,
+    approvedPricing:
+      r.approvedCategoryCode !== null && r.approvedQuantity !== null && r.approvedCurrency !== null
+        ? {
+            category: r.approvedCategoryCode,
+            quantity: toDecimalString(r.approvedQuantity),
+            currency: r.approvedCurrency,
+            total: r.approvedTotal === null ? null : toDecimalString(r.approvedTotal),
+          }
+        : null,
     actions: {
       canRoute:
         open &&

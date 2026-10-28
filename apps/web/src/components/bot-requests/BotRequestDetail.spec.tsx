@@ -46,6 +46,7 @@ const base: CsBookingRequestStaffDto = {
   bookingId: null,
   bookingNumber: null,
   paymentCurrency: null,
+  approvedPricing: null,
   actions: { canRoute: true, canReject: true, canApprove: false },
 };
 
@@ -143,11 +144,13 @@ describe('BotRequestDetail', () => {
       bookingId: 'bk1',
       bookingNumber: 'BK-000042',
       paymentCurrency: 'SDG',
+      approvedPricing: { category: 'BARREL', quantity: '2', currency: 'USD', total: '90.00' },
       actions: { canRoute: false, canReject: false, canApprove: false },
     });
     const link = shown.querySelector<HTMLAnchorElement>('a[href="/bookings/bk1"]');
     expect(link?.textContent).toBe('BK-000042');
     expect(shown.textContent).toContain('SDG');
+    expect(shown.textContent).toContain('BARREL × 2 = 90.00 USD');
   });
 
   it('offers no action the API does not allow', async () => {

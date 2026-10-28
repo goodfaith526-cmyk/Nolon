@@ -111,14 +111,17 @@ version, created_by, approved_by)`، اعتماد بشخص غير المنشئ،
 
 - **مسار موافقة خاص** `POST /cs-booking-requests/:id/approve {version, paymentCurrency, pricing, pricingFingerprint, booking}`
   (approve + bookings:create)، بدل حقل `csRequest` في `POST /bookings`. السبب: `CreateBookingRequest` مستخدم في
-  مسودات المساعد اللي بترفض أي حقل ما معروف، فما بنغيّر شكلو. `booking` هو نفس جسم `POST /bookings`، وبيمر بنفس
-  فحوص `prepareCreate` و`insertInTx` بصلاحيات الموظف.
-- **مدخلات التسعير** `pricing {originId, destinationId, mode, loadType?, category, quantity, currency}`: المنشأ والوجهة
-  والطريقة لازم تطابق الحجز (وإلا `400 PRICING_MISMATCH`)؛ الفئة والكمية (بوحدة الفئة) والعملة الموظف بيأكدها.
+  مسودات المساعد اللي بترفض أي حقل ما معروف، فما بنغيّر شكلو. `booking` هو جسم `POST /bookings` **بدون** المسار
+  والطريقة ونوع الحمولة ونوع البضاعة والأسطر (Codex F137-1)، وبيمر بنفس فحوص `prepareCreate` و`insertInTx`
+  بصلاحيات الموظف.
+- **مدخلات التسعير** `pricing {originId, destinationId, mode, loadType?, category, quantity, currency}` هي مصدر
+  البضاعة الوحيد: الحجز بياخد منها المنشأ والوجهة والطريقة ونوع الحمولة (المختار، أو المستنتج زي التسعير) ونوع بضاعة
+  الفئة، فما في وصف تاني للبضاعة يختلف عن المسعَّر. الطلب بيحفظ لقطة اللي اتسعّر: الفئة والكمية (بوحدة الفئة) وعملة
+  التسعير والإجمالي (`approvedPricing`؛ الإجمالي فاضي لو ما في سعر معتمد).
   `GET /cs-booking-requests/:id/price` بيرجّع السعر والبصمة لنفس المدخلات.
 - **داخل المعاملة**: قفل الطلب، النسخة، الحالة `PENDING` وما منتهي، فرع الحجز = فرع الطلب (`BRANCH_MISMATCH`)،
   زبون الطلب لو عندو زبون (`CUSTOMER_MISMATCH`)، صلاحية approve في الفرع، المفتاح لسه بيخدم الفرع، عملة الدفع
-  نشطة ومقفولة، وإعادة التسعير: البصمة لازم تطابق، وصف البطاقة مقفول `FOR SHARE` ولسه APPROVED وبنفس السعر
+  نشطة ومقفولة، عملة التسعير مقفولة `FOR SHARE` ونشطة قبل إعادة الحساب (Codex F137-2؛ اتوقفت = `PRICE_STALE`)، وإعادة التسعير: البصمة لازم تطابق، وصف البطاقة مقفول `FOR SHARE` ولسه APPROVED وبنفس السعر
   والحد الأدنى و`approvedAt` وسارية اليوم. غير كده = `409 PRICE_STALE` مع السعر الحالي، وما في حجز ولا موافقة.
 - **الحجز** بيتعمل مسودة بلا أسطر وبلا سعر، والموظف بيكمّلو في شاشة الحجز. البوت بيشوف `bookingNumber` (رقم الحجز
   الحالي).

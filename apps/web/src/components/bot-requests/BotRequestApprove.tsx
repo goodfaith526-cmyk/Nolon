@@ -78,15 +78,11 @@ export function BotRequestApprove({
       paymentCurrency,
       pricing: inputs,
       pricingFingerprint: priced.pricingFingerprint,
+      // The route, mode and cargo of the booking are the priced inputs (the API takes them).
       booking: {
         customerId,
-        originLocationId: inputs.originId,
-        destinationLocationId: inputs.destinationId,
-        mode: inputs.mode,
-        cargoType: category.cargoType,
         services: [...r.services],
         requestedDeparture: r.requestedDate,
-        items: [],
       },
     });
   }

@@ -213,6 +213,16 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.approvedPricing && (
+          <>
+            <dt>{t('approvedPricing')}</dt>
+            <dd dir="ltr">
+              {r.approvedPricing.category} × {r.approvedPricing.quantity}
+              {r.approvedPricing.total !== null &&
+                ` = ${r.approvedPricing.total} ${r.approvedPricing.currency}`}
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>

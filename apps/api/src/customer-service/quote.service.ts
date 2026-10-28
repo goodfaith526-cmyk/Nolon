@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import {
   CS_QUOTE_INCLUDES,
+  type CargoType,
   type CsApprovalPriceDto,
   type CsPriceInputs,
   type CsQuoteChoices,
@@ -231,6 +232,21 @@ export class QuoteService {
       quoteRefExpiresAt: expiresAt.toISOString(),
       customerNote: null,
       bookable,
+    };
+  }
+
+  /**
+   * The cargo an approval's pricing inputs price (Codex F137-1): the booking takes its category's
+   * cargo type and the load type priced, so the booking approved is the cargo staff priced.
+   */
+  async cargoOf(
+    inputs: CsPriceInputs,
+  ): Promise<{ category: string; cargoType: CargoType; loadType: LoadType | null }> {
+    const category = await this.masterData.requirePriceCategory(inputs.category, null);
+    return {
+      category: category.code,
+      cargoType: category.cargoType,
+      loadType: inputs.loadType ?? loadTypeOf(inputs.mode, category.cargoType),
     };
   }
 

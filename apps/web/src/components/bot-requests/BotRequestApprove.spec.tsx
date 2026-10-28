@@ -107,16 +107,7 @@ describe('BotRequestApprove', () => {
         currency: 'USD',
       },
       pricingFingerprint: 'a'.repeat(64),
-      booking: {
-        customerId: 'c1',
-        originLocationId: 'jed',
-        destinationLocationId: 'krt',
-        mode: 'SEA',
-        cargoType: 'GENERAL',
-        services: ['PICKUP'],
-        requestedDeparture: null,
-        items: [],
-      },
+      booking: { customerId: 'c1', services: ['PICKUP'], requestedDeparture: null },
     });
 
     // A changed input needs the price again.

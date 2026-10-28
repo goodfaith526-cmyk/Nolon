@@ -2946,6 +2946,7 @@
     "priceNone_AMBIGUOUS": "More than one rate card matches: price it on the quotation.",
     "priceFailed": "The price could not be checked. Check the inputs.",
     "approveAction": "Approve and open the booking",
-    "booking": "Booking"
+    "booking": "Booking",
+    "approvedPricing": "Priced on approval"
   }
 }

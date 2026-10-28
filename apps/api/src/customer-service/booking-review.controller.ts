@@ -63,7 +63,15 @@ const approveBody = z
       .string()
       .regex(/^[0-9a-f]{64}$/)
       .nullable(),
-    booking: bookingCreateBody,
+    // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
+    booking: bookingCreateBody.omit({
+      originLocationId: true,
+      destinationLocationId: true,
+      mode: true,
+      loadType: true,
+      cargoType: true,
+      items: true,
+    }),
   })
   .strict();
 const reasonBody = z

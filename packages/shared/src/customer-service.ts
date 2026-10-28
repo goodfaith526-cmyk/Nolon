@@ -460,6 +460,14 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   bookingId: string | null;
   bookingNumber: string | null;
   paymentCurrency: string | null;
+  /** What staff priced on approval: the booking is made with no line (Codex F137-1). */
+  approvedPricing: {
+    category: string;
+    quantity: DecimalString;
+    currency: string;
+    /** Null: approved with no approved price. */
+    total: DecimalString | null;
+  } | null;
   actions: { canRoute: boolean; canReject: boolean; canApprove: boolean };
 }
 
@@ -497,7 +505,17 @@ export interface CsApprovalPriceDto {
 }
 
 /**
- * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create request, in the
+ * The booking's own fields on approval. Its route, mode, load type and cargo type come from the
+ * pricing inputs, and it is made with no line (Codex F137-1): the booking approved is the cargo
+ * staff priced, never a second description of it.
+ */
+export type CsApproveBooking = Omit<
+  CreateBookingRequest,
+  'originLocationId' | 'destinationLocationId' | 'mode' | 'loadType' | 'cargoType' | 'items'
+>;
+
+/**
+ * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create checks, in the
  * request's branch) and the request it approves, in one transaction.
  */
 export interface CsApproveRequest {
@@ -506,7 +524,7 @@ export interface CsApproveRequest {
   pricing: CsPriceInputs;
   /** The fingerprint of the price staff saw; null when they saw no approved price. */
   pricingFingerprint: string | null;
-  booking: CreateBookingRequest;
+  booking: CsApproveBooking;
 }
 
 export interface CsRouteRequest {
