@@ -5,9 +5,11 @@ import {
   type ConsolidationBasis,
   type ConsolidationDto,
   type ConsolidationMove,
+  type ConsolidationReopenRequest,
   type ConsolidationSummaryDto,
   type ConsolidationUpdateRequest,
   type Page,
+  SHIPMENT_REASON_MIN_LENGTH,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, Fragment, useState } from 'react';
@@ -43,6 +45,8 @@ export function ConsolidationDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // B3-5: the revision the reopen form was opened on, and one request id per attempt.
+  const [reopening, setReopening] = useState<{ revision: number; requestId: string } | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
   const [targets, setTargets] = useState<ConsolidationSummaryDto[] | null>(null);
 
@@ -123,6 +127,22 @@ export function ConsolidationDetail({ id }: { id: string }) {
     if (ok) setCancelling(false);
   }
 
+  async function onReopen(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!reopening) return;
+    const body: ConsolidationReopenRequest = {
+      requestId: reopening.requestId,
+      expectedRevision: reopening.revision,
+      expectedStatus: 'CLOSED',
+      reason: field(new FormData(event.currentTarget), 'reason').trim(),
+    };
+    const ok = await run(
+      () => api<ConsolidationDto>(`/consolidations/${id}/reopen`, { method: 'POST', body }),
+      t('reopenedNotice'),
+    );
+    if (ok) setReopening(null);
+  }
+
   function startMove(shipmentId: string) {
     setMoving(shipmentId);
     if (targets !== null) return;
@@ -193,7 +213,7 @@ export function ConsolidationDetail({ id }: { id: string }) {
       )}
       <Notice notice={notice} />
 
-      {(a.moves.length > 0 || a.canCancel) && (
+      {(a.moves.length > 0 || a.canCancel || a.canReopen) && (
         <div className="card stack">
           {a.moves.map((move) => (
             <form key={move} className="line trip-move" onSubmit={(e) => onMove(e, move)}>
@@ -225,6 +245,40 @@ export function ConsolidationDetail({ id }: { id: string }) {
               <div className="actions">
                 <button type="button" onClick={() => setCancelling(true)}>
                   {t('cancel')}
+                </button>
+              </div>
+            ))}
+          {a.canReopen &&
+            (reopening ? (
+              <form className="stack" onSubmit={(e) => void onReopen(e)}>
+                <p className="muted">{t('reopenHint')}</p>
+                <label className="field">
+                  <span>{t('reopenReason')}</span>
+                  <textarea
+                    name="reason"
+                    required
+                    minLength={SHIPMENT_REASON_MIN_LENGTH}
+                    maxLength={500}
+                  />
+                </label>
+                <div className="actions">
+                  <button type="submit" className="danger" disabled={busy}>
+                    {t('confirmReopen')}
+                  </button>
+                  <button type="button" onClick={() => setReopening(null)}>
+                    {tc('back')}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setReopening({ revision: c.reopenRevision, requestId: crypto.randomUUID() })
+                  }
+                >
+                  {t('reopen')}
                 </button>
               </div>
             ))}
@@ -311,6 +365,15 @@ export function ConsolidationDetail({ id }: { id: string }) {
               <dd className="pre">{c.cancelReason}</dd>
             </>
           )}
+          {c.reopenings.map((r) => (
+            <Fragment key={r.revision}>
+              <dt>{t('reopenedAt', { time: dateTime(r.reopenedAt) })}</dt>
+              <dd>
+                {t('reopenedBy', { user: r.reopenedByName, closed: dateTime(r.closedAt) })}
+                <div className="pre">{r.reason}</div>
+              </dd>
+            </Fragment>
+          ))}
           {c.notes && (
             <>
               <dt>{tc('notes')}</dt>

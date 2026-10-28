@@ -69,6 +69,7 @@ model Branch {
   podCancellations               PodCancellation[]
   shipmentCargoCorrections       ShipmentCargoCorrection[]
   tripDepartureUndos             TripDepartureUndo[]
+  consolidationReopenings        ConsolidationReopening[]
   grnDrafts                      GrnDraft[]
   grnDraftLines                  GrnDraftLine[]
   grnDraftProposals              GrnDraftProposal[]
@@ -225,6 +226,7 @@ model User {
   podCancellations                  PodCancellation[]               @relation("PodCancelledBy")
   shipmentCargoCorrections          ShipmentCargoCorrection[]       @relation("CargoCorrectedBy")
   tripDepartureUndos                TripDepartureUndo[]             @relation("TripDepartureUndoneBy")
+  consolidationReopenings           ConsolidationReopening[]        @relation("ConsolidationReopenedBy")
   grnDraftsCreated                  GrnDraft[]                      @relation("GrnDraftCreatedBy")
   grnDraftsDecided                  GrnDraft[]                      @relation("GrnDraftDecidedBy")
   quotationDraftsCreated            QuotationDraft[]                @relation("QuotationDraftCreatedBy")
@@ -2708,9 +2710,43 @@ model Consolidation {
   billLines        SupplierBillLine[]
   journalLines     JournalLine[]
   bookingDrafts    BookingDraft[]
+  reopenings       ConsolidationReopening[]
 
   @@index([branchId, status])
   @@map("consolidations")
+}
+
+/// A closed container opened again before anything was charged to it (B3-5,
+/// docs/plans/05-correction-contracts.md section 5). Insert-only (trigger).
+model ConsolidationReopening {
+  id              String   @id @default(uuid()) @db.Uuid
+  consolidationId String   @map("consolidation_id") @db.Uuid
+  /// The container's branch.
+  branchId        String   @map("branch_id") @db.Uuid
+  /// 1 for the first reopening of the container, then 2, 3...
+  revision        Int
+  requestId       String   @map("request_id") @db.Uuid
+  /// SHA-256 (hex) of the request without its id.
+  requestHash     String   @map("request_hash") @db.Char(64)
+  /// The close that was taken back.
+  closedAt        DateTime @map("closed_at") @db.Timestamptz(3)
+  /// The basis frozen at that close: { basis, shares: [{ shipmentId, value }] }, values as
+  /// decimal strings.
+  basis           Json
+  /// The shipments that went back to their step before the close.
+  shipmentIds     String[] @map("shipment_ids") @db.Uuid
+  reason          String   @db.VarChar(500)
+  reopenedById    String   @map("reopened_by_id") @db.Uuid
+  reopenedAt      DateTime @default(now()) @map("reopened_at") @db.Timestamptz(3)
+
+  consolidation Consolidation @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  reopenedBy    User          @relation("ConsolidationReopenedBy", fields: [reopenedById], references: [id], onDelete: Restrict)
+
+  @@unique([consolidationId, revision])
+  @@unique([consolidationId, requestId])
+  @@index([branchId])
+  @@map("consolidation_reopenings")
 }
 
 /// A shipment in a consolidated container. A shipment is in one container at a time (cancelled

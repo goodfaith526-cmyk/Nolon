@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
+  AuditLogEntryDto,
   ConsolidationStatus,
   ConsolidationsReportDto,
   ContainerReportRowDto,
@@ -9,7 +10,14 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { fromDbDate, fromDbDateOrNull } from '../common/dates.js';
 import { ZERO, toDecimalString } from '../common/money.js';
-import { overLimit, sqlDate, uuidList } from '../common/report-sql.js';
+import {
+  type AuditQuery,
+  andIf,
+  auditEntityFilter,
+  overLimit,
+  sqlDate,
+  uuidList,
+} from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -180,5 +188,42 @@ export class ConsolidationReportsService {
       containers,
       truncated,
     };
+  }
+
+  /** Audit log: closed containers opened again (B3-5), with who did it and why. */
+  async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
+    const branchIds = reportBranchIds(user, q.branchId);
+    if (branchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<
+      {
+        at: Date;
+        branchCode: string;
+        userId: string;
+        userName: string;
+        entity: 'CONTAINER';
+        action: 'REVERT';
+        reference: string;
+        status: ConsolidationStatus;
+        detail: string;
+      }[]
+    >`
+      SELECT x."at", b."code" AS "branchCode", x."user_id" AS "userId", u."full_name" AS "userName",
+             x."entity", x."action", x."reference", x."status", x."detail"
+      FROM (
+        SELECT r."branch_id", r."reopened_at" AS "at", r."reopened_by_id" AS "user_id",
+               'CONTAINER' AS "entity", 'REVERT' AS "action", c."number" AS "reference",
+               'OPEN' AS "status", r."reason" AS "detail"
+        FROM "consolidation_reopenings" r
+        JOIN "consolidations" c ON c."id" = r."consolidation_id"
+      ) x
+      JOIN "branches" b ON b."id" = x."branch_id"
+      JOIN "users" u ON u."id" = x."user_id"
+      WHERE x."branch_id" IN ${uuidList(branchIds)}
+        AND (x."at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+        ${andIf(q.userId, (id) => Prisma.sql`x."user_id" = ${id}::uuid`)}
+        ${auditEntityFilter(q)}
+      ORDER BY x."at" DESC
+      LIMIT ${q.limit + 1}`;
+    return rows.map((r) => ({ ...r, at: r.at.toISOString() }));
   }
 }

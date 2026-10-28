@@ -146,6 +146,17 @@ export class ContainerCostsService implements ContainerCostHandler, OnModuleInit
     });
   }
 
+  async hasCostHistoryInTx(tx: Tx, consolidationId: string): Promise<boolean> {
+    const found = await tx.supplierBillLine.findFirst({
+      where: {
+        consolidationId,
+        OR: [{ bill: { status: 'APPROVED' } }, { allocationEntryId: { not: null } }],
+      },
+      select: { id: true },
+    });
+    return found !== null;
+  }
+
   async view(consolidationId: string): Promise<ContainerCostsView> {
     const lines = await this.prisma.supplierBillLine.findMany({
       where: { consolidationId, bill: { status: 'APPROVED' } },

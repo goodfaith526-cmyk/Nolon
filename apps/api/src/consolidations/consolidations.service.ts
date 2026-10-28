@@ -18,6 +18,8 @@ import type {
   ConsolidationDto,
   ConsolidationInput,
   ConsolidationMoveRequest,
+  ConsolidationReopenRequest,
+  ConsolidationReopeningDto,
   ConsolidationShipmentDto,
   ConsolidationStatus,
   ConsolidationSummaryDto,
@@ -47,8 +49,9 @@ import {
 } from '../common/list-filters.js';
 import { type Decimal, ZERO, toDecimalString } from '../common/money.js';
 import { ROUTE_SEQUENCES, formatRouteNumber, nextSequenceValue } from '../common/numbering.js';
-import { oldNumberTerm, onceNumbered } from '../common/old-numbers.js';
+import { oldNumberTerm, oldNumbersOf, onceNumbered } from '../common/old-numbers.js';
 import { codedRefusal, type PageQuery } from '../common/validation.js';
+import { requestHash } from '../drafts/draft-rules.js';
 import type { Consolidation, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -150,6 +153,10 @@ const detailInclude = {
   ...summaryInclude,
   createdBy: { select: { fullName: true } },
   shipments: { orderBy: { addedAt: 'asc' } },
+  reopenings: {
+    orderBy: { revision: 'asc' },
+    include: { reopenedBy: { select: { fullName: true } } },
+  },
 } satisfies Prisma.ConsolidationInclude;
 
 type ContainerWithDetails = Prisma.ConsolidationGetPayload<{ include: typeof detailInclude }>;
@@ -771,6 +778,136 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     return this.get(user, id);
   }
 
+  /**
+   * B3-5 (docs/plans/05-correction-contracts.md, sections 0 and 5): opens a container closed by
+   * mistake again, before anything was charged to it. Each shipment goes back to its step before
+   * the close by a REVERT event of the container's CONSOLIDATED step; the container is OPEN again,
+   * its close time and frozen basis cleared, and can be changed and closed as before. The
+   * reopening is kept with the reason and the basis it cleared.
+   *
+   * Locks as a container move does: the container, then each shipment exclusively in id order. A
+   * bill approved on the container share-locks it first (lockForCostsInTx), so the cost check
+   * below holds until the end. A retry with the same request id and content changes nothing; a
+   * request made on an older revision, or once the container is no longer CLOSED, is STALE.
+   * Refused when anything was ever charged to the container, or when a shipment moved on since
+   * the close (its last step is not the container's CONSOLIDATED).
+   */
+  async reopen(
+    user: AuthUser,
+    id: string,
+    input: ConsolidationReopenRequest,
+  ): Promise<ConsolidationDto> {
+    const existing = await this.findOwn(user, id);
+    if (!mayReopen(user, existing.branchId)) throw new ForbiddenException('Missing permission');
+    const hash = requestHash({
+      expectedRevision: input.expectedRevision,
+      expectedStatus: input.expectedStatus,
+      reason: input.reason,
+    });
+    const numbers = await this.shipmentNumbers(user, existing);
+    const shipmentLabel = (shipmentId: string) => numbers.get(shipmentId) ?? shipmentId;
+    await this.prisma.$transaction(async (tx) => {
+      const container = await lockContainer(tx, id);
+      const label = container.number;
+      const stored = await tx.consolidationReopening.findUnique({
+        where: { consolidationId_requestId: { consolidationId: id, requestId: input.requestId } },
+        select: { requestHash: true },
+      });
+      if (stored) {
+        if (stored.requestHash === hash) return;
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_KEY_REUSED',
+          'This request id was used for another correction',
+        );
+      }
+      const revision = await tx.consolidationReopening.count({ where: { consolidationId: id } });
+      if (revision !== input.expectedRevision || container.status !== input.expectedStatus) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CORRECTION_STALE',
+          `Container ${label} changed since it was read: reload it and try again`,
+          { record: label },
+        );
+      }
+      if (!container.closedAt) throw new Error('A closed container has a close time');
+      const shipmentIds = await this.lockShipments(tx, id);
+      if (await this.costs.get().hasCostHistoryInTx(tx, id)) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CONTAINER_REOPEN_HAS_COSTS',
+          `Costs were charged to container ${label}: it cannot be reopened`,
+          { container: label },
+        );
+      }
+      // The CONSOLIDATED step names the container by the number it had then (#115).
+      const containerNumbers = [label, ...(await oldNumbersOf(tx, 'CONSOLIDATION', id))];
+      const moved: string[] = [];
+      for (const shipmentId of shipmentIds) {
+        let undone = false;
+        try {
+          undone = await this.shipments.undoRecordStepInTx(
+            tx,
+            user,
+            shipmentId,
+            { status: 'CONSOLIDATED', numbers: containerNumbers, reason: input.reason },
+            () => new StepMoved(),
+          );
+        } catch (e) {
+          if (!(e instanceof StepMoved)) throw e;
+        }
+        // Not undone: the close is not the shipment's last step (it moved on, or it had passed
+        // that step before the container was closed).
+        if (!undone) moved.push(shipmentLabel(shipmentId));
+      }
+      if (moved.length > 0) {
+        const list = moved.join(', ');
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CONTAINER_REOPEN_SHIPMENT_MOVED',
+          `Shipments of container ${label} moved on since it was closed: ${list}`,
+          { container: label, shipments: list },
+        );
+      }
+      const shares = await tx.consolidationShipment.findMany({
+        where: { consolidationId: id },
+        select: { shipmentId: true, basisValue: true },
+        orderBy: { shipmentId: 'asc' },
+      });
+      // Compare-and-set on top of the row lock.
+      const { count } = await tx.consolidation.updateMany({
+        where: { id, status: 'CLOSED' },
+        data: { status: 'OPEN', closedAt: null },
+      });
+      if (count !== 1) throw new ConflictException('The container changed meanwhile');
+      await tx.consolidationShipment.updateMany({
+        where: { consolidationId: id },
+        data: { basisValue: null },
+      });
+      await tx.consolidationReopening.create({
+        data: {
+          consolidationId: id,
+          branchId: container.branchId,
+          revision: revision + 1,
+          requestId: input.requestId,
+          requestHash: hash,
+          closedAt: container.closedAt,
+          basis: {
+            basis: container.basis,
+            shares: shares.map((l) => ({
+              shipmentId: l.shipmentId,
+              value: l.basisValue ? toDecimalString(l.basisValue) : null,
+            })),
+          },
+          shipmentIds,
+          reason: input.reason,
+          reopenedById: user.id,
+        },
+      });
+    });
+    return this.get(user, id);
+  }
+
   // -------------------------------------------------------------------------------------------
   // For supplier bills (payables)
 
@@ -1234,6 +1371,17 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       costs: view?.costs ?? [],
       clearingBalanceUsd: view ? toDecimalString(view.clearingBalanceUsd) : null,
       ownBranch: own,
+      reopenRevision: c.reopenings.length,
+      reopenings: own
+        ? c.reopenings.map((r): ConsolidationReopeningDto => ({
+            revision: r.revision,
+            closedAt: r.closedAt.toISOString(),
+            reason: r.reason,
+            reopenedAt: r.reopenedAt.toISOString(),
+            reopenedByName: r.reopenedBy.fullName,
+            shipmentCount: r.shipmentIds.length,
+          }))
+        : [],
       actions: {
         canEdit: own && has('consolidation:update') && isEditable(c.status),
         canAddShipments: has('consolidation:update') && isOpen(c.status),
@@ -1241,9 +1389,22 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         canAddBooking: canBookInto(user) && isOpen(c.status),
         moves: own && has('consolidation:update') ? [...consolidationMoves(c.status)] : [],
         canCancel: own && has('consolidation:cancel') && isOpen(c.status),
+        // The reopening's own rule (mayReopen).
+        canReopen: own && mayReopen(user, c.branchId) && c.status === 'CLOSED',
       },
     };
   }
+}
+
+/** A shipment whose last step is not the container's close (reopen collects them). */
+class StepMoved extends ConflictException {}
+
+/**
+ * consolidation:cancel in the container's branch: the reopening of a closed container and the
+ * button that offers it (B3-5).
+ */
+function mayReopen(user: AuthUser, branchId: string): boolean {
+  return user.access.has('consolidation:cancel', branchId);
 }
 
 /** 409 unless the container (locked or as read) is still open. */
