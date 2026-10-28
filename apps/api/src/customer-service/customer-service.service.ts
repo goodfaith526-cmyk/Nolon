@@ -144,14 +144,24 @@ export class CustomerServiceService {
     return rows.map((r) => summary(r, locations));
   }
 
-  async shipment(client: ApiClientAuth, number: string): Promise<CsShipmentDto> {
+  /**
+   * A shipment by its number, in the key's branches; with `customerId`, among that customer's
+   * shipments only (a customer token: another customer's shipment is not found, as one that does
+   * not exist).
+   */
+  async shipment(
+    client: ApiClientAuth,
+    number: string,
+    customerId?: string,
+  ): Promise<CsShipmentDto> {
     if (client.allowedBranchIds.length === 0) throw new NotFoundException('Shipment not found');
     const [row] = await this.prisma.$queryRaw<ShipmentRow[]>`
       SELECT s.*, c."number" AS "customerNumber"
       FROM "cs_shipments" s
       JOIN "cs_customers" c ON c."id" = s."customer_id"
       WHERE s."number" = ${number}
-        AND s."branch_id" IN ${uuidList(client.allowedBranchIds)}`;
+        AND s."branch_id" IN ${uuidList(client.allowedBranchIds)}
+        ${customerId ? Prisma.sql`AND s."customer_id" = ${customerId}::uuid` : Prisma.empty}`;
     if (!row) throw new NotFoundException('Shipment not found');
     const events = await this.prisma.$queryRaw<
       {

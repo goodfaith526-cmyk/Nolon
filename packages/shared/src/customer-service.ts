@@ -139,3 +139,41 @@ export interface ApiClientCreatedDto {
   client: ApiClientDto;
   key: string;
 }
+
+/** A token for one customer (docs/plans/04 section 3, N1): `Authorization: Bearer nolct_...`. */
+export const CS_TOKEN_PREFIX = 'nolct_';
+
+/** At most this long; every use rechecks the key, the customer and the match anyway. */
+export const CS_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+export type CsAccessLevel = 'L1' | 'L2';
+
+export interface CsCustomerTokenRequest {
+  /** The sender's number as the channel verified it, +E.164. Never a number the customer typed. */
+  phone: string;
+  /** The account the sender chose from a `choose` answer. */
+  customerNumber?: string;
+  /** A proof of an email code (N3). Until N3 exists, no proof is valid and the level is L1. */
+  verificationId?: string;
+}
+
+/** What the sender may choose between: no phone, email or balance. */
+export interface CsCustomerChoiceDto {
+  number: string;
+  label: string;
+}
+
+export type CsCustomerTokenAnswer =
+  | { kind: 'none' }
+  | { kind: 'choose'; customers: CsCustomerChoiceDto[] }
+  | {
+      kind: 'token';
+      token: string;
+      expiresAt: string;
+      customer: CsCustomerChoiceDto;
+      /** Stable for the reason of the match (the customer's phone, WhatsApp, or one contact). */
+      grantId: string;
+      /** Changes whenever the matched customer or contact record changes. */
+      grantVersion: number;
+      level: CsAccessLevel;
+    };

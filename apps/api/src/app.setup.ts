@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AGENT_SERVER_PATHS } from './agent-auth/agent-auth.paths.js';
 import { originCheck } from './auth/origin-check.js';
+import { CS_SERVER_PATHS } from './customer-service/cs-server-paths.js';
 import type { AppEnv } from './config/env.js';
 
 export const API_PREFIX = 'api/v1';
@@ -17,7 +18,7 @@ export function configureApp(app: INestApplication, env: AppEnv): void {
   app.use(
     originCheck(
       env.CORS_ORIGINS,
-      AGENT_SERVER_PATHS.map((path) => `/${API_PREFIX}/${path}`),
+      [...AGENT_SERVER_PATHS, ...CS_SERVER_PATHS].map((path) => `/${API_PREFIX}/${path}`),
     ),
   );
   app.enableShutdownHooks();

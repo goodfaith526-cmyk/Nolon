@@ -18,6 +18,7 @@ import {
   CS_SCOPES,
   CS_SHIPMENT_STATES,
   type CsCustomerDto,
+  type CsCustomerTokenAnswer,
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
@@ -29,7 +30,14 @@ import { parse, phone, requiredText } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { RequireApiScope } from './api-scopes.js';
+import { CustomerMeService } from './customer-me.service.js';
 import { CustomerServiceService } from './customer-service.service.js';
+import {
+  type CustomerTokenAuth,
+  CurrentCustomerToken,
+  CustomerTokenGuard,
+} from './customer-token.guard.js';
+import { CustomerTokensService } from './customer-tokens.service.js';
 
 const reference = z.string().trim().min(1).max(30);
 const phoneQuery = z.object({ phone }).strict();
@@ -39,6 +47,16 @@ const shipmentsQuery = z
   .strict();
 const invoicesQuery = z
   .object({ state: z.enum(CS_INVOICE_STATES).default('open'), limit })
+  .strict();
+const tokenBody = z
+  .object({
+    phone,
+    customerNumber: reference.optional(),
+    verificationId: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{8,200}$/)
+      .optional(),
+  })
   .strict();
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const createBody = z
@@ -99,6 +117,61 @@ export class CustomerServiceController {
     @Param('number') number: string,
   ): Promise<CsShipmentDto> {
     return this.cs.shipment(client, parse(reference, number));
+  }
+}
+
+/**
+ * Customer tokens (N1): a key with cs:customer_tokens:issue asks for a token for the one customer
+ * a channel-verified phone matches. The key reads no customer data itself.
+ */
+@Controller('cs/customer-tokens')
+@Public()
+@UseGuards(ApiClientGuard)
+@RequireApiScope('cs:customer_tokens:issue')
+export class CustomerTokensController {
+  constructor(private readonly tokens: CustomerTokensService) {}
+
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  issue(
+    @CurrentApiClient() client: ApiClientAuth,
+    @Body() body: unknown,
+  ): Promise<CsCustomerTokenAnswer> {
+    return this.tokens.issue(client, parse(tokenBody, body));
+  }
+}
+
+/** One customer's reads with a customer token (N2): the customer comes from the token only. */
+@Controller('cs/me')
+@Public()
+@UseGuards(CustomerTokenGuard)
+export class CustomerMeController {
+  constructor(private readonly me: CustomerMeService) {}
+
+  @Get('shipments')
+  shipments(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+  ): Promise<CsShipmentSummaryDto[]> {
+    const q = parse(shipmentsQuery, query);
+    return this.me.shipments(auth, q.state, q.limit);
+  }
+
+  @Get('shipments/:number')
+  shipment(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Param('number') number: string,
+  ): Promise<CsShipmentDto> {
+    return this.me.shipment(auth, parse(reference, number));
+  }
+
+  @Get('invoices')
+  invoices(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+  ): Promise<CsInvoiceDto[]> {
+    const q = parse(invoicesQuery, query);
+    return this.me.invoices(auth, q.state, q.limit);
   }
 }
 
