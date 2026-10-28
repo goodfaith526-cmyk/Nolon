@@ -482,6 +482,7 @@ export class BookingsService {
       : null;
     if (fromQuotation) {
       await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+      await this.customers.lockActiveCustomerInTx(tx, prepared.branchId, prepared.customerId);
     }
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
