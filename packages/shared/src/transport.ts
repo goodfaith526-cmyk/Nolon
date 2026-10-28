@@ -205,6 +205,11 @@ export interface TripActionsDto {
   canEditShipments: boolean;
   canAddExpense: boolean;
   canCancelExpense: boolean;
+  /**
+   * Take back the departure (B3-4): transport_trips:cancel in the trip's branch, while it is
+   * DEPARTED. The API checks its PODs, expenses and shipments when it is sent.
+   */
+  canUndoDeparture: boolean;
 }
 
 export interface TripDto extends TripSummaryDto {
@@ -237,7 +242,34 @@ export interface TripDto extends TripSummaryDto {
   expenses: TripExpenseDto[];
   /** Filled when actions.canAddExpense: the accounts an expense may be paid from. */
   cashAccounts: TripCashAccountDto[];
+  /** How many times the departure was taken back: the `expectedRevision` of the next undo. */
+  departureRevision: number;
+  /** The departures taken back, oldest first. */
+  departureUndos: TripDepartureUndoDto[];
   actions: TripActionsDto;
+}
+
+/** A departure taken back (B3-4): when the trip had left, and why it was taken back. */
+export interface TripDepartureUndoDto {
+  revision: number;
+  departedAt: string;
+  reason: string;
+  undoneAt: string;
+  undoneByName: string;
+  /** The shipments that went back to TRIP_SCHEDULED. */
+  shipmentCount: number;
+}
+
+/**
+ * `POST /trips/:id/undo-departure` (B3-4). `requestId` is made once per attempt by the screen; a
+ * retry with the same id and content returns the trip as it is. `expectedRevision` is the
+ * `departureRevision` the screen read.
+ */
+export interface TripUndoDepartureRequest {
+  requestId: string;
+  expectedRevision: number;
+  expectedStatus: 'DEPARTED';
+  reason: string;
 }
 
 export interface TripInput {

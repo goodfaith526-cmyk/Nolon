@@ -1,4 +1,5 @@
 import type {
+  BookingItemInput,
   BookingService,
   CargoType,
   DateString,
@@ -205,6 +206,8 @@ export interface ShipmentActionsDto {
   closeCheck: ShipmentCloseCheckDto | null;
   canCancel: boolean;
   canEdit: boolean;
+  /** Correct the cargo lines (B3-3): `shipments:update` in the shipment's own branch, while active. */
+  canCorrectCargo: boolean;
   /** Only users of the shipment's own branch choose the branches sharing it. */
   canShareBranches: boolean;
 }
@@ -255,6 +258,10 @@ export interface ShipmentDto extends ShipmentSummaryDto {
   /** Packages on all cargo lines (the sum of their quantities): what the labels number up to. */
   packages: number;
   items: ShipmentItemDto[];
+  /** How many times the cargo lines were corrected: the `expectedRevision` of the next one. */
+  cargoRevision: number;
+  /** The corrections of the cargo lines, oldest first. */
+  cargoCorrections: ShipmentCargoCorrectionDto[];
   containers: ShipmentContainerDto[];
   events: ShipmentEventDto[];
   /** The branches in sharedBranchIds, by code. */
@@ -265,6 +272,31 @@ export interface ShipmentDto extends ShipmentSummaryDto {
 }
 
 /** PATCH /shipments/:id: what may change after creation. Omitted fields stay as they are. */
+/** One correction of a shipment's cargo lines (B3-3): the lines before and after, and why. */
+export interface ShipmentCargoCorrectionDto {
+  revision: number;
+  reason: string;
+  correctedAt: string;
+  correctedByName: string;
+  /** The open container the shipment was in, by number. */
+  containerNumber: string | null;
+  itemsBefore: ShipmentItemDto[];
+  itemsAfter: ShipmentItemDto[];
+}
+
+/**
+ * `PUT /shipments/:id/items` (B3-3): the shipment's cargo lines, all of them, as a booking takes
+ * them (no price category). `requestId` is made once per attempt by the screen; a retry with the
+ * same id and content returns the stored correction. `expectedRevision` is the `cargoRevision`
+ * the screen read.
+ */
+export interface ShipmentCargoCorrectionRequest {
+  requestId: string;
+  expectedRevision: number;
+  reason: string;
+  items: Omit<BookingItemInput, 'priceCategoryCode'>[];
+}
+
 export interface ShipmentUpdateRequest {
   cargoDescription?: string | null;
   services?: BookingService[];

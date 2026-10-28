@@ -59,6 +59,7 @@ import {
   type ContainerBookingShape,
   ContainerBookingsRegistry,
 } from '../bookings/container-bookings.registry.js';
+import { ShipmentContainerRegistry } from '../shipments/shipment-container.registry.js';
 import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive, stageApplies } from '../shipments/state-machine.js';
@@ -185,11 +186,35 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     private readonly bookings: BookingsService,
     private readonly containerBookings: ContainerBookingsRegistry,
     private readonly shipmentLinks: ShipmentLinksRegistry,
+    private readonly shipmentContainers: ShipmentContainerRegistry,
   ) {}
 
   onModuleInit(): void {
     // Booking drafts that name a container are checked and approved by the rules below.
     this.containerBookings.register(this);
+    // B3-3: a shipment's cargo correction locks its container first and keeps it within limits.
+    this.shipmentContainers.register({
+      liveContainerInTx: async (tx, shipmentId) => {
+        const link = await tx.consolidationShipment.findFirst({
+          where: { shipmentId, consolidation: { status: { not: 'CANCELLED' } } },
+          select: { consolidation: { select: { id: true, number: true, status: true } } },
+        });
+        return link?.consolidation ?? null;
+      },
+      lockContainerInTx: async (tx, containerId) => {
+        const { id, number, status } = await lockContainer(tx, containerId);
+        return { id, number, status };
+      },
+      guardCapacityInTx: async (tx, containerId, write) => {
+        const container = await tx.consolidation.findUniqueOrThrow({ where: { id: containerId } });
+        const before = containerLoad(await cargoOf(tx, containerId));
+        await write();
+        const after = containerLoad(await cargoOf(tx, containerId));
+        const limits = await limitsInTx(tx, container.containerTypeCode);
+        const over = overLimits(limits, before, after)[0];
+        if (over) throw overRefusal(container, over, limits, before, after);
+      },
+    });
     // B2: while a container is under way (closed, not yet unpacked) it moves its shipments on, so
     // none of them is cancelled and no step it recorded is undone from the shipment page (the
     // container's next move would refuse that shipment). Once unpacked, both are as before (#109).
