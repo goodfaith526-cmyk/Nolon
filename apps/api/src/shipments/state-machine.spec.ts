@@ -8,6 +8,9 @@ import {
   permissionForTransition,
   publicTimeline,
   replayHistory,
+  revertUndoes,
+  earliestEntryTime,
+  usualPlace,
   revertTarget,
 } from './state-machine.js';
 
@@ -322,6 +325,85 @@ describe('shipment history replay', () => {
       event('REVERT', 'CREATED', 2),
     ]);
     expect(hasPassedLoading(reverted)).toBe(false);
+  });
+
+  it('names the step a revert undoes by its own event, through holds and repeated statuses', () => {
+    const recorded = (
+      id: number,
+      kind: HistoryEvent['kind'],
+      status: ShipmentStatus,
+      by: string,
+    ) => ({
+      ...event(kind, status, id),
+      id: BigInt(id),
+      userId: by,
+    });
+    const events = [
+      recorded(1, 'CREATED', 'CREATED', 'shaker'),
+      recorded(2, 'STATUS', 'PICKUP_SCHEDULED', 'shaker'),
+      recorded(3, 'STATUS', 'CONSOLIDATED', 'shaker'),
+      recorded(4, 'HOLD', 'ON_HOLD', 'mohamed'),
+      recorded(5, 'RESUME', 'CONSOLIDATED', 'mohamed'),
+      recorded(6, 'STATUS', 'LOADED', 'mohamed'),
+    ];
+    expect(revertUndoes(replayHistory(events))).toMatchObject({
+      eventId: '6',
+      status: 'LOADED',
+      userId: 'mohamed',
+    });
+    // After undoing the load, the next revert would undo Shaker's consolidation (event 3), not
+    // the resume that brought it back.
+    const once = replayHistory([...events, recorded(7, 'REVERT', 'CONSOLIDATED', 'mohamed')]);
+    expect(revertUndoes(once)).toMatchObject({
+      eventId: '3',
+      status: 'CONSOLIDATED',
+      userId: 'shaker',
+    });
+    const repeated = replayHistory([
+      recorded(1, 'CREATED', 'CREATED', 'a'),
+      recorded(2, 'STATUS', 'OUT_FOR_DELIVERY', 'a'),
+      recorded(3, 'STATUS', 'PARTIALLY_DELIVERED', 'a'),
+      recorded(4, 'STATUS', 'PARTIALLY_DELIVERED', 'b'),
+    ]);
+    expect(revertUndoes(repeated)?.eventId).toBe('4');
+    expect(revertUndoes(replayHistory([recorded(1, 'CREATED', 'CREATED', 'a')]))).toBeNull();
+    expect(revertUndoes(replayHistory(events.slice(0, 4)))).toBeNull();
+  });
+
+  it('a time entered by hand is not before creation or a step still standing', () => {
+    const created = at(0);
+    expect(earliestEntryTime(created, replayHistory([event('CREATED', 'CREATED', 0)]))).toEqual(
+      created,
+    );
+    const moved = replayHistory([
+      event('CREATED', 'CREATED', 0),
+      event('STATUS', 'PICKUP_SCHEDULED', 20),
+      event('STATUS', 'CONSOLIDATED', 10),
+    ]);
+    // Old rows may be out of order: the latest standing step counts, not the last one.
+    expect(earliestEntryTime(created, moved)).toEqual(at(20));
+    const reverted = replayHistory([
+      event('CREATED', 'CREATED', 0),
+      event('STATUS', 'LOADED', 30),
+      event('REVERT', 'CREATED', 31),
+    ]);
+    expect(earliestEntryTime(created, reverted)).toEqual(created);
+    // A step dated before the shipment's creation (entered before this check) does not lower it.
+    const early = replayHistory([event('CREATED', 'CREATED', 5), event('STATUS', 'LOADED', 1)]);
+    expect(earliestEntryTime(at(5), early)).toEqual(at(5));
+  });
+
+  it('suggests the origin or destination only where the status is not leg-dependent', () => {
+    expect(usualPlace('PICKUP_SCHEDULED', 'SEA_ROAD')).toBe('ORIGIN');
+    expect(usualPlace('CONSOLIDATED', 'SEA')).toBe('ORIGIN');
+    expect(usualPlace('LOADED', 'SEA')).toBe('ORIGIN');
+    expect(usualPlace('ARRIVED_PORT', 'SEA')).toBe('DESTINATION');
+    // Sea then road: the port of loading or arrival is not the route's end.
+    expect(usualPlace('LOADED', 'SEA_ROAD')).toBeNull();
+    expect(usualPlace('ARRIVED_PORT', 'SEA_ROAD')).toBeNull();
+    expect(usualPlace('DELIVERED', 'ROAD')).toBe('DESTINATION');
+    expect(usualPlace('ROAD_DEPARTED', 'ROAD')).toBeNull();
+    expect(usualPlace('CUSTOMS_IN_PROGRESS', 'SEA')).toBeNull();
   });
 
   it('shows the customer public statuses only', () => {

@@ -28,7 +28,7 @@ import {
   requests,
   tokenFor,
 } from './agent-drafts-helpers.js';
-import { deleteCommercialTestData, uniquePhone } from './test-data.js';
+import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
 
 // Shipment status drafts proposed by the staff assistant (entry drafts). The assistant's users
 // (agent-it-) create drafts; it- users decide them, so the shipments they move are removed by the
@@ -401,6 +401,36 @@ describe('shipment status drafts: a person reviews', () => {
     expect(
       (await t.prisma.shipmentStatusDraft.findUniqueOrThrow({ where: { id: draft.id } })).state,
     ).toBe('DRAFT');
+  });
+
+  it('approves at "now" even after a status entered a few minutes ahead, also when queued', async () => {
+    const shipment = await roadShipment();
+    const ahead = new Date(Date.now() + 4 * 60 * 1000).toISOString();
+    await r
+      .post(`/shipments/${shipment.id}/status`, cookies.opsDxb, {
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+        occurredAt: ahead,
+      })
+      .expect(200);
+    // The pre-check on saving and on reading the draft uses now, and is not refused for it.
+    const draft = await statusDraft(statusRequest(shipment.id));
+    expect(draft.check).toMatchObject({ ok: true });
+    // The approval waits behind another holder of the shipment lock, then applies at now.
+    let release: () => void = () => undefined;
+    const held = t.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipment.id}::uuid FOR UPDATE`;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const approving = r
+      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .then((res) => res);
+    await waitForLockWaiter(t.prisma);
+    release();
+    await held;
+    expect((await approving).status).toBe(200);
+    expect(await shipmentStatus(shipment.id)).toBe('TRIP_SCHEDULED');
   });
 
   it('two concurrent approvals of drafts for the same move apply it once', async () => {

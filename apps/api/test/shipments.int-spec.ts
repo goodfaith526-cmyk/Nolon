@@ -93,6 +93,33 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
   const move = (id: string, cookie: string, status: string, extra: object = {}) =>
     post(`/shipments/${id}/status`, cookie, { status, ...extra });
+  /** Dates the shipment's creation and its history `hours` back (a shipment entered late). */
+  const backdate = async (id: string, hours: number) => {
+    const ms = hours * 60 * 60 * 1000;
+    const row = await t.prisma.shipment.findUniqueOrThrow({ where: { id } });
+    await t.prisma.shipment.update({
+      where: { id },
+      data: { createdAt: new Date(row.createdAt.getTime() - ms) },
+    });
+    for (const e of await t.prisma.shipmentEvent.findMany({ where: { shipmentId: id } })) {
+      await t.prisma.shipmentEvent.update({
+        where: { id: e.id },
+        data: { occurredAt: new Date(e.occurredAt.getTime() - ms) },
+      });
+    }
+  };
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+
+  /** The step a revert would undo, as the shipment page shows it to a manager ('1' when none). */
+  const undoable = async (id: string) =>
+    ((await get(`/shipments/${id}`, cookies.managerDxb).expect(200)).body as ShipmentDto).actions
+      .revertUndoes?.eventId ?? '1';
+  /** Goes back a status, confirming the step the shipment page shows now. */
+  const revert = async (id: string, cookie: string, reason: string, expected: number) =>
+    post(`/shipments/${id}/revert`, cookie, { reason, undoEventId: await undoable(id) }).expect(
+      expected,
+    );
 
   beforeAll(async () => {
     t = await createTestApp();
@@ -186,7 +213,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
     it('activeOnly leaves out cancelled and closed shipments', async () => {
       const open = await confirmedShipment();
       const gone = await confirmedShipment();
-      await post(`/shipments/${gone.id}/cancel`, cookies.opsDxb, { reason: 'x' }).expect(200);
+      await post(`/shipments/${gone.id}/cancel`, cookies.opsDxb, { reason: 'Wrong entry' }).expect(
+        200,
+      );
       const count = async (q: string, extra = '') =>
         (
           (await get(`/shipments?q=${q}${extra}`, cookies.salesDxb).expect(200))
@@ -347,18 +376,12 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       ]) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
-      const first = (
-        await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
-          reason: 'Double entry',
-        }).expect(200)
-      ).body as ShipmentDto;
+      const first = (await revert(s.id, cookies.managerDxb, 'Double entry', 200))
+        .body as ShipmentDto;
       expect(first.status).toBe('PARTIALLY_DELIVERED');
       expect(first.actions.revertTo).toBe('OUT_FOR_DELIVERY');
-      const second = (
-        await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
-          reason: 'Wrong batch',
-        }).expect(200)
-      ).body as ShipmentDto;
+      const second = (await revert(s.id, cookies.managerDxb, 'Wrong batch', 200))
+        .body as ShipmentDto;
       expect(second.status).toBe('OUT_FOR_DELIVERY');
     });
 
@@ -380,6 +403,7 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
 
     it('records each change with time, location, user, source and note', async () => {
       const s = await confirmedShipment();
+      await backdate(s.id, 3);
       const at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const moved = (
         await move(s.id, cookies.opsDxb, 'LOADED', {
@@ -401,6 +425,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         note: 'Loaded on MSC Aurora',
         userName: 'Integration Test',
       });
+      // Entered an hour after the fact: the page shows when it was recorded too.
+      const recorded = Date.parse(moved.events.at(-1)?.createdAt ?? '');
+      expect(recorded - Date.parse(at)).toBeGreaterThan(50 * 60 * 1000);
       const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
       await move(s.id, cookies.opsDxb, 'DEPARTED', { occurredAt: future }).expect(400);
     });
@@ -409,7 +436,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       const s = await confirmedShipment();
       await move(s.id, cookies.opsDxb, 'LOADED').expect(200);
       await post(`/shipments/${s.id}/hold`, cookies.opsDxb, {}).expect(400);
-      await post(`/shipments/${s.id}/hold`, cookies.salesDxb, { reason: 'x' }).expect(403);
+      await post(`/shipments/${s.id}/hold`, cookies.salesDxb, { reason: 'Wrong entry' }).expect(
+        403,
+      );
       const held = (
         await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: 'Port strike' }).expect(200)
       ).body as ShipmentDto;
@@ -432,12 +461,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       await move(s.id, cookies.opsDxb, 'LOADED', { locationId: jebelAli }).expect(200);
       await move(s.id, cookies.opsDxb, 'DEPARTED', { locationId: khartoum }).expect(200);
       await post(`/shipments/${s.id}/revert`, cookies.opsDxb, {}).expect(400);
-      await post(`/shipments/${s.id}/revert`, cookies.salesDxb, { reason: 'x' }).expect(403);
-      const reverted = (
-        await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
-          reason: 'Entered by mistake',
-        }).expect(200)
-      ).body as ShipmentDto;
+      await revert(s.id, cookies.salesDxb, 'Wrong entry', 403);
+      const reverted = (await revert(s.id, cookies.managerDxb, 'Entered by mistake', 200))
+        .body as ShipmentDto;
       expect(reverted.status).toBe('LOADED');
       expect(reverted.currentLocationId).toBe(jebelAli);
       expect(reverted.events.at(-1)).toMatchObject({
@@ -447,6 +473,108 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         reason: 'Entered by mistake',
       });
       expect(reverted.actions.revertTo).toBe('CREATED');
+    });
+
+    it('a time entered by hand is not before creation or a step still standing', async () => {
+      const s = await confirmedShipment();
+      const early = await move(s.id, cookies.opsDxb, 'LOADED', { occurredAt: hoursAgo(1) }).expect(
+        400,
+      );
+      expect(code(early)).toBe('STATUS_TIME_TOO_EARLY');
+      expect((early.body as { fields: string[] }).fields).toEqual(['occurredAt']);
+      await backdate(s.id, 3);
+      const fresh = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(Date.parse(fresh.actions.earliestStatusTime)).toBeLessThan(Date.parse(hoursAgo(2.9)));
+      await move(s.id, cookies.opsDxb, 'LOADED', { occurredAt: hoursAgo(2) }).expect(200);
+      // Before the load it follows: refused, and nothing is recorded.
+      await move(s.id, cookies.opsDxb, 'DEPARTED', { occurredAt: hoursAgo(2.5) }).expect(400);
+      await move(s.id, cookies.opsDxb, 'DEPARTED', { occurredAt: hoursAgo(1) }).expect(200);
+      // Once that departure is undone, a time before it (after the load) is fine again.
+      await revert(s.id, cookies.managerDxb, 'Wrong time', 200);
+      const again = (
+        await move(s.id, cookies.opsDxb, 'DEPARTED', { occurredAt: hoursAgo(1.5) }).expect(200)
+      ).body as ShipmentDto;
+      expect(again.status).toBe('DEPARTED');
+      expect(again.actions.earliestStatusTime).toBe(again.events.at(-1)?.occurredAt);
+    });
+
+    it('a status entered a few minutes ahead does not block moves recorded now', async () => {
+      const s = await confirmedShipment();
+      const ahead = new Date(Date.now() + 4 * 60 * 1000).toISOString();
+      await move(s.id, cookies.opsDxb, 'LOADED', { occurredAt: ahead }).expect(200);
+      // A time typed in before it is refused; the same move recorded now is not.
+      await move(s.id, cookies.opsDxb, 'DEPARTED', { occurredAt: new Date().toISOString() }).expect(
+        400,
+      );
+      await move(s.id, cookies.opsDxb, 'DEPARTED').expect(200);
+      await move(s.id, cookies.opsDxb, 'ARRIVED_PORT').expect(200);
+    });
+
+    it('goes back only the step the user saw: a stale or repeated revert changes nothing', async () => {
+      const s = await confirmedShipment();
+      await move(s.id, cookies.opsDxb, 'LOADED').expect(200);
+      const seen = (await get(`/shipments/${s.id}`, cookies.managerDxb).expect(200))
+        .body as ShipmentDto;
+      expect(seen.actions.revertUndoes).toMatchObject({
+        status: 'LOADED',
+        userName: 'Integration Test',
+        byMe: false,
+      });
+      const loadId = seen.actions.revertUndoes?.eventId;
+      // Someone else records the departure meanwhile: the confirmed revert would undo it instead.
+      await move(s.id, cookies.opsDxb, 'DEPARTED').expect(200);
+      const stale = await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
+        reason: 'Wrong shipment',
+        undoEventId: loadId,
+      }).expect(409);
+      expect(code(stale)).toBe('REVERT_STALE');
+      const unchanged = (await get(`/shipments/${s.id}`, cookies.managerDxb).expect(200))
+        .body as ShipmentDto;
+      expect(unchanged.status).toBe('DEPARTED');
+      expect(unchanged.events.filter((e) => e.kind === 'REVERT')).toEqual([]);
+      // The same confirmed revert sent twice at once: one goes back, the other is refused.
+      const departId = unchanged.actions.revertUndoes?.eventId;
+      const body = { reason: 'Wrong shipment', undoEventId: departId };
+      const results = await Promise.all([
+        post(`/shipments/${s.id}/revert`, cookies.managerDxb, body),
+        post(`/shipments/${s.id}/revert`, cookies.managerDxb, body),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+      // And again later (another manager's revert already took it): still refused.
+      await post(`/shipments/${s.id}/revert`, cookies.managerDxb, body).expect(409);
+      const after = (await get(`/shipments/${s.id}`, cookies.managerDxb).expect(200))
+        .body as ShipmentDto;
+      expect(after.status).toBe('LOADED');
+      expect(after.events.filter((e) => e.kind === 'REVERT')).toHaveLength(1);
+      await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
+        reason: 'Wrong shipment',
+      }).expect(400);
+    });
+
+    it('a reason says something: at least 3 letters, spaces aside', async () => {
+      const s = await confirmedShipment();
+      await move(s.id, cookies.opsDxb, 'LOADED').expect(200);
+      await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: '  ab  ' }).expect(400);
+      await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'x' }).expect(400);
+      const undoEventId = await undoable(s.id);
+      await post(`/shipments/${s.id}/revert`, cookies.managerDxb, {
+        reason: 'r;',
+        undoEventId,
+      }).expect(400);
+      expect(((await get(`/shipments/${s.id}`, cookies.opsDxb)).body as ShipmentDto).status).toBe(
+        'LOADED',
+      );
+      await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: ' abc ' }).expect(200);
+    });
+
+    it('suggests the usual place of each offered status', async () => {
+      const s = await confirmedShipment();
+      expect(s.actions.suggestedLocations).toEqual({ LOADED: jebelAli });
+      await move(s.id, cookies.opsDxb, 'LOADED').expect(200);
+      const loaded = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      expect(loaded.actions.suggestedLocations).toEqual({ DEPARTED: jebelAli });
     });
 
     it('closing a delivered shipment completes its booking and freezes the shipment', async () => {
@@ -462,8 +590,8 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         .body as BookingDto;
       expect(booking.status).toBe('COMPLETED');
       await patch(`/shipments/${s.id}`, cookies.opsDxb, { vesselName: 'x' }).expect(409);
-      await post(`/shipments/${s.id}/revert`, cookies.managerDxb, { reason: 'x' }).expect(409);
-      await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: 'x' }).expect(409);
+      await revert(s.id, cookies.managerDxb, 'Wrong entry', 409);
+      await post(`/shipments/${s.id}/hold`, cookies.opsDxb, { reason: 'Wrong entry' }).expect(409);
     });
 
     it('two concurrent changes of the same status: one wins, the other is refused', async () => {
@@ -507,7 +635,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
   describe('cancellation', () => {
     it('before loading, Operations cancels and the booking is cancelled too', async () => {
       const s = await confirmedShipment();
-      await post(`/shipments/${s.id}/cancel`, cookies.salesDxb, { reason: 'x' }).expect(403);
+      await post(`/shipments/${s.id}/cancel`, cookies.salesDxb, { reason: 'Wrong entry' }).expect(
+        403,
+      );
       await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, {}).expect(400);
       const cancelled = (
         await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, {
@@ -526,7 +656,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       await move(s.id, cookies.opsDxb, 'LOADED').expect(200);
       const ops = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200)).body as ShipmentDto;
       expect(ops.actions.canCancel).toBe(false);
-      await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, { reason: 'x' }).expect(403);
+      await post(`/shipments/${s.id}/cancel`, cookies.opsDxb, { reason: 'Wrong entry' }).expect(
+        403,
+      );
       await post(`/bookings/${s.bookingId}/cancel`, cookies.salesDxb, { reason: 'x' }).expect(403);
       await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'Vessel lost' }).expect(
         200,
@@ -549,7 +681,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
         await move(s.id, cookies.opsDxb, status).expect(200);
       }
-      await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'x' }).expect(409);
+      await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'Wrong entry' }).expect(
+        409,
+      );
     });
   });
 
@@ -757,7 +891,9 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         .body as PublicTrackingDto;
       expect(held.status).toBe('ON_HOLD');
       expect(JSON.stringify(held)).not.toContain('internal reason');
-      await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'x' }).expect(200);
+      await post(`/shipments/${s.id}/cancel`, cookies.managerDxb, { reason: 'Wrong entry' }).expect(
+        200,
+      );
       await t.http().get(`/api/v1/public/tracking/${s.trackingToken}`).expect(404);
     });
 

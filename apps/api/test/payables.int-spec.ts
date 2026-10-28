@@ -653,17 +653,19 @@ describe('credit notes, payables, expenses and opening balances', () => {
         await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
       ).body as CustomerInvoiceDto;
       // Missing permission and another branch are refused before the invoices are looked at.
-      await post(`/shipments/${shipmentId}/cancel`, cookies.salesPts, { reason: 'x' }).expect(403);
-      await post(`/shipments/${shipmentId}/cancel`, cookies.managerJed, { reason: 'x' }).expect(
-        404,
-      );
+      await post(`/shipments/${shipmentId}/cancel`, cookies.salesPts, {
+        reason: 'Withdrawn',
+      }).expect(403);
+      await post(`/shipments/${shipmentId}/cancel`, cookies.managerJed, {
+        reason: 'Withdrawn',
+      }).expect(404);
       refusedForInvoices(
-        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'x' }),
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
         '—',
         '1',
       );
       refusedForInvoices(
-        await post(`/bookings/${bookingId}/cancel`, cookies.salesPts, { reason: 'x' }),
+        await post(`/bookings/${bookingId}/cancel`, cookies.salesPts, { reason: 'Withdrawn' }),
         '—',
         '1',
       );
@@ -690,20 +692,20 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const shipmentId = invoice.shipmentId ?? '';
       const number = invoice.number ?? '';
       refusedForInvoices(
-        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'x' }),
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
         number,
         '0',
       );
       // A draft credit note and a partial credit do not release it.
       const part = await creditNoteDraft(invoice.id, '400000');
       refusedForInvoices(
-        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'x' }),
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
         number,
         '0',
       );
       await post(`/credit-notes/${part.id}/approve`, cookies.managerPts).expect(200);
       refusedForInvoices(
-        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'x' }),
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
         number,
         '0',
       );
@@ -731,7 +733,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
         allocations: [{ invoiceId: invoice.id, amount: '100' }],
       }).expect(201);
       refusedForInvoices(
-        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'x' }),
+        await post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' }),
         number,
         '0',
       );
@@ -740,7 +742,7 @@ describe('credit notes, payables, expenses and opening balances', () => {
       expect((await invoiceRow(invoice.id)).creditedAmount.toFixed()).toBe('999900.5');
       refusedForInvoices(
         await post(`/bookings/${await bookingOf(shipmentId)}/cancel`, cookies.salesPts, {
-          reason: 'x',
+          reason: 'Withdrawn',
         }),
         number,
         '0',
