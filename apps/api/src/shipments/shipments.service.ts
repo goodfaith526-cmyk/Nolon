@@ -33,6 +33,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
+import { currentLocationOf } from './location-timeline.js';
 import { ShipmentLinksRegistry, type ShipmentLinkBlocker } from './shipment-links.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
@@ -482,6 +483,15 @@ export class ShipmentsService {
         visitedStatuses(replayHistory(shipment.events)),
       ).filter((next) => permissionForTransition(next).some(has)),
     };
+  }
+
+  /** The packages on the shipment's cargo lines, in the caller's transaction (it holds the lock). */
+  async packagesInTx(tx: Tx, id: string): Promise<number> {
+    const { _sum } = await tx.shipmentItem.aggregate({
+      where: { shipmentId: id },
+      _sum: { quantity: true },
+    });
+    return _sum.quantity ?? 0;
   }
 
   /**
@@ -936,6 +946,63 @@ export class ShipmentsService {
    */
   async relocateInTx(tx: Tx, id: string, locationId: string): Promise<void> {
     await tx.shipment.update({ where: { id }, data: { currentLocationId: locationId } });
+  }
+
+  /**
+   * B3 corrections (docs/plans/05-correction-contracts.md, section 0), inside the caller's
+   * transaction: undoes the step a record being cancelled made, the one with `step.status` whose
+   * event note is one of the record's numbers. Only when it is the shipment's current step: a later
+   * step throws `moved()`, and nothing is undone. Returns false when no step of the record is left
+   * (it recorded none, or it was undone before). The REVERT event carries the reason and the
+   * record's number; the place becomes the latest left on the location timeline. The B2 check is
+   * not run: this record is the one being cancelled.
+   */
+  async undoRecordStepInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    step: { status: ShipmentStatus; numbers: readonly string[]; reason: string },
+    moved: () => HttpException,
+  ): Promise<boolean> {
+    return this.applyEventInTx(tx, user, id, (shipment, path) => {
+      const noteOf = (eventId: string | null) =>
+        shipment.events.find((e) => e.id.toString() === eventId)?.note ?? null;
+      const index = path.findLastIndex((entry) => {
+        const note = noteOf(entry.eventId);
+        return entry.status === step.status && note !== null && step.numbers.includes(note);
+      });
+      if (index < 0) return null;
+      const target = path.at(-2)?.status;
+      if (index !== path.length - 1 || !target) throw moved();
+      const remaining = path.slice(0, -1);
+      return {
+        kind: 'REVERT',
+        status: target,
+        reason: step.reason,
+        note: noteOf(path.at(-1)?.eventId ?? null),
+        update: { status: target },
+        after: async (tx) => {
+          const createdAt = (eventId: string | null, fallback: Date) =>
+            shipment.events.find((e) => e.id.toString() === eventId)?.createdAt ?? fallback;
+          const steps = remaining.flatMap((entry) =>
+            entry.locationId
+              ? [
+                  {
+                    at: entry.occurredAt,
+                    createdAt: createdAt(entry.eventId, entry.occurredAt),
+                    locationId: entry.locationId,
+                  },
+                ]
+              : [],
+          );
+          const effects = await this.links.locationEffectsInTx(tx, shipment.id);
+          await tx.shipment.update({
+            where: { id: shipment.id },
+            data: { currentLocationId: currentLocationOf([...steps, ...effects]) },
+          });
+        },
+      };
+    });
   }
 
   /**

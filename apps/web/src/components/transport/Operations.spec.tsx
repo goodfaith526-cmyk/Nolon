@@ -387,6 +387,7 @@ describe('warehouse suggestions (D5)', () => {
       canReceive: true,
       canRelease: true,
       canAddPhotos: false,
+      canCancelMovements: false,
       receiptStatuses: [],
       defaultReceiptStatus: null,
     },

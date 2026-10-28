@@ -1088,7 +1088,14 @@
     "weightHeldSuggested": "مقترح: الوزن المتبقي في هذا المخزن، للإفراج عنه كله.",
     "place": "الموقع",
     "noPlace": "بدون موقع",
-    "placeHint": "الاستلام الذي يحرّك حالة الشحنة يظهرها في هذا الموقع في صفحة التتبع."
+    "placeHint": "الاستلام الذي يحرّك حالة الشحنة يظهرها في هذا الموقع في صفحة التتبع.",
+    "cancelMovement": "إلغاء الحركة",
+    "cancelReason": "سبب الإلغاء",
+    "cancelMovementHint": "الحركة تبقى في السجل بعلامة «ملغاة» ولا تُحسب في أي رصيد. إن كانت غيّرت حالة الشحنة، ترجع الحالة لما قبلها.",
+    "confirmCancelMovement": "تأكيد الإلغاء",
+    "cancelledBadge": "ملغاة",
+    "cancelledBy": "ألغاها {name} في {at}",
+    "movementCancelledNotice": "أُلغيت الحركة {number}."
   },
   "Customs": {
     "section": "الجمارك",
@@ -2631,7 +2638,7 @@
     "SHIPMENT_CANCEL_IN_CONTAINER": "الشحنة {shipment} في الحاوية {container} وهي مقفولة: لا يمكن إلغاؤها من هنا. أكمل الحاوية بتفريغها في الوجهة، أو اطلب تصحيحاً من المدير.",
     "REVERT_BY_TRIP": "هذه الخطوة سجلتها الرحلة {record}: لا يمكن التراجع عنها من هنا. اطلب تصحيحاً من المدير.",
     "REVERT_BY_CONTAINER": "هذه الخطوة سجلتها الحاوية {record}: لا يمكن التراجع عنها من هنا. اطلب تصحيحاً من المدير.",
-    "REVERT_BY_WAREHOUSE": "هذه الخطوة سجلتها حركة المخزن {record}: لا يمكن التراجع عنها من هنا. اطلب تصحيحاً من المدير.",
+    "REVERT_BY_WAREHOUSE": "هذه الخطوة سجلتها حركة المخزن {record}: لا يمكن التراجع عنها من هنا. ألغِ الحركة من تبويب المخزن (بصلاحية إلغاء حركات المخزن).",
     "REVERT_BY_POD": "هذه الخطوة سجلها إثبات التسليم {record}: لا يمكن التراجع عنها من هنا. اطلب تصحيحاً من المدير.",
     "REVERT_BY_CUSTOMS": "هذه الخطوة سجلها ملف الجمارك ({record}): لا يمكن التراجع عنها من هنا. اطلب تصحيحاً من المدير.",
     "SUPPLIER_REFERENCE_DUPLICATE": "مرجع المورد {reference} مسجّل في فواتير أخرى (معتمدة: {approved}، مسودات: {drafts})، أو تغيّرت من آخر مرة شفتها. راجعها، ثم أكّد أن هذه فاتورة مختلفة.",
@@ -2645,7 +2652,12 @@
     "CONTAINER_OVER_VOLUME": "الحاوية {container} لا تتسع لهذا الحجم: سعتها {limit} م³، فيها {used} وستصبح {after}.",
     "CONTAINER_OVER_WEIGHT": "الحاوية {container} لا تتحمل هذا الوزن: حدها {limit} كجم، فيها {used} وستصبح {after}.",
     "CONTAINER_VOLUME_MISSING": "أدخل حجم (م³) كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}.",
-    "CONTAINER_WEIGHT_MISSING": "أدخل وزن كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}."
+    "CONTAINER_WEIGHT_MISSING": "أدخل وزن كل بند بضاعة قبل إغلاق أو تحميل الحاوية {container}: {shipments}.",
+    "CORRECTION_ALREADY_DONE": "السجل {record} أُلغي من قبل بسبب آخر.",
+    "MOVEMENT_CANCEL_NEGATIVE": "بدون الحركة {movement} سيُفرج المخزن {warehouse} عن بضاعة لم تكن عنده: ألغِ الإفراج اللاحق أولاً.",
+    "MOVEMENT_CANCEL_OVER_PACKAGES": "بدون الحركة {movement} ستحمل المخازن معاً {peak} طرداً من {packages}: ألغِ الاستلام اللاحق أولاً.",
+    "MOVEMENT_CANCEL_STATUS_MOVED": "الشحنة تجاوزت الحالة التي سجلتها الحركة {movement}: تراجع عن الخطوات اللاحقة أولاً.",
+    "MOVEMENT_CANCEL_CLOSED": "الشحنة مغلقة: لا يمكن إلغاء الحركة {movement}."
   },
   "Locations": {
     "title": "الموانئ والمدن",

@@ -46,6 +46,8 @@ export interface MovementRow {
 /** Packages and weight with the sign of the movement: + received, - released. */
 const SIGNED_PACKAGES = Prisma.sql`CASE WHEN m."kind" = 'RECEIPT' THEN m."packages" ELSE -m."packages" END`;
 const SIGNED_WEIGHT = Prisma.sql`CASE WHEN m."kind" = 'RECEIPT' THEN m."weight_kg" ELSE -m."weight_kg" END`;
+/** B3-1: a cancelled receipt or release counts nowhere (alias `m`). */
+const LIVE = Prisma.sql`NOT EXISTS (SELECT 1 FROM "warehouse_movement_cancellations" x WHERE x."movement_id" = m."id")`;
 
 /**
  * Warehouse figures of the operational reports and the branch dashboard (annex D sections 2 and
@@ -71,7 +73,7 @@ export class WarehouseReportsService {
                sum(${SIGNED_PACKAGES}) OVER w AS "running"
         FROM "warehouse_movements" m
         -- Scoped by the shipment (rule 2), not the warehouse: your branches' shipments, owned or shared.
-        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)} AND ${LIVE}
           ${andIf(warehouseId, (id) => Prisma.sql`m."warehouse_id" = ${id}::uuid`)}
         WINDOW w AS (PARTITION BY m."shipment_id", m."warehouse_id"
                      ORDER BY m."occurred_at", m."created_at", m."id" ROWS UNBOUNDED PRECEDING)
@@ -211,7 +213,7 @@ export class WarehouseReportsService {
       JOIN "branches" b ON b."id" = m."branch_id"
       JOIN "warehouses" w ON w."id" = m."warehouse_id"
       JOIN "users" u ON u."id" = m."created_by_id"
-      WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
+      WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)} AND ${LIVE}
         AND (m."occurred_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
         ${andIf(q.warehouseId, (id) => Prisma.sql`m."warehouse_id" = ${id}::uuid`)}
         ${andIf(q.kind, (kind) => Prisma.sql`m."kind"::text = ${kind}`)}`;
@@ -308,7 +310,7 @@ export class WarehouseReportsService {
                count(*) FILTER (WHERE m."kind" = 'RELEASE')::int AS "released"
         FROM "warehouse_movements" m
         JOIN "branches" b ON b."id" = m."branch_id"
-        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)} AND ${LIVE}
           AND (m."occurred_at" AT TIME ZONE b."timezone")::date = ${day}`,
     ]);
     const h = held[0];
@@ -321,7 +323,10 @@ export class WarehouseReportsService {
     };
   }
 
-  /** Audit log: receipts and releases recorded in the period. */
+  /**
+   * Audit log: receipts and releases recorded in the period, and their cancellations (B3-1) when
+   * they were made, with the reason. A cancelled movement keeps its own entry: it was recorded.
+   */
   async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
     const branchIds = reportBranchIds(user, q.branchId);
     if (branchIds.length === 0) return [];
@@ -331,27 +336,39 @@ export class WarehouseReportsService {
         branchCode: string;
         userId: string;
         userName: string;
-        kind: WarehouseMovementKind;
+        kind: WarehouseMovementKind | 'CANCELLED';
         reference: string;
         detail: string | null;
       }[]
     >`
-      SELECT m."created_at" AS "at", b."code" AS "branchCode", m."created_by_id" AS "userId",
-             u."full_name" AS "userName", m."kind"::text AS "kind", m."number" AS "reference",
-             m."note" AS "detail"
-      FROM "warehouse_movements" m
-      JOIN "branches" b ON b."id" = m."branch_id"
-      JOIN "users" u ON u."id" = m."created_by_id"
-      WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
-        AND (m."created_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
-        ${andIf(q.userId, (id) => Prisma.sql`m."created_by_id" = ${id}::uuid`)}
-      ORDER BY m."created_at" DESC
+      SELECT * FROM (
+        SELECT m."created_at" AS "at", b."code" AS "branchCode", m."created_by_id" AS "userId",
+               u."full_name" AS "userName", m."kind"::text AS "kind", m."number" AS "reference",
+               m."note" AS "detail"
+        FROM "warehouse_movements" m
+        JOIN "branches" b ON b."id" = m."branch_id"
+        JOIN "users" u ON u."id" = m."created_by_id"
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
+          AND (m."created_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+          ${andIf(q.userId, (id) => Prisma.sql`m."created_by_id" = ${id}::uuid`)}
+        UNION ALL
+        SELECT x."cancelled_at", b."code", x."cancelled_by_id", u."full_name", 'CANCELLED',
+               m."number", x."reason"
+        FROM "warehouse_movement_cancellations" x
+        JOIN "warehouse_movements" m ON m."id" = x."movement_id"
+        JOIN "branches" b ON b."id" = x."branch_id"
+        JOIN "users" u ON u."id" = x."cancelled_by_id"
+        WHERE ${shipmentIdVisibleIn(Prisma.sql`m."shipment_id"`, branchIds)}
+          AND (x."cancelled_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+          ${andIf(q.userId, (id) => Prisma.sql`x."cancelled_by_id" = ${id}::uuid`)}
+      ) e
+      ORDER BY e."at" DESC
       LIMIT ${q.limit + 1}`;
     return rows.map(({ kind, ...r }) => ({
       ...r,
       at: r.at.toISOString(),
       entity: 'WAREHOUSE_MOVEMENT',
-      action: kind === 'RECEIPT' ? 'RECEIVED' : 'RELEASED',
+      action: kind === 'RECEIPT' ? 'RECEIVED' : kind === 'RELEASE' ? 'RELEASED' : 'CANCELLED',
       status: null,
     }));
   }

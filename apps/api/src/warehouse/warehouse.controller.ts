@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import {
   GOODS_CONDITIONS,
   MAX_DOCUMENT_BYTES,
+  SHIPMENT_REASON_MIN_LENGTH,
   WAREHOUSE_RECEIPT_STATUSES,
   type ShipmentWarehouseDto,
   type WarehouseDto,
@@ -52,6 +53,11 @@ const warehouseUpdateBody = z
     locationId: z.uuid().nullish(),
     isActive: z.boolean().optional(),
   })
+  .strict();
+
+/** B3-1: why a receipt or release is cancelled (3 to 500 characters, as the cancellation keeps). */
+const cancelBody = z
+  .object({ reason: requiredText(500).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH)) })
   .strict();
 
 const locationBody = z.object({ code, name: optionalText(200) }).strict();
@@ -188,6 +194,17 @@ export class ShipmentWarehouseController {
     @Body() body: unknown,
   ): Promise<WarehouseMovementDto> {
     return this.movements.release(user, shipmentId, parse(releaseBody, body));
+  }
+
+  @Post('movements/:movementId/cancel')
+  @RequirePermission('warehouse:cancel')
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('shipmentId', ParseUUIDPipe) shipmentId: string,
+    @Param('movementId', ParseUUIDPipe) movementId: string,
+    @Body() body: unknown,
+  ): Promise<WarehouseMovementDto> {
+    return this.movements.cancel(user, shipmentId, movementId, parse(cancelBody, body).reason);
   }
 
   @Post('movements/:movementId/photos')
