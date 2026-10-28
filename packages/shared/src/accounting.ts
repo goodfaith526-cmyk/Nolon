@@ -355,9 +355,32 @@ export interface UpdateCustomerInvoiceRequest extends CustomerInvoiceInput {
   repriced?: boolean;
 }
 
+/**
+ * An invoice of a shipment that is not cancelled, as the person sees them before adding another
+ * invoice to the shipment (owner decision Q3).
+ */
+export interface ShipmentInvoiceRefDto {
+  id: string;
+  /** Null while the invoice is a draft. */
+  number: string | null;
+  status: InvoiceStatus;
+}
+
+/**
+ * The most invoice ids a request may acknowledge. A shipment with more invoices that are not
+ * cancelled takes no further invoice until some are cancelled.
+ */
+export const MAX_ACKNOWLEDGED_INVOICES = 1000;
+
 /** A draft for the shipment, prefilled from its quotation when it has one. */
 export interface CreateCustomerInvoiceRequest {
   shipmentId: string;
+  /**
+   * The ids of the shipment's invoices that are not cancelled, as the person saw them (Q3). The
+   * API compares them with the shipment's invoices under the shipment's lock and refuses (409
+   * SHIPMENT_ALREADY_INVOICED) when they differ. Left out: the shipment must have none.
+   */
+  acknowledgedInvoiceIds?: string[];
 }
 
 export interface ReceiptAllocationDto {
@@ -455,6 +478,12 @@ export interface ReceiptDto extends ReceiptSummaryDto {
 }
 
 export interface CreateReceiptRequest {
+  /**
+   * The client's id for this request; it becomes the receipt's id. A retry with the same id and
+   * the same content returns the receipt the first request posted; the same id with other content
+   * is refused (409). Left out, a retry posts another receipt (B1-3).
+   */
+  requestId?: string;
   customerId: string;
   receiptDate: string;
   currency: CurrencyCode;

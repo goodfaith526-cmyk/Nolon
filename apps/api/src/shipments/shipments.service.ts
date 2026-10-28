@@ -33,7 +33,7 @@ import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
-import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
+import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   dateRange,
   localDayFilter,
@@ -42,7 +42,7 @@ import {
   routeWhere,
 } from '../common/list-filters.js';
 import { toDecimalStringOrNull } from '../common/money.js';
-import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
+import { oldNumberTerm } from '../common/old-numbers.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { codedRefusal, fieldRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
@@ -174,6 +174,7 @@ export class ShipmentsService {
     const { branchId, from, to } = filters;
     if (branchId) assertBranchAccess(user, branchId);
     const created = await localDayFilter(this.prisma, 'createdAt', from, to);
+    const oldNumbers = filters.q ? await oldNumberTerm(this.prisma, 'SHIPMENT', filters.q) : [];
     const where: Prisma.ShipmentWhereInput = {
       AND: [
         this.scope(user),
@@ -196,6 +197,7 @@ export class ShipmentsService {
         ? {
             OR: [
               { number: { contains: filters.q, mode: 'insensitive' } },
+              ...oldNumbers,
               { blNumber: { contains: filters.q, mode: 'insensitive' } },
               { customer: { name: { contains: filters.q, mode: 'insensitive' } } },
               { containers: { some: { containerNumber: { contains: filters.q.toUpperCase() } } } },
@@ -465,19 +467,19 @@ export class ShipmentsService {
 
   /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
-   * customer, parties, route, services, cargo lines and sales outlet are copied from the booking.
+   * customer, parties, route, services, cargo lines and sales outlet are copied from the booking,
+   * and so is its number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among
+   * shipments).
    */
   async createForBooking(tx: Tx, user: AuthUser, bookingId: string): Promise<{ id: string }> {
     const booking = await tx.booking.findUniqueOrThrow({
       where: { id: bookingId },
-      include: { items: { orderBy: { lineNo: 'asc' } }, branch: { select: { timezone: true } } },
+      include: { items: { orderBy: { lineNo: 'asc' } } },
     });
-    const year = todayIn(booking.branch.timezone).slice(0, 4);
-    const number = formatDocumentNumber('SHP', await nextSequenceValue(tx, 'SHIPMENT', year), year);
     const now = new Date();
     return tx.shipment.create({
       data: {
-        number,
+        number: booking.number,
         branchId: booking.branchId,
         customerId: booking.customerId,
         bookingId: booking.id,

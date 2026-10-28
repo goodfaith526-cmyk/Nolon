@@ -46,7 +46,7 @@ export function seesConsolidationCosts(has: (permission: Permission) => boolean)
 
 export interface ConsolidationSummaryDto {
   id: string;
-  /** NOL-CON-2026-000001 */
+  /** DXB-PTS-C0001 (its route, then C and a serial) */
   number: string;
   branchId: string;
   status: ConsolidationStatus;

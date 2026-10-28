@@ -220,7 +220,10 @@
     "reviewWithAssistantHint": "The assistant explains why it was refused, and can prepare the entry as a draft if you want.",
     "reviewWithAssistantFailed": "Could not open the assistant. Try again.",
     "openAssistant": "Open the assistant",
-    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it."
+    "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it.",
+    "chooseCountry": "Choose a country",
+    "countriesInUse": "Countries in use",
+    "allCountries": "All countries"
   },
   "Customers": {
     "title": "Customers",
@@ -261,7 +264,8 @@
     "parties": "Shipper, consignee and notify party",
     "addParty": "Add party",
     "partiesHint": "Parties are kept separately from the customer and chosen on each booking.",
-    "import": "Import from Excel"
+    "import": "Import from Excel",
+    "country": "Country"
   },
   "Rates": {
     "title": "Rates",
@@ -289,7 +293,10 @@
     "validFrom": "Valid from",
     "validTo": "Valid to (optional)",
     "transitDays": "Transit days",
-    "import": "Import from Excel"
+    "import": "Import from Excel",
+    "priceCategory": "Price category",
+    "generalCategory": "General (every category)",
+    "countryScope": "country"
   },
   "Enums": {
     "rate_DRAFT": "Draft",
@@ -493,7 +500,14 @@
     "currencyFromCustomer": "Suggested: the customer's preferred currency.",
     "currencyFromBranch": "Suggested: the branch's currency.",
     "validUntilFromDays": "Suggested: {days} days from today.",
-    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed."
+    "currencySuggestionNotApplied": "The suggested currency for this customer is {currency}. It was not applied because the lines already hold prices; change the currency yourself if needed.",
+    "priceCategory": "Price category",
+    "noCategory": "No category",
+    "sourceTyped": "Price typed",
+    "sourceRate": "From a rate card · {category} · {unit} · {currency} · {from} → {to}",
+    "scope_PLACE": "place",
+    "scope_CITY": "city",
+    "scope_COUNTRY": "country"
   },
   "Bookings": {
     "title": "Bookings",
@@ -745,6 +759,8 @@
     "notEditable": "Only a draft invoice can be edited.",
     "create": "Create invoice",
     "noneForShipment": "No invoices for this shipment yet.",
+    "otherInvoicesWarning": "This shipment already has {count, plural, one {# invoice} other {# invoices}} that {count, plural, one {is} other {are}} not cancelled. Another invoice bills it again: check {count, plural, one {it} other {them}} first.",
+    "otherInvoicesConfirm": "I checked these invoices; add another invoice to the shipment.",
     "editDraftTitle": "Edit draft invoice",
     "newCreditNote": "New credit note",
     "creditNoteHint": "A credit note reduces what this invoice still owes, up to its open amount. It is approved separately, which posts the reversing entry.",
@@ -1898,13 +1914,16 @@
     "kind_DISTRIBUTOR": "Distributor in Sudan",
     "phone": "Phone",
     "email": "Email",
-    "countryCode": "Country (2 letters)",
-    "countryHint": "For example SA, AE, EG, CN, SD.",
+    "countryCode": "Country",
     "location": "City or port",
     "currency": "Currency",
     "branch": "Branch",
     "commissionsLater": "Commission contracts and partner settlements are not set up yet: they come in a later step.",
-    "loadMore": "Show more"
+    "loadMore": "Show more",
+    "noLocation": "No city or port",
+    "chooseCountryFirst": "Choose the country first.",
+    "noPlacesInCountry": "No city or port of this country is recorded yet.",
+    "addPlace": "Add one in Locations"
   },
   "SupplierBills": {
     "title": "Supplier bills",
@@ -1971,7 +1990,9 @@
     "exactMatch": "Exact match:",
     "moreShipments": "More shipments",
     "noShipments": "No shipment of this branch matches.",
-    "chooseShipmentFirst": "Line {line}: choose the shipment."
+    "chooseShipmentFirst": "Line {line}: choose the shipment.",
+    "duplicateWarning": "Supplier reference {reference} is on {count, plural, one {# other supplier bill} other {# other supplier bills}} in this branch that {count, plural, one {is} other {are}} not cancelled. The same supplier invoice may be entered twice: check {count, plural, one {it} other {them}} first.",
+    "duplicateConfirm": "I checked these bills; this is a different supplier invoice."
   },
   "SupplierPayments": {
     "title": "Supplier payments",
@@ -2450,6 +2471,7 @@
     "VOLUME_TOO_LARGE": "The volume is too large: check the dimensions and the quantity.",
     "VALID_UNTIL_PAST": "The valid-until date is in the past.",
     "CURRENCY_NOT_ACTIVE": "This currency is unknown or no longer in use.",
+    "ROUTE_CODE_MISSING": "Place {location} has no letters for route numbers: an administrator sets its short code (Master data, Locations).",
     "QUOTED_ROUTE_FIXED": "This booking was made from a quotation: its route and mode are the quotation's and cannot change.",
     "RATE_NOT_USABLE": "This rate does not apply to this quotation (route, mode, load, cargo, currency or date).",
     "MANUAL_LINE_INCOMPLETE": "A line without a rate needs a charge, a unit and a price.",
@@ -2465,6 +2487,8 @@
     "SHIPMENT_PAST_LOADING": "Shipment {shipment} is past consolidation, on hold or cancelled.",
     "SHIPMENT_IN_OTHER_CONTAINER": "Shipment {shipment} is in container {container}: take it out or move it first.",
     "SHIPMENT_HAS_LIVE_INVOICES": "Shipment {shipment} still has invoices, so it cannot be cancelled. Cancel its draft invoices ({drafts}) and issue credit notes covering its approved invoices ({approved}) first. A paid or part-paid invoice blocks the cancellation.",
+    "SHIPMENT_ALREADY_INVOICED": "Shipment {shipment} already has invoices (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm to add another invoice.",
+    "SHIPMENT_ALREADY_INVOICED_REVIEW": "Shipment {shipment} already has invoices (approved: {approved}; drafts: {drafts}). Approve this draft on its review screen in NOLON, where they are listed.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
     "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",
@@ -2487,7 +2511,13 @@
     "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country.",
     "STATUS_TIME_TOO_EARLY": "The time cannot be before the shipment was created or its last status.",
     "REVERT_STALE": "The shipment changed since you opened it. Check its status history and try again.",
-    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone."
+    "REVERT_CLOSED_CONTAINER": "The shipment is in closed container {container}: closing a container is final, so its consolidation cannot be undone.",
+    "SUPPLIER_REFERENCE_DUPLICATE": "Supplier reference {reference} is on other bills (approved: {approved}; drafts: {drafts}), or they changed since you looked. Check them, then confirm this is a different invoice.",
+    "RATE_SUPERSEDED": "A narrower rate card prices this route (city before country, place before city): choose it.",
+    "RATE_CATEGORY_REQUIRED": "This rate card prices a category: choose the line's price category first.",
+    "PRICE_CATEGORY_NOT_USABLE": "This price category is unknown, no longer in use, or for another cargo type.",
+    "COUNTRY_KIND_FIXED": "A country pricing scope keeps its kind and country: add a new location instead.",
+    "COUNTRY_SCOPE_TAKEN": "{code} is already the pricing scope of {country}."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -2507,7 +2537,10 @@
     "kind_CITY": "City",
     "kind_BORDER": "Border point",
     "kind_OTHER": "Other",
-    "countryFromCity": "The city's country: a place is in the country of its city."
+    "countryFromCity": "The city's country: a place is in the country of its city.",
+    "shortCode": "Route letters",
+    "shortCodeHint": "Letters in route numbers (DXB in DXB-KRT-0001), 2 to 4. Empty: the city's, else the last three letters of the code.",
+    "kind_COUNTRY": "Country (pricing scope)"
   },
   "MasterData": {
     "title": "Master data",

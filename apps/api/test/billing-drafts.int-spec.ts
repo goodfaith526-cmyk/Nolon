@@ -509,6 +509,82 @@ describe('invoice drafts: a person reviews', () => {
   });
 });
 
+describe('invoice drafts for a shipment that already has invoices (Q3)', () => {
+  it('the review screen lists them and its approval names them; the chat sends it there', async () => {
+    await r
+      .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
+        kinds: ['invoice', 'receipt'],
+      })
+      .expect(200);
+    const shipmentId = await shipment();
+    const first = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    const draft = await invoiceDraft(invoiceRequest(shipmentId));
+    expect(draft.shipmentInvoices).toEqual([{ id: first.id, number: null, status: 'DRAFT' }]);
+    const suggestion = (
+      await r.agentPost('/invoice-drafts/suggest', tokens.finance, { shipmentId }).expect(200)
+    ).body as InvoiceSuggestionDto;
+    expect(suggestion.shipmentInvoices.map((i) => i.id)).toEqual([first.id]);
+
+    // Without the invoices named, or with others, nothing is written and the draft stays open.
+    for (const body of [
+      { version: 1 },
+      { version: 1, acknowledgedInvoiceIds: [] },
+      { version: 1, acknowledgedInvoiceIds: [randomUUID()] },
+      { version: 1, acknowledgedInvoiceIds: [first.id, randomUUID()] },
+    ]) {
+      const res = await r.post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, body);
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'SHIPMENT_ALREADY_INVOICED',
+        params: { approved: '—', drafts: '1' },
+      });
+    }
+    // The assistant's chat cannot list them: the approval is sent to the review screen.
+    const card = (
+      await r.agentGet(`/invoice-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
+    ).body as AssistantDraftDto<InvoiceDraftDto>;
+    const chat = await r.agentPost(
+      `/invoice-drafts/${draft.id}/assistant-approve`,
+      tokens.finance,
+      {
+        version: 1,
+        contentHash: card.contentHash,
+      },
+    );
+    expect(chat.status).toBe(409);
+    expect(chat.body).toMatchObject({ code: 'SHIPMENT_ALREADY_INVOICED_REVIEW' });
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+    expect(
+      await t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id: draft.id } }),
+    ).toMatchObject({ state: 'DRAFT', version: 1, invoiceId: null });
+
+    const approved = (
+      await r
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, {
+          version: 1,
+          acknowledgedInvoiceIds: [first.id],
+        })
+        .expect(200)
+    ).body as InvoiceDraftDto;
+    expect(approved).toMatchObject({ status: 'APPROVED', shipmentInvoices: [] });
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(2);
+  });
+
+  it('a draft approved after the shipment is cancelled is refused', async () => {
+    const shipmentId = await shipment();
+    const draft = await invoiceDraft(invoiceRequest(shipmentId));
+    await r
+      .post(`/shipments/${shipmentId}/cancel`, cookies.opsPts, { reason: 'Withdrawn' })
+      .expect(200);
+    await r
+      .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
+      .expect(409);
+    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(0);
+  });
+});
+
 describe('receipt drafts', () => {
   it('the assistant proposes a receipt; nothing is posted yet', async () => {
     const invoice = await approvedInvoice('500');

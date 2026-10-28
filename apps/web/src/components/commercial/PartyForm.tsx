@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
+import { CountrySelect } from '../CountrySelect';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 /**
@@ -29,6 +30,7 @@ export function PartyForm({
   const failure = useFailureText();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [country, setCountry] = useState('');
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -44,6 +46,7 @@ export function PartyForm({
             companyName: field(form, 'companyName') || null,
             phone: field(form, 'phone').replace(/\s/g, '') || null,
             email: field(form, 'email') || null,
+            countryCode: field(form, 'countryCode') || null,
             city: field(form, 'city') || null,
             address: field(form, 'address') || null,
           },
@@ -56,7 +59,7 @@ export function PartyForm({
   }
 
   return (
-    <form className="card stack" onSubmit={(e) => void submit(e)}>
+    <form className="card stack" autoComplete="off" onSubmit={(e) => void submit(e)}>
       {title && <h2>{title}</h2>}
       <Notice notice={notice} />
       <div className="grid">
@@ -75,6 +78,15 @@ export function PartyForm({
         <label className="field">
           {t('email')}
           <input name="email" type="email" dir="ltr" />
+        </label>
+        <label className="field">
+          {t('country')}
+          <CountrySelect
+            name="countryCode"
+            locations={undefined}
+            value={country}
+            onChange={setCountry}
+          />
         </label>
         <label className="field">
           {t('city')}

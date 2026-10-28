@@ -18,7 +18,7 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { branchCurrency } from '@/lib/branches';
 import { field } from '@/lib/form';
-import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { AMOUNT_PATTERN } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
@@ -193,7 +193,7 @@ export function TripForm({ shipmentId }: { shipmentId?: string } = {}) {
   }
 
   const carriers = (fleet?.carriers ?? []).filter((c) => c.isActive);
-  const locations = (master?.locations ?? []).filter((l) => l.isActive);
+  const locations = (master?.locations ?? []).filter((l) => l.isActive && isPlace(l));
   const currencies = (master?.currencies ?? []).filter((c) => c.isActive);
   const fleetMissing = fleet !== null && kind === 'OWN' && (!vehicles.length || !drivers.length);
   const isLocation = (id: string | null | undefined): id is string =>

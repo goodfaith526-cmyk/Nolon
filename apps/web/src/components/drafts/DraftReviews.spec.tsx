@@ -29,6 +29,7 @@ vi.mock('@/i18n/navigation', () => ({
 }));
 vi.mock('@/lib/api', () => ({ api: vi.fn(), ApiError: class extends Error {} }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => null,
   useLocalName: () => (item: { nameEn: string }) => item.nameEn,
   useLocationName: () => (id: string) => `place:${id}`,
@@ -165,6 +166,7 @@ describe('review screens: a draft holding none of its values', () => {
     const draft: InvoiceDraftDto = {
       ...base,
       missingFields: ['shipmentId', 'currency', 'lines[0].quantity'],
+      shipmentInvoices: [],
       customerId: null,
       customerName: null,
       shipmentNumber: null,

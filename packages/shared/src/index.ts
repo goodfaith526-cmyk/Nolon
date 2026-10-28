@@ -18,6 +18,7 @@ export * from './reports.js';
 export * from './operational-reports.js';
 export * from './payables.js';
 export * from './partners.js';
+export * from './countries.js';
 export * from './expenses.js';
 export * from './imports.js';
 export * from './agent-auth.js';

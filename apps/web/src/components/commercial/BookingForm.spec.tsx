@@ -14,13 +14,17 @@ import { ApiError } from '@/lib/api';
 const api = vi.fn();
 let permissions: string[] = ['customers:update'];
 
-vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
+vi.mock('next-intl', () => ({
+  useLocale: () => 'en',
+  useTranslations: () => (key: string) => key,
+}));
 vi.mock('@/i18n/navigation', () => ({ Link: () => null, useRouter: () => ({ push: () => {} }) }));
 vi.mock('@/lib/api', async (actual) => ({
   ...(await actual<typeof import('@/lib/api')>()),
   api: (...args: unknown[]) => api(...args) as unknown,
 }));
 vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
   useMasterData: () => ({
     currencies: [],
     locations: [

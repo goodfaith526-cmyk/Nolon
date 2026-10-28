@@ -12,6 +12,7 @@ import type {
   InvoicesReceiptsDto,
   JournalEntryDto,
   OpenAccrualsDto,
+  Page,
   ReceiptDto,
   ReportAccountOptionDto,
   ShipmentProfitabilityDto,
@@ -116,8 +117,19 @@ describe('financial reports', () => {
     lines: { chargeTypeCode: string; quantity: string; unitPrice: string }[],
     approve = true,
   ): Promise<CustomerInvoiceDto> {
-    const draft = (await post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201))
-      .body as CustomerInvoiceDto;
+    // A second invoice of a shipment names the invoices it already has (Q3).
+    const existing = (
+      await get(`/customer-invoices?shipmentId=${shipmentId}&pageSize=50`, cookies.financePts)
+    ).body as Page<CustomerInvoiceDto>;
+    const acknowledgedInvoiceIds = existing.items
+      .filter((i) => i.status !== 'CANCELLED')
+      .map((i) => i.id);
+    const draft = (
+      await post('/customer-invoices', cookies.financePts, {
+        shipmentId,
+        acknowledgedInvoiceIds,
+      }).expect(201)
+    ).body as CustomerInvoiceDto;
     await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
       ...fields,
       repriced: true,

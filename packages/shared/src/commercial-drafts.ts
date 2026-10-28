@@ -29,7 +29,10 @@ import type {
 // ---------------------------------------------------------------------------------------------
 
 /** A quotation line as a draft holds it: its quantity may be missing. */
-export type QuotationDraftLine = DraftValues<QuotationLineInput, 'quantity'>;
+export type QuotationDraftLine = DraftValues<
+  Omit<QuotationLineInput, 'priceCategoryCode'>,
+  'quantity'
+>;
 
 /**
  * A quotation as a quotation draft holds it (no required business fields): the customer, route,

@@ -18,7 +18,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
 import { asciiDigits } from '@/lib/form';
-import { useLocalName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useApiList } from '../finance/reports/ReportKit';
 import {
@@ -233,8 +233,9 @@ function MissingControl({
   if (options !== null) {
     // The review screen's own choices for this value.
   } else if (field === 'originLocationId' || field === 'destinationLocationId') {
+    // Documents name places; a rate card draft's screen offers its country scopes (`choices`).
     options = (master?.locations ?? [])
-      .filter((l) => l.isActive)
+      .filter((l) => l.isActive && isPlace(l))
       .map((l) => ({ value: l.id, label: `${localName(l)} (${l.code})` }));
   } else if (field === 'currency') options = codes(master?.currencies);
   else if (field === 'chargeTypeCode') options = codes(master?.chargeTypes);

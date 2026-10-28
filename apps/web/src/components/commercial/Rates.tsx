@@ -54,6 +54,15 @@ export function Rates() {
 
   // Every branch reads the rate cards; a rate is changed by a user of its own branch.
   const ofMine = (r: RateCardDto) => me.allBranches || me.branches.some((b) => b.id === r.branchId);
+  // A country scope says so: its card prices every place of the country (plan 5.3).
+  const scoped = (id: string) =>
+    master?.locations.find((l) => l.id === id)?.kind === 'COUNTRY'
+      ? `${locationName(id)} (${t('countryScope')})`
+      : locationName(id);
+  const categoryName = (code: string) => {
+    const category = master?.priceCategories.find((c) => c.code === code);
+    return category ? name(category) : code;
+  };
   const branchName = (id: string) => {
     const branch = master?.branches.find((b) => b.id === id);
     return branch ? name(branch) : '';
@@ -133,8 +142,8 @@ export function Rates() {
                   <td>{branchName(r.branchId)}</td>
                   <td>
                     {tc('route', {
-                      from: locationName(r.originLocationId),
-                      to: locationName(r.destinationLocationId),
+                      from: scoped(r.originLocationId),
+                      to: scoped(r.destinationLocationId),
                     })}
                   </td>
                   <td>
@@ -144,6 +153,7 @@ export function Rates() {
                   <td>
                     {te(`cargo_${r.cargoType}`)}
                     {r.containerTypeCode ? ` · ${r.containerTypeCode}` : ''}
+                    {r.priceCategoryCode ? ` · ${categoryName(r.priceCategoryCode)}` : ''}
                     <div className="muted">{r.chargeTypeCode}</div>
                   </td>
                   <td dir="ltr">
@@ -220,6 +230,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
       cargoType: cargo,
       containerTypeCode: cargo === 'CONTAINER' ? field(form, 'containerTypeCode') : null,
       chargeTypeCode: field(form, 'chargeTypeCode'),
+      priceCategoryCode: field(form, 'priceCategoryCode') || null,
       unit: field(form, 'unit'),
       price: field(form, 'price'),
       minimumCharge: field(form, 'minimumCharge') || '0',
@@ -242,7 +253,12 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
   }
 
   if (!master) return <p className="muted">{tc('loading')}</p>;
+  // A card may price a whole country (plan 5.3): the narrower card (city, then place) wins.
   const locations = master.locations.filter((l) => l.isActive);
+  const locationLabel = (l: (typeof locations)[number]) =>
+    `${name(l)} (${l.code})${l.kind === 'COUNTRY' ? ` · ${t('countryScope')}` : ''}`;
+  // A category follows one cargo type; a card without one is general (plan 5.3).
+  const categories = master.priceCategories.filter((c) => c.isActive && c.cargoType === cargo);
 
   return (
     <form className="card stack" onSubmit={(e) => void submit(e)}>
@@ -271,7 +287,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
           <select name="originLocationId" required>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
+                {locationLabel(l)}
               </option>
             ))}
           </select>
@@ -281,7 +297,7 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
           <select name="destinationLocationId" required defaultValue={locations[1]?.id}>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
-                {name(l)} ({l.code})
+                {locationLabel(l)}
               </option>
             ))}
           </select>
@@ -337,6 +353,17 @@ function RateForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
                   {name(c)}
                 </option>
               ))}
+          </select>
+        </label>
+        <label className="field">
+          {t('priceCategory')}
+          <select name="priceCategoryCode" key={cargo} defaultValue="">
+            <option value="">{t('generalCategory')}</option>
+            {categories.map((c) => (
+              <option key={c.code} value={c.code}>
+                {name(c)}
+              </option>
+            ))}
           </select>
         </label>
         <label className="field">

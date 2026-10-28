@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
-import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
+import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
@@ -27,7 +27,7 @@ export function Warehouses() {
   const master = useMasterData();
   const locationName = useLocationName(master);
   // The place a warehouse is at: a receipt that moves the shipment records it there (review D9).
-  const places = master?.locations.filter((l) => l.isActive) ?? [];
+  const places = master?.locations.filter((l) => l.isActive && isPlace(l)) ?? [];
   const branchCode = useBranchCode(me);
   const failure = useFailureText();
   const [warehouses, setWarehouses] = useState<WarehouseDto[] | null>(null);

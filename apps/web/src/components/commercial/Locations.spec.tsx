@@ -16,12 +16,19 @@ const place = (id: string, kind: LocationDto['kind'], cityId: string | null = nu
     countryCode: 'AE',
     isActive: true,
     cityId,
+    shortCode: null,
   }) satisfies LocationDto;
 const locations = [place('dxb', 'CITY'), place('jea', 'PORT'), place('ruh', 'CITY')];
 locations[2] = { ...locations[2]!, countryCode: 'SA' };
 
-vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
-vi.mock('@/lib/master-data', () => ({ useLocalName: () => (l: { nameEn: string }) => l.nameEn }));
+vi.mock('next-intl', () => ({
+  useLocale: () => 'en',
+  useTranslations: () => (key: string) => key,
+}));
+vi.mock('@/lib/master-data', () => ({
+  isPlace: (l: { kind?: string }) => l.kind !== 'COUNTRY',
+  useLocalName: () => (l: { nameEn: string }) => l.nameEn,
+}));
 vi.mock('@/lib/api', () => ({
   api: (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, init });
@@ -74,23 +81,27 @@ describe('Locations', () => {
     permissions = ['master_data:view', 'master_data:create'];
     const shown = await show();
     const form = shown.querySelector('form')!;
-    const country = form.querySelector<HTMLInputElement>('input[name="countryCode"]')!;
+    const country = () => form.querySelector<HTMLSelectElement>('select[name="countryCode"]')!;
+    // A disabled select is not submitted: the locked country travels in a hidden field.
+    const sent = () => form.querySelector<HTMLInputElement>('input[name="countryCode"]');
     const city = form.querySelector<HTMLSelectElement>('select[name="cityId"]')!;
     const pick = (value: string) =>
       act(() => {
         city.value = value;
         city.dispatchEvent(new Event('change', { bubbles: true }));
       });
-    expect(country.readOnly).toBe(false);
+    expect(country().disabled).toBe(false);
     pick('ruh');
-    expect(country.value).toBe('SA');
-    expect(country.readOnly).toBe(true);
+    expect(country().value).toBe('SA');
+    expect(country().disabled).toBe(true);
+    expect(sent()?.value).toBe('SA');
     // Without a city the place names its own country, still required.
     pick('');
-    expect(country.readOnly).toBe(false);
-    expect(country.required).toBe(true);
+    expect(country().disabled).toBe(false);
+    expect(country().required).toBe(true);
+    expect(sent()).toBeNull();
     pick('dxb');
-    expect(country.value).toBe('AE');
+    expect(country().value).toBe('AE');
     for (const [name, value] of [
       ['code', 'jxa'],
       ['nameAr', 'x'],

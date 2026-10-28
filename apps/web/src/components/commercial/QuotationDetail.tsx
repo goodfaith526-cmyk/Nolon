@@ -54,6 +54,21 @@ export function QuotationDetail({ id }: { id: string }) {
     }
   }
 
+  // Where the price came from (plan 5.2): the card, its category, unit, currency and the scope
+  // each end of its route matched at; or typed.
+  const sourceText = (l: QuotationDto['lines'][number]) => {
+    if (l.priceSource === 'TYPED') return t('sourceTyped');
+    const s = l.priceSourceDetail;
+    if (!s) return null;
+    const category = master?.priceCategories.find((c) => c.code === s.priceCategoryCode);
+    return t('sourceRate', {
+      category: category ? name(category) : t('noCategory'),
+      unit: te(`unit_${s.unit}`),
+      currency: s.currency,
+      from: `${locationName(s.originLocationId)} (${t(`scope_${s.originScope}`)})`,
+      to: `${locationName(s.destinationLocationId)} (${t(`scope_${s.destinationScope}`)})`,
+    });
+  };
   const chargeName = (code: string) => {
     const charge = master?.chargeTypes.find((c) => c.code === code);
     return charge ? name(charge) : code;
@@ -192,6 +207,7 @@ export function QuotationDetail({ id }: { id: string }) {
                 <td>
                   {chargeName(l.chargeTypeCode)}
                   {l.description ? <div className="muted">{l.description}</div> : null}
+                  {sourceText(l) ? <div className="muted">{sourceText(l)}</div> : null}
                 </td>
                 <td dir="ltr">
                   {l.quantity} × {te(`unit_${l.unit}`)}

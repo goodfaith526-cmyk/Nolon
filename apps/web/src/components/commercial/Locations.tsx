@@ -13,11 +13,13 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
+import { CountrySelect, useCountryName } from '../CountrySelect';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 
 /** Ports, cities and border points (master data); each place can name the city it serves. */
 export function Locations() {
   const t = useTranslations('Locations');
+  const countryName = useCountryName();
   const tc = useTranslations('Common');
   const me = useMe();
   const localName = useLocalName();
@@ -65,8 +67,9 @@ export function Locations() {
       kind,
       nameEn: field(form, 'nameEn').trim(),
       nameAr: field(form, 'nameAr').trim(),
-      countryCode: field(form, 'countryCode').trim().toUpperCase(),
+      countryCode: field(form, 'countryCode'),
       cityId: chosenCity?.id ?? null,
+      shortCode: field(form, 'shortCode').trim().toUpperCase() || null,
     };
     const ok = await run(
       () => api<LocationDto>('/master-data/locations', { method: 'POST', body }),
@@ -86,7 +89,8 @@ export function Locations() {
 
   const cities = (locations ?? []).filter((l) => l.kind === 'CITY');
   // The city picked for the new place (a city has none): its country is the place's.
-  const chosenCity = kind === 'CITY' ? undefined : cities.find((c) => c.id === cityId);
+  const chosenCity =
+    kind === 'CITY' || kind === 'COUNTRY' ? undefined : cities.find((c) => c.id === cityId);
   const canCreate = can(me, 'master_data:create');
   const canUpdate = can(me, 'master_data:update');
   const cityName = (id: string | null) => {
@@ -112,7 +116,7 @@ export function Locations() {
       </div>
       <Notice notice={notice} />
       {canCreate && (
-        <form className="card stack" onSubmit={(e) => void onCreate(e)}>
+        <form className="card stack" autoComplete="off" onSubmit={(e) => void onCreate(e)}>
           <h2>{t('add')}</h2>
           <div className="grid">
             <label className="field">
@@ -143,25 +147,38 @@ export function Locations() {
             </label>
             <label className="field">
               <span>{t('country')}</span>
-              <input
+              <CountrySelect
                 name="countryCode"
                 required
-                minLength={2}
-                maxLength={2}
-                dir="ltr"
-                pattern="[A-Za-z]{2}"
+                locations={locations ?? undefined}
                 value={chosenCity ? chosenCity.countryCode : country}
-                readOnly={chosenCity !== undefined}
-                aria-describedby={chosenCity ? 'location-country-from-city' : undefined}
-                onChange={(e) => setCountry(e.target.value)}
+                disabled={chosenCity !== undefined}
+                onChange={setCountry}
               />
+              {chosenCity && (
+                // A disabled select is not submitted: the city's country is sent with the form.
+                <input type="hidden" name="countryCode" value={chosenCity.countryCode} />
+              )}
               {chosenCity && (
                 <small id="location-country-from-city" className="muted">
                   {t('countryFromCity')}
                 </small>
               )}
             </label>
-            {kind !== 'CITY' && (
+            <label className="field">
+              <span>{t('shortCode')}</span>
+              <input
+                name="shortCode"
+                maxLength={4}
+                dir="ltr"
+                pattern="[A-Za-z]{2,4}"
+                aria-describedby="location-short-code-hint"
+              />
+              <small id="location-short-code-hint" className="muted">
+                {t('shortCodeHint')}
+              </small>
+            </label>
+            {kind !== 'CITY' && kind !== 'COUNTRY' && (
               <label className="field">
                 <span>{t('city')}</span>
                 <select
@@ -200,6 +217,7 @@ export function Locations() {
                 <th>{t('name')}</th>
                 <th>{t('kind')}</th>
                 <th>{t('country')}</th>
+                <th>{t('shortCode')}</th>
                 <th>{t('city')}</th>
                 <th>{tc('status')}</th>
                 {canUpdate && <th />}
@@ -211,9 +229,28 @@ export function Locations() {
                   <td dir="ltr">{l.code}</td>
                   <td>{localName(l)}</td>
                   <td>{t(`kind_${l.kind}`)}</td>
-                  <td dir="ltr">{l.countryCode}</td>
+                  <td>{countryName(l.countryCode)}</td>
+                  <td dir="ltr">
+                    {canUpdate ? (
+                      <input
+                        key={`${l.id}-${l.shortCode ?? ''}`}
+                        aria-label={t('shortCode')}
+                        defaultValue={l.shortCode ?? ''}
+                        maxLength={4}
+                        size={4}
+                        pattern="[A-Za-z]{2,4}"
+                        disabled={busy}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim().toUpperCase() || null;
+                          if (value !== l.shortCode) update(l, { shortCode: value });
+                        }}
+                      />
+                    ) : (
+                      (l.shortCode ?? '—')
+                    )}
+                  </td>
                   <td>
-                    {canUpdate && l.kind !== 'CITY' ? (
+                    {canUpdate && l.kind !== 'CITY' && l.kind !== 'COUNTRY' ? (
                       <select
                         aria-label={t('city')}
                         value={l.cityId ?? ''}

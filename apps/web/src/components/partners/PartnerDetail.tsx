@@ -6,12 +6,14 @@ import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
+import { useCountryName } from '../CountrySelect';
 import { useRecord } from '../finance/common';
 import { useMe } from '../StaffShell';
 import { PartnerFields, partnerFields } from './Partners';
 
 export function PartnerDetail({ id }: { id: string }) {
   const t = useTranslations('Partners');
+  const countryName = useCountryName();
   const tc = useTranslations('Common');
   const me = useMe();
   const failure = useFailureText();
@@ -81,7 +83,7 @@ export function PartnerDetail({ id }: { id: string }) {
       )}
 
       {editing ? (
-        <form className="card stack" onSubmit={save}>
+        <form className="card stack" autoComplete="off" onSubmit={save}>
           <PartnerFields partner={p} />
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
@@ -103,7 +105,7 @@ export function PartnerDetail({ id }: { id: string }) {
           <dt>{t('email')}</dt>
           <dd dir="ltr">{p.email ?? '—'}</dd>
           <dt>{t('countryCode')}</dt>
-          <dd dir="ltr">{p.countryCode}</dd>
+          <dd>{countryName(p.countryCode)}</dd>
           <dt>{t('location')}</dt>
           <dd>{p.locationId ? locationName(p.locationId) : '—'}</dd>
           <dt>{t('currency')}</dt>

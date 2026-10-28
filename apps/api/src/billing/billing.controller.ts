@@ -13,6 +13,7 @@ import {
 import {
   CREDIT_NOTE_STATUSES,
   INVOICE_STATUSES,
+  MAX_ACKNOWLEDGED_INVOICES,
   PAYMENT_STATUSES,
   RECEIPT_STATUSES,
   type CreditNoteDto,
@@ -55,7 +56,12 @@ export const invoiceLine = z
     unitPrice: amount,
   })
   .strict();
-const createInvoiceBody = z.object({ shipmentId: z.uuid() }).strict();
+const createInvoiceBody = z
+  .object({
+    shipmentId: z.uuid(),
+    acknowledgedInvoiceIds: z.array(z.uuid()).max(MAX_ACKNOWLEDGED_INVOICES).optional(),
+  })
+  .strict();
 const updateInvoiceBody = z
   .object({
     currency: currencyCode,
@@ -83,6 +89,7 @@ const invoiceListQuery = pageQuery
 
 export const createReceiptBody = z
   .object({
+    requestId: z.uuid().optional(),
     customerId: z.uuid(),
     receiptDate: dateString,
     currency: currencyCode,
@@ -176,7 +183,8 @@ export class InvoicesController {
   @Post()
   @RequirePermission('customer_invoices:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerInvoiceDto> {
-    return this.invoices.createForShipment(user, parse(createInvoiceBody, body).shipmentId);
+    const { shipmentId, acknowledgedInvoiceIds } = parse(createInvoiceBody, body);
+    return this.invoices.createForShipment(user, shipmentId, acknowledgedInvoiceIds);
   }
 
   /** A customer's open invoice at go-live (annex C rule 15), approved and posted at once. */

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CargoType,
   CodeNameDto,
   CodeNameInput,
   CodeNameUpdate,
@@ -49,6 +50,17 @@ const PRICE_CATEGORY_FIELDS = [
   'nameAr',
   'cargoType',
   'defaultUnit',
+  'isActive',
+] as const;
+
+/** The fields the audit log shows for a location, in this order. */
+const LOCATION_FIELDS = [
+  'code',
+  'kind',
+  'nameEn',
+  'nameAr',
+  'countryCode',
+  'shortCode',
   'isActive',
 ] as const;
 
@@ -121,13 +133,16 @@ export class MasterDataService {
    * edit (which locks it for update) and the place's insert run one after the other, so a place
    * never lands in a city that moved to another country meanwhile (Codex F96-1).
    */
-  async createLocation(input: LocationInput): Promise<LocationDto> {
+  async createLocation(user: AuthUser, input: LocationInput): Promise<LocationDto> {
     try {
       return toLocationDto(
         await this.prisma.$transaction(async (tx) => {
           const city = await requireCityOf(tx, null, input.kind, input.cityId);
           requireCityCountry(city, input.countryCode);
-          return tx.location.create({ data: input });
+          if (input.kind === 'COUNTRY') await requireNoCountryScope(tx, input.countryCode);
+          const created = await tx.location.create({ data: input });
+          await this.logLocation(tx, user, 'CREATED', null, created);
+          return created;
         }),
       );
     } catch (error) {
@@ -141,7 +156,11 @@ export class MasterDataService {
    * so the checks below and the write see the same city and the same places (Codex F96-1). A place
    * locks itself before its city, and a city has no city, so the order never cycles.
    */
-  async updateLocation(id: string, input: Partial<LocationInput>): Promise<LocationDto> {
+  async updateLocation(
+    user: AuthUser,
+    id: string,
+    input: Partial<LocationInput>,
+  ): Promise<LocationDto> {
     try {
       return toLocationDto(
         await this.prisma.$transaction(async (tx) => {
@@ -150,6 +169,19 @@ export class MasterDataService {
           const kind = input.kind ?? existing.kind;
           const cityId = input.cityId === undefined ? existing.cityId : input.cityId;
           const countryCode = input.countryCode ?? existing.countryCode;
+          // A country scope stays that country: rate cards price its places through it.
+          if ((kind === 'COUNTRY') !== (existing.kind === 'COUNTRY')) {
+            throw fieldRefusal(
+              'COUNTRY_KIND_FIXED',
+              'A country scope stays one, and a place does not become one: add a new location',
+              ['kind'],
+            );
+          }
+          if (kind === 'COUNTRY' && countryCode !== existing.countryCode) {
+            throw fieldRefusal('COUNTRY_KIND_FIXED', 'A country scope keeps its country', [
+              'countryCode',
+            ]);
+          }
           const city = await requireCityOf(tx, id, kind, cityId);
           // Checked when the country or the city changes (a place saved before the check keeps
           // its own).
@@ -173,7 +205,9 @@ export class MasterDataService {
             if (places > 0)
               throw new BadRequestException('Places name this location as their city');
           }
-          return tx.location.update({ where: { id }, data: input });
+          const updated = await tx.location.update({ where: { id }, data: input });
+          await this.logLocation(tx, user, 'UPDATED', existing, updated);
+          return updated;
         }),
       );
     } catch (error) {
@@ -311,6 +345,25 @@ export class MasterDataService {
     });
   }
 
+  private async logLocation(
+    tx: Tx,
+    user: AuthUser,
+    action: 'CREATED' | 'UPDATED',
+    before: Location | null,
+    after: Location,
+  ): Promise<void> {
+    const changes = changedFields(before, after, LOCATION_FIELDS);
+    if (action === 'UPDATED' && changes.length === 0) return;
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: 'LOCATION',
+      entityId: after.id,
+      reference: `${after.code} ${after.nameEn}`,
+      action,
+      changes,
+    });
+  }
+
   private async logCodeType(
     tx: Tx,
     user: AuthUser,
@@ -327,6 +380,40 @@ export class MasterDataService {
       action,
       changes: changedFields(before, after, AUDITED_FIELDS),
     });
+  }
+
+  /**
+   * The letters of a route numbered by it (an LCL booking or a shared container: DXB-KRT). Each
+   * end is its short code, else its city's, else the last three characters of its code when they
+   * are three letters. Refused (ROUTE_CODE_MISSING, on that end's field) when an end has none:
+   * an administrator sets its short code; no letters are made up.
+   */
+  async routeLetters(
+    db: Tx,
+    originId: string,
+    destinationId: string,
+    fields: readonly [string, string] = ['originLocationId', 'destinationLocationId'],
+  ): Promise<string> {
+    const ends = await db.location.findMany({
+      where: { id: { in: [originId, destinationId] } },
+      select: { id: true, code: true, shortCode: true, city: { select: { shortCode: true } } },
+    });
+    const letters = (id: string, field: string): string => {
+      const end = ends.find((e) => e.id === id);
+      if (!end) throw new NotFoundException('Location not found');
+      const tail = end.code.slice(-3);
+      const found = end.shortCode ?? end.city?.shortCode ?? (/^[A-Z]{3}$/.test(tail) ? tail : null);
+      if (found === null || !/^[A-Z]{2,4}$/.test(found)) {
+        throw fieldRefusal(
+          'ROUTE_CODE_MISSING',
+          `Location ${end.code} has no letters for route numbers: set its short code`,
+          [field],
+          { location: end.code },
+        );
+      }
+      return found;
+    };
+    return `${letters(originId, fields[0])}-${letters(destinationId, fields[1])}`;
   }
 
   /**
@@ -353,8 +440,33 @@ export class MasterDataService {
     };
   }
 
-  /** 400 unless the location exists and is active. */
+  /**
+   * 400 unless the location exists, is active and is a place: a country scope (COUNTRY) is for
+   * rate cards only (requireRateLocation), never a document's origin, destination or position.
+   */
   async requireLocation(id: string): Promise<Location> {
+    return requirePlace(await this.requireRateLocation(id));
+  }
+
+  /**
+   * 400 unless the price category exists and is active, and (when given) prices `cargoType`: a
+   * category follows one cargo type, so it never contradicts the cargo it prices.
+   */
+  async requirePriceCategory(code: string, cargoType: CargoType | null): Promise<PriceCategory> {
+    const category = await this.prisma.priceCategory.findUnique({ where: { code } });
+    if (!category?.isActive) {
+      throw new BadRequestException(`Unknown or inactive price category: ${code}`);
+    }
+    if (cargoType !== null && category.cargoType !== cargoType) {
+      throw new BadRequestException(
+        `Price category ${code} prices ${category.cargoType} cargo, not ${cargoType}`,
+      );
+    }
+    return category;
+  }
+
+  /** For a rate card: 400 unless the location exists and is active, a place or a country. */
+  async requireRateLocation(id: string): Promise<Location> {
     const location = await this.prisma.location.findUnique({ where: { id } });
     if (!location?.isActive) throw new BadRequestException('Unknown or inactive location');
     return location;
@@ -378,15 +490,25 @@ export class MasterDataService {
   async requireLocationInTx(tx: Tx, id: string): Promise<Location> {
     const location = await lockLocation(tx, id, 'SHARE');
     if (!location?.isActive) throw new BadRequestException('Unknown or inactive location');
-    return location;
+    return requirePlace(location);
   }
 
+  /** A document's route: two different active places (requireLocation). */
   async requireRoute(originId: string, destinationId: string): Promise<void> {
     if (originId === destinationId) {
       throw new BadRequestException('Origin and destination must differ');
     }
     await this.requireLocation(originId);
     await this.requireLocation(destinationId);
+  }
+
+  /** A rate card's route: as requireRoute, and either end may be a country scope. */
+  async requireRateRoute(originId: string, destinationId: string): Promise<void> {
+    if (originId === destinationId) {
+      throw new BadRequestException('Origin and destination must differ');
+    }
+    await this.requireRateLocation(originId);
+    await this.requireRateLocation(destinationId);
   }
 
   async requireContainerType(code: string): Promise<ContainerType> {
@@ -506,10 +628,41 @@ async function requireCityOf(
 ): Promise<Location | null> {
   if (!cityId) return null;
   if (kind === 'CITY') throw new BadRequestException('A city does not belong to another city');
+  if (kind === 'COUNTRY') throw new BadRequestException('A country scope has no city');
   if (cityId === id) throw new BadRequestException('A location cannot be its own city');
   const city = await lockLocation(tx, cityId, 'SHARE');
   if (city?.kind !== 'CITY') throw new BadRequestException('cityId must be a city');
   return city;
+}
+
+/** A country scope prices places through rate cards; it is not a place a document names. */
+function requirePlace(location: Location): Location {
+  if (location.kind === 'COUNTRY') {
+    throw new BadRequestException(
+      `${location.code} is a country pricing scope, not a place: choose a port, city or point`,
+    );
+  }
+  return location;
+}
+
+/**
+ * One country scope per country: a second would split its rate cards. Checked under a lock on
+ * the country code, so two creates cannot both pass.
+ */
+async function requireNoCountryScope(tx: Tx, countryCode: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`location-country:${countryCode}`}))`;
+  const taken = await tx.location.findFirst({
+    where: { kind: 'COUNTRY', countryCode },
+    select: { code: true },
+  });
+  if (taken) {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'COUNTRY_SCOPE_TAKEN',
+      `${taken.code} is already the pricing scope of ${countryCode}`,
+      { code: taken.code, country: countryCode },
+    );
+  }
 }
 
 /** A location row locked until the caller commits, read after the lock; null when missing. */
@@ -550,6 +703,7 @@ function toLocationDto(l: Location): LocationDto {
     countryCode: l.countryCode,
     isActive: l.isActive,
     cityId: l.cityId,
+    shortCode: l.shortCode,
   };
 }
 
