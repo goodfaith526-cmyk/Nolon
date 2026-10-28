@@ -8,7 +8,8 @@ import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data'
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useCountryName } from '../CountrySelect';
 import { useRecord } from '../finance/common';
-import { useMe } from '../StaffShell';
+import { can, useMe } from '../StaffShell';
+import { PartnerContracts } from './PartnerContracts';
 import { PartnerFields, partnerFields } from './Partners';
 
 export function PartnerDetail({ id }: { id: string }) {
@@ -118,6 +119,7 @@ export function PartnerDetail({ id }: { id: string }) {
           )}
         </dl>
       )}
+      {can(me, 'partner_contracts:view') && <PartnerContracts partner={p} />}
       <p className="muted">{t('commissionsLater')}</p>
     </section>
   );

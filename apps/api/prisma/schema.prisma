@@ -130,6 +130,8 @@ model Currency {
   partners             Partner[]
   customersCreditLimit Customer[]        @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
+  partnerContracts     PartnerContract[]
+  rateCardCosts        RateCardCost[]
   quotations           Quotation[]
   accounts             Account[]
   fxRates              FxRate[]
@@ -191,6 +193,9 @@ model User {
 
   customersCreated            Customer[]           @relation("CustomerCreatedBy")
   partnersCreated             Partner[]            @relation("PartnerCreatedBy")
+  partnerContractsCreated     PartnerContract[]    @relation("PartnerContractCreatedBy")
+  partnerContractsApproved    PartnerContract[]    @relation("PartnerContractApprovedBy")
+  rateCardCostsUpdated        RateCardCost[]       @relation("RateCardCostUpdatedBy")
   ratesCreated                RateCard[]           @relation("RateCreatedBy")
   ratesApproved               RateCard[]           @relation("RateApprovedBy")
   quotationsCreated           Quotation[]          @relation("QuotationCreatedBy")
@@ -882,8 +887,9 @@ model Partner {
   quotationsSold        Quotation[]
   bookingsSold          Booking[]
   shipmentsSold         Shipment[]
-  shipmentsConsolidated Shipment[]    @relation("ShipmentOriginConsolidator")
-  shipmentsDistributed  Shipment[]    @relation("ShipmentDistributor")
+  shipmentsConsolidated Shipment[]        @relation("ShipmentOriginConsolidator")
+  shipmentsDistributed  Shipment[]        @relation("ShipmentDistributor")
+  contracts             PartnerContract[]
 
   @@index([branchId, kind])
   @@index([locationId])
@@ -907,8 +913,109 @@ model PriceCategory {
   quotationLines QuotationLine[]
   csRequests     CsBookingRequest[]
   bookingItems   BookingItem[]
+  contracts      PartnerContract[]
 
   @@map("price_categories")
+}
+
+enum CommissionBasis {
+  PERCENT_OF_PRICE
+  FIXED_PER_UNIT
+
+  @@map("commission_basis")
+}
+
+enum PartnerContractStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+
+  @@map("partner_contract_status")
+}
+
+/// What a partner earns per sale (business model plan 3.4): settings only in batch 1. Read to show
+/// the expected commission inside a rate card's expected margin; nothing accrues, posts or settles
+/// from it. An approved contract is never edited: it is cancelled and a new one is made.
+model PartnerContract {
+  id                String                @id @default(uuid()) @db.Uuid
+  partnerId         String                @map("partner_id") @db.Uuid
+  /// Null: every category. A contract of the card's own category beats one for every category.
+  priceCategoryCode String?               @map("price_category_code") @db.VarChar(20)
+  basis             CommissionBasis
+  /// The percentage (7.5 = 7.5%) or the fixed amount per unit.
+  value             Decimal               @db.Decimal(18, 4)
+  /// Fixed amounts only (the unit the amount is per, and its currency); null for a percentage.
+  unit              RateUnit?
+  currency          String?               @db.Char(3)
+  validFrom         DateTime              @map("valid_from") @db.Date
+  validTo           DateTime?             @map("valid_to") @db.Date
+  notes             String?
+  status            PartnerContractStatus @default(DRAFT)
+  approvedById      String?               @map("approved_by_id") @db.Uuid
+  approvedAt        DateTime?             @map("approved_at") @db.Timestamptz(3)
+  createdById       String                @map("created_by_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  partner       Partner        @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  priceCategory PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  currencyRef   Currency?      @relation(fields: [currency], references: [code], onDelete: Restrict)
+  approvedBy    User?          @relation("PartnerContractApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy     User           @relation("PartnerContractCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, status])
+  @@index([priceCategoryCode])
+  @@index([currency])
+  @@map("partner_contracts")
+}
+
+enum RateCostComponent {
+  ORIGIN_HANDLING
+  SEA_FREIGHT
+  DISTRIBUTION
+  OTHER
+
+  @@map("rate_cost_component")
+}
+
+enum RateCostStatus {
+  ENTERED
+  NOT_APPLICABLE
+
+  @@map("rate_cost_status")
+}
+
+/// A reference cost of a rate card (business model plan 6.1), for its expected margin: planning
+/// only, never a journal entry or a report figure. One row per component; a component with no row
+/// is missing, and the margin is incomplete. The outlet's commission is not stored: it comes from
+/// the outlet's approved contract.
+model RateCardCost {
+  id                 String            @id @default(uuid()) @db.Uuid
+  rateCardId         String            @map("rate_card_id") @db.Uuid
+  component          RateCostComponent
+  status             RateCostStatus
+  /// Entered costs only.
+  amount             Decimal?          @db.Decimal(18, 4)
+  currency           String?           @db.Char(3)
+  unit               RateUnit?
+  /// How many of the card's units one cost unit holds (400 pieces in a container), when the cost's
+  /// unit is not the card's.
+  unitsPerCostUnit   Decimal?          @map("units_per_cost_unit") @db.Decimal(18, 4)
+  /// The card unit `unitsPerCostUnit` was entered for. The factor converts only while the card
+  /// still has that unit: after the card's unit changes, the cost needs a new conversion.
+  conversionCardUnit RateUnit?         @map("conversion_card_unit")
+  note               String?
+  updatedById        String            @map("updated_by_id") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  rateCard    RateCard  @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
+  currencyRef Currency? @relation(fields: [currency], references: [code], onDelete: Restrict)
+  updatedBy   User      @relation("RateCardCostUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([rateCardId, component])
+  @@index([currency])
+  @@map("rate_card_costs")
 }
 
 /// Individuals and families, merchants and importers, companies and online shops... Master data
@@ -975,6 +1082,7 @@ model RateCard {
   createdBy         User               @relation("RateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   quotationLines    QuotationLine[]
   invoiceDraftLines InvoiceDraftLine[]
+  costs             RateCardCost[]
 
   draft    RateCardDraft?
   csQuotes CsQuote[]

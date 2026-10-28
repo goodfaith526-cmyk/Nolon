@@ -79,6 +79,9 @@ services:
       # `true`: the assistant opens as a panel inside the pages (repository variable
       # STAGING_AGENT_ASSISTANT_PANEL). Empty: a new tab.
       AGENT_ASSISTANT_PANEL: ${AGENT_ASSISTANT_PANEL:-}
+      # The owner opened the Outlet Staff role for trials on staging (2026-10-28, «افتح»).
+      # Production leaves it unset (off) until opened there too.
+      OUTLET_STAFF_ASSIGNABLE: 'true'
     depends_on:
       postgres:
         condition: service_healthy

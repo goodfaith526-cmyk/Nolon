@@ -827,6 +827,11 @@ export const FORM_REFUSALS = [
   'QUOTED_OUTLET_FIXED',
   // A customer segment that is unknown or no longer in use.
   'CUSTOMER_SEGMENT_NOT_USABLE',
+  // Business model PR-4: two approved contracts of a partner and category whose dates overlap; a
+  // contract or cost unit, category or outlet that cannot be used.
+  'CONTRACT_OVERLAP',
+  'CONTRACT_PARTNER_INACTIVE',
+  'OUTLET_NOT_USABLE',
   // Master data screens: a code already in use (409, param `code`), and the base currency, which
   // every journal entry balances in, stays active (param `code`).
   'MASTER_CODE_TAKEN',

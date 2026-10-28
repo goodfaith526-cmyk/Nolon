@@ -310,6 +310,7 @@ export class AuthService {
       delegations: await this.liveDelegations(user),
       assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
       assistantPanel: Boolean(this.env.AGENT_ASSISTANT_URL) && this.env.AGENT_ASSISTANT_PANEL,
+      outletStaffAssignable: this.env.OUTLET_STAFF_ASSIGNABLE,
     };
   }
 
