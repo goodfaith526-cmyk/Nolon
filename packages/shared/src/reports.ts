@@ -1,4 +1,5 @@
 import type { AccountType, JournalSource, ReceiptStatus } from './accounting.js';
+import type { BookingService, RateUnit } from './commercial.js';
 import type { CurrencyCode, DecimalString } from './currencies.js';
 
 /**
@@ -244,6 +245,30 @@ export interface ReportLocationDto {
   nameAr: string;
 }
 
+/**
+ * Why a shipment's actual profit may not be final yet (business model plan 6.2): a booked service
+ * without any cost recorded for it (`missingCosts` names them), a transport accrual still open on
+ * one of its trips, or not closed yet.
+ */
+export const PROFIT_INCOMPLETE_REASONS = ['MISSING_COST', 'OPEN_ACCRUAL', 'NOT_CLOSED'] as const;
+export type ProfitIncompleteReason = (typeof PROFIT_INCOMPLETE_REASONS)[number];
+
+/**
+ * The price category a shipment's profit counts under (plan 6.3, F105-3): the one category of
+ * all its lines, MIXED for more than one, UNSPECIFIED when a line has none. Never split.
+ */
+export type ProfitCategoryDto =
+  | { kind: 'SINGLE'; code: string; nameEn: string; nameAr: string }
+  | { kind: 'MIXED' }
+  | { kind: 'UNSPECIFIED' };
+
+export interface ReportCountryDto {
+  /** ISO 3166-1 alpha-2. */
+  code: string;
+  nameEn: string;
+  nameAr: string;
+}
+
 export interface ShipmentProfitDto extends ProfitFiguresDto {
   shipmentId: string;
   number: string;
@@ -252,18 +277,60 @@ export interface ShipmentProfitDto extends ProfitFiguresDto {
   customerName: string;
   origin: ReportLocationDto;
   destination: ReportLocationDto;
+  /** The sales outlet it was sold through; null: none. */
+  salesOutlet: { id: string; name: string } | null;
+  originCountry: ReportCountryDto;
+  category: ProfitCategoryDto;
+  /** Empty when the figures are final. */
+  incompleteReasons: ProfitIncompleteReason[];
+  /** The booked services with no cost recorded for them yet (MISSING_COST). */
+  missingCosts: BookingService[];
+  /** Days from first receipt at origin to proof of delivery, to 1 place; null: not measured. */
+  cycleDays: DecimalString | null;
 }
 
-export interface CustomerProfitDto extends ProfitFiguresDto {
+/** A group's profit, with how many of its shipments are not final yet. */
+export interface ProfitGroupFiguresDto extends ProfitFiguresDto {
+  shipments: number;
+  incompleteShipments: number;
+}
+
+export interface OutletProfitDto extends ProfitGroupFiguresDto {
+  /** Null: shipments sold without an outlet ("unspecified"). */
+  salesOutlet: { id: string; name: string } | null;
+}
+
+export interface CountryProfitDto extends ProfitGroupFiguresDto {
+  originCountry: ReportCountryDto;
+}
+
+export interface CategoryProfitDto extends ProfitGroupFiguresDto {
+  category: ProfitCategoryDto;
+  /** A single category's unit (its default unit); null for MIXED and UNSPECIFIED. */
+  unit: RateUnit | null;
+  /** The group's units in `unit`; null when not every line has the measure. */
+  units: DecimalString | null;
+  /** Margin per unit; null without units. */
+  marginPerUnitUsd: DecimalString | null;
+}
+
+/** Days from first receipt at origin to proof of delivery, over the route's measured shipments. */
+export interface CycleTimeDto {
+  measured: number;
+  averageDays: DecimalString | null;
+  minDays: DecimalString | null;
+  maxDays: DecimalString | null;
+}
+
+export interface CustomerProfitDto extends ProfitGroupFiguresDto {
   customerId: string;
   customerName: string;
-  shipments: number;
 }
 
-export interface RouteProfitDto extends ProfitFiguresDto {
+export interface RouteProfitDto extends ProfitGroupFiguresDto {
   origin: ReportLocationDto;
   destination: ReportLocationDto;
-  shipments: number;
+  cycle: CycleTimeDto;
 }
 
 export interface ShipmentProfitabilityDto {
@@ -274,7 +341,11 @@ export interface ShipmentProfitabilityDto {
   shipments: ShipmentProfitDto[];
   customers: CustomerProfitDto[];
   routes: RouteProfitDto[];
-  totals: ProfitFiguresDto;
+  outlets: OutletProfitDto[];
+  countries: CountryProfitDto[];
+  /** Every shipment in exactly one column: the columns add up to `totals` exactly. */
+  categories: CategoryProfitDto[];
+  totals: ProfitGroupFiguresDto;
 }
 
 // ---- 6. Invoices and receipts -----------------------------------------------------------------
