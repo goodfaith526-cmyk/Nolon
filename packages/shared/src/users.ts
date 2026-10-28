@@ -17,6 +17,8 @@ export interface UserSummary {
   lastLoginAt: string | null;
   roles: Role[];
   branchIds: string[];
+  /** Outlet Staff only: the partner sales outlets whose records the user works on (plan 4.2). */
+  outletIds: string[];
 }
 
 /** Body of POST /users. */
@@ -27,6 +29,8 @@ export interface CreateUserRequest {
   preferredLocale: Locale;
   roles: Role[];
   branchIds: string[];
+  /** Required with the Outlet Staff role, refused without it. */
+  outletIds?: string[];
 }
 
 /** Body of PATCH /users/:id. Omitted fields stay as they are. */
@@ -35,6 +39,7 @@ export interface UpdateUserRequest {
   preferredLocale?: Locale;
   roles?: Role[];
   branchIds?: string[];
+  outletIds?: string[];
 }
 
 /** Body of POST /users/:id/password (admin reset). */

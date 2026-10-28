@@ -176,7 +176,8 @@
     "WAREHOUSE": "المستودع",
     "CUSTOMS": "الجمارك",
     "DRIVER": "سائق / نقل",
-    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق"
+    "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق",
+    "OUTLET_STAFF": "موظف منفذ"
   },
   "Common": {
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",

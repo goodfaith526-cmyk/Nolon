@@ -58,6 +58,16 @@ const envSchema = z.object({
       .default('false')
       .transform((value) => value === 'true'),
   ),
+  /**
+   * `true`: the Outlet Staff role may be assigned on the users screen and API (business model plan
+   * 4.2). Off until the owner opens it; the role and its isolation are built and tested either way.
+   */
+  OUTLET_STAFF_ASSIGNABLE: emptyAsUnset(
+    z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+  ),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

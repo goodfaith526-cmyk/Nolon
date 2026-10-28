@@ -13,6 +13,7 @@ export const AGENT_READABLE = 'auth:agentReadable';
 export const AGENT_DRAFT_WRITABLE = 'auth:agentDraftWritable';
 export const AGENT_DRAFT_DECIDABLE = 'auth:agentDraftDecidable';
 export const AGENT_DRAFT_CHECKABLE = 'auth:agentDraftCheckable';
+export const OUTLET_SCOPED = 'auth:outletScoped';
 
 /** Opts a route out of the session guard. Every other route requires a signed-in user. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -52,6 +53,13 @@ export const AgentDraftDecidable = () => SetMetadata(AGENT_DRAFT_DECIDABLE, true
  * invoice NOLON derives for a shipment, also read-only.
  */
 export const AgentDraftCheckable = () => SetMetadata(AGENT_DRAFT_CHECKABLE, true);
+
+/**
+ * Opens a route to Outlet Staff (business model plan 4.2). Every other route refuses them, so a
+ * route forgotten by the outlet filter fails closed. Mark only routes whose service narrows every
+ * read and write to the user's outlets (auth/outlet-scope.ts); outlet-scoped.spec.ts lists them.
+ */
+export const OutletScoped = () => SetMetadata(OUTLET_SCOPED, true);
 
 /** The user the guard attached. Only valid on routes that are not @Public(). */
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

@@ -62,6 +62,18 @@ describe('loadEnv', () => {
     );
   });
 
+  it('keeps the Outlet Staff role locked unless the switch is exactly true', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    expect(loadEnv(base).OUTLET_STAFF_ASSIGNABLE).toBe(false);
+    expect(loadEnv({ ...base, OUTLET_STAFF_ASSIGNABLE: '' }).OUTLET_STAFF_ASSIGNABLE).toBe(false);
+    expect(loadEnv({ ...base, OUTLET_STAFF_ASSIGNABLE: 'true' }).OUTLET_STAFF_ASSIGNABLE).toBe(
+      true,
+    );
+    expect(() => loadEnv({ ...base, OUTLET_STAFF_ASSIGNABLE: 'yes' })).toThrow(
+      /OUTLET_STAFF_ASSIGNABLE/,
+    );
+  });
+
   it('rejects an assistant URL that is not https', () => {
     const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
     for (const value of ['http://pilot.example.com/', 'javascript:alert(1)', 'not a url']) {

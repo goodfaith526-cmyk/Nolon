@@ -24,7 +24,7 @@ import {
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { branchPeriodFields, periodInOrder, routeFields } from '../common/list-filters.js';
 import {
   clearableText,
@@ -113,6 +113,7 @@ const listQuery = pageQuery
 export class BookingsController {
   constructor(private readonly bookings: BookingsService) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('bookings:view')
@@ -121,6 +122,7 @@ export class BookingsController {
   }
 
   /** Parties a new booking of the customer may start from (declared before `:id`). */
+  @OutletScoped()
   @Get('party-suggestion')
   @RequirePermission('bookings:create')
   partySuggestion(
@@ -131,6 +133,7 @@ export class BookingsController {
   }
 
   /** What a booking from this approved quotation starts from; nothing is created. */
+  @OutletScoped()
   @Get('from-quotation/:quotationId')
   @RequirePermission('bookings:create')
   previewFromQuotation(
@@ -140,6 +143,7 @@ export class BookingsController {
     return this.bookings.previewFromQuotation(user, quotationId);
   }
 
+  @OutletScoped()
   @AgentReadable()
   @Get(':id')
   @RequirePermission('bookings:view')
@@ -147,12 +151,14 @@ export class BookingsController {
     return this.bookings.get(user, id);
   }
 
+  @OutletScoped()
   @Post()
   @RequirePermission('bookings:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<BookingDto> {
     return this.bookings.create(user, parse(bookingCreateBody, body));
   }
 
+  @OutletScoped()
   @Post('from-quotation/:quotationId')
   @RequirePermission('bookings:create')
   createFromQuotation(
@@ -167,6 +173,7 @@ export class BookingsController {
     );
   }
 
+  @OutletScoped()
   @Patch(':id')
   @RequirePermission('bookings:update')
   update(

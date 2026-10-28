@@ -371,6 +371,20 @@ describe('acting with a token', () => {
     expect(after.branches).toEqual([]);
   });
 
+  it('keeps Outlet Staff out of the assistant: no code, and a token stops working', async () => {
+    const outletStaff = await staff(['OUTLET_STAFF'], ['DXB']);
+    await authorizeRequest(outletStaff.cookie, pkce().challenge).expect(403);
+
+    // A token issued before the user became Outlet Staff is refused from the next request.
+    const user = await staff(['SALES'], ['DXB']);
+    const token = await tokenFor(user.cookie);
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(200);
+    await t.prisma.userRole.deleteMany({ where: { userId: user.id } });
+    await t.prisma.userRole.create({ data: { userId: user.id, role: 'OUTLET_STAFF' } });
+    await asAgent('/api/v1/auth/me', token.accessToken).expect(403);
+    await asAgent('/api/v1/customers', token.accessToken).expect(403);
+  });
+
   it('still needs the route’s permission', async () => {
     const warehouse = await staff(['WAREHOUSE'], ['DXB']);
     const token = await tokenFor(warehouse.cookie);

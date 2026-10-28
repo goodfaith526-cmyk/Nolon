@@ -22,6 +22,12 @@ export interface AuthUser {
   /** The only branches this user may read or write. Services filter on this list. */
   allowedBranchIds: readonly string[];
   /**
+   * Outlet Staff (business model plan 4.2): the partner sales outlets whose records this user may
+   * read or write, on top of the branch scope; an empty list sees nothing. Absent or null for
+   * every other role. The guard refuses such a user on any route not marked @OutletScoped().
+   */
+  allowedOutletIds?: readonly string[] | null;
+  /**
    * Set when the staff AI assistant acts for this user with a delegated token (agent-auth): the
    * same roles and branches, on read-only routes marked @AgentReadable() only.
    */

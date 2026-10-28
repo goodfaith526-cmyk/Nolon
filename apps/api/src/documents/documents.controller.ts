@@ -24,7 +24,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
-import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { optionalText, parse } from '../common/validation.js';
 import { DocumentsService } from './documents.service.js';
 import { attachmentDisposition } from './file-type.js';
@@ -49,6 +49,7 @@ const uploadBody = z
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
+  @OutletScoped()
   @AgentReadable()
   @Get()
   @RequirePermission('documents:view')
@@ -59,6 +60,7 @@ export class DocumentsController {
     return this.documents.list(user, shipmentId);
   }
 
+  @OutletScoped()
   @Post()
   @RequirePermission('documents:create')
   @UseInterceptors(
@@ -84,6 +86,7 @@ export class DocumentsController {
   }
 
   /** The staff assistant reads a packing list as JSON (no file name, no download headers). */
+  @OutletScoped()
   @AgentReadable()
   @Get(':documentId/packing-list-content')
   @RequirePermission('documents:view')
@@ -95,6 +98,7 @@ export class DocumentsController {
     return this.documents.packingListContent(user, shipmentId, documentId);
   }
 
+  @OutletScoped()
   @Get(':documentId/file')
   @RequirePermission('documents:view')
   async file(
@@ -118,6 +122,7 @@ export class DocumentsController {
    * or image, never HTML or SVG), sniffing is off, and only NOLON itself may
    * frame it. (No CSP sandbox: browsers refuse to show a PDF in one.)
    */
+  @OutletScoped()
   @Get(':documentId/preview')
   @RequirePermission('documents:view')
   async preview(
@@ -138,6 +143,7 @@ export class DocumentsController {
   }
 
   /** The first sheet of an .xlsx document as text cells (formulas are not evaluated). */
+  @OutletScoped()
   @Get(':documentId/sheet')
   @RequirePermission('documents:view')
   sheet(

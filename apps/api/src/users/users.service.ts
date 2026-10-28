@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import { AuditService, changedFields } from '../audit/audit.service.js';
 import { normalizeEmail } from '../auth/email.js';
 import { lockCredentials } from '../auth/credential-lock.js';
 import { hashPassword } from '../auth/password.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -27,6 +29,7 @@ type Tx = Prisma.TransactionClient;
 const USER_INCLUDE = {
   roles: { select: { role: true } },
   branches: { select: { branchId: true } },
+  outlets: { select: { partnerId: true } },
 } satisfies Prisma.UserInclude;
 
 type UserRow = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE }>;
@@ -41,6 +44,7 @@ function toSummary(user: UserRow): UserSummary {
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     roles: user.roles.map((r) => r.role),
     branchIds: user.branches.map((b) => b.branchId).sort(),
+    outletIds: user.outlets.map((o) => o.partnerId).sort(),
   };
 }
 
@@ -50,6 +54,8 @@ function toSummary(user: UserRow): UserSummary {
  * - a role that is not all-branch needs at least one branch,
  * - there is always at least one active Administrator,
  * - an administrator cannot deactivate themselves,
+ * - Outlet Staff (business model plan 4.2) is assignable only once the owner opens it, holds no
+ *   other role, and works in one branch for one active sales outlet of that branch,
  * - deactivation and password reset end the user's open sessions.
  */
 @Injectable()
@@ -57,6 +63,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   /**
@@ -111,6 +118,8 @@ export class UsersService {
     return this.prisma.$transaction(async (tx) => {
       assertBranchesForRoles(input.roles, input.branchIds);
       await assertBranchesExist(tx, input.branchIds);
+      const outletIds = input.outletIds ?? [];
+      await this.assertOutletStaff(tx, input.roles, input.branchIds, outletIds, true);
       if (await tx.user.findUnique({ where: { email } })) {
         throw new ConflictException('A user with this email already exists');
       }
@@ -122,6 +131,7 @@ export class UsersService {
           preferredLocale: input.preferredLocale,
           roles: { create: unique(input.roles).map((role) => ({ role })) },
           branches: { create: unique(input.branchIds).map((branchId) => ({ branchId })) },
+          outlets: { create: unique(outletIds).map((partnerId) => ({ partnerId })) },
         },
         include: USER_INCLUDE,
       });
@@ -140,6 +150,14 @@ export class UsersService {
       const branchIds = input.branchIds ?? current.branches.map((b) => b.branchId);
       assertBranchesForRoles(roles, branchIds);
       if (input.branchIds) await assertBranchesExist(tx, input.branchIds);
+      // Outlets follow the role: kept while the user stays Outlet Staff, dropped when they leave it.
+      const outletIds = roles.includes('OUTLET_STAFF')
+        ? (input.outletIds ?? current.outlets.map((o) => o.partnerId))
+        : (input.outletIds ?? []);
+      const newlyOutletStaff = !current.roles.some((r) => r.role === 'OUTLET_STAFF');
+      if (input.roles || input.branchIds || input.outletIds) {
+        await this.assertOutletStaff(tx, roles, branchIds, outletIds, newlyOutletStaff);
+      }
 
       if (input.roles) {
         await tx.userRole.deleteMany({ where: { userId: id } });
@@ -153,6 +171,11 @@ export class UsersService {
           data: unique(input.branchIds).map((branchId) => ({ userId: id, branchId })),
         });
       }
+      await tx.userPartner.deleteMany({ where: { userId: id, partnerId: { notIn: outletIds } } });
+      await tx.userPartner.createMany({
+        data: unique(outletIds).map((partnerId) => ({ userId: id, partnerId })),
+        skipDuplicates: true,
+      });
       await tx.user.update({
         where: { id },
         data: {
@@ -248,6 +271,47 @@ export class UsersService {
   }
 
   /**
+   * Outlet Staff (business model plan 4.2): refused while the role is locked (when it is being
+   * given), with any other role (permissions add up, so a second role would open the outlet's
+   * isolation, decision ق3), outside exactly one branch, or without exactly one active sales outlet
+   * of that branch: until the screens choose an outlet per record (plan PR-3), a record they create
+   * is sold through their only outlet. Outlets on any other role are refused.
+   */
+  private async assertOutletStaff(
+    tx: Tx,
+    roles: readonly Role[],
+    branchIds: readonly string[],
+    outletIds: readonly string[],
+    newlyGiven: boolean,
+  ): Promise<void> {
+    if (!roles.includes('OUTLET_STAFF')) {
+      if (outletIds.length > 0) {
+        throw new BadRequestException('Sales outlets are only for the Outlet Staff role');
+      }
+      return;
+    }
+    if (newlyGiven && !this.env.OUTLET_STAFF_ASSIGNABLE) {
+      throw new BadRequestException('The Outlet Staff role is not open yet');
+    }
+    if (unique(roles).length !== 1) {
+      throw new BadRequestException('Outlet Staff cannot hold another role');
+    }
+    const [branchId] = unique(branchIds);
+    if (unique(branchIds).length !== 1 || !branchId) {
+      throw new BadRequestException('Outlet Staff work in exactly one branch');
+    }
+    const [outletId] = unique(outletIds);
+    if (unique(outletIds).length !== 1 || !outletId) {
+      throw new BadRequestException('Outlet Staff work for exactly one sales outlet');
+    }
+    const outlet = await tx.partner.findFirst({
+      where: { id: outletId, branchId, kind: 'SALES_OUTLET', isActive: true },
+      select: { id: true },
+    });
+    if (!outlet) throw new BadRequestException('Unknown or inactive sales outlet of this branch');
+  }
+
+  /**
    * Audit log (AuditService): who changed a user account and what, branches by code. User
    * accounts belong to no branch.
    */
@@ -261,6 +325,15 @@ export class UsersService {
   ): Promise<void> {
     const branches = await tx.branch.findMany({ select: { id: true, code: true } });
     const codes = new Map(branches.map((b) => [b.id, b.code]));
+    const outletIds = [...new Set([...(before?.outletIds ?? []), ...after.outletIds])];
+    const outlets =
+      outletIds.length > 0
+        ? await tx.partner.findMany({
+            where: { id: { in: outletIds } },
+            select: { id: true, number: true },
+          })
+        : [];
+    const numbers = new Map(outlets.map((o) => [o.id, o.number]));
     const fields = (u: UserSummary) => ({
       email: u.email,
       fullName: u.fullName,
@@ -268,6 +341,7 @@ export class UsersService {
       isActive: u.isActive,
       roles: u.roles,
       branches: u.branchIds.map((id) => codes.get(id) ?? id),
+      outlets: u.outletIds.map((id) => numbers.get(id) ?? id),
     });
     await this.audit.record(
       tx,
@@ -286,6 +360,7 @@ export class UsersService {
             'isActive',
             'roles',
             'branches',
+            'outlets',
           ]),
           ...extra,
         ],
