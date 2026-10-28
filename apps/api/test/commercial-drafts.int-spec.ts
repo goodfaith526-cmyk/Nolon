@@ -643,6 +643,60 @@ describe('approval waits for a concurrent rejection and then refuses', () => {
   });
 });
 
+describe('drafts: a customer deactivated during approval (B1-6)', () => {
+  /** Sends the approval while a deactivation of the customer is held, then commits it. */
+  async function whileDeactivating(send: () => Promise<{ status: number }>) {
+    let finish = () => {};
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const deactivate = t.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "customers" SET "is_active" = false WHERE "id" = ${customer.id}::uuid`;
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    try {
+      const sent = send();
+      await waitForLockWaiter(t.prisma);
+      finish();
+      await deactivate;
+      return await sent;
+    } finally {
+      await t.prisma.customer.update({ where: { id: customer.id }, data: { isActive: true } });
+    }
+  }
+
+  it('refuses the quotation and the booking approval; the drafts stay open', async () => {
+    const qDraft = await quotationDraft();
+    const quotation = await whileDeactivating(() =>
+      r
+        .post(`/quotation-drafts/${qDraft.id}/approve`, cookies.salesDxb, {
+          version: 1,
+          pricingKey: qDraft.pricing?.key,
+        })
+        .then((res) => res),
+    );
+    expect(quotation.status).toBe(400);
+    expect(await t.prisma.quotationDraft.findUnique({ where: { id: qDraft.id } })).toMatchObject({
+      state: 'DRAFT',
+      quotationId: null,
+    });
+    const bDraft = await bookingDraft();
+    const booking = await whileDeactivating(() =>
+      r
+        .post(`/booking-drafts/${bDraft.id}/approve`, cookies.opsDxb, { version: 1 })
+        .then((res) => res),
+    );
+    expect(booking.status).toBe(400);
+    expect(await t.prisma.bookingDraft.findUnique({ where: { id: bDraft.id } })).toMatchObject({
+      state: 'DRAFT',
+      bookingId: null,
+    });
+  });
+});
+
 describe('drafts: the retention purge (data governance v2.1, section 4)', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const purge = (now: Date) => t.app.get(DraftRetentionService).purge(now);

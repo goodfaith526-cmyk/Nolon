@@ -910,6 +910,28 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(409);
     });
 
+    it('a quotation that expires while its booking is being made is refused (B1-6)', async () => {
+      const q = await approvedQuotation(customer.id);
+      let finish = () => {};
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      // The expiry commits after the booking was prepared from the approved quotation.
+      const expire = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE "quotations" SET "status" = 'EXPIRED' WHERE "id" = ${q.id}::uuid`;
+          await held;
+        },
+        { timeout: 20_000 },
+      );
+      const booking = post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).then((r) => r);
+      await waitForLockWaiter(t.prisma);
+      finish();
+      await expire;
+      expect((await booking).status).toBe(409);
+      expect(await t.prisma.booking.count({ where: { quotationId: q.id } })).toBe(0);
+    });
+
     it('keeps a quoted booking on the quotation’s route and mode; the cargo stays editable', async () => {
       const q = await approvedQuotation(customer.id);
       const booking = (await post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).expect(201))
@@ -961,6 +983,57 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
         ...overrides,
       };
     }
+
+    /** Sends the request while a deactivation of `customerId` is held, then commits it. */
+    async function whileDeactivating(customerId: string, send: () => Promise<{ status: number }>) {
+      let finish = () => {};
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      // The deactivation commits after the request was prepared for an active customer.
+      const deactivate = t.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE "customers" SET "is_active" = false WHERE "id" = ${customerId}::uuid`;
+          await held;
+        },
+        { timeout: 20_000 },
+      );
+      const sent = send();
+      await waitForLockWaiter(t.prisma);
+      finish();
+      await deactivate;
+      return sent;
+    }
+
+    it('a customer deactivated while a booking or quotation is being saved takes none (B1-6)', async () => {
+      const gone = await createCustomer(cookies.salesDxb, dxb);
+      const rate = await approvedRate();
+      const booking = await whileDeactivating(gone.id, () =>
+        post('/bookings', cookies.salesDxb, directBooking({ customerId: gone.id })).then((r) => r),
+      );
+      expect(booking.status).toBe(400);
+      await t.prisma.customer.update({ where: { id: gone.id }, data: { isActive: true } });
+      const quotation = await whileDeactivating(gone.id, () =>
+        post(
+          '/quotations',
+          cookies.salesDxb,
+          quotationBody(gone.id, [{ rateCardId: rate.id, quantity: '1' }]),
+        ).then((r) => r),
+      );
+      expect(quotation.status).toBe(400);
+      expect(await t.prisma.booking.count({ where: { customerId: gone.id } })).toBe(0);
+      expect(await t.prisma.quotation.count({ where: { customerId: gone.id } })).toBe(0);
+    });
+
+    it('a customer deactivated while a quoted booking is being made takes no booking (B1-6)', async () => {
+      const gone = await createCustomer(cookies.salesDxb, dxb);
+      const q = await approvedQuotation(gone.id);
+      const booking = await whileDeactivating(gone.id, () =>
+        post(`/bookings/from-quotation/${q.id}`, cookies.salesDxb).then((r) => r),
+      );
+      expect(booking.status).toBe(400);
+      expect(await t.prisma.booking.count({ where: { quotationId: q.id } })).toBe(0);
+    });
 
     it('creates a direct booking and computes CBM on the server', async () => {
       const b = (await post('/bookings', cookies.opsDxb, directBooking()).expect(201))

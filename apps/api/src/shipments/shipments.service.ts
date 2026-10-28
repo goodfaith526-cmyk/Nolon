@@ -32,7 +32,7 @@ import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
-import { shipmentScope } from './shipment-scope.js';
+import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
 import { BookingLifecycleService } from '../bookings/booking-lifecycle.service.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
@@ -450,6 +450,7 @@ export class ShipmentsService {
   ): Promise<{
     id: string;
     branchId: string;
+    sharedBranchIds: string[];
     status: ShipmentStatus;
     packages: number;
     transitions: ShipmentStatus[];
@@ -459,13 +460,16 @@ export class ShipmentsService {
       include: {
         items: { select: { quantity: true } },
         events: { orderBy: { id: 'asc' } },
+        sharedBranches: sharedBranchesSelect,
       },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
-    const has = (permission: Permission) => user.permissions.has(permission);
+    const on = { branchId: shipment.branchId, sharedBranchIds: sharedIds(shipment) };
+    const has = (permission: Permission) => holdsOnShipment(user, permission, on);
     return {
       id: shipment.id,
       branchId: shipment.branchId,
+      sharedBranchIds: on.sharedBranchIds,
       status: shipment.status,
       packages: shipment.items.reduce((sum, item) => sum + item.quantity, 0),
       transitions: nextStatuses(
@@ -728,7 +732,7 @@ export class ShipmentsService {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(input.status)) {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
-      requireAny(user, permissionForTransition(input.status));
+      requireAny(user, permissionForTransition(input.status), shipment);
       if (input.entered) {
         const earliest = earliestEntryTime(shipment.createdAt, path);
         if (input.occurredAt < earliest) {
@@ -770,7 +774,7 @@ export class ShipmentsService {
   ): Promise<ShipmentDto> {
     await this.findScoped(user, id);
     await this.applyEvent(user, id, (shipment) => {
-      requireAny(user, ['shipments:update']);
+      requireAny(user, ['shipments:update'], shipment);
       if (!canHold(shipment.status)) {
         throw new ConflictException(`A ${shipment.status} shipment cannot be put on hold`);
       }
@@ -788,7 +792,7 @@ export class ShipmentsService {
   async resume(user: AuthUser, id: string, note: string | null): Promise<ShipmentDto> {
     await this.findScoped(user, id);
     await this.applyEvent(user, id, (shipment) => {
-      requireAny(user, ['shipments:update']);
+      requireAny(user, ['shipments:update'], shipment);
       if (shipment.status !== 'ON_HOLD' || !shipment.statusBeforeHold) {
         throw new ConflictException('The shipment is not on hold');
       }
@@ -811,7 +815,7 @@ export class ShipmentsService {
     const { reason, undoEventId } = input;
     await this.findScoped(user, id);
     await this.applyEvent(user, id, (shipment, path) => {
-      requireAny(user, ['shipments:approve']);
+      requireAny(user, ['shipments:approve'], shipment);
       const target = revertTarget(path);
       if (!target) throw new ConflictException('There is no earlier status to go back to');
       // The step the user saw and confirmed: if anything changed since, nothing is undone.
@@ -889,7 +893,7 @@ export class ShipmentsService {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
         return null;
       }
-      requireAny(user, permissionForTransition(status));
+      requireAny(user, permissionForTransition(status), shipment);
       if (options.beforeLatestEvent) {
         const latest = shipment.events.reduce<Date | null>(
           (max, e) => (max && max >= e.occurredAt ? max : e.occurredAt),
@@ -1173,7 +1177,7 @@ export class ShipmentsService {
     reason: string,
     permission: Permission,
   ): PlannedEvent {
-    requireAny(user, [permission]);
+    requireAny(user, [permission], shipment);
     if (!canCancelStatus(shipment.status)) {
       throw new ConflictException(`A ${shipment.status} shipment cannot be cancelled`);
     }
@@ -1281,7 +1285,11 @@ export class ShipmentsService {
     await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${id}::uuid FOR UPDATE`;
     const shipment = await tx.shipment.findUniqueOrThrow({
       where: { id },
-      include: { events: { orderBy: { id: 'asc' } }, consolidationLinks: closedContainerLinks },
+      include: {
+        events: { orderBy: { id: 'asc' } },
+        consolidationLinks: closedContainerLinks,
+        sharedBranches: sharedBranchesSelect,
+      },
     });
     const path = replayHistory(shipment.events);
     const event = plan(shipment, path);
@@ -1531,7 +1539,11 @@ export class ShipmentsService {
 }
 
 type LockedShipment = Prisma.ShipmentGetPayload<{
-  include: { events: true; consolidationLinks: typeof closedContainerLinks };
+  include: {
+    events: true;
+    consolidationLinks: typeof closedContainerLinks;
+    sharedBranches: typeof sharedBranchesSelect;
+  };
 }>;
 
 interface PlannedEvent {
@@ -1551,10 +1563,20 @@ type Planner = (shipment: LockedShipment, path: HistoryEntry[]) => PlannedEvent;
 /** A planner that may decline: null records nothing. */
 type NullablePlanner = (shipment: LockedShipment, path: HistoryEntry[]) => PlannedEvent | null;
 
-function requireAny(user: AuthUser, permissions: readonly Permission[]): void {
-  if (!permissions.some((p) => user.permissions.has(p))) {
+/** One of `permissions`, held for this shipment (its branch or a branch sharing it). */
+function requireAny(
+  user: AuthUser,
+  permissions: readonly Permission[],
+  shipment: LockedShipment,
+): void {
+  const on = { branchId: shipment.branchId, sharedBranchIds: sharedIds(shipment) };
+  if (!permissions.some((p) => holdsOnShipment(user, p, on))) {
     throw new ForbiddenException('Missing permission');
   }
+}
+
+function sharedIds(s: { sharedBranches: readonly { branchId: string }[] }): string[] {
+  return s.sharedBranches.map((b) => b.branchId);
 }
 
 function isLateCanceller(user: AuthUser): boolean {
@@ -1566,7 +1588,8 @@ function actionsFor(
   s: ShipmentWithDetails,
   path: HistoryEntry[],
 ): ShipmentActionsDto {
-  const has = (permission: Permission) => user.permissions.has(permission);
+  const on = { branchId: s.branchId, sharedBranchIds: sharedIds(s) };
+  const has = (permission: Permission) => holdsOnShipment(user, permission, on);
   const canUpdate = has('shipments:update');
   const undoes = revertUndoes(path);
   const links = s.consolidationLinks.map((link) => link.consolidation);

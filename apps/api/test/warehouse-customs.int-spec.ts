@@ -22,6 +22,7 @@ import {
   signIn,
 } from './auth-test-app.js';
 import { deleteCommercialTestData, uniquePhone, waitForLockWaiter } from './test-data.js';
+import { Access } from '../src/access-control/access.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
 const PDF = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
@@ -1086,7 +1087,7 @@ describe('warehouse and customs', () => {
           sessionId: 's',
           credentialStamp: 'c',
           roles: ['CUSTOMS'],
-          permissions: new Set(['customs:view']),
+          access: Access.uniform(['customs:view'], [dxb]),
           allBranches: false,
           allowedBranchIds: [dxb],
         };

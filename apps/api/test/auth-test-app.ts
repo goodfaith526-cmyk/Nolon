@@ -15,6 +15,7 @@ import { hashPassword } from '../src/auth/password.js';
 import { APP_ENV, type AppEnv, loadEnv } from '../src/config/env.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { BRANCHES } from '../src/seed/branches.js';
+import { Access } from '../src/access-control/access.js';
 
 export const APP_ORIGIN = 'http://app.test';
 export const PASSWORD = 'integration-test-password';
@@ -114,6 +115,18 @@ export async function createUser(
     },
   });
   return { id: user.id, email };
+}
+
+/**
+ * A user as a request would carry them into a change of access: their id, and the current
+ * access_state version (no permissions: the service rechecks the actor under the lock).
+ */
+export async function actorAt(
+  prisma: PrismaService,
+  id: string,
+): Promise<{ id: string; access: Access }> {
+  const state = await prisma.accessState.findUniqueOrThrow({ where: { id: 1 } });
+  return { id, access: Access.uniform([], [], state.version.toString()) };
 }
 
 /**

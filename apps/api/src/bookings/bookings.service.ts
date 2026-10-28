@@ -24,7 +24,7 @@ import type {
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope } from '../auth/branch-scope.js';
-import { lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
+import { assertOutletInTx, lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
   localDayFilter,
@@ -493,20 +493,15 @@ export class BookingsService {
     // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs, or
     // the one of the branch's outlets the person names. For Outlet Staff the outlet is checked as
     // it is now, first in the transaction.
-    // The quotation's outlet as it is now, share-locked: another user may move it meanwhile.
+    // The quotation's outlet as it is now, share-locked with the quotation.
     const fromQuotation = prepared.quotationId
-      ? {
-          salesOutletId: await lockRecordOutletInTx(
-            tx,
-            user,
-            'quotations',
-            prepared.quotationId,
-            'Quotation not found',
-            'SHARE',
-          ),
-        }
+      ? await lockApprovedQuotation(tx, prepared.quotationId)
       : null;
-    if (fromQuotation) requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
+    if (fromQuotation) {
+      await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
+      await this.customers.lockActiveCustomerInTx(tx, prepared.branchId, prepared.customerId);
+      requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
+    }
     const salesOutletId = fromQuotation
       ? fromQuotation.salesOutletId
       : await this.partnerRefs.chooseInTx(tx, user, {
@@ -957,4 +952,25 @@ function requireSameBranch(quotationBranchId: string, customerBranchId: string):
   if (quotationBranchId !== customerBranchId) {
     throw new ConflictException("This quotation is not in its customer's branch");
   }
+}
+
+/**
+ * The quotation a booking is made from, share-locked and checked again in the booking's
+ * transaction (B1-6): it was approved when the booking was prepared, but an expiry, a rejection
+ * or a change may have committed since. Status changes update the row, so they wait for this
+ * lock and then find the booking.
+ */
+async function lockApprovedQuotation(
+  tx: Tx,
+  id: string,
+): Promise<{ salesOutletId: string | null }> {
+  const rows = await tx.$queryRaw<{ status: string; salesOutletId: string | null }[]>`
+    SELECT "status"::text AS "status", "sales_outlet_id" AS "salesOutletId"
+    FROM "quotations" WHERE "id" = ${id}::uuid FOR SHARE`;
+  const row = rows[0];
+  if (!row) throw new NotFoundException('Quotation not found');
+  if (row.status !== 'APPROVED') {
+    throw new ConflictException('Only an approved quotation can become a booking');
+  }
+  return { salesOutletId: row.salesOutletId };
 }

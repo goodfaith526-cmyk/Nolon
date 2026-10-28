@@ -125,7 +125,8 @@ export async function outletForWriteInTx(
 }
 
 /**
- * For a write by Outlet Staff to an existing record whose outlet never changes (a shipment): the
+ * For a write by Outlet Staff to an existing record whose outlet never changes (a shipment), or
+ * that the caller read under its row lock (an approved quotation becoming a booking): the
  * record's outlet must be one of the user's outlets, checked and locked inside the write's
  * transaction (lockOutletsInTx: 403 when the user's access changed). Otherwise the record is of
  * another outlet: 404 with `notFound`. A no-op for a user not limited by outlet. A record another

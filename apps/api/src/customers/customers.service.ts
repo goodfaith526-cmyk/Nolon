@@ -635,15 +635,37 @@ export class CustomersService {
     customerId: string,
   ): Promise<string | null> {
     const outletId = await outletForWriteInTx(tx, user, branchId);
-    if (outletId === null) return null;
-    const customer = await tx.customer.findUnique({
-      where: { id: customerId },
-      select: { acquiredViaOutletId: true },
-    });
-    if (customer?.acquiredViaOutletId !== outletId) {
+    await this.lockActiveCustomerInTx(tx, branchId, customerId, outletId);
+    return outletId;
+  }
+
+  /**
+   * Re-checks, inside the write's transaction, that the customer a sale was prepared for is still
+   * an active customer of that branch (B1-6) and, for Outlet Staff, of their outlet (404 first, as
+   * for a customer they cannot see). FOR SHARE conflicts with setActive's row lock, so a
+   * deactivation either commits first and is seen here, or waits for the sale to commit.
+   */
+  async lockActiveCustomerInTx(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    customerId: string,
+    outletId: string | null = null,
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<
+      { branchId: string; isActive: boolean; acquiredViaOutletId: string | null }[]
+    >`
+      SELECT "branch_id" AS "branchId", "is_active" AS "isActive",
+             "acquired_via_outlet_id" AS "acquiredViaOutletId"
+      FROM "customers" WHERE "id" = ${customerId}::uuid FOR SHARE`;
+    const customer = rows[0];
+    if (
+      !customer ||
+      customer.branchId !== branchId ||
+      (outletId !== null && customer.acquiredViaOutletId !== outletId)
+    ) {
       throw new NotFoundException('Customer not found');
     }
-    return outletId;
+    if (!customer.isActive) throw new BadRequestException('Customer is inactive');
   }
 
   async requireActiveCustomer(user: AuthUser, id: string): Promise<Customer> {

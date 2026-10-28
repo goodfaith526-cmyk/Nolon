@@ -248,6 +248,6 @@ function toDto(s: SupplierWithDetails, user: AuthUser): SupplierDto {
     paymentTermsDays: s.paymentTermsDays,
     notes: s.notes,
     carriers: s.carriers,
-    actions: { canEdit: user.permissions.has('suppliers:update') },
+    actions: { canEdit: user.access.any('suppliers:update') },
   };
 }

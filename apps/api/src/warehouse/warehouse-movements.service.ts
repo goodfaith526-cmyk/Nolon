@@ -17,7 +17,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
-import { shipmentScope } from '../shipments/shipment-scope.js';
+import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
@@ -156,7 +156,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         remainingWeightKg: toDecimalStringOrNull(remainingWeightKg(movements, warehouseId)),
       });
     }
-    const has = (permission: Permission) => user.permissions.has(permission);
+    const has = (permission: Permission) => holdsOnShipment(user, permission, shipment);
     const active = isActive(shipment.status);
     const receiptStatuses = has('warehouse:create')
       ? receiptStatusOptions(shipment.transitions)

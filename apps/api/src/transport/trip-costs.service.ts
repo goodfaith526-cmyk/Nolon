@@ -99,8 +99,8 @@ export class TripCostsService {
    */
   async addExpense(user: AuthUser, tripId: string, input: TripExpenseRequest): Promise<void> {
     forbidDriverOnly(user, 'pay trip expenses');
-    forbidHiddenCosts(user);
     const existing = await this.findScoped(user, tripId);
+    forbidHiddenCosts(user, existing.branchId);
     if (existing.kind !== 'OWN') {
       throw new ConflictException(
         "An external trip's cost is its agreed amount, accrued on completion",
@@ -199,8 +199,8 @@ export class TripCostsService {
     reason: string,
   ): Promise<void> {
     forbidDriverOnly(user, 'cancel trip expenses');
-    forbidHiddenCosts(user);
     const trip = await this.findScoped(user, tripId);
+    forbidHiddenCosts(user, trip.branchId);
     const expense = await this.prisma.tripExpense.findFirst({
       where: { id: expenseId, tripId: trip.id },
     });

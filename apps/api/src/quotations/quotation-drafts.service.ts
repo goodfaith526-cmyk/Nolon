@@ -25,7 +25,7 @@ import type {
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { branchScope } from '../auth/branch-scope.js';
+import { branchScope, withPermissions } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import {
@@ -487,8 +487,10 @@ export class QuotationDraftsService {
   }
 
   /** "My drafts": this kind's drafts the assistant made for this user, if the user may see them. */
-  async mine(user: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
-    if (!user.permissions.has('quotations:view')) return [];
+  async mine(requester: AuthUser, query: MyDraftsQuery): Promise<MyDraftRow[]> {
+    // Only the branches where they may read these records (plan 03, section 5.3).
+    const user = withPermissions(requester, 'quotations:view');
+    if (user.allowedBranchIds.length === 0) return [];
     const drafts = await this.list(user, query.status, query);
     return drafts.map((d) =>
       myDraftItem(
@@ -766,7 +768,8 @@ function baseFields(
   now: Date,
 ): Omit<QuotationDraftDto, 'request' | 'check' | 'pricing' | 'priceSources'> {
   const status = draftStatus(d.state, d.expiresAt, now);
-  const open = status === 'DRAFT' && !user.agent && user.permissions.has('quotations:create');
+  const open =
+    status === 'DRAFT' && !user.agent && user.access.has('quotations:create', d.branchId);
   return {
     id: d.id,
     replacesDraftId: d.replacesDraftId,

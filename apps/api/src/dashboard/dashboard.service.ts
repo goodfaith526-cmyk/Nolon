@@ -10,6 +10,7 @@ import { QuotationsService } from '../quotations/quotations.service.js';
 import { RatesService } from '../rates/rates.service.js';
 import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
+import { withPermissions } from '../auth/branch-scope.js';
 
 const COUNT = { page: 1, pageSize: 1 } as const;
 const RECENT = { page: 1, pageSize: 5 } as const;
@@ -35,16 +36,18 @@ export class DashboardService {
   ) {}
 
   async summary(user: AuthUser): Promise<DashboardDto> {
-    const can = (permission: Permission) => user.permissions.has(permission);
+    // Each part covers the branches where its permission is held (plan 03, section 5.3).
+    const can = (permission: Permission) => user.access.any(permission);
+    const as = (permission: Permission) => withPermissions(user, permission);
     const [customers, rates, quotations, bookings, warehouse, customs, trips, drafts, alerts] =
       await Promise.all([
-        can('customers:view') ? this.customerFigures(user) : null,
+        can('customers:view') ? this.customerFigures(as('customers:view')) : null,
         can('rates:view') ? this.rateFigures() : null,
-        can('quotations:view') ? this.quotationFigures(user) : null,
-        can('bookings:view') ? this.bookingFigures(user) : null,
-        can('warehouse:view') ? this.warehouse.dashboard(user) : null,
-        can('customs:view') ? this.customs.open(user) : null,
-        can('transport_trips:view') ? this.trips.home(user) : null,
+        can('quotations:view') ? this.quotationFigures(as('quotations:view')) : null,
+        can('bookings:view') ? this.bookingFigures(as('bookings:view')) : null,
+        can('warehouse:view') ? this.warehouse.dashboard(as('warehouse:view')) : null,
+        can('customs:view') ? this.customs.open(as('customs:view')) : null,
+        can('transport_trips:view') ? this.trips.home(as('transport_trips:view')) : null,
         this.drafts.awaitingReview(user),
         this.alerts.counts(user),
       ]);

@@ -71,8 +71,8 @@ export async function lockTripShared(
  * Trip costs are Restricted (annex A): a user who may not see them (seesTransportCosts) may not
  * record or cancel them either, whatever expense permission another of their roles grants.
  */
-export function forbidHiddenCosts(user: AuthUser): void {
-  if (!seesTransportCosts((p) => user.permissions.has(p))) {
+export function forbidHiddenCosts(user: AuthUser, branchId: string): void {
+  if (!seesTransportCosts((p) => user.access.has(p, branchId))) {
     throw new ForbiddenException('Trip costs are restricted to those who may see them');
   }
 }

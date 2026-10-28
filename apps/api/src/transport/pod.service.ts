@@ -12,7 +12,7 @@ import {
   type ShipmentStatus,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { shipmentScope } from '../shipments/shipment-scope.js';
+import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { todayIn } from '../common/dates.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
 import { DocumentsService, type PreparedUpload } from '../documents/documents.service.js';
@@ -81,8 +81,8 @@ export class PodService {
       this.tripsOf(user, shipmentId),
     ]);
     const canRecord =
-      user.permissions.has('pod:create') &&
-      user.permissions.has('documents:create') &&
+      holdsOnShipment(user, 'pod:create', shipment) &&
+      holdsOnShipment(user, 'documents:create', shipment) &&
       recordable(shipment.status) &&
       // A driver records against one of their trips, so one must have left.
       (!isDriverOnly(user) || trips.length > 0);

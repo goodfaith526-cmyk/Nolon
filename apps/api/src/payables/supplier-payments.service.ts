@@ -405,7 +405,7 @@ function toDto(p: PaymentWithDetails, user: AuthUser): SupplierPaymentDto {
     cancelReason: p.cancelReason,
     cancelledAt: p.cancelledAt?.toISOString() ?? null,
     actions: {
-      canCancel: p.status === 'POSTED' && user.permissions.has('supplier_payments:cancel'),
+      canCancel: p.status === 'POSTED' && user.access.has('supplier_payments:cancel', p.branchId),
     },
   };
 }
