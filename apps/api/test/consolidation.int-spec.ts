@@ -1038,6 +1038,63 @@ describe('consolidated LCL containers', () => {
     expect((refusedAfterUnpacking.body as { code?: string }).code).toBe('REVERT_CLOSED_CONTAINER');
   });
 
+  it('B2: a container under way keeps its shipments and the steps it recorded', async () => {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const value = (ch: string) => {
+      const n = letters.indexOf(ch);
+      if (n < 0) return Number(ch);
+      const v = 10 + n;
+      return v + Math.floor((v - 1) / 10);
+    };
+    const body = `ZQRU${randomInt(100000, 999999)}`;
+    const check = ([...body].reduce((sum, ch, i) => sum + value(ch) * 2 ** i, 0) % 11) % 10;
+    const id = await lclShipment(customers[0], '2');
+    const created = (
+      await newContainer([id], { containerNumber: `${body}${check}`, sealNumber: 'S-2' }).expect(
+        201,
+      )
+    ).body as ConsolidationDto;
+    const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+    const cancel = () => post(`/shipments/${id}/cancel`, cookies.admin, { reason: 'Withdrawn' });
+    const revert = async () => {
+      const shipment = (await get(`/shipments/${id}`, cookies.admin).expect(200))
+        .body as ShipmentDto;
+      return post(`/shipments/${id}/revert`, cookies.admin, {
+        reason: 'Entered by mistake',
+        undoEventId: shipment.actions.revertUndoes?.eventId,
+      });
+    };
+    const move = (status: string, day: string) =>
+      post(`/consolidations/${created.id}/status`, cookies.opsJed, {
+        status,
+        occurredAt: at(day),
+      }).expect(200);
+
+    await move('CLOSED', '04-01');
+    const closed = await cancel();
+    expect(closed.status).toBe(409);
+    expect(code(closed)).toBe('SHIPMENT_CANCEL_IN_CONTAINER');
+    expect((closed.body as { params?: object }).params).toMatchObject({
+      container: created.number,
+    });
+    await move('LOADED', '04-02');
+    const loaded = await revert();
+    expect(loaded.status).toBe(409);
+    expect(code(loaded)).toBe('REVERT_BY_CONTAINER');
+    expect((loaded.body as { params?: object }).params).toEqual({ record: created.number });
+    await move('DEPARTED', '04-02');
+    await move('ARRIVED', '04-06');
+    expect(code(await cancel())).toBe('SHIPMENT_CANCEL_IN_CONTAINER');
+    expect(code(await revert())).toBe('REVERT_BY_CONTAINER');
+    expect((await container(created.id)).status).toBe('ARRIVED');
+
+    // Unpacked, the shipment goes on by itself: going back and cancelling work as before.
+    await move('DECONSOLIDATED', '04-07');
+    expect((await revert()).status).toBe(200);
+    expect((await cancel()).status).toBe(200);
+    expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status).toBe('CANCELLED');
+  });
+
   it('an open container does not stop going back from a consolidation entered by hand', async () => {
     const id = await lclShipment(customers[1], '1');
     const before = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;

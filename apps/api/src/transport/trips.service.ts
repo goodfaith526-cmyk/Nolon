@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import type {
   Page,
@@ -37,6 +38,7 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
 import { FleetService } from './fleet.service.js';
@@ -111,6 +113,9 @@ const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 /** At most this many shipments on one trip. */
 export const MAX_TRIP_SHIPMENTS = 100;
 
+/** The statuses a trip's scheduling and moves give its shipments (B2). */
+const TRIP_STEPS: readonly ShipmentStatus[] = [SCHEDULED_STATUS, 'ROAD_DEPARTED', 'ROAD_ARRIVED'];
+
 /**
  * Trips (scope 12): a branch's own vehicle and driver, or a hired carrier, carrying one or more
  * shipments on one road leg. The trip status drives its shipments' road statuses (annex B,
@@ -141,7 +146,7 @@ export interface PreparedTrip {
 }
 
 @Injectable()
-export class TripsService {
+export class TripsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
@@ -151,7 +156,34 @@ export class TripsService {
     private readonly costs: TripCostsService,
     private readonly accounts: AccountsService,
     private readonly autoJournal: AutoJournalService,
+    private readonly shipmentLinks: ShipmentLinksRegistry,
   ) {}
+
+  onModuleInit(): void {
+    // B2: until a trip is completed it moves its shipments on and cannot drop one once it has
+    // left, so a shipment on a trip under way is not cancelled, and a step the trip recorded is not
+    // undone from the shipment page (the trip's next move would refuse that shipment).
+    this.shipmentLinks.register({
+      cancelBlockerInTx: async (tx, shipmentId) => {
+        const link = await tx.tripShipment.findFirst({
+          where: { shipmentId, trip: { status: { in: ['DEPARTED', 'ARRIVED'] } } },
+          select: { trip: { select: { number: true } } },
+        });
+        return link ? { record: 'TRIP', number: link.trip.number } : null;
+      },
+      revertBlockerInTx: async (tx, shipmentId, step) => {
+        if (step.note === null || !TRIP_STEPS.includes(step.status)) return null;
+        const link = await tx.tripShipment.findFirst({
+          where: {
+            shipmentId,
+            trip: { number: step.note, status: { in: ['PLANNED', 'DEPARTED', 'ARRIVED'] } },
+          },
+          select: { trip: { select: { number: true } } },
+        });
+        return link ? { record: 'TRIP', number: link.trip.number } : null;
+      },
+    });
+  }
 
   async list(user: AuthUser, filters: TripFilters): Promise<Page<TripSummaryDto>> {
     const departure = await localDayFilter(

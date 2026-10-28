@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   type CustomsBrokerOptionDto,
@@ -21,6 +22,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { SupplierBillsService } from '../payables/supplier-bills.service.js';
 import { SuppliersService } from '../payables/suppliers.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
 import {
@@ -46,14 +48,29 @@ type Tx = Prisma.TransactionClient;
  * nothing is recorded or posted here, so no cost is counted twice).
  */
 @Injectable()
-export class CustomsService {
+export class CustomsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly shipments: ShipmentsService,
     private readonly currencies: CurrenciesService,
     private readonly suppliers: SuppliersService,
     private readonly bills: SupplierBillsService,
+    private readonly shipmentLinks: ShipmentLinksRegistry,
   ) {}
+
+  onModuleInit(): void {
+    // B2: a customs step the shipment's customs file stands for is not undone from the shipment.
+    this.shipmentLinks.register({
+      revertBlockerInTx: async (tx, shipmentId, step) => {
+        const file = await tx.customsClearance.findUnique({
+          where: { shipmentId },
+          select: { status: true, declarationNumber: true },
+        });
+        if (!file || !shipmentStepsForFile(file.status).includes(step.status)) return null;
+        return { record: 'CUSTOMS', number: file.declarationNumber ?? '—' };
+      },
+    });
+  }
 
   async get(user: AuthUser, shipmentId: string): Promise<ShipmentCustomsDto> {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);

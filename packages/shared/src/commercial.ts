@@ -800,6 +800,16 @@ export const FORM_REFUSALS = [
   'STATUS_TIME_TOO_EARLY',
   'REVERT_STALE',
   'REVERT_CLOSED_CONTAINER',
+  // B2 (plan #110): a cancel that would strand a trip that has left or a closed container (params
+  // `shipment`, and `trip` or `container`: their numbers), and a revert of a step a record made
+  // (param `record`: that record's number).
+  'SHIPMENT_CANCEL_ON_TRIP',
+  'SHIPMENT_CANCEL_IN_CONTAINER',
+  'REVERT_BY_TRIP',
+  'REVERT_BY_CONTAINER',
+  'REVERT_BY_WAREHOUSE',
+  'REVERT_BY_POD',
+  'REVERT_BY_CUSTOMS',
   // An LCL booking or shared container numbered by its route (DXB-KRT-0001): a place on the route
   // has no letters (no short code, none on its city, and its code does not end in three letters).
   // Param `location`: the place's code.
