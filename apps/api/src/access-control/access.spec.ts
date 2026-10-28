@@ -216,6 +216,43 @@ describe('who may do what, per branch', () => {
     expect(access.inBranch(DXB)).toEqual([...ROLE_PERMISSIONS.DRIVER].sort());
   });
 
+  it('widens the outlet staff team as the owner set it, never with user management', () => {
+    const access = computeAccess(
+      rows({
+        roles: ['OUTLET_STAFF'],
+        branchTeams: [{ teamId: CUSTOM_TEAM, branchId: DXB, delegationId: null }],
+        branchPermissions: [allow(DXB, 'expenses:create')],
+        teams: [
+          {
+            id: 'team-outlet',
+            systemRole: 'OUTLET_STAFF',
+            restricted: true,
+            isActive: true,
+            changes: [
+              { permission: 'quotations:approve', effect: 'ALLOW' },
+              { permission: 'users:view', effect: 'ALLOW' },
+              { permission: 'customers:create', effect: 'DENY' },
+            ],
+          },
+          {
+            id: CUSTOM_TEAM,
+            systemRole: null,
+            restricted: false,
+            isActive: true,
+            changes: [{ permission: 'bookings:approve', effect: 'ALLOW' }],
+          },
+        ],
+      }),
+    );
+    const held = access.inBranch(DXB);
+    expect(held).toContain('quotations:approve');
+    expect(held).not.toContain('customers:create');
+    // Still nothing from another team, a person's own grant, or user management.
+    expect(held).not.toContain('users:view');
+    expect(held).not.toContain('bookings:approve');
+    expect(held).not.toContain('expenses:create');
+  });
+
   describe('a delegation', () => {
     const delegated = (
       live: boolean,

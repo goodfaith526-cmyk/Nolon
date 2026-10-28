@@ -1,4 +1,5 @@
 import type {
+  AccessTeamDto,
   AuthMeResponse,
   BookingDto,
   CustomerDto,
@@ -11,6 +12,7 @@ import type {
   ShipmentSummaryDto,
   UserSummary,
 } from '@nolon/shared';
+import { ROLE_PERMISSIONS } from '@nolon/shared';
 import { randomInt } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -312,6 +314,52 @@ describe('outlet staff: isolation by sales outlet', () => {
     await get('/auth/me', cookies.staffA).expect(200);
     await get('/master-data', cookies.staffA).expect(200);
     await get('/rates', cookies.staffA).expect(200);
+  });
+
+  it('lets the owner set the outlet team’s permissions; the outlet filter holds whatever it holds', async () => {
+    const OUTLET_TEAM = '5a0e0000-0000-4000-8000-00000000000b';
+    const version = async () =>
+      (await t.prisma.accessState.findUniqueOrThrow({ where: { id: 1 } })).version.toString();
+    const setTeam = async (permissions: readonly string[], status: number) =>
+      t
+        .http()
+        .put(`/api/v1/access-control/teams/${OUTLET_TEAM}/permissions`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.admin)
+        .send({ permissions, expectedVersion: await version() })
+        .expect(status);
+    const defaults = [...ROLE_PERMISSIONS.OUTLET_STAFF];
+    const held = async () =>
+      ((await get('/auth/me', cookies.staffA).expect(200)).body as AuthMeResponse).permissions;
+    try {
+      // Off: the outlet staff can no longer add a customer; their other work goes on.
+      const off = (await setTeam(
+        defaults.filter((p) => p !== 'customers:create'),
+        200,
+      )) as { body: AccessTeamDto };
+      expect(off.body.permissions).not.toContain('customers:create');
+      expect(await held()).not.toContain('customers:create');
+      await post('/customers', cookies.staffA, {
+        branchId: jed,
+        kind: 'INDIVIDUAL',
+        name: `ZZ outlet customer ${randomInt(1e9)}`,
+        phone: uniquePhone(),
+      }).expect(403);
+      await get('/customers?pageSize=1', cookies.staffA).expect(200);
+
+      // On, past the defaults: held, but every route not built for the outlet filter still
+      // refuses them, so the branch's invoices stay out of reach.
+      await setTeam([...defaults, 'customer_invoices:view', 'quotations:approve'], 200);
+      expect(await held()).toEqual(expect.arrayContaining(['customer_invoices:view']));
+      await get('/customer-invoices', cookies.staffA).expect(403);
+      // User and access management stay the Administrator's.
+      await setTeam([...defaults, 'users:view'], 400);
+    } finally {
+      // Back to the defaults: a set equal to them clears the changes.
+      await setTeam(defaults, 200);
+    }
+    expect(await t.prisma.teamPermissionChange.count({ where: { teamId: OUTLET_TEAM } })).toBe(0);
+    await newCustomer(cookies.staffA);
   });
 
   it('closes everything once their outlet is deactivated', async () => {
