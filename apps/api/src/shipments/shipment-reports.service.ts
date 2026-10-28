@@ -130,6 +130,19 @@ function shipmentRef(r: ShipmentColumns) {
   };
 }
 
+/** The audit log shows a cargo correction (B3-3) by these totals of its lines, before and after. */
+const CARGO_FIELDS = ['lines', 'packages', 'weightKg', 'volumeCbm'] as const;
+type CargoTotals = Record<(typeof CARGO_FIELDS)[number], string | null>;
+
+/** CargoTotals of a stored list of lines (ShipmentItemDto[]); a sum counts the known values. */
+const CARGO_TOTALS = (lines: Prisma.Sql) => Prisma.sql`(
+  SELECT jsonb_build_object(
+    'lines', count(*)::text,
+    'packages', coalesce(sum((i->>'quantity')::int), 0)::text,
+    'weightKg', trim_scale(sum((i->>'weightKg')::numeric))::text,
+    'volumeCbm', trim_scale(sum((i->>'volumeCbm')::numeric))::text)
+  FROM jsonb_array_elements(${lines}) i)`;
+
 const AUDIT_ACTION: Record<ShipmentEventKind, AuditLogEntryDto['action']> = {
   CREATED: 'CREATED',
   STATUS: 'STATUS',
@@ -527,18 +540,67 @@ export class ShipmentReportsService {
         ${andIf(q.userId, (id) => Prisma.sql`e."user_id" = ${id}::uuid`)}
       ORDER BY e."created_at" DESC, e."id" DESC
       LIMIT ${q.limit + 1}`;
-    return rows.map((r) => ({
-      at: r.at.toISOString(),
-      branchCode: r.branchCode,
-      userId: r.userId,
-      userName: r.userName,
-      entity: 'SHIPMENT',
-      action: AUDIT_ACTION[r.kind],
-      reference: r.reference,
-      status: r.status,
-      detail: r.reason ?? r.note,
-      changes: [{ field: 'status', before: r.fromStatus, after: r.status }],
-      source: r.source,
-    }));
+    // B3-3: cargo line corrections, with the totals before and after.
+    const corrections = await this.prisma.$queryRaw<
+      {
+        at: Date;
+        branchCode: string;
+        userId: string;
+        userName: string;
+        reference: string;
+        status: ShipmentStatus;
+        reason: string;
+        before: CargoTotals;
+        after: CargoTotals;
+      }[]
+    >`
+      SELECT x."corrected_at" AS "at", b."code" AS "branchCode", x."corrected_by_id" AS "userId",
+             u."full_name" AS "userName", s."number" AS "reference",
+             s."status"::text AS "status", x."reason",
+             ${CARGO_TOTALS(Prisma.sql`x."items_before"`)} AS "before",
+             ${CARGO_TOTALS(Prisma.sql`x."items_after"`)} AS "after"
+      FROM "shipment_cargo_corrections" x
+      JOIN "shipments" s ON s."id" = x."shipment_id"
+      JOIN "branches" b ON b."id" = s."branch_id"
+      JOIN "users" u ON u."id" = x."corrected_by_id"
+      WHERE ${shipmentVisibleIn('s', branchIds)}
+        AND ${localDay(Prisma.sql`x."corrected_at"`)} BETWEEN ${sqlDate(q.from)} AND ${sqlDate(q.to)}
+        ${andIf(q.userId, (id) => Prisma.sql`x."corrected_by_id" = ${id}::uuid`)}
+      ORDER BY x."corrected_at" DESC
+      LIMIT ${q.limit + 1}`;
+    const entries: AuditLogEntryDto[] = [
+      ...rows.map((r) => ({
+        at: r.at.toISOString(),
+        branchCode: r.branchCode,
+        userId: r.userId,
+        userName: r.userName,
+        entity: 'SHIPMENT' as const,
+        action: AUDIT_ACTION[r.kind],
+        reference: r.reference,
+        status: r.status,
+        detail: r.reason ?? r.note,
+        changes: [{ field: 'status', before: r.fromStatus, after: r.status }],
+        source: r.source,
+      })),
+      ...corrections.map((r) => ({
+        at: r.at.toISOString(),
+        branchCode: r.branchCode,
+        userId: r.userId,
+        userName: r.userName,
+        entity: 'SHIPMENT' as const,
+        action: 'UPDATED' as const,
+        reference: r.reference,
+        status: r.status,
+        detail: r.reason,
+        changes: CARGO_FIELDS.map((field) => ({
+          field,
+          before: r.before[field],
+          after: r.after[field],
+        })),
+        source: 'USER' as const,
+      })),
+    ];
+    // Both lists are newest first; ISO times of one zone sort as text.
+    return entries.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0)).slice(0, q.limit + 1);
   }
 }

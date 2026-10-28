@@ -20,6 +20,7 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
     await tx.podCancellation.deleteMany({ where: { pod: { shipment: createdBy } } });
+    await tx.shipmentCargoCorrection.deleteMany({ where: { shipment: createdBy } });
   });
   await prisma.podPhoto.deleteMany({ where: { pod: { shipment: createdBy } } });
   await prisma.proofOfDelivery.deleteMany({ where: { shipment: createdBy } });

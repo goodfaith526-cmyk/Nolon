@@ -702,7 +702,23 @@
     "closeGoodsOnHand": "This shipment's goods are still in the warehouse: {warehouses}. Release them first, then close the shipment.",
     "closeNotInvoiced": "No approved invoice bills this shipment. Approve its invoice first, or write why it is closed without charges.",
     "noChargeReason": "Reason to close without charges",
-    "closeCostsReminder": "Before closing, check that all the shipment's costs are recorded: supplier bills, trips and container costs."
+    "closeCostsReminder": "Before closing, check that all the shipment's costs are recorded: supplier bills, trips and container costs.",
+    "correctCargo": "Correct cargo lines",
+    "correctCargoHint": "The new lines replace the current ones. Trip expenses and container allocations already posted stay as posted; later ones use the new lines.",
+    "cargoCorrectionReason": "Reason for the correction",
+    "saveCargoCorrection": "Save correction",
+    "cargoCorrected": "Cargo lines corrected.",
+    "cargoCorrections": "Cargo line corrections",
+    "cargoCorrectionBy": "Correction {revision} by {user}, {time}",
+    "cargoCorrectionContainer": "In container {container}",
+    "cargoBefore": "Before",
+    "cargoAfter": "After",
+    "cargoLinesSummary": "{lines} lines, {packages} packages",
+    "addCargoLine": "Add cargo line",
+    "lengthCm": "Length (cm)",
+    "widthCm": "Width (cm)",
+    "heightCm": "Height (cm)",
+    "lineDescription": "Description"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -2678,7 +2694,14 @@
     "MOVEMENT_CANCEL_CLOSED": "The shipment is closed: movement {movement} cannot be cancelled.",
     "POD_CANCEL_LATER_POD": "Proof of delivery {later} came after {pod}: cancel it first.",
     "POD_CANCEL_STATUS_MOVED": "The shipment moved on since proof of delivery {pod}: undo the later steps first.",
-    "POD_CANCEL_CLOSED": "The shipment is closed: proof of delivery {pod} cannot be cancelled."
+    "POD_CANCEL_CLOSED": "The shipment is closed: proof of delivery {pod} cannot be cancelled.",
+    "CORRECTION_STALE": "Shipment {shipment} changed since this page was opened: reload it and try again.",
+    "CORRECTION_KEY_REUSED": "This correction was already sent with other content: reload the page and try again.",
+    "CARGO_IN_CLOSED_CONTAINER": "Shipment {shipment} is in container {container}, which is closed: its cargo lines can no longer be corrected.",
+    "CARGO_INVOICED": "Shipment {shipment} is billed by {invoices}: issue a full credit note first, then correct the cargo lines.",
+    "CARGO_BELOW_ON_HAND": "Shipment {shipment} has {onHand} packages in its warehouses: the cargo lines cannot count fewer ({packages}).",
+    "CARGO_SHIPMENT_CLOSED": "Shipment {shipment} is closed or cancelled: its cargo lines cannot be corrected.",
+    "CARGO_LOAD_TYPE_CHANGE": "Shipment {shipment} is booked as FCL or LCL, and the corrected lines would change that: correct the lines without changing it."
   },
   "Locations": {
     "title": "Ports and cities",

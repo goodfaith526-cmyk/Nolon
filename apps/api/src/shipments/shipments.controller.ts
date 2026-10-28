@@ -28,6 +28,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AgentReadable, CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
+import { itemBody } from '../bookings/bookings.controller.js';
 import { flag, periodFields, periodsInOrder, routeFields } from '../common/list-filters.js';
 import { dateString, optionalText, pageQuery, parse, requiredText } from '../common/validation.js';
 import { ShipmentsService } from './shipments.service.js';
@@ -50,6 +51,19 @@ const updateBody = z
     sharedBranchIds: z.array(z.uuid()).max(MAX_SHARED_BRANCHES).optional(),
     originConsolidatorId: z.uuid().nullish(),
     distributorId: z.uuid().nullish(),
+  })
+  .strict();
+
+/**
+ * B3-3: all the cargo lines, as a booking takes them. `requestId` is made once per attempt by the
+ * screen; `expectedRevision` is the `cargoRevision` it read.
+ */
+const cargoCorrectionBody = z
+  .object({
+    requestId: z.uuid(),
+    expectedRevision: z.number().int().min(0),
+    reason: requiredText(500).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH)),
+    items: z.array(itemBody).min(1).max(100),
   })
   .strict();
 
@@ -169,6 +183,17 @@ export class ShipmentsController {
     @Body() body: unknown,
   ): Promise<ShipmentDto> {
     return this.shipments.update(user, id, parse(updateBody, body));
+  }
+
+  /** Corrects the cargo lines after confirmation (B3-3); the shipment's own branch only. */
+  @Put(':id/items')
+  @RequirePermission('shipments:update')
+  correctCargo(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ShipmentDto> {
+    return this.shipments.correctCargo(user, id, parse(cargoCorrectionBody, body));
   }
 
   @Post(':id/status')
