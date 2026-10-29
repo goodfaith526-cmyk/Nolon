@@ -21,3 +21,25 @@ export function averageDays(totalDays: number, count: number): string | null {
   if (count === 0) return null;
   return roundMoney(dec(totalDays).div(count), DAYS_DECIMALS).toFixed(DAYS_DECIMALS);
 }
+
+/**
+ * Scans pages (`fetch` from a cursor, `nextAfterId` null once done) and keeps what `keep`
+ * returns of each, until more than `limit` items are kept or nothing is left. A kept item is
+ * never missed behind the rows `keep` drops; `truncated` says more than `limit` were kept (only
+ * the first `limit` are returned).
+ */
+export async function collectPaged<T, K>(
+  fetch: (cursor: string | null) => Promise<{ rows: T[]; nextAfterId: string | null }>,
+  keep: (rows: T[]) => Promise<K[]>,
+  limit: number,
+): Promise<{ items: K[]; truncated: boolean }> {
+  const items: K[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page = await fetch(cursor);
+    items.push(...(await keep(page.rows)));
+    if (items.length > limit) return { items: items.slice(0, limit), truncated: true };
+    if (page.nextAfterId === null) return { items, truncated: false };
+    cursor = page.nextAfterId;
+  }
+}

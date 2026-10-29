@@ -29,6 +29,7 @@ import {
   type WarehouseMovementKind,
   type WarehouseMovementsDto,
   type WarehouseOnHandDto,
+  type WarehouseStockDto,
   seesTransportCosts,
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
@@ -52,8 +53,9 @@ import { ShipmentReportsService } from '../shipments/shipment-reports.service.js
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
+import { awaitsReceipt } from '../warehouse/warehouse-rules.js';
 import { type WorkbookSpec, buildWorkbook } from './excel.js';
-import { averageDays, conversionRate } from './operational-math.js';
+import { averageDays, collectPaged, conversionRate } from './operational-math.js';
 import {
   auditLogSheets,
   consolidationsSheets,
@@ -384,6 +386,46 @@ export class OperationalReportsService {
       }),
       totals: { ...held.totals, weightKg: held.totals.weightKg.toFixed() },
       truncated: held.truncated,
+    };
+  }
+
+  /**
+   * The warehouse screen: what each warehouse holds now (report 6 over all the user's branches),
+   * and the shipments whose status says they are in a warehouse with no goods receipt behind it.
+   * Those are found by scanning every warehouse-status shipment page by page (most have their
+   * receipt), so none is missed behind the others; past LIMIT of them the list says it is cut.
+   * `pageSize` is the scan's page (tests use a small one to cross page boundaries).
+   */
+  async warehouseStock(user: AuthUser, pageSize = LIMIT): Promise<WarehouseStockDto> {
+    const [onHand, awaiting] = await Promise.all([
+      this.warehouseOnHand(user, {}),
+      collectPaged(
+        (afterId) => this.shipments.atWarehouseStatus(user, { afterId, take: pageSize }),
+        async (page) => {
+          const state = await this.warehouse.receiptState(
+            user,
+            page.map((s) => s.id),
+          );
+          return page.filter((s) => awaitsReceipt(s.status, s.recordedAt, state.get(s.id)));
+        },
+        LIMIT,
+      ),
+    ]);
+    return {
+      asOf: onHand.asOf,
+      rows: onHand.rows,
+      truncated: onHand.truncated,
+      awaitingReceipt: awaiting.items
+        .sort((a, b) => a.statusAt.getTime() - b.statusAt.getTime())
+        .map((s) => ({
+          shipmentId: s.id,
+          shipmentNumber: s.number,
+          branchCode: s.branchCode,
+          customerName: s.customerName,
+          status: s.status,
+          statusAt: s.statusAt.toISOString(),
+        })),
+      awaitingTruncated: awaiting.truncated,
     };
   }
 

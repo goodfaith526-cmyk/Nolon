@@ -17,6 +17,7 @@ import { OperationalReportsController } from './operational-reports.controller.j
 import { OperationalReportsService } from './operational-reports.service.js';
 import { ReportsController } from './reports.controller.js';
 import { ReportsService } from './reports.service.js';
+import { WarehouseStockController } from './warehouse-stock.controller.js';
 
 /**
  * Financial (annex D section 4) and operational (section 3) reports and their Excel exports.
@@ -39,7 +40,7 @@ import { ReportsService } from './reports.service.js';
     TransportModule,
     WarehouseModule,
   ],
-  controllers: [ReportsController, OperationalReportsController],
+  controllers: [ReportsController, OperationalReportsController, WarehouseStockController],
   providers: [ReportsService, OperationalReportsService],
 })
 export class ReportsModule {}

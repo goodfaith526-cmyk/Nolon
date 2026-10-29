@@ -9,6 +9,7 @@ import {
   type PartnerRefDto,
   type ShipmentDto,
   type ShipmentStatus,
+  type WarehouseMovementDto,
 } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
@@ -28,6 +29,13 @@ import { ShipmentCargo } from './ShipmentCargo';
 import { ShipmentContainersTab } from './ShipmentContainers';
 import { ShipmentPods, ShipmentTrips } from '../transport/ShipmentTransport';
 import { ShipmentWarehouse } from '../warehouse/ShipmentWarehouse';
+import {
+  StatusReceiptFields,
+  isReceiptStatus,
+  receiptRecordsStatus,
+  statusReceiptBody,
+  useStatusReceipt,
+} from '../warehouse/StatusReceipt';
 import { ShipmentDocuments } from './ShipmentDocuments';
 import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
@@ -48,6 +56,7 @@ const LATE_ENTRY_MS = 60 * 60 * 1000;
 export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
   const tc = useTranslations('Common');
+  const tw = useTranslations('Warehouse');
   const tpa = useTranslations('Partners');
   const te = useTranslations('Enums');
   const tp = useTranslations('Print');
@@ -67,6 +76,10 @@ export function ShipmentDetail({ id }: { id: string }) {
   const [pickedLocation, setPickedLocation] = useState<string | null>(null);
   // A refresh after a refused revert is under way: no revert is offered on the old preview.
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped after the status form records a goods receipt, so the warehouse tab reloads.
+  const [warehouseVersion, setWarehouseVersion] = useState(0);
+  // A warehouse status records a goods receipt too, so the shipment is in the warehouse's stock.
+  const statusReceipt = useStatusReceipt(id, panel === 'status' && can(me, 'warehouse:view'));
 
   const load = useCallback(() => {
     api<ShipmentDto>(`/shipments/${id}`)
@@ -125,9 +138,44 @@ export function ShipmentDetail({ id }: { id: string }) {
     return null;
   }
 
+  async function receiveWithStatus(form: FormData, status: ShipmentStatus) {
+    if (!isReceiptStatus(status)) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const movement = await api<WarehouseMovementDto>(`/shipments/${id}/warehouse/receipts`, {
+        method: 'POST',
+        body: statusReceiptBody(form, status, toIso(field(form, 'occurredAt'))),
+      });
+      setPanel(null);
+      setNotice(
+        movement.statusApplied
+          ? {
+              ok: true,
+              text: tw('receivedMovedNotice', {
+                number: movement.number,
+                status: te(`shipment_${movement.statusApplied}`),
+              }),
+            }
+          : { ok: false, text: tw('statusReceiptNotMoved', { number: movement.number }) },
+      );
+      setWarehouseVersion((v) => v + 1);
+      load();
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function onStatus(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const status = field(form, 'status') as ShipmentStatus;
+    if (receiptRecordsStatus(status, statusReceipt.view, statusReceipt.warehouses)) {
+      void receiveWithStatus(form, status);
+      return;
+    }
     void send(
       '/status',
       {
@@ -202,6 +250,17 @@ export function ShipmentDetail({ id }: { id: string }) {
   const goodsBlockClose = closing && (closeCheck?.goodsOnHand.length ?? 0) > 0;
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
   const chosenLocation = pickedLocation ?? suggested ?? '';
+  // A warehouse status: recorded as a goods receipt when possible (the warehouse's place is then
+  // the shipment's location), else the status changes alone and the warehouse page shows it as
+  // awaiting a receipt.
+  const warehouseStatus = isReceiptStatus(chosenStatus);
+  // Until the warehouse view arrives, a warehouse status is not saved (it might record a receipt).
+  const receiptLoading = warehouseStatus && can(me, 'warehouse:view') && !statusReceipt.view;
+  const withReceipt = receiptRecordsStatus(
+    chosenStatus,
+    statusReceipt.view,
+    statusReceipt.warehouses,
+  );
 
   const reasonForm = (action: 'hold' | 'cancel', label: string, submit: string) => (
     <form className="card stack" onSubmit={(e) => onReason(e, action)}>
@@ -306,22 +365,38 @@ export function ShipmentDetail({ id }: { id: string }) {
               <span>{t('occurredAt')}</span>
               <input name="occurredAt" type="datetime-local" min={earliestMinute} />
             </label>
-            <label className="field">
-              <span>{t('location')}</span>
-              <select
-                name="locationId"
-                value={chosenLocation}
-                onChange={(e) => setPickedLocation(e.target.value)}
-              >
-                <option value="">—</option>
-                {activeLocations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {localName(l)} ({l.code})
-                  </option>
-                ))}
-              </select>
-            </label>
+            {!withReceipt && (
+              <label className="field">
+                <span>{t('location')}</span>
+                <select
+                  name="locationId"
+                  value={chosenLocation}
+                  onChange={(e) => setPickedLocation(e.target.value)}
+                >
+                  <option value="">—</option>
+                  {activeLocations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {localName(l)} ({l.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
+          {withReceipt && statusReceipt.view && (
+            <StatusReceiptFields
+              view={statusReceipt.view}
+              warehouses={statusReceipt.warehouses}
+              usualLocationId={suggested}
+            />
+          )}
+          {warehouseStatus && !withReceipt && statusReceipt.view && (
+            <p className={statusReceipt.view.heldPackages > 0 ? 'muted' : 'warning'}>
+              {statusReceipt.view.heldPackages > 0
+                ? tw('statusAlreadyHeld', { held: statusReceipt.view.heldPackages })
+                : tw('statusWithoutReceipt')}
+            </p>
+          )}
           <label className="field">
             <span>{t('note')}</span>
             <textarea name="note" maxLength={1000} />
@@ -358,7 +433,7 @@ export function ShipmentDetail({ id }: { id: string }) {
               })}
             </p>
           )}
-          {suggested && chosenLocation !== suggested && (
+          {!withReceipt && suggested && chosenLocation !== suggested && (
             <p className="warning">
               {t('locationNotUsual', {
                 status: te(`shipment_${chosenStatus}`),
@@ -372,7 +447,11 @@ export function ShipmentDetail({ id }: { id: string }) {
             })}
           </p>
           <div className="actions">
-            <button type="submit" className="primary" disabled={busy || goodsBlockClose}>
+            <button
+              type="submit"
+              className="primary"
+              disabled={busy || goodsBlockClose || receiptLoading}
+            >
               {tc('save')}
             </button>
             <button type="button" onClick={() => setPanel(null)}>
@@ -661,7 +740,13 @@ export function ShipmentDetail({ id }: { id: string }) {
                 {
                   key: 'warehouse',
                   label: t('tabWarehouse'),
-                  content: <ShipmentWarehouse shipment={s} onShipmentChanged={load} />,
+                  content: (
+                    <ShipmentWarehouse
+                      key={warehouseVersion}
+                      shipment={s}
+                      onShipmentChanged={load}
+                    />
+                  ),
                 },
               ]
             : []),

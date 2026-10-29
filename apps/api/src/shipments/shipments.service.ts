@@ -31,7 +31,9 @@ import type {
   ShipmentSummaryDto,
   ShipmentUpdateRequest,
   ShippingMode,
+  WarehouseReceiptStatus,
 } from '@nolon/shared';
+import { WAREHOUSE_RECEIPT_STATUSES } from '@nolon/shared';
 import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
@@ -1359,6 +1361,70 @@ export class ShipmentsService {
       branchCode: branch.code,
       customerName: customer.name,
     }));
+  }
+
+  /**
+   * Shipments the user may see whose status says their goods are in a warehouse (a warehouse
+   * receipt status), with when that status was entered and recorded (its latest STATUS event to
+   * it). One page of `take` in id order after `afterId`; `nextAfterId` continues the scan (null
+   * once nothing is left). The warehouse screen checks them against the receipts.
+   */
+  async atWarehouseStatus(
+    user: AuthUser,
+    page: { afterId: string | null; take: number },
+  ): Promise<{
+    rows: {
+      id: string;
+      number: string;
+      branchCode: string;
+      customerName: string;
+      status: WarehouseReceiptStatus;
+      statusAt: Date;
+      recordedAt: Date;
+    }[];
+    nextAfterId: string | null;
+  }> {
+    const shipments = await this.prisma.shipment.findMany({
+      where: {
+        status: { in: [...WAREHOUSE_RECEIPT_STATUSES] },
+        ...(page.afterId ? { id: { gt: page.afterId } } : {}),
+        ...this.scope(user),
+      },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        branch: { select: { code: true } },
+        customer: { select: { name: true } },
+        events: {
+          where: { kind: 'STATUS', status: { in: [...WAREHOUSE_RECEIPT_STATUSES] } },
+          select: { status: true, occurredAt: true, createdAt: true },
+          orderBy: { id: 'desc' },
+          take: 5,
+        },
+      },
+      orderBy: { id: 'asc' },
+      take: page.take,
+    });
+    const rows = shipments.flatMap((s) => {
+      const status = WAREHOUSE_RECEIPT_STATUSES.find((w) => w === s.status);
+      const event = s.events.find((e) => e.status === s.status);
+      return status && event
+        ? [
+            {
+              id: s.id,
+              number: s.number,
+              branchCode: s.branch.code,
+              customerName: s.customer.name,
+              status,
+              statusAt: event.occurredAt,
+              recordedAt: event.createdAt,
+            },
+          ]
+        : [];
+    });
+    const last = shipments.at(-1);
+    return { rows, nextAfterId: shipments.length === page.take && last ? last.id : null };
   }
 
   /**
