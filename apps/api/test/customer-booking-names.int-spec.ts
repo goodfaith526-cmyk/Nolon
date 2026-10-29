@@ -284,4 +284,30 @@ describe('Customer Service booking requests by names (R3)', () => {
       await create(bot.key, body(bad)).expect(400);
     }
   });
+
+  it("refuses pickup when the key's bot does not offer it, before any row is written", async () => {
+    const res = await t
+      .http()
+      .post('/api/v1/api-clients')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', cookie)
+      .send({
+        name: 'No pickup',
+        branchIds: [pts],
+        scopes: ['cs:booking_requests:create'],
+        services: [],
+      })
+      .expect(201);
+    const quiet = res.body as ApiClientCreatedDto;
+    expect(quiet.client.services).toEqual([]);
+    const before = await t.prisma.csBookingRequest.count({
+      where: { apiClientId: quiet.client.id },
+    });
+    const refused = await create(quiet.key, body({ handover: 'pickup' })).expect(422);
+    expect(code(refused)).toBe('SERVICE_NOT_OFFERED');
+    expect(await t.prisma.csBookingRequest.count({ where: { apiClientId: quiet.client.id } })).toBe(
+      before,
+    );
+    await create(quiet.key, body({ handover: 'dropoff' })).expect(201);
+  });
 });

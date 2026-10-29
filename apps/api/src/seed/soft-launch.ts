@@ -337,9 +337,10 @@ export async function applySoftLaunch(
   const categorySpecs = new Map(SOFT_LAUNCH_CATEGORIES.map((c) => [c.code, c]));
 
   // 3. Rate cards: created as drafts and approved, as on the rates screen. A card already in force
-  // today with exactly these terms counts as present; any other card on the same route and
-  // category (a staff draft, a card with other terms, one starting later) is left as it is and
-  // reported, never approved or changed: staff decide.
+  // today with exactly these terms (transit days and note included, no end date) counts as
+  // present; any other card on the same route and category (a staff draft, a card with other
+  // terms, one starting later) is left as it is and reported, never approved or changed: staff
+  // decide.
   const counts = { created: 0, present: 0, skipped: 0 };
   const today = toDbDate(options.today);
   for (const card of softLaunchCards()) {
@@ -390,7 +391,10 @@ export async function applySoftLaunch(
       r.unit === input.unit &&
       r.currency === input.currency &&
       r.price.equals(input.price) &&
-      r.minimumCharge.isZero();
+      r.minimumCharge.isZero() &&
+      r.validTo === null &&
+      r.transitDays === SOFT_LAUNCH_TRANSIT_DAYS &&
+      r.notes === SOFT_LAUNCH_NOTES;
     if (existing.some(inForce)) {
       counts.present++;
       continue;
@@ -399,7 +403,7 @@ export async function applySoftLaunch(
       const others = existing
         .map((r) => {
           const from = r.validFrom.toISOString().slice(0, 10);
-          return `${r.status} ${r.price.toString()} ${r.currency} ${r.unit} من ${from}`;
+          return `${r.status} ${r.price.toString()} ${r.currency} ${r.unit} من ${from} ${r.transitDays ?? '-'} يوم`;
         })
         .join('؛ ');
       say(`بطاقة أخرى على نفس الطريق والفئة، تُركت كما هي ولم تُدخل بطاقتنا (${others}): ${label}`);

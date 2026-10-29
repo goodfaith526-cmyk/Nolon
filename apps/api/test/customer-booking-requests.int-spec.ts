@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import type {
   ApiClientCreatedDto,
   ApiClientDto,
+  CsBookingRequestCreate,
   CsBookingRequestCreated,
   CsCatalogDto,
   CsBookingRequestDto,
@@ -20,6 +21,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { BookingRequestsService } from '../src/customer-service/booking-requests.service.js';
 import { uniquePhone } from './test-data.js';
 
 /**
@@ -535,6 +537,33 @@ describe('Customer Service booking requests (R3)', () => {
       body({ sender, services: ['LAST_MILE'], handover: 'BRANCH_DROP' }),
     ).expect(201);
     await refused({ services: ['PICKUP'], handover: 'BRANCH_DROP' });
+
+    // Turned off after the guard read the key: the write reads it again under its lock.
+    await setServices(cookies.admin, key.client.id, []).expect(200);
+    const stale = {
+      kind: 'key' as const,
+      client: {
+        id: key.client.id,
+        name: key.client.name,
+        allowedBranchIds: [pts],
+        scopes: ['cs:booking_requests:create' as const],
+        services: ['PICKUP' as const, 'LAST_MILE' as const],
+      },
+    };
+    const rows = () => t.prisma.csBookingRequest.count({ where: { apiClientId: key.client.id } });
+    const was = await rows();
+    const requests = t.app.get(BookingRequestsService);
+    await expect(
+      requests.create(
+        stale,
+        body({
+          sender,
+          services: ['LAST_MILE'],
+          handover: 'BRANCH_DROP',
+        }) as CsBookingRequestCreate,
+      ),
+    ).rejects.toMatchObject({ response: { code: 'SERVICE_NOT_OFFERED' } });
+    expect(await rows()).toBe(was);
 
     // A revoked key keeps what it had.
     await post(`/api-clients/${key.client.id}/revoke`, cookies.admin).expect(200);

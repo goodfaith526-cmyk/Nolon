@@ -261,11 +261,28 @@ describe('soft-launch data script', () => {
         data: { ...card, id: undefined, createdAt: undefined, updatedAt: undefined, ...data },
       });
     };
+    /** The same for a Dubai card: an older card at the same price but 90 days' transit. */
+    const replace2 = async (origin: string, destination: string, data: object) => {
+      const card = await t.prisma.rateCard.findFirstOrThrow({
+        where: {
+          ...ours(),
+          origin: { code: origin },
+          destination: { code: destination },
+          priceCategoryCode: 'BARREL',
+          status: 'APPROVED',
+        },
+      });
+      await t.prisma.rateCard.update({ where: { id: card.id }, data: { status: 'CANCELLED' } });
+      return t.prisma.rateCard.create({
+        data: { ...card, id: undefined, createdAt: undefined, updatedAt: undefined, ...data },
+      });
+    };
     const tomorrow = new Date(toDbDate(today).getTime() + 86_400_000);
     await replace('SDKRT', { price: '175' });
     const minimum = await replace('SDATB', { minimumCharge: '999' });
     const draft = await replace('SDPZU', { status: 'DRAFT', approvedById: null, approvedAt: null });
     await replace('SDDOG', { validFrom: tomorrow });
+    const slow = await replace2('AEDXB', 'SDKRT', { transitDays: 90 });
 
     const count = () => t.prisma.rateCard.count({ where: { ...ours(), status: 'APPROVED' } });
     const was = await count();
@@ -278,8 +295,11 @@ describe('soft-launch data script', () => {
 
     // Same price with another minimum, a staff draft, a card from tomorrow: none is ours, none
     // is approved or changed, and our card is not added beside them.
-    expect(lines).toContain('بطاقات الأسعار: 0 جديدة معتمدة، 32 موجودة من قبل، 4 لم تُدخل');
+    expect(lines).toContain('بطاقات الأسعار: 0 جديدة معتمدة، 31 موجودة من قبل، 5 لم تُدخل');
     expect(lines).toContain('175 AED');
+    expect(lines).toContain('90 يوم');
+    const stillSlow = await t.prisma.rateCard.findUniqueOrThrow({ where: { id: slow.id } });
+    expect([stillSlow.status, stillSlow.transitDays]).toEqual(['APPROVED', 90]);
     expect(await count()).toBe(was);
     expect(await t.prisma.rateCard.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
       status: 'DRAFT',
