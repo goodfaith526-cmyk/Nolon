@@ -17,6 +17,7 @@ export const SCOPE_ROWS = {
   'cs:quote:read': 'QUOTE_READ',
   'cs:booking_requests:create': 'BOOKING_REQUESTS_CREATE',
   'cs:tracking:lookup': 'TRACKING_LOOKUP',
+  'cs:customer_profiles:write': 'CUSTOMER_PROFILES_WRITE',
 } as const satisfies Record<Exclude<CsScope, 'cs:customers:read'>, ApiScope>;
 
 const SCOPE_OF_ROW = new Map<ApiScope, CsScope>(

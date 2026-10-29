@@ -68,6 +68,12 @@ services:
     environment:
       DATABASE_URL: *database-url
       CORS_ORIGINS: https://${SITE_DOMAIN:?}
+      # Plan 08: owner-configured rollout only. Missing configuration always leaves capture off.
+      CS_CUSTOMER_IDENTITY_ENABLED: ${CS_CUSTOMER_IDENTITY_ENABLED:-false}
+      CS_CUSTOMER_FOLLOWUP_ENABLED: ${CS_CUSTOMER_FOLLOWUP_ENABLED:-false}
+      CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: ${CS_CUSTOMER_BOOKING_IDENTITY_ENABLED:-false}
+      CS_CUSTOMER_IDENTITY_COMPANY_ID: ${CS_CUSTOMER_IDENTITY_COMPANY_ID:-}
+      CS_CUSTOMER_IDENTITY_CLIENTS: ${CS_CUSTOMER_IDENTITY_CLIENTS:-}
       # Host nginx, then this stack's Caddy (which trusts nginx and appends to X-Forwarded-For),
       # so the API sees each client's real IP and the per-IP sign-in limit works
       # (docs/plans/01-auth-and-permissions.md, S1).

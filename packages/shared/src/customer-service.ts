@@ -41,6 +41,7 @@ export const CS_SCOPES = [
   'cs:quote:read',
   'cs:booking_requests:create',
   'cs:tracking:lookup',
+  'cs:customer_profiles:write',
 ] as const;
 export type CsScope = (typeof CS_SCOPES)[number];
 
@@ -61,7 +62,7 @@ export interface CsCustomerDto {
   kind: CustomerKind;
   name: string;
   companyName: string | null;
-  phone: string;
+  phone: string | null;
   whatsapp: string | null;
   email: string | null;
   preferredLocale: string;
@@ -314,6 +315,8 @@ export const CS_REQUEST_TTL_DAYS = 14;
  * the key vouches its channel verified, never linked to an account by itself.
  */
 export interface CsBookingRequestCreate {
+  profileId?: string;
+  conversationId?: string;
   sender?: { channel: CsSenderChannel; id: string };
   /** A number shared for contact only (Telegram's «share my number»). */
   contactPhone?: string;
@@ -339,6 +342,8 @@ export interface CsBookingRequestCreate {
  * does not match stays for staff. Key only, never with a customer token.
  */
 export interface CsBookingRequestByNames {
+  profileId?: string;
+  conversationId?: string;
   idempotencyKey: string;
   channel: CsSenderChannel;
   origin: CsName;
@@ -347,7 +352,7 @@ export interface CsBookingRequestByNames {
   quantity: number | DecimalString;
   senderName: string;
   /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
-  senderPhone: string;
+  senderPhone?: string;
   receiverName: string;
   receiverPhone: string;
   handover: (typeof CS_BOT_HANDOVERS)[number];
@@ -504,6 +509,15 @@ export interface CsRequestPriceCheck {
 }
 
 export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
+  profile?: {
+    id: string;
+    number: string;
+    name: string | null;
+    phone: string | null;
+    phoneVerified?: boolean;
+    needsReview?: boolean;
+    version: number;
+  } | null;
   version: number;
   allowedBranchIds: string[];
   customerNumber: string | null;
@@ -580,14 +594,21 @@ export interface CsApprovalPriceDto {
  */
 export type CsApproveBooking = Omit<
   CreateBookingRequest,
-  'originLocationId' | 'destinationLocationId' | 'mode' | 'loadType' | 'cargoType' | 'items'
->;
+  | 'customerId'
+  | 'originLocationId'
+  | 'destinationLocationId'
+  | 'mode'
+  | 'loadType'
+  | 'cargoType'
+  | 'items'
+> & { customerId?: string };
 
 /**
  * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create checks, in the
  * request's branch) and the request it approves, in one transaction.
  */
 export interface CsApproveRequest {
+  profileVersion?: number;
   version: number;
   paymentCurrency: CurrencyCode;
   pricing: CsPriceInputs;

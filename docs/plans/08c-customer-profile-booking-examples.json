@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "nolon.customer-identity/1",
+  "status": "IMPLEMENTATION_CANDIDATE_NOT_DEPLOYED",
+  "transport": {
+    "method": "POST",
+    "path": "/api/v1/cs/booking-requests",
+    "authorization": "Bearer <service-key-from-secret-store>",
+    "context": {
+      "channel": "TELEGRAM",
+      "subjectId": "123456789",
+      "channelAccountId": "nolon-booking",
+      "eventId": "update-booking-1001",
+      "observedAt": "2026-10-29T12:05:00Z"
+    },
+    "contextHeader": "base64url(UTF8(JSON.stringify(context)))",
+    "assertionHeader": "v1:<current-unix-seconds>:<base64url-HMAC-SHA256>",
+    "canonicalLines": [
+      "v1",
+      "clientId",
+      "POST",
+      "/api/v1/cs/booking-requests",
+      "Idempotency-Key",
+      "current-unix-seconds",
+      "sha256(rawContextBytes)",
+      "sha256(rawBodyBytes)"
+    ],
+    "notes": "Join canonicalLines with LF, no final LF. clientId is the api_clients UUID, not the key prefix. JSON bytes must be retained across retries; issue a fresh signature after expiration. No real secrets in fixtures. Both examples need a previously captured profile bound to this sender and conversation."
+  },
+  "ids": {
+    "body": {
+      "profileId": "11111111-1111-4111-8111-111111111111",
+      "conversationId": "conversation-1001",
+      "sender": { "channel": "telegram", "id": "123456789" },
+      "originId": "22222222-2222-4222-8222-222222222222",
+      "destinationId": "33333333-3333-4333-8333-333333333333",
+      "category": "BARREL",
+      "quantity": "2",
+      "services": [],
+      "senderName": "Explicit booking sender",
+      "consigneeName": "Receiver, not sender",
+      "consigneePhone": "0912345678",
+      "handover": "BRANCH_DROP",
+      "language": "ar",
+      "idempotencyKey": "booking-1001"
+    },
+    "response": { "status": "pending" },
+    "generatedResponseFields": ["requestId", "reference"]
+  },
+  "names": {
+    "body": {
+      "profileId": "11111111-1111-4111-8111-111111111111",
+      "conversationId": "conversation-1001",
+      "channel": "telegram",
+      "origin": { "ar": "غير معروف", "en": "Unknown" },
+      "destination": { "ar": "غير معروف", "en": "Unknown" },
+      "kind": { "ar": "برميل", "en": "BARREL" },
+      "quantity": "1",
+      "senderName": "Explicit sender",
+      "receiverName": "Receiver",
+      "receiverPhone": "0912345678",
+      "handover": "dropoff",
+      "idempotencyKey": "booking-1002"
+    },
+    "response": { "status": "pending" },
+    "generatedResponseFields": ["requestId", "reference"]
+  },
+  "approval": {
+    "transport": "Employee session with the existing branch permissions and Origin; never the bot key",
+    "steps": [
+      "Read request detail (version and profile.version)",
+      "Read staff price check (pricingFingerprint)",
+      "POST /api/v1/cs-booking-requests/:requestId/approve"
+    ],
+    "body": {
+      "version": 1,
+      "profileVersion": 2,
+      "pricing": {
+        "originId": "22222222-2222-4222-8222-222222222222",
+        "destinationId": "33333333-3333-4333-8333-333333333333",
+        "mode": "ROAD",
+        "category": "BARREL",
+        "quantity": "2",
+        "currency": "USD"
+      },
+      "pricingFingerprint": "<from-fresh-staff-price-check>",
+      "paymentCurrency": "USD",
+      "booking": { "services": [] }
+    },
+    "notes": "No customerId on the bound-profile path. Staff must have customers:create in the booking branch only when a branch account needs creating. Missing name or unresolved profile dispute blocks approval. profileVersion and pricingFingerprint are live values, not constants from this example."
+  },
+  "legacy": "Without profileId/conversationId the previous ids/names validation and ownership remain unchanged, including the existing senderPhone requirement of names requests. Omitting just one binding field is INVALID_INPUT; a guessed/other-sender profile is PROFILE_NOT_BOUND."
+}

@@ -44,7 +44,16 @@ export function originCheck(
   const allowed = allowedOrigins.map((origin) => originOf(origin) ?? origin);
   const exempt = new Set(exemptPaths);
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (exempt.has(req.path) || isAgentAuthorization(req.headers.authorization)) {
+    // Profile paths accept only bearer keys plus the trusted channel signature, never cookies.
+    const profilePath =
+      /^\/api\/v1\/cs\/customer-profiles\/(?:capture|[0-9a-f-]{36}(?:\/follow-up)?)$/.test(
+        req.path,
+      );
+    if (
+      exempt.has(req.path) ||
+      (profilePath && /^Bearer nolcs_/.test(req.headers.authorization ?? '')) ||
+      isAgentAuthorization(req.headers.authorization)
+    ) {
       next();
       return;
     }

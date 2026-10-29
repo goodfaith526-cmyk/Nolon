@@ -26,21 +26,25 @@ model SystemSetting {
 /// Operating branch (DXB, JED, PTS, ATB, KRT). Root of branch scoping: branch-owned tables
 /// reference it. Codes must match BRANCH_CODES in @nolon/shared.
 model Branch {
-  id              String   @id @default(uuid()) @db.Uuid
-  code            String   @unique @db.VarChar(10)
-  nameEn          String   @map("name_en")
-  nameAr          String   @map("name_ar")
+  followedProfiles      CustomerProfile[]         @relation("CustomerProfileFollowUp")
+  profileFollowUpRules  CustomerFollowUpRule[]    @relation("CustomerProfileRuleBranch")
+  profileFollowUpBefore CustomerFollowUpHistory[] @relation("CustomerProfileHistoryBefore")
+  profileFollowUpAfter  CustomerFollowUpHistory[] @relation("CustomerProfileHistoryAfter")
+  id                    String                    @id @default(uuid()) @db.Uuid
+  code                  String                    @unique @db.VarChar(10)
+  nameEn                String                    @map("name_en")
+  nameAr                String                    @map("name_ar")
   /// ISO 3166-1 alpha-2.
-  countryCode     String   @map("country_code") @db.Char(2)
-  city            String
+  countryCode           String                    @map("country_code") @db.Char(2)
+  city                  String
   /// ISO 4217 code; must exist in the currencies master.
-  defaultCurrency String   @map("default_currency") @db.Char(3)
-  currency        Currency @relation(fields: [defaultCurrency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  defaultCurrency       String                    @map("default_currency") @db.Char(3)
+  currency              Currency                  @relation(fields: [defaultCurrency], references: [code], onUpdate: Restrict, onDelete: Restrict)
   /// IANA time zone, e.g. Asia/Dubai.
-  timezone        String
-  isActive        Boolean  @default(true) @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  timezone              String
+  isActive              Boolean                   @default(true) @map("is_active")
+  createdAt             DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   users               UserBranch[]
   routingRules        BranchRoutingRule[]
@@ -184,18 +188,19 @@ enum Role {
 /// Staff user who signs in to the web app. A user can hold several roles and several branches;
 /// permissions add up across roles.
 model User {
-  id              String    @id @default(uuid()) @db.Uuid
+  profileReviews  CustomerProfileReview[] @relation("CustomerProfileReviewActor")
+  id              String                  @id @default(uuid()) @db.Uuid
   /// Stored lower-cased and trimmed; the sign-in lookup normalizes the same way.
-  email           String    @unique @db.VarChar(254)
-  fullName        String    @map("full_name") @db.VarChar(200)
+  email           String                  @unique @db.VarChar(254)
+  fullName        String                  @map("full_name") @db.VarChar(200)
   /// scrypt hash in the form scrypt$N$r$p$salt$hash (base64). Never the plain password.
-  passwordHash    String    @map("password_hash")
+  passwordHash    String                  @map("password_hash")
   /// "ar" or "en", one of LOCALES in @nolon/shared.
-  preferredLocale String    @default("ar") @map("preferred_locale") @db.VarChar(5)
-  isActive        Boolean   @default(true) @map("is_active")
-  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(3)
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  preferredLocale String                  @default("ar") @map("preferred_locale") @db.VarChar(5)
+  isActive        Boolean                 @default(true) @map("is_active")
+  lastLoginAt     DateTime?               @map("last_login_at") @db.Timestamptz(3)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   roles                UserRole[]
   branches             UserBranch[]
@@ -575,22 +580,24 @@ enum LocationKind {
 
 /// Ports, cities and border points used in routes. Master data the client extends.
 model Location {
-  id          String       @id @default(uuid()) @db.Uuid
+  profileResidents     CustomerProfile[]      @relation("CustomerProfileResidence")
+  profileFollowUpRules CustomerFollowUpRule[] @relation("CustomerProfileRuleCity")
+  id                   String                 @id @default(uuid()) @db.Uuid
   /// UN/LOCODE where one exists (AEJEA, SAJED, SDPZU), otherwise an internal code.
-  code        String       @unique @db.VarChar(10)
-  kind        LocationKind
-  nameEn      String       @map("name_en")
-  nameAr      String       @map("name_ar")
+  code                 String                 @unique @db.VarChar(10)
+  kind                 LocationKind
+  nameEn               String                 @map("name_en")
+  nameAr               String                 @map("name_ar")
   /// ISO 3166-1 alpha-2.
-  countryCode String       @map("country_code") @db.Char(2)
-  isActive    Boolean      @default(true) @map("is_active")
+  countryCode          String                 @map("country_code") @db.Char(2)
+  isActive             Boolean                @default(true) @map("is_active")
   /// The city a port (or other place) serves, a CITY location: a lookup by the city also finds it.
-  cityId      String?      @map("city_id") @db.Uuid
+  cityId               String?                @map("city_id") @db.Uuid
   /// The client's letters for this place in route numbers (DXB-KRT-0001): 2 to 4 capital letters.
   /// Empty: its city's, else the last three letters of its code when they are letters.
-  shortCode   String?      @map("short_code") @db.VarChar(4)
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  shortCode            String?                @map("short_code") @db.VarChar(4)
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   city               Location?             @relation("LocationCity", fields: [cityId], references: [id], onDelete: Restrict)
   places             Location[]            @relation("LocationCity")
@@ -746,35 +753,37 @@ enum CustomerKind {
 
 /// A NOLON customer. Branch-owned: staff see the customers of their branches only.
 model Customer {
-  id                  String       @id @default(uuid()) @db.Uuid
+  profileId           String?          @map("profile_id") @db.Uuid
+  profile             CustomerProfile? @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  id                  String           @id @default(uuid()) @db.Uuid
   /// NOL-CUS-000001
-  number              String       @unique @db.VarChar(30)
-  branchId            String       @map("branch_id") @db.Uuid
+  number              String           @unique @db.VarChar(30)
+  branchId            String           @map("branch_id") @db.Uuid
   kind                CustomerKind
-  name                String       @db.VarChar(200)
-  companyName         String?      @map("company_name") @db.VarChar(200)
+  name                String           @db.VarChar(200)
+  companyName         String?          @map("company_name") @db.VarChar(200)
   /// E.164, e.g. +249912345678.
-  phone               String       @db.VarChar(20)
-  whatsapp            String?      @db.VarChar(20)
-  email               String?      @db.VarChar(254)
-  countryCode         String?      @map("country_code") @db.Char(2)
-  city                String?      @db.VarChar(100)
+  phone               String?          @db.VarChar(20)
+  whatsapp            String?          @db.VarChar(20)
+  email               String?          @db.VarChar(254)
+  countryCode         String?          @map("country_code") @db.Char(2)
+  city                String?          @db.VarChar(100)
   address             String?
-  taxNumber           String?      @map("tax_number") @db.VarChar(50)
-  preferredCurrency   String?      @map("preferred_currency") @db.Char(3)
-  preferredLocale     String       @default("ar") @map("preferred_locale") @db.VarChar(5)
-  paymentTermsDays    Int          @default(0) @map("payment_terms_days")
-  creditLimit         Decimal?     @map("credit_limit") @db.Decimal(18, 4)
-  creditLimitCurrency String?      @map("credit_limit_currency") @db.Char(3)
+  taxNumber           String?          @map("tax_number") @db.VarChar(50)
+  preferredCurrency   String?          @map("preferred_currency") @db.Char(3)
+  preferredLocale     String           @default("ar") @map("preferred_locale") @db.VarChar(5)
+  paymentTermsDays    Int              @default(0) @map("payment_terms_days")
+  creditLimit         Decimal?         @map("credit_limit") @db.Decimal(18, 4)
+  creditLimitCurrency String?          @map("credit_limit_currency") @db.Char(3)
   notes               String?
-  isActive            Boolean      @default(true) @map("is_active")
+  isActive            Boolean          @default(true) @map("is_active")
   /// The partner sales outlet that brought the customer (plan 3.3); Outlet Staff see only theirs.
-  acquiredViaOutletId String?      @map("acquired_via_outlet_id") @db.Uuid
+  acquiredViaOutletId String?          @map("acquired_via_outlet_id") @db.Uuid
   /// The customer's segment (plan 3.3), from the customer_segments master.
-  segmentCode         String?      @map("segment_code") @db.VarChar(20)
-  createdById         String       @map("created_by_id") @db.Uuid
-  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  segmentCode         String?          @map("segment_code") @db.VarChar(20)
+  createdById         String           @map("created_by_id") @db.Uuid
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch                 Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
   acquiredViaOutlet      Partner?          @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
@@ -805,6 +814,7 @@ model Customer {
   csAccessEvents CsAccessEvent[]
   csRequests     CsBookingRequest[]
 
+  @@unique([profileId, branchId])
   @@index([branchId])
   @@index([phone])
   @@index([acquiredViaOutletId])
@@ -3448,23 +3458,25 @@ model AlertSetting {
 /// customer-safe data of its branches with it. Only the key's SHA-256 is kept; its prefix tells
 /// keys apart and finds the row. A revoked key stays, inactive, for the record.
 model ApiClient {
-  id             String    @id @default(uuid()) @db.Uuid
-  name           String    @db.VarChar(100)
-  keyPrefix      String    @unique @map("key_prefix") @db.VarChar(16)
-  keyHash        String    @map("key_hash") @db.Char(64)
-  isActive       Boolean   @default(true) @map("is_active")
-  createdById    String    @map("created_by_id") @db.Uuid
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  lastUsedAt     DateTime? @map("last_used_at") @db.Timestamptz(3)
-  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedById    String?   @map("revoked_by_id") @db.Uuid
+  profileOperations    CustomerProfileOperation[]
+  profileConversations CustomerProfileConversation[]
+  id                   String                        @id @default(uuid()) @db.Uuid
+  name                 String                        @db.VarChar(100)
+  keyPrefix            String                        @unique @map("key_prefix") @db.VarChar(16)
+  keyHash              String                        @map("key_hash") @db.Char(64)
+  isActive             Boolean                       @default(true) @map("is_active")
+  createdById          String                        @map("created_by_id") @db.Uuid
+  createdAt            DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt           DateTime?                     @map("last_used_at") @db.Timestamptz(3)
+  revokedAt            DateTime?                     @map("revoked_at") @db.Timestamptz(3)
+  revokedById          String?                       @map("revoked_by_id") @db.Uuid
   /// Reads customers and their shipments and invoices by number (the original /cs routes). Every
   /// key made before scopes existed keeps it (the default); a new key has it only when given.
-  customersRead  Boolean   @default(true) @map("customers_read")
+  customersRead        Boolean                       @default(true) @map("customers_read")
   /// The services the key's bot offers its customers (the catalog's PICKUP and LAST_MILE): a soft
   /// launch without pickup or door delivery turns them off. Every key made before had both.
-  offersPickup   Boolean   @default(true) @map("offers_pickup")
-  offersLastMile Boolean   @default(true) @map("offers_last_mile")
+  offersPickup         Boolean                       @default(true) @map("offers_pickup")
+  offersLastMile       Boolean                       @default(true) @map("offers_last_mile")
 
   createdBy       User               @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   revokedBy       User?              @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
@@ -3486,6 +3498,7 @@ enum ApiScope {
   QUOTE_READ
   BOOKING_REQUESTS_CREATE
   TRACKING_LOOKUP
+  CUSTOMER_PROFILES_WRITE
 
   @@map("api_scope")
 }
@@ -3629,6 +3642,9 @@ enum CsHandover {
 /// never a booking, shipment, invoice or journal entry. Its owner is a customer (through a customer
 /// token) or a channel identity (sender), exactly one. Every value is the customer's, as sent.
 model CsBookingRequest {
+  profileId             String?                @map("profile_id") @db.Uuid
+  conversationId        String?                @map("conversation_id") @db.VarChar(128)
+  profile               CustomerProfile?       @relation(fields: [profileId], references: [id], onDelete: Restrict)
   id                    String                 @id @default(uuid()) @db.Uuid
   /// BR-000001.
   reference             String                 @unique @db.VarChar(20)
@@ -4781,4 +4797,163 @@ model PaymentInstruction {
   @@index([branchId, currency, status])
   @@index([currency])
   @@map("payment_instructions")
+}
+
+/// Unified person, independent of branch dealing accounts (plan 08). No transaction-read grant.
+model CustomerProfile {
+  residenceCity    Location?                 @relation("CustomerProfileResidence", fields: [residenceCityId], references: [id], onDelete: Restrict)
+  followUpBranch   Branch?                   @relation("CustomerProfileFollowUp", fields: [followUpBranchId], references: [id], onDelete: Restrict)
+  needsReview      Boolean                   @default(false) @map("needs_review")
+  id               String                    @id @default(uuid()) @db.Uuid
+  companyId        String                    @map("company_id") @db.VarChar(100)
+  number           String                    @db.VarChar(40)
+  version          Int                       @default(1)
+  name             String?                   @db.VarChar(200)
+  phone            String?                   @db.VarChar(20)
+  phoneVerified    Boolean                   @default(false) @map("phone_verified")
+  residenceCityId  String?                   @map("residence_city_id") @db.Uuid
+  address          String?                   @db.VarChar(1000)
+  followUpBranchId String?                   @map("follow_up_branch_id") @db.Uuid
+  followUpReview   Boolean                   @default(false) @map("follow_up_review")
+  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  accounts         Customer[]
+  requests         CsBookingRequest[]
+  identities       CustomerChannelIdentity[]
+  evidence         CustomerProfileEvidence[]
+  history          CustomerFollowUpHistory[]
+
+  @@unique([companyId, number])
+  @@unique([companyId, id])
+  @@index([companyId, needsReview, createdAt, id])
+  @@index([companyId, phone])
+  @@map("customer_profiles")
+}
+
+model CustomerChannelIdentity {
+  id            String                        @id @default(uuid()) @db.Uuid
+  companyId     String                        @map("company_id") @db.VarChar(100)
+  channel       String                        @db.VarChar(20)
+  subjectId     String                        @map("subject_id") @db.VarChar(32)
+  profileId     String?                       @map("profile_id") @db.Uuid
+  username      String?                       @db.VarChar(64)
+  displayName   String?                       @map("display_name") @db.VarChar(200)
+  observedAt    DateTime                      @map("observed_at") @db.Timestamptz(3)
+  blocked       Boolean                       @default(false)
+  pending       Json?
+  createdAt     DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  profile       CustomerProfile?              @relation(fields: [companyId, profileId], references: [companyId, id], onDelete: Restrict)
+  conversations CustomerProfileConversation[]
+  operations    CustomerProfileOperation[]
+
+  @@unique([companyId, channel, subjectId])
+  @@unique([companyId, id])
+  @@map("customer_channel_identities")
+}
+
+model CustomerProfileConversation {
+  apiClient      ApiClient               @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  id             String                  @id @default(uuid()) @db.Uuid
+  companyId      String                  @map("company_id") @db.VarChar(100)
+  apiClientId    String                  @map("api_client_id") @db.Uuid
+  conversationId String                  @map("conversation_id") @db.VarChar(128)
+  identityId     String                  @map("identity_id") @db.Uuid
+  identity       CustomerChannelIdentity @relation(fields: [companyId, identityId], references: [companyId, id], onDelete: Restrict)
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([companyId, apiClientId, conversationId])
+  @@map("customer_profile_conversations")
+}
+
+/// Atomic mutation + original reply; retained as a tombstone after reply expiry, never re-executed.
+model CustomerProfileOperation {
+  apiClient      ApiClient                 @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  id             String                    @id @default(uuid()) @db.Uuid
+  companyId      String                    @map("company_id") @db.VarChar(100)
+  apiClientId    String                    @map("api_client_id") @db.Uuid
+  identityId     String                    @map("identity_id") @db.Uuid
+  idempotencyKey String                    @map("idempotency_key") @db.VarChar(100)
+  contentHash    String                    @map("content_hash") @db.Char(64)
+  result         Json
+  actor          String                    @default("ai_agent") @db.VarChar(30)
+  context        Json
+  createdAt      DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  identity       CustomerChannelIdentity   @relation(fields: [companyId, identityId], references: [companyId, id], onDelete: Restrict)
+  evidence       CustomerProfileEvidence[]
+  history        CustomerFollowUpHistory[]
+
+  @@unique([companyId, apiClientId, idempotencyKey])
+  @@index([companyId, apiClientId, createdAt])
+  @@index([companyId, identityId, createdAt])
+  @@map("customer_profile_operations")
+}
+
+/// Append-only field provenance/proposals; contains no whole conversation or transport secret.
+model CustomerProfileEvidence {
+  id          String                   @id @default(uuid()) @db.Uuid
+  profileId   String                   @map("profile_id") @db.Uuid
+  operationId String                   @map("operation_id") @db.Uuid
+  field       String                   @db.VarChar(40)
+  value       String                   @db.VarChar(1000)
+  source      String                   @db.VarChar(40)
+  verified    Boolean
+  applied     Boolean
+  messageId   String?                  @map("message_id") @db.VarChar(128)
+  observedAt  DateTime                 @map("observed_at") @db.Timestamptz(3)
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  profile     CustomerProfile          @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  operation   CustomerProfileOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+
+  @@index([profileId, createdAt])
+  @@map("customer_profile_field_evidence")
+}
+
+/// Residence/service routing, deliberately independent of shipment-origin routing.
+model CustomerFollowUpRule {
+  residenceCity   Location @relation("CustomerProfileRuleCity", fields: [residenceCityId], references: [id], onDelete: Restrict)
+  branch          Branch   @relation("CustomerProfileRuleBranch", fields: [branchId], references: [id], onDelete: Restrict)
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.VarChar(100)
+  residenceCityId String   @map("residence_city_id") @db.Uuid
+  serviceCode     String?  @map("service_code") @db.VarChar(40)
+  branchId        String   @map("branch_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  version         Int      @default(1)
+
+  @@index([companyId, residenceCityId, isActive])
+  @@map("customer_followup_rules")
+}
+
+model CustomerFollowUpHistory {
+  beforeBranch   Branch?                  @relation("CustomerProfileHistoryBefore", fields: [beforeBranchId], references: [id], onDelete: Restrict)
+  afterBranch    Branch?                  @relation("CustomerProfileHistoryAfter", fields: [afterBranchId], references: [id], onDelete: Restrict)
+  id             String                   @id @default(uuid()) @db.Uuid
+  profileId      String                   @map("profile_id") @db.Uuid
+  operationId    String                   @map("operation_id") @db.Uuid
+  beforeBranchId String?                  @map("before_branch_id") @db.Uuid
+  afterBranchId  String?                  @map("after_branch_id") @db.Uuid
+  reason         String                   @db.VarChar(40)
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  profile        CustomerProfile          @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  operation      CustomerProfileOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+
+  @@index([profileId, createdAt])
+  @@map("customer_followup_history")
+}
+
+/// Append-only privileged identity decisions, distinct from bot channel evidence.
+model CustomerProfileReview {
+  actorUser User?    @relation("CustomerProfileReviewActor", fields: [actorId], references: [id], onDelete: Restrict)
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.VarChar(100)
+  actorId   String?  @map("actor_id") @db.Uuid
+  actor     String   @default("staff") @db.VarChar(30)
+  entityId  String   @map("entity_id") @db.Uuid
+  action    String   @db.VarChar(40)
+  reason    String   @db.VarChar(1000)
+  snapshot  Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([companyId, entityId, createdAt])
+  @@map("customer_profile_reviews")
 }

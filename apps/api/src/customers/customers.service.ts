@@ -58,6 +58,9 @@ import { PrismaService } from '../prisma/prisma.service.js';
 /** Rows per INSERT of a bulk import (keeps the statement under PostgreSQL's parameter limit). */
 const WRITE_CHUNK = 1000;
 
+/** Only the internal profile account path may omit a phone; legacy HTTP forms stay unchanged. */
+type CustomerWriteFields = Omit<CustomerInput, 'phone'> & { phone: string | null };
+
 /** The per-branch lock every write that can change a customer's phone or tax number takes. */
 export const CUSTOMER_UNIQUE_RULE = 'customer-phone-tax';
 
@@ -74,7 +77,7 @@ export interface CustomerFilters extends PageQuery {
 /** What a customer write would claim in its branch; `excludeId` is the customer being edited. */
 export interface CustomerKeys {
   branchId: string;
-  phone?: string;
+  phone?: string | null;
   taxNumber?: string | null;
   excludeId?: string;
 }
@@ -101,6 +104,101 @@ export class CustomersService {
     private readonly masterData: MasterDataService,
     private readonly partnerRefs: PartnerRefsService,
   ) {}
+
+  /** Minimum legacy identity candidates, never balances or branch documents. Internal API only. */
+  async profilePhoneOwnersInTx(
+    tx: Prisma.TransactionClient,
+    value: string,
+    exceptProfile?: string,
+  ): Promise<{ profileId: string | null }[]> {
+    return tx.$queryRaw<
+      { profileId: string | null }[]
+    >`SELECT profile_id AS "profileId" FROM customers
+      WHERE (profile_id IS NULL OR profile_id IS DISTINCT FROM ${exceptProfile ?? null}::uuid)
+      AND (regexp_replace(phone, '[^0-9]', '', 'g') = ${value.slice(1)}
+        OR regexp_replace(whatsapp, '[^0-9]', '', 'g') = ${value.slice(1)})`;
+  }
+
+  async profileLinkCandidateInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    accountId: string,
+    lock = false,
+  ) {
+    if (lock) await tx.$queryRaw`SELECT id FROM customers WHERE id = ${accountId}::uuid FOR UPDATE`;
+    const row = await tx.customer.findFirst({
+      where: { id: accountId, ...branchScope(user), ...customerOutletScope(user) },
+      select: {
+        id: true,
+        number: true,
+        branchId: true,
+        profileId: true,
+        name: true,
+        phone: true,
+        address: true,
+        isActive: true,
+      },
+    });
+    if (!row || !user.access.has('customers:update', row.branchId))
+      throw new NotFoundException('Customer not found');
+    if (!row.isActive) throw new ConflictException('Customer is inactive');
+    return row;
+  }
+
+  async linkProfileInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    accountId: string,
+    profileId: string,
+  ): Promise<void> {
+    const account = await this.profileLinkCandidateInTx(tx, user, accountId, true);
+    if (account.profileId === profileId) return;
+    if (account.profileId)
+      throw new ConflictException('Existing profiles need a separate merge review');
+    await tx.customer.update({ where: { id: accountId }, data: { profileId } });
+    await this.audit.record(tx, user, {
+      branchId: account.branchId,
+      entity: 'CUSTOMER',
+      entityId: accountId,
+      reference: account.number,
+      action: 'UPDATED',
+      changes: [{ field: 'profileId', before: null, after: profileId }],
+    });
+  }
+
+  /** Internal branch-account materialisation for an explicitly linked unified profile. */
+  async profileAccountInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    profile: { id: string; name: string | null; phone: string | null; phoneVerified: boolean },
+    branchId: string,
+  ): Promise<string> {
+    assertBranchAccess(user, branchId);
+    if (outletLimited(user)) throw new NotFoundException('Customer not found');
+    const existing = await tx.customer.findUnique({
+      where: { profileId_branchId: { profileId: profile.id, branchId } },
+    });
+    if (existing) {
+      await this.lockActiveCustomerInTx(tx, branchId, existing.id);
+      return existing.id;
+    }
+    if (!user.access.has('customers:create', branchId))
+      throw new NotFoundException('Customer creation is not allowed');
+    if (!profile.name)
+      throw new BadRequestException({
+        code: 'PROFILE_NAME_REQUIRED',
+        message: 'Complete the explicit customer name before approval',
+        fields: ['profile.name'],
+      });
+    const account = await this.createInTx(tx, user, {
+      branchId,
+      kind: 'INDIVIDUAL',
+      name: profile.name,
+      phone: profile.phoneVerified ? profile.phone : null,
+    });
+    await tx.customer.update({ where: { id: account.id }, data: { profileId: profile.id } });
+    return account.id;
+  }
 
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
     const where: Prisma.CustomerWhereInput = {
@@ -167,7 +265,7 @@ export class CustomersService {
   async createInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
-    input: CreateCustomerRequest,
+    input: CustomerWriteFields & { branchId: string },
   ): Promise<CustomerWithDetails> {
     assertBranchAccess(user, input.branchId);
     const { branchId, acquiredViaOutletId: requested, ...fields } = input;
@@ -769,7 +867,7 @@ const details = {
   acquiredViaOutlet: partnerRefSelect,
 } satisfies Prisma.CustomerInclude;
 
-function toData<T extends Partial<CustomerInput>>(
+function toData<T extends Partial<CustomerWriteFields>>(
   input: T,
 ): Omit<T, 'creditLimit'> & { creditLimit?: Decimal | null } {
   const { creditLimit, ...rest } = input;
