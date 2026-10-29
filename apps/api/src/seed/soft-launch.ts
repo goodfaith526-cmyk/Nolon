@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   hasAllBranchAccess,
   type CargoType,
+  type CreateRateCardRequest,
   type CsScope,
   type LocationKind,
   type RateUnit,
@@ -15,14 +16,15 @@ import { fold } from '../customer-service/bot-names.js';
 import type { ApiClientsService } from '../customer-service/api-clients.service.js';
 import type { MasterDataService } from '../master-data/master-data.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
-import type { RatesService } from '../rates/rates.service.js';
+import { type RatesService, withLoadType } from '../rates/rates.service.js';
 
 /**
  * The soft-launch prices of the customer-service booking bot (owner's request, 2026-10-29, numbers
  * from NOLON's sales on 2026-10-28): places and their other names, two new price categories, 36
  * approved rate cards, routing for the priced origins and for Cairo and Guangzhou (no price yet),
- * and the three scopes the bot's API key needs. Everything goes through NOLON's own services, as
- * the screens do, so the same rules, locks and audit log apply.
+ * the three scopes the bot's API key needs, and pickup and door delivery off for that key.
+ * Everything goes through NOLON's own services, as the screens do, so the same rules, locks and
+ * audit log apply.
  *
  * Safe to run again: what is there already is left as it is and reported. Nothing is deleted, an
  * approved card is never changed, and a routing rule or category staff already set is kept.
@@ -237,7 +239,7 @@ export interface SoftLaunchDeps {
 export interface SoftLaunchOptions {
   /** The UTC date the cards are valid from (YYYY-MM-DD). */
   today: string;
-  /** The API key to give the scopes, by its prefix, when there is more than one active key. */
+  /** The booking bot's API key, by its prefix (nolcs_...): without it no key changes. */
   keyPrefix?: string;
 }
 
@@ -334,8 +336,12 @@ export async function applySoftLaunch(
   }
   const categorySpecs = new Map(SOFT_LAUNCH_CATEGORIES.map((c) => [c.code, c]));
 
-  // 3. Rate cards: created as drafts and approved, as on the rates screen.
+  // 3. Rate cards: created as drafts and approved, as on the rates screen. A card already in force
+  // today with exactly these terms counts as present; any other card on the same route and
+  // category (a staff draft, a card with other terms, one starting later) is left as it is and
+  // reported, never approved or changed: staff decide.
   const counts = { created: 0, present: 0, skipped: 0 };
+  const today = toDbDate(options.today);
   for (const card of softLaunchCards()) {
     const label = `${card.origin}→${card.destination} ${card.category}`;
     const branchId = branches.get(card.branchCode);
@@ -347,41 +353,7 @@ export async function applySoftLaunch(
       counts.skipped++;
       continue;
     }
-    const today = toDbDate(options.today);
-    const existing = await prisma.rateCard.findMany({
-      where: {
-        branchId,
-        originLocationId: origin,
-        destinationLocationId: destination,
-        priceCategoryCode: card.category,
-        chargeTypeCode: 'FREIGHT',
-        status: { in: ['DRAFT', 'APPROVED'] },
-        OR: [{ validTo: null }, { validTo: { gte: today } }],
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-    const same = (r: (typeof existing)[number]) =>
-      r.currency === card.currency && r.price.equals(card.price) && r.mode === card.mode;
-    const approved = existing.find((r) => r.status === 'APPROVED' && same(r));
-    if (approved) {
-      counts.present++;
-      continue;
-    }
-    const draft = existing.find((r) => r.status === 'DRAFT' && same(r));
-    if (draft) {
-      await rates.approve(actor, draft.id);
-      counts.created++;
-      continue;
-    }
-    const [other] = existing;
-    if (other) {
-      say(
-        `بطاقة أخرى موجودة، تُركت كما هي (${other.status} ${other.price.toString()} ${other.currency}): ${label}`,
-      );
-      counts.skipped++;
-      continue;
-    }
-    const created = await rates.create(actor, {
+    const input = withLoadType<CreateRateCardRequest>({
       branchId,
       originLocationId: origin,
       destinationLocationId: destination,
@@ -396,7 +368,52 @@ export async function applySoftLaunch(
       transitDays: SOFT_LAUNCH_TRANSIT_DAYS,
       notes: SOFT_LAUNCH_NOTES,
     });
-    await rates.approve(actor, created.id);
+    const existing = await prisma.rateCard.findMany({
+      where: {
+        branchId,
+        originLocationId: origin,
+        destinationLocationId: destination,
+        priceCategoryCode: card.category,
+        chargeTypeCode: 'FREIGHT',
+        status: { in: ['DRAFT', 'APPROVED'] },
+        OR: [{ validTo: null }, { validTo: { gte: today } }],
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const inForce = (r: (typeof existing)[number]) =>
+      r.status === 'APPROVED' &&
+      r.validFrom <= today &&
+      r.mode === input.mode &&
+      r.loadType === (input.loadType ?? null) &&
+      r.cargoType === input.cargoType &&
+      r.containerTypeCode === null &&
+      r.unit === input.unit &&
+      r.currency === input.currency &&
+      r.price.equals(input.price) &&
+      r.minimumCharge.isZero();
+    if (existing.some(inForce)) {
+      counts.present++;
+      continue;
+    }
+    if (existing.length > 0) {
+      const others = existing
+        .map((r) => {
+          const from = r.validFrom.toISOString().slice(0, 10);
+          return `${r.status} ${r.price.toString()} ${r.currency} ${r.unit} من ${from}`;
+        })
+        .join('؛ ');
+      say(`بطاقة أخرى على نفس الطريق والفئة، تُركت كما هي ولم تُدخل بطاقتنا (${others}): ${label}`);
+      counts.skipped++;
+      continue;
+    }
+    const created = await rates.create(actor, input);
+    try {
+      await rates.approve(actor, created.id);
+    } catch (error) {
+      // Never leave a draft behind: a later run would find it and skip the card.
+      await rates.cancel(actor, created.id);
+      throw error;
+    }
     counts.created++;
   }
   say(
@@ -418,21 +435,26 @@ export async function applySoftLaunch(
     }
   }
 
-  // 5. The bot's API key: the three scopes, added to what it holds.
+  // 5. The bot's API key, named by its prefix (never guessed): the three scopes added to what it
+  // holds, and pickup and door delivery off. Without the prefix, or when the key does not cover
+  // the origins' branches, nothing about any key changes.
   const active = (await apiClients.list()).filter((k) => k.isActive);
-  const holding = active.filter((k) => k.scopes.some((s) => SOFT_LAUNCH_SCOPES.includes(s)));
-  const key = options.keyPrefix
-    ? active.find((k) => k.keyPrefix === options.keyPrefix)
-    : active.length === 1
-      ? active[0]
-      : holding.length === 1
-        ? holding[0]
-        : undefined;
+  const key = options.keyPrefix ? active.find((k) => k.keyPrefix === options.keyPrefix) : undefined;
+  const needed = [...new Set(Object.values(SOFT_LAUNCH_ORIGINS))];
   if (!key) {
     say(
-      `المفتاح: لم يُحدد مفتاح واحد (${active.length} مفاتيح نشطة: ${
-        active.map((k) => `${k.name} ${k.keyPrefix}`).join('، ') || 'لا شيء'
-      }). شغّل مرة تانية مع SOFT_LAUNCH_KEY_PREFIX`,
+      `المفتاح: لم يتغير أي مفتاح. ${
+        options.keyPrefix ? `لا مفتاح نشط بالبادئة ${options.keyPrefix}. ` : ''
+      }المفاتيح النشطة: ${
+        active
+          .map((k) => `«${k.name}» ${k.keyPrefix} (فروع ${k.branchCodes.join('، ')})`)
+          .join('؛ ') || 'لا شيء'
+      }. شغّل مرة تانية مع SOFT_LAUNCH_KEY_PREFIX=بادئة مفتاح بوت الحجز`,
+    );
+  } else if (needed.some((b) => !key.branchCodes.includes(b))) {
+    say(
+      `المفتاح «${key.name}» لم يتغير: فروعه ${key.branchCodes.join('، ')} لا تشمل ` +
+        `${needed.filter((b) => !key.branchCodes.includes(b)).join('، ')}`,
     );
   } else {
     const missing = SOFT_LAUNCH_SCOPES.filter((s) => !key.scopes.includes(s));
@@ -442,14 +464,12 @@ export async function applySoftLaunch(
     } else {
       say(`المفتاح «${key.name}» (${key.keyPrefix}): الصلاحيات التلاتة موجودة`);
     }
-    const outside = [...new Set(Object.values(SOFT_LAUNCH_ORIGINS))].filter(
-      (b) => !key.branchCodes.includes(b),
-    );
-    if (outside.length > 0) {
-      say(
-        `تنبيه: فروع المفتاح ${key.branchCodes.join('، ')} لا تشمل ${outside.join('، ')}: ` +
-          'طلبات الحجز من مدن هذا الفرع لن تقبل بهذا المفتاح',
-      );
+    // No pickup from home and no door delivery at the soft launch: the bot offers neither.
+    if (key.services.length > 0) {
+      await apiClients.setServices(actor, key.id, []);
+      say(`المفتاح «${key.name}»: أُوقفت خدمات ${key.services.join('، ')}`);
+    } else {
+      say(`المفتاح «${key.name}»: الاستلام والتوصيل موقوفين`);
     }
   }
   return report;

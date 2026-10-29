@@ -1,5 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
-import type { CsScope } from '@nolon/shared';
+import { CS_REQUEST_SERVICES, type CsRequestService, type CsScope } from '@nolon/shared';
 import type { ApiScope } from '../generated/prisma/client.js';
 
 export const API_SCOPE_KEY = 'nolon:apiScope';
@@ -37,4 +37,13 @@ export function keyScopes(
 /** The rows for `scopes` (all but `cs:customers:read`). */
 export function scopeRows(scopes: readonly CsScope[]): ApiScope[] {
   return scopes.flatMap((s) => (s === 'cs:customers:read' ? [] : [SCOPE_ROWS[s]]));
+}
+/** A key's services, from its columns, in CS_REQUEST_SERVICES order. */
+export function keyServices(row: {
+  offersPickup: boolean;
+  offersLastMile: boolean;
+}): CsRequestService[] {
+  return CS_REQUEST_SERVICES.filter((s) =>
+    s === 'PICKUP' ? row.offersPickup : row.offersLastMile,
+  );
 }

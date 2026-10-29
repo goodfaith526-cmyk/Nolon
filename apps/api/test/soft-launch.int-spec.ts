@@ -1,7 +1,7 @@
 import type { ApiClientCreatedDto, CsCatalogDto, CsQuoteDto } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/auth/auth-user.js';
-import { todayIn } from '../src/common/dates.js';
+import { todayIn, toDbDate } from '../src/common/dates.js';
 import { ApiClientsService } from '../src/customer-service/api-clients.service.js';
 import { MasterDataService } from '../src/master-data/master-data.service.js';
 import { RatesService } from '../src/rates/rates.service.js';
@@ -33,6 +33,8 @@ describe('soft-launch data script', () => {
   let deps: SoftLaunchDeps;
   let actor: AuthUser;
   let bot: ApiClientCreatedDto;
+  /** A key of JED and PTS only: not the bot's, never widened. */
+  let narrow: ApiClientCreatedDto;
   let adminEmail = '';
   const today = todayIn('UTC');
   const before = {
@@ -69,19 +71,22 @@ describe('soft-launch data script', () => {
     // Not an it- user: the shared cleanup deletes their rate cards, and the bot's quotes keep these.
     adminEmail = (await createUser(t.prisma, ['ADMINISTRATOR'], [], 'soft-launch-it-')).email;
     const cookie = await signIn(t, adminEmail);
-    bot = (
-      await t
-        .http()
-        .post('/api/v1/api-clients')
-        .set('Origin', APP_ORIGIN)
-        .set('Cookie', cookie)
-        .send({
-          name: 'Soft launch bot',
-          branchIds: [await branchId(t.prisma, 'JED'), await branchId(t.prisma, 'PTS')],
-          scopes: ['cs:tracking:lookup'],
-        })
-        .expect(201)
-    ).body as ApiClientCreatedDto;
+    const makeKey = async (name: string, branchCodes: string[]) =>
+      (
+        await t
+          .http()
+          .post('/api/v1/api-clients')
+          .set('Origin', APP_ORIGIN)
+          .set('Cookie', cookie)
+          .send({
+            name,
+            branchIds: await Promise.all(branchCodes.map((c) => branchId(t.prisma, c))),
+            scopes: ['cs:tracking:lookup'],
+          })
+          .expect(201)
+      ).body as ApiClientCreatedDto;
+    bot = await makeKey('Soft launch bot', ['JED', 'DXB']);
+    narrow = await makeKey('Tracking integration', ['JED', 'PTS']);
     actor = await softLaunchActor(t.prisma, adminEmail.toUpperCase());
 
     const ids = Object.values(await placeIds());
@@ -124,6 +129,7 @@ describe('soft-launch data script', () => {
       data: { isActive: false },
     });
     await deps.apiClients.revoke(actor, bot.client.id);
+    await deps.apiClients.revoke(actor, narrow.client.id);
     await t.close();
   });
 
@@ -152,8 +158,16 @@ describe('soft-launch data script', () => {
   });
 
   it('enters everything through the services, and the bot quotes and lists it', async () => {
-    const report = await applySoftLaunch(deps, actor, { today, keyPrefix: bot.client.keyPrefix });
-    expect(report.join('\n')).toContain('بطاقات الأسعار:');
+    const keys = async () =>
+      (await deps.apiClients.list()).map((k) => [k.id, k.scopes.join(), k.services.join()].join());
+    const keysBefore = await keys();
+    // Without the bot key's prefix no key changes, whatever keys exist: it lists them.
+    const first = (await applySoftLaunch(deps, actor, { today })).join('\n');
+    expect(first).toContain('بطاقات الأسعار:');
+    expect(first).toContain('المفتاح: لم يتغير أي مفتاح');
+    expect(first).toContain(bot.client.keyPrefix);
+    expect(await keys()).toEqual(keysBefore);
+    await applySoftLaunch(deps, actor, { today, keyPrefix: bot.client.keyPrefix });
 
     const cards = await t.prisma.rateCard.findMany({
       where: { ...ours(), id: { notIn: [...before.cards] } },
@@ -189,6 +203,7 @@ describe('soft-launch data script', () => {
       'cs:booking_requests:create',
       'cs:tracking:lookup',
     ]);
+    expect(key?.services).toEqual([]);
 
     const catalog = (
       await t.http().get('/api/v1/cs/catalog').set('Authorization', `Bearer ${bot.key}`).expect(200)
@@ -199,6 +214,7 @@ describe('soft-launch data script', () => {
     }
     const destinations = catalog.destinations.map((d) => d.code);
     for (const code of ['SDPZU', 'SDATB', 'SDKRT', 'SDDOG']) expect(destinations).toContain(code);
+    expect(catalog.services).toEqual([]);
     expect(catalog.categories.map((c) => c.code)).toEqual(
       expect.arrayContaining(['BARREL', 'SUITCASE', 'CARTON50']),
     );
@@ -226,40 +242,68 @@ describe('soft-launch data script', () => {
     expect([quote.total, quote.bookable]).toEqual(['500.00', true]);
   });
 
-  it('changes nothing on a second run, and keeps a card staff set at another price', async () => {
-    const card = await t.prisma.rateCard.findFirstOrThrow({
-      where: {
-        ...ours(),
-        origin: { code: 'AESHJ' },
-        destination: { code: 'SDKRT' },
-        priceCategoryCode: 'SUITCASE',
-        status: 'APPROVED',
-      },
-    });
-    // Staff replace one card with their own price.
-    await t.prisma.rateCard.update({ where: { id: card.id }, data: { status: 'CANCELLED' } });
-    await t.prisma.rateCard.create({
-      data: {
-        ...card,
-        id: undefined,
-        price: '175',
-        status: 'APPROVED',
-        createdAt: undefined,
-        updatedAt: undefined,
-      },
-    });
+  it('changes nothing on a second run, and leaves every other card on its routes as it is', async () => {
+    const ourCard = (destination: string) =>
+      t.prisma.rateCard.findFirstOrThrow({
+        where: {
+          ...ours(),
+          origin: { code: 'AESHJ' },
+          destination: { code: destination },
+          priceCategoryCode: 'SUITCASE',
+          status: 'APPROVED',
+        },
+      });
+    /** Staff replace our Sharjah suitcase card to `destination` with their own. */
+    const replace = async (destination: string, data: object) => {
+      const card = await ourCard(destination);
+      await t.prisma.rateCard.update({ where: { id: card.id }, data: { status: 'CANCELLED' } });
+      return t.prisma.rateCard.create({
+        data: { ...card, id: undefined, createdAt: undefined, updatedAt: undefined, ...data },
+      });
+    };
+    const tomorrow = new Date(toDbDate(today).getTime() + 86_400_000);
+    await replace('SDKRT', { price: '175' });
+    const minimum = await replace('SDATB', { minimumCharge: '999' });
+    const draft = await replace('SDPZU', { status: 'DRAFT', approvedById: null, approvedAt: null });
+    await replace('SDDOG', { validFrom: tomorrow });
+
     const count = () => t.prisma.rateCard.count({ where: { ...ours(), status: 'APPROVED' } });
     const was = await count();
     const aliases = await t.prisma.locationAlias.count();
-    const report = await applySoftLaunch(deps, actor, { today, keyPrefix: bot.client.keyPrefix });
-    expect(await count()).toBe(was);
-    expect(await t.prisma.locationAlias.count()).toBe(aliases);
-    const lines = report.join('\n');
-    expect(lines).toContain('بطاقات الأسعار: 0 جديدة معتمدة، 35 موجودة من قبل، 1 لم تُدخل');
+    const narrowScopes = (await deps.apiClients.list()).find((k) => k.id === narrow.client.id);
+    const lines = [
+      ...(await applySoftLaunch(deps, actor, { today, keyPrefix: bot.client.keyPrefix })),
+      ...(await applySoftLaunch(deps, actor, { today, keyPrefix: narrow.client.keyPrefix })),
+    ].join('\n');
+
+    // Same price with another minimum, a staff draft, a card from tomorrow: none is ours, none
+    // is approved or changed, and our card is not added beside them.
+    expect(lines).toContain('بطاقات الأسعار: 0 جديدة معتمدة، 32 موجودة من قبل، 4 لم تُدخل');
     expect(lines).toContain('175 AED');
+    expect(await count()).toBe(was);
+    expect(await t.prisma.rateCard.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
+      status: 'DRAFT',
+      approvedById: null,
+    });
+    const kept = await t.prisma.rateCard.findUniqueOrThrow({ where: { id: minimum.id } });
+    expect([kept.status, kept.minimumCharge.toString()]).toEqual(['APPROVED', '999']);
+    expect(await t.prisma.locationAlias.count()).toBe(aliases);
+    // The card from tomorrow does not price today.
+    const ids = await placeIds();
+    const res = await t
+      .http()
+      .get('/api/v1/cs/quote')
+      .query({ originId: ids.AESHJ, destinationId: ids.SDDOG, category: 'SUITCASE' })
+      .set('Authorization', `Bearer ${bot.key}`)
+      .expect(404);
+    expect((res.body as { code: string }).code).toBe('NO_RATE');
+
     expect(lines).toContain('الصلاحيات التلاتة موجودة');
-    // The key covers JED and PTS, not DXB: the script says so.
-    expect(lines).toContain('لا تشمل DXB');
+    expect(lines).toContain('الاستلام والتوصيل موقوفين');
+    // A key that does not cover DXB is not the bot's: named or not, it is not widened.
+    expect(lines).toContain('«Tracking integration» لم يتغير');
+    const after = (await deps.apiClients.list()).find((k) => k.id === narrow.client.id);
+    expect(after).toEqual(narrowScopes);
   });
 
   it('refuses to act as anyone but an active Administrator', async () => {

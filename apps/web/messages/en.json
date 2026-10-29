@@ -1514,7 +1514,12 @@
     "editScopes": "Change scopes",
     "saveScopes": "Save scopes",
     "cancel": "Cancel",
-    "scopesSaved": "The key's scopes were saved."
+    "scopesSaved": "The key's scopes were saved.",
+    "services": "Services the bot offers",
+    "servicesHint": "The bot offers customers only what is ticked: untick pickup or delivery while NOLON does not do it.",
+    "service_PICKUP": "Pickup from the customer",
+    "service_LAST_MILE": "Delivery to the receiver's door",
+    "noServices": "No pickup or delivery"
   },
   "Reports": {
     "title": "Financial reports",

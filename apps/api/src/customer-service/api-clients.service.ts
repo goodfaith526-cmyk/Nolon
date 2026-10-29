@@ -3,7 +3,9 @@ import {
   type ApiClientCreatedDto,
   type ApiClientCreateRequest,
   type ApiClientDto,
+  CS_REQUEST_SERVICES,
   CS_SCOPES,
+  type CsRequestService,
   type CsScope,
 } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
@@ -12,7 +14,7 @@ import { assertBranchAccess } from '../auth/branch-scope.js';
 import type { ApiScope, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { newApiKey } from './api-key.js';
-import { keyScopes, scopeRows } from './api-scopes.js';
+import { keyScopes, keyServices, scopeRows } from './api-scopes.js';
 
 const include = {
   branches: { include: { branch: { select: { code: true } } } },
@@ -56,6 +58,7 @@ export class ApiClientsService {
           createdById: user.id,
           // Always explicit: the column's default (true) is only for the keys made before scopes.
           customersRead: scopes.includes('cs:customers:read'),
+          ...serviceColumns(input.services ?? CS_REQUEST_SERVICES),
           branches: { create: branchIds.map((branchId) => ({ branchId })) },
           scopes: { create: scopeRows(scopes).map((scope) => ({ scope, grantedById: user.id })) },
         },
@@ -68,7 +71,7 @@ export class ApiClientsService {
         entityId: made.id,
         reference: reference(dto),
         action: 'CREATED',
-        changes: changedFields(null, auditFields(dto), ['name', 'branches', 'scopes']),
+        changes: changedFields(null, auditFields(dto), ['name', 'branches', 'scopes', 'services']),
       });
       return made;
     });
@@ -112,6 +115,39 @@ export class ApiClientsService {
     });
   }
 
+  /**
+   * Sets the services an active key's bot offers (PICKUP, LAST_MILE), for an Administrator of all
+   * its branches: its catalog lists only those, and its booking requests may ask only for those.
+   */
+  async setServices(
+    user: AuthUser,
+    id: string,
+    services: readonly CsRequestService[],
+  ): Promise<ApiClientDto> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "api_clients" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const before = await tx.apiClient.findUnique({ where: { id }, include });
+      if (!before) throw new NotFoundException('API key not found');
+      for (const b of before.branches) assertBranchAccess(user, b.branchId);
+      if (!before.isActive) throw new ConflictException('The API key is revoked');
+      const after = await tx.apiClient.update({
+        where: { id },
+        data: serviceColumns(services),
+        include,
+      });
+      const dto = toDto(after);
+      await this.audit.record(tx, user, {
+        branchId: null,
+        entity: 'API_CLIENT',
+        entityId: id,
+        reference: reference(dto),
+        action: 'UPDATED',
+        changes: changedFields(auditFields(toDto(before)), auditFields(dto), ['services']),
+      });
+      return dto;
+    });
+  }
+
   async revoke(user: AuthUser, id: string): Promise<ApiClientDto> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.apiClient.updateMany({
@@ -144,7 +180,14 @@ function reference(dto: ApiClientDto): string {
 }
 
 function auditFields(dto: ApiClientDto) {
-  return { name: dto.name, branches: dto.branchCodes, scopes: dto.scopes };
+  return { name: dto.name, branches: dto.branchCodes, scopes: dto.scopes, services: dto.services };
+}
+
+function serviceColumns(services: readonly CsRequestService[]) {
+  return {
+    offersPickup: services.includes('PICKUP'),
+    offersLastMile: services.includes('LAST_MILE'),
+  };
 }
 
 function toDto(row: Row): ApiClientDto {
@@ -154,6 +197,7 @@ function toDto(row: Row): ApiClientDto {
     keyPrefix: `nolcs_${row.keyPrefix}`,
     branchCodes: row.branches.map((b) => b.branch.code).sort(),
     scopes: keyScopes(row.customersRead, row.scopes, CS_SCOPES),
+    services: keyServices(row),
     isActive: row.isActive,
     createdByName: row.createdBy.fullName,
     createdAt: row.createdAt.toISOString(),

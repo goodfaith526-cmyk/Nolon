@@ -159,6 +159,16 @@ export class BookingRequestsService {
     const replay = await this.replay(client, owner, input.idempotencyKey, hash);
     if (replay) return { created: false, body: replay };
 
+    // Only what the key's bot offers: no pickup (as a service or as the handover) when it is off.
+    const asked = [...input.services, ...(input.handover === 'PICKUP' ? ['PICKUP' as const] : [])];
+    const refused = asked.find((s) => !client.services.includes(s));
+    if (refused) {
+      throw coded(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'SERVICE_NOT_OFFERED',
+        `This key does not offer ${refused}: see the catalog's services`,
+      );
+    }
     await this.masterData.requireRoute(input.originId, input.destinationId);
     const category = await this.masterData.requirePriceCategory(input.category, null);
     if (input.requestedDate !== undefined && input.requestedDate < todayIn('UTC')) {

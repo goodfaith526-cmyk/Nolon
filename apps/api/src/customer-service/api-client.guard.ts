@@ -8,11 +8,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { CS_SCOPES, type CsScope } from '@nolon/shared';
+import { CS_SCOPES, type CsRequestService, type CsScope } from '@nolon/shared';
 import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { keyMatches, readApiKey } from './api-key.js';
-import { API_SCOPE_KEY, keyScopes } from './api-scopes.js';
+import { API_SCOPE_KEY, keyScopes, keyServices } from './api-scopes.js';
 
 /** The Customer Service API client a request authenticated as. */
 export interface ApiClientAuth {
@@ -22,6 +22,8 @@ export interface ApiClientAuth {
   allowedBranchIds: readonly string[];
   /** What the key may do (CS_SCOPES). */
   scopes: readonly CsScope[];
+  /** The services its bot offers (CS_REQUEST_SERVICES). */
+  services: readonly CsRequestService[];
 }
 
 interface ApiClientRequest extends Request {
@@ -82,6 +84,7 @@ export class ApiClientGuard implements CanActivate {
       name: client.name,
       allowedBranchIds: client.branches.map((b) => b.branchId),
       scopes,
+      services: keyServices(client),
     };
     return true;
   }

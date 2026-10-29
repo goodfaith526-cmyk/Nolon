@@ -14,7 +14,8 @@ import { applySoftLaunch, softLaunchActor } from './soft-launch.js';
  * Run inside the api container, which has the API's settings:
  *   docker compose -f docker-compose.staging.yml exec -T api node dist/seed/soft-launch-main.js
  * Optional: SOFT_LAUNCH_ACTOR_EMAIL (the Administrator it acts as; default the first one) and
- * SOFT_LAUNCH_KEY_PREFIX (the API key, when there is more than one active key). Safe to repeat.
+ * SOFT_LAUNCH_KEY_PREFIX (the booking bot's API key, nolcs_...; without it no key changes, and
+ * the run lists the active keys). Safe to repeat.
  */
 async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {

@@ -1,7 +1,9 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
   ApiClientCreatedDto,
+  ApiClientDto,
   CsBookingRequestCreated,
+  CsCatalogDto,
   CsBookingRequestDto,
   CsCustomerTokenAnswer,
   CsQuoteDto,
@@ -482,5 +484,60 @@ describe('Customer Service booking requests (R3)', () => {
     expect(saved.consigneePhone).toBe('0912345678');
     await create(bot.key, body({ sender, quantity: 1.23456 })).expect(400);
     await create(bot.key, body({ sender, consigneePhone: 'call me' })).expect(400);
+  });
+
+  it('offers only the services its key offers: the catalog lists them, requests ask for no others', async () => {
+    const key = await makeKey([pts], ['cs:catalog:read', 'cs:booking_requests:create']);
+    expect(key.client.services).toEqual(['PICKUP', 'LAST_MILE']);
+    const catalog = async () =>
+      (
+        await t
+          .http()
+          .get('/api/v1/cs/catalog')
+          .set('Authorization', `Bearer ${key.key}`)
+          .expect(200)
+      ).body as CsCatalogDto;
+    expect((await catalog()).services.map((s) => s.code)).toEqual(['PICKUP', 'LAST_MILE']);
+    const setServices = (cookie: string, id: string, services: unknown) =>
+      t
+        .http()
+        .put(`/api/v1/api-clients/${id}/services`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send({ services });
+
+    // Only who manages keys changes them; an unknown service is refused.
+    await setServices(cookies.sales, key.client.id, []).expect(403);
+    await setServices(cookies.admin, key.client.id, ['WAREHOUSE']).expect(400);
+    const off = (await setServices(cookies.admin, key.client.id, []).expect(200))
+      .body as ApiClientDto;
+    expect(off.services).toEqual([]);
+    const audit = await t.prisma.auditEvent.findFirstOrThrow({
+      where: { entity: 'API_CLIENT', entityId: key.client.id, action: 'UPDATED' },
+      orderBy: { id: 'desc' },
+    });
+    expect(audit.changes).toEqual([{ field: 'services', before: 'LAST_MILE, PICKUP', after: '' }]);
+    expect((await catalog()).services).toEqual([]);
+
+    const sender = newSender();
+    const refused = async (extra: object) => {
+      const res = await create(key.key, body({ sender, ...extra })).expect(422);
+      expect((res.body as { code: string }).code).toBe('SERVICE_NOT_OFFERED');
+    };
+    await refused({ services: ['LAST_MILE'], handover: 'BRANCH_DROP' });
+    await refused({ services: [] });
+    await create(key.key, body({ sender, services: [], handover: 'BRANCH_DROP' })).expect(201);
+
+    // Delivery back on: a request may ask for it again, still without pickup.
+    await setServices(cookies.admin, key.client.id, ['LAST_MILE']).expect(200);
+    await create(
+      key.key,
+      body({ sender, services: ['LAST_MILE'], handover: 'BRANCH_DROP' }),
+    ).expect(201);
+    await refused({ services: ['PICKUP'], handover: 'BRANCH_DROP' });
+
+    // A revoked key keeps what it had.
+    await post(`/api-clients/${key.client.id}/revoke`, cookies.admin).expect(200);
+    await setServices(cookies.admin, key.client.id, []).expect(409);
   });
 });
