@@ -74,6 +74,9 @@ export const PERMISSION_MODULES = [
   // Plan 04a: staff review of the shipping bot's booking requests. view: the list; update:
   // routing to a branch; approve: approval and rejection.
   'cs_booking_requests',
+  // Plan 04 section 4.1: how a customer pays, per branch and currency. create/update: drafts;
+  // approve: by another person than its maker; cancel: retiring one.
+  'payment_instructions',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -157,6 +160,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   access_control: 'FNNNNNNNNNN',
   // Plan 04a section 2 (⭐ proposed, in the owner's decisions file): those who book review them.
   cs_booking_requests: 'FVFFVNNNNFN',
+  // Plan 04 section 4.1 (⭐ proposed, in the owner's decisions file): Finance writes the drafts,
+  // the Branch Manager approves and retires them (and Management approves), Sales reads them.
+  payment_instructions: 'FAFVNENNNNN',
 };
 
 /**

@@ -81,7 +81,8 @@
     "masterData": "البيانات الأساسية",
     "partners": "الشركاء",
     "permissions": "الصلاحيات",
-    "branchPermissions": "صلاحيات الفرع"
+    "branchPermissions": "صلاحيات الفرع",
+    "paymentInstructions": "تعليمات الدفع"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -476,7 +477,10 @@
     "consolidation_CANCELLED": "ملغاة",
     "billLineKind_CONSOLIDATION": "حاوية مجمعة",
     "journalSource_CONSOLIDATION_ALLOCATION": "توزيع تكلفة حاوية",
-    "journalSource_RECEIPT_APPLICATION": "تطبيق دفعة مقدمة على فاتورة"
+    "journalSource_RECEIPT_APPLICATION": "تطبيق دفعة مقدمة على فاتورة",
+    "paymentInstruction_DRAFT": "مسودة",
+    "paymentInstruction_APPROVED": "معتمدة",
+    "paymentInstruction_RETIRED": "متقاعدة"
   },
   "Quotations": {
     "title": "عروض الأسعار",
@@ -1869,7 +1873,8 @@
     "entity_BRANCH_LIMIT": "حد الفرع",
     "entity_DELEGATION": "تفويض",
     "entity_CS_REJECT_REASON": "سبب رفض طلب البوت",
-    "entity_API_CLIENT": "مفتاح API"
+    "entity_API_CLIENT": "مفتاح API",
+    "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -2965,7 +2970,8 @@
     "level_N": "—",
     "levelName_N": "بدون صلاحية",
     "level_C": "*",
-    "levelName_C": "مزيج آخر من الأفعال"
+    "levelName_C": "مزيج آخر من الأفعال",
+    "module_payment_instructions": "تعليمات الدفع"
   },
   "BotRequests": {
     "title": "طلبات الحجز من البوت",
@@ -3044,6 +3050,26 @@
     "approveAction": "وافق وافتح الحجز",
     "booking": "الحجز",
     "approvedPricing": "المسعَّر عند الموافقة"
+  },
+  "PaymentInstructions": {
+    "title": "تعليمات الدفع",
+    "hint": "طريقة دفع الزبون لكل فرع وعملة. بوت الشحن بيعرض النص المعتمد للطلب المعتمد زي ما هو؛ ولو ما في نص معتمد بيقول للزبون إن الموظف حيرسل ليهو طريقة الدفع. بيعتمدها شخص غير اللي كتبها، والنص المعتمد ما بيتعدل، بس بيتقاعد.",
+    "add": "مسودة جديدة",
+    "branch": "الفرع",
+    "currency": "العملة",
+    "textAr": "النص بالعربي",
+    "textEn": "النص بالإنجليزي",
+    "none": "ما في تعليمات دفع لسه.",
+    "created": "المسودة اتحفظت.",
+    "saved": "المسودة اتحفظت.",
+    "approved": "اتعتمدت، وبقت بدل اللي قبلها.",
+    "retired": "اتقاعدت.",
+    "edit": "تعديل",
+    "approve": "اعتماد",
+    "retire": "تقاعد",
+    "madeBy": "كتبها {name}",
+    "approvedBy": "اعتمدها {name}",
+    "editedBy": "آخر تعديل من {name}"
   },
   "ShipmentProfit": {
     "expected": "المتوقع (من بطاقات الأسعار)",

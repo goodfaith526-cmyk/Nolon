@@ -110,6 +110,8 @@ model Branch {
   supplierPayments SupplierPayment[]
   expenses         Expense[]
 
+  paymentInstructions PaymentInstruction[]
+
   @@map("branches")
 }
 
@@ -150,6 +152,8 @@ model Currency {
   expenses             Expense[]
   csRequestsPaid       CsBookingRequest[] @relation("CsRequestPaymentCurrency")
   csRequestsPriced     CsBookingRequest[] @relation("CsRequestApprovedCurrency")
+
+  paymentInstructions PaymentInstruction[]
 
   @@map("currencies")
 }
@@ -299,6 +303,11 @@ model User {
   delegationsRevoked       BranchDelegation[]        @relation("BranchDelegationRevokedBy")
   csRequestsRouted         CsBookingRequest[]        @relation("CsRequestRoutedBy")
   csRequestsDecided        CsBookingRequest[]        @relation("CsRequestDecidedBy")
+
+  paymentInstructionsMade     PaymentInstruction[] @relation("PaymentInstructionCreatedBy")
+  paymentInstructionsEdited   PaymentInstruction[] @relation("PaymentInstructionEditedBy")
+  paymentInstructionsApproved PaymentInstruction[] @relation("PaymentInstructionApprovedBy")
+  paymentInstructionsRetired  PaymentInstruction[] @relation("PaymentInstructionRetiredBy")
 
   @@map("users")
 }
@@ -4560,4 +4569,48 @@ model ReferenceRenumbering {
   @@index([oldNumber])
   @@index([kind, recordId])
   @@map("reference_renumberings")
+}
+
+enum PaymentInstructionStatus {
+  DRAFT
+  APPROVED
+  RETIRED
+
+  @@map("payment_instruction_status")
+}
+
+/// How a customer pays, per branch and currency (plan 04 section 4.1): the shipping bot shows the
+/// approved one of an approved request's branch and payment currency word for word. A draft is
+/// edited; another person than its maker and its current text's writer approves it, which retires the approved one of its branch
+/// and currency in the same transaction; an approved one is never edited, only retired. One
+/// approved per (branch, currency) is a partial unique index, and the database refuses editing a
+/// decided row (trigger, migration 20261029005000).
+model PaymentInstruction {
+  id           String                   @id @default(uuid()) @db.Uuid
+  branchId     String                   @map("branch_id") @db.Uuid
+  currency     String                   @db.Char(3)
+  textAr       String                   @map("text_ar") @db.VarChar(2000)
+  textEn       String                   @map("text_en") @db.VarChar(2000)
+  status       PaymentInstructionStatus @default(DRAFT)
+  version      Int                      @default(1)
+  createdById  String                   @map("created_by_id") @db.Uuid
+  /// Who wrote the current text: its maker, then each editor (F140-1). Never its approver.
+  editedById   String                   @map("edited_by_id") @db.Uuid
+  approvedById String?                  @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime?                @map("approved_at") @db.Timestamptz(3)
+  retiredById  String?                  @map("retired_by_id") @db.Uuid
+  retiredAt    DateTime?                @map("retired_at") @db.Timestamptz(3)
+  createdAt    DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  currencyOf Currency @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy  User     @relation("PaymentInstructionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  editedBy   User     @relation("PaymentInstructionEditedBy", fields: [editedById], references: [id], onDelete: Restrict)
+  approvedBy User?    @relation("PaymentInstructionApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  retiredBy  User?    @relation("PaymentInstructionRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+
+  @@index([branchId, currency, status])
+  @@index([currency])
+  @@map("payment_instructions")
 }

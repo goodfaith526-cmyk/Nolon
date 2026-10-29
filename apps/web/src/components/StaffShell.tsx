@@ -50,6 +50,7 @@ interface NavLink {
     | 'periods'
     | 'locations'
     | 'masterData'
+    | 'paymentInstructions'
     | 'users'
     | 'permissions'
     | 'branchPermissions'
@@ -257,6 +258,12 @@ const NAV_SECTIONS: readonly {
         label: 'locations',
         icon: 'globe',
         permission: 'master_data:view',
+      },
+      {
+        href: '/payment-instructions',
+        label: 'paymentInstructions',
+        icon: 'balance',
+        permission: 'payment_instructions:view',
       },
       {
         href: '/master-data',

@@ -159,6 +159,10 @@
 - POST `/party-drafts/:id/approve` · `PartyDraftsController.approve` · `customers/party-drafts.controller.ts` · customers:update
 - POST `/party-drafts/:id/reject` · `PartyDraftsController.reject` · `customers/party-drafts.controller.ts` · customers:update
 - POST `/party-drafts/check` · `PartyDraftsController.check` · `customers/party-drafts.controller.ts` · customers:update
+- POST `/payment-instructions` · `PaymentInstructionsController.create` · `customer-service/payment-instructions.controller.ts` · payment_instructions:create
+- PATCH `/payment-instructions/:id` · `PaymentInstructionsController.update` · `customer-service/payment-instructions.controller.ts` · payment_instructions:update
+- POST `/payment-instructions/:id/approve` · `PaymentInstructionsController.approve` · `customer-service/payment-instructions.controller.ts` · payment_instructions:approve
+- POST `/payment-instructions/:id/retire` · `PaymentInstructionsController.retire` · `customer-service/payment-instructions.controller.ts` · payment_instructions:cancel
 - POST `/public/tracking/lookup` · `PublicTrackingController.lookup` · `shipments/public-tracking.controller.ts` · —
 - POST `/quotation-drafts` · `QuotationDraftsController.create` · `quotations/quotation-drafts.controller.ts` · quotations:create
 - PATCH `/quotation-drafts/:id` · `QuotationDraftsController.update` · `quotations/quotation-drafts.controller.ts` · quotations:create

@@ -24,6 +24,8 @@ import {
 import { CustomerServiceService } from './customer-service.service.js';
 import { CustomerTokenGuard } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
+import { PaymentInstructionsController } from './payment-instructions.controller.js';
+import { PaymentInstructionsService } from './payment-instructions.service.js';
 import { QuoteService } from './quote.service.js';
 
 /** The Customer Service API and its keys (scope section 17). */
@@ -39,6 +41,7 @@ import { QuoteService } from './quote.service.js';
     ApiClientsController,
     BookingReviewController,
     RejectReasonsController,
+    PaymentInstructionsController,
   ],
   providers: [
     ApiClientGuard,
@@ -52,6 +55,7 @@ import { QuoteService } from './quote.service.js';
     BookingRequestGuard,
     BookingRequestsService,
     BookingReviewService,
+    PaymentInstructionsService,
   ],
 })
 export class CustomerServiceModule {}

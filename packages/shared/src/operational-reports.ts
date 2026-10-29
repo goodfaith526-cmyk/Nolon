@@ -422,6 +422,8 @@ export const AUDIT_ENTITIES = [
   'DELEGATION',
   // Plan 04a section 4: why staff reject a bot's booking request.
   'CS_REJECT_REASON',
+  // Plan 04 section 4.1: how a customer pays, per branch and currency.
+  'PAYMENT_INSTRUCTION',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
