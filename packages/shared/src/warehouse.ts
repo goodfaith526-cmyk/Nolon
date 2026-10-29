@@ -210,4 +210,6 @@ export interface WarehouseStockDto {
   rows: WarehouseOnHandRowDto[];
   truncated: boolean;
   awaitingReceipt: AwaitingReceiptDto[];
+  /** More shipments await a receipt than the list shows. */
+  awaitingTruncated: boolean;
 }

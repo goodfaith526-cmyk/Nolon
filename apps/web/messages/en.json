@@ -1117,7 +1117,8 @@
     "statusReceiptHint": "Saving records a goods receipt (GRN) in this warehouse, so the shipment shows in its stock. Still to receive: {remaining} of {packages} packages. Count them and confirm.",
     "statusReceiptNotMoved": "Goods received: {number}, but the status could not change now. Check the shipment's status.",
     "statusAlreadyHeld": "The goods are already received in a warehouse ({held} packages held): only the status changes.",
-    "statusWithoutReceipt": "No goods receipt will be recorded, so the shipment will not show in a warehouse's stock until someone receives the goods."
+    "statusWithoutReceipt": "No goods receipt will be recorded, so the shipment will not show in a warehouse's stock until someone receives the goods.",
+    "awaitingTruncated": "Only the first shipments awaiting a receipt are shown. Receive these first."
   },
   "Customs": {
     "section": "Customs",

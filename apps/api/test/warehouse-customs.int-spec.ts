@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AuthUser } from '../src/auth/auth-user.js';
 import { todayIn } from '../src/common/dates.js';
 import { CustomsService } from '../src/customs/customs.service.js';
+import { OperationalReportsService } from '../src/reports/operational-reports.service.js';
 import {
   APP_ORIGIN,
   type TestApp,
@@ -1138,6 +1139,41 @@ describe('warehouse and customs', () => {
       const r = await stock();
       expect(held(r, s.id)).toEqual([]);
       expect(awaiting(r, s.id)).toHaveLength(1);
+    });
+
+    it('F146-1: a shipment awaiting a receipt is found behind pages of received ones', async () => {
+      const received: string[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        const r = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+        await receive(r.id, cookies.warehouseDxb, {
+          packages: 10,
+          shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+        }).expect(201);
+        received.push(r.id);
+      }
+      const s = await confirmedShipment(['MAIN_FREIGHT', 'WAREHOUSE']);
+      await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+        status: 'RECEIVED_ORIGIN_WAREHOUSE',
+      }).expect(200);
+      const user: AuthUser = {
+        id: warehouseUserId,
+        email: 'x@test',
+        fullName: 'x',
+        preferredLocale: 'en',
+        sessionId: 's',
+        credentialStamp: 'c',
+        roles: ['WAREHOUSE'],
+        access: Access.uniform(['warehouse:view'], [dxb]),
+        allBranches: false,
+        allowedBranchIds: [dxb],
+      };
+      // Pages of one shipment: every page boundary is crossed, as past 2000 in production.
+      const r = await t.app.get(OperationalReportsService).warehouseStock(user, 1);
+      const ids = r.awaitingReceipt.map((a) => a.shipmentId);
+      expect(ids).toContain(s.id);
+      expect(received.filter((id) => ids.includes(id))).toEqual([]);
+      expect(r.awaitingTruncated).toBe(false);
+      expect(r).toEqual(await stock());
     });
 
     it('another branch sees neither; a role without warehouse view is refused (403)', async () => {

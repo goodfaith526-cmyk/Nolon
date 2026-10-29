@@ -1366,14 +1366,14 @@ export class ShipmentsService {
   /**
    * Shipments the user may see whose status says their goods are in a warehouse (a warehouse
    * receipt status), with when that status was entered and recorded (its latest STATUS event to
-   * it), at most `limit`, least recently changed first. The warehouse screen checks them against
-   * the receipts.
+   * it). One page of `take` in id order after `afterId`; `nextAfterId` continues the scan (null
+   * once nothing is left). The warehouse screen checks them against the receipts.
    */
   async atWarehouseStatus(
     user: AuthUser,
-    limit: number,
-  ): Promise<
-    {
+    page: { afterId: string | null; take: number },
+  ): Promise<{
+    rows: {
       id: string;
       number: string;
       branchCode: string;
@@ -1381,10 +1381,15 @@ export class ShipmentsService {
       status: WarehouseReceiptStatus;
       statusAt: Date;
       recordedAt: Date;
-    }[]
-  > {
+    }[];
+    nextAfterId: string | null;
+  }> {
     const shipments = await this.prisma.shipment.findMany({
-      where: { status: { in: [...WAREHOUSE_RECEIPT_STATUSES] }, ...this.scope(user) },
+      where: {
+        status: { in: [...WAREHOUSE_RECEIPT_STATUSES] },
+        ...(page.afterId ? { id: { gt: page.afterId } } : {}),
+        ...this.scope(user),
+      },
       select: {
         id: true,
         number: true,
@@ -1398,10 +1403,10 @@ export class ShipmentsService {
           take: 5,
         },
       },
-      orderBy: { updatedAt: 'asc' },
-      take: limit,
+      orderBy: { id: 'asc' },
+      take: page.take,
     });
-    return shipments.flatMap((s) => {
+    const rows = shipments.flatMap((s) => {
       const status = WAREHOUSE_RECEIPT_STATUSES.find((w) => w === s.status);
       const event = s.events.find((e) => e.status === s.status);
       return status && event
@@ -1418,6 +1423,8 @@ export class ShipmentsService {
           ]
         : [];
     });
+    const last = shipments.at(-1);
+    return { rows, nextAfterId: shipments.length === page.take && last ? last.id : null };
   }
 
   /**

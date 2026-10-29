@@ -171,6 +171,7 @@ export function Warehouses() {
               ))}
             </tbody>
           </table>
+          {stock.awaitingTruncated && <p className="muted panel-body">{t('awaitingTruncated')}</p>}
         </div>
       )}
       {can(me, 'warehouse:create') && (

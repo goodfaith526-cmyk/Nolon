@@ -79,6 +79,7 @@ const stock: WarehouseStockDto = {
       statusAt: '2026-10-28T08:00:00.000Z',
     },
   ],
+  awaitingTruncated: false,
 };
 
 describe('Warehouses: the shipments in each warehouse now', () => {
