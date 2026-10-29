@@ -895,6 +895,12 @@ export const FORM_REFUSALS = [
   'TRIP_UNDO_LATER_TRIP',
   'CONTAINER_REOPEN_HAS_COSTS',
   'CONTAINER_REOPEN_SHIPMENT_MOVED',
+  // A partner's manual commission adjustment (plan 07, 4.6): the amount is zero, has too many
+  // decimals or rounds to 0.00 USD; the partner is not on the shipment in that role; no exchange
+  // rate today for the currency.
+  'COMMISSION_AMOUNT_INVALID',
+  'COMMISSION_NOT_PARTNER',
+  'COMMISSION_NO_FX_RATE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

@@ -146,6 +146,15 @@ export class AccountsService {
     return mapping.accountId;
   }
 
+  /** Which of the charge types are reimbursable (rule 8): passed through at cost, not earned. */
+  async reimbursableCodes(tx: Tx, chargeTypeCodes: readonly string[]): Promise<Set<string>> {
+    const postings = await tx.chargeTypePosting.findMany({
+      where: { chargeTypeCode: { in: [...new Set(chargeTypeCodes)] }, isReimbursable: true },
+      select: { chargeTypeCode: true },
+    });
+    return new Set(postings.map((p) => p.chargeTypeCode));
+  }
+
   /** Revenue account of each charge type on an invoice (annex C rules 1-2). */
   async revenueAccounts(tx: Tx, chargeTypeCodes: readonly string[]): Promise<Map<string, string>> {
     const codes = [...new Set(chargeTypeCodes)];

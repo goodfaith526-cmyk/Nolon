@@ -24,6 +24,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
 import { isActive } from '../shipments/state-machine.js';
 import { isDriverOnly, lockTripShared, tripScope } from './trip-scope.js';
 import {
@@ -75,7 +76,22 @@ export class PodService implements OnModuleInit {
     private readonly shipments: ShipmentsService,
     private readonly documents: DocumentsService,
     private readonly shipmentLinks: ShipmentLinksRegistry,
+    private readonly commissions: CommissionTriggers,
   ) {}
+
+  /**
+   * For a distributor's commission (plan 07, 3.1 and 6), in the caller's transaction: when the
+   * shipment's first full delivery still standing was made (a live proof of delivery that applied
+   * DELIVERED), or null. A DELIVERED status set by hand without one does not count.
+   */
+  async fullDeliveryAtInTx(tx: Prisma.TransactionClient, shipmentId: string): Promise<Date | null> {
+    const pod = await tx.proofOfDelivery.findFirst({
+      where: { shipmentId, statusApplied: 'DELIVERED', cancellation: null },
+      orderBy: [{ deliveredAt: 'asc' }, { createdAt: 'asc' }],
+      select: { deliveredAt: true },
+    });
+    return pod?.deliveredAt ?? null;
+  }
 
   onModuleInit(): void {
     // B2: the status a proof of delivery applied is not undone from the shipment.
@@ -243,6 +259,7 @@ export class PodService implements OnModuleInit {
           data: { podId: pod.id, documentId: document.id, branchId: shipment.branchId },
         });
       }
+      await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'POD');
       return pod.id;
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({
@@ -353,6 +370,7 @@ export class PodService implements OnModuleInit {
           moved,
         );
       }
+      await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'POD');
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({
       where: { id: podId, shipment: shipmentScope(user) },
