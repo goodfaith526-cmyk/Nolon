@@ -352,8 +352,11 @@ export interface ShipmentProfitabilityDto {
 /** A charge of the shipment's pricing that gives no expected figure, and why (plan 6.2). */
 export interface ExpectedGapDto {
   chargeTypeCode: string;
-  /** NO_CARD: priced by hand, not from a rate card; QUANTITY_UNKNOWN: the cargo does not give it. */
-  reason: 'NO_CARD' | 'QUANTITY_UNKNOWN';
+  /**
+   * NO_CARD: priced by hand, not from a rate card; QUANTITY_UNKNOWN: the cargo does not give it;
+   * COSTS_HIDDEN: a card of a branch whose costs the user may not see (Codex F145-1).
+   */
+  reason: 'NO_CARD' | 'QUANTITY_UNKNOWN' | 'COSTS_HIDDEN';
 }
 
 /**

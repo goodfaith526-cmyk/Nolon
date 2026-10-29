@@ -786,13 +786,30 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       };
     }
     const derived = await this.deriveForShipment(user, shipmentId, {});
+    const filled = derived.lines.filter((l) => l.use === 'FILL');
+    // The cargo's own quantity, not the invoice line's: below a minimum charge the line is 1 × the
+    // minimum, while the costs are per unit of cargo (Codex F145-2). The margin applies the
+    // minimum to the price itself.
+    const rates = new Map(
+      (
+        await this.prisma.rateCard.findMany({
+          where: { id: { in: filled.flatMap((l) => (l.rateCardId ? [l.rateCardId] : [])) } },
+          select: { id: true, unit: true, containerTypeCode: true },
+        })
+      ).map((r) => [r.id, r]),
+    );
     return {
       source: 'RATE_CARDS',
-      lines: derived.lines.flatMap((l) =>
-        l.use === 'FILL'
-          ? [{ chargeTypeCode: l.chargeTypeCode, rateCardId: l.rateCardId, quantity: l.quantity }]
-          : [],
-      ),
+      lines: filled.map((l) => {
+        const rate = l.rateCardId ? rates.get(l.rateCardId) : undefined;
+        return {
+          chargeTypeCode: l.chargeTypeCode,
+          rateCardId: l.rateCardId,
+          quantity: rate
+            ? unitQuantity(rate.unit, shipment.items, rate.containerTypeCode, shipment.cargoType)
+            : null,
+        };
+      }),
     };
   }
 

@@ -132,13 +132,15 @@ export class RateCostsService {
    * The expected margin of each rate card a shipment the caller has checked is priced from (plan
    * 6.2), at the quantity it is priced at: a card of any branch, as any branch's card may price
    * it. The commission is the shipment's outlet's (`outletId`, even if deactivated since), or none
-   * for a shipment sold without an outlet. One margin per line, in order.
+   * for a shipment sold without an outlet. One margin per line, in order; null for a card of a
+   * branch where the user may not see costs (rate_costs:view), whose costs are never read (Codex
+   * F145-1): another branch's tariff may price the shipment, but its costs stay that branch's.
    */
   async shipmentMargins(
     user: AuthUser,
     lines: readonly { rateCardId: string; quantity: Decimal | null }[],
     outletId: string | null,
-  ): Promise<ExpectedMarginDto[]> {
+  ): Promise<(ExpectedMarginDto | null)[]> {
     const cards = new Map(
       (
         await this.prisma.rateCard.findMany({
@@ -146,11 +148,15 @@ export class RateCostsService {
         })
       ).map((r) => [r.id, r]),
     );
-    const margins: ExpectedMarginDto[] = [];
+    const margins: (ExpectedMarginDto | null)[] = [];
     for (const line of lines) {
       // The lines name cards that priced the shipment, so each exists (cards are never deleted).
       const rate = cards.get(line.rateCardId);
       if (!rate) throw new NotFoundException('Rate not found');
+      if (!user.access.has('rate_costs:view', rate.branchId)) {
+        margins.push(null);
+        continue;
+      }
       const asOf = await this.todayOf(rate);
       const commission: MarginCommission = outletId
         ? await this.contracts.commissionFor(user, outletId, rate.priceCategoryCode, asOf, true)

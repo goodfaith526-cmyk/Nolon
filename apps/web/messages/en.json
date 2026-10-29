@@ -3036,6 +3036,7 @@
     "expectedIncomplete": "Incomplete: see the lines above.",
     "revenue": "Revenue",
     "cost": "Cost",
-    "margin": "Margin"
+    "margin": "Margin",
+    "gap_COSTS_HIDDEN": "{charge}: a card of another branch, whose costs you may not see."
   }
 }

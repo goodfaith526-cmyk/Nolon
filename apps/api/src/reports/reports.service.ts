@@ -15,6 +15,7 @@ import {
   type ReportAccountOptionDto,
   type ProfitCategoryDto,
   type ShipmentProfitabilityDto,
+  type ShipmentExpectedDto,
   type ShipmentProfitViewDto,
   type TrialBalanceDto,
 } from '@nolon/shared';
@@ -202,7 +203,12 @@ export class ReportsService {
       }
     }
     const margins = await this.rateCosts.shipmentMargins(user, lines, shipment.salesOutletId);
-    const cards = margins.map((m, i) => ({ ...m, chargeTypeCode: lines[i]?.chargeTypeCode ?? '' }));
+    const cards: ShipmentExpectedDto['cards'] = [];
+    margins.forEach((m, i) => {
+      const chargeTypeCode = lines[i]?.chargeTypeCode ?? '';
+      if (m === null) gaps.push({ chargeTypeCode, reason: 'COSTS_HIDDEN' });
+      else cards.push({ ...m, chargeTypeCode });
+    });
     const currencies = new Set(cards.map((c) => c.currency));
     const [currency] = currencies.size === 1 ? [...currencies] : [null];
     const complete =

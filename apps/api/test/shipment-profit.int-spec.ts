@@ -31,18 +31,23 @@ let to: string;
 let freight: string;
 let rateId: string;
 let customer: CustomerDto;
+let adminId: string;
+let tag: string;
 const cookies = { admin: '', salesPts: '', financePts: '', managerJed: '' };
 
 const day = (offset: number) =>
   new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
 
-async function shipment(salesOutletId?: string): Promise<string> {
+async function shipment(
+  salesOutletId?: string,
+  route: { from: string; to: string } = { from, to },
+): Promise<string> {
   const booking = (
     await r
       .post('/bookings', cookies.salesPts, {
         customerId: customer.id,
-        originLocationId: from,
-        destinationLocationId: to,
+        originLocationId: route.from,
+        destinationLocationId: route.to,
         mode: 'ROAD',
         cargoType: 'GENERAL',
         services: ['MAIN_FREIGHT'],
@@ -74,19 +79,8 @@ beforeAll(async () => {
   for (const key of Object.keys(people) as (keyof typeof people)[]) {
     cookies[key] = await signIn(t, people[key].email);
   }
-  const tag = `SP${randomUUID().slice(0, 6).toUpperCase()}`;
-  const location = async (suffix: string) =>
-    (
-      await t.prisma.location.create({
-        data: {
-          code: `${tag}${suffix}`,
-          kind: 'CITY',
-          nameEn: `Profit test ${tag}${suffix}`,
-          nameAr: 'مدينة اختبار الربحية',
-          countryCode: 'SD',
-        },
-      })
-    ).id;
+  adminId = people.admin.id;
+  tag = `SP${randomUUID().slice(0, 6).toUpperCase()}`;
   from = await location('A');
   to = await location('B');
   freight = `${tag}F`;
@@ -95,40 +89,8 @@ beforeAll(async () => {
   });
   // The freight card: 300 USD a shipment, its reference costs 50 for origin handling and 70 for
   // distribution, the rest not applicable.
-  rateId = (
-    await t.prisma.rateCard.create({
-      data: {
-        branchId: pts,
-        originLocationId: from,
-        destinationLocationId: to,
-        mode: 'ROAD',
-        cargoType: 'GENERAL',
-        chargeTypeCode: freight,
-        unit: 'PER_SHIPMENT',
-        price: '300',
-        minimumCharge: '0',
-        currency: 'USD',
-        validFrom: new Date(`${day(-30)}T00:00:00Z`),
-        status: 'APPROVED',
-        createdById: people.admin.id,
-        approvedById: people.admin.id,
-        approvedAt: new Date(),
-      },
-    })
-  ).id;
-  const entered = (amount: string) => ({
-    status: 'ENTERED',
-    amount,
-    currency: 'USD',
-    unit: 'PER_SHIPMENT',
-  });
-  await r.put(`/rates/${rateId}/costs/ORIGIN_HANDLING`, cookies.admin, entered('50')).expect(200);
-  await r.put(`/rates/${rateId}/costs/DISTRIBUTION`, cookies.admin, entered('70')).expect(200);
-  for (const component of ['SEA_FREIGHT', 'OTHER']) {
-    await r
-      .put(`/rates/${rateId}/costs/${component}`, cookies.admin, { status: 'NOT_APPLICABLE' })
-      .expect(200);
-  }
+  rateId = await card({ branch: pts, route: { from, to }, unit: 'PER_SHIPMENT', price: '300' });
+  await costs(rateId, 'PER_SHIPMENT', '50', '70');
   customer = (
     await r
       .post('/customers', cookies.salesPts, {
@@ -141,6 +103,62 @@ beforeAll(async () => {
       .expect(201)
   ).body as CustomerDto;
 });
+
+const location = async (suffix: string) =>
+  (
+    await t.prisma.location.create({
+      data: {
+        code: `${tag}${suffix}`,
+        kind: 'CITY',
+        nameEn: `Profit test ${tag}${suffix}`,
+        nameAr: 'مدينة اختبار الربحية',
+        countryCode: 'SD',
+      },
+    })
+  ).id;
+
+/** An approved freight card of `branch` on `route`, this run's own. */
+async function card(c: {
+  branch: string;
+  route: { from: string; to: string };
+  unit: string;
+  price: string;
+  minimumCharge?: string;
+}): Promise<string> {
+  return (
+    await t.prisma.rateCard.create({
+      data: {
+        branchId: c.branch,
+        originLocationId: c.route.from,
+        destinationLocationId: c.route.to,
+        mode: 'ROAD',
+        cargoType: 'GENERAL',
+        chargeTypeCode: freight,
+        unit: c.unit as 'PER_SHIPMENT',
+        price: c.price,
+        minimumCharge: c.minimumCharge ?? '0',
+        currency: 'USD',
+        validFrom: new Date(`${day(-30)}T00:00:00Z`),
+        status: 'APPROVED',
+        createdById: adminId,
+        approvedById: adminId,
+        approvedAt: new Date(),
+      },
+    })
+  ).id;
+}
+
+/** Origin handling and distribution entered in `unit`, the rest not applicable. */
+async function costs(id: string, unit: string, origin: string, distribution: string) {
+  const entered = (amount: string) => ({ status: 'ENTERED', amount, currency: 'USD', unit });
+  await r.put(`/rates/${id}/costs/ORIGIN_HANDLING`, cookies.admin, entered(origin)).expect(200);
+  await r.put(`/rates/${id}/costs/DISTRIBUTION`, cookies.admin, entered(distribution)).expect(200);
+  for (const component of ['SEA_FREIGHT', 'OTHER']) {
+    await r
+      .put(`/rates/${id}/costs/${component}`, cookies.admin, { status: 'NOT_APPLICABLE' })
+      .expect(200);
+  }
+}
 
 afterAll(async () => {
   await t.close();
@@ -213,6 +231,49 @@ describe("a shipment's expected and actual profit (plan 6.2)", () => {
     await r.post(`/partner-contracts/${contract.id}/approve`, cookies.admin).expect(200);
     // 300 - 30 - 50 - 70.
     expect((await view(id)).expected?.expectedMargin).toBe('150');
+  });
+
+  it('costs the cargo it carries, not the one unit a minimum charge invoices (Codex F145-2)', async () => {
+    // 10 kg at 100/kg is 1000, below the 2000 minimum: invoiced as 1 × 2000. The costs are per
+    // kg of cargo: 2000 - 10 × (50 + 70).
+    const route = { from: await location('MA'), to: await location('MB') };
+    const id = await card({
+      branch: pts,
+      route,
+      unit: 'PER_KG',
+      price: '100',
+      minimumCharge: '2000',
+    });
+    await costs(id, 'PER_KG', '50', '70');
+    const expected = (await view(await shipment(undefined, route))).expected;
+    expect(expected?.cards.map((c) => [c.rateCardId, c.quantity, c.price])).toEqual([
+      [id, '10', '2000'],
+    ]);
+    expect(expected?.expectedMargin).toBe('800');
+  });
+
+  it("never shows another branch's card costs to someone who may not see them (Codex F145-1)", async () => {
+    // A JED tariff prices this PTS shipment; JED's costs stay JED's.
+    const route = { from: await location('JA'), to: await location('JB') };
+    const jedCard = await card({
+      branch: await branchId(t.prisma, 'JED'),
+      route,
+      unit: 'PER_SHIPMENT',
+      price: '300',
+    });
+    await costs(jedCard, 'PER_SHIPMENT', '987', '70');
+    const id = await shipment(undefined, route);
+    const hidden = await view(id);
+    expect(hidden.expected).toMatchObject({
+      cards: [],
+      gaps: [{ chargeTypeCode: freight, reason: 'COSTS_HIDDEN' }],
+      expectedMargin: null,
+    });
+    expect(JSON.stringify(hidden)).not.toContain('987');
+    // Someone who may see JED's costs sees the card and its margin: 300 - 987 - 70.
+    const shown = await view(id, cookies.admin);
+    expect(shown.expected?.cards.map((c) => c.rateCardId)).toEqual([jedCard]);
+    expect(shown.expected?.expectedMargin).toBe('-757');
   });
 
   it("is 404 for another branch's shipment and 403 without the permission", async () => {
