@@ -8,7 +8,16 @@ const calls: { path: string; method?: string; body?: unknown }[] = [];
 let data: PartnerCommissionsDto;
 const page = (over: Partial<PartnerCommissionsDto> = {}): PartnerCommissionsDto => ({
   partnerId: 'p1',
-  balances: [{ branchId: 'b1', branchCode: 'PTS', currency: 'USD', open: '27.5', openUsd: '27.5' }],
+  balances: [
+    {
+      branchId: 'b1',
+      branchCode: 'PTS',
+      currency: 'USD',
+      open: '27.5',
+      openUsd: '27.5',
+      canStatement: true,
+    },
+  ],
   rows: [
     {
       id: 'r1',
@@ -39,19 +48,39 @@ const page = (over: Partial<PartnerCommissionsDto> = {}): PartnerCommissionsDto 
       canRecompute: true,
     },
   ],
+  statements: [
+    {
+      id: 'st1',
+      number: 'NOL-PST-2026-000001',
+      partnerId: 'p1',
+      branchId: 'b1',
+      branchCode: 'PTS',
+      currency: 'USD',
+      periodTo: '2026-10-28',
+      total: '30',
+      totalUsd: '30',
+      status: 'BILLED',
+      billId: 'bill1',
+      billNumber: null,
+      billStatus: 'DRAFT',
+      createdAt: '2026-10-29T05:00:00.000Z',
+    },
+  ],
   canAdjust: true,
   ...over,
 });
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
+const pushed: string[] = [];
 vi.mock('@/i18n/navigation', () => ({
   Link: ({ children }: { children: unknown }) => children,
+  useRouter: () => ({ push: (path: string) => pushed.push(path) }),
 }));
 vi.mock('@/lib/master-data', () => ({ useMasterData: () => null }));
 vi.mock('@/lib/api', () => ({
   api: (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, ...init });
-    return Promise.resolve(init?.method ? {} : data);
+    return Promise.resolve(init?.method ? { id: 'st2' } : data);
   },
 }));
 vi.mock('../finance/common', () => ({ Money: ({ value }: { value: string }) => value }));
@@ -66,6 +95,7 @@ afterEach(() => {
   host?.remove();
   host = null;
   calls.length = 0;
+  pushed.length = 0;
 });
 
 async function show(): Promise<HTMLElement> {

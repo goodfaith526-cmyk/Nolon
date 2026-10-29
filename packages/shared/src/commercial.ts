@@ -901,6 +901,13 @@ export const FORM_REFUSALS = [
   'COMMISSION_AMOUNT_INVALID',
   'COMMISSION_NOT_PARTNER',
   'COMMISSION_NO_FX_RATE',
+  // Plan 07, 5: partner statements and the supplier bill made from one.
+  'STATEMENT_NOT_POSITIVE',
+  'PARTNER_NO_SUPPLIER',
+  'STATEMENT_ALREADY_BILLED',
+  'STATEMENT_BILLED',
+  'BILL_FROM_STATEMENT',
+  'STATEMENT_BILL_MISMATCH',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

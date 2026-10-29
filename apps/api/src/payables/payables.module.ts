@@ -14,6 +14,7 @@ import { ContainerCostsService } from './container-costs.service.js';
 import { PayablesReportsService } from './payables-reports.service.js';
 import { SupplierBillsService } from './supplier-bills.service.js';
 import { SupplierPaymentsService } from './supplier-payments.service.js';
+import { StatementBills } from './statement-bills.registry.js';
 import { SuppliersService } from './suppliers.service.js';
 
 /** Payables (scope 13): suppliers, supplier bills and supplier payments, and AP aging. */
@@ -33,7 +34,8 @@ import { SuppliersService } from './suppliers.service.js';
     ContainerCostsService,
     SupplierPaymentsService,
     PayablesReportsService,
+    StatementBills,
   ],
-  exports: [PayablesReportsService, SupplierBillsService, SuppliersService],
+  exports: [PayablesReportsService, StatementBills, SupplierBillsService, SuppliersService],
 })
 export class PayablesModule {}
