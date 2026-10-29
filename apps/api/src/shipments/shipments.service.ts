@@ -117,19 +117,20 @@ const sharedBranchesSelect = {
 } satisfies Prisma.Shipment$sharedBranchesArgs;
 
 /**
- * The closed container a shipment is in (stuffed and sealed, not cancelled): closing is final, so
- * its consolidation is not undone from the shipment page (docs/reviews/shipment-status-history).
+ * The containers a shipment is or was in (not cancelled), read under the shipment lock. A closed one
+ * (any status but OPEN, unpacked included) is final: its consolidation is not undone from the
+ * shipment page (docs/reviews/shipment-status-history). One not yet unpacked moves the shipment:
+ * its container statuses come from the container only (client decision أ3, docs/plans/06).
  */
-const closedContainerLinks = {
-  where: { consolidation: { status: { notIn: ['OPEN', 'CANCELLED'] } } },
-  select: { consolidation: { select: { number: true } } },
-  take: 1,
+const lockedContainerLinks = {
+  where: { consolidation: { status: { not: 'CANCELLED' } } },
+  select: { consolidation: { select: { number: true, status: true } } },
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
 /**
  * The containers a shipment is or was in, for its page (not cancelled). The closed one (any status
  * but OPEN, unpacked included) blocks undoing its consolidation exactly as the locked check
- * (closedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
+ * (lockedContainerLinks) does; the one not yet unpacked is the one it travels in (after unpacking
  * the shipment goes on by itself).
  */
 const containerLinks = {
@@ -138,9 +139,10 @@ const containerLinks = {
 } satisfies Prisma.Shipment$consolidationLinksArgs;
 
 /**
- * The statuses a container's moves give its shipments (consolidation-rules shipmentStatusFor):
- * recorded by hand on the page of a shipment in a container, they come with a warning (owner
- * choice Q3, docs/reviews/shipment-status-history-2026-10-27.md).
+ * The statuses a container's moves give its shipments (consolidation-rules shipmentStatusFor). A
+ * shipment in a container not yet unpacked gets them from the container only: they are refused by
+ * hand (client decision أ3, docs/plans/06-client-decisions-v2.md; it replaced the warning of
+ * owner choice Q3).
  */
 const CONTAINER_MOVED: readonly ShipmentStatus[] = [
   'CONSOLIDATED',
@@ -941,6 +943,22 @@ export class ShipmentsService {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(input.status)) {
         throw new ConflictException(`Cannot move from ${shipment.status} to ${input.status}`);
       }
+      // Container links change under the shipment lock (lockForChildWrite), so this read is current.
+      const travelsIn = shipment.consolidationLinks.find(
+        (l) => l.consolidation.status !== 'DECONSOLIDATED',
+      );
+      if (travelsIn && CONTAINER_MOVED.includes(input.status)) {
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'SHIPMENT_MOVES_WITH_CONTAINER',
+          `Shipment ${shipment.number} is in container ${travelsIn.consolidation.number}: ${input.status} is recorded from the container`,
+          {
+            shipment: shipment.number,
+            container: travelsIn.consolidation.number,
+            status: input.status,
+          },
+        );
+      }
       requireAny(user, permissionForTransition(input.status), shipment);
       if (input.entered) {
         const earliest = earliestEntryTime(shipment.createdAt, path);
@@ -1036,7 +1054,7 @@ export class ShipmentsService {
         );
       }
       // Container closes lock their shipments, so the link read with the lock is current.
-      const link = shipment.consolidationLinks[0];
+      const link = shipment.consolidationLinks.find((l) => l.consolidation.status !== 'OPEN');
       if (path.at(-1)?.status === 'CONSOLIDATED' && link) {
         throw codedRefusal(
           HttpStatus.CONFLICT,
@@ -1793,7 +1811,7 @@ export class ShipmentsService {
       where: { id },
       include: {
         events: { orderBy: { id: 'asc' } },
-        consolidationLinks: closedContainerLinks,
+        consolidationLinks: lockedContainerLinks,
         sharedBranches: sharedBranchesSelect,
       },
     });
@@ -2038,7 +2056,7 @@ export class ShipmentsService {
 type LockedShipment = Prisma.ShipmentGetPayload<{
   include: {
     events: true;
-    consolidationLinks: typeof closedContainerLinks;
+    consolidationLinks: typeof lockedContainerLinks;
     sharedBranches: typeof sharedBranchesSelect;
   };
 }>;
@@ -2131,9 +2149,12 @@ function actionsFor(
   const closed = links.find((c) => c.status !== 'OPEN') ?? null;
   const container = undoes?.status === 'CONSOLIDATED' && closed ? closed.number : null;
   const canRevert = has('shipments:approve') && undoes !== null && container === null;
-  const transitions = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
+  const reachable = nextStatuses(s.status, s, visitedStatuses(path)).filter((next) =>
     permissionForTransition(next).some(has),
   );
+  // The container records these for the shipment (client decision أ3).
+  const byContainer = inContainer ? reachable.filter((next) => CONTAINER_MOVED.includes(next)) : [];
+  const transitions = reachable.filter((next) => !byContainer.includes(next));
   const suggestedLocations: Partial<Record<ShipmentStatus, string>> = {};
   for (const next of transitions) {
     const place = usualPlace(next, s.mode);
@@ -2141,7 +2162,6 @@ function actionsFor(
       suggestedLocations[next] = place === 'ORIGIN' ? s.originLocationId : s.destinationLocationId;
     }
   }
-  const byContainer = transitions.filter((next) => CONTAINER_MOVED.includes(next));
   return {
     transitions,
     containerMoves:

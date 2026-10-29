@@ -25,6 +25,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { AGENT_PREFIX, draftKey, registerClient, tokenFor } from './agent-drafts-helpers.js';
 import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /**
@@ -1111,29 +1112,58 @@ describe('consolidated LCL containers', () => {
     expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status).toBe('CANCELLED');
   });
 
-  it('an open container does not stop going back from a consolidation entered by hand', async () => {
+  it('a shipment in a container gets the container statuses from the container only (أ3)', async () => {
     const id = await lclShipment(customers[1], '1');
     const before = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
     expect(before.actions.containerMoves).toBeNull();
+    expect(before.actions.transitions).toContain('CONSOLIDATED');
     const created = (await newContainer([id]).expect(201)).body as ConsolidationDto;
-    // Allowed by hand, with a warning that the container's own move does it (owner choice Q3).
+    // The page names what the container records, and offers it no more (client decision أ3).
     const inside = (await get(`/shipments/${id}`, cookies.admin).expect(200)).body as ShipmentDto;
     expect(inside.actions.containerMoves).toEqual({
       container: created.number,
       statuses: ['CONSOLIDATED'],
     });
-    const moved = (
-      await post(`/shipments/${id}/status`, cookies.admin, { status: 'CONSOLIDATED' }).expect(200)
-    ).body as ShipmentDto;
-    expect(moved.actions.revertBlockedByContainer).toBeNull();
-    const step = moved.actions.revertUndoes;
-    expect(step?.status).toBe('CONSOLIDATED');
-    const reverted = (
-      await post(`/shipments/${id}/revert`, cookies.admin, {
-        reason: 'Not stuffed yet',
-        undoEventId: step?.eventId,
-      }).expect(200)
-    ).body as ShipmentDto;
-    expect(reverted.status).toBe('CREATED');
+    expect(inside.actions.transitions).not.toContain('CONSOLIDATED');
+    const events = await t.prisma.shipmentEvent.count({ where: { shipmentId: id } });
+    const refused = await post(`/shipments/${id}/status`, cookies.admin, {
+      status: 'CONSOLIDATED',
+    }).expect(409);
+    expect(refused.body).toMatchObject({
+      code: 'SHIPMENT_MOVES_WITH_CONTAINER',
+      params: { container: created.number, status: 'CONSOLIDATED' },
+    });
+    expect(await t.prisma.shipmentEvent.count({ where: { shipmentId: id } })).toBe(events);
+    expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status).toBe('CREATED');
+  });
+
+  it("refuses the assistant's status draft for a shipment in a container, saved or approved (أ3)", async () => {
+    const assistant = await createUser(t.prisma, ['OPERATIONS'], ['JED'], AGENT_PREFIX);
+    const client = await registerClient(t, cookies.admin, 'Container moves platform');
+    const token = await tokenFor(t, await signIn(t, assistant.email), client);
+    const draft = (shipmentId: string) =>
+      t
+        .http()
+        .post('/api/v1/shipment-status-drafts')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ idempotencyKey: draftKey(), shipmentId, status: 'CONSOLIDATED' });
+
+    // Saved while the shipment was free, approved after it went into a container: refused then.
+    const early = await lclShipment(customers[1], '1');
+    const saved = (await draft(early).expect(201)).body as { id: string };
+    await newContainer([early]).expect(201);
+    const approved = await post(`/shipment-status-drafts/${saved.id}/approve`, cookies.opsJed, {
+      version: 1,
+    }).expect(409);
+    expect((approved.body as { code?: string }).code).toBe('SHIPMENT_MOVES_WITH_CONTAINER');
+    expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id: early } })).status).toBe(
+      'CREATED',
+    );
+
+    // Proposed once it is in the container: refused when saved.
+    const late = await lclShipment(customers[1], '1');
+    await newContainer([late]).expect(201);
+    const refused = await draft(late).expect(409);
+    expect((refused.body as { code?: string }).code).toBe('SHIPMENT_MOVES_WITH_CONTAINER');
   });
 });

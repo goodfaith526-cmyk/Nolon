@@ -343,6 +343,16 @@ export function ShipmentDetail({ id }: { id: string }) {
         </div>
       </div>
       <Notice notice={notice} />
+      {actions.containerMoves && (
+        <p className="muted">
+          {t('containerMovesNotice', {
+            container: actions.containerMoves.container,
+            statuses: actions.containerMoves.statuses
+              .map((status) => te(`shipment_${status}`))
+              .join(locale === 'ar' ? '، ' : ', '),
+          })}
+        </p>
+      )}
 
       {panel === 'status' && (
         <form className="card stack" onSubmit={onStatus}>
@@ -426,14 +436,6 @@ export function ShipmentDetail({ id }: { id: string }) {
             </>
           )}
           {closing && <p className="muted">{t('closeCostsReminder')}</p>}
-          {chosenStatus && actions.containerMoves?.statuses.includes(chosenStatus) && (
-            <p className="warning">
-              {t('containerMoveWarning', {
-                container: actions.containerMoves.container,
-                status: te(`shipment_${chosenStatus}`),
-              })}
-            </p>
-          )}
           {!withReceipt && suggested && chosenLocation !== suggested && (
             <p className="warning">
               {t('locationNotUsual', {
