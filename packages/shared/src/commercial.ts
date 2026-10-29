@@ -883,6 +883,9 @@ export const FORM_REFUSALS = [
   'CARGO_BELOW_ON_HAND',
   'CARGO_SHIPMENT_CLOSED',
   'CARGO_LOAD_TYPE_CHANGE',
+  // A container status recorded by hand for a shipment in a container not yet unpacked (client
+  // decision أ3; params `shipment`, `container`, `status`): the container records it.
+  'SHIPMENT_MOVES_WITH_CONTAINER',
   // Taking back a trip's departure (param `trip`: its number): it has live proofs of delivery
   // (`pods`) or expenses (`expenses`); shipments moved on since it left, or went on a later trip
   // (`shipments`).
