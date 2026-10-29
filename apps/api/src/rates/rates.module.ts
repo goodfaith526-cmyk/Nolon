@@ -32,6 +32,6 @@ import { RatesService } from './rates.service.js';
     RateCardDraftsController,
   ],
   providers: [RatesService, RatesImportService, RateCardDraftsService, RateCostsService],
-  exports: [RatesService, RateCardDraftsService],
+  exports: [RatesService, RateCardDraftsService, RateCostsService],
 })
 export class RatesModule {}

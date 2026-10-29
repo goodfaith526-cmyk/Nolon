@@ -10,6 +10,7 @@ import { DocumentsModule } from '../documents/documents.module.js';
 import { ExpensesModule } from '../expenses/expenses.module.js';
 import { PayablesModule } from '../payables/payables.module.js';
 import { QuotationsModule } from '../quotations/quotations.module.js';
+import { RatesModule } from '../rates/rates.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { TransportModule } from '../transport/transport.module.js';
 import { WarehouseModule } from '../warehouse/warehouse.module.js';
@@ -36,6 +37,7 @@ import { WarehouseStockController } from './warehouse-stock.controller.js';
     ExpensesModule,
     PayablesModule,
     QuotationsModule,
+    RatesModule,
     ShipmentsModule,
     TransportModule,
     WarehouseModule,

@@ -389,6 +389,7 @@ export class ShipmentsService {
     }[];
     /** The price category of each of its booking's cargo lines (null: none). */
     priceCategoryCodes: (string | null)[];
+    salesOutletId: string | null;
   }> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
     const shipment = await this.prisma.shipment.findFirst({
@@ -399,6 +400,7 @@ export class ShipmentsService {
         branchId: true,
         customerId: true,
         status: true,
+        salesOutletId: true,
         originLocationId: true,
         destinationLocationId: true,
         mode: true,

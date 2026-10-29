@@ -5,6 +5,7 @@ import {
   type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
+  type ExpectedGapDto,
   type CashMovementDto,
   type GeneralLedgerDto,
   type IncomeStatementDto,
@@ -14,6 +15,8 @@ import {
   type ReportAccountOptionDto,
   type ProfitCategoryDto,
   type ShipmentProfitabilityDto,
+  type ShipmentExpectedDto,
+  type ShipmentProfitViewDto,
   type TrialBalanceDto,
 } from '@nolon/shared';
 import { LedgerReportsService } from '../accounting/ledger-reports.service.js';
@@ -22,10 +25,13 @@ import { TrialBalanceService } from '../accounting/trial-balance.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { reportBranchIds } from '../auth/branch-scope.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
+import { InvoicesService } from '../billing/invoices.service.js';
+import { type Decimal, dec } from '../common/money.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { PayablesReportsService } from '../payables/payables-reports.service.js';
 import { SuppliersService } from '../payables/suppliers.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { RateCostsService } from '../rates/rate-costs.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripsService } from '../transport/trips.service.js';
 import { withAdvances } from './ar-aging.js';
@@ -110,6 +116,8 @@ export class ReportsService {
     private readonly trips: TripsService,
     private readonly payables: PayablesReportsService,
     private readonly suppliers: SuppliersService,
+    private readonly invoices: InvoicesService,
+    private readonly rateCosts: RateCostsService,
   ) {}
 
   accountOptions(user: AuthUser): Promise<ReportAccountOptionDto[]> {
@@ -161,6 +169,69 @@ export class ReportsService {
   }
 
   /**
+   * One shipment's finance tab (plan 6.2), two figures side by side and never mixed: the actual,
+   * as the profitability report gives it over every posted line to date; and the expected, from
+   * the rate cards it is priced from (InvoicesService.pricedFrom, RateCostsService.
+   * shipmentMargins), for a user who may see the cards' costs in the shipment's branch. 404
+   * unless the shipment belongs to one of the user's branches.
+   */
+  async shipmentProfit(user: AuthUser, shipmentId: string): Promise<ShipmentProfitViewDto> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    const report = await this.shipmentProfitability(user, {
+      from: '1900-01-01',
+      to: '9999-12-31',
+      branchId: shipment.branchId,
+      shipmentId,
+    });
+    const actual = report.shipments.find((s) => s.shipmentId === shipmentId) ?? null;
+    if (shipment.status === 'CANCELLED' || !user.access.has('rate_costs:view', shipment.branchId)) {
+      return { shipmentId, actual, expected: null };
+    }
+    const priced = await this.invoices.pricedFrom(user, shipmentId);
+    const gaps: ExpectedGapDto[] = [];
+    const lines: { chargeTypeCode: string; rateCardId: string; quantity: Decimal }[] = [];
+    for (const l of priced.lines) {
+      if (l.rateCardId === null) gaps.push({ chargeTypeCode: l.chargeTypeCode, reason: 'NO_CARD' });
+      else if (l.quantity === null) {
+        gaps.push({ chargeTypeCode: l.chargeTypeCode, reason: 'QUANTITY_UNKNOWN' });
+      } else {
+        lines.push({
+          chargeTypeCode: l.chargeTypeCode,
+          rateCardId: l.rateCardId,
+          quantity: l.quantity,
+        });
+      }
+    }
+    const margins = await this.rateCosts.shipmentMargins(user, lines, shipment.salesOutletId);
+    const cards: ShipmentExpectedDto['cards'] = [];
+    margins.forEach((m, i) => {
+      const chargeTypeCode = lines[i]?.chargeTypeCode ?? '';
+      if (m === null) gaps.push({ chargeTypeCode, reason: 'COSTS_HIDDEN' });
+      else cards.push({ ...m, chargeTypeCode });
+    });
+    const currencies = new Set(cards.map((c) => c.currency));
+    const [currency] = currencies.size === 1 ? [...currencies] : [null];
+    const complete =
+      currency !== null &&
+      gaps.length === 0 &&
+      cards.length > 0 &&
+      cards.every((c) => c.expectedMargin !== null);
+    return {
+      shipmentId,
+      actual,
+      expected: {
+        source: priced.source,
+        cards,
+        gaps,
+        currency: currency ?? null,
+        expectedMargin: complete
+          ? cards.reduce((sum, c) => sum.plus(c.expectedMargin ?? 0), dec(0)).toFixed()
+          : null,
+      },
+    };
+  }
+
+  /**
    * Revenue, cost and margin per shipment from the journal lines that carry it, then per customer,
    * route, sales outlet, origin country and price category (business model plan 6.3), each
    * shipment whole in one group. A shipment whose figures are not final yet (plan 6.2) is marked
@@ -169,9 +240,9 @@ export class ReportsService {
    */
   async shipmentProfitability(
     user: AuthUser,
-    q: PeriodQuery & { customerId?: string },
+    q: PeriodQuery & { customerId?: string; shipmentId?: string },
   ): Promise<ShipmentProfitabilityDto> {
-    const results = await this.ledger.shipmentResults(user, q, q.branchId);
+    const results = await this.ledger.shipmentResults(user, q, q.branchId, q.shipmentId);
     const amounts = new Map(results.map((r) => [r.shipmentId, r]));
     const summaries = await this.shipments.reportSummaries(
       user,
