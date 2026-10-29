@@ -127,6 +127,8 @@ export interface ApiClientDto {
   branchCodes: string[];
   /** In CS_SCOPES order. */
   scopes: CsScope[];
+  /** The services the key's bot offers (its catalog lists and its requests may ask for), in CS_REQUEST_SERVICES order. */
+  services: CsRequestService[];
   isActive: boolean;
   createdByName: string;
   createdAt: string;
@@ -138,6 +140,12 @@ export interface ApiClientCreateRequest {
   name: string;
   branchIds: string[];
   scopes: CsScope[];
+  /** Left out: both (every key before services could be turned off offered both). */
+  services?: CsRequestService[];
+}
+
+export interface ApiClientServicesRequest {
+  services: CsRequestService[];
 }
 
 /** Replaces a key's scopes. */
@@ -287,6 +295,7 @@ export interface CsQuoteChoices {
 
 /** The services a booking request may ask for (the catalog's). */
 export const CS_REQUEST_SERVICES = ['PICKUP', 'LAST_MILE'] as const;
+export type CsRequestService = (typeof CS_REQUEST_SERVICES)[number];
 
 export const CS_SENDER_CHANNELS = ['whatsapp', 'telegram'] as const;
 export type CsSenderChannel = (typeof CS_SENDER_CHANNELS)[number];

@@ -3284,19 +3284,23 @@ model AlertSetting {
 /// customer-safe data of its branches with it. Only the key's SHA-256 is kept; its prefix tells
 /// keys apart and finds the row. A revoked key stays, inactive, for the record.
 model ApiClient {
-  id            String    @id @default(uuid()) @db.Uuid
-  name          String    @db.VarChar(100)
-  keyPrefix     String    @unique @map("key_prefix") @db.VarChar(16)
-  keyHash       String    @map("key_hash") @db.Char(64)
-  isActive      Boolean   @default(true) @map("is_active")
-  createdById   String    @map("created_by_id") @db.Uuid
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  lastUsedAt    DateTime? @map("last_used_at") @db.Timestamptz(3)
-  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedById   String?   @map("revoked_by_id") @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String    @db.VarChar(100)
+  keyPrefix      String    @unique @map("key_prefix") @db.VarChar(16)
+  keyHash        String    @map("key_hash") @db.Char(64)
+  isActive       Boolean   @default(true) @map("is_active")
+  createdById    String    @map("created_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt     DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById    String?   @map("revoked_by_id") @db.Uuid
   /// Reads customers and their shipments and invoices by number (the original /cs routes). Every
   /// key made before scopes existed keeps it (the default); a new key has it only when given.
-  customersRead Boolean   @default(true) @map("customers_read")
+  customersRead  Boolean   @default(true) @map("customers_read")
+  /// The services the key's bot offers its customers (the catalog's PICKUP and LAST_MILE): a soft
+  /// launch without pickup or door delivery turns them off. Every key made before had both.
+  offersPickup   Boolean   @default(true) @map("offers_pickup")
+  offersLastMile Boolean   @default(true) @map("offers_last_mile")
 
   createdBy       User               @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   revokedBy       User?              @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)

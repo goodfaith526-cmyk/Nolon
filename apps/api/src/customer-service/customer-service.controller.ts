@@ -174,10 +174,17 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     : null;
 }
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
+const services = z.array(z.enum(CS_REQUEST_SERVICES)).max(CS_REQUEST_SERVICES.length);
 const createBody = z
-  .object({ name: requiredText(100), branchIds: z.array(z.uuid()).min(1).max(20), scopes })
+  .object({
+    name: requiredText(100),
+    branchIds: z.array(z.uuid()).min(1).max(20),
+    scopes,
+    services: services.optional(),
+  })
   .strict();
 const scopesBody = z.object({ scopes }).strict();
+const servicesBody = z.object({ services }).strict();
 
 /**
  * Customer Service API (scope section 17): read-only, customer-safe, with an API key instead of a
@@ -265,8 +272,8 @@ export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get()
-  get(): Promise<CsCatalogDto> {
-    return this.catalog.catalog();
+  get(@CurrentApiClient() client: ApiClientAuth): Promise<CsCatalogDto> {
+    return this.catalog.catalog(client.services);
   }
 }
 
@@ -379,6 +386,16 @@ export class ApiClientsController {
     @Body() body: unknown,
   ): Promise<ApiClientDto> {
     return this.clients.setScopes(user, id, parse(scopesBody, body).scopes);
+  }
+
+  @Put(':id/services')
+  @RequirePermission('users:update')
+  setServices(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ApiClientDto> {
+    return this.clients.setServices(user, id, parse(servicesBody, body).services);
   }
 
   @Post(':id/revoke')

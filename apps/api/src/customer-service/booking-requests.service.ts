@@ -16,6 +16,7 @@ import {
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsBookingRequestState,
+  type CsRequestService,
   type CsSenderChannel,
 } from '@nolon/shared';
 import { todayIn, toDbDate } from '../common/dates.js';
@@ -26,7 +27,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
-import { keyScopes } from './api-scopes.js';
+import { keyScopes, keyServices } from './api-scopes.js';
 import { matchCategory, matchPlace } from './bot-names.js';
 import { grantHoldsInTx } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
@@ -315,7 +316,7 @@ export class BookingRequestsService {
     const now = new Date();
     const apiClientId = caller.client.id;
     return this.prisma.$transaction(async (tx) => {
-      const branchIds = await currentBranches(tx, caller);
+      const { branchIds, services } = await currentKey(tx, caller);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
@@ -325,6 +326,20 @@ export class BookingRequestsService {
       if (again) {
         if (!servedBy(again, branchIds)) throw new NotFoundException('Booking request not found');
         return { created: false, row: again };
+      }
+      // Only what the key's bot offers now, read under the key's lock (a service turned off after
+      // the guard read the key still refuses): no pickup, as a service or as the handover.
+      const asked = [
+        ...(Array.isArray(data.services) ? data.services : []),
+        ...(data.handover === 'PICKUP' ? ['PICKUP' as const] : []),
+      ];
+      const refused = asked.find((s) => !(services as readonly string[]).includes(s));
+      if (refused) {
+        throw coded(
+          HttpStatus.UNPROCESSABLE_ENTITY,
+          'SERVICE_NOT_OFFERED',
+          `This key does not offer ${refused}: see the catalog's services`,
+        );
       }
       const still = allowed.filter((b) => branchIds.includes(b));
       if (
@@ -490,12 +505,13 @@ function notServed(): HttpException {
 /**
  * The caller's key read again inside a write's transaction and share-locked, so a revocation or a
  * scope change commits before it (and is seen) or waits for the write: still active, still holding
- * cs:booking_requests:create, and, for a customer token, a grant that still holds. Its branches.
+ * cs:booking_requests:create, and, for a customer token, a grant that still holds. Its branches
+ * and the services its bot offers now.
  */
-async function currentBranches(
+async function currentKey(
   tx: Prisma.TransactionClient,
   caller: BookingRequestCaller,
-): Promise<string[]> {
+): Promise<{ branchIds: string[]; services: CsRequestService[] }> {
   const id = caller.client.id;
   await tx.$queryRaw`SELECT 1 FROM "api_clients" WHERE "id" = ${id}::uuid FOR SHARE`;
   const key = await tx.apiClient.findUnique({
@@ -521,7 +537,7 @@ async function currentBranches(
       statusCode: 401,
     });
   }
-  return key.branches.map((b) => b.branchId);
+  return { branchIds: key.branches.map((b) => b.branchId), services: keyServices(key) };
 }
 
 function conflict(): HttpException {

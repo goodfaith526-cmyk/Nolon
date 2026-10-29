@@ -12,7 +12,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import { hashApiKey } from './api-key.js';
-import { keyScopes } from './api-scopes.js';
+import { keyScopes, keyServices } from './api-scopes.js';
 import {
   CustomerTokensService,
   grantId,
@@ -184,7 +184,13 @@ export class CustomerTokenGuard implements CanActivate {
     const { customer } = row;
     request.customerToken = {
       tokenId: row.id,
-      client: { id: key.id, name: key.name, allowedBranchIds: branchIds, scopes },
+      client: {
+        id: key.id,
+        name: key.name,
+        allowedBranchIds: branchIds,
+        scopes,
+        services: keyServices(key),
+      },
       customerId: customer.id,
       customerNumber: customer.number,
       grantId: grantId(customer.id, { kind: row.grantKind, contactId: row.contactId }),
