@@ -38,6 +38,10 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import {
+  CommissionTriggers,
+  type ShipmentCommissionFacts,
+} from './commission-triggers.registry.js';
 import { ShipmentContainerRegistry } from './shipment-container.registry.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { currentLocationOf } from './location-timeline.js';
@@ -207,6 +211,7 @@ export class ShipmentsService {
     private readonly stock: ShipmentStockRegistry,
     private readonly links: ShipmentLinksRegistry,
     private readonly containers: ShipmentContainerRegistry,
+    private readonly commissions: CommissionTriggers,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -532,6 +537,57 @@ export class ShipmentsService {
   }
 
   /**
+   * What a partner's commission on the shipment depends on (plan 07, 4.2 and 4.3), in the caller's
+   * transaction: its partners, its cargo lines (as corrected), the price categories of its booking's
+   * lines, and when it first departed on the path it still stands on (a revert takes it back).
+   */
+  async commissionFactsInTx(tx: Tx, id: string): Promise<ShipmentCommissionFacts> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: {
+        number: true,
+        branchId: true,
+        status: true,
+        cargoType: true,
+        salesOutletId: true,
+        originConsolidatorId: true,
+        distributorId: true,
+        branch: { select: { timezone: true } },
+        items: {
+          orderBy: { lineNo: 'asc' },
+          select: {
+            cargoType: true,
+            containerTypeCode: true,
+            quantity: true,
+            weightKg: true,
+            volumeCbm: true,
+          },
+        },
+        booking: { select: { items: { select: { priceCategoryCode: true } } } },
+        events: { orderBy: { id: 'asc' } },
+      },
+    });
+    const departed = replayHistory(shipment.events).find(
+      (e) => e.status === 'DEPARTED' || e.status === 'ROAD_DEPARTED',
+    );
+    return {
+      number: shipment.number,
+      branchId: shipment.branchId,
+      timezone: shipment.branch.timezone,
+      status: shipment.status,
+      cargoType: shipment.cargoType,
+      partners: {
+        SALES_OUTLET: shipment.salesOutletId,
+        ORIGIN_CONSOLIDATOR: shipment.originConsolidatorId,
+        DISTRIBUTOR: shipment.distributorId,
+      },
+      items: shipment.items,
+      categories: shipment.booking.items.map((i) => i.priceCategoryCode),
+      departedAt: departed?.occurredAt ?? null,
+    };
+  }
+
+  /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
    * customer, parties, route, services, cargo lines and sales outlet are copied from the booking,
    * and so is its number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among
@@ -685,6 +741,12 @@ export class ShipmentsService {
       };
       await tx.shipment.update({ where: { id }, data: { ...data, ...partners } });
       if (sharedBranchIds) await this.replaceSharedBranchesInTx(tx, id, sharedBranchIds);
+      if (
+        partners.originConsolidatorId !== current.originConsolidatorId ||
+        partners.distributorId !== current.distributorId
+      ) {
+        await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_PARTNERS');
+      }
     });
     return this.get(user, id);
   }
@@ -845,6 +907,7 @@ export class ShipmentsService {
           correctedById: user.id,
         },
       });
+      await this.commissions.shipmentChangedInTx(tx, user, id, 'CARGO_CORRECTED');
     });
     return this.get(user, id);
   }
@@ -1842,6 +1905,7 @@ export class ShipmentsService {
       },
     });
     if (event.after) await event.after(tx);
+    await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_EVENT');
     return true;
   }
 

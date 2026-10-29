@@ -154,6 +154,7 @@
 - POST `/partner-contracts/:id/cancel` · `PartnerContractsController.cancel` · `partners/partner-contracts.controller.ts` · partner_contracts:cancel
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create
 - POST `/party-drafts` · `PartyDraftsController.create` · `customers/party-drafts.controller.ts` · customers:update
 - PATCH `/party-drafts/:id` · `PartyDraftsController.update` · `customers/party-drafts.controller.ts` · customers:update
@@ -223,6 +224,7 @@
 - POST `/shipments/:id/resume` · `ShipmentsController.resume` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/revert` · `ShipmentsController.revert` · `shipments/shipments.controller.ts` · shipments:approve
 - POST `/shipments/:id/status` · `ShipmentsController.changeStatus` · `shipments/shipments.controller.ts` · shipments:view
+- POST `/shipments/:shipmentId/commissions/recompute` · `CommissionsController.recompute` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - PUT `/shipments/:shipmentId/customs` · `CustomsController.save` · `customs/customs.controller.ts` · customs:update
 - POST `/shipments/:shipmentId/customs/fees` · `CustomsController.addFee` · `customs/customs.controller.ts` · customs:create
 - DELETE `/shipments/:shipmentId/customs/fees/:feeId` · `CustomsController.removeFee` · `customs/customs.controller.ts` · customs:cancel

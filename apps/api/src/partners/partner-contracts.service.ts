@@ -204,6 +204,51 @@ export class PartnerContractsService {
     };
   }
 
+  /**
+   * For a partner's commission on a shipment (plan 07, 4.2), in the caller's transaction: the
+   * partner's approved contract valid on `date` for `priceCategoryCode` (the category's own, else
+   * the one for every category); with no category (lines of several), only the one for every
+   * category. `anyOnDay`: whether any approved contract of the partner is valid that day.
+   */
+  async commissionContractInTx(
+    tx: Tx,
+    partnerId: string,
+    priceCategoryCode: string | null,
+    date: string,
+  ): Promise<{ contract: PartnerContract | null; anyOnDay: boolean }> {
+    const day = toDbDate(date);
+    const valid = {
+      partnerId,
+      status: 'APPROVED',
+      validFrom: { lte: day },
+      OR: [{ validTo: null }, { validTo: { gte: day } }],
+    } satisfies Prisma.PartnerContractWhereInput;
+    // Approval keeps one approved contract per category and day, so each lookup finds at most one.
+    const contract =
+      (priceCategoryCode
+        ? await tx.partnerContract.findFirst({ where: { ...valid, priceCategoryCode } })
+        : null) ??
+      (await tx.partnerContract.findFirst({ where: { ...valid, priceCategoryCode: null } }));
+    const anyOnDay = contract !== null || (await tx.partnerContract.count({ where: valid })) > 0;
+    return { contract, anyOnDay };
+  }
+
+  /** The contract a slot keeps once accrued (plan 07, 3.2), whatever its status now. */
+  async contractInTx(tx: Tx, id: string): Promise<PartnerContract> {
+    return tx.partnerContract.findUniqueOrThrow({ where: { id } });
+  }
+
+  /** The partner a commission is posted for: its number, name and supplier. */
+  async partnerInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<Pick<Partner, 'id' | 'number' | 'name' | 'supplierId' | 'branchId'>> {
+    return tx.partner.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, number: true, name: true, supplierId: true, branchId: true },
+    });
+  }
+
   private async get(user: AuthUser, id: string): Promise<PartnerContractDto> {
     const contract = await this.prisma.partnerContract.findFirst({
       where: { id, partner: branchScope(user) },
