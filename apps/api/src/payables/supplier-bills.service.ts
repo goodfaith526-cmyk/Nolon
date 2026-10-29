@@ -16,6 +16,7 @@ import type {
   SupplierBillDueDateDto,
   SupplierBillInput,
   SupplierBillLineInput,
+  SupplierBillLineKind,
   SupplierBillRefDto,
   SupplierBillStatus,
   SupplierBillSummaryDto,
@@ -711,7 +712,7 @@ export class SupplierBillsService {
   private async postingLine(
     tx: Tx,
     line: {
-      kind: SupplierBillLineInput['kind'];
+      kind: SupplierBillLineKind;
       chargeTypeCode: string | null;
       shipmentId: string | null;
       tripId: string | null;
@@ -833,12 +834,16 @@ export class SupplierBillsService {
           throw new BadRequestException(`${label}: trip ${trip.number} is of another branch`);
         }
         lines.push({ ...base, tripId: trip.id });
-      } else {
+      } else if (line.kind === 'EXPENSE') {
         const code = line.expenseCategoryCode ?? '';
         if (!categories.get(code)) {
           throw new BadRequestException(`${label}: unknown or inactive expense category`);
         }
         lines.push({ ...base, expenseCategoryCode: code });
+      } else {
+        // F152-1: a commission line comes only from a partner statement (plan 07, 5.2), never
+        // from a bill entered by hand, whatever the caller sent past the route's schema.
+        throw new BadRequestException(`${label}: this kind of line is not entered on a bill`);
       }
     }
     const total = lines.reduce((sum, l) => sum.plus(l.amount), ZERO);
