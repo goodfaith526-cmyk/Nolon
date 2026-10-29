@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   COMMISSION_BASES,
+  COMMISSION_EVENTS,
   RATE_UNITS,
   type PartnerContractDto,
   type PartnerContractInput,
@@ -35,6 +36,7 @@ const contractBody: z.ZodType<PartnerContractInput> = z
     currency: currencyCode.nullish(),
     validFrom: dateString,
     validTo: dateString.nullish(),
+    accrualEvent: z.enum(COMMISSION_EVENTS).optional(),
     notes: optionalText(2000),
   })
   .strict()

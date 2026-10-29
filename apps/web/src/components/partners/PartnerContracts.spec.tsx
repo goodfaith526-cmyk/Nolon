@@ -16,6 +16,7 @@ const contract = (id: string, over: Partial<PartnerContractDto>): PartnerContrac
   currency: null,
   validFrom: '2026-10-01',
   validTo: null,
+  accrualEvent: 'INVOICED',
   notes: null,
   status: 'DRAFT',
   approvedAt: null,
@@ -52,7 +53,7 @@ vi.mock('../StaffShell', () => ({
 }));
 const { PartnerContracts } = await import('./PartnerContracts');
 
-const partner = { id: 'p1', currency: 'SAR' } as PartnerDto;
+const partner = { id: 'p1', currency: 'SAR', kind: 'DISTRIBUTOR' } as PartnerDto;
 let host: HTMLElement | null = null;
 
 afterEach(() => {
@@ -85,7 +86,7 @@ describe('PartnerContracts', () => {
     expect(calls.find((c) => c.method === 'POST')?.path).toBe('/partner-contracts/c1/approve');
   });
 
-  it('sends a percentage contract without a unit or currency', async () => {
+  it("sends a percentage contract without a unit or currency, accruing on the partner kind's default event", async () => {
     const shown = await show();
     act(() => buttons(shown, 'add')[0]?.click());
     const set = (name: string, value: string) => {
@@ -111,9 +112,15 @@ describe('PartnerContracts', () => {
         currency: null,
         validFrom: '2026-11-01',
         validTo: null,
+        accrualEvent: 'DELIVERED',
         notes: null,
       },
     });
+  });
+
+  it("shows each contract's accrual event", async () => {
+    const shown = await show();
+    expect(shown.querySelector('tbody tr')?.textContent).toContain('event_INVOICED');
   });
 
   it('hides the add button without the create permission', async () => {

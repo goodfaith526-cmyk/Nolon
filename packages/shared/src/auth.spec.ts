@@ -76,6 +76,9 @@ describe('permission matrix (annex A)', () => {
     // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
     ['partners', 'ك ع ك ع ع ع — — — ك ع'],
     ['partner_contracts', 'ك ع ع — — ع — — — ك —'],
+    // Plan 07 section 8: create = a statement, update = cancelling a draft one, approve = a manual
+    // adjustment. Finance makes statements, the Branch Manager adjusts.
+    ['partner_commissions', 'ك ع م — — إ — — — ع —'],
     ['supplier_payments', 'ك ع م — — ك — — — — —'],
     ['expenses', 'ك ع م — إ ك إ إ إ — —'],
     ['manual_journals', 'ك ع — — — ك — — — — —'],

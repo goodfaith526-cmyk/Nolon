@@ -1,8 +1,9 @@
 import { ConflictException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
-import type {
-  PartnerContractDto,
-  PartnerContractInput,
-  PartnerContractStatus,
+import {
+  DEFAULT_COMMISSION_EVENT,
+  type PartnerContractDto,
+  type PartnerContractInput,
+  type PartnerContractStatus,
 } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -28,15 +29,16 @@ const AUDITED_FIELDS = [
   'currency',
   'validFrom',
   'validTo',
+  'accrualEvent',
   'notes',
   'status',
 ] as const;
 
 /**
- * Partners' commission contracts (business model plan 3.4): settings only in batch 1. A contract
- * belongs to its partner's branch (AGENTS.md rule 2); drafts are edited, an approved contract is
- * only cancelled, never edited. Nothing here accrues, posts or settles: the only reader is the
- * expected commission of a rate card's expected margin (commissionFor).
+ * Partners' commission contracts (business model plan 3.4). A contract belongs to its partner's
+ * branch (AGENTS.md rule 2); drafts are edited, an approved contract is only cancelled, never
+ * edited. Nothing here accrues, posts or settles: it is read for the expected commission of a rate
+ * card's expected margin (commissionFor), and (plan 07) for the event its commission accrues on.
  */
 @Injectable()
 export class PartnerContractsService {
@@ -70,7 +72,7 @@ export class PartnerContractsService {
       await requireBranchMemberInTx(tx, user, partner.branchId);
       await this.checkReferences(tx, input, null);
       const contract = await tx.partnerContract.create({
-        data: { ...fields(input), partnerId, createdById: user.id },
+        data: { ...fields(input, partner, null), partnerId, createdById: user.id },
       });
       await this.log(tx, user, partner, 'CREATED', null, contract);
       return contract;
@@ -90,7 +92,10 @@ export class PartnerContractsService {
         throw new ConflictException('Only a draft contract can be edited');
       }
       await this.checkReferences(tx, input, contract);
-      const after = await tx.partnerContract.update({ where: { id }, data: fields(input) });
+      const after = await tx.partnerContract.update({
+        where: { id },
+        data: fields(input, partner, contract),
+      });
       await this.log(tx, user, partner, 'UPDATED', contract, after);
     });
     return this.get(user, id);
@@ -308,7 +313,8 @@ async function lockPartner(tx: Tx, user: AuthUser, id: string): Promise<Partner>
   return partner;
 }
 
-function fields(input: PartnerContractInput) {
+/** A draft's fields; an event not sent keeps the draft's, or takes the partner kind's default. */
+function fields(input: PartnerContractInput, partner: Partner, held: PartnerContract | null) {
   const fixed = input.basis === 'FIXED_PER_UNIT';
   return {
     priceCategoryCode: input.priceCategoryCode ?? null,
@@ -318,6 +324,8 @@ function fields(input: PartnerContractInput) {
     currency: fixed ? (input.currency ?? null) : null,
     validFrom: toDbDate(input.validFrom),
     validTo: input.validTo ? toDbDate(input.validTo) : null,
+    accrualEvent:
+      input.accrualEvent ?? held?.accrualEvent ?? DEFAULT_COMMISSION_EVENT[partner.kind],
     notes: input.notes ?? null,
   };
 }
@@ -334,6 +342,7 @@ function toDto(c: PartnerContract, branchId: string, user: AuthUser): PartnerCon
     currency: c.currency,
     validFrom: fromDbDate(c.validFrom),
     validTo: fromDbDateOrNull(c.validTo),
+    accrualEvent: c.accrualEvent,
     notes: c.notes,
     status: c.status,
     approvedAt: c.approvedAt?.toISOString() ?? null,

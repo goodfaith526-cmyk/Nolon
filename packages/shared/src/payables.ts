@@ -51,6 +51,7 @@ export const SUPPLIER_BILL_LINE_KINDS = [
   'TRIP',
   'EXPENSE',
   'CONSOLIDATION',
+  'COMMISSION',
 ] as const;
 export type SupplierBillLineKind = (typeof SUPPLIER_BILL_LINE_KINDS)[number];
 

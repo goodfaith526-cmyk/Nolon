@@ -47,6 +47,8 @@ model Branch {
   csRequests          CsBookingRequest[]
   customers           Customer[]
   partners            Partner[]
+  commissionAccruals  CommissionAccrual[]
+  partnerStatements   PartnerStatement[]
   rateCards           RateCard[]
   quotations          Quotation[]
   bookings            Booking[]
@@ -132,11 +134,13 @@ model Currency {
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branches             Branch[]
-  customersPreferred   Customer[]         @relation("CustomerPreferredCurrency")
+  customersPreferred   Customer[]          @relation("CustomerPreferredCurrency")
   partners             Partner[]
-  customersCreditLimit Customer[]         @relation("CustomerCreditLimitCurrency")
+  customersCreditLimit Customer[]          @relation("CustomerCreditLimitCurrency")
   rateCards            RateCard[]
   partnerContracts     PartnerContract[]
+  commissionAccruals   CommissionAccrual[]
+  partnerStatements    PartnerStatement[]
   rateCardCosts        RateCardCost[]
   quotations           Quotation[]
   accounts             Account[]
@@ -150,8 +154,8 @@ model Currency {
   supplierBills        SupplierBill[]
   supplierPayments     SupplierPayment[]
   expenses             Expense[]
-  csRequestsPaid       CsBookingRequest[] @relation("CsRequestPaymentCurrency")
-  csRequestsPriced     CsBookingRequest[] @relation("CsRequestApprovedCurrency")
+  csRequestsPaid       CsBookingRequest[]  @relation("CsRequestPaymentCurrency")
+  csRequestsPriced     CsBookingRequest[]  @relation("CsRequestApprovedCurrency")
 
   paymentInstructions PaymentInstruction[]
 
@@ -204,6 +208,8 @@ model User {
   customersCreated            Customer[]           @relation("CustomerCreatedBy")
   partnersCreated             Partner[]            @relation("PartnerCreatedBy")
   partnerContractsCreated     PartnerContract[]    @relation("PartnerContractCreatedBy")
+  commissionAccrualsCreated   CommissionAccrual[]  @relation("CommissionAccrualCreatedBy")
+  partnerStatementsCreated    PartnerStatement[]   @relation("PartnerStatementCreatedBy")
   partnerContractsApproved    PartnerContract[]    @relation("PartnerContractApprovedBy")
   rateCardCostsUpdated        RateCardCost[]       @relation("RateCardCostUpdatedBy")
   ratesCreated                RateCard[]           @relation("RateCreatedBy")
@@ -908,9 +914,12 @@ model Partner {
   quotationsSold        Quotation[]
   bookingsSold          Booking[]
   shipmentsSold         Shipment[]
-  shipmentsConsolidated Shipment[]        @relation("ShipmentOriginConsolidator")
-  shipmentsDistributed  Shipment[]        @relation("ShipmentDistributor")
+  shipmentsConsolidated Shipment[]          @relation("ShipmentOriginConsolidator")
+  shipmentsDistributed  Shipment[]          @relation("ShipmentDistributor")
   contracts             PartnerContract[]
+  commissionAccruals    CommissionAccrual[]
+  commissionHolds       CommissionHold[]
+  statements            PartnerStatement[]
 
   @@index([branchId, kind])
   @@index([locationId])
@@ -955,6 +964,45 @@ enum PartnerContractStatus {
   @@map("partner_contract_status")
 }
 
+/// When a partner's commission on a shipment is accrued (business model plan 07, 3.1).
+enum CommissionEvent {
+  /// The shipment's first approved customer invoice ("on sale").
+  INVOICED
+  /// Its first DEPARTED or ROAD_DEPARTED event still standing.
+  DEPARTED
+  /// A full proof of delivery, not cancelled (a manual DELIVERED status is not enough).
+  DELIVERED
+
+  @@map("commission_event")
+}
+
+/// The partner slot of a shipment a commission is earned in (plan 07, 3.2).
+enum CommissionRole {
+  SALES_OUTLET
+  ORIGIN_CONSOLIDATOR
+  DISTRIBUTOR
+
+  @@map("commission_role")
+}
+
+enum CommissionAccrualKind {
+  ACCRUAL
+  ADJUSTMENT
+  REVERSAL
+  MANUAL
+
+  @@map("commission_accrual_kind")
+}
+
+enum PartnerStatementStatus {
+  DRAFT
+  BILLED
+  SETTLED
+  CANCELLED
+
+  @@map("partner_statement_status")
+}
+
 /// What a partner earns per sale (business model plan 3.4): settings only in batch 1. Read to show
 /// the expected commission inside a rate card's expected margin; nothing accrues, posts or settles
 /// from it. An approved contract is never edited: it is cancelled and a new one is made.
@@ -971,6 +1019,8 @@ model PartnerContract {
   currency          String?               @db.Char(3)
   validFrom         DateTime              @map("valid_from") @db.Date
   validTo           DateTime?             @map("valid_to") @db.Date
+  /// When the commission is accrued (plan 07). Contracts approved before batch 2 accrue on invoicing.
+  accrualEvent      CommissionEvent       @default(INVOICED) @map("accrual_event")
   notes             String?
   status            PartnerContractStatus @default(DRAFT)
   approvedById      String?               @map("approved_by_id") @db.Uuid
@@ -979,16 +1029,114 @@ model PartnerContract {
   createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  partner       Partner        @relation(fields: [partnerId], references: [id], onDelete: Restrict)
-  priceCategory PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  currencyRef   Currency?      @relation(fields: [currency], references: [code], onDelete: Restrict)
-  approvedBy    User?          @relation("PartnerContractApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  createdBy     User           @relation("PartnerContractCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  partner       Partner             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  priceCategory PriceCategory?      @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  currencyRef   Currency?           @relation(fields: [currency], references: [code], onDelete: Restrict)
+  approvedBy    User?               @relation("PartnerContractApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy     User                @relation("PartnerContractCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  accruals      CommissionAccrual[]
 
   @@index([partnerId, status])
   @@index([priceCategoryCode])
   @@index([currency])
   @@map("partner_contracts")
+}
+
+/// A partner's commission sub-ledger (plan 07, 3.2): one row per change of a partner's commission on
+/// a shipment, posted by rule 16 in the same transaction. Amounts never change: a trigger allows
+/// UPDATE of statement_id only and refuses DELETE. A change is a new row with the difference.
+model CommissionAccrual {
+  id          String                @id @default(uuid()) @db.Uuid
+  shipmentId  String                @map("shipment_id") @db.Uuid
+  partnerId   String                @map("partner_id") @db.Uuid
+  /// The contract chosen at the slot's first accrual, kept for every later change of the slot.
+  contractId  String?               @map("contract_id") @db.Uuid
+  role        CommissionRole
+  kind        CommissionAccrualKind
+  /// The shipment's branch: the entry's, and the statement's that settles it.
+  branchId    String                @map("branch_id") @db.Uuid
+  currency    String                @db.Char(3)
+  /// Percentage contracts: the base the commission was computed on.
+  base        Decimal?              @db.Decimal(18, 4)
+  /// Fixed contracts: the quantity in the contract's unit.
+  quantity    Decimal?              @db.Decimal(18, 4)
+  /// Units of `currency` per 1 USD the row's USD value came from; null when its invoices' rates differ.
+  fxRate      Decimal?              @map("fx_rate") @db.Decimal(18, 8)
+  /// Positive accrues, negative reduces.
+  amount      Decimal               @db.Decimal(18, 4)
+  /// Its carrying value in USD, the same as its entry's lines (plan 07, 4.7).
+  amountUsd   Decimal               @map("amount_usd") @db.Decimal(18, 4)
+  entryId     String                @map("entry_id") @db.Uuid
+  /// Null while open.
+  statementId String?               @map("statement_id") @db.Uuid
+  /// Required for MANUAL rows.
+  reason      String?
+  createdById String                @map("created_by_id") @db.Uuid
+  createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment    Shipment          @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  partner     Partner           @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  contract    PartnerContract?  @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  branch      Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  currencyRef Currency          @relation(fields: [currency], references: [code], onDelete: Restrict)
+  entry       JournalEntry      @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  statement   PartnerStatement? @relation(fields: [statementId], references: [id], onDelete: Restrict)
+  createdBy   User              @relation("CommissionAccrualCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([shipmentId, role])
+  @@index([partnerId, branchId, currency, statementId])
+  @@index([entryId])
+  @@index([statementId])
+  @@map("commission_accruals")
+}
+
+/// A commission that could not be computed, and why (plan 07, 4.5). Removed once it computes.
+model CommissionHold {
+  shipmentId String         @map("shipment_id") @db.Uuid
+  role       CommissionRole
+  partnerId  String         @map("partner_id") @db.Uuid
+  code       String         @db.VarChar(60)
+  detail     String?
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  partner  Partner  @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@id([shipmentId, role])
+  @@index([partnerId])
+  @@map("commission_holds")
+}
+
+/// A partner's commission statement for one branch and currency (plan 07, 3.3 and 5): its open rows
+/// up to a date, settled by the one live supplier bill made from it (rule 16a).
+model PartnerStatement {
+  id          String                 @id @default(uuid()) @db.Uuid
+  /// NOL-PST-2026-000001
+  number      String                 @unique @db.VarChar(30)
+  partnerId   String                 @map("partner_id") @db.Uuid
+  /// The branch of its rows (their shipments'), not necessarily the partner's.
+  branchId    String                 @map("branch_id") @db.Uuid
+  currency    String                 @db.Char(3)
+  periodTo    DateTime               @map("period_to") @db.Date
+  total       Decimal                @db.Decimal(18, 4)
+  totalUsd    Decimal                @map("total_usd") @db.Decimal(18, 4)
+  status      PartnerStatementStatus @default(DRAFT)
+  /// The one live bill made from it; null while DRAFT.
+  billId      String?                @unique @map("bill_id") @db.Uuid
+  createdById String                 @map("created_by_id") @db.Uuid
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  partner     Partner             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  currencyRef Currency            @relation(fields: [currency], references: [code], onDelete: Restrict)
+  bill        SupplierBill?       @relation(fields: [billId], references: [id], onDelete: Restrict)
+  createdBy   User                @relation("PartnerStatementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  accruals    CommissionAccrual[]
+  billLines   SupplierBillLine[]
+
+  @@index([partnerId, branchId, status])
+  @@map("partner_statements")
 }
 
 enum RateCostComponent {
@@ -1431,6 +1579,8 @@ model Shipment {
   cargoCorrections   ShipmentCargoCorrection[]
   containers         ShipmentContainer[]
   events             ShipmentEvent[]
+  commissionAccruals CommissionAccrual[]
+  commissionHolds    CommissionHold[]
   documents          Document[]
   journalLines       JournalLine[]
   invoices           CustomerInvoice[]
@@ -1717,6 +1867,10 @@ enum PostingRole {
   REIMBURSABLE
   CONSOLIDATION_CLEARING
   ACCRUED_TRANSPORT
+  /// Partner commissions (rule 16): a cost of the shipment.
+  COMMISSION_COST
+  /// Partner commissions accrued, until the partner's statement is billed (rule 16a).
+  ACCRUED_COMMISSIONS
   FX_GAIN
   FX_LOSS
   ROUNDING
@@ -1817,6 +1971,8 @@ enum JournalSource {
   CONSOLIDATION_ALLOCATION
   /// A receipt's advance applied to a later invoice of the same customer.
   RECEIPT_APPLICATION
+  /// A partner's commission on a shipment accrued, adjusted or reversed (rule 16, plan 07).
+  COMMISSION_ACCRUAL
 
   @@map("journal_source")
 }
@@ -1858,6 +2014,7 @@ model JournalEntry {
   tripAccrual             Trip?               @relation("TripAccrualJournal")
   creditNote              CreditNote?         @relation("CreditNoteJournal")
   supplierBill            SupplierBill?       @relation("SupplierBillJournal")
+  commissionAccruals      CommissionAccrual[]
   supplierBillCancel      SupplierBill?       @relation("SupplierBillCancelJournal")
   supplierPayment         SupplierPayment?    @relation("SupplierPaymentJournal")
   supplierPaymentCancel   SupplierPayment?    @relation("SupplierPaymentCancelJournal")
@@ -3021,18 +3178,19 @@ model SupplierBill {
   createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch         Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  supplier       Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  currencyRef    Currency                    @relation(fields: [currency], references: [code], onDelete: Restrict)
-  journalEntry   JournalEntry?               @relation("SupplierBillJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
-  cancelJournal  JournalEntry?               @relation("SupplierBillCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
-  payableAccount Account?                    @relation("BillPayable", fields: [payableAccountId], references: [id], onDelete: Restrict)
-  createdBy      User                        @relation("SupplierBillCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  approvedBy     User?                       @relation("SupplierBillApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
-  cancelledBy    User?                       @relation("SupplierBillCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
-  lines          SupplierBillLine[]
-  allocations    SupplierPaymentAllocation[]
-  trips          Trip[]                      @relation("TripCarrierBill")
+  branch           Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier         Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  currencyRef      Currency                    @relation(fields: [currency], references: [code], onDelete: Restrict)
+  journalEntry     JournalEntry?               @relation("SupplierBillJournal", fields: [journalEntryId], references: [id], onDelete: Restrict)
+  cancelJournal    JournalEntry?               @relation("SupplierBillCancelJournal", fields: [cancelJournalEntryId], references: [id], onDelete: Restrict)
+  payableAccount   Account?                    @relation("BillPayable", fields: [payableAccountId], references: [id], onDelete: Restrict)
+  createdBy        User                        @relation("SupplierBillCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy       User?                       @relation("SupplierBillApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  cancelledBy      User?                       @relation("SupplierBillCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  lines            SupplierBillLine[]
+  allocations      SupplierPaymentAllocation[]
+  trips            Trip[]                      @relation("TripCarrierBill")
+  partnerStatement PartnerStatement?
 
   @@index([branchId, status])
   @@index([supplierId])
@@ -3049,6 +3207,8 @@ enum SupplierBillLineKind {
   /// A cost of a consolidated (LCL) container by charge type, to its clearing account (rule 7a),
   /// shared by the container's shipments (rule 13).
   CONSOLIDATION
+  /// A partner's commission statement, clearing its accrued commissions (rule 16a, plan 07).
+  COMMISSION
 
   @@map("supplier_bill_line_kind")
 }
@@ -3063,6 +3223,8 @@ model SupplierBillLine {
   tripId              String?              @map("trip_id") @db.Uuid
   expenseCategoryCode String?              @map("expense_category_code") @db.VarChar(20)
   consolidationId     String?              @map("consolidation_id") @db.Uuid
+  /// COMMISSION lines: the partner statement the line settles (made by the statement only).
+  statementId         String?              @map("statement_id") @db.Uuid
   /// Rule 13: the entry that shared this container cost between the container's shipments, once
   /// the container is closed (at the close, or on approval for a bill approved after it).
   allocationEntryId   String?              @unique @map("allocation_entry_id") @db.Uuid
@@ -3070,18 +3232,20 @@ model SupplierBillLine {
   /// In the bill currency, rounded to its minor units.
   amount              Decimal              @db.Decimal(18, 4)
 
-  bill            SupplierBill     @relation(fields: [billId], references: [id], onDelete: Cascade)
-  chargeType      ChargeType?      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
-  shipment        Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  trip            Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
-  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryCode], references: [code], onDelete: Restrict)
-  consolidation   Consolidation?   @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
-  allocationEntry JournalEntry?    @relation("BillLineAllocationJournal", fields: [allocationEntryId], references: [id], onDelete: Restrict)
+  bill            SupplierBill      @relation(fields: [billId], references: [id], onDelete: Cascade)
+  chargeType      ChargeType?       @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  shipment        Shipment?         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  trip            Trip?             @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  expenseCategory ExpenseCategory?  @relation(fields: [expenseCategoryCode], references: [code], onDelete: Restrict)
+  consolidation   Consolidation?    @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  allocationEntry JournalEntry?     @relation("BillLineAllocationJournal", fields: [allocationEntryId], references: [id], onDelete: Restrict)
+  statement       PartnerStatement? @relation(fields: [statementId], references: [id], onDelete: Restrict)
 
   @@unique([billId, lineNo])
   @@index([shipmentId])
   @@index([tripId])
   @@index([consolidationId])
+  @@index([statementId])
   @@map("supplier_bill_lines")
 }
 
