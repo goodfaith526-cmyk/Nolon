@@ -1926,6 +1926,14 @@ enum InvoiceStatus {
   @@map("invoice_status")
 }
 
+/// A shipment's main invoice, or one for charges added after it (client decision ب3, plan 06).
+enum InvoiceKind {
+  MAIN
+  ADDITIONAL
+
+  @@map("invoice_kind")
+}
+
 /// Customer invoice for one shipment. Approval posts its journal entry (annex C rules 1-2) and
 /// gives it its number; a draft has none. Paid and credited amounts are kept in the invoice
 /// currency and as the USD carrying value already relieved, so the last payment or credit note
@@ -1940,6 +1948,9 @@ model CustomerInvoice {
   /// Null only for an opening item.
   shipmentId          String?       @map("shipment_id") @db.Uuid
   isOpening           Boolean       @default(false) @map("is_opening")
+  /// One live MAIN invoice per shipment; ADDITIONAL ones bill charges that are not on it. Set on
+  /// creation, never changed. Opening items are MAIN.
+  kind                InvoiceKind   @default(MAIN)
   /// Opening items: the invoice's number in the previous system.
   reference           String?       @db.VarChar(50)
   currency            String        @db.Char(3)

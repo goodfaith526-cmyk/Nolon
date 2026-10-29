@@ -777,11 +777,13 @@ export const FORM_REFUSALS = [
   // A shipment that an invoice still bills is not cancelled: `shipment`, `approved` (the numbers of
   // the approved invoices, or a dash) and `drafts` (how many draft invoices).
   'SHIPMENT_HAS_LIVE_INVOICES',
-  // Another invoice for a shipment that has invoices (Q3): the request did not name exactly the
-  // invoices it has. Params `shipment`, `approved` (numbers, or a dash) and `drafts` (a count).
-  // The assistant's chat cannot list them, so its approval is sent to NOLON's review screen.
+  // A shipment's invoices (client decision ب3). A second live MAIN invoice: `shipment`,
+  // `invoices` (the live MAIN invoices' numbers, or a dash) and `drafts` (a count). An ADDITIONAL
+  // invoice with no live MAIN one: `shipment`. A charge type on both kinds: `shipment`, `charges`
+  // (the codes) and `invoices` (the other kind's invoices carrying them: numbers, or a dash).
   'SHIPMENT_ALREADY_INVOICED',
-  'SHIPMENT_ALREADY_INVOICED_REVIEW',
+  'ADDITIONAL_NEEDS_MAIN',
+  'CHARGE_ON_OTHER_INVOICE',
   // Approving a supplier bill whose reference other bills of the supplier and branch carry (or
   // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
   // dash) and `drafts` (a count).

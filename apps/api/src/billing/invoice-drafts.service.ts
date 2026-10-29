@@ -552,7 +552,6 @@ export class InvoiceDraftsService {
     id: string,
     version: number,
     via: DecisionVia = 'SESSION',
-    acknowledgedInvoiceIds: readonly string[] = [],
   ): Promise<InvoiceDraftDto> {
     this.drafts.requireDecider(user, via, HUMAN_ONLY, id);
     const current = await this.findScoped(user, id);
@@ -575,12 +574,8 @@ export class InvoiceDraftsService {
           requireApprovable(invoiceDraftCompleteness(row));
         },
         record: async () => {
-          // The shipment's other invoices (Q3): the review screen lists them and the person
-          // confirms them; the assistant's chat cannot, so it sends a shipment with invoices there.
-          invoiceId = await this.invoices.insertInTx(tx, user, prepared, {
-            invoiceIds: acknowledgedInvoiceIds,
-            listed: via === 'SESSION',
-          });
+          // The shipment's MAIN invoice: refused while it has a live one (ب3).
+          invoiceId = await this.invoices.insertInTx(tx, user, prepared);
         },
       });
       if (decided) {

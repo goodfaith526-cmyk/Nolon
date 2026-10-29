@@ -131,19 +131,10 @@ describe('financial reports', () => {
     fields: { currency: string; fxRate?: string; invoiceDate: string; dueDate: string },
     lines: { chargeTypeCode: string; quantity: string; unitPrice: string }[],
     approve = true,
+    kind: 'MAIN' | 'ADDITIONAL' = 'MAIN',
   ): Promise<CustomerInvoiceDto> {
-    // A second invoice of a shipment names the invoices it already has (Q3).
-    const existing = (
-      await get(`/customer-invoices?shipmentId=${shipmentId}&pageSize=50`, cookies.financePts)
-    ).body as Page<CustomerInvoiceDto>;
-    const acknowledgedInvoiceIds = existing.items
-      .filter((i) => i.status !== 'CANCELLED')
-      .map((i) => i.id);
     const draft = (
-      await post('/customer-invoices', cookies.financePts, {
-        shipmentId,
-        acknowledgedInvoiceIds,
-      }).expect(201)
+      await post('/customer-invoices', cookies.financePts, { shipmentId, kind }).expect(201)
     ).body as CustomerInvoiceDto;
     await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
       ...fields,
@@ -291,8 +282,9 @@ describe('financial reports', () => {
     await invoice(
       shipments.s3,
       { currency: 'USD', invoiceDate: d('02-11'), dueDate: d('02-11') },
-      [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '5555' }],
+      [{ chargeTypeCode: 'CUSTOMS', quantity: '1', unitPrice: '5555' }],
       false,
+      'ADDITIONAL',
     );
 
     // Receipts: 400 USD on I1; 300,000 SDG at 500 (600 USD) on I3, clearing 500 USD at the
