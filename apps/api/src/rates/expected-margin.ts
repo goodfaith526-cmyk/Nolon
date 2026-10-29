@@ -43,9 +43,15 @@ export interface MarginContract {
   currency: string | null;
 }
 
-/** The outlet's commission: no outlet chosen, an outlet without a contract for the card, or one. */
+/**
+ * The outlet's commission: no outlet chosen, an outlet without a contract for the card, or one;
+ * DIRECT for a shipment sold without an outlet, which pays none (plan 6.2).
+ */
 export type MarginCommission =
-  { kind: 'NO_OUTLET' } | { kind: 'NO_CONTRACT' } | { kind: 'CONTRACT'; contract: MarginContract };
+  | { kind: 'NO_OUTLET' }
+  | { kind: 'NO_CONTRACT' }
+  | { kind: 'CONTRACT'; contract: MarginContract }
+  | { kind: 'DIRECT' };
 
 export interface MarginInput {
   card: MarginCard;
@@ -112,6 +118,9 @@ export function computeExpectedMargin(input: MarginInput): MarginResult {
   const commissionLine = (): MarginLine => {
     const component = 'OUTLET_COMMISSION';
     const { commission } = input;
+    if (commission.kind === 'DIRECT') {
+      return { component, amount: ZERO, notApplicable: true, gap: null };
+    }
     if (commission.kind === 'NO_OUTLET') {
       return { component, amount: null, notApplicable: false, gap: 'OUTLET_NOT_CHOSEN' };
     }

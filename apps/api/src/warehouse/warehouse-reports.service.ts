@@ -13,8 +13,8 @@ import { type Decimal, ZERO, dec } from '../common/money.js';
 import { type AuditQuery, andIf, overLimit, sqlDate } from '../common/report-sql.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { shipmentIdVisibleIn } from '../shipments/shipment-scope.js';
-import { daysHeld } from './warehouse-rules.js';
+import { shipmentIdVisibleIn, shipmentScope } from '../shipments/shipment-scope.js';
+import { type ShipmentReceiptState, daysHeld } from './warehouse-rules.js';
 
 /** Goods a warehouse holds for a shipment now (the shipment's number comes from its module). */
 export interface OnHandRow {
@@ -184,6 +184,44 @@ export class WarehouseReportsService {
       },
       truncated: capped.truncated,
     };
+  }
+
+  /**
+   * For each of `shipmentIds` the user may see: the packages its warehouses hold now (live
+   * receipts less live releases) and its live receipts, with the status each moved the shipment
+   * to and when it was recorded. A shipment with no movement is left out.
+   */
+  async receiptState(
+    user: AuthUser,
+    shipmentIds: readonly string[],
+  ): Promise<Map<string, ShipmentReceiptState>> {
+    const state = new Map<string, ShipmentReceiptState>();
+    if (shipmentIds.length === 0) return state;
+    const movements = await this.prisma.warehouseMovement.findMany({
+      where: {
+        shipmentId: { in: [...shipmentIds] },
+        shipment: shipmentScope(user),
+        cancellation: null,
+      },
+      select: {
+        shipmentId: true,
+        kind: true,
+        packages: true,
+        statusApplied: true,
+        createdAt: true,
+      },
+    });
+    for (const m of movements) {
+      const entry = state.get(m.shipmentId) ?? { heldPackages: 0, receipts: [] };
+      if (m.kind === 'RECEIPT') {
+        entry.heldPackages += m.packages;
+        entry.receipts.push({ statusApplied: m.statusApplied, createdAt: m.createdAt });
+      } else {
+        entry.heldPackages -= m.packages;
+      }
+      state.set(m.shipmentId, entry);
+    }
+    return state;
   }
 
   /** Report 7: receipts and releases that happened in the period, with totals per kind. */

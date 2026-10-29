@@ -760,6 +760,60 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   }
 
   /**
+   * The rate cards the shipment is priced from, for its expected margin (plan 6.2): its
+   * quotation's lines while the quotation still prices it (agreedPrices; a line typed by hand
+   * names no card), else the rate card lines its invoice suggestion fills (deriveForShipment, in
+   * its default currency): a tariff it only offers is not proof the charge applies. Each with the
+   * quantity it is priced at (null when the cargo does not give it exactly).
+   */
+  async pricedFrom(
+    user: AuthUser,
+    shipmentId: string,
+  ): Promise<{
+    source: 'QUOTATION' | 'RATE_CARDS';
+    lines: { chargeTypeCode: string; rateCardId: string | null; quantity: Decimal | null }[];
+  }> {
+    const shipment = await this.shipments.billingSource(user, shipmentId);
+    const { quotation } = await this.agreedPrices(shipment);
+    if (quotation !== null) {
+      return {
+        source: 'QUOTATION',
+        lines: quotation.lines.map((l) => ({
+          chargeTypeCode: l.chargeTypeCode,
+          rateCardId: l.rateCardId,
+          quantity: l.quantity,
+        })),
+      };
+    }
+    const derived = await this.deriveForShipment(user, shipmentId, {});
+    const filled = derived.lines.filter((l) => l.use === 'FILL');
+    // The cargo's own quantity, not the invoice line's: below a minimum charge the line is 1 × the
+    // minimum, while the costs are per unit of cargo (Codex F145-2). The margin applies the
+    // minimum to the price itself.
+    const rates = new Map(
+      (
+        await this.prisma.rateCard.findMany({
+          where: { id: { in: filled.flatMap((l) => (l.rateCardId ? [l.rateCardId] : [])) } },
+          select: { id: true, unit: true, containerTypeCode: true },
+        })
+      ).map((r) => [r.id, r]),
+    );
+    return {
+      source: 'RATE_CARDS',
+      lines: filled.map((l) => {
+        const rate = l.rateCardId ? rates.get(l.rateCardId) : undefined;
+        return {
+          chargeTypeCode: l.chargeTypeCode,
+          rateCardId: l.rateCardId,
+          quantity: rate
+            ? unitQuantity(rate.unit, shipment.items, rate.containerTypeCode, shipment.cargoType)
+            : null,
+        };
+      }),
+    };
+  }
+
+  /**
    * The checks of a draft invoice for a shipment with the given values (an assistant's invoice
    * draft), as update() checks them, without writing; insertInTx then records it. The fx rate is
    * the rate table's for the invoice date. A line without a unit price takes the system price

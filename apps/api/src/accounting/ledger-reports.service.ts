@@ -540,12 +540,14 @@ export class LedgerReportsService {
    * Revenue (credit - debit on revenue accounts) and cost (debit - credit on expense accounts) per
    * shipment owned by the report's branches, from posted lines of the period that carry it, in
    * whichever branch they were posted: a sharing branch's delivery trip or supplier bill is a
-   * cost of the shipment too. The caller keeps only the shipments the user may see.
+   * cost of the shipment too. The caller keeps only the shipments the user may see. With
+   * `shipmentId`, that shipment only.
    */
   async shipmentResults(
     user: AuthUser,
     period: Period,
     branchId?: string,
+    shipmentId?: string,
   ): Promise<ShipmentResult[]> {
     const branchIds = reportBranchIds(user, branchId);
     if (branchIds.length === 0) return [];
@@ -562,6 +564,7 @@ export class LedgerReportsService {
         AND e."entry_date" BETWEEN ${toDbDate(period.from)} AND ${toDbDate(period.to)}
         AND a."type" IN ('REVENUE', 'EXPENSE')
         AND ${shipmentIdOwnedBy(Prisma.sql`l."shipment_id"`, branchIds)}
+        ${shipmentId ? Prisma.sql`AND l."shipment_id" = ${shipmentId}::uuid` : Prisma.empty}
       GROUP BY l."shipment_id"`;
     return rows.map((r) => ({
       shipmentId: r.shipmentId,

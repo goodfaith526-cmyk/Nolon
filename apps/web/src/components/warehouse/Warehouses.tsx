@@ -4,24 +4,32 @@ import type {
   StorageLocationInput,
   WarehouseDto,
   WarehouseInput,
+  WarehouseStockDto,
   WarehouseUpdateRequest,
 } from '@nolon/shared';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { isPlace, useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
+import { StatusBadge } from '../StatusBadge';
 
 /** Pattern for warehouse and storage location codes: letters and digits, dash-separated. */
 const CODE_PATTERN = '[A-Za-z0-9]+(-[A-Za-z0-9]+)*';
 
-/** Warehouses of the user's branches and their storage locations (master data). */
+/**
+ * Warehouses of the user's branches: the shipments each holds now (its goods receipts less its
+ * releases), the shipments whose status says they are in a warehouse with no receipt yet, and
+ * the warehouses' storage locations (master data).
+ */
 export function Warehouses() {
   const t = useTranslations('Warehouse');
   const tc = useTranslations('Common');
+  const locale = useLocale();
   const me = useMe();
   const localName = useLocalName();
   const master = useMasterData();
@@ -31,12 +39,16 @@ export function Warehouses() {
   const branchCode = useBranchCode(me);
   const failure = useFailureText();
   const [warehouses, setWarehouses] = useState<WarehouseDto[] | null>(null);
+  const [stock, setStock] = useState<WarehouseStockDto | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api<WarehouseDto[]>('/warehouses')
       .then(setWarehouses)
+      .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
+    api<WarehouseStockDto>('/warehouses/stock')
+      .then(setStock)
       .catch((e: unknown) => setNotice({ ok: false, text: failure(e) }));
   }, [failure]);
 
@@ -110,6 +122,7 @@ export function Warehouses() {
   }
 
   const canUpdate = can(me, 'warehouse:update');
+  const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
 
   return (
     <section className="stack">
@@ -120,6 +133,47 @@ export function Warehouses() {
         </div>
       </div>
       <Notice notice={notice} />
+      {stock && stock.awaitingReceipt.length > 0 && (
+        <div className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>{t('awaitingTitle', { count: stock.awaitingReceipt.length })}</h2>
+              <p className="muted">{t('awaitingHint')}</p>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>{t('stockShipment')}</th>
+                <th>{t('stockCustomer')}</th>
+                <th>{t('branch')}</th>
+                <th>{tc('status')}</th>
+                <th>{t('awaitingSince')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {stock.awaitingReceipt.map((a) => (
+                <tr key={a.shipmentId}>
+                  <td dir="ltr">
+                    <Link href={`/shipments/${a.shipmentId}`}>{a.shipmentNumber}</Link>
+                  </td>
+                  <td>{a.customerName}</td>
+                  <td dir="ltr">{a.branchCode}</td>
+                  <td>
+                    <StatusBadge kind="shipment" status={a.status} />
+                  </td>
+                  <td>{dateTime.format(new Date(a.statusAt))}</td>
+                  <td>
+                    <Link href={`/shipments/${a.shipmentId}#warehouse`}>{t('awaitingOpen')}</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {stock.awaitingTruncated && <p className="muted panel-body">{t('awaitingTruncated')}</p>}
+        </div>
+      )}
       {can(me, 'warehouse:create') && (
         <form className="card stack" onSubmit={(e) => void onCreate(e)}>
           <h2>{t('add')}</h2>
@@ -225,6 +279,7 @@ export function Warehouses() {
                 )}
               </div>
             </div>
+            <WarehouseStock stock={stock} warehouseId={w.id} />
             {w.storageLocations.length === 0 ? (
               <p className="empty">{t('noLocations')}</p>
             ) : (
@@ -278,5 +333,56 @@ export function Warehouses() {
         ))
       )}
     </section>
+  );
+}
+
+/** The shipments a warehouse holds now, longest held first (from GET /warehouses/stock). */
+function WarehouseStock({
+  stock,
+  warehouseId,
+}: {
+  stock: WarehouseStockDto | null;
+  warehouseId: string;
+}) {
+  const t = useTranslations('Warehouse');
+  const tc = useTranslations('Common');
+  if (!stock) return <p className="muted">{tc('loading')}</p>;
+  const rows = stock.rows.filter((r) => r.warehouseId === warehouseId);
+  const packages = rows.reduce((n, r) => n + r.packages, 0);
+  return (
+    <div className="panel-body stack">
+      <h3>{t('stockTitle', { shipments: rows.length, packages })}</h3>
+      {rows.length === 0 ? (
+        <p className="empty">{t('stockNone')}</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>{t('stockShipment')}</th>
+              <th>{t('stockCustomer')}</th>
+              <th>{t('packages')}</th>
+              <th>{t('weightKg')}</th>
+              <th>{t('stockSince')}</th>
+              <th>{t('stockDays')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.shipmentId}>
+                <td dir="ltr">
+                  <Link href={`/shipments/${r.shipmentId}#warehouse`}>{r.shipmentNumber}</Link>
+                </td>
+                <td>{r.customerName}</td>
+                <td dir="ltr">{r.packages}</td>
+                <td dir="ltr">{r.weightKg}</td>
+                <td dir="ltr">{r.heldSince}</td>
+                <td dir="ltr">{r.daysHeld}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {stock.truncated && <p className="muted">{t('stockTruncated')}</p>}
+    </div>
   );
 }

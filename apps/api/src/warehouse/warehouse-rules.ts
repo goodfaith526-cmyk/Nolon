@@ -225,3 +225,25 @@ export function defaultReceiptStatus(
 export function daysHeld(heldSince: string, today: string): number {
   return Math.max(daysBetween(heldSince, today), 0);
 }
+
+/** What the warehouses hold of a shipment now, and its live receipts. */
+export interface ShipmentReceiptState {
+  heldPackages: number;
+  receipts: { statusApplied: ShipmentStatus | null; createdAt: Date }[];
+}
+
+/**
+ * Whether a shipment whose status says its goods are in a warehouse (`status`, recorded at
+ * `recordedAt`) has no goods receipt behind it: nothing is held now, and no live receipt moved it
+ * to that status or was recorded since. Stock counts receipts only, so such a shipment is shown
+ * apart, for someone to record its receipt.
+ */
+export function awaitsReceipt(
+  status: WarehouseReceiptStatus,
+  recordedAt: Date,
+  state: ShipmentReceiptState | undefined,
+): boolean {
+  if (!state) return true;
+  if (state.heldPackages > 0) return false;
+  return !state.receipts.some((r) => r.statusApplied === status || r.createdAt >= recordedAt);
+}
