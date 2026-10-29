@@ -56,6 +56,10 @@ export const PERMISSION_MODULES = [
   'suppliers',
   'partners',
   'partner_contracts',
+  // Plan 07 section 8: partner commissions (rule 16) and statements (rule 16a). view: rows,
+  // holds and statements; create: making a statement; update: cancelling a draft statement;
+  // approve: a manual adjustment (apart from making statements on purpose).
+  'partner_commissions',
   'supplier_payments',
   'expenses',
   'manual_journals',
@@ -142,6 +146,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   partners: 'FVFVVVNNNFV',
   // Business model plan 3.4 and 4.1: a partner's commission contracts (settings only in batch 1).
   partner_contracts: 'FVVNNVNNNFN',
+  // Plan 07 section 8: Finance makes and cancels statements, the Branch Manager adjusts, and
+  // Management and the Sales & Marketing Manager read.
+  partner_commissions: 'FVANNENNNVN',
   supplier_payments: 'FVANNFNNNNN',
   expenses: 'FVANEFEEENN',
   manual_journals: 'FVNNNFNNNNN',

@@ -1133,6 +1133,43 @@ describe('credit notes, payables, expenses and opening balances', () => {
       ).body as SupplierBillDto;
       expect(cancelled).toMatchObject({ status: 'CANCELLED', cancelJournalEntryId: null });
     });
+
+    it('a commission line is never entered on a bill, created or edited (F152-1)', async () => {
+      const body = {
+        requestId: randomUUID(),
+        supplierId: supplier.id,
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '100' }],
+      };
+      const commission = [{ kind: 'COMMISSION', expenseCategoryCode: 'RENT', amount: '100' }];
+      const bills = () => t.prisma.supplierBill.count({ where: { supplierId: supplier.id } });
+      const before = await bills();
+      await post('/supplier-bills', cookies.financePts, { ...body, lines: commission }).expect(400);
+      expect(await bills()).toBe(before);
+      const draft = (await post('/supplier-bills', cookies.financePts, body).expect(201))
+        .body as SupplierBillDto;
+      await patch(`/supplier-bills/${draft.id}`, cookies.financePts, {
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: commission,
+      }).expect(400);
+      // The same edit with an expense line is accepted: the refusal is the commission line's.
+      await patch(`/supplier-bills/${draft.id}`, cookies.financePts, {
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '100' }],
+      }).expect(200);
+      const lines = await t.prisma.supplierBillLine.findMany({ where: { billId: draft.id } });
+      expect(lines.map((l) => [l.kind, l.amount.toFixed()])).toEqual([['EXPENSE', '100']]);
+    });
+
     it('shipment costs and trips are of the bill branch; a cancelled shipment is refused', async () => {
       const ptsShipment = await shipment();
       const jedBill = {

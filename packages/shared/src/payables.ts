@@ -45,17 +45,30 @@ export type SupplierBillStatus = (typeof SUPPLIER_BILL_STATUSES)[number];
  * SHIPMENT_COST: a cost of one shipment by charge type (rule 7, reimbursable charges rule 8).
  * TRIP: a carrier's charge for a completed external trip; it clears the trip's accrual (rule 11a).
  * EXPENSE: a general expense by category (rule 12).
+ * CONSOLIDATION: a container's cost, shared out when the container closes (rules 7a and 13).
+ * COMMISSION: a partner statement's line (plan 07, rule 16a), written only by the statement's own
+ * route, never entered on a bill (F152-1).
  */
 export const SUPPLIER_BILL_LINE_KINDS = [
   'SHIPMENT_COST',
   'TRIP',
   'EXPENSE',
   'CONSOLIDATION',
+  'COMMISSION',
 ] as const;
 export type SupplierBillLineKind = (typeof SUPPLIER_BILL_LINE_KINDS)[number];
 
+/** The kinds a person enters on a supplier bill: every kind but COMMISSION. */
+export const ENTERED_BILL_LINE_KINDS = [
+  'SHIPMENT_COST',
+  'TRIP',
+  'EXPENSE',
+  'CONSOLIDATION',
+] as const satisfies readonly SupplierBillLineKind[];
+export type EnteredBillLineKind = (typeof ENTERED_BILL_LINE_KINDS)[number];
+
 export interface SupplierBillLineInput {
-  kind: SupplierBillLineKind;
+  kind: EnteredBillLineKind;
   chargeTypeCode?: string | null;
   shipmentId?: string | null;
   tripId?: string | null;
