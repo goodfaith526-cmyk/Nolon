@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   CREDIT_NOTE_STATUSES,
+  INVOICE_KINDS,
   INVOICE_STATUSES,
   MAX_ACKNOWLEDGED_INVOICES,
   PAYMENT_STATUSES,
@@ -59,6 +60,8 @@ export const invoiceLine = z
 const createInvoiceBody = z
   .object({
     shipmentId: z.uuid(),
+    kind: z.enum(INVOICE_KINDS).optional(),
+    // The old Q3 confirmation: accepted and ignored, so a page opened before ب3 still works.
     acknowledgedInvoiceIds: z.array(z.uuid()).max(MAX_ACKNOWLEDGED_INVOICES).optional(),
   })
   .strict();
@@ -183,8 +186,8 @@ export class InvoicesController {
   @Post()
   @RequirePermission('customer_invoices:create')
   create(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<CustomerInvoiceDto> {
-    const { shipmentId, acknowledgedInvoiceIds } = parse(createInvoiceBody, body);
-    return this.invoices.createForShipment(user, shipmentId, acknowledgedInvoiceIds);
+    const { shipmentId, kind } = parse(createInvoiceBody, body);
+    return this.invoices.createForShipment(user, shipmentId, kind);
   }
 
   /** A customer's open invoice at go-live (annex C rule 15), approved and posted at once. */

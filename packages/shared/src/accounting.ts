@@ -80,6 +80,13 @@ export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 export const INVOICE_STATUSES = ['DRAFT', 'APPROVED', 'CANCELLED'] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
+/**
+ * A shipment has one live MAIN invoice; ADDITIONAL invoices bill charges that came after it and
+ * are not on it (client decision ب3, docs/plans/06-client-decisions-v2.md). Set on creation.
+ */
+export const INVOICE_KINDS = ['MAIN', 'ADDITIONAL'] as const;
+export type InvoiceKind = (typeof INVOICE_KINDS)[number];
+
 export const PAYMENT_STATUSES = ['UNPAID', 'PARTIAL', 'PAID'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
@@ -289,6 +296,12 @@ export interface CustomerInvoiceSummaryDto {
   balance: DecimalString;
   /** PAID once payments and credit notes cover the total. */
   paymentStatus: PaymentStatus;
+  kind: InvoiceKind;
+  /**
+   * The invoice still bills its shipment: a draft, or approved and not wholly credited unpaid.
+   * A shipment with a live MAIN invoice takes ADDITIONAL invoices only.
+   */
+  live: boolean;
 }
 
 export interface InvoicePaymentDto {
@@ -375,24 +388,25 @@ export interface ShipmentInvoiceRefDto {
   /** Null while the invoice is a draft. */
   number: string | null;
   status: InvoiceStatus;
+  kind: InvoiceKind;
 }
 
 /**
- * The most invoice ids a request may acknowledge. A shipment with more invoices that are not
- * cancelled takes no further invoice until some are cancelled.
+ * POST /customer-invoices: a draft for the shipment. A MAIN one (the default) is prefilled from
+ * its quotation or rate cards, and is refused while the shipment has a live MAIN invoice
+ * (SHIPMENT_ALREADY_INVOICED). An ADDITIONAL one starts with no lines and needs a live MAIN
+ * invoice (ADDITIONAL_NEEDS_MAIN). No charge type is on both kinds (CHARGE_ON_OTHER_INVOICE).
  */
-export const MAX_ACKNOWLEDGED_INVOICES = 1000;
-
-/** A draft for the shipment, prefilled from its quotation when it has one. */
 export interface CreateCustomerInvoiceRequest {
   shipmentId: string;
-  /**
-   * The ids of the shipment's invoices that are not cancelled, as the person saw them (Q3). The
-   * API compares them with the shipment's invoices under the shipment's lock and refuses (409
-   * SHIPMENT_ALREADY_INVOICED) when they differ. Left out: the shipment must have none.
-   */
-  acknowledgedInvoiceIds?: string[];
+  kind?: InvoiceKind;
 }
+
+/**
+ * `acknowledgedInvoiceIds` (the old Q3 confirmation) is still accepted, up to this many, and
+ * ignored, so a page opened before ب3 does not fail on an unknown field.
+ */
+export const MAX_ACKNOWLEDGED_INVOICES = 1000;
 
 export interface ReceiptAllocationDto {
   invoiceId: string;

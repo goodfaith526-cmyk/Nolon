@@ -201,8 +201,9 @@ export class InvoiceDraftsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ): Promise<InvoiceDraftDto> {
-    const { version, acknowledgedInvoiceIds } = parse(approveBody, body);
-    return this.drafts.approve(user, id, version, 'SESSION', acknowledgedInvoiceIds);
+    // acknowledgedInvoiceIds (the old Q3 confirmation) is accepted and ignored (ب3).
+    const { version } = parse(approveBody, body);
+    return this.drafts.approve(user, id, version, 'SESSION');
   }
 
   @Post(':id/reject')

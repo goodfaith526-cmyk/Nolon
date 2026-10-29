@@ -509,8 +509,8 @@ describe('invoice drafts: a person reviews', () => {
   });
 });
 
-describe('invoice drafts for a shipment that already has invoices (Q3)', () => {
-  it('the review screen lists them and its approval names them; the chat sends it there', async () => {
+describe('invoice drafts for a shipment that already has invoices (ب3)', () => {
+  it('a draft is the main invoice: refused while the shipment has a live one, in both screens', async () => {
     await r
       .put(`/users/${agentIds.financeAgent}/assistant-approvals`, cookies.admin, {
         kinds: ['invoice', 'receipt'],
@@ -521,55 +521,90 @@ describe('invoice drafts for a shipment that already has invoices (Q3)', () => {
       await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
     ).body as CustomerInvoiceDto;
     const draft = await invoiceDraft(invoiceRequest(shipmentId));
-    expect(draft.shipmentInvoices).toEqual([{ id: first.id, number: null, status: 'DRAFT' }]);
+    // The shapes erp-agents reads (nolon-fields.generated.ts): the same fields, and `kind`.
+    expect(draft.shipmentInvoices).toEqual([
+      { id: first.id, number: null, status: 'DRAFT', kind: 'MAIN' },
+    ]);
     const suggestion = (
       await r.agentPost('/invoice-drafts/suggest', tokens.finance, { shipmentId }).expect(200)
     ).body as InvoiceSuggestionDto;
-    expect(suggestion.shipmentInvoices.map((i) => i.id)).toEqual([first.id]);
+    expect(suggestion.shipmentInvoices).toEqual(draft.shipmentInvoices);
 
-    // Without the invoices named, or with others, nothing is written and the draft stays open.
+    // Naming the invoices (the old Q3 confirmation) opens nothing.
     for (const body of [
       { version: 1 },
       { version: 1, acknowledgedInvoiceIds: [] },
-      { version: 1, acknowledgedInvoiceIds: [randomUUID()] },
+      { version: 1, acknowledgedInvoiceIds: [first.id] },
       { version: 1, acknowledgedInvoiceIds: [first.id, randomUUID()] },
     ]) {
       const res = await r.post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, body);
       expect(res.status).toBe(409);
       expect(res.body).toMatchObject({
         code: 'SHIPMENT_ALREADY_INVOICED',
-        params: { approved: '—', drafts: '1' },
+        params: { invoices: '—', drafts: '1' },
       });
     }
-    // The assistant's chat cannot list them: the approval is sent to the review screen.
     const card = (
       await r.agentGet(`/invoice-drafts/${draft.id}/assistant`, tokens.finance).expect(200)
     ).body as AssistantDraftDto<InvoiceDraftDto>;
     const chat = await r.agentPost(
       `/invoice-drafts/${draft.id}/assistant-approve`,
       tokens.finance,
-      {
-        version: 1,
-        contentHash: card.contentHash,
-      },
+      { version: 1, contentHash: card.contentHash },
     );
     expect(chat.status).toBe(409);
-    expect(chat.body).toMatchObject({ code: 'SHIPMENT_ALREADY_INVOICED_REVIEW' });
+    expect(chat.body).toMatchObject({ code: 'SHIPMENT_ALREADY_INVOICED' });
     expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
     expect(
       await t.prisma.invoiceDraft.findUniqueOrThrow({ where: { id: draft.id } }),
     ).toMatchObject({ state: 'DRAFT', version: 1, invoiceId: null });
 
+    // With the main invoice cancelled, the draft becomes the new main invoice.
+    await r
+      .post(`/customer-invoices/${first.id}/cancel`, cookies.financePts, { reason: 'Redo' })
+      .expect(200);
     const approved = (
       await r
-        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, {
-          version: 1,
-          acknowledgedInvoiceIds: [first.id],
-        })
+        .post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, { version: 1 })
         .expect(200)
     ).body as InvoiceDraftDto;
     expect(approved).toMatchObject({ status: 'APPROVED', shipmentInvoices: [] });
-    expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(2);
+    expect(
+      await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: approved.invoiceId ?? '' } }),
+    ).toMatchObject({ kind: 'MAIN', status: 'DRAFT' });
+  });
+
+  it('a draft whose charge is on a live additional-charges invoice is refused (rule 3)', async () => {
+    const shipmentId = await shipment();
+    const main = (
+      await r.post('/customer-invoices', cookies.financePts, { shipmentId }).expect(201)
+    ).body as CustomerInvoiceDto;
+    const extra = (
+      await r
+        .post('/customer-invoices', cookies.financePts, { shipmentId, kind: 'ADDITIONAL' })
+        .expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(extra).toMatchObject({ kind: 'ADDITIONAL', lines: [] });
+    await r
+      .patch(`/customer-invoices/${extra.id}`, cookies.financePts, {
+        currency: 'USD',
+        invoiceDate: d('03-01'),
+        dueDate: d('03-31'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '50' }],
+      })
+      .expect(200);
+    await r
+      .post(`/customer-invoices/${main.id}/cancel`, cookies.financePts, { reason: 'Redo' })
+      .expect(200);
+    const draft = await invoiceDraft(invoiceRequest(shipmentId));
+    const res = await r.post(`/invoice-drafts/${draft.id}/approve`, cookies.financePts, {
+      version: 1,
+    });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: 'CHARGE_ON_OTHER_INVOICE',
+      params: { charges: 'FREIGHT', invoices: '—' },
+    });
   });
 
   it('a draft approved after the shipment is cancelled is refused', async () => {

@@ -8,11 +8,14 @@ import { api } from '@/lib/api';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
-import { InvoiceNumber } from './Invoices';
-import { OtherInvoicesCheck } from './OtherInvoicesCheck';
+import { InvoiceKindLabel, InvoiceNumber } from './Invoices';
 import { Money } from './common';
 
-/** The shipment's customer invoices, and a button that starts a draft prefilled from the quote. */
+/**
+ * The shipment's customer invoices, and a button that starts its main invoice (prefilled from the
+ * quote) or, once it has a live main invoice, an additional-charges invoice (ب3). The API decides;
+ * the button follows what it says of each invoice (`live`, `kind`).
+ */
 export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
   const t = useTranslations('Invoices');
   const me = useMe();
@@ -22,17 +25,11 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<NoticeState | null>(null);
-  // The invoices another invoice would bill the shipment on top of (Q3).
-  const live = (invoices ?? []).filter((i) => i.status !== 'CANCELLED');
-  // The tick holds for the list it was given on: once the list read changes, it is asked again,
-  // so the ids sent are always the ones the person saw (Codex F116-1).
-  const listed = live.map((i) => `${i.id}:${i.status}`).join(',');
-  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
-  const confirmed = confirmedFor === listed;
+  const hasMain = (invoices ?? []).some((i) => i.live && i.kind === 'MAIN');
   // Only the latest read is shown: an earlier one answering late is dropped.
   const reads = useRef(0);
 
-  // Every invoice of the shipment, page after page: the API compares the whole list (F116-2).
+  // Every invoice of the shipment, page after page.
   const readAll = useCallback(async () => {
     const all: CustomerInvoiceSummaryDto[] = [];
     for (let page = 1; ; page++) {
@@ -76,14 +73,13 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
     try {
       const draft = await api<CustomerInvoiceDto>('/customer-invoices', {
         method: 'POST',
-        body: { shipmentId, acknowledgedInvoiceIds: live.map((i) => i.id) },
+        body: hasMain ? { shipmentId, kind: 'ADDITIONAL' } : { shipmentId },
       });
       router.push(`/invoices/${draft.id}/edit`);
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
       setBusy(false);
-      // The shipment's invoices may have changed meanwhile: read them again, to be checked again.
-      setConfirmedFor(null);
+      // The shipment's invoices may have changed meanwhile: read them again.
       setLoading(true);
       show(++reads.current, () => true);
     }
@@ -97,26 +93,16 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
           <button
             type="button"
             className="primary"
-            disabled={busy || loading || invoices === null || (live.length > 0 && !confirmed)}
+            disabled={busy || loading || invoices === null}
             onClick={() => void create()}
           >
-            {t('create')}
+            {hasMain ? t('createAdditional') : t('create')}
           </button>
         )}
       </div>
       {notice && (
         <div className="panel-body">
           <Notice notice={notice} />
-        </div>
-      )}
-      {can(me, 'customer_invoices:create') && live.length > 0 && (
-        <div className="panel-body">
-          <OtherInvoicesCheck
-            invoices={live}
-            checked={confirmed}
-            onChange={(checked) => setConfirmedFor(checked ? listed : null)}
-            disabled={busy || loading}
-          />
         </div>
       )}
       {invoices === null ? null : invoices.length === 0 ? (
@@ -138,7 +124,8 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
                 <td className="nowrap">
                   <Link href={`/invoices/${i.id}`}>
                     <InvoiceNumber number={i.number} />
-                  </Link>
+                  </Link>{' '}
+                  <InvoiceKindLabel kind={i.kind} />
                 </td>
                 <td dir="ltr">{i.invoiceDate}</td>
                 <td dir="ltr">
