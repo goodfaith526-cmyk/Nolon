@@ -1,12 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 // Plan 03, F114-1 / F114-4: the write inventory (docs/plans/03a-permissions-write-inventory.md) is a
 // gate. It is rebuilt here from the TypeScript AST of every controller and matched against the
-// document both ways: a write route missing from the document fails, a row naming no route fails,
+// document both ways: a write route missing from the document fails, a line naming no route fails,
 // and two routes on one verb + path fail. A new write route is added to the document on purpose.
+// The document holds one line per route, sorted by path, with no row numbers, counts or padded
+// columns, so two changes that each add a route touch different lines and merge without a
+// conflict. `UPDATE_03A=1` rewrites the list from the code; review the diff before committing.
 
 const SRC = join(import.meta.dirname, '..');
 const DOC = join(SRC, '../../../docs/plans/03a-permissions-write-inventory.md');
@@ -94,25 +97,43 @@ function codeRows(): Row[] {
     );
 }
 
-function docRows(): Row[] {
-  const cell = (c: string) => c.trim().replace(/^`|`$/g, '');
-  return readFileSync(DOC, 'utf8')
+/** One route as the document writes it. */
+function inventoryLine(r: Row): string {
+  return `- ${r.verb} \`${r.path}\` · \`${r.controller}.${r.handler}\` · \`${r.file}\` · ${r.permissions}`;
+}
+
+const LINE = /^- (POST|PATCH|PUT|DELETE) `([^`]+)` · `(\w+)\.(\w+)` · `([^`]+)` · (.+)$/;
+
+/** By path, then verb, then handler: where a new route goes is fixed by the route itself. */
+function inventoryOrder(a: Row, b: Row): number {
+  const at = [a.path, a.verb, a.controller, a.handler];
+  const bt = [b.path, b.verb, b.controller, b.handler];
+  for (let i = 0; i < at.length; i++) {
+    const c = (at[i] ?? '') < (bt[i] ?? '') ? -1 : (at[i] ?? '') > (bt[i] ?? '') ? 1 : 0;
+    if (c) return c;
+  }
+  return 0;
+}
+
+const docLines = (): string[] =>
+  readFileSync(DOC, 'utf8')
     .split('\n')
-    .filter((line) => /^\|\s*\d+\s*\|/.test(line))
-    .map((line) => {
-      const [, file, controller, verb, path, handler, permissions] = line
-        .split('|')
-        .slice(1, -1)
-        .map(cell);
-      return {
-        file: file ?? '',
-        controller: controller ?? '',
-        verb: verb ?? '',
-        path: path ?? '',
-        handler: handler ?? '',
-        permissions: permissions ?? '',
-      };
-    });
+    .filter((line) => line.startsWith('- ') && /^- (POST|PATCH|PUT|DELETE) /.test(line));
+
+function docRows(): Row[] {
+  return docLines().map((line) => {
+    const m = LINE.exec(line);
+    if (!m) throw new Error(`03a: unreadable line: ${line}`);
+    const [, verb, path, controller, handler, file, permissions] = m;
+    return {
+      verb: verb ?? '',
+      path: path ?? '',
+      controller: controller ?? '',
+      handler: handler ?? '',
+      file: file ?? '',
+      permissions: permissions ?? '',
+    };
+  });
 }
 
 const key = (r: Row) => `${r.verb} ${r.path} ${r.controller}.${r.handler}`;
@@ -141,8 +162,54 @@ describe('the write inventory gate', () => {
     );
   });
 
+  it('writes one sortable line per route and reads it back', () => {
+    const rows: Row[] = [
+      {
+        file: 'b.controller.ts',
+        controller: 'B',
+        verb: 'POST',
+        path: '/b',
+        handler: 'x',
+        permissions: 'p:create',
+      },
+      {
+        file: 'a.controller.ts',
+        controller: 'A',
+        verb: 'DELETE',
+        path: '/a/:id',
+        handler: 'y',
+        permissions: '—',
+      },
+      {
+        file: 'a.controller.ts',
+        controller: 'A',
+        verb: 'PATCH',
+        path: '/a/:id',
+        handler: 'z',
+        permissions: 'p:update',
+      },
+    ];
+    expect([...rows].sort(inventoryOrder).map(inventoryLine)).toEqual([
+      '- DELETE `/a/:id` · `A.y` · `a.controller.ts` · —',
+      '- PATCH `/a/:id` · `A.z` · `a.controller.ts` · p:update',
+      '- POST `/b` · `B.x` · `b.controller.ts` · p:create',
+    ]);
+    for (const r of rows) {
+      const m = LINE.exec(inventoryLine(r));
+      expect(m?.slice(1)).toEqual([r.verb, r.path, r.controller, r.handler, r.file, r.permissions]);
+    }
+  });
+
   it('matches the code both ways, with its permissions, and no route twice', () => {
     const code = codeRows();
+    if (process.env.UPDATE_03A === '1') {
+      const lines = [...code].sort(inventoryOrder).map(inventoryLine);
+      const current = readFileSync(DOC, 'utf8').split('\n');
+      const first = current.findIndex((l) => /^- (POST|PATCH|PUT|DELETE) /.test(l));
+      const kept = current.filter((l) => !/^- (POST|PATCH|PUT|DELETE) /.test(l));
+      kept.splice(first, 0, ...lines);
+      writeFileSync(DOC, kept.join('\n'));
+    }
     const doc = docRows();
     const routes = code.map((r) => `${r.verb} ${r.path}`);
     expect(routes.filter((r, i) => routes.indexOf(r) !== i)).toEqual([]);
@@ -161,5 +228,9 @@ describe('the write inventory gate', () => {
       expect(docKeys.get(k)?.permissions, k).toBe(r.permissions);
       expect(docKeys.get(k)?.file, k).toBe(r.file);
     }
+    // Sorted, so a new route has one place to go and two new routes rarely meet.
+    expect(docLines(), 'not sorted by path (UPDATE_03A=1 rewrites it)').toEqual(
+      [...doc].sort(inventoryOrder).map(inventoryLine),
+    );
   });
 });
