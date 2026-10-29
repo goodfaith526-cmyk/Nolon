@@ -202,7 +202,7 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
             </div>
           )}
           {stating && (
-            <form className="card row" autoComplete="off" onSubmit={makeStatement}>
+            <form className="card row" autoComplete="off" onSubmit={(e) => void makeStatement(e)}>
               <strong>
                 {stating.branchCode} · {stating.currency}
               </strong>
