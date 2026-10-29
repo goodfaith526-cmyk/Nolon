@@ -221,6 +221,47 @@ export const NON_GRANTABLE_MODULES: readonly PermissionModule[] = ['users', 'acc
  */
 export const RESTRICTED_ROLES: readonly Role[] = ['DRIVER', 'OUTLET_STAFF'];
 
+/**
+ * Restricted roles whose team the owner may widen like any other team (owner, 2026-10-28: the
+ * owner sets Outlet Staff's permissions, the matrix is only its default). Their row filter still
+ * applies whatever the team holds; the Driver's team only loses permissions.
+ */
+export const WIDENABLE_RESTRICTED_ROLES: readonly Role[] = ['OUTLET_STAFF'];
+
+/** Whether a team takes permissions beyond its defaults (an unrestricted or widenable team). */
+export function takesAddedPermissions(team: {
+  restricted: boolean;
+  systemRole: Role | null;
+}): boolean {
+  return (
+    !team.restricted ||
+    (team.systemRole !== null && WIDENABLE_RESTRICTED_ROLES.includes(team.systemRole))
+  );
+}
+
+/**
+ * The permissions that work for Outlet Staff today: those of the routes built for the outlet
+ * filter (@OutletScoped, checked by a test). Any other permission their team is given is held but
+ * refused on every route until that route filters by outlet (plan 4.2).
+ */
+export const OUTLET_READY_PERMISSIONS: readonly Permission[] = [
+  'bookings:create',
+  'bookings:update',
+  'bookings:view',
+  'customers:create',
+  'customers:update',
+  'customers:view',
+  'documents:create',
+  'documents:view',
+  'master_data:view',
+  'partners:view',
+  'quotations:create',
+  'quotations:update',
+  'quotations:view',
+  'rates:view',
+  'shipments:view',
+];
+
 /** Modules where the Driver sees and edits only the trips assigned to them. */
 export const DRIVER_OWN_TRIPS_ONLY: readonly PermissionModule[] = [
   'shipments',

@@ -16,6 +16,7 @@ import {
   CONSOLIDATION_MOVES,
   CONSOLIDATION_STATUSES,
   CONTAINER_NUMBER_PATTERN,
+  SHIPMENT_REASON_MIN_LENGTH,
   type BillableConsolidationDto,
   type ConsolidationBookingDto,
   type ConsolidationDto,
@@ -85,6 +86,18 @@ const moveBody = z
   })
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
+/**
+ * B3-5: `requestId` is made once per attempt by the screen; `expectedRevision` is the
+ * `reopenRevision` it read.
+ */
+const reopenBody = z
+  .object({
+    requestId: z.uuid(),
+    expectedRevision: z.number().int().min(0),
+    expectedStatus: z.literal('CLOSED'),
+    reason: requiredText(500).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH)),
+  })
+  .strict();
 const bookingBody = bookingCreateBody.omit({
   mode: true,
   loadType: true,
@@ -248,6 +261,18 @@ export class ConsolidationsController {
     @Body() body: unknown,
   ): Promise<ConsolidationDto> {
     return this.consolidations.cancel(user, id, parse(reasonBody, body).reason);
+  }
+
+  /** Opens a container closed by mistake again, before any cost (B3-5); its own branch only. */
+  @Post(':id/reopen')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('consolidation:cancel')
+  reopen(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ConsolidationDto> {
+    return this.consolidations.reopen(user, id, parse(reopenBody, body));
   }
 }
 

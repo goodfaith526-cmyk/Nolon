@@ -1,12 +1,15 @@
 'use client';
 
-import type {
-  AccessCatalogDto,
-  AccessTeamDto,
-  CreateTeamRequest,
-  Permission,
-  PermissionModule,
-  UpdateTeamRequest,
+import {
+  OUTLET_READY_PERMISSIONS,
+  permissionModule,
+  takesAddedPermissions,
+  type AccessCatalogDto,
+  type AccessTeamDto,
+  type CreateTeamRequest,
+  type Permission,
+  type PermissionModule,
+  type UpdateTeamRequest,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
@@ -20,6 +23,26 @@ import {
   useAccessLabels,
   useAccessNotice,
 } from './AccessCommon';
+
+/** What works for Outlet Staff today: the routes built for the outlet filter. */
+const OUTLET_READY: ReadonlySet<Permission> = new Set(OUTLET_READY_PERMISSIONS);
+
+/** Money, costs and margins: the screen warns before the Outlet Staff team holds them. */
+const SENSITIVE_MODULES: ReadonlySet<PermissionModule> = new Set<PermissionModule>([
+  'rate_costs',
+  'customer_invoices',
+  'credit_notes',
+  'receipts',
+  'suppliers',
+  'partner_contracts',
+  'supplier_payments',
+  'expenses',
+  'manual_journals',
+  'chart_of_accounts',
+  'fx_rates',
+  'shipment_profitability',
+  'financial_reports',
+]);
 
 /** The forms' fields; the tab adds the catalog's version (F118-3). */
 type NewTeamFields = Omit<CreateTeamRequest, 'expectedVersion'>;
@@ -187,10 +210,20 @@ function TeamEditor({
   onUpdate: (body: TeamFields) => Promise<void>;
 }) {
   const t = useTranslations('Access');
-  const { name } = useAccessLabels();
+  const { name, list, permissionLabel } = useAccessLabels();
   const [permissions, setPermissions] = useState<Permission[]>(team.permissions);
   const [busy, setBusy] = useState(false);
-  const editable = canEdit && !team.restricted;
+  // The Driver's restricted team only loses permissions and gets them back (the API and a
+  // trigger refuse more); the Outlet Staff team takes any, its outlet filter applying always.
+  const editable = canEdit;
+  const offered = takesAddedPermissions(team)
+    ? catalog.grantable
+    : catalog.grantable.filter((p) => team.defaults?.includes(p));
+  const outletTeam = team.systemRole === 'OUTLET_STAFF';
+  const notReady = outletTeam ? permissions.filter((p) => !OUTLET_READY.has(p)) : [];
+  const sensitive = outletTeam
+    ? permissions.filter((p) => SENSITIVE_MODULES.has(permissionModule(p)))
+    : [];
   const grantable = new Set(catalog.grantable);
   // What the screen cannot offer (users, access control) stays as the team holds it.
   const locked = team.permissions.filter((p) => !grantable.has(p));
@@ -232,9 +265,21 @@ function TeamEditor({
           {!team.isActive && <span className="badge">{t('inactive')}</span>}
         </span>
       </div>
-      {team.restricted && <p className="muted">{t('restrictedTeam')}</p>}
+      {team.restricted && (
+        <p className="muted">{t(outletTeam ? 'outletTeam' : 'restrictedTeam')}</p>
+      )}
+      {sensitive.length > 0 && (
+        <p className="warning">
+          {t('outletSensitive', { permissions: list(sensitive.map(permissionLabel)) })}
+        </p>
+      )}
+      {notReady.length > 0 && (
+        <p className="warning">
+          {t('outletNotReady', { permissions: list(notReady.map(permissionLabel)) })}
+        </p>
+      )}
 
-      {editable && (
+      {editable && !team.restricted && (
         <form className="grid" onSubmit={(e) => void rename(e)}>
           <label className="field">
             <span>{t('nameAr')}</span>
@@ -255,7 +300,7 @@ function TeamEditor({
       <PermissionPicker
         label={name(team)}
         modules={catalog.modules}
-        offered={editable ? catalog.grantable : []}
+        offered={editable ? offered : []}
         value={permissions}
         locked={locked}
         disabled={!editable || busy}

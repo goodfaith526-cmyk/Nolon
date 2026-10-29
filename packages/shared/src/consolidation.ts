@@ -167,6 +167,10 @@ export interface ConsolidationDto extends ConsolidationSummaryDto {
    * open (to book into) or once it holds their shipment: their own shipments only, no costs.
    */
   ownBranch: boolean;
+  /** How many times the container was reopened: the `expectedRevision` of the next reopening. */
+  reopenRevision: number;
+  /** The closes taken back, oldest first (the container's own branch only). */
+  reopenings: ConsolidationReopeningDto[];
   actions: {
     canEdit: boolean;
     /** Put an LCL shipment in (another branch: one of its own shipments). */
@@ -177,7 +181,32 @@ export interface ConsolidationDto extends ConsolidationSummaryDto {
     canAddBooking: boolean;
     moves: ConsolidationMove[];
     canCancel: boolean;
+    /** Open a closed container again (B3-5): consolidation:cancel in the container's branch. */
+    canReopen: boolean;
   };
+}
+
+/** A close taken back (B3-5): when the container had been closed, and why it was reopened. */
+export interface ConsolidationReopeningDto {
+  revision: number;
+  closedAt: string;
+  reason: string;
+  reopenedAt: string;
+  reopenedByName: string;
+  /** The shipments that went back to their step before the close. */
+  shipmentCount: number;
+}
+
+/**
+ * `POST /consolidations/:id/reopen` (B3-5). `requestId` is made once per attempt by the screen; a
+ * retry with the same id and content returns the container as it is. `expectedRevision` is the
+ * `reopenRevision` the screen read.
+ */
+export interface ConsolidationReopenRequest {
+  requestId: string;
+  expectedRevision: number;
+  expectedStatus: 'CLOSED';
+  reason: string;
 }
 
 export interface ConsolidationInput {

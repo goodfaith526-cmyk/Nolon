@@ -1037,7 +1037,7 @@ export class ShipmentsService {
         throw codedRefusal(
           HttpStatus.CONFLICT,
           'REVERT_CLOSED_CONTAINER',
-          `The shipment is in closed container ${link.consolidation.number}; its consolidation is final`,
+          `The shipment is in closed container ${link.consolidation.number}: reopen the container to undo its consolidation`,
           { container: link.consolidation.number },
         );
       }
@@ -2009,8 +2009,8 @@ function sharedIds(s: { sharedBranches: readonly { branchId: string }[] }): stri
 }
 
 /**
- * B2 (F110-6): no way exists yet to take a shipment off a trip that has left or out of a closed
- * container, so the refusal says what can be done now instead of promising a correction.
+ * B2 (F110-6): the refusal says what can be done instead: the trip's departure can be taken back
+ * (B3-4) and a closed container reopened (B3-5) from their pages.
  */
 function cancelRefusal(shipment: string, blocker: ShipmentLinkBlocker): HttpException {
   return blocker.record === 'TRIP'
@@ -2023,7 +2023,7 @@ function cancelRefusal(shipment: string, blocker: ShipmentLinkBlocker): HttpExce
     : codedRefusal(
         HttpStatus.CONFLICT,
         'SHIPMENT_CANCEL_IN_CONTAINER',
-        `Shipment ${shipment} is in container ${blocker.number}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or ask a manager for a correction`,
+        `Shipment ${shipment} is in container ${blocker.number}, which is closed: it cannot be cancelled from here. Unpack the container at its destination, or reopen it while it is closed and nothing was charged to it`,
         { shipment, container: blocker.number },
       );
 }
