@@ -1306,7 +1306,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       throw codedRefusal(
         HttpStatus.CONFLICT,
         'SHIPMENT_ALREADY_INVOICED',
-        `Shipment ${await shipment()} has a main invoice (${numbersOf(mains)}): bill new charges on an additional-charges invoice, or credit the main invoice in full first`,
+        `Shipment ${await shipment()} already has its invoice (${numbersOf(mains)}): bill new services on an additional services invoice, or credit the invoice in full first`,
         {
           shipment: await shipment(),
           invoices: numbersOf(mains),
@@ -1319,7 +1319,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       throw codedRefusal(
         HttpStatus.CONFLICT,
         'ADDITIONAL_NEEDS_MAIN',
-        `Shipment ${number} has no main invoice: create the main invoice first`,
+        `Shipment ${number} has no invoice yet: create its invoice first`,
         { shipment: number },
       );
     }
@@ -1339,7 +1339,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       throw codedRefusal(
         HttpStatus.CONFLICT,
         'CHARGE_ON_OTHER_INVOICE',
-        `Shipment ${number}: ${codes.join(', ')} already on ${numbersOf(clashing)}, an invoice of the other kind; a charge type is on the main invoice or on additional-charges invoices, not both`,
+        `Shipment ${number}: ${codes.join(', ')} already on ${numbersOf(clashing)}: a charge type is on the shipment's invoice or on additional services invoices, not both`,
         { shipment: number, charges: codes.join(', '), invoices: numbersOf(clashing) },
       );
     }
