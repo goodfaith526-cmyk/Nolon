@@ -12,7 +12,6 @@ import type {
   InvoicesReceiptsDto,
   JournalEntryDto,
   OpenAccrualsDto,
-  Page,
   PartnerDto,
   ReceiptDto,
   ReportAccountOptionDto,
