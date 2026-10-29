@@ -124,13 +124,33 @@ describe('PartnerCommissions', () => {
     );
   });
 
-  it('offers neither the adjustment nor the recompute where the API does not allow them', async () => {
+  it('offers no adjustment, recompute or statement where the API does not allow them', async () => {
     data = page({
       canAdjust: false,
       holds: page().holds.map((h) => ({ ...h, canRecompute: false })),
+      balances: page().balances.map((b) => ({ ...b, canStatement: false })),
     });
     const shown = await show();
     expect(buttons(shown, 'adjust')).toHaveLength(0);
     expect(buttons(shown, 'recompute')).toHaveLength(0);
+    expect(buttons(shown, 'makeStatement')).toHaveLength(0);
+  });
+
+  it('lists the statements and makes one of an open balance', async () => {
+    data = page();
+    const shown = await show();
+    expect(shown.textContent).toContain('NOL-PST-2026-000001');
+    expect(shown.textContent).toContain('statementStatus_BILLED');
+    act(() => buttons(shown, 'makeStatement')[0]?.click());
+    const form = shown.querySelector('form');
+    const date = form?.querySelector<HTMLInputElement>('input[name="periodTo"]');
+    if (!form || !date) throw new Error('no statement form');
+    date.value = '2026-10-28';
+    act(() => form.requestSubmit());
+    await act(() => Promise.resolve());
+    const post = calls.find((c) => c.method === 'POST');
+    expect(post?.path).toBe('/partners/p1/statements');
+    expect(post?.body).toEqual({ branchId: 'b1', currency: 'USD', periodTo: '2026-10-28' });
+    expect(pushed).toEqual(['/partner-statements/st2']);
   });
 });
