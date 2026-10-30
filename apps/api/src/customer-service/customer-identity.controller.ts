@@ -27,6 +27,7 @@ import {
   updateIdentityBody,
   followUpIdentityBody,
   identityKey,
+  selfIdentityQuery,
 } from './customer-identity.contract.js';
 import { CustomerIdentityService } from './customer-identity.service.js';
 
@@ -41,6 +42,19 @@ export class CustomerIdentityController {
     private readonly auth: CustomerIdentityAuth,
     private readonly masterData: MasterDataService,
   ) {}
+
+  @Get('customer-profiles/self')
+  self(
+    @CurrentApiClient() client: ApiClientAuth,
+    @Query() query: unknown,
+    @Req() req: RawBodyRequest<Request>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const input = parse(selfIdentityQuery, query);
+    const envelope = this.auth.verify(client.id, req);
+    res.setHeader('Cache-Control', 'no-store');
+    return this.identity.self(client.id, input.conversationId, envelope);
+  }
 
   @Get('customer-profiles/residence-cities')
   async cities(

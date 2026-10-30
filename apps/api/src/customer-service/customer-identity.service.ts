@@ -18,6 +18,9 @@ import {
   type IdentityFollowUp,
   type IdentityResult,
   type IdentityFields,
+  PROFILE_FIELDS,
+  type SelfProfileField,
+  type SelfProfileResult,
 } from './customer-identity.contract.js';
 
 type Tx = Prisma.TransactionClient;
@@ -467,6 +470,103 @@ export class CustomerIdentityService {
       if (!row || !sameSender(row.identity, envelope)) identityError(404, 'OPERATION_NOT_FOUND');
       requireUnexpired(row.createdAt);
       return row.result as unknown as IdentityResult;
+    });
+  }
+
+  /** Current accepted values only. A signed sender and this key's existing conversation are required. */
+  async self(
+    clientId: string,
+    conversationId: string,
+    envelope: IdentityEnvelope,
+  ): Promise<SelfProfileResult> {
+    return this.prisma.$transaction(async (tx) => {
+      await this.requireKey(tx, clientId);
+      // Same order as capture / human identity resolution; serializes blocking/linking with the read.
+      await identityLock(
+        tx,
+        `${this.auth.companyId}:identity:${envelope.context.channel}:${envelope.context.subjectId}`,
+      );
+      const conversation = await tx.customerProfileConversation.findUnique({
+        where: {
+          companyId_apiClientId_conversationId: {
+            companyId: this.auth.companyId,
+            apiClientId: clientId,
+            conversationId,
+          },
+        },
+        include: { identity: true },
+      });
+      if (
+        !conversation ||
+        !sameSender(conversation.identity, envelope) ||
+        conversation.identity.blocked
+      )
+        identityError(404, 'PROFILE_NOT_BOUND');
+      if (!conversation.identity.profileId) identityError(409, 'IDENTITY_REVIEW_REQUIRED');
+      const id = conversation.identity.profileId;
+      // Keep version, values, and provenance in one consistent read relative to all profile writers.
+      await tx.$queryRaw`SELECT id FROM customer_profiles WHERE id = ${id}::uuid AND company_id = ${this.auth.companyId} FOR SHARE`;
+      const profile = await tx.customerProfile.findFirst({
+        where: { id, companyId: this.auth.companyId },
+      });
+      if (!profile) identityError(404, 'PROFILE_NOT_BOUND');
+      const fields = {} as SelfProfileResult['fields'];
+      for (const field of PROFILE_FIELDS) {
+        const value = profile[field];
+        if (value === null) {
+          fields[field] = { value: null, source: null, verification: 'MISSING', observedAt: null };
+          continue;
+        }
+        const proof = await tx.customerProfileEvidence.findFirst({
+          where: { profileId: profile.id, field, value, applied: true },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { source: true, verified: true, observedAt: true },
+        });
+        let source: SelfProfileField['source'] = 'UNRECORDED';
+        if (
+          proof?.source === 'CUSTOMER_STATEMENT' ||
+          (field === 'phone' &&
+            (proof?.source === 'WHATSAPP_SENDER' || proof?.source === 'TELEGRAM_OWN_CONTACT'))
+        )
+          source = proof.source;
+        const channelVerified =
+          field === 'phone' &&
+          profile.phoneVerified &&
+          proof?.verified &&
+          (source === 'WHATSAPP_SENDER' || source === 'TELEGRAM_OWN_CONTACT');
+        fields[field] = {
+          value,
+          source,
+          verification:
+            source === 'UNRECORDED'
+              ? 'UNKNOWN'
+              : channelVerified
+                ? 'CHANNEL_VERIFIED'
+                : 'UNVERIFIED',
+          observedAt: source === 'UNRECORDED' ? null : proof!.observedAt.toISOString(),
+        };
+      }
+      return {
+        schemaVersion: IDENTITY_VERSION,
+        profileId: profile.id,
+        profileVersion: profile.version,
+        fields,
+        missing: PROFILE_FIELDS.filter((field) => profile[field] === null),
+        needsReview: profile.needsReview,
+        followUp: {
+          status: profile.followUpReview
+            ? 'NEEDS_REVIEW'
+            : profile.followUpBranchId
+              ? 'ASSIGNED'
+              : 'UNASSIGNED',
+          branchId: profile.followUpBranchId,
+          reason: profile.followUpReview
+            ? 'REVIEW_REQUIRED'
+            : !profile.residenceCityId && !profile.followUpBranchId
+              ? 'NO_RESIDENCE'
+              : null,
+        },
+      };
     });
   }
 }

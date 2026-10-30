@@ -15,7 +15,10 @@ import {
 } from './auth-test-app.js';
 import { newApiKey } from '../src/customer-service/api-key.js';
 import { sha256 } from '../src/customer-service/customer-identity-auth.js';
-import type { IdentityResult } from '../src/customer-service/customer-identity.contract.js';
+import type {
+  IdentityResult,
+  SelfProfileResult,
+} from '../src/customer-service/customer-identity.contract.js';
 
 const bookingExamples = JSON.parse(
   readFileSync(
@@ -475,6 +478,19 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       expect((await post(input, idem).expect(410)).body as { code: string }).toMatchObject({
         code: 'OPERATION_RESULT_EXPIRED',
       });
+      const live = await call(
+        'get',
+        `/cs/customer-profiles/self?conversationId=${input.conversationId}`,
+        {},
+        '',
+        clientId,
+        key.key,
+        input.sender,
+      ).expect(200);
+      expect(live.body as unknown).toMatchObject({
+        profileId: r.profileId,
+        profileVersion: r.profileVersion,
+      });
     } finally {
       clock.mockRestore();
     }
@@ -578,6 +594,21 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       branchId: jed,
       reason: 'SEVERAL_RULES',
     });
+    const live = await call(
+      'get',
+      `/cs/customer-profiles/self?conversationId=${input.conversationId}`,
+      {},
+      '',
+      clientId,
+      key.key,
+      input.sender,
+    ).expect(200);
+    expect((live.body as SelfProfileResult).followUp).toEqual({
+      status: 'NEEDS_REVIEW',
+      branchId: jed,
+      reason: 'REVIEW_REQUIRED',
+    });
+    expect((live.body as SelfProfileResult).fields.residenceCityId.value).toBe(destinationId);
   });
   it.each([false, true])(
     'signed booking approval without re-entry or invented Telegram phone (unverified contact %s)',
@@ -925,6 +956,255 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       (await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: foreign.id } })).name,
     ).toBe('Other company');
   });
+  describe('GET customer-profiles/self', () => {
+    const path = (conversationId: string) =>
+      `/cs/customer-profiles/self?conversationId=${encodeURIComponent(conversationId)}`;
+    const read = (input: Body, client = clientId, token = key.key) =>
+      call('get', path(input.conversationId), {}, '', client, token, input.sender);
+    const current = (response: { body: unknown }) => response.body as SelfProfileResult;
+
+    it('reads the current anonymous Telegram profile without a phone, writes nothing, and forbids caching', async () => {
+      const input = capture();
+      const made = result(await post(input).expect(201));
+      const before = await t.prisma.customerProfileOperation.count({ where: { companyId } });
+      const response = await read(input).expect(200);
+      const fixture = JSON.parse(
+        readFileSync(
+          new URL('../../../docs/plans/08d-customer-profile-self-examples.json', import.meta.url),
+          'utf8',
+        ),
+      ) as { emptyProfile: SelfProfileResult };
+      expect(current(response)).toEqual({ ...fixture.emptyProfile, profileId: made.profileId });
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(await t.prisma.customerProfileOperation.count({ where: { companyId } })).toBe(before);
+      expect(Object.keys(response.body as object).sort()).toEqual(
+        [
+          'schemaVersion',
+          'profileId',
+          'profileVersion',
+          'fields',
+          'missing',
+          'needsReview',
+          'followUp',
+        ].sort(),
+      );
+      await t
+        .http()
+        .get('/api/v1/cs/customers?phone=%2B249900000001')
+        .set('Authorization', `Bearer ${key.key}`)
+        .expect(403);
+    });
+
+    it('reads newly accepted values instead of an earlier operation result; proposals never replace them', async () => {
+      const input = capture({
+        fields: { name: { value: 'Accepted sender', source: 'CUSTOMER_STATEMENT' } },
+      });
+      const made = result(await post(input).expect(201));
+      const patched = result(
+        await call('patch', `/cs/customer-profiles/${made.profileId}`, {
+          ...input,
+          expectedVersion: made.profileVersion,
+          fields: { address: { value: 'Explicit address', source: 'CUSTOMER_STATEMENT' } },
+        }).expect(200),
+      );
+      const proposed = result(
+        await call('patch', `/cs/customer-profiles/${made.profileId}`, {
+          ...input,
+          expectedVersion: patched.profileVersion,
+          fields: { name: { value: 'Rejected candidate name', source: 'CUSTOMER_STATEMENT' } },
+        }).expect(200),
+      );
+      const view = current(await read(input).expect(200));
+      expect(view.profileVersion).toBe(proposed.profileVersion);
+      expect(view.needsReview).toBe(true);
+      expect(view.fields.name).toEqual({
+        value: 'Accepted sender',
+        source: 'CUSTOMER_STATEMENT',
+        verification: 'UNVERIFIED',
+        observedAt: input.sender.observedAt,
+      });
+      expect(view.fields.address.value).toBe('Explicit address');
+      expect(JSON.stringify(view)).not.toContain('Rejected candidate name');
+      await t
+        .http()
+        .post(`/api/v1/customer-profiles/${made.profileId}/reject-proposals`)
+        .set('Cookie', staffCookie)
+        .set('Origin', APP_ORIGIN)
+        .send({
+          expectedVersion: proposed.profileVersion,
+          proofNote: 'Authorised staff rejected the proposed receiver name',
+        })
+        .expect(201);
+      const after = current(await read(input).expect(200));
+      expect(after.needsReview).toBe(false);
+      expect(after.profileVersion).toBe(proposed.profileVersion! + 1);
+    });
+
+    it('shows a corrected current value without borrowing provenance from the old value', async () => {
+      const input = capture({
+        fields: { name: { value: 'Before correction', source: 'CUSTOMER_STATEMENT' } },
+      });
+      const made = result(await post(input).expect(201));
+      // Simulate the committed profile write of an authorised staff correction, not a new public edit API.
+      await t.prisma.$transaction(async (tx) => {
+        await tx.customerProfile.update({
+          where: { id: made.profileId! },
+          data: { name: 'Corrected by staff', version: { increment: 1 } },
+        });
+        await tx.customerProfileReview.create({
+          data: {
+            companyId,
+            actorId: creatorId,
+            entityId: made.profileId!,
+            action: 'PROFILE_CORRECTION',
+            reason: 'Synthetic authorised correction fixture',
+            snapshot: { field: 'name' },
+          },
+        });
+      });
+      const view = current(await read(input).expect(200));
+      expect(view.profileVersion).toBe(made.profileVersion! + 1);
+      expect(view.fields.name).toEqual({
+        value: 'Corrected by staff',
+        source: 'UNRECORDED',
+        verification: 'UNKNOWN',
+        observedAt: null,
+      });
+    });
+
+    it('only labels the current matching channel-proved phone as verified', async () => {
+      const input = capture({ sender: sender({ channel: 'WHATSAPP', subjectId: uniquePhone() }) });
+      const made = result(await post(input).expect(201));
+      expect(current(await read(input).expect(200)).fields.phone).toEqual({
+        value: input.sender.subjectId,
+        source: 'WHATSAPP_SENDER',
+        verification: 'CHANNEL_VERIFIED',
+        observedAt: input.sender.observedAt,
+      });
+      await t.prisma.customerProfile.update({
+        where: { id: made.profileId! },
+        data: { phone: uniquePhone(), version: { increment: 1 } },
+      });
+      expect(current(await read(input).expect(200)).fields.phone.verification).toBe('UNKNOWN');
+    });
+
+    it('requires the same sender, key and previously bound conversation, and rejects model selectors', async () => {
+      const input = capture();
+      await post(input).expect(201);
+      await read({ ...input, sender: sender() }).expect(404);
+      await read({ ...input, conversationId: randomUUID() }).expect(404);
+      await read(input, otherId, otherKey.key).expect(404);
+      await call(
+        'get',
+        path(input.conversationId) + '&profileId=' + randomUUID(),
+        {},
+        '',
+        clientId,
+        key.key,
+        input.sender,
+      ).expect(400);
+      await t
+        .http()
+        .get('/api/v1' + path(input.conversationId))
+        .set('Authorization', `Bearer ${key.key}`)
+        .expect(401);
+      const identity = await t.prisma.customerChannelIdentity.findFirstOrThrow({
+        where: { companyId, subjectId: input.sender.subjectId },
+      });
+      await t.prisma.customerChannelIdentity.update({
+        where: { id: identity.id },
+        data: { blocked: true },
+      });
+      await read(input).expect(404);
+    });
+
+    it('ignores a same-key conversation in another company and never creates or binds on GET', async () => {
+      const input = capture();
+      const foreignCompany = `other-${randomUUID()}`;
+      const foreignProfile = await t.prisma.customerProfile.create({
+        data: {
+          companyId: foreignCompany,
+          number: `CP${randomUUID().slice(0, 8)}`,
+          name: 'Other company customer',
+        },
+      });
+      const foreign = await t.prisma.customerChannelIdentity.create({
+        data: {
+          companyId: foreignCompany,
+          channel: 'TELEGRAM',
+          subjectId: input.sender.subjectId,
+          observedAt: new Date(),
+          profileId: foreignProfile.id,
+        },
+      });
+      await t.prisma.customerProfileConversation.create({
+        data: {
+          companyId: foreignCompany,
+          apiClientId: clientId,
+          conversationId: input.conversationId,
+          identityId: foreign.id,
+        },
+      });
+      await read(input).expect(404);
+      expect(
+        await t.prisma.customerChannelIdentity.count({
+          where: { companyId, subjectId: input.sender.subjectId },
+        }),
+      ).toBe(0);
+    });
+
+    it('returns an opaque review error for ambiguous identities without candidates or pending input', async () => {
+      const phone = uniquePhone();
+      await post(
+        capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } }),
+      ).expect(201);
+      const input = capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } });
+      expect(result(await post(input).expect(200)).profileId).toBeNull();
+      const response = await read(input).expect(409);
+      expect(response.body as unknown).toEqual({
+        statusCode: 409,
+        code: 'IDENTITY_REVIEW_REQUIRED',
+        message: 'IDENTITY_REVIEW_REQUIRED',
+      });
+    });
+
+    it.each(['scope', 'key'] as const)(
+      'rechecks revoked %s after the guard and before returning personal data',
+      async (revoked) => {
+        const input = capture();
+        await post(input).expect(201);
+        const service = t.app.get(CustomerIdentityService);
+        const original = service.requireKey.bind(service);
+        const spy = vi.spyOn(service, 'requireKey').mockImplementationOnce(async (tx, id) => {
+          if (revoked === 'key')
+            await t.prisma.apiClient.update({ where: { id }, data: { isActive: false } });
+          else
+            await t.prisma.apiClientScope.deleteMany({
+              where: { apiClientId: id, scope: 'CUSTOMER_PROFILES_WRITE' },
+            });
+          return original(tx, id);
+        });
+        try {
+          await read(input).expect(403);
+        } finally {
+          spy.mockRestore();
+          await t.prisma.apiClient.update({ where: { id: clientId }, data: { isActive: true } });
+          await t.prisma.apiClientScope.upsert({
+            where: {
+              apiClientId_scope: { apiClientId: clientId, scope: 'CUSTOMER_PROFILES_WRITE' },
+            },
+            create: {
+              apiClientId: clientId,
+              scope: 'CUSTOMER_PROFILES_WRITE',
+              grantedById: creatorId,
+            },
+            update: {},
+          });
+        }
+      },
+    );
+  });
+
   it('unsigned or mutated transport is refused; profile scope is opt-in', async () => {
     await t
       .http()

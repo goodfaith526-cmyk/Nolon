@@ -9,6 +9,7 @@ import {
   captureIdentityBody,
   updateIdentityBody,
   followUpIdentityBody,
+  selfIdentityQuery,
 } from './customer-identity.contract.js';
 
 const clientId = '11111111-1111-4111-8111-111111111111';
@@ -33,6 +34,7 @@ function signed(
   rawBody = '{"fields":{}}',
   originalUrl = '/api/v1/cs/customer-profiles/capture',
   issuedAt = Math.floor(Date.now() / 1000),
+  method: 'GET' | 'POST' = 'POST',
 ) {
   const rawContext = JSON.stringify(sender);
   const parsed = new URL(originalUrl, 'http://test.invalid');
@@ -44,9 +46,9 @@ function signed(
       [
         'v1',
         clientId,
-        'POST',
+        method,
         path,
-        'capture-1001',
+        method === 'GET' ? '' : 'capture-1001',
         String(issuedAt),
         sha256(rawContext),
         sha256(rawBody),
@@ -59,13 +61,34 @@ function signed(
     'X-Nolon-Channel-Assertion': `v1:${issuedAt}:${mac}`,
   };
   return {
-    method: 'POST',
+    method,
     originalUrl,
     rawBody: Buffer.from(rawBody),
     get: (name: string) => headers[name],
   } as unknown as RawBodyRequest<Request>;
 }
 describe('Customer identity contract and trusted wrapper', () => {
+  it('binds the self conversation query to the GET signature and accepts no model-selected customer', () => {
+    const auth = new CustomerIdentityAuth(env());
+    const request = signed(
+      '',
+      '/api/v1/cs/customer-profiles/self?conversationId=conversation-1001',
+      Math.floor(Date.now() / 1000),
+      'GET',
+    );
+    expect(() => auth.verify(clientId, request)).not.toThrow();
+    request.originalUrl = '/api/v1/cs/customer-profiles/self?conversationId=another-conversation';
+    expect(() => auth.verify(clientId, request)).toThrow();
+    expect(selfIdentityQuery.safeParse({ conversationId: 'conversation-1001' }).success).toBe(true);
+    for (const selector of ['profileId', 'customerId', 'companyId', 'sender']) {
+      expect(
+        selfIdentityQuery.safeParse({ conversationId: 'conversation-1001', [selector]: clientId })
+          .success,
+      ).toBe(false);
+    }
+    expect(selfIdentityQuery.safeParse({}).success).toBe(false);
+    expect(selfIdentityQuery.safeParse({ conversationId: ' ' }).success).toBe(false);
+  });
   it('defaults closed; enabling requires a deployment company and a registered channel account', () => {
     expect(
       loadEnv({ DATABASE_URL: 'postgresql://test:test@localhost/test' })

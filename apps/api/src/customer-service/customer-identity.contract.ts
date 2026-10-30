@@ -116,3 +116,22 @@ export interface IdentityResult {
     reason: string | null;
   };
 }
+
+export const selfIdentityQuery = z.object({ conversationId: text(128) }).strict();
+export const PROFILE_FIELDS = ['name', 'phone', 'residenceCityId', 'address'] as const;
+export type ProfileField = (typeof PROFILE_FIELDS)[number];
+export interface SelfProfileField {
+  value: string | null;
+  source: 'CUSTOMER_STATEMENT' | 'WHATSAPP_SENDER' | 'TELEGRAM_OWN_CONTACT' | 'UNRECORDED' | null;
+  verification: 'MISSING' | 'UNKNOWN' | 'UNVERIFIED' | 'CHANNEL_VERIFIED';
+  observedAt: string | null;
+}
+export interface SelfProfileResult {
+  schemaVersion: typeof IDENTITY_VERSION;
+  profileId: string;
+  profileVersion: number;
+  fields: Record<ProfileField, SelfProfileField>;
+  missing: ProfileField[];
+  needsReview: boolean;
+  followUp: IdentityResult['followUp'];
+}
