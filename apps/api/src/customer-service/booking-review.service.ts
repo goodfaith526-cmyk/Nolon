@@ -1,3 +1,5 @@
+import { CustomersService } from '../customers/customers.service.js';
+import { CustomerIdentityService } from './customer-identity.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -107,6 +109,8 @@ export class BookingReviewService {
     private readonly audit: AuditService,
     private readonly bookings: BookingsService,
     private readonly currencies: CurrenciesService,
+    private readonly identities: CustomerIdentityService,
+    private readonly customers: CustomersService,
   ) {}
 
   async list(user: AuthUser, filter: CsReviewFilter): Promise<CsBookingRequestSummaryDto[]> {
@@ -159,7 +163,23 @@ export class BookingReviewService {
     const priceCheck = row.quote
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
-    return staffDto(user, row, priceCheck);
+    const dto = staffDto(user, row, priceCheck);
+    // The request's ordinary branch permission authorises only its linked profile's minimum.
+    const profile = row.profileId
+      ? await this.prisma.customerProfile.findUnique({
+          where: { id: row.profileId },
+          select: {
+            id: true,
+            number: true,
+            name: true,
+            phone: true,
+            phoneVerified: true,
+            needsReview: true,
+            version: true,
+          },
+        })
+      : null;
+    return { ...dto, profile };
   }
 
   /** Plan 04a section 3: AWAITING_ROUTING to PENDING, at one of its branches the key still serves. */
@@ -267,7 +287,7 @@ export class BookingReviewService {
     const { pricing } = input;
     // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
     const cargo = await this.quotes.cargoOf(pricing);
-    const booking: CreateBookingRequest = {
+    const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
       ...input.booking,
       originLocationId: pricing.originId,
       destinationLocationId: pricing.destinationId,
@@ -277,7 +297,18 @@ export class BookingReviewService {
       items: [],
     };
     await this.currencies.requireActive(input.paymentCurrency);
-    const prepared = await this.bookings.prepareCreate(user, booking);
+    const initial = await this.prisma.csBookingRequest.findUnique({ where: { id } });
+    if (!initial || !visibleTo(user, initial))
+      throw new NotFoundException('Booking request not found');
+    if (!initial.profileId && !booking.customerId)
+      throw new BadRequestException('Choose the booking customer');
+    const prepareProfile =
+      initial.profileId && initial.branchId
+        ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
+        : null;
+    const legacyPrepared = !initial.profileId
+      ? await this.bookings.prepareCreate(user, { ...booking, customerId: booking.customerId! })
+      : null;
     const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       if (row.status !== 'PENDING' || row.branchId === null) {
@@ -286,6 +317,28 @@ export class BookingReviewService {
       if (!decideBranches(user, row).includes(row.branchId)) {
         throw new ForbiddenException('You may not approve this request');
       }
+      await requireKeyServes(tx, row.apiClientId, row.branchId);
+      let prepared = legacyPrepared;
+      if (row.profileId) {
+        this.identities.requireBookingEnabled();
+        const profile = await this.identities.lockProfile(tx, row.profileId);
+        if (profile.version !== input.profileVersion)
+          throw new ConflictException({
+            code: 'PROFILE_VERSION_CONFLICT',
+            message: 'The customer profile changed: reopen the request',
+          });
+        if (!prepareProfile) throw new ConflictException('The request changed: reopen it');
+        if (profile.needsReview)
+          throw new ConflictException({
+            code: 'PROFILE_REVIEW_REQUIRED',
+            message: 'Resolve customer identity proposals before approval',
+          });
+        const accountId = await this.customers.profileAccountInTx(tx, user, profile, row.branchId);
+        if (booking.customerId && booking.customerId !== accountId)
+          throw new BadRequestException('A linked request uses its own customer');
+        prepared = prepareProfile(accountId);
+      }
+      if (!prepared) throw new ConflictException('The request changed: reopen it');
       if (prepared.branchId !== row.branchId) {
         throw new BadRequestException({
           message: "The booking's customer is not of the request's branch",
@@ -306,6 +359,22 @@ export class BookingReviewService {
       const now = await this.quotes.priceFor(pricing, row.branchId);
       await requireSamePrice(tx, now, input.pricingFingerprint);
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      if (row.profileId)
+        await tx.customerProfileReview.create({
+          data: {
+            companyId: this.identities.companyId,
+            actorId: user.id,
+            entityId: row.profileId,
+            action: 'BOOKING_ACCOUNT',
+            reason: 'Staff approved the linked customer in the booking branch',
+            snapshot: {
+              accountId: prepared.customerId,
+              branchId: row.branchId,
+              bookingId,
+              requestId: row.id,
+            },
+          },
+        });
       return tx.csBookingRequest.update({
         where: { id },
         data: {

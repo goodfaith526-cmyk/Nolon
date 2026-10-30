@@ -1,3 +1,4 @@
+import { CustomerIdentityController } from './customer-identity.controller.js';
 import { Reflector } from '@nestjs/core';
 import { CS_SCOPES } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ import {
 
 describe('Customer Service API scopes', () => {
   it.each([
+    CustomerIdentityController,
     CustomerServiceController,
     CustomerTokensController,
     CatalogController,

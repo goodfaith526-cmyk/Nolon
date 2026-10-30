@@ -1,3 +1,4 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
   Body,
   Controller,
@@ -11,9 +12,13 @@ import {
   Put,
   Query,
   Res,
+  Req,
+  type RawBodyRequest,
   UseGuards,
+  UseFilters,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { CustomerIdentityAuth, identityError } from './customer-identity-auth.js';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
@@ -122,6 +127,8 @@ const bodyQuantity = z.union([
 ]);
 const requestBody = z
   .object({
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
     sender: sender.optional(),
     contactPhone: phone.optional(),
     originId: z.uuid(),
@@ -151,13 +158,15 @@ const requestBody = z
 const namesBody = z
   .object({
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
     channel: z.enum(CS_SENDER_CHANNELS),
     origin: botName,
     destination: botName,
     kind: botName,
     quantity: bodyQuantity,
     senderName: name200,
-    senderPhone: digitsPhone,
+    senderPhone: digitsPhone.optional(),
     receiverName: name200,
     receiverPhone: digitsPhone,
     handover: z.enum(CS_BOT_HANDOVERS),
@@ -299,20 +308,46 @@ export class QuoteController {
 @Public()
 @UseGuards(BookingRequestGuard)
 @RequireApiScope('cs:booking_requests:create')
+@UseFilters(CustomerIdentityFilter)
 export class BookingRequestsController {
-  constructor(private readonly requests: BookingRequestsService) {}
+  constructor(
+    private readonly requests: BookingRequestsService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
 
   @Post()
   async create(
     @CurrentBookingCaller() caller: BookingRequestCaller,
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: RawBodyRequest<Request>,
   ): Promise<CsBookingRequestCreated> {
     // Names (origin as { ar, en }) are the bot's form; ids are the catalog's.
     const byNames = typeof body === 'object' && body !== null && 'channel' in body;
-    const { created, body: answer } = byNames
-      ? await this.requests.createByNames(caller, parse(namesBody, body))
-      : await this.requests.create(caller, parse(requestBody, body));
+    const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
+    let binding;
+    if (input.profileId || input.conversationId) {
+      if (!input.profileId || !input.conversationId || caller.kind !== 'key')
+        identityError(400, 'INVALID_INPUT');
+      const envelope = this.identityAuth.verify(caller.client.id, req);
+      const channel = envelope.context.channel.toLowerCase();
+      if (
+        ('channel' in input && input.channel !== channel) ||
+        ('sender' in input &&
+          input.sender &&
+          (input.sender.channel !== channel || input.sender.id !== envelope.context.subjectId))
+      )
+        identityError(401, 'INVALID_CHANNEL_ASSERTION');
+      binding = {
+        profileId: input.profileId,
+        conversationId: input.conversationId,
+        context: envelope.context,
+      };
+    }
+    const { created, body: answer } =
+      'channel' in input
+        ? await this.requests.createByNames(caller, input, binding)
+        : await this.requests.create(caller, input, binding);
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     return answer;
   }

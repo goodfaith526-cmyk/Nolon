@@ -1,3 +1,4 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
   Body,
   Controller,
@@ -8,6 +9,7 @@ import {
   Post,
   Put,
   Query,
+  UseFilters,
 } from '@nestjs/common';
 import {
   CS_REVIEW_FILTERS,
@@ -58,20 +60,23 @@ const approveBody = z
   .object({
     version,
     paymentCurrency: currencyCode,
+    profileVersion: version.optional(),
     pricing: priceInputs,
     pricingFingerprint: z
       .string()
       .regex(/^[0-9a-f]{64}$/)
       .nullable(),
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
-    booking: bookingCreateBody.omit({
-      originLocationId: true,
-      destinationLocationId: true,
-      mode: true,
-      loadType: true,
-      cargoType: true,
-      items: true,
-    }),
+    booking: bookingCreateBody
+      .omit({
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        cargoType: true,
+        items: true,
+      })
+      .partial({ customerId: true }),
   })
   .strict();
 const reasonBody = z
@@ -83,6 +88,7 @@ const reasonBody = z
  * never an API key. Approval makes the booking with the ordinary create checks (R3-ج2).
  */
 @Controller('cs-booking-requests')
+@UseFilters(CustomerIdentityFilter)
 export class BookingReviewController {
   constructor(private readonly review: BookingReviewService) {}
 

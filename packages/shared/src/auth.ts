@@ -37,6 +37,9 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 
 export const PERMISSION_MODULES = [
   'customers',
+  'customer_profiles',
+  'customer_profile_intake',
+  'customer_profile_followup',
   'rates',
   'rate_costs',
   'quotations',
@@ -115,6 +118,9 @@ const LEVEL_ACTIONS: Record<Level, readonly PermissionAction[]> = {
  * own-trips filter (DRIVER_OWN_TRIPS_ONLY) narrow the rows.
  */
 export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
+  customer_profiles: 'NNNNNNNNNNN',
+  customer_profile_intake: 'NNNNNNNNNNN',
+  customer_profile_followup: 'NNNNNNNNNNN',
   customers: 'FVFFVVVVNFE',
   // Owner, 2026-10-19: only the Sales & Marketing Manager (and the Administrator) make, edit,
   // approve and cancel rate cards; every other role reads them, for every branch.
@@ -208,6 +214,9 @@ export function permissionModule(permission: Permission): PermissionModule {
  * any of their branches.
  */
 export const GLOBAL_MODULES: readonly PermissionModule[] = [
+  'customer_profiles',
+  'customer_profile_intake',
+  'customer_profile_followup',
   'master_data',
   'fx_rates',
   'alert_settings',

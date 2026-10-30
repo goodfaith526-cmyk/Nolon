@@ -1,3 +1,7 @@
+import {
+  CustomerIdentityService,
+  type ProfileBookingBinding,
+} from './customer-identity.service.js';
 import { createHash } from 'node:crypto';
 import {
   ForbiddenException,
@@ -138,15 +142,25 @@ export class BookingRequestsService {
     private readonly masterData: MasterDataService,
     private readonly tokens: CustomerTokensService,
     private readonly payments: PaymentInstructionsService,
+    private readonly identities: CustomerIdentityService,
   ) {}
 
   async create(
     caller: BookingRequestCaller,
     input: CsBookingRequestCreate,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
     if (caller.kind === 'customer' && input.sender) {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
+    if (binding && !input.sender)
+      input = {
+        ...input,
+        sender: {
+          channel: binding.context.channel === 'WHATSAPP' ? 'whatsapp' : 'telegram',
+          id: binding.context.subjectId,
+        },
+      };
     if (caller.kind === 'key' && !input.sender) {
       throw coded(
         HttpStatus.BAD_REQUEST,
@@ -176,27 +190,34 @@ export class BookingRequestsService {
     }
     const branchId = candidates.length === 1 ? (allowed[0] ?? null) : null;
 
-    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
-      ...(caller.kind === 'customer'
-        ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
-        : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
-      contactPhone: input.contactPhone ?? null,
-      contentHash: hash,
-      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
-      branchId,
-      originLocationId: input.originId,
-      destinationLocationId: input.destinationId,
-      priceCategoryCode: category.code,
-      quantity: dec(input.quantity),
-      services: input.services,
-      senderName: input.senderName,
-      consigneeName: input.consigneeName,
-      consigneePhone: input.consigneePhone,
-      handover: input.handover,
-      requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
-      quoteRef: input.quoteRef ?? null,
-      language: input.language,
-    });
+    const result = await this.save(
+      caller,
+      owner,
+      input.idempotencyKey,
+      allowed,
+      {
+        ...(caller.kind === 'customer'
+          ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
+          : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
+        contactPhone: input.contactPhone ?? null,
+        contentHash: hash,
+        status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+        branchId,
+        originLocationId: input.originId,
+        destinationLocationId: input.destinationId,
+        priceCategoryCode: category.code,
+        quantity: dec(input.quantity),
+        services: input.services,
+        senderName: input.senderName,
+        consigneeName: input.consigneeName,
+        consigneePhone: input.consigneePhone,
+        handover: input.handover,
+        requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
+        quoteRef: input.quoteRef ?? null,
+        language: input.language,
+      },
+      binding,
+    );
     if (!result.created && result.row.contentHash !== hash) throw conflict();
     if (caller.kind === 'customer') {
       await this.tokens.record(
@@ -219,12 +240,19 @@ export class BookingRequestsService {
   async createByNames(
     caller: BookingRequestCaller,
     input: CsBookingRequestByNames,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
     if (caller.kind === 'customer') {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
     const client = caller.client;
-    const senderId = namesSender(input.channel, input.senderPhone);
+    if (!input.senderPhone && !binding)
+      throw coded(
+        HttpStatus.BAD_REQUEST,
+        'SENDER_REQUIRED',
+        'A contact phone or signed profile binding is required',
+      );
+    const senderId = binding?.context.subjectId ?? namesSender(input.channel, input.senderPhone!);
     const owner = `s:${input.channel}:${senderId}`;
     const hash = namesHash(input);
     const replay = await this.replay(client, owner, input.idempotencyKey, hash);
@@ -247,31 +275,38 @@ export class BookingRequestsService {
 
     const { allowed, branchId } = await this.namesRouting(client, originId);
     const quoted = input.quotedPrice ?? null;
-    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
-      senderChannel: input.channel,
-      senderId,
-      contactPhone: input.senderPhone,
-      contentHash: hash,
-      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
-      branchId,
-      originLocationId: originId,
-      destinationLocationId: destinationId,
-      priceCategoryCode: categoryCode,
-      botNames: {
-        origin: { ...input.origin },
-        destination: { ...input.destination },
-        kind: { ...input.kind },
+    const result = await this.save(
+      caller,
+      owner,
+      input.idempotencyKey,
+      allowed,
+      {
+        senderChannel: input.channel,
+        senderId,
+        contactPhone: input.senderPhone ?? null,
+        contentHash: hash,
+        status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+        branchId,
+        originLocationId: originId,
+        destinationLocationId: destinationId,
+        priceCategoryCode: categoryCode,
+        botNames: {
+          origin: { ...input.origin },
+          destination: { ...input.destination },
+          kind: { ...input.kind },
+        },
+        quantity: dec(String(input.quantity)),
+        services: [],
+        senderName: input.senderName,
+        consigneeName: input.receiverName,
+        consigneePhone: input.receiverPhone,
+        handover: input.handover === 'pickup' ? 'PICKUP' : 'BRANCH_DROP',
+        botQuotedAmount: quoted ? dec(quoted.amount) : null,
+        botQuotedCurrency: quoted?.currency ?? null,
+        language: null,
       },
-      quantity: dec(String(input.quantity)),
-      services: [],
-      senderName: input.senderName,
-      consigneeName: input.receiverName,
-      consigneePhone: input.receiverPhone,
-      handover: input.handover === 'pickup' ? 'PICKUP' : 'BRANCH_DROP',
-      botQuotedAmount: quoted ? dec(quoted.amount) : null,
-      botQuotedCurrency: quoted?.currency ?? null,
-      language: null,
-    });
+      binding,
+    );
     if (!result.created && result.row.contentHash !== hash) throw conflict();
     return { created: result.created, body: createdBody(result.row) };
   }
@@ -312,11 +347,13 @@ export class BookingRequestsService {
       Prisma.CsBookingRequestUncheckedCreateInput,
       'reference' | 'apiClientId' | 'ownerRef' | 'idempotencyKey' | 'expiresAt' | 'allowedBranchIds'
     >,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; row: CsBookingRequest }> {
     const now = new Date();
     const apiClientId = caller.client.id;
     return this.prisma.$transaction(async (tx) => {
       const { branchIds, services } = await currentKey(tx, caller);
+      if (binding) await this.identities.requireBookingBindingInTx(tx, apiClientId, binding);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
@@ -363,6 +400,9 @@ export class BookingRequestsService {
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
+          ...(binding
+            ? { profileId: binding.profileId, conversationId: binding.conversationId }
+            : {}),
           allowedBranchIds: still,
           reference: requestReference(number),
           apiClientId,

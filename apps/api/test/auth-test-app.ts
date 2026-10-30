@@ -73,7 +73,7 @@ export async function createTestApp(overrides: Partial<AppEnv> = {}): Promise<Te
     .overrideProvider(APP_ENV)
     .useValue(env)
     .compile();
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
+  const app = moduleRef.createNestApplication<INestApplication<App>>({ rawBody: true });
   configureApp(app, env);
   await app.init();
   const prisma = app.get(PrismaService);

@@ -71,6 +71,12 @@ services:
     environment:
       DATABASE_URL: *database-url
       CORS_ORIGINS: https://${SITE_DOMAIN:?}
+      # Plan 08: owner-configured rollout only. Missing configuration always leaves capture off.
+      CS_CUSTOMER_IDENTITY_ENABLED: ${CS_CUSTOMER_IDENTITY_ENABLED:-false}
+      CS_CUSTOMER_FOLLOWUP_ENABLED: ${CS_CUSTOMER_FOLLOWUP_ENABLED:-false}
+      CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: ${CS_CUSTOMER_BOOKING_IDENTITY_ENABLED:-false}
+      CS_CUSTOMER_IDENTITY_COMPANY_ID: ${CS_CUSTOMER_IDENTITY_COMPANY_ID:-}
+      CS_CUSTOMER_IDENTITY_CLIENTS: ${CS_CUSTOMER_IDENTITY_CLIENTS:-}
       # Until Caddy trusts the host nginx and passes the real client IP, every sign-in reaches the
       # API from one address, so only the per-email limit is on (docs/plans/01-auth-and-permissions.md S1).
       LOGIN_IP_LIMIT_ENABLED: 'false'

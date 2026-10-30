@@ -77,6 +77,9 @@
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
 - PUT `/cs-reject-reasons/:code` · `RejectReasonsController.set` · `customer-service/booking-review.controller.ts` · master_data:update
 - POST `/cs/booking-requests` · `BookingRequestsController.create` · `customer-service/customer-service.controller.ts` · —
+- PATCH `/cs/customer-profiles/:id` · `CustomerIdentityController.update` · `customer-service/customer-identity.controller.ts` · —
+- POST `/cs/customer-profiles/:id/follow-up` · `CustomerIdentityController.followUp` · `customer-service/customer-identity.controller.ts` · —
+- POST `/cs/customer-profiles/capture` · `CustomerIdentityController.capture` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-tokens` · `CustomerTokensController.issue` · `customer-service/customer-service.controller.ts` · —
 - POST `/customer-drafts` · `CustomerDraftsController.create` · `customers/customer-drafts.controller.ts` · customers:create
 - PATCH `/customer-drafts/:id` · `CustomerDraftsController.update` · `customers/customer-drafts.controller.ts` · customers:create
@@ -88,6 +91,9 @@
 - POST `/customer-invoices/:id/approve` · `InvoicesController.approve` · `billing/billing.controller.ts` · customer_invoices:approve
 - POST `/customer-invoices/:id/cancel` · `InvoicesController.cancel` · `billing/billing.controller.ts` · customer_invoices:cancel
 - POST `/customer-invoices/opening` · `InvoicesController.createOpeningItem` · `billing/billing.controller.ts` · customer_invoices:view, manual_journals:create, manual_journals:approve
+- POST `/customer-profiles/:id/reject-proposals` · `CustomerProfileReviewController.keepCurrent` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
+- PUT `/customer-profiles/follow-up-rules/:id` · `CustomerProfileReviewController.rule` · `customer-service/customer-profile-review.controller.ts` · customer_profile_followup:update
+- POST `/customer-profiles/intake/:id/resolve` · `CustomerProfileReviewController.resolve` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
 - POST `/customers` · `CustomersController.create` · `customers/customers.controller.ts` · customers:create
 - PATCH `/customers/:id` · `CustomersController.update` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/:id/activate` · `CustomersController.activate` · `customers/customers.controller.ts` · customers:update

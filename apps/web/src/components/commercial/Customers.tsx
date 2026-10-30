@@ -184,7 +184,10 @@ export function CustomerForm({
       kind: field(form, 'kind'),
       name: field(form, 'name'),
       companyName: opt(form, 'companyName'),
-      phone: field(form, 'phone').replace(/\s/g, ''),
+      phone:
+        customer?.phone === null && !field(form, 'phone').trim()
+          ? undefined
+          : field(form, 'phone').replace(/\s/g, ''),
       whatsapp: opt(form, 'whatsapp')?.replace(/\s/g, '') ?? null,
       email: opt(form, 'email'),
       countryCode: opt(form, 'countryCode'),
@@ -268,11 +271,11 @@ export function CustomerForm({
           {t('phone')}
           <input
             name="phone"
-            required
+            required={customer?.phone !== null}
             dir="ltr"
             placeholder="+249912345678"
             pattern="\+?[0-9 ]{7,20}"
-            defaultValue={customer?.phone}
+            defaultValue={customer?.phone ?? ''}
           />
         </label>
         <label className="field">

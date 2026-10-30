@@ -1,0 +1,346 @@
+{
+  "schemaVersion": "nolon.customer-identity/1",
+  "status": "PROPOSED_NOT_DEPLOYED",
+  "baseCommit": "ad21c8d991ad14bb19b14c9e019fa042f9807737",
+  "security": "All HTTP cases require an enabled scoped key and valid channel assertion; ids/names are synthetic. Some entries are scenario invariants, not complete HTTP exchanges.",
+  "cases": [
+    {
+      "id": "telegram-empty-first-contact",
+      "precondition": "No identity or legacy candidate exists",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cs/customer-profiles/capture",
+        "idempotencyKey": "capture-1001",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-1001",
+          "sender": {
+            "channel": "TELEGRAM",
+            "subjectId": "123456789",
+            "channelAccountId": "nolon-booking",
+            "eventId": "update-1001",
+            "observedAt": "2026-10-29T12:00:00Z"
+          },
+          "fields": {}
+        }
+      },
+      "expected": {
+        "status": 201,
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "operationId": "22222222-2222-4222-8222-222222222222",
+          "outcome": "CREATED",
+          "profileId": "11111111-1111-4111-8111-111111111111",
+          "profileVersion": 1,
+          "missing": ["name", "phone", "residenceCityId"],
+          "followUp": {
+            "status": "UNASSIGNED",
+            "branchId": null,
+            "reason": "NO_RESIDENCE"
+          }
+        }
+      }
+    },
+    {
+      "id": "exact-retry-after-response-loss",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cs/customer-profiles/capture",
+        "idempotencyKey": "capture-1001",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-1001",
+          "sender": {
+            "channel": "TELEGRAM",
+            "subjectId": "123456789",
+            "channelAccountId": "nolon-booking",
+            "eventId": "update-1001",
+            "observedAt": "2026-10-29T12:00:00Z"
+          },
+          "fields": {}
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "operationId": "22222222-2222-4222-8222-222222222222",
+          "outcome": "CREATED",
+          "profileId": "11111111-1111-4111-8111-111111111111",
+          "profileVersion": 1,
+          "missing": ["name", "phone", "residenceCityId"],
+          "followUp": {
+            "status": "UNASSIGNED",
+            "branchId": null,
+            "reason": "NO_RESIDENCE"
+          }
+        },
+        "invariant": "same profileId, operationId and recorded business result; no second row"
+      }
+    },
+    {
+      "id": "name-completion",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/cs/customer-profiles/11111111-1111-4111-8111-111111111111",
+        "idempotencyKey": "patch-name-1002",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-1001",
+          "sender": {
+            "channel": "TELEGRAM",
+            "subjectId": "123456789",
+            "channelAccountId": "nolon-booking",
+            "eventId": "update-1001",
+            "observedAt": "2026-10-29T12:00:00Z"
+          },
+          "fields": {
+            "name": {
+              "value": "اسم تجريبي",
+              "source": "CUSTOMER_STATEMENT",
+              "messageId": "message-1002"
+            }
+          },
+          "expectedVersion": 1
+        }
+      },
+      "expected": {
+        "status": 200,
+        "outcome": "UPDATED",
+        "profileId": "11111111-1111-4111-8111-111111111111",
+        "profileVersion": 2
+      }
+    },
+    {
+      "id": "telegram-username-change",
+      "precondition": "Same subjectId, different username in sender; new operation key",
+      "expected": {
+        "status": 200,
+        "sameProfile": true,
+        "explicitNameUnchanged": true
+      }
+    },
+    {
+      "id": "whatsapp-metadata-phone",
+      "precondition": "WHATSAPP sender subjectId from provider metadata, not consignee text",
+      "expected": {
+        "status": 201,
+        "phoneSource": "WHATSAPP_SENDER",
+        "readGrantIssued": false,
+        "profileId": "44444444-4444-4444-8444-444444444444"
+      },
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cs/customer-profiles/capture",
+        "idempotencyKey": "capture-wa-1001",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-wa-1001",
+          "sender": {
+            "channel": "WHATSAPP",
+            "subjectId": "+249900000001",
+            "channelAccountId": "nolon-booking",
+            "eventId": "wa-message-1001",
+            "observedAt": "2026-10-29T12:00:00Z",
+            "phoneEvidence": {
+              "value": "+249900000001",
+              "kind": "WHATSAPP_SENDER"
+            }
+          },
+          "fields": {}
+        }
+      }
+    },
+    {
+      "id": "similar-names",
+      "precondition": "Two different channel subjects declare identical names, no phone collision",
+      "expected": {
+        "distinctProfiles": true,
+        "merged": false
+      }
+    },
+    {
+      "id": "concurrent-capture",
+      "precondition": "Same company/channel/subjectId, two new operation keys at once",
+      "expected": {
+        "profileRows": 1,
+        "sameProfile": true
+      }
+    },
+    {
+      "id": "unverified-phone-match",
+      "precondition": "Typed phone matches a legacy profile without proven channel binding",
+      "expected": {
+        "status": 200,
+        "outcome": "NEEDS_REVIEW",
+        "candidateIdentifiersReturned": false,
+        "newDuplicateCustomer": false
+      }
+    },
+    {
+      "id": "stale-update",
+      "precondition": "Expected version 1 after name completion reached version 2",
+      "expected": {
+        "status": 409,
+        "code": "VERSION_CONFLICT",
+        "currentVersion": 2,
+        "noMutation": true
+      }
+    },
+    {
+      "id": "key-body-conflict",
+      "precondition": "Reuse capture-1001 with a different payload",
+      "expected": {
+        "status": 409,
+        "code": "IDEMPOTENCY_CONFLICT",
+        "noMutation": true
+      }
+    },
+    {
+      "id": "other-company-or-unbound-profile",
+      "precondition": "Profile belongs to another company or sender",
+      "expected": {
+        "status": 404,
+        "code": "PROFILE_NOT_BOUND",
+        "dataReturned": false
+      }
+    },
+    {
+      "id": "temporary-unavailable",
+      "expected": {
+        "status": 503,
+        "code": "CUSTOMER_CAPTURE_UNAVAILABLE",
+        "retrySameKeyAndBytes": true,
+        "agentClaimsSaved": false
+      }
+    },
+    {
+      "id": "booking-another-branch",
+      "precondition": "Profile exists, follow-up JED, booking service belongs to DXB",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cs/booking-requests",
+        "newFields": {
+          "profileId": "11111111-1111-4111-8111-111111111111",
+          "conversationId": "conversation-1001"
+        }
+      },
+      "expected": {
+        "sameProfile": true,
+        "followUpUnchanged": true,
+        "bookingBranch": "DXB",
+        "oldDocumentsChanged": false,
+        "readGrantIssued": false
+      }
+    },
+    {
+      "id": "permanent-move",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cs/customer-profiles/11111111-1111-4111-8111-111111111111/follow-up",
+        "idempotencyKey": "move-1003",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-1001",
+          "sender": {
+            "channel": "TELEGRAM",
+            "subjectId": "123456789",
+            "channelAccountId": "nolon-booking",
+            "eventId": "update-1001",
+            "observedAt": "2026-10-29T12:00:00Z"
+          },
+          "fields": {},
+          "expectedVersion": 2,
+          "residenceCityId": "33333333-3333-4333-8333-333333333333",
+          "intent": "PERMANENT_MOVE",
+          "permanentConfirmed": true,
+          "messageId": "message-1003"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "profileId": "11111111-1111-4111-8111-111111111111",
+        "oldDocumentsChanged": false
+      }
+    },
+    {
+      "id": "identity-not-a-read-grant",
+      "precondition": "Capture succeeds for an existing verified channel",
+      "expected": {
+        "customerTokenIssued": false,
+        "shipmentAccessGranted": false
+      }
+    },
+    {
+      "id": "late-old-result",
+      "precondition": "Operation for version 1 is delivered after version 2",
+      "expected": {
+        "agentVersion": 2,
+        "oldResultDoesNotOverwrite": true
+      }
+    },
+    {
+      "id": "recover-committed-operation",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cs/customer-profile-operations/22222222-2222-4222-8222-222222222222",
+        "channelContext": {
+          "channel": "TELEGRAM",
+          "subjectId": "123456789",
+          "channelAccountId": "nolon-booking",
+          "eventId": "update-1001",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "operationId": "22222222-2222-4222-8222-222222222222",
+          "outcome": "CREATED",
+          "profileId": "11111111-1111-4111-8111-111111111111",
+          "profileVersion": 1,
+          "missing": ["name", "phone", "residenceCityId"],
+          "followUp": {
+            "status": "UNASSIGNED",
+            "branchId": null,
+            "reason": "NO_RESIDENCE"
+          }
+        }
+      }
+    },
+    {
+      "id": "telegram-own-contact-completion",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/cs/customer-profiles/11111111-1111-4111-8111-111111111111",
+        "idempotencyKey": "patch-phone-1004",
+        "body": {
+          "schemaVersion": "nolon.customer-identity/1",
+          "conversationId": "conversation-1001",
+          "sender": {
+            "channel": "TELEGRAM",
+            "subjectId": "123456789",
+            "channelAccountId": "nolon-booking",
+            "eventId": "update-1004",
+            "observedAt": "2026-10-29T12:00:00Z",
+            "phoneEvidence": {
+              "value": "+249900000002",
+              "kind": "TELEGRAM_OWN_CONTACT",
+              "contactUserId": "123456789"
+            }
+          },
+          "expectedVersion": 2,
+          "fields": {}
+        }
+      },
+      "expected": {
+        "status": 200,
+        "outcome": "UPDATED",
+        "sameProfile": true,
+        "phoneVerifiedSource": "TELEGRAM_OWN_CONTACT",
+        "readGrantIssued": false
+      }
+    }
+  ]
+}

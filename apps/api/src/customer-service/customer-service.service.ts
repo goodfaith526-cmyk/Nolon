@@ -30,7 +30,7 @@ interface CustomerRow {
   kind: CustomerKind;
   name: string;
   company_name: string | null;
-  phone: string;
+  phone: string | null;
   whatsapp: string | null;
   email: string | null;
   preferred_locale: string;
