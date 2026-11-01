@@ -253,7 +253,11 @@ export class QuoteService {
     if (!rate.approvedAt) throw noRate();
 
     // The billable quantity: the CBM for a volume category, else what was asked.
-    const quantity = volume ? volume.cbm : input.quantity === undefined ? null : dec(input.quantity);
+    const quantity = volume
+      ? volume.cbm
+      : input.quantity === undefined
+        ? null
+        : dec(input.quantity);
     const places = (await this.currencies.requireActive(currency)).decimalPlaces;
     const total =
       quantity === null
