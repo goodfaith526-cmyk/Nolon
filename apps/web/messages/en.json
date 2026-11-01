@@ -747,7 +747,8 @@
     "OUT_FOR_DELIVERY": "Out for final delivery",
     "PARTIALLY_DELIVERED": "Partly delivered",
     "DELIVERED": "Delivered",
-    "ON_HOLD": "Temporarily on hold"
+    "ON_HOLD": "Temporarily on hold",
+    "CANCELLED": "Cancelled"
   },
   "Track": {
     "switchLocale": "العربية",

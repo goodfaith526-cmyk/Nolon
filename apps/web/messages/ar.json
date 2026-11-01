@@ -747,7 +747,8 @@
     "OUT_FOR_DELIVERY": "خرجت للتوصيل النهائي",
     "PARTIALLY_DELIVERED": "سُلّم جزء من الشحنة",
     "DELIVERED": "تم التسليم",
-    "ON_HOLD": "متوقفة مؤقتاً"
+    "ON_HOLD": "متوقفة مؤقتاً",
+    "CANCELLED": "ملغاة"
   },
   "Track": {
     "switchLocale": "English",

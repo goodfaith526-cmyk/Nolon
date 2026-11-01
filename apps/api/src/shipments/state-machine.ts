@@ -426,7 +426,7 @@ const PUBLIC_STATUS: Record<ShipmentStatus, PublicShipmentStatus | null> = {
   DELIVERED: 'DELIVERED',
   CLOSED: null,
   ON_HOLD: 'ON_HOLD',
-  CANCELLED: null,
+  CANCELLED: 'CANCELLED',
 };
 
 export function publicStatus(status: ShipmentStatus): PublicShipmentStatus | null {
