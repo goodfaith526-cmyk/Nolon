@@ -92,12 +92,22 @@ const tokenBody = z
       .optional(),
   })
   .strict();
+/** One piece's dimension in centimetres, positive, up to 2 decimals: Decimal(10, 2), as bookings. */
+const dimensionCm = z
+  .string()
+  .regex(/^\d{1,8}(\.\d{1,2})?$/, 'Invalid measurement')
+  .refine((v) => /[1-9]/.test(v), 'Must be positive');
+/** The pieces a volume request's CBM came from: a whole number, as a booking item's quantity. */
+const pieces = z.number().int().min(1).max(100_000);
 const quoteQuery = z
   .object({
     originId: z.uuid(),
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
     quantity: quantity.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     mode: z.enum(SHIPPING_MODES).optional(),
     loadType: z.enum(LOAD_TYPES).optional(),
     currency: currencyCode.optional(),
@@ -135,6 +145,10 @@ const requestBody = z
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
     quantity: bodyQuantity,
+    pieces: pieces.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     services: z
       .array(z.enum(CS_REQUEST_SERVICES))
       .max(CS_REQUEST_SERVICES.length)

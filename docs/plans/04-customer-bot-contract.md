@@ -87,7 +87,10 @@ R1 وR2 ممكن يتبنوا بالتوازي بعد R0، لكن R2 ما بين
   `id`، `code`، `kind` (مدينة/ميناء/دولة)، `nameAr`، `nameEn`، `aliases[]`.
   `aliases` جدول master جديد `location_aliases (location_id, alias, locale)` يملاه موظف بصلاحية
   `master_data:update` (أسماء الناس: «جدة»، «جده»، «Jeddah»). ما قائمة في الكود.
-- `categories`: `price_categories` النشطة: `code`، الاسمين، `unit` (`defaultUnit`).
+- `categories`: `price_categories` النشطة: `code`، الاسمين، `unit` (`defaultUnit`)، و`pricingMode` من
+  الوحدة: `counted` (برميل/قطعة/باليت/حاوية: عدد القطع)، `volume` (`PER_CBM`: عدد القطع وأبعاد القطعة
+  طول×عرض×ارتفاع بالسنتيمتر، ونولون بيحسب الـ CBM)، `weight` (`PER_KG`)، `flat` (`PER_SHIPMENT`).
+  قرار المالك (2026-11-01): البراميل بالقطعة، والكرتون والباليت بالحجم.
 - `services`: قيم `BookingService` اللي البوت ممكن يطلبها (`PICKUP`، `LAST_MILE`، …) بالاسمين.
 - **ما في تعليمات دفع في الكتالوج** (F119-3): الكتالوج ما عندو فرع ولا عملة، فبتجي مع حالة طلب الحجز
   المعتمد (القسم 4.1).
@@ -131,6 +134,11 @@ R1 وR2 ممكن يتبنوا بالتوازي بعد R0، لكن R2 ما بين
    ما متأكدين منها.
 6. **الوحدة والتحويل:** `quantity` بوحدة الفئة. لو وحدة البطاقة غير وحدة الفئة = `422 UNIT_MISMATCH`
    (ما في تحويل في النسخة الأولى، مثلاً كيلو ↔ CBM). الموظف بيكمل.
+   **فئة بالحجم** (`pricingMode: volume`، قرار المالك 2026-11-01): `quantity` = عدد القطع (صحيح) مع
+   `lengthCm` و`widthCm` و`heightCm` لقطعة واحدة بالسنتيمتر، كلهم إجباريين، وإلا `422 DIMENSIONS_REQUIRED`
+   مع `fields` الناقصة والبوت يسأل الزبون. نولون بيحسب الـ CBM (نفس حاسبة الحجوزات، 4 خانات) وده
+   الـ `quantity` المحتسب في الرد وفي `cs_quotes`؛ الرد بيرجّع كمان `pieces` و`dimensions` و`volumeCbm`.
+   طلب الحجز (القسم 7.1) بيرسل نفس الـ CBM كـ `quantity`. فئة بالعدد بتتجاهل الأبعاد لو انبعتت.
 7. **الحد الأدنى والتقريب:** `computeQuotationAmounts` بخانات العملة (`currencies.decimal_places`)،
    مكان واحد (قاعدة 1).
 
@@ -213,7 +221,8 @@ R1 وR2 ممكن يتبنوا بالتوازي بعد R0، لكن R2 ما بين
 
 **الجسم:** `originId`، `destinationId`، `category`، `quantity`، `services[]`، `senderName`، `consigneeName`،
 `consigneePhone`، `handover` (`PICKUP`/`BRANCH_DROP`)، `requestedDate?`، `quoteRef?`، `language`،
-`idempotencyKey`. كل قيمة بتتحقق مقابل نولون (الموقع والفئة نشطين). حقل غير معروف = `400`. قيم الزبون
+`idempotencyKey`، ولفئة بالحجم اختيارياً `pieces?` و`lengthCm?` و`widthCm?` و`heightCm?` (للموظف؛
+`quantity` هي الـ CBM اللي ردّ بيها السعر). كل قيمة بتتحقق مقابل نولون (الموقع والفئة نشطين). حقل غير معروف = `400`. قيم الزبون
 بتتحفظ بمصدرها `customer_channel`؛ قيم السعر بمصدرها `rate_card` (القسم 7.4)، ما كلام زبون.
 **`quoteRef` عند الإنشاء:** لو موجود، لازم يكون صالح التوقيع وما منتهي، ومدخلاتو مطابقة لجسم الطلب حقل حقل
 (منشأ، وجهة، فئة، كمية، خدمات، …). أي اختلاف أو انتهاء = `422 QUOTE_MISMATCH` / `QUOTE_EXPIRED`، والبوت

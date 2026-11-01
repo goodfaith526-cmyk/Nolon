@@ -3599,7 +3599,13 @@ model CsQuote {
   cargoType             CargoType    @map("cargo_type")
   currency              String       @db.Char(3)
   unit                  RateUnit
+  /// The billable quantity in `unit`: for a PER_CBM category the CBM computed from the pieces.
   quantity              Decimal?     @db.Decimal(18, 4)
+  /// A volume quote: the pieces and one piece's dimensions (cm) the CBM was computed from.
+  pieces                Int?
+  lengthCm              Decimal?     @map("length_cm") @db.Decimal(10, 2)
+  widthCm               Decimal?     @map("width_cm") @db.Decimal(10, 2)
+  heightCm              Decimal?     @map("height_cm") @db.Decimal(10, 2)
   price                 Decimal      @db.Decimal(18, 4)
   minimumCharge         Decimal      @map("minimum_charge") @db.Decimal(18, 4)
   total                 Decimal?     @db.Decimal(18, 4)
@@ -3671,7 +3677,13 @@ model CsBookingRequest {
   priceCategoryCode     String?                @map("price_category_code") @db.VarChar(20)
   /// A request by names: { origin, destination, kind }, each { ar, en }, as the customer saw them.
   botNames              Json?                  @map("bot_names")
+  /// The billable quantity in the category's unit (the CBM for a PER_CBM category).
   quantity              Decimal                @db.Decimal(18, 4)
+  /// A volume request: the pieces and one piece's dimensions (cm) the customer gave, for staff.
+  pieces                Int?
+  lengthCm              Decimal?               @map("length_cm") @db.Decimal(10, 2)
+  widthCm               Decimal?               @map("width_cm") @db.Decimal(10, 2)
+  heightCm              Decimal?               @map("height_cm") @db.Decimal(10, 2)
   services              BookingService[]
   senderName            String                 @map("sender_name") @db.VarChar(200)
   consigneeName         String                 @map("consignee_name") @db.VarChar(200)

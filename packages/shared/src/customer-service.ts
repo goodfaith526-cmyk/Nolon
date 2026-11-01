@@ -218,11 +218,48 @@ export interface CsCatalogPlaceDto {
   aliases: string[];
 }
 
+/**
+ * How a category is quoted and booked (owner, 2026-11-01): `counted` by pieces (barrels), `volume`
+ * by the CBM of the pieces' dimensions (cartons, pallets), `weight` by kilos, `flat` per shipment.
+ */
+export const CS_PRICING_MODES = ['counted', 'volume', 'weight', 'flat'] as const;
+export type CsPricingMode = (typeof CS_PRICING_MODES)[number];
+
+/** The pricing mode a category's default unit implies. */
+export function pricingModeOf(unit: RateUnit): CsPricingMode {
+  switch (unit) {
+    case 'PER_CBM':
+      return 'volume';
+    case 'PER_KG':
+      return 'weight';
+    case 'PER_SHIPMENT':
+      return 'flat';
+    case 'PER_BARREL':
+    case 'PER_PIECE':
+    case 'PER_PALLET':
+    case 'PER_CONTAINER':
+      return 'counted';
+  }
+}
+
+/** The dimensions of one piece, in centimetres (up to 2 decimals), as the customer gave them. */
+export interface CsDimensionsDto {
+  lengthCm: DecimalString;
+  widthCm: DecimalString;
+  heightCm: DecimalString;
+}
+
 export interface CsCatalogCategoryDto {
   code: string;
   nameAr: string;
   nameEn: string;
   unit: RateUnit;
+  /**
+   * What the bot must collect: `counted` a number of pieces; `volume` a number of pieces and the
+   * dimensions of one (L × W × H in centimetres), NOLON computes the CBM; `weight` kilos; `flat`
+   * nothing (one shipment).
+   */
+  pricingMode: CsPricingMode;
 }
 
 /**
@@ -252,8 +289,19 @@ export interface CsQuoteRequest {
   destinationId: string;
   /** A price category code from the catalog. */
   category: string;
-  /** In the category's unit. Without it the answer has no total. */
+  /**
+   * Counted and flat categories: in the category's unit; without it the answer has no total.
+   * Volume categories (`pricingMode: 'volume'`): the number of pieces, whole, required with the
+   * three dimensions; NOLON computes the CBM and prices it.
+   */
   quantity?: DecimalString;
+  /**
+   * One piece's dimensions in centimetres (up to 2 decimals), required for a volume category and
+   * ignored for the others. Centimetres only: the bot converts what the customer said.
+   */
+  lengthCm?: DecimalString;
+  widthCm?: DecimalString;
+  heightCm?: DecimalString;
   mode?: ShippingMode;
   loadType?: LoadType;
   currency?: CurrencyCode;
@@ -270,9 +318,17 @@ export interface CsQuoteDto {
   currency: CurrencyCode;
   unit: RateUnit;
   minimumCharge: DecimalString;
+  /**
+   * The billable quantity in `unit`: as asked for a counted or flat category; for a volume category
+   * the CBM NOLON computed. A booking request (R3) sends this same number as its `quantity`.
+   */
   quantity: DecimalString | null;
   /** max(quantity × price, minimum), rounded to the currency's places; null without a quantity. */
   total: DecimalString | null;
+  /** A volume answer echoes what it measured: the pieces, one piece's dimensions, and the CBM. */
+  pieces: DecimalString | null;
+  dimensions: CsDimensionsDto | null;
+  volumeCbm: DecimalString | null;
   includes: (typeof CS_QUOTE_INCLUDES)[number][];
   mode: ShippingMode;
   loadType: LoadType | null;
@@ -326,7 +382,19 @@ export interface CsBookingRequestCreate {
   originId: string;
   destinationId: string;
   category: string;
+  /**
+   * The billable quantity in the category's unit: pieces for a counted category; for a volume
+   * category the CBM the quote answered (`CsQuoteDto.quantity`), which `quoteRef` is checked against.
+   */
   quantity: DecimalString;
+  /**
+   * A volume category: the pieces and one piece's dimensions in centimetres the CBM came from,
+   * kept for staff. Optional; never a price input.
+   */
+  pieces?: number;
+  lengthCm?: DecimalString;
+  widthCm?: DecimalString;
+  heightCm?: DecimalString;
   services: (typeof CS_REQUEST_SERVICES)[number][];
   senderName: string;
   consigneeName: string;
