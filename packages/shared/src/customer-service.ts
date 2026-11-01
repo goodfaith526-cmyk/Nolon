@@ -79,7 +79,10 @@ export interface CsShipmentSummaryDto {
   number: string;
   /** The shipment's status, machine-readable. */
   status: ShipmentStatus;
-  /** The status as public tracking shows it (null for statuses it does not show). */
+  /**
+   * Public customer vocabulary (`PUBLIC_SHIPMENT_STATUSES`). Null only for internal-only
+   * statuses (e.g. CONSOLIDATED): never treat null as in-progress. Cancelled is `'CANCELLED'`.
+   */
   publicStatus: PublicShipmentStatus | null;
   mode: ShippingMode;
   loadType: LoadType | null;
