@@ -521,11 +521,7 @@ describe('shipment publicStatus vocabulary (customer / bot projection)', () => {
   });
 
   it('includes cancelled on the public timeline when recorded', () => {
-    const path = replayHistory([
-      event('CREATED', 'CREATED', 0),
-      event('STATUS', 'CANCELLED', 1),
-    ]);
+    const path = replayHistory([event('CREATED', 'CREATED', 0), event('STATUS', 'CANCELLED', 1)]);
     expect(publicTimeline(path).map((e) => e.status)).toEqual(['REGISTERED', 'CANCELLED']);
   });
 });
-
