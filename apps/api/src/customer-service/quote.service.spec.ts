@@ -71,6 +71,14 @@ describe('volumeOf (a PER_CBM category is priced by the CBM of the pieces, owner
     });
   });
 
+  it('refuses a volume that would overflow Decimal(18, 4) storage', () => {
+    const huge = { quantity: '1', lengthCm: '10000000', widthCm: '10000000', heightCm: '10000000' };
+    expect(refusal(() => volumeOf(huge)).getResponse()).toMatchObject({
+      code: 'DIMENSIONS_REQUIRED',
+      fields: ['lengthCm', 'widthCm', 'heightCm', 'quantity'],
+    });
+  });
+
   it('takes only a whole number of pieces, and a volume that does not round to nothing', () => {
     for (const quantity of ['1.5', '0', '100001']) {
       expect(refusal(() => volumeOf({ quantity, ...dims })).getResponse()).toMatchObject({

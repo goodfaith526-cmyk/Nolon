@@ -580,6 +580,9 @@ export interface CsRequestPriceCheck {
 }
 
 export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
+  /** Volume requests: pieces and one piece's dimensions (cm) behind the billable CBM quantity. */
+  pieces: number | null;
+  dimensions: CsDimensionsDto | null;
   profile?: {
     id: string;
     number: string;

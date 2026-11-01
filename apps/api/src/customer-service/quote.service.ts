@@ -138,6 +138,14 @@ export function volumeOf(input: Pick<CsQuoteRequest, VolumeField>): QuoteVolume 
       ['lengthCm', 'widthCm', 'heightCm'],
     );
   }
+  // cs_quotes.quantity / totals are Decimal(18, 4): refuse before insert becomes a 500.
+  const maxCbm = dec('99999999999999.9999');
+  if (cbm.gt(maxCbm)) {
+    throw dimensionsRequired(
+      'The computed volume is too large to store: check the dimensions are in centimetres',
+      ['lengthCm', 'widthCm', 'heightCm', 'quantity'],
+    );
+  }
   return { pieces: pieces.toNumber(), dimensions, cbm };
 }
 
