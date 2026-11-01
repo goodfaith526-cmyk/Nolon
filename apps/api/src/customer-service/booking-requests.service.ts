@@ -65,15 +65,23 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/** A dimension as a number (120 and 120.00 are the same measurement); left out stays left out. */
+function measurement(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : dec(value).toFixed();
+}
+
 /**
  * SHA-256 of a request's content: the body without its idempotency key, keys sorted, services
- * sorted, the quantity as a number (2 and 2.0 are the same request).
+ * sorted, the quantity and the dimensions as numbers (2 and 2.0 are the same request).
  */
 export function contentHash(input: CsBookingRequestCreate): string {
   const normal: Partial<CsBookingRequestCreate> = {
     ...input,
     idempotencyKey: undefined,
     quantity: dec(input.quantity).toFixed(),
+    lengthCm: measurement(input.lengthCm),
+    widthCm: measurement(input.widthCm),
+    heightCm: measurement(input.heightCm),
     services: [...input.services].sort(),
   };
   return createHash('sha256')
@@ -207,6 +215,11 @@ export class BookingRequestsService {
         destinationLocationId: input.destinationId,
         priceCategoryCode: category.code,
         quantity: dec(input.quantity),
+        // A volume category's pieces and dimensions, as the customer gave them, for staff.
+        pieces: input.pieces ?? null,
+        lengthCm: input.lengthCm === undefined ? null : dec(input.lengthCm),
+        widthCm: input.widthCm === undefined ? null : dec(input.widthCm),
+        heightCm: input.heightCm === undefined ? null : dec(input.heightCm),
         services: input.services,
         senderName: input.senderName,
         consigneeName: input.consigneeName,
@@ -503,20 +516,28 @@ export class BookingRequestsService {
 
   /**
    * Section 7.1 (F119-2): a quote of this key, not expired, whose inputs are the request's: route,
-   * category and quantity. The services it priced (MAIN_FREIGHT) are always in a request; the
-   * others are staff's to price, so they never make a mismatch.
+   * category and the billable quantity (the CBM, for a volume category), and the pieces and
+   * dimensions when the request names them and the quote measured them. The services it priced
+   * (MAIN_FREIGHT) are always in a request; the others are staff's to price, so they never make a
+   * mismatch.
    */
   private async checkQuote(apiClientId: string, input: CsBookingRequestCreate): Promise<void> {
     const quote = await this.prisma.csQuote.findFirst({
       where: { ref: input.quoteRef, apiClientId },
     });
+    const sameMeasure = (sent: string | undefined, kept: Prisma.Decimal | null) =>
+      sent === undefined || kept === null || kept.eq(dec(sent));
     const same =
       quote !== null &&
       quote.originLocationId === input.originId &&
       quote.destinationLocationId === input.destinationId &&
       quote.priceCategoryCode === input.category &&
       quote.quantity !== null &&
-      quote.quantity.eq(dec(input.quantity));
+      quote.quantity.eq(dec(input.quantity)) &&
+      (input.pieces === undefined || quote.pieces === null || quote.pieces === input.pieces) &&
+      sameMeasure(input.lengthCm, quote.lengthCm) &&
+      sameMeasure(input.widthCm, quote.widthCm) &&
+      sameMeasure(input.heightCm, quote.heightCm);
     if (!same) {
       throw coded(
         HttpStatus.UNPROCESSABLE_ENTITY,

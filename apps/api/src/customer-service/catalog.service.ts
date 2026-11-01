@@ -6,6 +6,7 @@ import {
   type CsRequestService,
   type CsCatalogPlaceDto,
   type LocationDto,
+  pricingModeOf,
 } from '@nolon/shared';
 import { todayIn } from '../common/dates.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -56,9 +57,16 @@ export class CatalogService {
       // A place a branch serves (section 6) is an origin too, priced or not.
       origins: covered([...ends.origins, ...Object.keys(routing)]),
       destinations: covered(ends.destinations),
+      // The unit says what the bot must collect: pieces, or pieces and dimensions for a volume unit.
       categories: all.priceCategories
         .filter((c) => c.isActive)
-        .map((c) => ({ code: c.code, nameAr: c.nameAr, nameEn: c.nameEn, unit: c.defaultUnit })),
+        .map((c) => ({
+          code: c.code,
+          nameAr: c.nameAr,
+          nameEn: c.nameEn,
+          unit: c.defaultUnit,
+          pricingMode: pricingModeOf(c.defaultUnit),
+        })),
       services: CS_CATALOG_SERVICES.filter((s) => offered.includes(s.code)).map((s) => ({ ...s })),
     };
     const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);

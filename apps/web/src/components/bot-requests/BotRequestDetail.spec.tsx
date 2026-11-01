@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import type { CsBookingRequestStaffDto } from '@nolon/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -17,6 +17,8 @@ const base: CsBookingRequestStaffDto = {
   destinationId: 'krt',
   category: null,
   quantity: '2',
+  pieces: null,
+  dimensions: null,
   senderName: 'Mohamed',
   channel: 'whatsapp',
   customerId: null,

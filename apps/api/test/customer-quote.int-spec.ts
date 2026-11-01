@@ -26,9 +26,10 @@ describe('Customer Service quote (R2)', () => {
   let salesId = '';
   let bot: ApiClientCreatedDto;
   let catalogOnly: ApiClientCreatedDto;
-  const cat = { shipment: '', kg: '' };
+  const cat = { shipment: '', kg: '', cbm: '' };
   const ids: Record<string, string> = {};
   const SECRET_NOTE = 'internal note never for customers';
+  const dims = { lengthCm: '120', widthCm: '100', heightCm: '150' };
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000);
   const iso = (offset: number) => day(offset).toISOString().slice(0, 10);
   const quote = (key: string, query: Record<string, string>) =>
@@ -46,7 +47,7 @@ describe('Customer Service quote (R2)', () => {
       validTo?: Date;
       mode?: 'ROAD' | 'SEA';
       currency?: string;
-      unit?: 'PER_SHIPMENT' | 'PER_KG';
+      unit?: 'PER_SHIPMENT' | 'PER_KG' | 'PER_CBM';
       branchId?: string;
       priceCategoryCode?: string | null;
       chargeTypeCode?: string;
@@ -105,9 +106,11 @@ describe('Customer Service quote (R2)', () => {
     const tag = `Q${randomUUID().slice(0, 5).toUpperCase()}`;
     cat.shipment = `${tag}S`;
     cat.kg = `${tag}K`;
+    cat.cbm = `${tag}V`;
     for (const [c, unit] of [
       [cat.shipment, 'PER_SHIPMENT'],
       [cat.kg, 'PER_KG'],
+      [cat.cbm, 'PER_CBM'],
     ] as const) {
       await t.prisma.priceCategory.create({
         data: { code: c, nameEn: c, nameAr: c, cargoType: 'GENERAL', defaultUnit: unit },
@@ -137,6 +140,7 @@ describe('Customer Service quote (R2)', () => {
       'offers',
       'kg',
       'cat',
+      'cbm',
     ]) {
       ids[name] = await place(name.slice(0, 3).toUpperCase(), 'CITY');
     }
@@ -164,6 +168,8 @@ describe('Customer Service quote (R2)', () => {
     // A category card and a general one.
     await card(ids.cat!, ids.dest!, { price: '70', priceCategoryCode: cat.shipment });
     await card(ids.cat!, ids.dest!, { price: '90' });
+    // Per cubic metre, for the volume category.
+    await card(ids.cbm!, ids.dest!, { unit: 'PER_CBM', price: '20', priceCategoryCode: cat.cbm });
   });
 
   afterAll(async () => {
@@ -302,6 +308,53 @@ describe('Customer Service quote (R2)', () => {
       category: cat.shipment,
     }).expect(422);
     expect(choices(offers)).toEqual({ field: 'offer', values: [] });
+  });
+
+  it('prices a volume category by the CBM of the pieces, or asks for the dimensions', async () => {
+    const q = { originId: ids.cbm!, destinationId: ids.dest!, category: cat.cbm };
+    // Owner (2026-11-01): pieces and one piece's L × W × H in centimetres, else ask.
+    const missing = await quote(bot.key, { ...q, quantity: '3' }).expect(422);
+    expect(code(missing)).toBe('DIMENSIONS_REQUIRED');
+    expect((missing.body as { fields?: string[] }).fields).toEqual([
+      'lengthCm',
+      'widthCm',
+      'heightCm',
+    ]);
+    await quote(bot.key, q).expect(422);
+    await quote(bot.key, { ...q, quantity: '3', lengthCm: '120', widthCm: '100' }).expect(422);
+    await quote(bot.key, { ...q, quantity: '1.5', ...dims }).expect(422);
+    await quote(bot.key, { ...q, quantity: '3', ...dims, heightCm: '0' }).expect(400);
+
+    // Three pieces of 120 × 100 × 150 cm = 5.4 CBM at 20 USD.
+    const body = (await quote(bot.key, { ...q, quantity: '3', ...dims }).expect(200))
+      .body as CsQuoteDto;
+    expect(body).toMatchObject({
+      unit: 'PER_CBM',
+      price: '20',
+      quantity: '5.4',
+      total: '108.00',
+      pieces: '3',
+      dimensions: { lengthCm: '120', widthCm: '100', heightCm: '150' },
+      volumeCbm: '5.4',
+    });
+    // The quote keeps the billable CBM as its quantity, and what it was measured from.
+    const row = await t.prisma.csQuote.findUniqueOrThrow({ where: { ref: body.quoteRef } });
+    expect(row.quantity?.toFixed()).toBe('5.4');
+    expect(row.pieces).toBe(3);
+    expect(row.lengthCm?.toFixed()).toBe('120');
+    expect(row.heightCm?.toFixed()).toBe('150');
+
+    // A category priced per shipment ignores dimensions sent and prices the quantity as it is.
+    const flat = (
+      await quote(bot.key, {
+        originId: ids.city!,
+        destinationId: ids.dest!,
+        category: cat.shipment,
+        quantity: '2',
+        ...dims,
+      }).expect(200)
+    ).body as CsQuoteDto;
+    expect(flat).toMatchObject({ quantity: '2', pieces: null, dimensions: null, volumeCbm: null });
   });
 
   it("refuses a card in another unit than the category's", async () => {

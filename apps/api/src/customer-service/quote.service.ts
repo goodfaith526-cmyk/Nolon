@@ -13,7 +13,9 @@ import {
   type LoadType,
   type ShippingMode,
   loadTypeOf,
+  pricingModeOf,
 } from '@nolon/shared';
+import { cbmFromDimensions } from '../bookings/cbm.js';
 import { addDays, fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { FailureLimiter, type LimitRule } from '../common/failure-limiter.js';
 import { ZERO, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
@@ -72,6 +74,81 @@ function noRate(): HttpException {
   );
 }
 
+/** The measurement fields a volume quote takes (CsQuoteRequest). */
+export type VolumeField = 'quantity' | 'lengthCm' | 'widthCm' | 'heightCm';
+
+/** 422 DIMENSIONS_REQUIRED: the client asks the customer for `fields`, then asks again. */
+export function dimensionsRequired(message: string, fields: readonly VolumeField[]): HttpException {
+  return new HttpException(
+    { message, code: 'DIMENSIONS_REQUIRED', fields: [...fields], statusCode: 422 },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+}
+
+/** What a volume quote measured: the pieces, one piece's dimensions (cm) and the CBM it prices. */
+export interface QuoteVolume {
+  pieces: number;
+  dimensions: { lengthCm: Prisma.Decimal; widthCm: Prisma.Decimal; heightCm: Prisma.Decimal };
+  cbm: Prisma.Decimal;
+}
+
+/** As many pieces as a booking item takes (bookings.controller itemBody). */
+const MAX_PIECES = 100_000;
+
+/**
+ * The billable quantity of a volume category (owner, 2026-11-01): the CBM of `quantity` whole
+ * pieces of lengthCm × widthCm × heightCm centimetres, as bookings compute it (bookings/cbm.ts,
+ * 4 places half up). Anything missing or not a measurement is 422 DIMENSIONS_REQUIRED naming the
+ * fields, so the agent asks the customer for exactly those.
+ */
+export function volumeOf(input: Pick<CsQuoteRequest, VolumeField>): QuoteVolume {
+  const { quantity, lengthCm, widthCm, heightCm } = input;
+  if (
+    quantity === undefined ||
+    lengthCm === undefined ||
+    widthCm === undefined ||
+    heightCm === undefined
+  ) {
+    const missing = (['quantity', 'lengthCm', 'widthCm', 'heightCm'] as const).filter(
+      (field) => input[field] === undefined,
+    );
+    throw dimensionsRequired(
+      "This category is priced by volume: give the number of pieces (quantity) and one piece's " +
+        `length, width and height in centimetres. Missing: ${missing.join(', ')}`,
+      missing,
+    );
+  }
+  const pieces = dec(quantity);
+  if (!pieces.isInteger() || pieces.lte(0) || pieces.gt(MAX_PIECES)) {
+    throw dimensionsRequired(
+      `For a volume category quantity is the number of pieces: a whole number up to ${MAX_PIECES}`,
+      ['quantity'],
+    );
+  }
+  const dimensions = { lengthCm: dec(lengthCm), widthCm: dec(widthCm), heightCm: dec(heightCm) };
+  const cbm = cbmFromDimensions(
+    dimensions.lengthCm,
+    dimensions.widthCm,
+    dimensions.heightCm,
+    pieces.toNumber(),
+  );
+  if (cbm.isZero()) {
+    throw dimensionsRequired(
+      'The pieces measure less than 0.0001 CBM: check the dimensions are in centimetres',
+      ['lengthCm', 'widthCm', 'heightCm'],
+    );
+  }
+  // cs_quotes.quantity / totals are Decimal(18, 4): refuse before insert becomes a 500.
+  const maxCbm = dec('99999999999999.9999');
+  if (cbm.gt(maxCbm)) {
+    throw dimensionsRequired(
+      'The computed volume is too large to store: check the dimensions are in centimetres',
+      ['lengthCm', 'widthCm', 'heightCm', 'quantity'],
+    );
+  }
+  return { pieces: pieces.toNumber(), dimensions, cbm };
+}
+
 /**
  * The customer-service price for a route (R2, docs/plans/04 section 5), from NOLON's own engine:
  * the cards systemScopedRates offers (narrowest scope, category before general, the branch that
@@ -111,6 +188,10 @@ export class QuoteService {
     await this.masterData.requireRoute(input.originId, input.destinationId);
     const category = await this.masterData.requirePriceCategory(input.category, null);
     const cargoType = category.cargoType;
+    // Owner (2026-11-01): a volume category (PER_CBM) is priced by the CBM of the pieces' dimensions,
+    // which are required; a counted, weight or flat category takes `quantity` in its unit as it is
+    // and ignores dimensions sent.
+    const volume = pricingModeOf(category.defaultUnit) === 'volume' ? volumeOf(input) : null;
     // Plan section 6: one branch serving the origin prices first from its own cards; else every
     // branch's. Bookable when a branch that may serve the origin is one of the key's.
     const candidates = await this.masterData.routingCandidates(input.originId);
@@ -171,7 +252,12 @@ export class QuoteService {
     const { rate } = scoped;
     if (!rate.approvedAt) throw noRate();
 
-    const quantity = input.quantity === undefined ? null : dec(input.quantity);
+    // The billable quantity: the CBM for a volume category, else what was asked.
+    const quantity = volume
+      ? volume.cbm
+      : input.quantity === undefined
+        ? null
+        : dec(input.quantity);
     const places = (await this.currencies.requireActive(currency)).decimalPlaces;
     const total =
       quantity === null
@@ -205,6 +291,10 @@ export class QuoteService {
         currency,
         unit: rate.unit,
         quantity,
+        pieces: volume?.pieces ?? null,
+        lengthCm: volume?.dimensions.lengthCm ?? null,
+        widthCm: volume?.dimensions.widthCm ?? null,
+        heightCm: volume?.dimensions.heightCm ?? null,
         price: rate.price,
         minimumCharge: rate.minimumCharge,
         total,
@@ -221,6 +311,16 @@ export class QuoteService {
       minimumCharge: toDecimalString(rate.minimumCharge),
       quantity: toDecimalStringOrNull(quantity),
       total: total === null ? null : total.toFixed(places),
+      pieces: volume === null ? null : String(volume.pieces),
+      dimensions:
+        volume === null
+          ? null
+          : {
+              lengthCm: toDecimalString(volume.dimensions.lengthCm),
+              widthCm: toDecimalString(volume.dimensions.widthCm),
+              heightCm: toDecimalString(volume.dimensions.heightCm),
+            },
+      volumeCbm: volume === null ? null : toDecimalString(volume.cbm),
       includes: [...CS_QUOTE_INCLUDES],
       mode,
       loadType,

@@ -582,6 +582,15 @@ function staffDto(
         ? { amount: toDecimalString(r.botQuotedAmount), currency: r.botQuotedCurrency }
         : null,
     quoteRef: r.quoteRef,
+    pieces: r.pieces,
+    dimensions:
+      r.lengthCm !== null && r.widthCm !== null && r.heightCm !== null
+        ? {
+            lengthCm: toDecimalString(r.lengthCm),
+            widthCm: toDecimalString(r.widthCm),
+            heightCm: toDecimalString(r.heightCm),
+          }
+        : null,
     priceCheck,
     routedAt: r.routedAt?.toISOString() ?? null,
     decidedAt: r.decidedAt?.toISOString() ?? null,
