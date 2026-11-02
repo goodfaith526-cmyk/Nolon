@@ -208,6 +208,11 @@ export interface CardSpec {
   mode: ShippingMode;
   price: string;
   currency: string;
+  transitDays: number;
+  /** A full-container card (category `CONTAINER`): its container type; no price category. */
+  containerTypeCode?: string;
+  /** Shown on the card and to staff: where the price comes from. */
+  notes: string;
 }
 
 /** The 36 cards: 3 origins, 4 destinations, 3 categories. Port Sudan by sea; inland sea + road. */
@@ -223,6 +228,8 @@ export function softLaunchCards(): CardSpec[] {
           mode: destination === 'SDPZU' ? ('SEA' as const) : ('SEA_ROAD' as const),
           price,
           currency,
+          transitDays: SOFT_LAUNCH_TRANSIT_DAYS,
+          notes: SOFT_LAUNCH_NOTES,
         })),
       ),
     ),
@@ -290,7 +297,7 @@ export async function applySoftLaunch(
 ): Promise<string[]> {
   const report: string[] = [];
   const say = (line: string) => report.push(line);
-  const { prisma, masterData, rates, apiClients } = deps;
+  const { prisma, masterData, apiClients } = deps;
 
   const branches = new Map(
     (await prisma.branch.findMany({ select: { id: true, code: true } })).map((b) => [b.code, b.id]),
@@ -334,95 +341,18 @@ export async function applySoftLaunch(
     }
     categories.add(spec.code);
   }
-  const categorySpecs = new Map(SOFT_LAUNCH_CATEGORIES.map((c) => [c.code, c]));
 
-  // 3. Rate cards: created as drafts and approved, as on the rates screen. A card already in force
-  // today with exactly these terms (transit days and note included, no end date) counts as
-  // present; any other card on the same route and category (a staff draft, a card with other
-  // terms, one starting later) is left as it is and reported, never approved or changed: staff
-  // decide.
-  const counts = { created: 0, present: 0, skipped: 0 };
-  const today = toDbDate(options.today);
-  for (const card of softLaunchCards()) {
-    const label = `${card.origin}→${card.destination} ${card.category}`;
-    const branchId = branches.get(card.branchCode);
-    const origin = placeIds.get(card.origin);
-    const destination = placeIds.get(card.destination);
-    const category = categories.has(card.category) ? categorySpecs.get(card.category) : undefined;
-    if (!branchId || !origin || !destination || !category) {
-      say(`بطاقة لم تُدخل (ينقصها فرع أو مكان أو فئة): ${label}`);
-      counts.skipped++;
-      continue;
-    }
-    const input = withLoadType<CreateRateCardRequest>({
-      branchId,
-      originLocationId: origin,
-      destinationLocationId: destination,
-      mode: card.mode,
-      cargoType: category.cargoType,
-      chargeTypeCode: 'FREIGHT',
-      priceCategoryCode: card.category,
-      unit: category.unit,
-      price: card.price,
-      currency: card.currency,
-      validFrom: options.today,
-      transitDays: SOFT_LAUNCH_TRANSIT_DAYS,
-      notes: SOFT_LAUNCH_NOTES,
-    });
-    const existing = await prisma.rateCard.findMany({
-      where: {
-        branchId,
-        originLocationId: origin,
-        destinationLocationId: destination,
-        priceCategoryCode: card.category,
-        chargeTypeCode: 'FREIGHT',
-        status: { in: ['DRAFT', 'APPROVED'] },
-        OR: [{ validTo: null }, { validTo: { gte: today } }],
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-    const inForce = (r: (typeof existing)[number]) =>
-      r.status === 'APPROVED' &&
-      r.validFrom <= today &&
-      r.mode === input.mode &&
-      r.loadType === (input.loadType ?? null) &&
-      r.cargoType === input.cargoType &&
-      r.containerTypeCode === null &&
-      r.unit === input.unit &&
-      r.currency === input.currency &&
-      r.price.equals(input.price) &&
-      r.minimumCharge.isZero() &&
-      r.validTo === null &&
-      r.transitDays === SOFT_LAUNCH_TRANSIT_DAYS &&
-      r.notes === SOFT_LAUNCH_NOTES;
-    if (existing.some(inForce)) {
-      counts.present++;
-      continue;
-    }
-    if (existing.length > 0) {
-      const others = existing
-        .map((r) => {
-          const from = r.validFrom.toISOString().slice(0, 10);
-          return `${r.status} ${r.price.toString()} ${r.currency} ${r.unit} من ${from} ${r.transitDays ?? '-'} يوم`;
-        })
-        .join('؛ ');
-      say(`بطاقة أخرى على نفس الطريق والفئة، تُركت كما هي ولم تُدخل بطاقتنا (${others}): ${label}`);
-      counts.skipped++;
-      continue;
-    }
-    const created = await rates.create(actor, input);
-    try {
-      await rates.approve(actor, created.id);
-    } catch (error) {
-      // Never leave a draft behind: a later run would find it and skip the card.
-      await rates.cancel(actor, created.id);
-      throw error;
-    }
-    counts.created++;
-  }
-  say(
-    `بطاقات الأسعار: ${counts.created} جديدة معتمدة، ${counts.present} موجودة من قبل، ${counts.skipped} لم تُدخل`,
+  // 3. Rate cards.
+  const categorySpecs = new Map(
+    SOFT_LAUNCH_CATEGORIES.filter((c) => categories.has(c.code)).map((c) => [c.code, c]),
   );
+  await ensureRateCards(deps, actor, softLaunchCards(), {
+    today: options.today,
+    branches,
+    placeIds,
+    categories: categorySpecs,
+    say,
+  });
 
   // 4. Routing: the branch that serves each origin, unless staff already set one.
   for (const [code, branchCode] of Object.entries(SOFT_LAUNCH_ORIGINS)) {
@@ -479,7 +409,7 @@ export async function applySoftLaunch(
   return report;
 }
 
-async function ensurePlace(
+export async function ensurePlace(
   { prisma, masterData }: SoftLaunchDeps,
   actor: AuthUser,
   spec: PlaceSpec,
@@ -532,4 +462,124 @@ async function ensurePlace(
     say(`أسماء تانية لـ ${place.nameAr}: ${added.join('، ')}`);
   }
   return place.id;
+}
+
+/** The category terms a card is entered with: its cargo type and unit. */
+export interface CardCategory {
+  cargoType: CargoType;
+  unit: RateUnit;
+}
+
+/**
+ * Enters `cards` as drafts and approves them, as on the rates screen. A card already in force today
+ * with exactly these terms (transit days and note included, no end date) counts as present; any
+ * other card on the same route and category (a staff draft, a card with other terms, one starting
+ * later) is left as it is and reported, never approved or changed: staff decide. A card whose
+ * branch, place or category is not in the maps is reported and skipped.
+ */
+export async function ensureRateCards(
+  { prisma, rates }: Pick<SoftLaunchDeps, 'prisma' | 'rates'>,
+  actor: AuthUser,
+  cards: readonly CardSpec[],
+  ctx: {
+    today: string;
+    branches: ReadonlyMap<string, string>;
+    placeIds: ReadonlyMap<string, string>;
+    categories: ReadonlyMap<string, CardCategory>;
+    /** The active container types, for full-container cards. */
+    containerTypes?: ReadonlySet<string>;
+    say: (line: string) => void;
+  },
+): Promise<{ created: number; present: number; skipped: number }> {
+  const { say } = ctx;
+  const counts = { created: 0, present: 0, skipped: 0 };
+  const today = toDbDate(ctx.today);
+  for (const card of cards) {
+    const container = card.containerTypeCode ?? null;
+    const label = `${card.origin}→${card.destination} ${container ?? card.category}`;
+    const branchId = ctx.branches.get(card.branchCode);
+    const origin = ctx.placeIds.get(card.origin);
+    const destination = ctx.placeIds.get(card.destination);
+    const category: CardCategory | undefined = container
+      ? ctx.containerTypes?.has(container)
+        ? { cargoType: 'CONTAINER', unit: 'PER_CONTAINER' }
+        : undefined
+      : ctx.categories.get(card.category);
+    if (!branchId || !origin || !destination || !category) {
+      say(`بطاقة لم تُدخل (ينقصها فرع أو مكان أو فئة): ${label}`);
+      counts.skipped++;
+      continue;
+    }
+    const input = withLoadType<CreateRateCardRequest>({
+      branchId,
+      originLocationId: origin,
+      destinationLocationId: destination,
+      mode: card.mode,
+      cargoType: category.cargoType,
+      chargeTypeCode: 'FREIGHT',
+      ...(container ? { containerTypeCode: container } : { priceCategoryCode: card.category }),
+      unit: category.unit,
+      price: card.price,
+      currency: card.currency,
+      validFrom: ctx.today,
+      transitDays: card.transitDays,
+      notes: card.notes,
+    });
+    const existing = await prisma.rateCard.findMany({
+      where: {
+        branchId,
+        originLocationId: origin,
+        destinationLocationId: destination,
+        ...(container
+          ? { containerTypeCode: container, priceCategoryCode: null }
+          : { priceCategoryCode: card.category }),
+        chargeTypeCode: 'FREIGHT',
+        status: { in: ['DRAFT', 'APPROVED'] },
+        OR: [{ validTo: null }, { validTo: { gte: today } }],
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const inForce = (r: (typeof existing)[number]) =>
+      r.status === 'APPROVED' &&
+      r.validFrom <= today &&
+      r.mode === input.mode &&
+      r.loadType === (input.loadType ?? null) &&
+      r.cargoType === input.cargoType &&
+      r.containerTypeCode === container &&
+      r.unit === input.unit &&
+      r.currency === input.currency &&
+      r.price.equals(input.price) &&
+      r.minimumCharge.isZero() &&
+      r.validTo === null &&
+      r.transitDays === card.transitDays &&
+      r.notes === card.notes;
+    if (existing.some(inForce)) {
+      counts.present++;
+      continue;
+    }
+    if (existing.length > 0) {
+      const others = existing
+        .map((r) => {
+          const from = r.validFrom.toISOString().slice(0, 10);
+          return `${r.status} ${r.price.toString()} ${r.currency} ${r.unit} من ${from} ${r.transitDays ?? '-'} يوم`;
+        })
+        .join('؛ ');
+      say(`بطاقة أخرى على نفس الطريق والفئة، تُركت كما هي ولم تُدخل بطاقتنا (${others}): ${label}`);
+      counts.skipped++;
+      continue;
+    }
+    const created = await rates.create(actor, input);
+    try {
+      await rates.approve(actor, created.id);
+    } catch (error) {
+      // Never leave a draft behind: a later run would find it and skip the card.
+      await rates.cancel(actor, created.id);
+      throw error;
+    }
+    counts.created++;
+  }
+  say(
+    `بطاقات الأسعار: ${counts.created} جديدة معتمدة، ${counts.present} موجودة من قبل، ${counts.skipped} لم تُدخل`,
+  );
+  return counts;
 }
