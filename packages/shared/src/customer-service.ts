@@ -440,7 +440,7 @@ export const CS_BOT_HANDOVERS = ['pickup', 'dropoff'] as const;
 
 /** A request by names reads `pending` while it awaits routing: its bot knows no such state. */
 export type CsBookingRequestState =
-  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired';
+  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
 
 export interface CsBookingRequestCreated {
   requestId: string;
@@ -462,6 +462,29 @@ export interface CsBookingRequestDto {
    * once approved; null when there are none (the bot says staff will send how to pay).
    */
   paymentInstructions: CsPaymentInstructionsDto | null;
+  /**
+   * Plan 09 section 2: the customer asked to cancel after approval (staff decide); closedAt once
+   * staff handled it. Null when never asked.
+   */
+  cancelRequest: CsCancelRequestDto | null;
+}
+
+export interface CsCancelRequestDto {
+  requestedAt: string;
+  closedAt: string | null;
+}
+
+/** POST /cs/booking-requests/:id/cancel (plan 09 section 2): the customer's words, optional. */
+export interface CsBookingRequestCancel {
+  reason?: string;
+}
+
+/** A cancellation done (or done before): the request is cancelled. */
+export interface CsBookingRequestCancelled {
+  requestId: string;
+  reference: string;
+  status: 'cancelled';
+  cancelledAt: string;
 }
 
 /** How the customer pays, as the bot shows it word for word with its version (plan 04, 4.1). */
@@ -542,6 +565,9 @@ export const CS_REVIEW_FILTERS = [
   'approved',
   'rejected',
   'expired',
+  // Plan 09 section 2: cancelled by the customer; approved ones whose customer asked to cancel.
+  'cancelled',
+  'cancel_requested',
 ] as const;
 export type CsReviewFilter = (typeof CS_REVIEW_FILTERS)[number];
 
@@ -625,7 +651,22 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
     /** Null: approved with no approved price. */
     total: DecimalString | null;
   } | null;
-  actions: { canRoute: boolean; canReject: boolean; canApprove: boolean };
+  /** Plan 09 section 2: when the customer cancelled it, and why (their words). */
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  /** The customer asked to cancel after approval: staff cancel the booking or close the ask. */
+  cancelRequest: (CsCancelRequestDto & { reason: string | null }) | null;
+  actions: {
+    canRoute: boolean;
+    canReject: boolean;
+    canApprove: boolean;
+    canCloseCancelRequest: boolean;
+  };
+}
+
+/** Staff mark a customer's cancel ask as handled (plan 09 section 2). */
+export interface CsCloseCancelRequest {
+  version: number;
 }
 
 /**

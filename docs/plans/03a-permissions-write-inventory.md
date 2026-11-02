@@ -73,10 +73,12 @@
 - POST `/credit-notes/:id/approve` · `CreditNotesController.approve` · `billing/billing.controller.ts` · credit_notes:approve
 - POST `/credit-notes/:id/cancel` · `CreditNotesController.cancel` · `billing/billing.controller.ts` · credit_notes:cancel
 - POST `/cs-booking-requests/:id/approve` · `BookingReviewController.approve` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve, bookings:create
+- POST `/cs-booking-requests/:id/cancel-request/close` · `BookingReviewController.closeCancelRequest` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/reject` · `BookingReviewController.reject` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
 - PUT `/cs-reject-reasons/:code` · `RejectReasonsController.set` · `customer-service/booking-review.controller.ts` · master_data:update
 - POST `/cs/booking-requests` · `BookingRequestsController.create` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/booking-requests/:id/cancel` · `BookingRequestsController.cancel` · `customer-service/customer-service.controller.ts` · —
 - PATCH `/cs/customer-profiles/:id` · `CustomerIdentityController.update` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-profiles/:id/follow-up` · `CustomerIdentityController.followUp` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-profiles/capture` · `CustomerIdentityController.capture` · `customer-service/customer-identity.controller.ts` · —

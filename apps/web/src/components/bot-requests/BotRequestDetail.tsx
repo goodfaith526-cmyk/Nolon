@@ -223,6 +223,29 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.cancelledAt && (
+          <>
+            <dt>{t('cancelledByCustomer')}</dt>
+            <dd>
+              <span dir="ltr">{r.cancelledAt.slice(0, 16).replace('T', ' ')}</span>
+              {r.cancelReason && <span className="pre"> — {r.cancelReason}</span>}
+            </dd>
+          </>
+        )}
+        {r.cancelRequest && (
+          <>
+            <dt>{t('cancelRequest')}</dt>
+            <dd>
+              <span dir="ltr">{r.cancelRequest.requestedAt.slice(0, 16).replace('T', ' ')}</span>
+              {r.cancelRequest.reason && (
+                <span className="pre"> — {r.cancelRequest.reason}</span>
+              )}{' '}
+              <span className="muted">
+                {r.cancelRequest.closedAt ? t('cancelRequestClosed') : t('cancelRequestOpen')}
+              </span>
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>
@@ -230,6 +253,22 @@ export function BotRequestDetail({ id }: { id: string }) {
           </>
         )}
       </dl>
+
+      {r.actions.canCloseCancelRequest && (
+        <div className="card stack">
+          <h2>{t('cancelRequestTitle')}</h2>
+          <p className="muted">{t('cancelRequestHint')}</p>
+          <div className="actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void post('cancel-request/close', { version: r.version })}
+            >
+              {t('cancelRequestCloseAction')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {r.actions.canRoute && (
         <form className="card stack" onSubmit={route}>

@@ -29,7 +29,13 @@ export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 export type AuditedEntity =
   | Extract<
       AuditEntity,
-      'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER' | 'API_CLIENT' | 'PAYMENT_INSTRUCTION'
+      | 'RATE'
+      | 'CUSTOMER'
+      | 'USER'
+      | 'PARTNER'
+      | 'API_CLIENT'
+      | 'PAYMENT_INSTRUCTION'
+      | 'CS_BOOKING_REQUEST'
     >
   | AuditedMasterData
   | AuditedAccess;
@@ -125,12 +131,29 @@ export class AuditService {
 
   /** Several changes at once (an Excel import), in chunks of one INSERT each. */
   async recordMany(tx: Tx, user: { id: string }, records: readonly AuditRecord[]): Promise<void> {
+    await this.write(tx, user.id, 'USER', records);
+  }
+
+  /**
+   * A change made by a Customer Service API client for its customer (source API, no staff user):
+   * the client and the owner go in the changes.
+   */
+  async recordApi(tx: Tx, record: AuditRecord): Promise<void> {
+    await this.write(tx, null, 'API', [record]);
+  }
+
+  private async write(
+    tx: Tx,
+    userId: string | null,
+    source: 'USER' | 'API',
+    records: readonly AuditRecord[],
+  ): Promise<void> {
     const data = records
       .filter((r) => r.action !== 'UPDATED' || r.changes.length > 0)
       .map((r) => ({
         branchId: r.branchId,
-        userId: user.id,
-        source: 'USER' as const,
+        userId,
+        source,
         entity: r.entity,
         entityId: r.entityId,
         reference: r.reference.slice(0, 300),

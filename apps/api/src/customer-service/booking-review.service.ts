@@ -18,6 +18,7 @@ import type {
   CsRejectReasonInput,
   CsRejectRequest,
   CsReviewFilter,
+  CsCloseCancelRequest,
   CsRouteRequest,
   CsSenderChannel,
   CreateBookingRequest,
@@ -129,7 +130,20 @@ export class BookingReviewService {
                 status: filter === 'pending' ? 'PENDING' : 'AWAITING_ROUTING',
                 expiresAt: { gt: now },
               }
-            : { status: filter === 'approved' ? 'APPROVED' : 'REJECTED' };
+            : filter === 'cancel_requested'
+              ? {
+                  status: 'APPROVED',
+                  cancelRequestedAt: { not: null },
+                  cancelRequestClosedAt: null,
+                }
+              : {
+                  status:
+                    filter === 'approved'
+                      ? 'APPROVED'
+                      : filter === 'cancelled'
+                        ? 'CANCELLED'
+                        : 'REJECTED',
+                };
     const rows = await this.prisma.csBookingRequest.findMany({
       where: {
         AND: [
@@ -253,6 +267,55 @@ export class BookingReviewService {
       });
     });
     // As route: the row this transaction wrote.
+    return this.format(user, written);
+  }
+
+  /**
+   * Plan 09 section 2: staff mark a customer's cancel ask on an approved request as handled (they
+   * cancelled the booking with its own route, or talked the customer out of it). The request stays
+   * approved; only the ask closes. The request's version, locked; approve in its branch.
+   */
+  async closeCancelRequest(
+    user: AuthUser,
+    id: string,
+    input: CsCloseCancelRequest,
+  ): Promise<CsBookingRequestStaffDto> {
+    const written = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id } });
+      if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+      if (row.version !== input.version) {
+        throw new ConflictException('The request changed: open it again');
+      }
+      if (
+        row.status !== 'APPROVED' ||
+        row.cancelRequestedAt === null ||
+        row.cancelRequestClosedAt !== null
+      ) {
+        throw new ConflictException('There is no open cancel ask on this request');
+      }
+      if (row.branchId === null || !user.access.has(DECIDE, row.branchId)) {
+        throw new ForbiddenException('You may not decide this request');
+      }
+      const closed = await tx.csBookingRequest.update({
+        where: { id },
+        data: {
+          cancelRequestClosedAt: new Date(),
+          cancelRequestClosedById: user.id,
+          version: { increment: 1 },
+        },
+        include: withQuote,
+      });
+      await this.audit.record(tx, user, {
+        branchId: row.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: row.id,
+        reference: row.reference,
+        action: 'UPDATED',
+        changes: [{ field: 'cancelRequestClosedAt', before: null, after: 'closed' }],
+      });
+      return closed;
+    });
     return this.format(user, written);
   }
 
@@ -608,7 +671,23 @@ function staffDto(
             total: r.approvedTotal === null ? null : toDecimalString(r.approvedTotal),
           }
         : null,
+    cancelledAt: r.cancelledAt?.toISOString() ?? null,
+    cancelReason: r.cancelReason,
+    cancelRequest:
+      r.cancelRequestedAt === null
+        ? null
+        : {
+            requestedAt: r.cancelRequestedAt.toISOString(),
+            closedAt: r.cancelRequestClosedAt?.toISOString() ?? null,
+            reason: r.cancelRequestReason,
+          },
     actions: {
+      canCloseCancelRequest:
+        r.status === 'APPROVED' &&
+        r.cancelRequestedAt !== null &&
+        r.cancelRequestClosedAt === null &&
+        r.branchId !== null &&
+        user.access.has(DECIDE, r.branchId),
       canRoute:
         open &&
         r.status === 'AWAITING_ROUTING' &&

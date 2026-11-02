@@ -49,7 +49,10 @@ const base: CsBookingRequestStaffDto = {
   bookingNumber: null,
   paymentCurrency: null,
   approvedPricing: null,
-  actions: { canRoute: true, canReject: true, canApprove: false },
+  cancelledAt: null,
+  cancelReason: null,
+  cancelRequest: null,
+  actions: { canRoute: true, canReject: true, canApprove: false, canCloseCancelRequest: false },
 };
 
 vi.mock('next-intl', () => ({
@@ -147,7 +150,12 @@ describe('BotRequestDetail', () => {
       bookingNumber: 'BK-000042',
       paymentCurrency: 'SDG',
       approvedPricing: { category: 'BARREL', quantity: '2', currency: 'USD', total: '90.00' },
-      actions: { canRoute: false, canReject: false, canApprove: false },
+      actions: {
+        canRoute: false,
+        canReject: false,
+        canApprove: false,
+        canCloseCancelRequest: false,
+      },
     });
     const link = shown.querySelector<HTMLAnchorElement>('a[href="/bookings/bk1"]');
     expect(link?.textContent).toBe('BK-000042');
@@ -158,8 +166,45 @@ describe('BotRequestDetail', () => {
   it('offers no action the API does not allow', async () => {
     const shown = await show({
       ...base,
-      actions: { canRoute: false, canReject: false, canApprove: false },
+      actions: {
+        canRoute: false,
+        canReject: false,
+        canApprove: false,
+        canCloseCancelRequest: false,
+      },
     });
     expect(shown.querySelector('form')).toBeNull();
+  });
+
+  it('shows the customer’s cancel ask and closes it with its version', async () => {
+    const shown = await show({
+      ...base,
+      status: 'approved',
+      branchId: 'b-pts',
+      cancelRequest: {
+        requestedAt: '2026-11-02T10:00:00.000Z',
+        closedAt: null,
+        reason: 'غيرت رأيي',
+      },
+      actions: {
+        canRoute: false,
+        canReject: false,
+        canApprove: false,
+        canCloseCancelRequest: true,
+      },
+    });
+    expect(shown.textContent).toContain('cancelRequestOpen');
+    expect(shown.textContent).toContain('غيرت رأيي');
+    const button = [...shown.querySelectorAll('button')].find(
+      (b) => b.textContent === 'cancelRequestCloseAction',
+    )!;
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+    expect(calls.find((c) => c.init?.method === 'POST')).toEqual({
+      path: '/cs-booking-requests/r1/cancel-request/close',
+      init: { method: 'POST', body: { version: 3 } },
+    });
   });
 });
