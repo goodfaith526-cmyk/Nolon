@@ -82,7 +82,8 @@
     "partners": "Partners",
     "permissions": "Permissions",
     "branchPermissions": "Branch permissions",
-    "paymentInstructions": "Payment instructions"
+    "paymentInstructions": "Payment instructions",
+    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window."
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -727,7 +728,8 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit"
+    "tabProfit": "Profit",
+    "openStandalone": "Open in its own window"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",

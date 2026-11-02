@@ -82,7 +82,8 @@
     "partners": "الشركاء",
     "permissions": "الصلاحيات",
     "branchPermissions": "صلاحيات الفرع",
-    "paymentInstructions": "تعليمات الدفع"
+    "paymentInstructions": "تعليمات الدفع",
+    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة."
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -727,7 +728,8 @@
     "widthCm": "العرض (سم)",
     "heightCm": "الارتفاع (سم)",
     "lineDescription": "الوصف",
-    "tabProfit": "الربحية"
+    "tabProfit": "الربحية",
+    "openStandalone": "افتح في نافذة مستقلة"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
