@@ -236,6 +236,33 @@ describe('trial-prices data script', () => {
     await deps.rates.cancel(actor, staff.id);
   });
 
+  it('never turns back on an origin or destination staff turned off (Codex F160-1)', async () => {
+    const off = await t.prisma.location.findMany({ where: { code: { in: ['EGCAI', 'SDDOG'] } } });
+    expect(off).toHaveLength(2);
+    await t.prisma.location.updateMany({
+      where: { id: { in: off.map((l) => l.id) } },
+      data: { isActive: false },
+    });
+    try {
+      const count = () => t.prisma.rateCard.count({ where: { status: { not: 'CANCELLED' } } });
+      const was = await count();
+      const lines = (await applyTrialPrices(deps, actor, { today })).join('\n');
+      expect(lines).toContain('مكان موقوف: القاهرة (EGCAI)');
+      expect(lines).toContain('مكان موقوف: دنقلا (SDDOG)');
+      expect(lines).toContain('ينقصها فرع أو مكان أو فئة');
+      expect(await count()).toBe(was);
+      const after = await t.prisma.location.findMany({
+        where: { id: { in: off.map((l) => l.id) } },
+      });
+      expect(after.map((l) => l.isActive)).toEqual([false, false]);
+    } finally {
+      await t.prisma.location.updateMany({
+        where: { id: { in: off.map((l) => l.id) } },
+        data: { isActive: true },
+      });
+    }
+  });
+
   it('skips the cards of a category staff turned off, and says so', async () => {
     await deps.masterData.setPriceCategoryActive(actor, 'SPECIAL', false);
     try {

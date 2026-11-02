@@ -7,7 +7,7 @@ import {
   SOFT_LAUNCH_PLACES,
   SOFT_LAUNCH_PRICES,
   type SoftLaunchDeps,
-  ensurePlace,
+  findPlace,
   ensureRateCards,
 } from './soft-launch.js';
 
@@ -156,9 +156,9 @@ export function trialCards(): CardSpec[] {
 }
 
 /**
- * Applies the trial prices. The places are found or entered as the soft-launch script does; a
- * category missing or inactive is reported and its cards skipped (staff decide, the script does
- * not turn a category back on). Returns what it did and found, one line each.
+ * Applies the trial prices. It changes no master data: a place, category or container type that
+ * is missing or turned off is reported and its cards skipped (staff decide; the script does not
+ * create one or turn it back on). Returns what it did and found, one line each.
  */
 export async function applyTrialPrices(
   deps: SoftLaunchDeps,
@@ -174,8 +174,13 @@ export async function applyTrialPrices(
   );
   const placeIds = new Map<string, string>();
   for (const spec of SOFT_LAUNCH_PLACES) {
-    const id = await ensurePlace(deps, actor, spec, say);
-    if (id) placeIds.set(spec.code, id);
+    // Read only (Codex F160-1): a missing place is not created and a place staff turned off is not
+    // turned back on; its cards are reported and skipped.
+    const place = await findPlace(prisma, spec, say);
+    if (place === null) say(`مكان ناقص: ${spec.nameAr} (${spec.code})، بطاقاته التجريبية لم تُدخل`);
+    else if (place && !place.isActive) {
+      say(`مكان موقوف: ${place.nameAr} (${place.code})، بطاقاته التجريبية لم تُدخل`);
+    } else if (place) placeIds.set(spec.code, place.id);
   }
   const categories = new Map<string, CardCategory>();
   const rows = await prisma.priceCategory.findMany({

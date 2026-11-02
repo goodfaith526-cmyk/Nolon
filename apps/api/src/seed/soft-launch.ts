@@ -409,12 +409,15 @@ export async function applySoftLaunch(
   return report;
 }
 
-export async function ensurePlace(
-  { prisma, masterData }: SoftLaunchDeps,
-  actor: AuthUser,
+/**
+ * The place of `spec`, by code, else by a name in the same country: null when there is none,
+ * undefined when more than one has the name (reported). Reads only.
+ */
+export async function findPlace(
+  prisma: PrismaService,
   spec: PlaceSpec,
   say: (line: string) => void,
-): Promise<string | null> {
+) {
   let place = await prisma.location.findUnique({
     where: { code: spec.code },
     include: { aliases: true },
@@ -432,11 +435,22 @@ export async function ensurePlace(
       say(
         `${spec.nameAr}: أكثر من مكان بنفس الاسم (${hits.map((h) => h.code).join('، ')})، لم يُستعمل`,
       );
-      return null;
+      return undefined;
     }
     place = hits[0] ?? null;
     if (place) say(`${spec.nameAr}: موجود بالرمز ${place.code}`);
   }
+  return place;
+}
+
+export async function ensurePlace(
+  { prisma, masterData }: SoftLaunchDeps,
+  actor: AuthUser,
+  spec: PlaceSpec,
+  say: (line: string) => void,
+): Promise<string | null> {
+  let place = await findPlace(prisma, spec, say);
+  if (place === undefined) return null;
   if (!place) {
     const created = await masterData.createLocation(actor, {
       code: spec.code,
