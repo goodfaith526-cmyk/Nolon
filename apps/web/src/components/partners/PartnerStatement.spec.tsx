@@ -13,6 +13,7 @@ const statement = (over: Partial<PartnerStatementDto> = {}): PartnerStatementDto
   partnerId: 'p1',
   partnerNumber: 'PRT-0001',
   partnerName: 'Outlet',
+  partnerSupplierId: 'sup1',
   branchId: 'b1',
   branchCode: 'PTS',
   currency: 'USD',
@@ -52,6 +53,8 @@ vi.mock('@/i18n/navigation', () => ({
 vi.mock('@/lib/api', () => ({
   api: (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, ...init });
+    if (path.startsWith('/supplier-bills/due-date'))
+      return Promise.resolve({ dueDate: '2026-11-30' });
     if (init?.method && failNext) {
       failNext = false;
       return Promise.reject(new Error('network'));
@@ -105,17 +108,27 @@ describe('PartnerStatement', () => {
     act(() => buttons(shown, 'makeBill')[0]?.click());
     const form = shown.querySelector('form');
     if (!form) throw new Error('no bill form');
+    const settle = async () => {
+      for (let i = 0; i < 5; i += 1) await act(() => Promise.resolve());
+    };
     act(() => form.requestSubmit());
-    await act(() => Promise.resolve());
+    await settle();
     act(() => form.requestSubmit());
-    await act(() => Promise.resolve());
+    await settle();
+    // Left empty, the due date is the API's suggestion, sent as the request's own (F168-2).
+    expect(calls.filter((c) => c.path.startsWith('/supplier-bills/due-date'))[0]?.path).toMatch(
+      /^\/supplier-bills\/due-date\?supplierId=sup1&billDate=\d{4}-\d{2}-\d{2}$/,
+    );
     const posts = calls.filter((c) => c.method === 'POST');
     expect(posts.map((c) => c.path)).toEqual([
       '/partner-statements/st1/bill',
       '/partner-statements/st1/bill',
     ]);
-    const [first, second] = posts.map((c) => c.body as { requestId: string; billDate: string });
+    const [first, second] = posts.map(
+      (c) => c.body as { requestId: string; billDate: string; dueDate: string },
+    );
     expect(first?.requestId).toBe(second?.requestId);
+    expect(second?.dueDate).toBe('2026-11-30');
     expect(first?.billDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 

@@ -4,9 +4,10 @@ import type {
   PartnerStatementBillInput,
   PartnerStatementDto,
   PartnerStatementLineDto,
+  SupplierBillDueDateDto,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
@@ -54,18 +55,36 @@ export function PartnerStatement({ id }: { id: string }) {
     }
   }
 
-  function makeBill(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    const dueDate = field(form, 'dueDate');
+  async function makeBill(form: FormData, supplierId: string | null) {
+    const billDate = field(form, 'billDate');
     const supplierReference = field(form, 'supplierReference');
+    let dueDate = field(form, 'dueDate');
+    // Left empty, the due date is the API's suggestion from the supplier's terms, sent as the
+    // request's own: a retry is then compared with what was asked for (F168-2). Without a
+    // supplier the API refuses the bill, whatever the date.
+    if (!dueDate) {
+      setBusy(true);
+      try {
+        dueDate = supplierId
+          ? (
+              await api<SupplierBillDueDateDto>(
+                `/supplier-bills/due-date?${new URLSearchParams({ supplierId, billDate }).toString()}`,
+              )
+            ).dueDate
+          : billDate;
+      } catch (err) {
+        setNotice({ ok: false, text: failure(err) });
+        setBusy(false);
+        return;
+      }
+    }
     const body: PartnerStatementBillInput = {
       requestId,
-      billDate: field(form, 'billDate'),
-      ...(dueDate ? { dueDate } : {}),
+      billDate,
+      dueDate,
       ...(supplierReference ? { supplierReference } : {}),
     };
-    void post(`/partner-statements/${id}/bill`, body, t('billed'));
+    await post(`/partner-statements/${id}/bill`, body, t('billed'));
   }
 
   function cancel() {
@@ -109,7 +128,14 @@ export function PartnerStatement({ id }: { id: string }) {
         <PrintLink href={`/partner-statements/${id}`} label={t('print')} />
       </div>
       {billing && (
-        <form className="card stack" autoComplete="off" onSubmit={makeBill}>
+        <form
+          className="card stack"
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void makeBill(new FormData(e.currentTarget), statement.partnerSupplierId);
+          }}
+        >
           <div className="grid">
             <label className="field">
               {t('billDate')}
