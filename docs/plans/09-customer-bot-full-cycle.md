@@ -133,15 +133,26 @@ N-C5 بعد N-C1 وN-C3 عشان أحداثهم، وبتيار تسلسل واح
   | `PER_SHIPMENT`                                           | `pieces` بس                                 | —                                               |
 
   صنف ما عندو عدد طرود ثابت (مثلاً 0.25 CBM بدون `pieces`، أو كمية عشرية لوحدة عدّ) **ما بيعمل سطر**: بيظهر في شاشة
-  الحجز «أصناف ناقصة العدد» بقيمو المحفوظة، والموظف بيكمّل قبل التأكيد (`confirmInTx` بيفحص البضاعة كما اليوم). نوع
+  الحجز «أصناف ناقصة العدد» بقيمو المحفوظة، والموظف بيكمّل قبل التأكيد. نوع
   البضاعة لكل سطر من فئتو. رأس الحجز: الطريقة ونوع الحمولة من مدخلات التسعير (واحدة للطلب)؛ `cargo_type` الرأس = نوع
   البضاعة المشترك لو كل الأصناف نفس النوع، وإلا `GENERAL` ⭐؛ أصناف بتحتاج أنواع حمولة مختلفة (حاوية كاملة مع LCL) =
   `422 MIXED_LOAD` والموظف يختار.
 
+- **بوابة اكتمال البضاعة (F161-3، مراجعة 2):** كل صنف طلب ليهو حالة مسجّلة: `cs_booking_request_items.booking_item_id`
+  (FK على `booking_items`، `ON DELETE SET NULL`) و`resolved_at`/`resolved_by_id`. الصنف «محلول» لما يكون مربوط بسطر حجز
+  موجود. الموافقة بتربط الأصناف اللي عملت سطور. الصنف الناقص بيتحل في شاشة الحجز بس: الموظف بيضيف السطر ويختار الصنف اللي
+  بيكمّلو (`POST /bookings/:id/cs-items/:itemId/resolve {bookingItemId, version}`، صلاحية `bookings:update` في فرع الحجز،
+  السطر من نفس الحجز، تدقيق). تعديل الحجز اللي بيمسح أو بيبدّل السطور بيرجّع الأصناف المربوطة «غير محلولة» تلقائياً (الـFK
+  بيبقى `NULL`)، فالاتجاه دايماً آمن.
+  **الفحص على الخادم:** `BookingsService.confirmInTx` (أي طريق تأكيد: الشاشة أو API أو مسودة المساعد) بيقفل أصناف الطلب
+  المرتبط بالحجز `FOR UPDATE` في نفس المعاملة، ولو في صنف `booking_item_id IS NULL` = `409 CARGO_INCOMPLETE` بقائمة الأصناف،
+  وما في شحنة. حجز ما جاي من طلب بوت ما بيتأثر.
+
 - **الموافقة:** `pricing.items[]` (والقديم صنف واحد)، والبصمة بتغطي كل الأسطر. لقطة السعر لكل سطر في
   `cs_booking_request_items.approved_*`، و`approved_total`/`approved_currency` في الطلب = المجموع.
 - **اختبارات:** كرتونتين مجموعهم 0.25 CBM مع برميل معدود = سطرين بالحجم والعدد الصحيح؛ وزن عشري؛ صنف بلا عدد = ما في سطر
-  وظاهر للموظف؛ 11 صنف = 400؛ الشكل القديم = نفس الرد والبصمة؛ صنف بلا سعر = `total: null`؛ بصمة ما بتغطي صنف =
+  وظاهر للموظف؛ **طلب مختلط (برميل معدود + 0.25 CBM بلا عدد): التأكيد من الشاشة ومن API = `409 CARGO_INCOMPLETE` وما في
+  شحنة، وبعد حل الصنف التأكيد بينجح**؛ مسح سطر مربوط بيرجّع الصنف غير محلول ويمنع التأكيد؛ ربط سطر من حجز تاني = مرفوض؛ 11 صنف = 400؛ الشكل القديم = نفس الرد والبصمة؛ صنف بلا سعر = `total: null`؛ بصمة ما بتغطي صنف =
   `PRICE_STALE`؛ `MIXED_LOAD`.
 
 ## 5. N-C5 الإشعار (R4 من الخطة 04 القسم 8)
@@ -262,7 +273,10 @@ CREATE TABLE "cs_booking_request_items" ("id" UUID PRIMARY KEY, "request_id" UUI
   "length_cm" DECIMAL(10,2), "width_cm" DECIMAL(10,2), "height_cm" DECIMAL(10,2), "weight_kg" DECIMAL(12,3),
   "approved_category_code" VARCHAR(20) REFERENCES "price_categories"("code") ON DELETE RESTRICT,
   "approved_quantity" DECIMAL(18,4), "approved_total" DECIMAL(18,4),
+  "booking_item_id" UUID REFERENCES "booking_items"("id") ON DELETE SET NULL,
+  "resolved_at" TIMESTAMPTZ(3), "resolved_by_id" UUID REFERENCES "users"("id") ON DELETE RESTRICT,
   UNIQUE ("request_id", "line_no"));
+CREATE UNIQUE INDEX ON "cs_booking_request_items" ("booking_item_id");
 
 -- 09-4
 ALTER TABLE "cs_booking_requests" ADD COLUMN "event_seq" INTEGER NOT NULL DEFAULT 0;
