@@ -10,12 +10,13 @@ import type {
   StorageLocationUpdateRequest,
   WarehouseDto,
   WarehouseInput,
+  WarehouseKind,
   WarehouseUpdateRequest,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
-import type { Prisma, StorageLocation } from '../generated/prisma/client.js';
+import { Prisma, type StorageLocation } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -26,6 +27,16 @@ const withLocations = {
 } satisfies Prisma.WarehouseInclude;
 
 type WarehouseWithLocations = Prisma.WarehouseGetPayload<{ include: typeof withLocations }>;
+
+/** A facility's details: what it does, the number customers call and where it is on the map. */
+export interface WarehouseFacility {
+  kind: WarehouseKind;
+  /** E.164. */
+  phone: string;
+  /** WGS 84 degrees, as decimal strings. */
+  latitude: string;
+  longitude: string;
+}
 
 /** What a movement needs from its warehouse. */
 export interface MovementWarehouse {
@@ -58,7 +69,15 @@ export class WarehousesService {
     return warehouses.map(toDto);
   }
 
-  async create(user: AuthUser, input: WarehouseInput): Promise<WarehouseDto> {
+  /**
+   * `facility` (kind, phone, map position) is not part of the API body yet: only the trial
+   * facilities script (seed/trial-facilities.ts) sets it.
+   */
+  async create(
+    user: AuthUser,
+    input: WarehouseInput,
+    facility?: WarehouseFacility,
+  ): Promise<WarehouseDto> {
     assertBranchAccess(user, input.branchId);
     try {
       return toDto(
@@ -73,6 +92,10 @@ export class WarehousesService {
               nameAr: input.nameAr,
               address: input.address ?? null,
               locationId,
+              kind: facility?.kind ?? null,
+              phone: facility?.phone ?? null,
+              latitude: facility ? new Prisma.Decimal(facility.latitude) : null,
+              longitude: facility ? new Prisma.Decimal(facility.longitude) : null,
             },
             include: withLocations,
           });
@@ -212,6 +235,10 @@ function toDto(w: WarehouseWithLocations): WarehouseDto {
     nameAr: w.nameAr,
     address: w.address,
     locationId: w.locationId,
+    kind: w.kind,
+    phone: w.phone,
+    latitude: w.latitude?.toString() ?? null,
+    longitude: w.longitude?.toString() ?? null,
     isActive: w.isActive,
     storageLocations: w.storageLocations.map(toLocationDto),
   };

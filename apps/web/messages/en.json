@@ -1130,7 +1130,15 @@
     "statusReceiptNotMoved": "Goods received: {number}, but the status could not change now. Check the shipment's status.",
     "statusAlreadyHeld": "The goods are already received in a warehouse ({held} packages held): only the status changes.",
     "statusWithoutReceipt": "No goods receipt will be recorded, so the shipment will not show in a warehouse's stock until someone receives the goods.",
-    "awaitingTruncated": "Only the first shipments awaiting a receipt are shown. Receive these first."
+    "awaitingTruncated": "Only the first shipments awaiting a receipt are shown. Receive these first.",
+    "phone": "Phone",
+    "openMap": "Location on the map",
+    "kind": {
+      "COLLECTION_CENTER": "Collection centre",
+      "DISTRIBUTION_HUB": "Central distribution hub",
+      "DELIVERY_CENTER": "Delivery centre",
+      "DROP_OFF_POINT": "Drop-off window"
+    }
   },
   "Customs": {
     "section": "Customs",
