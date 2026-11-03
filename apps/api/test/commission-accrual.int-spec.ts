@@ -41,7 +41,7 @@ let duties: string;
 let customer: CustomerDto;
 let tag: string;
 // A currency of this run only: no exchange rate until the test adds one.
-const currency = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+const currency = `QA${String.fromCharCode(65 + randomInt(26))}`;
 const cookies = {
   admin: '',
   salesPts: '',
