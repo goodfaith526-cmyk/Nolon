@@ -96,6 +96,8 @@ export class PodService implements OnModuleInit {
   onModuleInit(): void {
     // B2: the status a proof of delivery applied is not undone from the shipment.
     this.shipmentLinks.register({
+      // Plan 07, 6: a shipment with a distributor closes only once fully delivered with a POD.
+      fullDeliveryAtInTx: (tx, shipmentId) => this.fullDeliveryAtInTx(tx, shipmentId),
       revertBlockerInTx: async (tx, shipmentId, step) => {
         if (step.note === null) return null;
         const pod = await tx.proofOfDelivery.findFirst({

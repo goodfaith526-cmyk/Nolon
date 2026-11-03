@@ -791,6 +791,8 @@ export const FORM_REFUSALS = [
   // reason to close it without charges was given: params `shipment` and `drafts` (a count).
   'SHIPMENT_CLOSE_GOODS_ON_HAND',
   'SHIPMENT_CLOSE_NOT_INVOICED',
+  // A shipment with a distributor and no live full proof of delivery (plan 07, 6): `shipment`.
+  'SHIPMENT_CLOSE_NO_POD',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',

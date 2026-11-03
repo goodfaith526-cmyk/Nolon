@@ -449,6 +449,7 @@ describe('warehouse and customs', () => {
       expect(delivered.actions.closeCheck).toEqual({
         goodsOnHand: [{ warehouseCode: 'ZZ-DXB-1', packages: 4 }],
         invoiced: false,
+        podMissing: false,
       });
       const close = () =>
         post(`/shipments/${s.id}/status`, cookies.opsDxb, {
