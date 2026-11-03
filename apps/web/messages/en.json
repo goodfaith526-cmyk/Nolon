@@ -1887,7 +1887,8 @@
     "entity_DELEGATION": "Delegation",
     "entity_CS_REJECT_REASON": "Bot request rejection reason",
     "entity_API_CLIENT": "API key",
-    "entity_PAYMENT_INSTRUCTION": "Payment instructions"
+    "entity_PAYMENT_INSTRUCTION": "Payment instructions",
+    "entity_CS_BOOKING_REQUEST": "Bot booking request"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -3077,7 +3078,17 @@
     "priceFailed": "The price could not be checked. Check the inputs.",
     "approveAction": "Approve and open the booking",
     "booking": "Booking",
-    "approvedPricing": "Priced on approval"
+    "approvedPricing": "Priced on approval",
+    "filter_cancelled": "Cancelled by customer",
+    "filter_cancel_requested": "Cancel asked",
+    "state_cancelled": "Cancelled",
+    "cancelledByCustomer": "Cancelled by the customer",
+    "cancelRequest": "Customer asked to cancel",
+    "cancelRequestOpen": "(open)",
+    "cancelRequestClosed": "(handled)",
+    "cancelRequestTitle": "The customer asked to cancel",
+    "cancelRequestHint": "The booking is not cancelled automatically. Contact the customer, cancel the booking from its page if needed, then mark the ask handled.",
+    "cancelRequestCloseAction": "Mark handled"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

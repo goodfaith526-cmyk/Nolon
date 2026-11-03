@@ -1887,7 +1887,8 @@
     "entity_DELEGATION": "تفويض",
     "entity_CS_REJECT_REASON": "سبب رفض طلب البوت",
     "entity_API_CLIENT": "مفتاح API",
-    "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع"
+    "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع",
+    "entity_CS_BOOKING_REQUEST": "طلب حجز من البوت"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -3077,7 +3078,17 @@
     "priceFailed": "ما قدرنا نفحص السعر. راجع المدخلات.",
     "approveAction": "وافق وافتح الحجز",
     "booking": "الحجز",
-    "approvedPricing": "المسعَّر عند الموافقة"
+    "approvedPricing": "المسعَّر عند الموافقة",
+    "filter_cancelled": "ألغاه الزبون",
+    "filter_cancel_requested": "طلب إلغاء",
+    "state_cancelled": "ملغي",
+    "cancelledByCustomer": "ألغاه الزبون",
+    "cancelRequest": "الزبون طلب الإلغاء",
+    "cancelRequestOpen": "(مفتوح)",
+    "cancelRequestClosed": "(اتعالج)",
+    "cancelRequestTitle": "الزبون طلب إلغاء الحجز",
+    "cancelRequestHint": "الحجز ما بيتلغى تلقائياً. تواصل مع الزبون، وألغِ الحجز من صفحته لو لازم، وبعدها علّم الطلب «اتعالج».",
+    "cancelRequestCloseAction": "اتعالج"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

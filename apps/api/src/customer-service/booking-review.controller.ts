@@ -41,6 +41,7 @@ function requireReviewer(user: AuthUser): AuthUser {
 const listQuery = z.object({ state: z.enum(CS_REVIEW_FILTERS).default('open') }).strict();
 const version = z.number().int().min(1);
 const routeBody = z.object({ version, branchId: z.uuid() }).strict();
+const closeBody = z.object({ version }).strict();
 const reasonCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'A code of capitals, digits and _');
 const rejectBody = z
   .object({ version, reasonCode, internalNote: optionalText(1000).optional() })
@@ -155,6 +156,17 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** Plan 09 section 2: the customer's cancel ask on an approved request, handled. */
+  @Post(':id/cancel-request/close')
+  @RequirePermission('cs_booking_requests:approve')
+  closeCancelRequest(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.closeCancelRequest(user, id, parse(closeBody, body));
   }
 }
 

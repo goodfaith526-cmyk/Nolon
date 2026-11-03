@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -16,6 +17,8 @@ import {
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
   type CsBookingRequestByNames,
+  type CsBookingRequestCancelled,
+  type CsCancelRequestDto,
   type CsBookingRequestCreate,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
@@ -29,6 +32,8 @@ import { nextSequenceValue } from '../common/numbering.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AuditService } from '../audit/audit.service.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
 import { keyScopes, keyServices } from './api-scopes.js';
@@ -151,6 +156,8 @@ export class BookingRequestsService {
     private readonly tokens: CustomerTokensService,
     private readonly payments: PaymentInstructionsService,
     private readonly identities: CustomerIdentityService,
+    private readonly audit: AuditService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   async create(
@@ -437,23 +444,10 @@ export class BookingRequestsService {
     id: string,
     sender: { channel: CsSenderChannel; id: string } | null,
   ): Promise<CsBookingRequestDto> {
-    const owner =
-      caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
-    // A request by names belongs to the key that made it (its bot names no sender id to read by):
-    // only the key itself reads it so, never a customer token the key issued (F126-5).
-    const mine = owner === null ? null : { id, apiClientId: caller.client.id, ownerRef: owner };
-    const byKey =
-      caller.kind === 'key'
-        ? { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } }
-        : null;
-    const where = [mine, byKey].filter((w) => w !== null);
-    const row =
-      where.length === 0
-        ? null
-        : await this.prisma.csBookingRequest.findFirst({
-            where: { OR: where },
-            include: { rejectReason: true, booking: { select: { number: true } } },
-          });
+    const row = await this.prisma.csBookingRequest.findFirst({
+      where: ownedWhere(caller, id, sender),
+      include: { rejectReason: true, booking: { select: { number: true } } },
+    });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
       await this.tokens.record(
@@ -483,7 +477,132 @@ export class BookingRequestsService {
         row.status === 'APPROVED' && row.branchId !== null && row.paymentCurrency !== null
           ? await this.payments.approvedFor(row.branchId, row.paymentCurrency)
           : null,
+      cancelRequest: cancelRequestOf(row),
     };
+  }
+
+  /**
+   * Plan 09 section 2: the owner cancels a request. The owner is proven, never asserted: a customer
+   * token's own request, or a signed channel identity (plan 08) whose subject is the request's
+   * sender. The key alone, or X-Cs-Sender, is no proof (F161-1): 403 OWNER_PROOF_REQUIRED, and the
+   * bot hands over to staff. An undecided request not expired becomes CANCELLED; one already
+   * cancelled answers the same. An approved one is not cancelled: 409 ALREADY_DECIDED, and the ask
+   * is kept once for staff (the booking is theirs to cancel). Rejected or expired: 409
+   * ALREADY_DECIDED. All under the row's lock, with the key read again (revoked or no longer
+   * serving = 404, as a read).
+   */
+  async cancel(
+    caller: BookingRequestCaller,
+    id: string,
+    proof: { channel: CsSenderChannel; subjectId: string } | null,
+    reason: string | undefined,
+  ): Promise<CsBookingRequestCancelled> {
+    if (!this.env.CS_BOOKING_CANCEL_ENABLED) {
+      throw coded(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        'CANCEL_UNAVAILABLE',
+        'Cancelling a booking request is not available yet: hand over to staff',
+      );
+    }
+    let where: Prisma.CsBookingRequestWhereInput;
+    if (caller.kind === 'customer') {
+      where = { id, apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
+    } else if (proof) {
+      where = {
+        id,
+        apiClientId: caller.client.id,
+        senderChannel: proof.channel,
+        senderId: proof.subjectId,
+      };
+    } else {
+      throw coded(
+        HttpStatus.FORBIDDEN,
+        'OWNER_PROOF_REQUIRED',
+        'Cancelling needs the customer token or a signed channel identity of the sender',
+      );
+    }
+    const found = await this.prisma.csBookingRequest.findFirst({ where, select: { id: true } });
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      if (!found) return null;
+      const { branchIds } = await currentKey(tx, caller);
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${found.id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id: found.id } });
+      if (!row || !servedBy(row, branchIds)) return null;
+      const now = new Date();
+      const audit = (action: 'CANCELLED' | 'UPDATED', field: string) =>
+        this.audit.recordApi(tx, {
+          branchId: row.branchId,
+          entity: 'CS_BOOKING_REQUEST',
+          entityId: row.id,
+          reference: row.reference,
+          action,
+          changes: [
+            { field, before: null, after: reason ?? '' },
+            { field: 'apiClient', before: null, after: caller.client.id },
+            { field: 'owner', before: null, after: row.ownerRef },
+          ],
+        });
+      if (row.status === 'CANCELLED') return { kind: 'cancelled' as const, row };
+      if (stateOf(row, now) === 'pending' || stateOf(row, now) === 'awaiting_routing') {
+        const cancelled = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: now,
+            cancelReason: reason ?? null,
+            version: { increment: 1 },
+          },
+        });
+        await audit('CANCELLED', 'cancelReason');
+        return { kind: 'cancelled' as const, row: cancelled };
+      }
+      if (row.status === 'APPROVED') {
+        if (row.cancelRequestedAt !== null) return { kind: 'asked' as const, row };
+        const asked = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: {
+            cancelRequestedAt: now,
+            cancelRequestReason: reason ?? null,
+            version: { increment: 1 },
+          },
+        });
+        await audit('UPDATED', 'cancelRequestReason');
+        return { kind: 'asked' as const, row: asked };
+      }
+      return { kind: 'decided' as const, row };
+    });
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        caller.client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        outcome ? 'OK' : 'NOT_FOUND',
+        'POST /cs/booking-requests/:id/cancel',
+      );
+    }
+    if (!outcome) throw new NotFoundException('Booking request not found');
+    const { kind, row } = outcome;
+    if (kind === 'cancelled') {
+      return {
+        requestId: row.id,
+        reference: row.reference,
+        status: 'cancelled',
+        cancelledAt: (row.cancelledAt ?? row.updatedAt).toISOString(),
+      };
+    }
+    throw new HttpException(
+      {
+        message:
+          kind === 'asked'
+            ? 'The request is approved: staff will contact the customer about cancelling'
+            : 'The request is already decided',
+        code: 'ALREADY_DECIDED',
+        statusCode: HttpStatus.CONFLICT,
+        status: stateOf(row),
+        cancelRequest: cancelRequestOf(row),
+      },
+      HttpStatus.CONFLICT,
+    );
   }
 
   /**
@@ -607,6 +726,35 @@ function conflict(): HttpException {
     'IDEMPOTENCY_CONFLICT',
     'This idempotency key was used for another request',
   );
+}
+
+/**
+ * Which request a caller may read (section 7.2): its owner through the key that made it;
+ * a request by names belongs to the key itself (its bot names no sender to read by), never to a
+ * customer token the key issued (F126-5). Matches nothing when the caller names no owner.
+ */
+function ownedWhere(
+  caller: BookingRequestCaller,
+  id: string,
+  sender: { channel: CsSenderChannel; id: string } | null,
+): Prisma.CsBookingRequestWhereInput {
+  const owner = caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
+  const mine = owner === null ? null : { id, apiClientId: caller.client.id, ownerRef: owner };
+  const byKey =
+    caller.kind === 'key'
+      ? { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } }
+      : null;
+  const where = [mine, byKey].filter((w) => w !== null);
+  return where.length === 0 ? { id: { in: [] } } : { OR: where };
+}
+
+function cancelRequestOf(row: CsBookingRequest): CsCancelRequestDto | null {
+  return row.cancelRequestedAt === null
+    ? null
+    : {
+        requestedAt: row.cancelRequestedAt.toISOString(),
+        closedAt: row.cancelRequestClosedAt?.toISOString() ?? null,
+      };
 }
 
 function createdBody(row: CsBookingRequest): CsBookingRequestCreated {

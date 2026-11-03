@@ -90,6 +90,14 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 2: a customer cancels a bot's booking request. Off until the bot's connector
+   * accepts the cancelled state (consumer first, plan 09 section 9).
+   */
+  CS_BOOKING_CANCEL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

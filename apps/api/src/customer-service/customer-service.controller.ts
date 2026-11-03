@@ -31,6 +31,7 @@ import {
   CS_SHIPMENT_STATES,
   LOAD_TYPES,
   SHIPPING_MODES,
+  type CsBookingRequestCancelled,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsCatalogDto,
@@ -196,6 +197,7 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     ? parsed.data
     : null;
 }
+const cancelBody = z.object({ reason: requiredText(300).optional() }).strict();
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const services = z.array(z.enum(CS_REQUEST_SERVICES)).max(CS_REQUEST_SERVICES.length);
 const createBody = z
@@ -373,6 +375,30 @@ export class BookingRequestsController {
     @Headers('x-cs-sender') sender: string | undefined,
   ): Promise<CsBookingRequestDto> {
     return this.requests.read(caller, id, senderHeader(sender));
+  }
+
+  /** Plan 09 section 2: the owner cancels its request while staff have not decided it. */
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsBookingRequestCancelled> {
+    const input = parse(cancelBody, body ?? {});
+    // The owner's proof: the customer token, or a signed channel identity (plan 08) of the sender.
+    const signed =
+      caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
+        ? this.identityAuth.verify(caller.client.id, req).context
+        : null;
+    const proof = signed
+      ? {
+          channel: signed.channel === 'WHATSAPP' ? ('whatsapp' as const) : ('telegram' as const),
+          subjectId: signed.subjectId,
+        }
+      : null;
+    return this.requests.cancel(caller, id, proof, input.reason);
   }
 }
 

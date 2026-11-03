@@ -424,6 +424,8 @@ export const AUDIT_ENTITIES = [
   'CS_REJECT_REASON',
   // Plan 04 section 4.1: how a customer pays, per branch and currency.
   'PAYMENT_INSTRUCTION',
+  // Plan 09 section 2: a bot's booking request cancelled, or asked to be cancelled, by its customer.
+  'CS_BOOKING_REQUEST',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
