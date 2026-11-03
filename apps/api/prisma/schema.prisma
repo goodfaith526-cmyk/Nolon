@@ -2299,19 +2299,37 @@ model ReceiptApplication {
  * A warehouse of a branch. Master data each branch extends (warehouses and their storage
  * locations are rows, not code). Deactivate instead of deleting: movements reference it.
  */
+/// What a warehouse does in the network: a collection centre at an origin, the central
+/// distribution hub, a delivery centre in a destination city, or a small window where customers
+/// hand over goods (origins) or receivers collect them (Sudan). Empty: an ordinary warehouse.
+enum WarehouseKind {
+  COLLECTION_CENTER
+  DISTRIBUTION_HUB
+  DELIVERY_CENTER
+  DROP_OFF_POINT
+
+  @@map("warehouse_kind")
+}
+
 model Warehouse {
-  id         String   @id @default(uuid()) @db.Uuid
-  branchId   String   @map("branch_id") @db.Uuid
+  id         String         @id @default(uuid()) @db.Uuid
+  branchId   String         @map("branch_id") @db.Uuid
   /// Short code, unique across branches, e.g. PTS-MAIN.
-  code       String   @unique @db.VarChar(20)
-  nameEn     String   @map("name_en") @db.VarChar(200)
-  nameAr     String   @map("name_ar") @db.VarChar(200)
-  address    String?  @db.VarChar(500)
+  code       String         @unique @db.VarChar(20)
+  nameEn     String         @map("name_en") @db.VarChar(200)
+  nameAr     String         @map("name_ar") @db.VarChar(200)
+  address    String?        @db.VarChar(500)
   /// The place the warehouse is at: a receipt that moves the shipment records it there (review D9).
-  locationId String?  @map("location_id") @db.Uuid
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  locationId String?        @map("location_id") @db.Uuid
+  kind       WarehouseKind?
+  /// E.164: the number customers call.
+  phone      String?        @db.VarChar(20)
+  /// Map position in WGS 84 degrees (both set or both empty).
+  latitude   Decimal?       @db.Decimal(9, 6)
+  longitude  Decimal?       @db.Decimal(9, 6)
+  isActive   Boolean        @default(true) @map("is_active")
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch           Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
   location         Location?           @relation(fields: [locationId], references: [id], onDelete: Restrict)
