@@ -10,8 +10,12 @@ cd "$(dirname "$0")"
 # password or anything else the deploy job writes.
 env_files=(--env-file .env)
 if [ -f switches.env ]; then
-  if grep -Evx '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*' switches.env | grep -q .; then
-    echo "switches.env may hold only CS_* settings and comments" >&2
+  # grep reads the file itself (no pipe, so no SIGPIPE): 1 means no other line; 0 (a line that
+  # is not allowed) or 2 (unreadable) stops the deploy.
+  status=0
+  grep -Evxq '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*' switches.env || status=$?
+  if [ "$status" -ne 1 ]; then
+    echo "switches.env must be readable and hold only CS_* settings and comments" >&2
     exit 1
   fi
   env_files+=(--env-file switches.env)
