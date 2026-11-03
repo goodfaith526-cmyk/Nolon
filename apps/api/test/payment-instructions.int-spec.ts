@@ -59,7 +59,7 @@ describe('Payment instructions (R3c3)', () => {
     });
 
   const newCurrency = async () => {
-    const c = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    const c = `QE${String.fromCharCode(65 + randomInt(26))}`;
     await t.prisma.currency.upsert({
       where: { code: c },
       create: { code: c, nameEn: `Test ${c}`, nameAr: `تجربة ${c}`, decimalPlaces: 2 },

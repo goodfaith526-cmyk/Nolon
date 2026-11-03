@@ -163,6 +163,8 @@ jobs:
         run: deploy/production/test-backup.sh staging
       - name: switches.env guard refuses anything but CS_* settings (deploy/production/test-switches.sh)
         run: deploy/production/test-switches.sh
+      - name: Production takes the commit staging deployed (deploy/production/test-staging-deployed.sh)
+        run: deploy/production/test-staging-deployed.sh
       - name: Deploy scripts pass shellcheck
         run: shellcheck deploy/*/*.sh
       - name: Workflows and deploy.sh pass actionlint (with shellcheck)

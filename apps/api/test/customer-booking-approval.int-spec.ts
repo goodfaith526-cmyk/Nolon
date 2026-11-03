@@ -568,7 +568,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
   });
 
   it('refuses a pricing currency withdrawn after staff saw the price, also while approval waits on it (F137-2)', async () => {
-    const code = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    const code = `QB${String.fromCharCode(65 + randomInt(26))}`;
     await t.prisma.currency.upsert({
       where: { code },
       create: { code, nameEn: `Test ${code}`, nameAr: `تجربة ${code}`, decimalPlaces: 2 },
