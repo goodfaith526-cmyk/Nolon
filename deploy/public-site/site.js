@@ -2,7 +2,7 @@
   var site = document.getElementById('site');
   var T = {
     ar: {
-      hello: 'أهلاً بيك في نولون 👋\nالمحادثة المباشرة مع وكيل نولون حتفتح هنا قريباً: حساب السعر، الحجز، ومتابعة شحنتك.\nلحدي داك راسلنا على info@nolon.dev',
+      hello: 'أهلاً بيك في نولون 👋\nأنا وكيل نولون. أحسب لك سعر شحنتك، أجهز لك طلب الحجز، وأتابع لك شحنتك لحدي ما توصل.\nالمحادثة هنا في الموقع حتفتح قريباً، وهسة تقدر تكلمني في تليغرام 👇',
       chips: [['price', 'سعر شحنة'], ['track', 'تتبّع شحنة'], ['outlet', 'أقرب منفذ'], ['partner', 'أبقى شريك']],
       q: { price: 'عايز أشحن برميلين من جدة للخرطوم', track: 'وين وصلت شحنتي BK00142؟', outlet: 'وين أقرب منفذ في جدة؟', partner: 'عندي مكتب سفريات وعايز أبقى شريك' },
       a: {
@@ -17,7 +17,7 @@
       need: 'اكتب رقم الحجز أو الشحنة أولاً.'
     },
     en: {
-      hello: 'Welcome to Nolon 👋\nLive chat with the Nolon assistant opens here soon: prices, bookings and shipment updates.\nUntil then, email us at info@nolon.dev',
+      hello: 'Welcome to Nolon 👋\nI\'m the Nolon assistant. I price your cargo, prepare your booking and follow your shipment until it arrives.\nChat here on the website opens soon; right now you can talk to me on Telegram 👇',
       chips: [['price', 'Get a price'], ['track', 'Track a shipment'], ['outlet', 'Nearest outlet'], ['partner', 'Become a partner']],
       q: { price: 'I want to ship two barrels from Jeddah to Khartoum', track: 'Where is my shipment BK00142?', outlet: 'Where is the nearest outlet in Jeddah?', partner: 'I run a travel office and want to become a partner' },
       a: {
@@ -36,8 +36,6 @@
 
   var chat = document.getElementById('chat');
   var msgs = document.getElementById('msgs');
-  var chips = document.getElementById('chips');
-  var input = document.getElementById('chat-input');
   var started = false;
 
   function add(text, who) {
@@ -47,16 +45,7 @@
     msgs.appendChild(d);
     msgs.scrollTop = msgs.scrollHeight;
   }
-  function renderChips() {
-    chips.innerHTML = '';
-    [].forEach(function (c) {
-      var b = document.createElement('button');
-      b.type = 'button'; b.className = 'chip'; b.textContent = c[1];
-      b.addEventListener('click', function () { ask(c[0]); });
-      chips.appendChild(b);
-    });
-    input.placeholder = T[L()].ph;
-  }
+  function renderChips() {}
   function ask(key) {
     add(T[L()].q[key], 'me');
     setTimeout(function () { add(T[L()].a[key], 'bot'); }, 450);
@@ -65,22 +54,16 @@
     chat.hidden = false;
     if (!started) { started = true; add(T[L()].hello, 'bot'); }
     if (topic) ask(topic);
-    input.focus({ preventScroll: true });
+    var cta = chat.querySelector('.tg'); if (cta) cta.focus({ preventScroll: true });
   }
   document.querySelectorAll('[data-open-chat]').forEach(function (b) {
     b.addEventListener('click', function () {
+      hideBubble();
       if (b.id === 'fab' && !chat.hidden) { chat.hidden = true; return; }
       openChat(b.getAttribute('data-ask'));
     });
   });
   document.getElementById('chat-close').addEventListener('click', function () { chat.hidden = true; });
-  document.getElementById('chat-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var v = input.value.trim();
-    if (!v) return;
-    add(v, 'me'); input.value = '';
-    setTimeout(function () { add(T[L()].fallback, 'bot'); }, 450);
-  });
 
   document.getElementById('track-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -102,4 +85,43 @@
     if (localStorage.getItem('nolon-lang') === 'en') { site.setAttribute('lang', 'en'); site.setAttribute('dir', 'ltr'); }
   } catch (err) {}
   renderChips();
+
+  /* Mascot: greeting bubble once per visit, eyes that follow the pointer. */
+  var bubble = document.getElementById('fab-bubble');
+  function hideBubble() { if (bubble) bubble.hidden = true; }
+  document.getElementById('fab-bubble-x').addEventListener('click', hideBubble);
+  var seen = false;
+  try { seen = sessionStorage.getItem('nolon-hi') === '1'; } catch (err) {}
+  if (!seen) {
+    // Greet from the corner once the mascot in the hero has scrolled out of view.
+    var peek = document.querySelector('.peek'), heroVisible = true, ready = false;
+    function maybeGreet() {
+      if (seen || !ready || heroVisible || !chat.hidden) return;
+      seen = true; bubble.hidden = false;
+      try { sessionStorage.setItem('nolon-hi', '1'); } catch (err) {}
+    }
+    if (peek && 'IntersectionObserver' in window) {
+      new IntersectionObserver(function (en) { heroVisible = en[0].isIntersecting; maybeGreet(); }).observe(peek);
+    } else { heroVisible = false; }
+    setTimeout(function () { ready = true; maybeGreet(); }, 1500);
+  }
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!still) {
+    var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .bot-eyes'));
+    var px = 0, py = 0, queued = false;
+    function look() {
+      queued = false;
+      eyes.forEach(function (g) {
+        var r = g.ownerSVGElement.getBoundingClientRect();
+        if (!r.width) return;
+        var dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2);
+        var d = Math.sqrt(dx * dx + dy * dy) || 1, k = Math.min(1, d / 260);
+        g.setAttribute('transform', 'translate(' + (dx / d * 5 * k).toFixed(2) + ' ' + (dy / d * 4 * k).toFixed(2) + ')');
+      });
+    }
+    window.addEventListener('pointermove', function (e) {
+      px = e.clientX; py = e.clientY;
+      if (!queued) { queued = true; requestAnimationFrame(look); }
+    }, { passive: true });
+  }
 })();
