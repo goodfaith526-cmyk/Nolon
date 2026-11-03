@@ -391,7 +391,8 @@ export interface CsQuoteChoices {
 export const CS_REQUEST_SERVICES = ['PICKUP', 'LAST_MILE'] as const;
 export type CsRequestService = (typeof CS_REQUEST_SERVICES)[number];
 
-export const CS_SENDER_CHANNELS = ['whatsapp', 'telegram'] as const;
+/** The bot's customer channels; `web` is the chat on a company's own site (erp-agents docs/web-chat.md). */
+export const CS_SENDER_CHANNELS = ['whatsapp', 'telegram', 'web'] as const;
 export type CsSenderChannel = (typeof CS_SENDER_CHANNELS)[number];
 
 export const CS_HANDOVERS = ['PICKUP', 'BRANCH_DROP'] as const;

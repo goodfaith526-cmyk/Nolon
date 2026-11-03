@@ -2,7 +2,8 @@
   var site = document.getElementById('site');
   var T = {
     ar: {
-      hello: 'أهلاً بيك في نولون 👋\nأنا وكيل نولون. قول لي داير تشحن شنو، ومن وين لوين، وأحسب ليك السعر وأجهز طلب الحجز.',
+      hello:
+        'أهلاً بيك في نولون 👋\nأنا وكيل نولون. قول لي داير تشحن شنو، ومن وين لوين، وأحسب ليك السعر وأجهز طلب الحجز.',
       ph: 'اكتب رسالتك…',
       typing: 'بيكتب…',
       need: 'اكتب رقم الحجز أو الشحنة أولاً.',
@@ -13,10 +14,11 @@
       enet: 'ما قدرنا نوصل للوكيل. اتأكد من الإنترنت وأرسل تاني.',
       retry: 'اضغط على الرسالة عشان تعيد إرسالها.',
       file: 'افتح الملف',
-      image: 'صورة'
+      image: 'صورة',
     },
     en: {
-      hello: 'Welcome to Nolon 👋\nI\'m the Nolon assistant. Tell me what you want to ship, from where to where, and I\'ll price it and prepare your booking request.',
+      hello:
+        "Welcome to Nolon 👋\nI'm the Nolon assistant. Tell me what you want to ship, from where to where, and I'll price it and prepare your booking request.",
       ph: 'Type a message…',
       typing: 'Typing…',
       need: 'Enter a booking or shipment number first.',
@@ -27,10 +29,12 @@
       enet: 'We could not reach the assistant. Check your connection and send again.',
       retry: 'Tap the message to send it again.',
       file: 'Open the file',
-      image: 'Image'
-    }
+      image: 'Image',
+    },
   };
-  function L() { return site.getAttribute('lang') === 'en' ? 'en' : 'ar'; }
+  function L() {
+    return site.getAttribute('lang') === 'en' ? 'en' : 'ar';
+  }
 
   /* Live chat with the Nolon bookings assistant (agent web channel, site "nolon"). */
   var BASE = 'https://2-31-19-14.sslip.io/api/v1/whatsapp/web/nolon';
@@ -51,37 +55,66 @@
   var memToken = null;
 
   function getToken() {
-    try { return localStorage.getItem(TOKEN_KEY) || memToken; } catch (err) { return memToken; }
+    try {
+      return localStorage.getItem(TOKEN_KEY) || memToken;
+    } catch (err) {
+      return memToken;
+    }
   }
   function setToken(t) {
     memToken = t;
-    try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (err) {}
+    try {
+      if (t) localStorage.setItem(TOKEN_KEY, t);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (err) {}
   }
   function newId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-    var a = new Uint8Array(16); crypto.getRandomValues(a);
-    return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    var a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.prototype.map
+      .call(a, function (b) {
+        return ('0' + b.toString(16)).slice(-2);
+      })
+      .join('');
   }
-  function ApiError(status, retryAfter) { this.status = status; this.retryAfter = retryAfter; }
+  function ApiError(status, retryAfter) {
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
   function session() {
-    return fetch(BASE + '/sessions', { method: 'POST' }).then(function (res) {
-      if (!res.ok) throw new ApiError(res.status);
-      return res.json();
-    }).then(function (b) { setToken(b.token); return b.token; });
+    return fetch(BASE + '/sessions', { method: 'POST' })
+      .then(function (res) {
+        if (!res.ok) throw new ApiError(res.status);
+        return res.json();
+      })
+      .then(function (b) {
+        setToken(b.token);
+        return b.token;
+      });
   }
   function call(path, init, second) {
     var t = getToken();
     var ready = t ? Promise.resolve(t) : session();
-    return ready.then(function (tok) {
-      var opts = init || {};
-      var headers = { authorization: 'Bearer ' + tok };
-      if (opts.json) headers['content-type'] = 'application/json';
-      return fetch(BASE + path, { method: opts.method || 'GET', headers: headers, body: opts.json ? JSON.stringify(opts.json) : undefined });
-    }).then(function (res) {
-      if (res.status === 401 && !second) { setToken(null); return call(path, init, true); }
-      if (!res.ok) throw new ApiError(res.status, Number(res.headers.get('Retry-After')) || 0);
-      return res;
-    });
+    return ready
+      .then(function (tok) {
+        var opts = init || {};
+        var headers = { authorization: 'Bearer ' + tok };
+        if (opts.json) headers['content-type'] = 'application/json';
+        return fetch(BASE + path, {
+          method: opts.method || 'GET',
+          headers: headers,
+          body: opts.json ? JSON.stringify(opts.json) : undefined,
+        });
+      })
+      .then(function (res) {
+        if (res.status === 401 && !second) {
+          setToken(null);
+          return call(path, init, true);
+        }
+        if (!res.ok) throw new ApiError(res.status, Number(res.headers.get('Retry-After')) || 0);
+        return res;
+      });
   }
   function errorText(e) {
     var t = T[L()];
@@ -96,7 +129,9 @@
     status.textContent = text || '';
     status.hidden = !text;
   }
-  function scrollDown() { msgs.scrollTop = msgs.scrollHeight; }
+  function scrollDown() {
+    msgs.scrollTop = msgs.scrollHeight;
+  }
   function makeBubble(text, who) {
     var d = document.createElement('div');
     d.className = 'm ' + who;
@@ -109,23 +144,37 @@
     msgs.insertBefore(helloEl, msgs.firstChild);
   }
   function attachDocument(el, lineId) {
-    call('/files/' + encodeURIComponent(lineId)).then(function (res) { return res.blob(); }).then(function (blob) {
-      var url = URL.createObjectURL(blob);
-      if (/^image\//.test(blob.type)) {
-        var img = document.createElement('img');
-        img.className = 'doc'; img.src = url; img.alt = T[L()].image;
-        img.addEventListener('load', scrollDown);
-        var a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.appendChild(img);
-        el.appendChild(a);
-      } else {
-        var link = document.createElement('a');
-        link.className = 'doc-link'; link.href = url; link.target = '_blank'; link.rel = 'noopener';
-        link.download = 'nolon-' + lineId + '.pdf';
-        link.textContent = '📄 ' + T[L()].file;
-        el.appendChild(link);
-      }
-      scrollDown();
-    }).catch(function () {});
+    call('/files/' + encodeURIComponent(lineId))
+      .then(function (res) {
+        return res.blob();
+      })
+      .then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        if (/^image\//.test(blob.type)) {
+          var img = document.createElement('img');
+          img.className = 'doc';
+          img.src = url;
+          img.alt = T[L()].image;
+          img.addEventListener('load', scrollDown);
+          var a = document.createElement('a');
+          a.href = url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.appendChild(img);
+          el.appendChild(a);
+        } else {
+          var link = document.createElement('a');
+          link.className = 'doc-link';
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.download = 'nolon-' + lineId + '.pdf';
+          link.textContent = '📄 ' + T[L()].file;
+          el.appendChild(link);
+        }
+        scrollDown();
+      })
+      .catch(function () {});
   }
   function addLine(line) {
     if (seenIds[line.id]) {
@@ -137,13 +186,20 @@
     var el = makeBubble(line.text || '', line.from === 'visitor' ? 'me' : 'bot');
     el.setAttribute('data-id', line.id);
     if (line.document) attachDocument(el, line.id);
-    if (typingEl && typingEl.parentNode) msgs.insertBefore(el, typingEl); else msgs.appendChild(el);
+    if (typingEl && typingEl.parentNode) msgs.insertBefore(el, typingEl);
+    else msgs.appendChild(el);
     if (!lastAt || line.at > lastAt) lastAt = line.at;
     return line.from !== 'visitor';
   }
   function setTyping(on) {
-    if (on && !typingEl) { typingEl = makeBubble(T[L()].typing, 'bot typing'); msgs.appendChild(typingEl); }
-    if (!on && typingEl) { typingEl.remove(); typingEl = null; }
+    if (on && !typingEl) {
+      typingEl = makeBubble(T[L()].typing, 'bot typing');
+      msgs.appendChild(typingEl);
+    }
+    if (!on && typingEl) {
+      typingEl.remove();
+      typingEl = null;
+    }
   }
   function schedule() {
     clearTimeout(timer);
@@ -153,58 +209,97 @@
   }
   function poll() {
     if (!getToken()) return;
-    call('/messages' + (lastAt ? '?after=' + encodeURIComponent(lastAt) : '')).then(function (res) { return res.json(); }).then(function (b) {
-      var fresh = false;
-      (b.messages || []).slice().sort(function (x, y) { return x.at < y.at ? -1 : x.at > y.at ? 1 : 0; }).forEach(function (l) {
-        if (addLine(l)) fresh = true;
-      });
-      waiting = !!b.waiting;
-      setTyping(waiting);
-      if (fresh && chat.hidden && loaded) dot.hidden = false;
-      loaded = true;
-      if (!chat.hidden) { showStatus(''); scrollDown(); }
-      showHello();
-    }).catch(function (e) {
-      if (!chat.hidden && e instanceof ApiError && e.status !== 429) showStatus(errorText(e));
-    }).then(schedule);
+    call('/messages' + (lastAt ? '?after=' + encodeURIComponent(lastAt) : ''))
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (b) {
+        var fresh = false;
+        (b.messages || [])
+          .slice()
+          .sort(function (x, y) {
+            return x.at < y.at ? -1 : x.at > y.at ? 1 : 0;
+          })
+          .forEach(function (l) {
+            if (addLine(l)) fresh = true;
+          });
+        waiting = !!b.waiting;
+        setTyping(waiting);
+        if (fresh && chat.hidden && loaded) dot.hidden = false;
+        loaded = true;
+        if (!chat.hidden) {
+          showStatus('');
+          scrollDown();
+        }
+        showHello();
+      })
+      .catch(function (e) {
+        if (!chat.hidden && e instanceof ApiError && e.status !== 429) showStatus(errorText(e));
+      })
+      .then(schedule);
   }
   function send(text, el, id) {
-    el.classList.add('pending'); el.classList.remove('failed');
-    call('/messages', { method: 'POST', json: { id: id, text: text } }).then(function () {
-      el.classList.remove('pending');
-      waiting = true; setTyping(true); scrollDown();
-      showStatus('');
-      clearTimeout(timer); timer = setTimeout(poll, 1200);
-    }).catch(function (e) {
-      el.classList.remove('pending'); el.classList.add('failed');
-      el.title = T[L()].retry;
-      showStatus(errorText(e) + (e instanceof ApiError && e.status === 400 ? '' : ' ' + T[L()].retry));
-      el.onclick = function () { el.onclick = null; send(text, el, id); };
-    });
+    el.classList.add('pending');
+    el.classList.remove('failed');
+    call('/messages', { method: 'POST', json: { id: id, text: text } })
+      .then(function () {
+        el.classList.remove('pending');
+        waiting = true;
+        setTyping(true);
+        scrollDown();
+        showStatus('');
+        clearTimeout(timer);
+        timer = setTimeout(poll, 1200);
+      })
+      .catch(function (e) {
+        el.classList.remove('pending');
+        el.classList.add('failed');
+        el.title = T[L()].retry;
+        showStatus(
+          errorText(e) + (e instanceof ApiError && e.status === 400 ? '' : ' ' + T[L()].retry),
+        );
+        el.onclick = function () {
+          el.onclick = null;
+          send(text, el, id);
+        };
+      });
   }
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     var text = input.value.trim();
     if (!text) return;
-    if (text.length > 1000) { showStatus(T[L()].e400); return; }
+    if (text.length > 1000) {
+      showStatus(T[L()].e400);
+      return;
+    }
     var id = newId();
     seenIds[id] = true;
     var el = makeBubble(text, 'me');
     el.setAttribute('data-id', id);
-    if (typingEl) msgs.insertBefore(el, typingEl); else msgs.appendChild(el);
-    input.value = ''; grow();
+    if (typingEl) msgs.insertBefore(el, typingEl);
+    else msgs.appendChild(el);
+    input.value = '';
+    grow();
     scrollDown();
     send(text, el, id);
   });
-  function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; }
+  function grow() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
   input.addEventListener('input', grow);
   input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit')); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit'));
+    }
   });
   function openChat() {
-    chat.hidden = false; dot.hidden = true;
+    chat.hidden = false;
+    dot.hidden = true;
     showHello();
-    if (!loaded && getToken()) poll(); else schedule();
+    if (!loaded && getToken()) poll();
+    else schedule();
     scrollDown();
     input.focus({ preventScroll: true });
   }
@@ -216,12 +311,24 @@
   document.querySelectorAll('[data-open-chat]').forEach(function (b) {
     b.addEventListener('click', function () {
       hideBubble();
-      if (b.id === 'fab' && !chat.hidden) { chat.hidden = true; schedule(); return; }
+      if (b.id === 'fab' && !chat.hidden) {
+        chat.hidden = true;
+        schedule();
+        return;
+      }
       openChat();
     });
   });
-  document.getElementById('chat-close').addEventListener('click', function () { chat.hidden = true; schedule(); });
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { clearTimeout(timer); if (getToken()) poll(); } });
+  document.getElementById('chat-close').addEventListener('click', function () {
+    chat.hidden = true;
+    schedule();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+      clearTimeout(timer);
+      if (getToken()) poll();
+    }
+  });
   renderStatic();
   if (getToken()) poll();
 
@@ -229,7 +336,10 @@
     e.preventDefault();
     var r = document.getElementById('ref').value.trim();
     var msg = document.getElementById('track-msg');
-    if (!r) { msg.textContent = T[L()].need; return; }
+    if (!r) {
+      msg.textContent = T[L()].need;
+      return;
+    }
     window.location.href = 'https://app.nolon.dev/' + L() + '/track';
   });
 
@@ -239,42 +349,72 @@
     site.setAttribute('dir', en ? 'ltr' : 'rtl');
     document.documentElement.lang = en ? 'en' : 'ar';
     renderStatic();
-    try { localStorage.setItem('nolon-lang', en ? 'en' : 'ar'); } catch (err) {}
+    try {
+      localStorage.setItem('nolon-lang', en ? 'en' : 'ar');
+    } catch (err) {}
   });
   try {
-    if (localStorage.getItem('nolon-lang') === 'en') { site.setAttribute('lang', 'en'); site.setAttribute('dir', 'ltr'); }
+    if (localStorage.getItem('nolon-lang') === 'en') {
+      site.setAttribute('lang', 'en');
+      site.setAttribute('dir', 'ltr');
+    }
   } catch (err) {}
 
   /* Mascot: greeting bubble once per visit, eyes that follow the pointer. */
   var bubble = document.getElementById('fab-bubble');
-  function hideBubble() { if (bubble) bubble.hidden = true; }
+  function hideBubble() {
+    if (bubble) bubble.hidden = true;
+  }
   document.getElementById('fab-bubble-x').addEventListener('click', hideBubble);
   var seen = false;
-  try { seen = sessionStorage.getItem('nolon-hi') === '1'; } catch (err) {}
+  try {
+    seen = sessionStorage.getItem('nolon-hi') === '1';
+  } catch (err) {}
   if (!seen) {
     setTimeout(function () {
       if (!chat.hidden) return;
       bubble.hidden = false;
-      try { sessionStorage.setItem('nolon-hi', '1'); } catch (err) {}
+      try {
+        sessionStorage.setItem('nolon-hi', '1');
+      } catch (err) {}
     }, 3500);
   }
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!still) {
     var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .pupil'));
-    var px = 0, py = 0, queued = false;
+    var px = 0,
+      py = 0,
+      queued = false;
     function look() {
       queued = false;
       eyes.forEach(function (g) {
         var r = g.ownerSVGElement.getBoundingClientRect();
         if (!r.width) return;
-        var dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2);
-        var d = Math.sqrt(dx * dx + dy * dy) || 1, k = Math.min(1, d / 260);
-        g.setAttribute('transform', 'translate(' + (dx / d * 2.6 * k).toFixed(2) + ' ' + (dy / d * 2.4 * k).toFixed(2) + ')');
+        var dx = px - (r.left + r.width / 2),
+          dy = py - (r.top + r.height / 2);
+        var d = Math.sqrt(dx * dx + dy * dy) || 1,
+          k = Math.min(1, d / 260);
+        g.setAttribute(
+          'transform',
+          'translate(' +
+            ((dx / d) * 2.6 * k).toFixed(2) +
+            ' ' +
+            ((dy / d) * 2.4 * k).toFixed(2) +
+            ')',
+        );
       });
     }
-    window.addEventListener('pointermove', function (e) {
-      px = e.clientX; py = e.clientY;
-      if (!queued) { queued = true; requestAnimationFrame(look); }
-    }, { passive: true });
+    window.addEventListener(
+      'pointermove',
+      function (e) {
+        px = e.clientX;
+        py = e.clientY;
+        if (!queued) {
+          queued = true;
+          requestAnimationFrame(look);
+        }
+      },
+      { passive: true },
+    );
   }
 })();

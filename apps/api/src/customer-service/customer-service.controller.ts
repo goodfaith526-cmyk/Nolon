@@ -142,9 +142,12 @@ const quotesBody = quoteQuery
   })
   .strict();
 const telegramId = z.string().regex(/^[1-9]\d{0,19}$/, 'Telegram user id');
+/** A web chat visitor: 16 random hex digits the agent's site session issued (no phone, no account). */
+const webVisitorId = z.string().regex(/^[0-9a-f]{16}$/, 'Web chat visitor id');
 const sender = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('whatsapp'), id: phone }).strict(),
   z.object({ channel: z.literal('telegram'), id: telegramId }).strict(),
+  z.object({ channel: z.literal('web'), id: webVisitorId }).strict(),
 ]);
 const name200 = requiredText(200);
 const digitsPhone = z
@@ -296,7 +299,7 @@ const namesBody = z
     message: 'Send items, or kind and quantity, not both',
     params: { code: 'ITEMS_AND_SINGLE' },
   });
-/** `X-Cs-Sender: whatsapp:+2499...` or `telegram:123`: the owner a key-only read names. */
+/** `X-Cs-Sender: whatsapp:+2499...`, `telegram:123` or `web:<16 hex>`: the owner a key-only read names. */
 function senderHeader(value: string | undefined): z.infer<typeof sender> | null {
   const at = value?.indexOf(':') ?? -1;
   if (!value || at < 0) return null;

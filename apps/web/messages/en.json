@@ -3127,6 +3127,7 @@
     "sourceCustomer": "Customer {number} (verified number)",
     "channel_whatsapp": "WhatsApp",
     "channel_telegram": "Telegram",
+    "channel_web": "Website",
     "handover": "Handover",
     "handover_PICKUP": "Pickup from the sender",
     "handover_BRANCH_DROP": "Dropped at the branch",

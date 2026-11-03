@@ -3127,6 +3127,7 @@
     "sourceCustomer": "الزبون {number} (رقم موثّق)",
     "channel_whatsapp": "واتساب",
     "channel_telegram": "تيليجرام",
+    "channel_web": "الموقع",
     "handover": "التسليم",
     "handover_PICKUP": "استلام من المرسل",
     "handover_BRANCH_DROP": "تسليم في الفرع",
