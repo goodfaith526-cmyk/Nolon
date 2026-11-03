@@ -3897,3 +3897,17 @@ span.capacity-full {
   margin: 0;
   padding-inline-start: 1.25rem;
 }
+
+/* A shipment number with its "open in its own window" button beside it (shipments list). */
+.number-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.window-button {
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: 0.25rem;
+  color: var(--muted);
+}
