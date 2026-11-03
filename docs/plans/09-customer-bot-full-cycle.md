@@ -304,22 +304,29 @@ heightCm?, weightKg? }`. `description` إجباري (حد 500)، وما في `qu
   - صلاحية `cs_booking_requests:approve` في فرع الطلب، والطلب `pending` بفرع.
   - المبلغ `Decimal` أكبر من صفر، والعملة نشطة من جدول العملات.
   - ⭐ `validUntil` بعد الآن وفي حدود 14 يوم، و`expires_at` الطلب بيتمد لحدها لو أقصر.
-  - الطلب بيبقى `ESTIMATED` (قيمة enum جديدة)، مع تدقيق. تقدير جديد على طلب `estimated` بيبدّل القديم (نسخة الطلب بتمنع
-    السباق).
-- **القراءة:** `status: "estimated"` و`estimate: { amount, currency, note{ar,en}, validUntil }` في `estimated` بس، وغيرها
-  `null`. بعد `validUntil` القراءة بتقول `expired`، والطلب بيطلع من قائمة المراجعة المفتوحة.
+  - الطلب بيبقى `ESTIMATED` (قيمة enum جديدة)، مع تدقيق، و`estimate_version` بيزيد واحد مع كل تقدير. تقدير جديد على طلب
+    `estimated` بيبدّل القديم (نسخة الطلب بتمنع السباق).
+  - (Codex F165-2) أي تقدير جديد، حتى على طلب رجع `pending` بعد قبول، بيمسح `estimate_accepted_at` و
+    `estimate_accepted_version` في نفس المعاملة ويرجّع الطلب `estimated`: القبول القديم ما بيغطي سعر جديد.
+- **القراءة:** `status: "estimated"` و`estimate: { version, amount, currency, note{ar,en}, validUntil }` في `estimated` بس،
+  وغيرها `null`. (Codex F165-1) `version` = `estimate_version`، وهو الرقم البيرسلو البوت في القبول. بعد `validUntil` القراءة بتقول `expired`، والطلب بيطلع من قائمة المراجعة المفتوحة.
 - **قبول الزبون:** `POST /cs/booking-requests/:id/accept-estimate {estimateVersion}` بإثبات صاحب الطلب.
-  - قبل `validUntil` ولنفس التقدير المعروض، الطلب بيرجع `pending` مع `estimate_accepted_at`.
+  - قبل `validUntil` ولنفس التقدير المعروض (`estimateVersion` = `estimate_version` الحالي)، الطلب بيرجع `pending` مع
+    `estimate_accepted_at` و`estimate_accepted_version` = النسخة المقبولة، في معاملة واحدة بقفل الصف.
   - بعد `validUntil` = `409 ESTIMATE_EXPIRED`. تقدير اتبدّل = `409 ESTIMATE_CHANGED`. التكرار = نفس الرد.
   - ⭐ **الرفض** = الإلغاء الموجود (القسم 2)، بقى مسموح كمان في `estimated`.
-- **الموافقة بعد القبول:** الموظف بيوافق، و`approved_total`/`approved_currency` = التقدير المقبول، بدون بصمة سعر المحرّك
+- **الموافقة بعد القبول:** (Codex F165-2) الموافقة على طلب فيهو `OTHER` بتشترط `estimate_accepted_version` =
+  `estimate_version` الحالي و`validUntil` لسه ما فات، وغير كده `409 ESTIMATE_REQUIRED`. الموظف بيوافق، و
+  `approved_total`/`approved_currency` = مبلغ وعملة النسخة المقبولة نفسها، بدون بصمة سعر المحرّك
   (السعر اتفق عليهو). سطور `OTHER` بتعمل سطر حجز `GENERAL` لو `pieces` موجود، وغير كده بتمسك بوابة اكتمال البضاعة (القسم 4).
 - **التوافق (زي الإلغاء):** المستهلك الحالي بيرفض حالة ما يعرفها، فـ`estimated` مقفولة بمتغير `CS_ESTIMATES_ENABLED`
   (افتراضي `false`): مقفول = مسار التقدير `503`، ورفع الصور شغال. الترتيب: PR مستهلك في erp-agents بيقبل `estimated`
   و`estimate` وأخطاء القبول، بعدين فتح المتغير.
 - **اختبارات القبول:** رفع من غير صاحب الطلب = 404 أو 403؛ ملف مش صورة (PDF بامتداد jpg) = 415؛ الصورة 11 = 409؛ نفس
   المفتاح ونفس الصورة = نفس الرد؛ تقدير من موظف بدون صلاحية في الفرع = 403؛ `estimate` بيظهر في `estimated` بس؛ قبول بعد
-  `validUntil` = 409؛ موافقة طلب فيهو `OTHER` بدون تقدير = 409؛ متغير مقفول = 503.
+  `validUntil` = 409؛ موافقة طلب فيهو `OTHER` بدون تقدير = 409؛ متغير مقفول = 503؛ القراءة فيها `estimate.version` والقبول
+  بيها ينجح؛ تقدير جديد بعد القبول بيمسح القبول ويرجّع `estimated`، والموافقة قبل قبول النسخة الجديدة = 409؛ القبول بنسخة
+  قديمة = `409 ESTIMATE_CHANGED`.
 - **الحدث (09-4):** `request.estimated` في نفس التيار.
 
 ## 10. البيانات (SQL المقترح؛ الموافقة النهائية في PR كل بند)
@@ -391,7 +398,9 @@ ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_drop_off_w
 -- 09-3 (إضافة لصنف OTHER في الجدول الجديد)
 --   "is_other" BOOLEAN NOT NULL DEFAULT false, "description" VARCHAR(500),
 --   CHECK (("is_other" AND "description" IS NOT NULL AND "price_category_code" IS NULL) OR NOT "is_other")
---   و"quantity" بيبقى nullable لصنف OTHER: CHECK ("is_other" OR "quantity" > 0).
+--   و"quantity" بيبقى nullable لصنف OTHER (بدل NOT NULL فوق). (Codex F165-3) الصنف العادي لازم كميتو موجودة وموجبة،
+--   لأنو CHECK ("is_other" OR "quantity" > 0) بيعدّي NULL:
+--   CHECK (("is_other" AND "quantity" IS NULL) OR (NOT "is_other" AND "quantity" IS NOT NULL AND "quantity" > 0))
 
 -- 09-9
 ALTER TYPE "cs_booking_request_status" ADD VALUE 'ESTIMATED';
@@ -399,7 +408,12 @@ ALTER TABLE "cs_booking_requests" ADD COLUMN "estimate_amount" DECIMAL(18,4),
   ADD COLUMN "estimate_currency" CHAR(3), ADD COLUMN "estimate_note_ar" VARCHAR(500),
   ADD COLUMN "estimate_note_en" VARCHAR(500), ADD COLUMN "estimate_valid_until" TIMESTAMPTZ(3),
   ADD COLUMN "estimate_version" INTEGER NOT NULL DEFAULT 0, ADD COLUMN "estimated_by_id" UUID,
-  ADD COLUMN "estimated_at" TIMESTAMPTZ(3), ADD COLUMN "estimate_accepted_at" TIMESTAMPTZ(3);
+  ADD COLUMN "estimated_at" TIMESTAMPTZ(3), ADD COLUMN "estimate_accepted_at" TIMESTAMPTZ(3),
+  ADD COLUMN "estimate_accepted_version" INTEGER;
+-- (Codex F165-2) القبول مربوط بنسخة: الاتنين مع بعض أو فاضيين، والنسخة المقبولة ما بتتعدى الحالية. الشرط في الخدمة
+-- وفي الاختبارات (CHECK على جدول قائم ما إضافي، زي map_url فوق)؛ لو المالك وافق على هجرة غير إضافية، بيبقى:
+--   CHECK (("estimate_accepted_at" IS NULL AND "estimate_accepted_version" IS NULL) OR
+--     ("estimate_accepted_at" IS NOT NULL AND "estimate_accepted_version" BETWEEN 1 AND "estimate_version"))
 -- FKs: estimate_currency → currencies(code)، estimated_by_id → users(id)، ON DELETE RESTRICT.
 CREATE TABLE "cs_booking_request_photos" ("id" UUID PRIMARY KEY, "request_id" UUID NOT NULL
   REFERENCES "cs_booking_requests"("id") ON DELETE RESTRICT, "idempotency_key" VARCHAR(100) NOT NULL,
