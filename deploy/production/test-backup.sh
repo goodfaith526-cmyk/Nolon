@@ -194,12 +194,13 @@ set_env BACKUP_S3_BUCKET unlocked
 pass "pre-migrate takes a backup, and fails when the backup fails"
 
 set_env BACKUP_S3_BUCKET ''
-out="$(./backup.sh pre-migrate 2>&1)" && fail "pre-migrate let a database with data migrate without backups"
-[[ "$out" == *"Refusing to migrate"* ]] || fail "unexpected pre-migrate failure without backups: $out"
+before_count="$(count_backups)"
+out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate refused a trial database without backups: $out"
+[[ "$out" == *"WITHOUT a backup"* ]] || fail "pre-migrate without backups gave no warning: $out"
 psql_in postgres "DROP DATABASE nolon WITH (FORCE)"
 psql_in postgres "CREATE DATABASE nolon"
 out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate refused the first deploy onto an empty database: $out"
 [[ "$out" == *"Empty database"* ]] || fail "unexpected pre-migrate output on an empty database: $out"
-pass "without backups, only an empty database (the first deploy) may be migrated"
+pass "without backups, pre-migrate warns and lets the deploy go on (trial data)"
 
 echo "All backup tests passed ($stack)."

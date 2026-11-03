@@ -189,9 +189,9 @@ jobs:
             esac
           done
           if [ "$set_count" = 0 ]; then
-            # Allowed only to bootstrap: on the server, backup.sh pre-migrate refuses to migrate a
-            # database that holds anything without a successful backup.
-            echo "::warning::Backups are not set up: this deploy works only onto an empty database (the first deploy). Any later deploy fails until they are (DEPLOY-PRODUCTION.md, Backups)"
+            # Trial data (owner decision 2026-11-03): backup.sh pre-migrate then migrates without a
+            # backup, with a warning. Set backups up before go-live.
+            echo "::warning::Backups are not set up: this deploy migrates WITHOUT a backup (trial data only). Set them up before go-live (DEPLOY-PRODUCTION.md, Backups)"
           fi
 
       # Fails in seconds on a bad key or host key, before anything changes on the server.
