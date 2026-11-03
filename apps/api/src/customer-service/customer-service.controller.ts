@@ -190,6 +190,30 @@ const namesItem = z.union([
   z.object({ kind: botName, quantity: bodyQuantity, ...measures }).strict(),
   otherItem,
 ]);
+/**
+ * Codex F167-2: one piece's three dimensions come together or not at all, as a booking line takes
+ * them. A partial set is refused at intake, naming the missing fields so the bot asks for them;
+ * nothing is guessed.
+ */
+function requireWholeDimensions(
+  items: readonly { lengthCm?: string; widthCm?: string; heightCm?: string }[],
+): void {
+  const fields = items.flatMap((item, index) => {
+    const given = (['lengthCm', 'widthCm', 'heightCm'] as const).filter(
+      (f) => item[f] !== undefined,
+    );
+    if (given.length === 0 || given.length === 3) return [];
+    return (['lengthCm', 'widthCm', 'heightCm'] as const)
+      .filter((f) => item[f] === undefined)
+      .map((f) => `items.${index}.${f}`);
+  });
+  if (fields.length > 0)
+    throw new BadRequestException({
+      code: 'DIMENSIONS_TOGETHER',
+      message: 'Send lengthCm, widthCm and heightCm together, or none of them',
+      fields,
+    });
+}
 const itemsField = <T extends z.ZodType>(item: T) =>
   z.array(item).min(1).max(CS_REQUEST_ITEMS_MAX).optional();
 /** Plan 09 section 4: `items`, or the one-item shape, never both and never neither. */
@@ -447,6 +471,7 @@ export class BookingRequestsController {
         message: 'Send items, or the one-item fields, not both',
       });
     const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
+    requireWholeDimensions(input.items ?? []);
     let binding;
     if (input.profileId || input.conversationId || input.profileVersion !== undefined) {
       if (!input.profileId || !input.conversationId || caller.kind !== 'key')

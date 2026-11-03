@@ -34,7 +34,7 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
   let bot: ApiClientCreatedDto;
   const cookies = { admin: '', sales: '', viewer: '' };
   const ids: Record<string, string> = {};
-  const cat = { barrel: '', cbm: '', box: '', ctr: '' };
+  const cat = { barrel: '', cbm: '', box: '', ctr: '', kg: '' };
   let createdById = '';
   const tag = `I${randomUUID().slice(0, 5).toUpperCase()}`;
 
@@ -138,6 +138,7 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
       ['barrel', 'B', 'BARREL', 'PER_BARREL', '10'],
       ['cbm', 'C', 'GENERAL', 'PER_CBM', '100'],
       ['box', 'X', 'GENERAL', 'PER_PIECE', '5'],
+      ['kg', 'G', 'GENERAL', 'PER_KG', '2'],
       ['ctr', 'K', 'CONTAINER', 'PER_CONTAINER', null],
     ] as const;
     const countryCode = `T${String.fromCharCode(65 + randomInt(26))}`;
@@ -344,6 +345,77 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
     expect(made.weightKg?.toString()).toBe('40');
     expect(made.priceCategoryCode).toBe(cat.cbm);
     await confirm(approved.bookingId!).expect(200);
+  });
+
+  it('books what staff priced: a corrected count, volume, weight or category (Codex F167-1)', async () => {
+    const booked = async (items: object[], lines: (id: string) => Promise<object[]>) => {
+      const id = await request(items);
+      const approved = (await approve(id, await approveBody(id, await lines(id))).expect(201))
+        .body as CsBookingRequestStaffDto;
+      return {
+        approved,
+        made: await t.prisma.bookingItem.findUniqueOrThrow({
+          where: { id: approved.items[0]!.bookingItemId! },
+        }),
+      };
+    };
+    // 3 barrels asked, 5 priced and approved: 5 booked at 5 x 10.
+    const count = await booked([{ category: cat.barrel, quantity: '3' }], async (id) => [
+      await line(id, cat.barrel, '5'),
+    ]);
+    expect(count.made.quantity).toBe(5);
+    expect(count.approved.items[0]?.approvedTotal).toBe('50');
+    // 0.25 CBM asked in 2 pieces, 0.5 approved: the volume is the approved one, the pieces kept.
+    const volume = await booked(
+      [{ category: cat.cbm, quantity: '0.25', pieces: 2, weightKg: '40' }],
+      async (id) => [await line(id, cat.cbm, '0.5')],
+    );
+    expect(volume.made).toMatchObject({ quantity: 2 });
+    expect(volume.made.volumeCbm?.toString()).toBe('0.5');
+    expect(volume.made.weightKg?.toString()).toBe('40');
+    // 30 kg asked in 1 piece, 45 approved: the weight is the approved one.
+    const weight = await booked([{ category: cat.kg, quantity: '30', pieces: 1 }], async (id) => [
+      await line(id, cat.kg, '45'),
+    ]);
+    expect(weight.made.weightKg?.toString()).toBe('45');
+    expect(weight.made.volumeCbm).toBeNull();
+    // 3 barrels asked, approved as 0.6 CBM: the old count is not read as a volume.
+    const changed = await booked(
+      [{ category: cat.barrel, quantity: '3', pieces: 3 }],
+      async (id) => [await line(id, cat.cbm, '0.6')],
+    );
+    expect(changed.made).toMatchObject({ quantity: 3, priceCategoryCode: cat.cbm });
+    expect(changed.made.volumeCbm?.toString()).toBe('0.6');
+  });
+
+  it('refuses a partial set of dimensions at intake, naming the missing ones (Codex F167-2)', async () => {
+    const byIds = await botPost('/cs/booking-requests', {
+      ...base(),
+      items: [
+        { category: cat.box, quantity: '1', lengthCm: '20', widthCm: '20', heightCm: '20' },
+        { category: cat.barrel, quantity: '3', lengthCm: '20' },
+      ],
+    }).expect(400);
+    expect(byIds.body).toMatchObject({
+      code: 'DIMENSIONS_TOGETHER',
+      fields: ['items.1.widthCm', 'items.1.heightCm'],
+    });
+    const byNames = await botPost('/cs/booking-requests', {
+      idempotencyKey: randomUUID().replaceAll('-', ''),
+      channel: 'whatsapp',
+      origin: { ar: 'مكان', en: 'Place' },
+      destination: { ar: 'مكان', en: 'Place' },
+      items: [{ kind: 'OTHER', description: 'A sofa', widthCm: '80', heightCm: '90' }],
+      senderName: 'Sender',
+      senderPhone: '966500000000',
+      receiverName: 'Receiver',
+      receiverPhone: '0912345678',
+      handover: 'dropoff',
+    }).expect(400);
+    expect(byNames.body).toMatchObject({
+      code: 'DIMENSIONS_TOGETHER',
+      fields: ['items.0.lengthCm'],
+    });
   });
 
   it('refuses an OTHER item without an estimate, and items of different load types', async () => {

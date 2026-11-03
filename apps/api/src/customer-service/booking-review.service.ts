@@ -402,7 +402,8 @@ export class BookingReviewService {
     // Plan 09 section 4: an item becomes a booking line only when its count is certain.
     const made = lines.flatMap((line, index) => {
       const cargo = cargos[index]!;
-      const item = line.item ? bookingLineOf(line.item, cargo) : null;
+      // Codex F167-1: the line books what was priced, the approved category and quantity.
+      const item = line.item ? bookingLineOf(line.item, cargo, dec(line.inputs.quantity)) : null;
       return item && line.item ? [{ itemId: line.item.id, item }] : [];
     });
     const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
@@ -797,29 +798,34 @@ function sameItems(a: CsBookingRequestItem[], b: CsBookingRequestItem[]): boolea
 }
 
 /**
- * Plan 09 section 4 (F161-3): the booking line an item becomes, by its category's unit, with no
- * guess. A unit counted in packages takes a whole quantity, or else the pieces; a CBM, kg or
- * per-shipment price takes the pieces only. A container line needs its container type, which the
- * bot does not send. No certain count: no line, and staff complete it before confirming.
+ * Plan 09 section 4 (F161-3): the booking line an item becomes, by the approved category's unit
+ * and the approved quantity (Codex F167-1: what staff priced, not the customer's first figure),
+ * with no guess. A unit counted in packages takes a whole quantity, or else the pieces; a CBM, kg
+ * or per-shipment price takes the pieces only, with the approved quantity as its volume or weight.
+ * The customer's physical facts (pieces, one piece's dimensions, weight) are kept as given; the
+ * dimensions only as a full set (F167-2), which intake requires. A container line needs its
+ * container type, which the bot does not send. No certain count: no line, and staff complete it
+ * before confirming.
  */
 function bookingLineOf(
   item: CsBookingRequestItem,
   cargo: { category: string; cargoType: CargoType; unit: RateUnit },
+  quantity: Prisma.Decimal,
 ): BookingItemInput | null {
   if (cargo.cargoType === 'CONTAINER' || cargo.unit === 'PER_CONTAINER') return null;
-  const quantity = item.quantity;
-  if (quantity === null) return null;
   const counted = ['PER_PIECE', 'PER_PALLET', 'PER_BARREL'].includes(cargo.unit);
   const count = counted && quantity.isInteger() ? quantity.toNumber() : item.pieces;
   if (count === null || count < 1) return null;
   const decimal = (d: Prisma.Decimal | null) => (d === null ? null : toDecimalString(d));
+  // A partial set (a request saved before intake required all three) stays on the item only.
+  const sized = item.lengthCm !== null && item.widthCm !== null && item.heightCm !== null;
   return {
     cargoType: cargo.cargoType,
     quantity: count,
     priceCategoryCode: cargo.category,
-    lengthCm: decimal(item.lengthCm),
-    widthCm: decimal(item.widthCm),
-    heightCm: decimal(item.heightCm),
+    lengthCm: sized ? decimal(item.lengthCm) : null,
+    widthCm: sized ? decimal(item.widthCm) : null,
+    heightCm: sized ? decimal(item.heightCm) : null,
     weightKg: cargo.unit === 'PER_KG' ? toDecimalString(quantity) : decimal(item.weightKg),
     volumeCbm: cargo.unit === 'PER_CBM' ? toDecimalString(quantity) : null,
   };
