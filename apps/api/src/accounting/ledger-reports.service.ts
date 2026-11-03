@@ -574,6 +574,27 @@ export class LedgerReportsService {
   }
 
   /**
+   * Fixed expenses of a period for break-even (plan 07, z5): posted expense lines that carry no
+   * shipment (general expenses, salaries, rent...), debit - credit in USD, in the user's branches
+   * (or the one asked for).
+   */
+  async fixedExpenses(user: AuthUser, period: Period, branchId?: string): Promise<Decimal> {
+    const branchIds = reportBranchIds(user, branchId);
+    if (branchIds.length === 0) return ZERO;
+    const [row] = await this.prisma.$queryRaw<{ amountUsd: Decimal | null }[]>`
+      SELECT sum(l."debit_usd" - l."credit_usd") AS "amountUsd"
+      FROM "journal_lines" l
+      JOIN "journal_entries" e ON e."id" = l."entry_id"
+      JOIN "accounts" a ON a."id" = l."account_id"
+      WHERE e."status" = 'POSTED'
+        AND e."entry_date" BETWEEN ${toDbDate(period.from)} AND ${toDbDate(period.to)}
+        AND a."type" = 'EXPENSE'
+        AND l."shipment_id" IS NULL
+        AND ${lineBranchIn(branchIds)}`;
+    return dec(row?.amountUsd ?? 0);
+  }
+
+  /**
    * Accrued transport costs as of a date. Per trip: the accrued line of each rule 11 entry (source
    * TRIP_ACCRUAL, its liability line without a shipment) and of its reversal, and the lines that
    * carry the trip (a carrier bill clearing it, rule 11a, and that bill's reversal), credit -

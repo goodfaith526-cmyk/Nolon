@@ -886,7 +886,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const invoice = await approvedInvoice();
       const shipmentId = invoice.shipmentId ?? '';
       await deliver(shipmentId);
-      expect(await closeCheck(shipmentId)).toEqual({ goodsOnHand: [], invoiced: true });
+      expect(await closeCheck(shipmentId)).toEqual({
+        goodsOnHand: [],
+        invoiced: true,
+        podMissing: false,
+      });
       await close(shipmentId, 'No charges').expect(400);
       await close(shipmentId).expect(200);
       const event = await t.prisma.shipmentEvent.findFirstOrThrow({
@@ -899,7 +903,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const draftOnly = await shipment();
       await post('/customer-invoices', cookies.financePts, { shipmentId: draftOnly }).expect(201);
       await deliver(draftOnly);
-      expect(await closeCheck(draftOnly)).toEqual({ goodsOnHand: [], invoiced: false });
+      expect(await closeCheck(draftOnly)).toEqual({
+        goodsOnHand: [],
+        invoiced: false,
+        podMissing: false,
+      });
       const refused = await close(draftOnly).expect(409);
       expect(refused.body).toMatchObject({
         code: 'SHIPMENT_CLOSE_NOT_INVOICED',
@@ -911,7 +919,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const note = await creditNoteDraft(invoice.id, '1000000.5');
       await post(`/credit-notes/${note.id}/approve`, cookies.managerPts).expect(200);
       await deliver(credited);
-      expect(await closeCheck(credited)).toEqual({ goodsOnHand: [], invoiced: false });
+      expect(await closeCheck(credited)).toEqual({
+        goodsOnHand: [],
+        invoiced: false,
+        podMissing: false,
+      });
       await close(credited).expect(409);
       await close(credited, 'Credited in full').expect(200);
     });

@@ -2,6 +2,7 @@
 
 import type {
   BranchDashboardDto,
+  BreakEvenDto,
   DashboardShipmentRefDto,
   ManagementDashboardDto,
 } from '@nolon/shared';
@@ -258,6 +259,40 @@ function CommonFigures({ data }: { data: ManagementDashboardDto }) {
   );
 }
 
+/**
+ * Break-even (plan 07, z5): planning only. The API computes every figure; without a positive
+ * average margin it gives no number, and incomplete shipments mark the result.
+ */
+function BreakEven({ data }: { data: BreakEvenDto }) {
+  const t = useTranslations('Dashboards');
+  return (
+    <>
+      <h2 className="section-title">{t('breakEvenTitle')}</h2>
+      <div className="stats">
+        <Stat
+          label={t('contributionMargin')}
+          value={<Money value={data.contributionMarginUsd} />}
+        />
+        <Stat
+          label={t('averageMargin')}
+          value={data.averageMarginUsd === null ? '—' : <Money value={data.averageMarginUsd} />}
+          hint={t('averageMarginHint', { count: data.shipmentsWithRevenue })}
+        />
+        <Stat label={t('fixedExpenses')} value={<Money value={data.fixedExpensesUsd} />} />
+        <Stat
+          label={t('breakEvenShipments')}
+          value={data.breakEvenShipments ?? '—'}
+          hint={data.breakEvenShipments === null ? t('noPositiveMargin') : t('breakEvenHint')}
+        />
+      </div>
+      {data.incompleteShipments > 0 && (
+        <p className="warning">{t('breakEvenIncomplete', { count: data.incompleteShipments })}</p>
+      )}
+      <p className="muted">{t('breakEvenPlanning')}</p>
+    </>
+  );
+}
+
 export function ManagementDashboard() {
   const t = useTranslations('Dashboards');
   return (
@@ -267,7 +302,12 @@ export function ManagementDashboard() {
       hint={t('managementHint')}
       allBranches
     >
-      {(data) => <CommonFigures data={data} />}
+      {(data) => (
+        <>
+          <CommonFigures data={data} />
+          {data.breakEven && <BreakEven data={data.breakEven} />}
+        </>
+      )}
     </DashboardView>
   );
 }

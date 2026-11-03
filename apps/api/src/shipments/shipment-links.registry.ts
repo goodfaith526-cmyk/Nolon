@@ -47,6 +47,11 @@ export interface ShipmentLinkHandler {
   ): Promise<ShipmentLinkBlocker | null>;
   /** The live records of this module that moved the shipment without a status step. */
   locationEffectsInTx?(tx: Tx, shipmentId: string): Promise<LocationEffect[]>;
+  /**
+   * When a live full proof of delivery of this module delivered the shipment, or null: closing a
+   * shipment with a distributor needs one (plan 07, 6).
+   */
+  fullDeliveryAtInTx?(tx: Tx, shipmentId: string): Promise<Date | null>;
 }
 
 @Injectable()
@@ -73,6 +78,14 @@ export class ShipmentLinksRegistry {
     for (const handler of this.handlers) {
       const blocker = await handler.revertBlockerInTx?.(tx, shipmentId, step);
       if (blocker) return blocker;
+    }
+    return null;
+  }
+
+  async fullDeliveryAtInTx(tx: Tx, shipmentId: string): Promise<Date | null> {
+    for (const handler of this.handlers) {
+      const at = await handler.fullDeliveryAtInTx?.(tx, shipmentId);
+      if (at) return at;
     }
     return null;
   }

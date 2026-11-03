@@ -14,6 +14,7 @@ import {
   type ManagementDashboardDto,
   type QuotationDto,
   type SalesConversionDto,
+  type ShipmentProfitabilityDto,
   type ShipmentsReportDto,
   type TripDto,
   type TripsReportDto,
@@ -1163,6 +1164,68 @@ describe('operational reports and dashboards', () => {
       );
       // May: the expenses of 300 and 50 and the accrual of 400 (the 50's reversal is dated today).
       expect(may.finance?.totals.costUsd).toBe('750');
+      // March: no expense without a shipment, so no shipment is needed to cover one.
+      expect(r.breakEven).toEqual({
+        contributionMarginUsd: '1250.5',
+        shipmentsWithRevenue: 2,
+        averageMarginUsd: '625.25',
+        fixedExpensesUsd: '0',
+        breakEvenShipments: 0,
+        incompleteShipments: 2,
+      });
+      // May: costs and no revenue, so no positive margin and no figure (not a fake one).
+      expect(may.breakEven).toMatchObject({
+        contributionMarginUsd: '-750',
+        averageMarginUsd: null,
+        breakEvenShipments: null,
+      });
+    });
+
+    it('break-even: fixed expenses over the average margin, rounded up (plan 07, z5)', async () => {
+      // A general expense (no shipment) in August, a month of this test only.
+      const rent = (
+        await post('/expenses', cookies.opsPts, {
+          requestId: randomUUID(),
+          branchId: pts,
+          expenseDate: d('08-01'),
+          categoryCode: 'RENT',
+          description: 'Office rent August',
+          currency: 'USD',
+          amount: '1000',
+          cashAccountId: cashUsd.id,
+        }).expect(201)
+      ).body as { id: string };
+      await post(`/expenses/${rent.id}/approve`, cookies.managerPts).expect(200);
+      const period = `from=${d('03-01')}&to=${d('08-31')}&branchId=${pts}`;
+      const [dashboard, profitability] = await Promise.all([
+        report<ManagementDashboardDto>(`/dashboard/management?${period}`, cookies.admin),
+        report<ShipmentProfitabilityDto>(
+          `/reports/shipment-profitability?${period}`,
+          cookies.admin,
+        ),
+      ]);
+      const b = dashboard.breakEven;
+      if (!b) throw new Error('No break-even');
+      // The same contribution margin as the profitability report, and only the rent is fixed.
+      expect(b.contributionMarginUsd).toBe(profitability.totals.marginUsd);
+      expect(b.fixedExpensesUsd).toBe('1000');
+      expect(b.shipmentsWithRevenue).toBe(
+        profitability.shipments.filter((x) => new Prisma.Decimal(x.revenueUsd).gt(0)).length,
+      );
+      const average = new Prisma.Decimal(b.contributionMarginUsd).div(b.shipmentsWithRevenue);
+      expect(b.breakEvenShipments).toBe(
+        average.gt(0) ? new Prisma.Decimal(1000).div(average).ceil().toNumber() : null,
+      );
+      expect(b.incompleteShipments).toBe(
+        profitability.shipments.filter((x) => x.incompleteReasons.length > 0).length,
+      );
+      // Not on the branch dashboard, nor without financial reports.
+      expect(
+        (await report<BranchDashboardDto>(`/dashboard/branch?${period}`, cookies.admin)).breakEven,
+      ).toBeNull();
+      expect(
+        (await report<ManagementDashboardDto>(`/dashboard/management?${march()}`)).breakEven,
+      ).toBeNull();
     });
 
     it('leaves out finance for a user without financial reports', async () => {
