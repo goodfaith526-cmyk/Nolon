@@ -99,6 +99,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 09 section 12: staff estimates for items outside the standard categories, and the
+   * customer's acceptance. Off (default) until the bot accepts the estimated state (consumer
+   * first, plan 09 section 9); photo upload works either way.
+   */
+  CS_ESTIMATES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * The owner's instant account (2026-11-03): a signed bot request for a known branch makes or
    * reuses the profile's branch account when it is saved. Off: the account waits for approval, as
    * before.

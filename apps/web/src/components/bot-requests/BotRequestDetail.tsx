@@ -11,6 +11,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { useMe } from '../StaffShell';
 import { BotRequestApprove } from './BotRequestApprove';
+import { BotRequestEstimate } from './BotRequestEstimate';
 
 /**
  * One bot booking request for staff (plan 04a): what the customer asked, in NOLON's terms and, for
@@ -380,6 +381,35 @@ export function BotRequestDetail({ id }: { id: string }) {
           </div>
         </div>
       )}
+
+      {r.photos.length > 0 && (
+        <div className="card stack">
+          <h2>{t('photosTitle', { count: r.photos.length })}</h2>
+          <div className="row">
+            {r.photos.map((p) => {
+              const src = `/api/v1/cs-booking-requests/${r.id}/photos/${p.id}`;
+              return (
+                <a key={p.id} href={src} target="_blank" rel="noopener noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- an API-served photo behind the session, not a static asset */}
+                  <img
+                    src={src}
+                    alt={t('photoAlt')}
+                    loading="lazy"
+                    style={{ inlineSize: '8rem', blockSize: '8rem', objectFit: 'cover' }}
+                  />
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <BotRequestEstimate
+        request={r}
+        master={master}
+        busy={busy}
+        onEstimate={(body) => void post('estimate', body)}
+      />
 
       {r.actions.canSetDropOff && (
         <form

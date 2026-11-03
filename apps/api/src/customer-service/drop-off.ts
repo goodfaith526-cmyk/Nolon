@@ -20,7 +20,7 @@ export const dropOffSelect = {
 export type DropOffRow = Prisma.WarehouseGetPayload<{ select: typeof dropOffSelect }>;
 
 /** Both languages, the one given repeated when only one is; null when neither is. */
-function pair(ar: string | null, en: string | null): { ar: string; en: string } | null {
+export function pair(ar: string | null, en: string | null): { ar: string; en: string } | null {
   const a = ar?.trim() || null;
   const e = en?.trim() || null;
   if (a === null && e === null) return null;
