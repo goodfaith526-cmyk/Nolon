@@ -53,8 +53,9 @@ export const EVENT_SOURCES = ['USER', 'API', 'SYSTEM'] as const;
 export type EventSource = (typeof EVENT_SOURCES)[number];
 
 /**
- * What the customer sees (annex B section 4, "Public" column). Consolidated and Closed are
- * internal: the page keeps showing the status before them.
+ * What the customer sees (annex B section 4, "Public" column). Consolidated and Closed stay
+ * internal: the page keeps showing the status before them. Cancelled is public so bots never
+ * invent "in progress" for a null projection.
  */
 export const PUBLIC_SHIPMENT_STATUSES = [
   'REGISTERED',
@@ -75,6 +76,7 @@ export const PUBLIC_SHIPMENT_STATUSES = [
   'PARTIALLY_DELIVERED',
   'DELIVERED',
   'ON_HOLD',
+  'CANCELLED',
 ] as const;
 export type PublicShipmentStatus = (typeof PUBLIC_SHIPMENT_STATUSES)[number];
 

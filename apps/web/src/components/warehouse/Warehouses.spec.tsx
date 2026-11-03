@@ -38,18 +38,26 @@ async function flush() {
   });
 }
 
-const warehouse = (id: string, code: string) =>
-  ({
-    id,
-    branchId: 'b1',
-    code,
-    nameEn: code,
-    nameAr: code,
-    address: null,
-    locationId: null,
-    isActive: true,
-    storageLocations: [],
-  }) as WarehouseDto;
+const warehouse = (
+  id: string,
+  code: string,
+  details: Partial<WarehouseDto> = {},
+): WarehouseDto => ({
+  id,
+  branchId: 'b1',
+  code,
+  nameEn: code,
+  nameAr: code,
+  address: null,
+  locationId: null,
+  kind: null,
+  phone: null,
+  latitude: null,
+  longitude: null,
+  isActive: true,
+  storageLocations: [],
+  ...details,
+});
 
 const stock: WarehouseStockDto = {
   asOf: '2026-10-28',
@@ -92,7 +100,15 @@ describe('Warehouses: the shipments in each warehouse now', () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
         path === '/warehouses'
-          ? [warehouse('w1', 'DXB-1'), warehouse('w2', 'DXB-2')]
+          ? [
+              warehouse('w1', 'DXB-1'),
+              warehouse('w2', 'DXB-2', {
+                kind: 'DROP_OFF_POINT',
+                phone: '+971500000203',
+                latitude: '25.271',
+                longitude: '55.308',
+              }),
+            ]
           : path === '/warehouses/stock'
             ? stock
             : { locations: [] },
@@ -115,6 +131,23 @@ describe('Warehouses: the shipments in each warehouse now', () => {
     expect(w2?.textContent).toContain('stockTitle {"shipments":0,"packages":0}');
     expect(w2?.textContent).toContain('stockNone');
     expect(w2?.textContent).not.toContain('NOL-SHP-1');
+    act(() => root.unmount());
+  });
+
+  it('shows a facility its kind, phone and map link, and an ordinary warehouse none', async () => {
+    const root = createRoot(el);
+    act(() => root.render(<Warehouses />));
+    await flush();
+    const [w1, w2] = [...el.querySelectorAll('.panel')].slice(1);
+    expect(w1?.textContent).not.toContain('kind.');
+    expect(w1?.querySelector('a[href^="tel:"]')).toBeNull();
+    expect(w2?.textContent).toContain('kind.DROP_OFF_POINT');
+    expect(w2?.querySelector('a[href="tel:+971500000203"]')?.textContent).toBe('+971500000203');
+    const map = w2?.querySelector('a[target="_blank"]');
+    expect(map?.getAttribute('href')).toBe(
+      'https://www.google.com/maps/search/?api=1&query=25.271,55.308',
+    );
+    expect(map?.getAttribute('rel')).toBe('noopener noreferrer');
     act(() => root.unmount());
   });
 });

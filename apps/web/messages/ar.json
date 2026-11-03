@@ -82,7 +82,8 @@
     "partners": "الشركاء",
     "permissions": "الصلاحيات",
     "branchPermissions": "صلاحيات الفرع",
-    "paymentInstructions": "تعليمات الدفع"
+    "paymentInstructions": "تعليمات الدفع",
+    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة."
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -727,7 +728,8 @@
     "widthCm": "العرض (سم)",
     "heightCm": "الارتفاع (سم)",
     "lineDescription": "الوصف",
-    "tabProfit": "الربحية"
+    "tabProfit": "الربحية",
+    "openStandalone": "افتح في نافذة مستقلة"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -747,7 +749,8 @@
     "OUT_FOR_DELIVERY": "خرجت للتوصيل النهائي",
     "PARTIALLY_DELIVERED": "سُلّم جزء من الشحنة",
     "DELIVERED": "تم التسليم",
-    "ON_HOLD": "متوقفة مؤقتاً"
+    "ON_HOLD": "متوقفة مؤقتاً",
+    "CANCELLED": "ملغاة"
   },
   "Track": {
     "switchLocale": "English",
@@ -1127,7 +1130,15 @@
     "statusReceiptNotMoved": "استُلمت البضاعة: {number}، لكن تعذّر تغيير الحالة الآن. راجع حالة الشحنة.",
     "statusAlreadyHeld": "البضاعة مستلمة في مستودع مسبقاً ({held} طرد محفوظ): ستتغير الحالة فقط.",
     "statusWithoutReceipt": "لن يُسجَّل إذن استلام، فلن تظهر الشحنة في مخزون أي مستودع حتى تُستلم البضاعة.",
-    "awaitingTruncated": "تُعرض أولى الشحنات المنتظرة لإذن استلام فقط. استلم هذه أولاً."
+    "awaitingTruncated": "تُعرض أولى الشحنات المنتظرة لإذن استلام فقط. استلم هذه أولاً.",
+    "phone": "تلفون",
+    "openMap": "الموقع على الخريطة",
+    "kind": {
+      "COLLECTION_CENTER": "مركز تجميع",
+      "DISTRIBUTION_HUB": "مركز توزيع مركزي",
+      "DELIVERY_CENTER": "مركز تسليم",
+      "DROP_OFF_POINT": "نافذة استلام وتسليم"
+    }
   },
   "Customs": {
     "section": "الجمارك",
@@ -1514,6 +1525,7 @@
     "scope_catalog_read": "قراءة الأماكن وأنواع الشحن",
     "scope_quote_read": "قراءة أسعار طريق",
     "scope_booking_requests_create": "إرسال طلبات حجز",
+    "scope_customer_profiles_write": "إنشاء واستكمال هوية العميل (لا تمنح قراءة المعاملات)",
     "scope_tracking_lookup": "التتبّع برقم الشحنة والهاتف",
     "editScopes": "تغيير الصلاحيات",
     "saveScopes": "حفظ الصلاحيات",
@@ -1900,7 +1912,9 @@
     "entity_DELEGATION": "تفويض",
     "entity_CS_REJECT_REASON": "سبب رفض طلب البوت",
     "entity_API_CLIENT": "مفتاح API",
-    "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع"
+    "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع",
+    "entity_CS_BOOKING_REQUEST": "طلب حجز من البوت",
+    "entity_CUSTOMER_STAGE": "مرحلة الزبون"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -2471,6 +2485,9 @@
     "save": "حفظ التعديلات",
     "saved": "حُفظت التعديلات.",
     "saveBeforeDeciding": "احفظ تعديلاتك قبل الاعتماد أو الرفض.",
+    "profileReviewRequired": "هوية العميل تحتاج مراجعة قبل الاعتماد",
+    "profilePhoneUnverified": "الهاتف للتواصل فقط حتى التحقق منه",
+    "profileNameRequired": "استكمل اسم العميل قبل الاعتماد",
     "approveTitle": "اعتماد وتسجيل إيصال الاستلام",
     "approveHint": "المستودع والطرود والوزن والحالة تؤكدها أنت: هي ما يُسجَّل في إيصال الاستلام.",
     "extraPackagesConfirmed": "أؤكد طروداً زائدة عن سطور الشحنة (اذكر السبب في الملاحظة)",
@@ -2678,6 +2695,9 @@
     "allocations": "التخصيصات"
   },
   "Refusals": {
+    "PROFILE_NAME_REQUIRED": "استكمل اسم العميل قبل الاعتماد",
+    "PROFILE_REVIEW_REQUIRED": "راجع تعارض بيانات العميل قبل الاعتماد",
+    "PROFILE_VERSION_CONFLICT": "تغيّرت بيانات العميل؛ افتح الطلب من جديد",
     "SAME_ROUTE": "يجب أن يختلف «من» عن «إلى».",
     "LOAD_TYPE_SEA_ONLY": "FCL/LCL للشحن البحري فقط.",
     "SERVICE_REQUIRED": "اختر خدمة واحدة على الأقل.",
@@ -2959,6 +2979,9 @@
     "notEditable": "ليس من صلاحيتك",
     "editPerson": "ما تعطيه لـ {name}",
     "delegatedHint": "تظهر فقط الفرق والصلاحيات اللي داخل تفويضك.",
+    "module_customer_profiles": "هوية العميل الموحّدة",
+    "module_customer_profile_intake": "استقبال ومراجعة هوية العميل",
+    "module_customer_profile_followup": "تخصيص متابعة العميل",
     "module_customers": "العملاء",
     "module_rates": "الأسعار",
     "module_rate_costs": "تكاليف الأسعار والهامش المتوقع",
@@ -3090,7 +3113,36 @@
     "priceFailed": "ما قدرنا نفحص السعر. راجع المدخلات.",
     "approveAction": "وافق وافتح الحجز",
     "booking": "الحجز",
-    "approvedPricing": "المسعَّر عند الموافقة"
+    "approvedPricing": "المسعَّر عند الموافقة",
+    "filter_cancelled": "ألغاه الزبون",
+    "filter_cancel_requested": "طلب إلغاء",
+    "state_cancelled": "ملغي",
+    "cancelledByCustomer": "ألغاه الزبون",
+    "cancelRequest": "الزبون طلب الإلغاء",
+    "cancelRequestOpen": "(مفتوح)",
+    "cancelRequestClosed": "(اتعالج)",
+    "cancelRequestTitle": "الزبون طلب إلغاء الحجز",
+    "cancelRequestHint": "الحجز ما بيتلغى تلقائياً. تواصل مع الزبون، وألغِ الحجز من صفحته لو لازم، وبعدها علّم الطلب «اتعالج».",
+    "cancelRequestCloseAction": "اتعالج",
+    "stages": "مراحل الشحنة كما يقرأها الزبون",
+    "stagesHint": "دي المراحل البيقرأها الزبون من البوت. الحالة الما ليها مرحلة بتحوّل الزبون لموظف.",
+    "addStage": "إضافة مرحلة",
+    "stageCode": "رمز المرحلة",
+    "stageOrder": "الترتيب",
+    "stageMapping": "أي حالة شحنة بتظهر كأي مرحلة",
+    "shipmentStatus": "حالة الشحنة",
+    "customerStage": "المرحلة عند الزبون",
+    "stageToStaff": "— بلا مرحلة: تواصل مع الموظف —",
+    "instantAccount": "حساب العميل",
+    "instantAccountMade": "الحساب اتعمل",
+    "instantAccountWaits": "الحساب منتظر الموظف ({reason})",
+    "instantAccount_CREATED": "اتعمل",
+    "instantAccount_REUSED": "موجود من قبل",
+    "instantAccount_PROFILE_REVIEW": "بيانات العميل فيها اقتراحات محتاجة مراجعة",
+    "instantAccount_NAME_MISSING": "الاسم ناقص",
+    "instantAccount_PROFILE_CHANGED": "ملف العميل اتغيّر بعد ما البوت شافو",
+    "instantAccount_PHONE_IN_USE": "الرقم مسجّل لحساب تاني في الفرع",
+    "instantAccount_ACCOUNT_INACTIVE": "حساب العميل في الفرع موقوف"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

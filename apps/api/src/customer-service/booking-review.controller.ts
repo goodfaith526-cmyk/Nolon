@@ -1,3 +1,4 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
   Body,
   Controller,
@@ -8,6 +9,7 @@ import {
   Post,
   Put,
   Query,
+  UseFilters,
 } from '@nestjs/common';
 import {
   CS_REVIEW_FILTERS,
@@ -39,6 +41,7 @@ function requireReviewer(user: AuthUser): AuthUser {
 const listQuery = z.object({ state: z.enum(CS_REVIEW_FILTERS).default('open') }).strict();
 const version = z.number().int().min(1);
 const routeBody = z.object({ version, branchId: z.uuid() }).strict();
+const closeBody = z.object({ version }).strict();
 const reasonCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'A code of capitals, digits and _');
 const rejectBody = z
   .object({ version, reasonCode, internalNote: optionalText(1000).optional() })
@@ -58,20 +61,23 @@ const approveBody = z
   .object({
     version,
     paymentCurrency: currencyCode,
+    profileVersion: version.optional(),
     pricing: priceInputs,
     pricingFingerprint: z
       .string()
       .regex(/^[0-9a-f]{64}$/)
       .nullable(),
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
-    booking: bookingCreateBody.omit({
-      originLocationId: true,
-      destinationLocationId: true,
-      mode: true,
-      loadType: true,
-      cargoType: true,
-      items: true,
-    }),
+    booking: bookingCreateBody
+      .omit({
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        cargoType: true,
+        items: true,
+      })
+      .partial({ customerId: true }),
   })
   .strict();
 const reasonBody = z
@@ -83,6 +89,7 @@ const reasonBody = z
  * never an API key. Approval makes the booking with the ordinary create checks (R3-ج2).
  */
 @Controller('cs-booking-requests')
+@UseFilters(CustomerIdentityFilter)
 export class BookingReviewController {
   constructor(private readonly review: BookingReviewService) {}
 
@@ -149,6 +156,17 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** Plan 09 section 2: the customer's cancel ask on an approved request, handled. */
+  @Post(':id/cancel-request/close')
+  @RequirePermission('cs_booking_requests:approve')
+  closeCancelRequest(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.closeCancelRequest(user, id, parse(closeBody, body));
   }
 }
 

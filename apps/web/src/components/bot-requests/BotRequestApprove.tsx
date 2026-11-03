@@ -72,15 +72,16 @@ export function BotRequestApprove({
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!priced || !customerId || !category) return;
+    if (!priced || (!customerId && !r.profile?.name) || r.profile?.needsReview || !category) return;
     onApprove({
       version: r.version,
+      ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
       pricing: inputs,
       pricingFingerprint: priced.pricingFingerprint,
       // The route, mode and cargo of the booking are the priced inputs (the API takes them).
       booking: {
-        customerId,
+        ...(customerId ? { customerId } : {}),
         services: [...r.services],
         requestedDeparture: r.requestedDate,
       },
@@ -89,7 +90,8 @@ export function BotRequestApprove({
 
   const ready =
     priced !== null &&
-    customerId !== null &&
+    !r.profile?.needsReview &&
+    (customerId !== null || !!r.profile?.name) &&
     category !== undefined &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
@@ -101,7 +103,18 @@ export function BotRequestApprove({
       <div className="form-grid">
         <div className="field">
           {t('customer')}
-          {r.customerId ? (
+          {r.profile ? (
+            <strong>
+              {r.profile.name ?? t('profileNameRequired')}
+              {r.profile.needsReview ? (
+                <span className="error"> {t('profileReviewRequired')}</span>
+              ) : null}
+              {r.profile.phone && !r.profile.phoneVerified ? (
+                <span className="muted"> {t('profilePhoneUnverified')}</span>
+              ) : null}{' '}
+              <span dir="ltr">({r.profile.number})</span>
+            </strong>
+          ) : r.customerId ? (
             <strong dir="ltr">{r.customerNumber}</strong>
           ) : (
             <CustomerPicker value={customer} onChange={setCustomer} />

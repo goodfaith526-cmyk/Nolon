@@ -68,6 +68,45 @@ const envSchema = z.object({
       .default('false')
       .transform((value) => value === 'true'),
   ),
+  /** Plan 08: opt-in unified profile capture. Never enabled by a deployment default. */
+  CS_CUSTOMER_IDENTITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CS_CUSTOMER_IDENTITY_COMPANY_ID: emptyAsUnset(
+    // Stable namespace; never inferred from an incoming message.
+    z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{1,100}$/)
+      .optional(),
+  ),
+  /** Secret JSON map keyed by API client UUID: { secret, accounts: [{channel, channelAccountId}] }. */
+  CS_CUSTOMER_IDENTITY_CLIENTS: emptyAsUnset(z.string().default('{}')),
+  CS_CUSTOMER_FOLLOWUP_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 2: a customer cancels a bot's booking request. Off until the bot's connector
+   * accepts the cancelled state (consumer first, plan 09 section 9).
+   */
+  CS_BOOKING_CANCEL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * The owner's instant account (2026-11-03): a signed bot request for a known branch makes or
+   * reuses the profile's branch account when it is saved. Off: the account waits for approval, as
+   * before.
+   */
+  CS_INSTANT_CUSTOMER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

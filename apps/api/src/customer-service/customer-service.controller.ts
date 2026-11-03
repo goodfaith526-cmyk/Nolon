@@ -1,3 +1,4 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
   Body,
   Controller,
@@ -11,9 +12,13 @@ import {
   Put,
   Query,
   Res,
+  Req,
+  type RawBodyRequest,
   UseGuards,
+  UseFilters,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { CustomerIdentityAuth, identityError } from './customer-identity-auth.js';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
@@ -26,6 +31,7 @@ import {
   CS_SHIPMENT_STATES,
   LOAD_TYPES,
   SHIPPING_MODES,
+  type CsBookingRequestCancelled,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsCatalogDto,
@@ -87,12 +93,22 @@ const tokenBody = z
       .optional(),
   })
   .strict();
+/** One piece's dimension in centimetres, positive, up to 2 decimals: Decimal(10, 2), as bookings. */
+const dimensionCm = z
+  .string()
+  .regex(/^\d{1,8}(\.\d{1,2})?$/, 'Invalid measurement')
+  .refine((v) => /[1-9]/.test(v), 'Must be positive');
+/** The pieces a volume request's CBM came from: a whole number, as a booking item's quantity. */
+const pieces = z.number().int().min(1).max(100_000);
 const quoteQuery = z
   .object({
     originId: z.uuid(),
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
     quantity: quantity.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     mode: z.enum(SHIPPING_MODES).optional(),
     loadType: z.enum(LOAD_TYPES).optional(),
     currency: currencyCode.optional(),
@@ -122,12 +138,19 @@ const bodyQuantity = z.union([
 ]);
 const requestBody = z
   .object({
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     sender: sender.optional(),
     contactPhone: phone.optional(),
     originId: z.uuid(),
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
     quantity: bodyQuantity,
+    pieces: pieces.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     services: z
       .array(z.enum(CS_REQUEST_SERVICES))
       .max(CS_REQUEST_SERVICES.length)
@@ -151,13 +174,16 @@ const requestBody = z
 const namesBody = z
   .object({
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     channel: z.enum(CS_SENDER_CHANNELS),
     origin: botName,
     destination: botName,
     kind: botName,
     quantity: bodyQuantity,
     senderName: name200,
-    senderPhone: digitsPhone,
+    senderPhone: digitsPhone.optional(),
     receiverName: name200,
     receiverPhone: digitsPhone,
     handover: z.enum(CS_BOT_HANDOVERS),
@@ -173,6 +199,7 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     ? parsed.data
     : null;
 }
+const cancelBody = z.object({ reason: requiredText(300).optional() }).strict();
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const services = z.array(z.enum(CS_REQUEST_SERVICES)).max(CS_REQUEST_SERVICES.length);
 const createBody = z
@@ -299,20 +326,47 @@ export class QuoteController {
 @Public()
 @UseGuards(BookingRequestGuard)
 @RequireApiScope('cs:booking_requests:create')
+@UseFilters(CustomerIdentityFilter)
 export class BookingRequestsController {
-  constructor(private readonly requests: BookingRequestsService) {}
+  constructor(
+    private readonly requests: BookingRequestsService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
 
   @Post()
   async create(
     @CurrentBookingCaller() caller: BookingRequestCaller,
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: RawBodyRequest<Request>,
   ): Promise<CsBookingRequestCreated> {
     // Names (origin as { ar, en }) are the bot's form; ids are the catalog's.
     const byNames = typeof body === 'object' && body !== null && 'channel' in body;
-    const { created, body: answer } = byNames
-      ? await this.requests.createByNames(caller, parse(namesBody, body))
-      : await this.requests.create(caller, parse(requestBody, body));
+    const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
+    let binding;
+    if (input.profileId || input.conversationId || input.profileVersion !== undefined) {
+      if (!input.profileId || !input.conversationId || caller.kind !== 'key')
+        identityError(400, 'INVALID_INPUT');
+      const envelope = this.identityAuth.verify(caller.client.id, req);
+      const channel = envelope.context.channel.toLowerCase();
+      if (
+        ('channel' in input && input.channel !== channel) ||
+        ('sender' in input &&
+          input.sender &&
+          (input.sender.channel !== channel || input.sender.id !== envelope.context.subjectId))
+      )
+        identityError(401, 'INVALID_CHANNEL_ASSERTION');
+      binding = {
+        profileId: input.profileId,
+        conversationId: input.conversationId,
+        profileVersion: input.profileVersion,
+        context: envelope.context,
+      };
+    }
+    const { created, body: answer } =
+      'channel' in input
+        ? await this.requests.createByNames(caller, input, binding)
+        : await this.requests.create(caller, input, binding);
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     return answer;
   }
@@ -324,6 +378,30 @@ export class BookingRequestsController {
     @Headers('x-cs-sender') sender: string | undefined,
   ): Promise<CsBookingRequestDto> {
     return this.requests.read(caller, id, senderHeader(sender));
+  }
+
+  /** Plan 09 section 2: the owner cancels its request while staff have not decided it. */
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsBookingRequestCancelled> {
+    const input = parse(cancelBody, body ?? {});
+    // The owner's proof: the customer token, or a signed channel identity (plan 08) of the sender.
+    const signed =
+      caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
+        ? this.identityAuth.verify(caller.client.id, req).context
+        : null;
+    const proof = signed
+      ? {
+          channel: signed.channel === 'WHATSAPP' ? ('whatsapp' as const) : ('telegram' as const),
+          subjectId: signed.subjectId,
+        }
+      : null;
+    return this.requests.cancel(caller, id, proof, input.reason);
   }
 }
 

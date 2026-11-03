@@ -1,3 +1,5 @@
+import { CustomersService } from '../customers/customers.service.js';
+import { CustomerIdentityService } from './customer-identity.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -16,6 +18,7 @@ import type {
   CsRejectReasonInput,
   CsRejectRequest,
   CsReviewFilter,
+  CsCloseCancelRequest,
   CsRouteRequest,
   CsSenderChannel,
   CreateBookingRequest,
@@ -107,6 +110,8 @@ export class BookingReviewService {
     private readonly audit: AuditService,
     private readonly bookings: BookingsService,
     private readonly currencies: CurrenciesService,
+    private readonly identities: CustomerIdentityService,
+    private readonly customers: CustomersService,
   ) {}
 
   async list(user: AuthUser, filter: CsReviewFilter): Promise<CsBookingRequestSummaryDto[]> {
@@ -125,7 +130,20 @@ export class BookingReviewService {
                 status: filter === 'pending' ? 'PENDING' : 'AWAITING_ROUTING',
                 expiresAt: { gt: now },
               }
-            : { status: filter === 'approved' ? 'APPROVED' : 'REJECTED' };
+            : filter === 'cancel_requested'
+              ? {
+                  status: 'APPROVED',
+                  cancelRequestedAt: { not: null },
+                  cancelRequestClosedAt: null,
+                }
+              : {
+                  status:
+                    filter === 'approved'
+                      ? 'APPROVED'
+                      : filter === 'cancelled'
+                        ? 'CANCELLED'
+                        : 'REJECTED',
+                };
     const rows = await this.prisma.csBookingRequest.findMany({
       where: {
         AND: [
@@ -159,7 +177,23 @@ export class BookingReviewService {
     const priceCheck = row.quote
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
-    return staffDto(user, row, priceCheck);
+    const dto = staffDto(user, row, priceCheck);
+    // The request's ordinary branch permission authorises only its linked profile's minimum.
+    const profile = row.profileId
+      ? await this.prisma.customerProfile.findUnique({
+          where: { id: row.profileId },
+          select: {
+            id: true,
+            number: true,
+            name: true,
+            phone: true,
+            phoneVerified: true,
+            needsReview: true,
+            version: true,
+          },
+        })
+      : null;
+    return { ...dto, profile };
   }
 
   /** Plan 04a section 3: AWAITING_ROUTING to PENDING, at one of its branches the key still serves. */
@@ -237,6 +271,55 @@ export class BookingReviewService {
   }
 
   /**
+   * Plan 09 section 2: staff mark a customer's cancel ask on an approved request as handled (they
+   * cancelled the booking with its own route, or talked the customer out of it). The request stays
+   * approved; only the ask closes. The request's version, locked; approve in its branch.
+   */
+  async closeCancelRequest(
+    user: AuthUser,
+    id: string,
+    input: CsCloseCancelRequest,
+  ): Promise<CsBookingRequestStaffDto> {
+    const written = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id } });
+      if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+      if (row.version !== input.version) {
+        throw new ConflictException('The request changed: open it again');
+      }
+      if (
+        row.status !== 'APPROVED' ||
+        row.cancelRequestedAt === null ||
+        row.cancelRequestClosedAt !== null
+      ) {
+        throw new ConflictException('There is no open cancel ask on this request');
+      }
+      if (row.branchId === null || !user.access.has(DECIDE, row.branchId)) {
+        throw new ForbiddenException('You may not decide this request');
+      }
+      const closed = await tx.csBookingRequest.update({
+        where: { id },
+        data: {
+          cancelRequestClosedAt: new Date(),
+          cancelRequestClosedById: user.id,
+          version: { increment: 1 },
+        },
+        include: withQuote,
+      });
+      await this.audit.record(tx, user, {
+        branchId: row.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: row.id,
+        reference: row.reference,
+        action: 'UPDATED',
+        changes: [{ field: 'cancelRequestClosedAt', before: null, after: 'closed' }],
+      });
+      return closed;
+    });
+    return this.format(user, written);
+  }
+
+  /**
    * The engine's price for an approval's inputs (plan 04a section 1), for a request `user` may
    * approve, in its branch. The screen shows it and sends its fingerprint back on approval.
    */
@@ -267,7 +350,7 @@ export class BookingReviewService {
     const { pricing } = input;
     // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
     const cargo = await this.quotes.cargoOf(pricing);
-    const booking: CreateBookingRequest = {
+    const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
       ...input.booking,
       originLocationId: pricing.originId,
       destinationLocationId: pricing.destinationId,
@@ -277,7 +360,18 @@ export class BookingReviewService {
       items: [],
     };
     await this.currencies.requireActive(input.paymentCurrency);
-    const prepared = await this.bookings.prepareCreate(user, booking);
+    const initial = await this.prisma.csBookingRequest.findUnique({ where: { id } });
+    if (!initial || !visibleTo(user, initial))
+      throw new NotFoundException('Booking request not found');
+    if (!initial.profileId && !booking.customerId)
+      throw new BadRequestException('Choose the booking customer');
+    const prepareProfile =
+      initial.profileId && initial.branchId
+        ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
+        : null;
+    const legacyPrepared = !initial.profileId
+      ? await this.bookings.prepareCreate(user, { ...booking, customerId: booking.customerId! })
+      : null;
     const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       if (row.status !== 'PENDING' || row.branchId === null) {
@@ -286,6 +380,28 @@ export class BookingReviewService {
       if (!decideBranches(user, row).includes(row.branchId)) {
         throw new ForbiddenException('You may not approve this request');
       }
+      await requireKeyServes(tx, row.apiClientId, row.branchId);
+      let prepared = legacyPrepared;
+      if (row.profileId) {
+        this.identities.requireBookingEnabled();
+        const profile = await this.identities.lockProfile(tx, row.profileId);
+        if (profile.version !== input.profileVersion)
+          throw new ConflictException({
+            code: 'PROFILE_VERSION_CONFLICT',
+            message: 'The customer profile changed: reopen the request',
+          });
+        if (!prepareProfile) throw new ConflictException('The request changed: reopen it');
+        if (profile.needsReview)
+          throw new ConflictException({
+            code: 'PROFILE_REVIEW_REQUIRED',
+            message: 'Resolve customer identity proposals before approval',
+          });
+        const accountId = await this.customers.profileAccountInTx(tx, user, profile, row.branchId);
+        if (booking.customerId && booking.customerId !== accountId)
+          throw new BadRequestException('A linked request uses its own customer');
+        prepared = prepareProfile(accountId);
+      }
+      if (!prepared) throw new ConflictException('The request changed: reopen it');
       if (prepared.branchId !== row.branchId) {
         throw new BadRequestException({
           message: "The booking's customer is not of the request's branch",
@@ -306,6 +422,22 @@ export class BookingReviewService {
       const now = await this.quotes.priceFor(pricing, row.branchId);
       await requireSamePrice(tx, now, input.pricingFingerprint);
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      if (row.profileId)
+        await tx.customerProfileReview.create({
+          data: {
+            companyId: this.identities.companyId,
+            actorId: user.id,
+            entityId: row.profileId,
+            action: 'BOOKING_ACCOUNT',
+            reason: 'Staff approved the linked customer in the booking branch',
+            snapshot: {
+              accountId: prepared.customerId,
+              branchId: row.branchId,
+              bookingId,
+              requestId: row.id,
+            },
+          },
+        });
       return tx.csBookingRequest.update({
         where: { id },
         data: {
@@ -513,6 +645,15 @@ function staffDto(
         ? { amount: toDecimalString(r.botQuotedAmount), currency: r.botQuotedCurrency }
         : null,
     quoteRef: r.quoteRef,
+    pieces: r.pieces,
+    dimensions:
+      r.lengthCm !== null && r.widthCm !== null && r.heightCm !== null
+        ? {
+            lengthCm: toDecimalString(r.lengthCm),
+            widthCm: toDecimalString(r.widthCm),
+            heightCm: toDecimalString(r.heightCm),
+          }
+        : null,
     priceCheck,
     routedAt: r.routedAt?.toISOString() ?? null,
     decidedAt: r.decidedAt?.toISOString() ?? null,
@@ -530,7 +671,27 @@ function staffDto(
             total: r.approvedTotal === null ? null : toDecimalString(r.approvedTotal),
           }
         : null,
+    cancelledAt: r.cancelledAt?.toISOString() ?? null,
+    cancelReason: r.cancelReason,
+    cancelRequest:
+      r.cancelRequestedAt === null
+        ? null
+        : {
+            requestedAt: r.cancelRequestedAt.toISOString(),
+            closedAt: r.cancelRequestClosedAt?.toISOString() ?? null,
+            reason: r.cancelRequestReason,
+          },
+    instantAccount:
+      r.instantAccount === null
+        ? null
+        : { outcome: r.instantAccount, customerId: r.instantCustomerId },
     actions: {
+      canCloseCancelRequest:
+        r.status === 'APPROVED' &&
+        r.cancelRequestedAt !== null &&
+        r.cancelRequestClosedAt === null &&
+        r.branchId !== null &&
+        user.access.has(DECIDE, r.branchId),
       canRoute:
         open &&
         r.status === 'AWAITING_ROUTING' &&

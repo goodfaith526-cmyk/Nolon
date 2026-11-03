@@ -2299,6 +2299,21 @@ tr.subtotal td {
   white-space: normal;
 }
 
+/* A shipment in a window of its own (/standalone/...): links to other pages are switched off
+   (standalone-links.ts). A link in text reads as plain text; a link styled as a button (a page
+   action, such as a new trip) is not shown at all. */
+.standalone-root a[data-standalone-blocked] {
+  pointer-events: none;
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+}
+
+.standalone-root a.button[data-standalone-blocked],
+.standalone-root .more-menu-list > a[data-standalone-blocked] {
+  display: none;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Printouts (/print/...): an A4 document on screen and on paper. Print colors are fixed (black
    on white, whatever the screen theme). Logical properties only, so Arabic and English both lay

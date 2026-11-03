@@ -82,7 +82,8 @@
     "partners": "Partners",
     "permissions": "Permissions",
     "branchPermissions": "Branch permissions",
-    "paymentInstructions": "Payment instructions"
+    "paymentInstructions": "Payment instructions",
+    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window."
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -727,7 +728,8 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit"
+    "tabProfit": "Profit",
+    "openStandalone": "Open in its own window"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -747,7 +749,8 @@
     "OUT_FOR_DELIVERY": "Out for final delivery",
     "PARTIALLY_DELIVERED": "Partly delivered",
     "DELIVERED": "Delivered",
-    "ON_HOLD": "Temporarily on hold"
+    "ON_HOLD": "Temporarily on hold",
+    "CANCELLED": "Cancelled"
   },
   "Track": {
     "switchLocale": "العربية",
@@ -1127,7 +1130,15 @@
     "statusReceiptNotMoved": "Goods received: {number}, but the status could not change now. Check the shipment's status.",
     "statusAlreadyHeld": "The goods are already received in a warehouse ({held} packages held): only the status changes.",
     "statusWithoutReceipt": "No goods receipt will be recorded, so the shipment will not show in a warehouse's stock until someone receives the goods.",
-    "awaitingTruncated": "Only the first shipments awaiting a receipt are shown. Receive these first."
+    "awaitingTruncated": "Only the first shipments awaiting a receipt are shown. Receive these first.",
+    "phone": "Phone",
+    "openMap": "Location on the map",
+    "kind": {
+      "COLLECTION_CENTER": "Collection centre",
+      "DISTRIBUTION_HUB": "Central distribution hub",
+      "DELIVERY_CENTER": "Delivery centre",
+      "DROP_OFF_POINT": "Drop-off and pick-up window"
+    }
   },
   "Customs": {
     "section": "Customs",
@@ -1514,6 +1525,7 @@
     "scope_catalog_read": "Read places and shipment types",
     "scope_quote_read": "Read prices for a route",
     "scope_booking_requests_create": "Send booking requests",
+    "scope_customer_profiles_write": "Capture and enrich customer identity (no transaction reads)",
     "scope_tracking_lookup": "Track by shipment number and phone",
     "editScopes": "Change scopes",
     "saveScopes": "Save scopes",
@@ -1900,7 +1912,9 @@
     "entity_DELEGATION": "Delegation",
     "entity_CS_REJECT_REASON": "Bot request rejection reason",
     "entity_API_CLIENT": "API key",
-    "entity_PAYMENT_INSTRUCTION": "Payment instructions"
+    "entity_PAYMENT_INSTRUCTION": "Payment instructions",
+    "entity_CS_BOOKING_REQUEST": "Bot booking request",
+    "entity_CUSTOMER_STAGE": "Customer stage"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -2471,6 +2485,9 @@
     "save": "Save changes",
     "saved": "Changes saved.",
     "saveBeforeDeciding": "Save your changes before approving or rejecting.",
+    "profileReviewRequired": "Review the customer identity before approval",
+    "profilePhoneUnverified": "Phone is contact-only until verified",
+    "profileNameRequired": "Complete the customer name before approval",
     "approveTitle": "Approve and record the GRN",
     "approveHint": "The warehouse, packages, weight and condition are yours to confirm: they become the goods receipt.",
     "extraPackagesConfirmed": "Confirm extra packages beyond the cargo lines (say why in the note)",
@@ -2678,6 +2695,9 @@
     "allocations": "Allocations"
   },
   "Refusals": {
+    "PROFILE_NAME_REQUIRED": "Complete the customer name before approval",
+    "PROFILE_REVIEW_REQUIRED": "Review the disputed customer details before approval",
+    "PROFILE_VERSION_CONFLICT": "The customer changed; reopen the request",
     "SAME_ROUTE": "From and To must be different places.",
     "LOAD_TYPE_SEA_ONLY": "FCL/LCL applies to sea shipments only.",
     "SERVICE_REQUIRED": "Choose at least one service.",
@@ -2959,6 +2979,9 @@
     "notEditable": "Not by you",
     "editPerson": "What you give {name}",
     "delegatedHint": "Only the teams and permissions inside your delegation are offered.",
+    "module_customer_profiles": "Unified customer identity",
+    "module_customer_profile_intake": "Customer identity intake and review",
+    "module_customer_profile_followup": "Customer follow-up assignment",
     "module_customers": "Customers",
     "module_rates": "Rates",
     "module_rate_costs": "Rate costs and expected margin",
@@ -3090,7 +3113,36 @@
     "priceFailed": "The price could not be checked. Check the inputs.",
     "approveAction": "Approve and open the booking",
     "booking": "Booking",
-    "approvedPricing": "Priced on approval"
+    "approvedPricing": "Priced on approval",
+    "filter_cancelled": "Cancelled by customer",
+    "filter_cancel_requested": "Cancel asked",
+    "state_cancelled": "Cancelled",
+    "cancelledByCustomer": "Cancelled by the customer",
+    "cancelRequest": "Customer asked to cancel",
+    "cancelRequestOpen": "(open)",
+    "cancelRequestClosed": "(handled)",
+    "cancelRequestTitle": "The customer asked to cancel",
+    "cancelRequestHint": "The booking is not cancelled automatically. Contact the customer, cancel the booking from its page if needed, then mark the ask handled.",
+    "cancelRequestCloseAction": "Mark handled",
+    "stages": "Shipment stages the customer reads",
+    "stagesHint": "The stages the customer reads from the bot. A status with no stage sends the customer to staff.",
+    "addStage": "Add stage",
+    "stageCode": "Stage code",
+    "stageOrder": "Order",
+    "stageMapping": "Which shipment status shows as which stage",
+    "shipmentStatus": "Shipment status",
+    "customerStage": "Customer stage",
+    "stageToStaff": "— No stage: contact staff —",
+    "instantAccount": "Customer account",
+    "instantAccountMade": "Account created",
+    "instantAccountWaits": "Account waits for staff ({reason})",
+    "instantAccount_CREATED": "created",
+    "instantAccount_REUSED": "already existed",
+    "instantAccount_PROFILE_REVIEW": "the customer's details have proposals to review",
+    "instantAccount_NAME_MISSING": "the name is missing",
+    "instantAccount_PROFILE_CHANGED": "the customer profile changed after the bot read it",
+    "instantAccount_PHONE_IN_USE": "another account of the branch has this phone",
+    "instantAccount_ACCOUNT_INACTIVE": "the customer's branch account is inactive"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

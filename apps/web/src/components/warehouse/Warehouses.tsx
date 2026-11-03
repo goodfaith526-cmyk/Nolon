@@ -244,6 +244,7 @@ export function Warehouses() {
                   {w.address ? ` · ${w.address}` : ''}
                   {` · ${t('place')}: ${w.locationId ? locationName(w.locationId) : t('noPlace')}`}
                 </p>
+                <FacilityDetails warehouse={w} />
               </div>
               <div className="actions">
                 <span className={w.isActive ? 'badge badge-ok' : 'badge'}>
@@ -334,6 +335,35 @@ export function Warehouses() {
       )}
     </section>
   );
+}
+
+/** A facility's kind, the number customers call and a link to its position on the map. */
+function FacilityDetails({ warehouse: w }: { warehouse: WarehouseDto }) {
+  const t = useTranslations('Warehouse');
+  if (!w.kind && !w.phone && !w.latitude) return null;
+  return (
+    <p className="actions">
+      {w.kind && <span className="badge">{t(`kind.${w.kind}`)}</span>}
+      {w.phone && (
+        <span>
+          {t('phone')}:{' '}
+          <a href={`tel:${w.phone}`} dir="ltr">
+            {w.phone}
+          </a>
+        </span>
+      )}
+      {w.latitude && w.longitude && (
+        <a href={mapUrl(w.latitude, w.longitude)} target="_blank" rel="noopener noreferrer">
+          {t('openMap')}
+        </a>
+      )}
+    </p>
+  );
+}
+
+/** Opens the position in Google Maps (web or app). */
+function mapUrl(latitude: string, longitude: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
 }
 
 /** The shipments a warehouse holds now, longest held first (from GET /warehouses/stock). */
