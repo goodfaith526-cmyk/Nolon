@@ -310,6 +310,12 @@ export class AuthService {
       delegations: await this.liveDelegations(user),
       assistantUrl: this.env.AGENT_ASSISTANT_URL ?? null,
       assistantPanel: Boolean(this.env.AGENT_ASSISTANT_URL) && this.env.AGENT_ASSISTANT_PANEL,
+      // The agent admin panel's menu item: for holders of agent_admin:view, never to the
+      // assistant itself. The panel decides who enters (its own admins), not this field.
+      agentAdminUrl:
+        this.env.AGENT_ADMIN_URL && !user.agent && user.access.has('agent_admin:view', null)
+          ? this.env.AGENT_ADMIN_URL
+          : null,
       outletStaffAssignable: this.env.OUTLET_STAFF_ASSIGNABLE,
     };
   }

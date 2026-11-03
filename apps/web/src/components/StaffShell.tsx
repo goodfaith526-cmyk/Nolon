@@ -438,6 +438,20 @@ export function StaffShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="sidebar-foot">
+            {me.agentAdminUrl ? (
+              // The bookings agent's admin panel, on the agent's own site: it signs in with this
+              // NOLON account and decides there who may enter.
+              <a
+                href={me.agentAdminUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nav-link"
+                onClick={() => setMenuOpen(false)}
+              >
+                {icons.assistant}
+                <span>{t('agentAdmin')}</span>
+              </a>
+            ) : null}
             <Link
               href="/account"
               className={isActive('/account') ? 'nav-link active' : 'nav-link'}

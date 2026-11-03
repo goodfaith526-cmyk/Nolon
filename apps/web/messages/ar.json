@@ -83,7 +83,8 @@
     "permissions": "الصلاحيات",
     "branchPermissions": "صلاحيات الفرع",
     "paymentInstructions": "تعليمات الدفع",
-    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة."
+    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة.",
+    "agentAdmin": "إدارة وكيل الحجوزات"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -3061,7 +3062,8 @@
     "levelName_N": "بدون صلاحية",
     "level_C": "*",
     "levelName_C": "مزيج آخر من الأفعال",
-    "module_payment_instructions": "تعليمات الدفع"
+    "module_payment_instructions": "تعليمات الدفع",
+    "module_agent_admin": "لوحة إدارة وكيل الحجوزات"
   },
   "BotRequests": {
     "title": "طلبات الحجز من البوت",
