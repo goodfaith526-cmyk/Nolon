@@ -37,48 +37,71 @@ export function BotRequestApprove({
   const te = useTranslations('Enums');
   const name = useLocalName();
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // The route, mode and currency are common; one priced line per item (or the one-item shape's).
   const [inputs, setInputs] = useState({
     originId: r.originId ?? '',
     destinationId: r.destinationId ?? '',
     mode: 'SEA' as ShippingMode,
-    category: r.category ?? '',
-    quantity: r.quantity,
     currency: r.priceCheck?.currency ?? r.botQuotedPrice?.currency ?? '',
   });
+  const byItems = r.items.length > 0;
+  const hasOther = r.items.some((i) => i.isOther);
+  const [lines, setLines] = useState<{ category: string; quantity: string }[]>(
+    byItems
+      ? r.items.map((i) => ({ category: i.category ?? '', quantity: i.quantity ?? '' }))
+      : [{ category: r.category ?? '', quantity: r.quantity }],
+  );
   const [paymentCurrency, setPaymentCurrency] = useState(inputs.currency);
-  const [price, setPrice] = useState<{ key: string; dto: CsApprovalPriceDto } | null>(null);
+  const [prices, setPrices] = useState<{ key: string; dtos: CsApprovalPriceDto[] } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   const places = master.locations.filter((l) => l.isActive && isPlace(l));
   const currencies = master.currencies.filter((c) => c.isActive);
-  const key = JSON.stringify(inputs);
-  const priced = price !== null && price.key === key ? price.dto : null;
-  const category = master.priceCategories.find((c) => c.code === inputs.category);
+  const key = JSON.stringify({ inputs, lines });
+  const priced = prices !== null && prices.key === key ? prices.dtos : null;
+  const categoryOf = (code: string) => master.priceCategories.find((c) => c.code === code);
   const customerId = r.customerId ?? customer?.id ?? null;
   const set = (patch: Partial<typeof inputs>) => setInputs((v) => ({ ...v, ...patch }));
+  const setLine = (index: number, patch: Partial<(typeof lines)[number]>) =>
+    setLines((all) => all.map((l, i) => (i === index ? { ...l, ...patch } : l)));
 
   async function check() {
     setFailed(null);
     try {
-      const query = new URLSearchParams(inputs).toString();
-      setPrice({
-        key,
-        dto: await api<CsApprovalPriceDto>(`/cs-booking-requests/${r.id}/price?${query}`),
-      });
+      const dtos = [];
+      for (const line of lines) {
+        const query = new URLSearchParams({ ...inputs, ...line }).toString();
+        dtos.push(await api<CsApprovalPriceDto>(`/cs-booking-requests/${r.id}/price?${query}`));
+      }
+      setPrices({ key, dtos });
     } catch {
       setFailed(t('priceFailed'));
     }
   }
 
+  const linesReady = lines.every((l) => categoryOf(l.category) !== undefined && l.quantity !== '');
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!priced || (!customerId && !r.profile?.name) || r.profile?.needsReview || !category) return;
+    if (!priced || (!customerId && !r.profile?.name) || r.profile?.needsReview) return;
+    if (!linesReady || hasOther) return;
+    const first = lines[0]!;
     onApprove({
       version: r.version,
       ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
-      pricing: inputs,
-      pricingFingerprint: priced.pricingFingerprint,
+      // Plan 09 section 4: a request with items is priced per line; the one-item shape as before.
+      ...(byItems
+        ? {
+            pricing: inputs,
+            lines: lines.map((l, i) => ({
+              ...l,
+              pricingFingerprint: priced[i]?.pricingFingerprint ?? null,
+            })),
+          }
+        : {
+            pricing: { ...inputs, ...first },
+            pricingFingerprint: priced[0]?.pricingFingerprint ?? null,
+          }),
       // The route, mode and cargo of the booking are the priced inputs (the API takes them).
       booking: {
         ...(customerId ? { customerId } : {}),
@@ -90,9 +113,10 @@ export function BotRequestApprove({
 
   const ready =
     priced !== null &&
+    !hasOther &&
     !r.profile?.needsReview &&
     (customerId !== null || !!r.profile?.name) &&
-    category !== undefined &&
+    linesReady &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
     inputs.destinationId !== '';
@@ -156,38 +180,6 @@ export function BotRequestApprove({
         </label>
         <ModePicker label={t('mode')} value={inputs.mode} onChange={(mode) => set({ mode })} />
         <label className="field">
-          {t('category')}
-          <select
-            required
-            value={inputs.category}
-            onChange={(e) => set({ category: e.target.value })}
-          >
-            <option value="" disabled>
-              —
-            </option>
-            {master.priceCategories.map((c) => (
-              <option key={c.code} value={c.code}>
-                {name(c)} ({c.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('quantity')}
-          <input
-            required
-            dir="ltr"
-            inputMode="decimal"
-            value={inputs.quantity}
-            onChange={(e) => set({ quantity: e.target.value.trim() })}
-          />
-          {category && (
-            <span className="muted">
-              {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
-            </span>
-          )}
-        </label>
-        <label className="field">
           {t('priceCurrency')}
           <select
             required
@@ -222,20 +214,74 @@ export function BotRequestApprove({
           </select>
         </label>
       </div>
+      {hasOther && <p className="error">{t('estimateRequired')}</p>}
+      <div className="stack">
+        {lines.map((line, index) => {
+          const category = categoryOf(line.category);
+          const item = r.items[index];
+          const price = priced?.[index];
+          return (
+            <div key={item?.id ?? 'single'} className="form-grid">
+              {byItems && <strong>{t('itemLine', { line: item?.lineNo ?? index + 1 })}</strong>}
+              <label className="field">
+                {t('category')}
+                <select
+                  required
+                  value={line.category}
+                  onChange={(e) => setLine(index, { category: e.target.value })}
+                >
+                  <option value="" disabled>
+                    —
+                  </option>
+                  {master.priceCategories.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {name(c)} ({c.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                {t('quantity')}
+                <input
+                  required
+                  dir="ltr"
+                  inputMode="decimal"
+                  value={line.quantity}
+                  onChange={(e) => setLine(index, { quantity: e.target.value.trim() })}
+                />
+                {category && (
+                  <span className="muted">
+                    {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
+                  </span>
+                )}
+              </label>
+              {byItems && price && (
+                <span className="muted" dir="ltr">
+                  {price.state === 'priced'
+                    ? `${price.total} ${price.currency}`
+                    : t(`priceNone_${price.reason ?? 'NO_RATE'}`)}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
       <div className="row">
-        <button type="button" onClick={() => void check()} disabled={busy}>
+        <button type="button" onClick={() => void check()} disabled={busy || hasOther}>
           {t('checkPrice')}
         </button>
         {priced ? (
-          priced.state === 'priced' ? (
+          priced.every((p) => p.state === 'priced') ? (
             <span>
               <span dir="ltr">
-                {priced.total} {priced.currency}
+                {totalOf(priced)} {priced[0]?.currency}
               </span>{' '}
               <span className="muted">{t('priceSource')}</span>
             </span>
           ) : (
-            <span className="muted">{t(`priceNone_${priced.reason ?? 'NO_RATE'}`)}</span>
+            <span className="muted">
+              {t(`priceNone_${priced.find((p) => p.state !== 'priced')?.reason ?? 'NO_RATE'}`)}
+            </span>
           )
         ) : (
           <span className="muted">{t('checkPriceFirst')}</span>
@@ -249,4 +295,22 @@ export function BotRequestApprove({
       </div>
     </form>
   );
+}
+
+/**
+ * The lines' totals summed for display only, in integer units of 1/10000 (decimal strings of up
+ * to 4 places): the API recomputes and keeps the total as Decimal on approval.
+ */
+function totalOf(prices: CsApprovalPriceDto[]): string {
+  const scale = 4;
+  let sum = BigInt(0);
+  for (const p of prices) {
+    const [whole = '0', frac = ''] = (p.total ?? '0').split('.');
+    sum += BigInt(whole + frac.padEnd(scale, '0').slice(0, scale));
+  }
+  const digits = sum.toString().padStart(scale + 1, '0');
+  const places = Math.max(0, ...prices.map((p) => (p.total ?? '').split('.')[1]?.length ?? 0));
+  const whole = digits.slice(0, -scale);
+  const frac = digits.slice(-scale).slice(0, places);
+  return places > 0 ? `${whole}.${frac}` : whole;
 }

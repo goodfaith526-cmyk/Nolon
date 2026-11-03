@@ -3116,7 +3116,19 @@
     "instantAccount_NAME_MISSING": "الاسم ناقص",
     "instantAccount_PROFILE_CHANGED": "ملف العميل اتغيّر بعد ما البوت شافو",
     "instantAccount_PHONE_IN_USE": "الرقم مسجّل لحساب تاني في الفرع",
-    "instantAccount_ACCOUNT_INACTIVE": "حساب العميل في الفرع موقوف"
+    "instantAccount_ACCOUNT_INACTIVE": "حساب العميل في الفرع موقوف",
+    "itemsTitle": "أصناف الطلب",
+    "itemsIncomplete": "في أصناف ما ليها سطر في الحجز: أضف السطر في الحجز واربطو هنا قبل التأكيد.",
+    "pieces": "عدد الطرود",
+    "dimensions": "المقاسات (سم)",
+    "weightKg": "الوزن (كجم)",
+    "approvedTotal": "المسعَّر",
+    "bookingLine": "سطر الحجز",
+    "otherItem": "صنف غير معياري",
+    "resolveItem": "اربط",
+    "addBookingLine": "أضف سطراً في الحجز أولاً",
+    "itemLine": "الصنف {line}",
+    "estimateRequired": "في الطلب صنف غير معياري: محتاج تقدير من الموظف قبل الموافقة (قريباً)."
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

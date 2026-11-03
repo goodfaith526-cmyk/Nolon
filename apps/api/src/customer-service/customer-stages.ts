@@ -40,7 +40,7 @@ export interface TrackInput {
 export interface Track {
   stage: CsStageDto | null;
   attention: 'staff' | null;
-  shipment: CsShipmentTrackDto | null;
+  shipment: Omit<CsShipmentTrackDto, 'trackingUrl'> | null;
 }
 
 /** The first stage: a request still undecided, or a booking still a draft. */
@@ -88,7 +88,7 @@ export function trackOf(
   }
   const code = STAFF_STATUSES.has(shipment.status) ? undefined : mapping.get(shipment.status);
   const stage = code === undefined ? null : stageDto(stages.get(code));
-  const track: CsShipmentTrackDto = {
+  const track: Omit<CsShipmentTrackDto, 'trackingUrl'> = {
     number: shipment.number,
     stage,
     city:

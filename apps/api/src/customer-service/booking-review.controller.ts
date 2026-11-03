@@ -12,6 +12,7 @@ import {
   UseFilters,
 } from '@nestjs/common';
 import {
+  CS_REQUEST_ITEMS_MAX,
   CS_REVIEW_FILTERS,
   LOAD_TYPES,
   SHIPPING_MODES,
@@ -57,16 +58,27 @@ const priceInputs = z
     currency: currencyCode,
   })
   .strict();
+const fingerprint = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/)
+  .nullable();
+// Plan 09 section 4: a request with items is priced per line, in order (the service checks the
+// count and the shape against the request's items).
+const approveLine = z
+  .object({
+    category: z.string().trim().toUpperCase().min(1).max(20),
+    quantity,
+    pricingFingerprint: fingerprint,
+  })
+  .strict();
 const approveBody = z
   .object({
     version,
     paymentCurrency: currencyCode,
     profileVersion: version.optional(),
-    pricing: priceInputs,
-    pricingFingerprint: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .nullable(),
+    pricing: priceInputs.partial({ category: true, quantity: true }),
+    lines: z.array(approveLine).min(1).max(CS_REQUEST_ITEMS_MAX).optional(),
+    pricingFingerprint: fingerprint.optional(),
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
     booking: bookingCreateBody
       .omit({
@@ -80,6 +92,7 @@ const approveBody = z
       .partial({ customerId: true }),
   })
   .strict();
+const resolveBody = z.object({ bookingItemId: z.uuid() }).strict();
 const reasonBody = z
   .object({ textAr: requiredText(300), textEn: requiredText(300), isActive: z.boolean() })
   .strict();
@@ -156,6 +169,21 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /**
+   * Plan 09 section 4: an item that made no booking line, linked to the line staff added. On the
+   * request (not /bookings) so the bookings module never reads the customer service's tables.
+   */
+  @Post(':id/items/:itemId/resolve')
+  @RequirePermission('bookings:update')
+  resolveItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.resolveItem(user, id, itemId, parse(resolveBody, body));
   }
 
   /** Plan 09 section 2: the customer's cancel ask on an approved request, handled. */

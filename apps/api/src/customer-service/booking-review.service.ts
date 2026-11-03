@@ -6,8 +6,12 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import type {
+  BookingItemInput,
+  CargoType,
+  RateUnit,
   CsApprovalPriceDto,
   CsApproveRequest,
   CsBookingRequestStaffDto,
@@ -16,6 +20,8 @@ import type {
   CsName,
   CsRejectReasonDto,
   CsRejectReasonInput,
+  CsRequestItemDto,
+  CsResolveItem,
   CsRejectRequest,
   CsReviewFilter,
   CsCloseCancelRequest,
@@ -28,9 +34,15 @@ import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
+import { BookingConfirmChecksRegistry } from '../bookings/booking-confirm-checks.registry.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
-import { type CsBookingRequest, type CsQuote, Prisma } from '../generated/prisma/client.js';
+import {
+  type CsBookingRequest,
+  type CsBookingRequestItem,
+  type CsQuote,
+  Prisma,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
@@ -46,13 +58,32 @@ const DECIDE: Permission = 'cs_booking_requests:approve';
 
 type Row = CsBookingRequest & {
   customer: { number: string } | null;
-  booking: { number: string } | null;
+  booking: {
+    number: string;
+    items: {
+      id: string;
+      lineNo: number;
+      cargoType: string;
+      quantity: number;
+      description: string | null;
+    }[];
+  } | null;
+  items: CsBookingRequestItem[];
 };
 type QuotedRow = Row & { quote: CsQuote | null };
 
 const rowInclude = {
   customer: { select: { number: true } },
-  booking: { select: { number: true } },
+  booking: {
+    select: {
+      number: true,
+      items: {
+        orderBy: { lineNo: 'asc' },
+        select: { id: true, lineNo: true, cargoType: true, quantity: true, description: true },
+      },
+    },
+  },
+  items: { orderBy: { lineNo: 'asc' } },
 } as const;
 const withQuote = { ...rowInclude, quote: true } as const;
 
@@ -112,7 +143,10 @@ export class BookingReviewService {
     private readonly currencies: CurrenciesService,
     private readonly identities: CustomerIdentityService,
     private readonly customers: CustomersService,
-  ) {}
+    confirmChecks: BookingConfirmChecksRegistry,
+  ) {
+    confirmChecks.register((tx, bookingId) => requireCargoComplete(tx, bookingId));
+  }
 
   async list(user: AuthUser, filter: CsReviewFilter): Promise<CsBookingRequestSummaryDto[]> {
     const now = new Date();
@@ -347,22 +381,39 @@ export class BookingReviewService {
     id: string,
     input: CsApproveRequest,
   ): Promise<CsBookingRequestStaffDto> {
-    const { pricing } = input;
-    // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
-    const cargo = await this.quotes.cargoOf(pricing);
-    const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
-      ...input.booking,
-      originLocationId: pricing.originId,
-      destinationLocationId: pricing.destinationId,
-      mode: pricing.mode,
-      loadType: cargo.loadType,
-      cargoType: cargo.cargoType,
-      items: [],
-    };
     await this.currencies.requireActive(input.paymentCurrency);
-    const initial = await this.prisma.csBookingRequest.findUnique({ where: { id } });
+    const initial = await this.prisma.csBookingRequest.findUnique({
+      where: { id },
+      include: { items: { orderBy: { lineNo: 'asc' } } },
+    });
     if (!initial || !visibleTo(user, initial))
       throw new NotFoundException('Booking request not found');
+    // Plan 09 section 4: one priced line per standard item (or the one-item shape's pricing).
+    const lines = approvalLines(input, initial.items);
+    // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
+    const cargos = await Promise.all(lines.map((l) => this.quotes.cargoOf(l.inputs)));
+    const loadTypes = new Set(cargos.map((c) => c.loadType));
+    if (loadTypes.size > 1)
+      throw new UnprocessableEntityException({
+        code: 'MIXED_LOAD',
+        message: 'The items need different load types: book them separately',
+      });
+    const cargoTypes = new Set(cargos.map((c) => c.cargoType));
+    // Plan 09 section 4: an item becomes a booking line only when its count is certain.
+    const made = lines.flatMap((line, index) => {
+      const cargo = cargos[index]!;
+      const item = line.item ? bookingLineOf(line.item, cargo) : null;
+      return item && line.item ? [{ itemId: line.item.id, item }] : [];
+    });
+    const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
+      ...input.booking,
+      originLocationId: input.pricing.originId,
+      destinationLocationId: input.pricing.destinationId,
+      mode: input.pricing.mode,
+      loadType: cargos[0]!.loadType,
+      cargoType: cargoTypes.size === 1 ? cargos[0]!.cargoType : 'GENERAL',
+      items: made.map((m) => m.item),
+    };
     if (!initial.profileId && !booking.customerId)
       throw new BadRequestException('Choose the booking customer');
     const prepareProfile =
@@ -380,6 +431,13 @@ export class BookingReviewService {
       if (!decideBranches(user, row).includes(row.branchId)) {
         throw new ForbiddenException('You may not approve this request');
       }
+      // The items as they are under the request's lock: the ones staff priced.
+      const lockedItems = await tx.csBookingRequestItem.findMany({
+        where: { requestId: id },
+        orderBy: { lineNo: 'asc' },
+      });
+      if (!sameItems(lockedItems, initial.items))
+        throw new ConflictException('The request changed: reopen it');
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       let prepared = legacyPrepared;
       if (row.profileId) {
@@ -418,10 +476,35 @@ export class BookingReviewService {
       await this.currencies.requireActiveInTx(tx, input.paymentCurrency);
       // F137-2: the pricing currency share-locked through commit, before the price is computed
       // again; one withdrawn since staff saw the price makes it stale.
-      await requirePriceCurrency(tx, pricing.currency);
-      const now = await this.quotes.priceFor(pricing, row.branchId);
-      await requireSamePrice(tx, now, input.pricingFingerprint);
+      await requirePriceCurrency(tx, input.pricing.currency);
+      const totals: (Prisma.Decimal | null)[] = [];
+      for (const line of lines) {
+        const now = await this.quotes.priceFor(line.inputs, row.branchId);
+        await requireSamePrice(tx, now, line.fingerprint);
+        totals.push(now.dto.total === null ? null : dec(now.dto.total));
+      }
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      if (lines.some((l) => l.item !== null)) {
+        // The booking's lines in order, as made from `made`: each item linked to its line.
+        const bookingLines = await tx.bookingItem.findMany({
+          where: { bookingId },
+          orderBy: { lineNo: 'asc' },
+          select: { id: true },
+        });
+        const lineOf = new Map(made.map((m, index) => [m.itemId, bookingLines[index]?.id ?? null]));
+        for (const [index, line] of lines.entries()) {
+          if (!line.item) continue;
+          await tx.csBookingRequestItem.update({
+            where: { id: line.item.id },
+            data: {
+              approvedCategoryCode: cargos[index]!.category,
+              approvedQuantity: dec(line.inputs.quantity),
+              approvedTotal: totals[index] ?? null,
+              bookingItemId: lineOf.get(line.item.id) ?? null,
+            },
+          });
+        }
+      }
       if (row.profileId)
         await tx.customerProfileReview.create({
           data: {
@@ -438,16 +521,20 @@ export class BookingReviewService {
             },
           },
         });
+      // The request's total: the lines' sum when every line is priced, else none.
+      const priced = totals.filter((t): t is Prisma.Decimal => t !== null);
+      const total =
+        priced.length === totals.length ? priced.reduce((sum, t) => sum.plus(t), dec('0')) : null;
       return tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'APPROVED',
           bookingId,
           paymentCurrency: input.paymentCurrency,
-          approvedCategoryCode: cargo.category,
-          approvedQuantity: dec(pricing.quantity),
-          approvedCurrency: pricing.currency,
-          approvedTotal: now.dto.total === null ? null : dec(now.dto.total),
+          approvedCategoryCode: cargos[0]!.category,
+          approvedQuantity: dec(lines[0]!.inputs.quantity),
+          approvedCurrency: input.pricing.currency,
+          approvedTotal: total,
           decidedById: user.id,
           decidedAt: new Date(),
           version: { increment: 1 },
@@ -456,6 +543,81 @@ export class BookingReviewService {
       });
     });
     // As route and reject (F131-3): the row this transaction wrote.
+    return this.format(user, written);
+  }
+
+  /**
+   * Plan 09 section 4: staff link an item that made no booking line to the line they added to the
+   * draft booking. In one transaction with the booking locked (as confirmation locks it): the
+   * person's bookings:update in the request's branch, the booking still a draft, the item the
+   * request's and not linked yet, and the line the booking's and no other item's. Audited.
+   */
+  async resolveItem(
+    user: AuthUser,
+    id: string,
+    itemId: string,
+    input: CsResolveItem,
+  ): Promise<CsBookingRequestStaffDto> {
+    const written = await this.prisma.$transaction(async (tx) => {
+      const initial = await tx.csBookingRequest.findUnique({ where: { id } });
+      if (!initial || !visibleTo(user, initial))
+        throw new NotFoundException('Booking request not found');
+      if (initial.branchId === null || !user.access.has('bookings:update', initial.branchId))
+        throw new ForbiddenException('You may not change this booking');
+      if (initial.bookingId === null)
+        throw new ConflictException('Only an approved request has a booking');
+      const booking = await tx.$queryRaw<{ status: string }[]>`
+        SELECT "status"::text AS "status" FROM "bookings"
+        WHERE "id" = ${initial.bookingId}::uuid FOR UPDATE`;
+      if (booking[0]?.status !== 'DRAFT')
+        throw new ConflictException('Only a draft booking has items to complete');
+      await tx.$queryRaw`
+        SELECT 1 FROM "cs_booking_request_items" WHERE "id" = ${itemId}::uuid FOR UPDATE`;
+      const item = await tx.csBookingRequestItem.findUnique({ where: { id: itemId } });
+      if (!item || item.requestId !== id) throw new NotFoundException('Item not found');
+      if (item.bookingItemId !== null)
+        throw new ConflictException({
+          code: 'ITEM_RESOLVED',
+          message: 'This item already has its booking line',
+        });
+      const line = await tx.bookingItem.findUnique({
+        where: { id: input.bookingItemId },
+        select: { bookingId: true, lineNo: true, csRequestItem: { select: { id: true } } },
+      });
+      if (!line || line.bookingId !== initial.bookingId)
+        throw new BadRequestException({
+          code: 'LINE_NOT_OF_BOOKING',
+          message: "Choose a line of this request's booking",
+        });
+      if (line.csRequestItem !== null)
+        throw new ConflictException({
+          code: 'LINE_TAKEN',
+          message: 'That line already completes another item',
+        });
+      await tx.csBookingRequestItem.update({
+        where: { id: itemId },
+        data: {
+          bookingItemId: input.bookingItemId,
+          resolvedAt: new Date(),
+          resolvedById: user.id,
+        },
+      });
+      await this.audit.record(tx, user, {
+        branchId: initial.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: initial.id,
+        reference: initial.reference,
+        action: 'UPDATED',
+        changes: [
+          {
+            field: `items.${item.lineNo}.bookingLine`,
+            before: null,
+            after: String(line.lineNo),
+          },
+        ],
+      });
+      return tx.csBookingRequest.findUniqueOrThrow({ where: { id }, include: withQuote });
+    });
     return this.format(user, written);
   }
 
@@ -536,6 +698,131 @@ async function requireKeyServes(tx: Tx, apiClientId: string, branchId: string): 
   if (!key?.isActive || key.branches.length === 0) {
     throw new ConflictException('The key that sent this request no longer serves that branch');
   }
+}
+
+/**
+ * Plan 09 section 4 (F161-3): a booking made from a bot request is confirmed only when every item
+ * of the request has its booking line. The items are locked in the confirming transaction, so a
+ * resolve and a confirm never race; any path to confirmation (screen, API, assistant draft) runs
+ * this. A booking from no bot request has no items and passes.
+ */
+async function requireCargoComplete(tx: Tx, bookingId: string): Promise<void> {
+  const open = await tx.$queryRaw<{ id: string; line_no: number }[]>`
+    SELECT i."id", i."line_no" FROM "cs_booking_request_items" i
+    JOIN "cs_booking_requests" r ON r."id" = i."request_id"
+    WHERE r."booking_id" = ${bookingId}::uuid
+    ORDER BY i."line_no"
+    FOR UPDATE OF i`;
+  const missing = open.length
+    ? await tx.csBookingRequestItem.findMany({
+        where: { id: { in: open.map((o) => o.id) }, bookingItemId: null },
+        orderBy: { lineNo: 'asc' },
+        select: { id: true, lineNo: true },
+      })
+    : [];
+  if (missing.length > 0)
+    throw new ConflictException({
+      code: 'CARGO_INCOMPLETE',
+      message: 'Complete the cargo lines of the bot request before confirming',
+      items: missing,
+    });
+}
+
+/** An approval line: the inputs priced, the fingerprint staff saw, and the item it prices. */
+interface ApprovalLine {
+  inputs: CsPriceInputs;
+  fingerprint: string | null;
+  item: CsBookingRequestItem | null;
+}
+
+/**
+ * Plan 09 section 4: what an approval prices. A request with no item rows (the one-item shape)
+ * prices `pricing.category`/`quantity`; one with items sends one line per item, in order, and no
+ * category or quantity of its own. An OTHER item is priced by staff's estimate (plan 09 section
+ * 12), never by the engine: until that exists, the request is not approved.
+ */
+function approvalLines(input: CsApproveRequest, items: CsBookingRequestItem[]): ApprovalLine[] {
+  const { category, quantity, ...route } = input.pricing;
+  const mismatch = (message: string) =>
+    new BadRequestException({ code: 'LINES_MISMATCH', message });
+  if (items.length === 0) {
+    if (input.lines !== undefined) throw mismatch('This request has no items: price it as one');
+    if (category === undefined || quantity === undefined)
+      throw new BadRequestException({
+        code: 'LINES_REQUIRED',
+        message: 'Name the category and quantity priced',
+      });
+    return [
+      {
+        inputs: { ...route, category, quantity },
+        fingerprint: input.pricingFingerprint ?? null,
+        item: null,
+      },
+    ];
+  }
+  if (items.some((i) => i.isOther))
+    throw new ConflictException({
+      code: 'ESTIMATE_REQUIRED',
+      message: 'An item outside the standard categories needs a staff estimate first',
+    });
+  if (category !== undefined || quantity !== undefined || input.pricingFingerprint !== undefined)
+    throw mismatch('A request with items is priced per line');
+  if (input.lines === undefined)
+    throw new BadRequestException({ code: 'LINES_REQUIRED', message: 'Price each item' });
+  if (input.lines.length !== items.length) throw mismatch('Price each item once, in order');
+  return input.lines.map((line, index) => ({
+    inputs: { ...route, category: line.category, quantity: line.quantity },
+    fingerprint: line.pricingFingerprint,
+    item: items[index]!,
+  }));
+}
+
+/** Whether the items under the lock are the ones read before it (same rows, same values). */
+function sameItems(a: CsBookingRequestItem[], b: CsBookingRequestItem[]): boolean {
+  const key = (i: CsBookingRequestItem) =>
+    [
+      i.id,
+      i.lineNo,
+      i.priceCategoryCode,
+      i.isOther,
+      i.quantity?.toString(),
+      i.pieces,
+      i.lengthCm?.toString(),
+      i.widthCm?.toString(),
+      i.heightCm?.toString(),
+      i.weightKg?.toString(),
+      i.bookingItemId,
+    ].join('|');
+  return a.length === b.length && a.every((item, index) => key(item) === key(b[index]!));
+}
+
+/**
+ * Plan 09 section 4 (F161-3): the booking line an item becomes, by its category's unit, with no
+ * guess. A unit counted in packages takes a whole quantity, or else the pieces; a CBM, kg or
+ * per-shipment price takes the pieces only. A container line needs its container type, which the
+ * bot does not send. No certain count: no line, and staff complete it before confirming.
+ */
+function bookingLineOf(
+  item: CsBookingRequestItem,
+  cargo: { category: string; cargoType: CargoType; unit: RateUnit },
+): BookingItemInput | null {
+  if (cargo.cargoType === 'CONTAINER' || cargo.unit === 'PER_CONTAINER') return null;
+  const quantity = item.quantity;
+  if (quantity === null) return null;
+  const counted = ['PER_PIECE', 'PER_PALLET', 'PER_BARREL'].includes(cargo.unit);
+  const count = counted && quantity.isInteger() ? quantity.toNumber() : item.pieces;
+  if (count === null || count < 1) return null;
+  const decimal = (d: Prisma.Decimal | null) => (d === null ? null : toDecimalString(d));
+  return {
+    cargoType: cargo.cargoType,
+    quantity: count,
+    priceCategoryCode: cargo.category,
+    lengthCm: decimal(item.lengthCm),
+    widthCm: decimal(item.widthCm),
+    heightCm: decimal(item.heightCm),
+    weightKg: cargo.unit === 'PER_KG' ? toDecimalString(quantity) : decimal(item.weightKg),
+    volumeCbm: cargo.unit === 'PER_CBM' ? toDecimalString(quantity) : null,
+  };
 }
 
 /**
@@ -621,6 +908,32 @@ function summary(r: Row, now = new Date()): CsBookingRequestSummaryDto {
   };
 }
 
+function itemDto(i: CsBookingRequestItem): CsRequestItemDto {
+  const decimal = (d: Prisma.Decimal | null) => (d === null ? null : toDecimalString(d));
+  return {
+    id: i.id,
+    lineNo: i.lineNo,
+    category: i.priceCategoryCode,
+    botKind: (i.botKind as CsName | null) ?? null,
+    isOther: i.isOther,
+    description: i.description,
+    quantity: decimal(i.quantity),
+    pieces: i.pieces,
+    dimensions:
+      i.lengthCm !== null && i.widthCm !== null && i.heightCm !== null
+        ? {
+            lengthCm: toDecimalString(i.lengthCm),
+            widthCm: toDecimalString(i.widthCm),
+            heightCm: toDecimalString(i.heightCm),
+          }
+        : null,
+    weightKg: decimal(i.weightKg),
+    quoteRef: i.quoteRef,
+    approvedTotal: decimal(i.approvedTotal),
+    bookingItemId: i.bookingItemId,
+  };
+}
+
 function staffDto(
   user: AuthUser,
   r: Row,
@@ -654,6 +967,8 @@ function staffDto(
             heightCm: toDecimalString(r.heightCm),
           }
         : null,
+    items: r.items.map(itemDto),
+    bookingLines: r.booking?.items ?? [],
     priceCheck,
     routedAt: r.routedAt?.toISOString() ?? null,
     decidedAt: r.decidedAt?.toISOString() ?? null,

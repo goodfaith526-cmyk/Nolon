@@ -56,6 +56,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { BookingConfirmChecksRegistry } from './booking-confirm-checks.registry.js';
 import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
 import { bookingItemMissingFields } from './booking-draft-missing.js';
 import { prepareCargoLine } from './cargo-line.js';
@@ -103,6 +104,7 @@ export class BookingsService {
     private readonly masterData: MasterDataService,
     private readonly shipments: ShipmentsService,
     private readonly partnerRefs: PartnerRefsService,
+    private readonly confirmChecks: BookingConfirmChecksRegistry,
   ) {}
 
   async list(user: AuthUser, filters: BookingFilters): Promise<Page<BookingSummaryDto>> {
@@ -669,6 +671,8 @@ export class BookingsService {
     if ((await tx.bookingItem.count({ where: { bookingId: id } })) === 0) {
       throw new BadRequestException('Add at least one cargo line before confirming');
     }
+    // Other modules' gates (plan 09 section 4: a bot request's items all have their lines).
+    await this.confirmChecks.run(tx, id);
     await tx.booking.update({
       where: { id },
       data: { status: 'CONFIRMED', confirmedAt: new Date() },

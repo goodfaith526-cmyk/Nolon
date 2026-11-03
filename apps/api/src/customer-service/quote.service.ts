@@ -8,9 +8,12 @@ import {
   type CsQuoteChoices,
   type CsQuoteDto,
   type CsQuoteRequest,
+  type CsQuotesDto,
+  type CsQuotesRequest,
   type CsRequestPriceCheck,
   type CurrencyCode,
   type LoadType,
+  type RateUnit,
   type ShippingMode,
   loadTypeOf,
   pricingModeOf,
@@ -169,14 +172,73 @@ export class QuoteService {
   ) {}
 
   async quote(client: ApiClientAuth, input: CsQuoteRequest): Promise<CsQuoteDto> {
+    this.requireNotBlocked(client);
+    this.limiter.recordFailure(client.id);
+    return this.quoteOne(client, input);
+  }
+
+  /**
+   * Plan 09 section 4: POST /cs/quotes, several items of one route in one call. Each item is
+   * answered as GET /cs/quote answers it (its quote, with its own quoteRef, or its refusal), and
+   * each counts as one quote against the key's limit. `total` is the items' sum when every item
+   * has a total in one currency; otherwise null, with why.
+   */
+  async quoteMany(client: ApiClientAuth, input: CsQuotesRequest): Promise<CsQuotesDto> {
+    this.requireNotBlocked(client);
+    const { items, ...common } = input;
+    const answers: CsQuotesDto['items'] = [];
+    for (const item of items) {
+      this.limiter.recordFailure(client.id);
+      try {
+        answers.push({ quote: await this.quoteOne(client, { ...common, ...item }), error: null });
+      } catch (e) {
+        if (!(e instanceof HttpException)) throw e;
+        const body = e.getResponse();
+        const code =
+          typeof body === 'object' &&
+          body !== null &&
+          'code' in body &&
+          typeof body.code === 'string'
+            ? body.code
+            : 'NOT_PRICED';
+        answers.push({ quote: null, error: { code, message: e.message, status: e.getStatus() } });
+      }
+    }
+    const quotes = answers.map((a) => a.quote);
+    const currencies = new Set(quotes.map((q) => q?.currency ?? null));
+    let totalReason: CsQuotesDto['totalReason'] = null;
+    if (quotes.some((q) => q === null)) totalReason = 'ITEM_NOT_PRICED';
+    else if (quotes.some((q) => q?.total === null)) totalReason = 'ITEM_WITHOUT_TOTAL';
+    else if (currencies.size > 1) totalReason = 'CURRENCIES_DIFFER';
+    const first = quotes[0] ?? null;
+    if (totalReason !== null || first === null) {
+      return {
+        items: answers,
+        total: null,
+        currency: null,
+        totalReason: totalReason ?? 'ITEM_NOT_PRICED',
+      };
+    }
+    const places = (await this.currencies.requireActive(first.currency)).decimalPlaces;
+    const total = quotes.reduce((sum, q) => sum.plus(dec(q!.total!)), ZERO);
+    return {
+      items: answers,
+      total: total.toFixed(places),
+      currency: first.currency,
+      totalReason: null,
+    };
+  }
+
+  private requireNotBlocked(client: ApiClientAuth): void {
     if (this.limiter.isBlocked(client.id)) {
       throw new HttpException(
         { message: 'Too many quotes, try again later', code: 'TOO_MANY', statusCode: 429 },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-    this.limiter.recordFailure(client.id);
+  }
 
+  private async quoteOne(client: ApiClientAuth, input: CsQuoteRequest): Promise<CsQuoteDto> {
     const today = todayIn('UTC');
     const onDate = input.onDate ?? today;
     if (onDate < today) {
@@ -330,6 +392,7 @@ export class QuoteService {
       source: { rateCardId: rate.id, approvedAt: rate.approvedAt.toISOString(), quotedOn: onDate },
       quoteRef: ref,
       quoteRefExpiresAt: expiresAt.toISOString(),
+      validUntil: expiresAt.toISOString(),
       customerNote: null,
       bookable,
     };
@@ -339,13 +402,17 @@ export class QuoteService {
    * The cargo an approval's pricing inputs price (Codex F137-1): the booking takes its category's
    * cargo type and the load type priced, so the booking approved is the cargo staff priced.
    */
-  async cargoOf(
-    inputs: CsPriceInputs,
-  ): Promise<{ category: string; cargoType: CargoType; loadType: LoadType | null }> {
+  async cargoOf(inputs: CsPriceInputs): Promise<{
+    category: string;
+    cargoType: CargoType;
+    loadType: LoadType | null;
+    unit: RateUnit;
+  }> {
     const category = await this.masterData.requirePriceCategory(inputs.category, null);
     return {
       category: category.code,
       cargoType: category.cargoType,
+      unit: category.defaultUnit,
       loadType: inputs.loadType ?? loadTypeOf(inputs.mode, category.cargoType),
     };
   }

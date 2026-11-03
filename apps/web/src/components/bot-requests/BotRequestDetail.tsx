@@ -270,6 +270,103 @@ export function BotRequestDetail({ id }: { id: string }) {
         )}
       </dl>
 
+      {r.items.length > 0 && (
+        <div className="card stack">
+          <h2>{t('itemsTitle')}</h2>
+          {r.bookingId && r.items.some((i) => i.bookingItemId === null) && (
+            <p className="error">{t('itemsIncomplete')}</p>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{t('category')}</th>
+                  <th>{t('quantity')}</th>
+                  <th>{t('pieces')}</th>
+                  <th>{t('dimensions')}</th>
+                  <th>{t('weightKg')}</th>
+                  <th>{t('approvedTotal')}</th>
+                  {r.bookingId && <th>{t('bookingLine')}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {r.items.map((item) => {
+                  const linked = r.bookingLines.find((l) => l.id === item.bookingItemId);
+                  const free = r.bookingLines.filter(
+                    (l) => !r.items.some((i) => i.bookingItemId === l.id),
+                  );
+                  return (
+                    <tr key={item.id}>
+                      <td dir="ltr">{item.lineNo}</td>
+                      <td>
+                        {item.isOther ? (
+                          <span>
+                            {t('otherItem')}: «{item.description}»
+                          </span>
+                        ) : (
+                          <span dir="ltr">
+                            {item.category ??
+                              `${t('unmatched')}: «${named(item.botKind ?? undefined)}»`}
+                          </span>
+                        )}
+                      </td>
+                      <td dir="ltr">{item.quantity ?? '—'}</td>
+                      <td dir="ltr">{item.pieces ?? '—'}</td>
+                      <td dir="ltr">
+                        {item.dimensions
+                          ? `${item.dimensions.lengthCm}×${item.dimensions.widthCm}×${item.dimensions.heightCm}`
+                          : '—'}
+                      </td>
+                      <td dir="ltr">{item.weightKg ?? '—'}</td>
+                      <td dir="ltr">{item.approvedTotal ?? '—'}</td>
+                      {r.bookingId && (
+                        <td>
+                          {linked ? (
+                            <span dir="ltr">{linked.lineNo}</span>
+                          ) : free.length > 0 ? (
+                            <form
+                              className="row"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void post(`items/${item.id}/resolve`, {
+                                  bookingItemId: field(new FormData(e.currentTarget), 'line'),
+                                });
+                              }}
+                            >
+                              <select
+                                name="line"
+                                required
+                                defaultValue=""
+                                aria-label={t('bookingLine')}
+                              >
+                                <option value="" disabled>
+                                  —
+                                </option>
+                                {free.map((l) => (
+                                  <option key={l.id} value={l.id}>
+                                    {l.lineNo} · {l.quantity} {l.description ?? ''}
+                                  </option>
+                                ))}
+                              </select>
+                              <button type="submit" disabled={busy}>
+                                {t('resolveItem')}
+                              </button>
+                            </form>
+                          ) : (
+                            <span className="muted">{t('addBookingLine')}</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {r.actions.canCloseCancelRequest && (
         <div className="card stack">
           <h2>{t('cancelRequestTitle')}</h2>

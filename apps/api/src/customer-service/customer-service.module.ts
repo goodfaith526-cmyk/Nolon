@@ -28,6 +28,7 @@ import {
   CustomerServiceController,
   CustomerTokensController,
   QuoteController,
+  QuotesController,
 } from './customer-service.controller.js';
 import { CustomerServiceService } from './customer-service.service.js';
 import { CustomerTokenGuard } from './customer-token.guard.js';
@@ -53,6 +54,7 @@ import { QuoteService } from './quote.service.js';
     CustomerTokensController,
     CatalogController,
     QuoteController,
+    QuotesController,
     BookingRequestsController,
     CustomerMeController,
     ApiClientsController,

@@ -1,5 +1,6 @@
 import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -25,6 +26,8 @@ import {
   CS_BOT_HANDOVERS,
   CS_INVOICE_STATES,
   CS_HANDOVERS,
+  CS_OTHER_KIND,
+  CS_REQUEST_ITEMS_MAX,
   CS_REQUEST_SERVICES,
   CS_SCOPES,
   CS_SENDER_CHANNELS,
@@ -38,6 +41,7 @@ import {
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
   type CsQuoteDto,
+  type CsQuotesDto,
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
@@ -115,13 +119,30 @@ const quoteQuery = z
     onDate: dateString.optional(),
   })
   .strict();
+// Plan 09 section 4: POST /cs/quotes, the route common and 1 to 10 items.
+const quotesBody = quoteQuery
+  .omit({ category: true, quantity: true, lengthCm: true, widthCm: true, heightCm: true })
+  .extend({
+    items: z
+      .array(
+        quoteQuery.pick({
+          category: true,
+          quantity: true,
+          lengthCm: true,
+          widthCm: true,
+          heightCm: true,
+        }),
+      )
+      .min(1)
+      .max(CS_REQUEST_ITEMS_MAX),
+  })
+  .strict();
 const telegramId = z.string().regex(/^[1-9]\d{0,19}$/, 'Telegram user id');
 const sender = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('whatsapp'), id: phone }).strict(),
   z.object({ channel: z.literal('telegram'), id: telegramId }).strict(),
 ]);
 const name200 = requiredText(200);
-const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
 const digitsPhone = z
   .string()
   .trim()
@@ -136,6 +157,47 @@ const bodyQuantity = z.union([
     .refine((n) => /^\d{1,14}(\.\d{1,4})?$/.test(String(n)), 'At most 4 decimals')
     .transform(String),
 ]);
+/** A total weight in kilograms, positive, up to 3 decimals: Decimal(12, 3), as booking lines. */
+const weightKg = z
+  .string()
+  .regex(/^\d{1,9}(\.\d{1,3})?$/, 'Invalid weight')
+  .refine((v) => /[1-9]/.test(v), 'Must be positive');
+const measures = {
+  pieces: pieces.optional(),
+  lengthCm: dimensionCm.optional(),
+  widthCm: dimensionCm.optional(),
+  heightCm: dimensionCm.optional(),
+  weightKg: weightKg.optional(),
+};
+/** Plan 09 section 12: an item outside the standard categories, in the customer's words. */
+const otherItem = z
+  .object({ kind: z.literal(CS_OTHER_KIND), description: requiredText(500), ...measures })
+  .strict();
+const quoteRefField = z.string().regex(/^q_[A-Za-z0-9_-]{32}$/);
+const idsItem = z.union([
+  z
+    .object({
+      category: z.string().trim().min(1).max(20),
+      quantity: bodyQuantity,
+      quoteRef: quoteRefField.optional(),
+      ...measures,
+    })
+    .strict(),
+  otherItem,
+]);
+const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
+const namesItem = z.union([
+  z.object({ kind: botName, quantity: bodyQuantity, ...measures }).strict(),
+  otherItem,
+]);
+const itemsField = <T extends z.ZodType>(item: T) =>
+  z.array(item).min(1).max(CS_REQUEST_ITEMS_MAX).optional();
+/** Plan 09 section 4: `items`, or the one-item shape, never both and never neither. */
+function oneShape(v: { items?: unknown[]; quantity?: unknown }, single: unknown): boolean {
+  return v.items === undefined
+    ? single !== undefined && v.quantity !== undefined
+    : single === undefined && v.quantity === undefined;
+}
 const requestBody = z
   .object({
     profileId: z.uuid().optional(),
@@ -145,8 +207,9 @@ const requestBody = z
     contactPhone: phone.optional(),
     originId: z.uuid(),
     destinationId: z.uuid(),
-    category: z.string().trim().min(1).max(20),
-    quantity: bodyQuantity,
+    category: z.string().trim().min(1).max(20).optional(),
+    quantity: bodyQuantity.optional(),
+    items: itemsField(idsItem),
     pieces: pieces.optional(),
     lengthCm: dimensionCm.optional(),
     widthCm: dimensionCm.optional(),
@@ -169,7 +232,17 @@ const requestBody = z
     language: z.enum(['ar', 'en']),
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
   })
-  .strict();
+  .strict()
+  .refine((v) => oneShape(v, v.category), {
+    message: 'Send items, or category and quantity, not both',
+    params: { code: 'ITEMS_AND_SINGLE' },
+  })
+  .refine(
+    (v) =>
+      v.items === undefined ||
+      (v.pieces === undefined && v.lengthCm === undefined && v.quoteRef === undefined),
+    { message: 'With items, pieces, dimensions and quoteRef go on each item' },
+  );
 /** A request in the bot's own words (erp-agents #247): names, a number of pieces, its price. */
 const namesBody = z
   .object({
@@ -180,8 +253,9 @@ const namesBody = z
     channel: z.enum(CS_SENDER_CHANNELS),
     origin: botName,
     destination: botName,
-    kind: botName,
-    quantity: bodyQuantity,
+    kind: botName.optional(),
+    quantity: bodyQuantity.optional(),
+    items: itemsField(namesItem),
     senderName: name200,
     senderPhone: digitsPhone.optional(),
     receiverName: name200,
@@ -189,7 +263,11 @@ const namesBody = z
     handover: z.enum(CS_BOT_HANDOVERS),
     quotedPrice: z.object({ amount, currency: currencyCode }).strict().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => oneShape(v, v.kind), {
+    message: 'Send items, or kind and quantity, not both',
+    params: { code: 'ITEMS_AND_SINGLE' },
+  });
 /** `X-Cs-Sender: whatsapp:+2499...` or `telegram:123`: the owner a key-only read names. */
 function senderHeader(value: string | undefined): z.infer<typeof sender> | null {
   const at = value?.indexOf(':') ?? -1;
@@ -318,6 +396,21 @@ export class QuoteController {
   }
 }
 
+/** Plan 09 section 4: the price of several items of one route, item by item, with their sum. */
+@Controller('cs/quotes')
+@Public()
+@UseGuards(ApiClientGuard)
+@RequireApiScope('cs:quote:read')
+export class QuotesController {
+  constructor(private readonly quotes: QuoteService) {}
+
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  quote(@CurrentApiClient() client: ApiClientAuth, @Body() body: unknown): Promise<CsQuotesDto> {
+    return this.quotes.quoteMany(client, parse(quotesBody, body));
+  }
+}
+
 /**
  * Booking requests (R3): a draft for staff, never a booking. With a customer token it is that
  * customer's; with the key alone, the sender's it names. Read back by the same owner only.
@@ -342,6 +435,17 @@ export class BookingRequestsController {
   ): Promise<CsBookingRequestCreated> {
     // Names (origin as { ar, en }) are the bot's form; ids are the catalog's.
     const byNames = typeof body === 'object' && body !== null && 'channel' in body;
+    // Plan 09 section 4: items or the one-item shape, never both, refused with its own code.
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'items' in body &&
+      ['category', 'kind', 'quantity'].some((field) => field in body)
+    )
+      throw new BadRequestException({
+        code: 'ITEMS_AND_SINGLE',
+        message: 'Send items, or the one-item fields, not both',
+      });
     const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
     let binding;
     if (input.profileId || input.conversationId || input.profileVersion !== undefined) {
