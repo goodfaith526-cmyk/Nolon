@@ -93,6 +93,8 @@ export interface SupplierBillLineDto {
   consolidationNumber: string | null;
   description: string | null;
   amount: DecimalString;
+  /** A COMMISSION line: the partner statement it settles (plan 07, 5.2). */
+  statementId: string | null;
 }
 
 export interface SupplierBillSummaryDto {

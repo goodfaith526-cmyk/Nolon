@@ -17,7 +17,8 @@ const REPORTS: readonly {
     | 'profitability'
     | 'invoicesReceipts'
     | 'cashMovement'
-    | 'openAccruals';
+    | 'openAccruals'
+    | 'partnerCommissions';
   permission: Permission;
 }[] = [
   {
@@ -46,6 +47,11 @@ const REPORTS: readonly {
   },
   { href: '/reports/cash-movement', title: 'cashMovement', permission: 'financial_reports:view' },
   { href: '/reports/open-accruals', title: 'openAccruals', permission: 'financial_reports:view' },
+  {
+    href: '/reports/partner-commissions',
+    title: 'partnerCommissions',
+    permission: 'partner_commissions:view',
+  },
 ];
 
 /** The financial reports the user may open, each with what it shows. */

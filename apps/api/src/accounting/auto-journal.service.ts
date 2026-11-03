@@ -129,6 +129,17 @@ export type BillLineForPosting =
       /** The trip's rule 11 entry, which the line clears. */
       accrualEntryId: string;
       amount: Decimal;
+    }
+  | {
+      /** Rule 16a: a partner statement's total, clearing its rows' accrued commissions. */
+      kind: 'COMMISSION';
+      statementId: string;
+      statementNumber: string;
+      amount: Decimal;
+      /** What its rows carry in USD: what the line clears from ACCRUED_COMMISSIONS. */
+      totalUsd: Decimal;
+      /** Per shipment, the USD its rows net to: the weights of any exchange difference. */
+      shipments: readonly { shipmentId: string; netUsd: Decimal }[];
     };
 
 export interface SupplierBillForPosting {
@@ -792,7 +803,7 @@ export class AutoJournalService {
   }
 
   /**
-   * Rules 7, 8, 11a and 12, supplier bill approved: credit the payable with the total (supplier
+   * Rules 7, 8, 11a, 12 and 16a, supplier bill approved: credit the payable with the total (supplier
    * dimension) and debit, per line,
    * - a shipment cost: the charge type's cost account (the reimbursable clearing account for a
    *   reimbursable charge), with the shipment;
@@ -802,7 +813,9 @@ export class AutoJournalService {
    * - a carrier's trip: the accrued transport account, with exactly what the trip's rule 11
    *   entry accrued there (amount, rate and USD value), so the accrual is cleared. Any USD
    *   difference between the billed and the accrued cost goes to the transport cost account the
-   *   accrual debited, shared by the trip's shipments as the accrual was.
+   *   accrual debited, shared by the trip's shipments as the accrual was;
+   * - a partner statement (rule 16a): the accrued partner commissions, with what its rows carry
+   *   in USD; the difference to partner commissions, by shipment.
    * Returns the payable account used, which the bill keeps: its payments clear it there.
    */
   async supplierBillApproved(
@@ -849,6 +862,8 @@ export class AutoJournalService {
           supplierId: bill.supplierId,
           description: line.description,
         });
+      } else if (line.kind === 'COMMISSION') {
+        lines.push(...(await this.statementClearingLines(tx, bill, line)));
       } else {
         lines.push(...(await this.accrualClearingLines(tx, bill, line)));
       }
@@ -931,6 +946,55 @@ export class AutoJournalService {
       },
       lines,
     );
+  }
+
+  /**
+   * Rule 16a: debit ACCRUED_COMMISSIONS with the statement's total at exactly the USD value its
+   * rows carry, so the partner's accrual in the branch clears in the currency and in USD. The USD
+   * difference at the bill's rate goes to the partner commissions account, shared by the shipments
+   * whose rows net above zero in proportion to that net (plan 07, 4.7, F149-5); a share of zero
+   * gets no line.
+   */
+  private async statementClearingLines(
+    tx: Tx,
+    bill: SupplierBillForPosting,
+    line: Extract<BillLineForPosting, { kind: 'COMMISSION' }>,
+  ): Promise<LineSpec[]> {
+    const lines: LineSpec[] = [
+      {
+        accountId: await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS'),
+        branchId: bill.branchId,
+        currency: bill.currency,
+        fxRate: bill.fxRate,
+        side: 'DEBIT',
+        amount: line.amount,
+        amountUsd: line.totalUsd,
+        supplierId: bill.supplierId,
+        description: line.statementNumber,
+      },
+    ];
+    const difference = toUsd(line.amount, bill.fxRate, bill.currency).minus(line.totalUsd);
+    if (difference.isZero()) return lines;
+    const weights = line.shipments.map((s) => (s.netUsd.gt(0) ? s.netUsd : ZERO));
+    const shares = splitAmount(difference.abs(), weights, USD_DECIMALS);
+    const cost = await this.accounts.roleAccount(tx, 'COMMISSION_COST');
+    line.shipments.forEach((shipment, index) => {
+      const amount = shares[index] ?? ZERO;
+      if (amount.isZero()) return;
+      lines.push({
+        accountId: cost,
+        branchId: bill.branchId,
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'DEBIT' : 'CREDIT',
+        amount,
+        amountUsd: amount,
+        shipmentId: shipment.shipmentId,
+        supplierId: bill.supplierId,
+        description: `${line.statementNumber}: billed commission difference`,
+      });
+    });
+    return lines;
   }
 
   /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */
