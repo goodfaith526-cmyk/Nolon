@@ -5,6 +5,25 @@ function emptyAsUnset<T extends z.ZodType>(schema: T) {
   return z.preprocess((value) => (value === '' ? undefined : value), schema);
 }
 
+/** An https URL (http only for localhost, for development). */
+function httpsUrl() {
+  return z
+    .string()
+    .url()
+    .refine(
+      (value) => {
+        // Runs even when .url() already failed: a value that is not a URL is just rejected.
+        if (!URL.canParse(value)) return false;
+        const url = new URL(value);
+        return (
+          url.protocol === 'https:' ||
+          (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+        );
+      },
+      { message: 'must be an https URL (http only for localhost)' },
+    );
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -28,24 +47,13 @@ const envSchema = z.object({
    * https://pilot.example.com/?tenant=nolon). Empty: no assistant button. HTTPS only, except
    * localhost for development.
    */
-  AGENT_ASSISTANT_URL: emptyAsUnset(
-    z
-      .string()
-      .url()
-      .refine(
-        (value) => {
-          // Runs even when .url() already failed: a value that is not a URL is just rejected.
-          if (!URL.canParse(value)) return false;
-          const url = new URL(value);
-          return (
-            url.protocol === 'https:' ||
-            (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
-          );
-        },
-        { message: 'must be an https URL (http only for localhost)' },
-      )
-      .optional(),
-  ),
+  AGENT_ASSISTANT_URL: emptyAsUnset(httpsUrl().optional()),
+  /**
+   * The bookings agent's admin panel, exactly as the agent gives it (e.g.
+   * https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp). Empty: no menu item.
+   * Shown only to holders of agent_admin:view. HTTPS only, except localhost for development.
+   */
+  AGENT_ADMIN_URL: emptyAsUnset(httpsUrl().optional()),
   /**
    * `true`: the assistant opens as a panel inside NOLON's pages (a frame of AGENT_ASSISTANT_URL)
    * instead of a new tab. Only once the assistant allows this NOLON address to frame it (its

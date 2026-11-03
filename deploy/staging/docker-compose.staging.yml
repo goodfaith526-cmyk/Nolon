@@ -88,6 +88,8 @@ services:
       # `true`: the assistant opens as a panel inside the pages (repository variable
       # STAGING_AGENT_ASSISTANT_PANEL). Empty: a new tab.
       AGENT_ASSISTANT_PANEL: ${AGENT_ASSISTANT_PANEL:-}
+      # Empty: no agent admin panel item in the menu (repository variable STAGING_AGENT_ADMIN_URL).
+      AGENT_ADMIN_URL: ${AGENT_ADMIN_URL:-}
       # The owner opened the Outlet Staff role for trials on staging (2026-10-28, «افتح»).
       # Production leaves it unset (off) until opened there too.
       OUTLET_STAFF_ASSIGNABLE: 'true'

@@ -83,7 +83,8 @@
     "permissions": "Permissions",
     "branchPermissions": "Branch permissions",
     "paymentInstructions": "Payment instructions",
-    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window."
+    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
+    "agentAdmin": "Bookings agent admin"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -3061,7 +3062,8 @@
     "levelName_N": "No access",
     "level_C": "*",
     "levelName_C": "Another mix of actions",
-    "module_payment_instructions": "Payment instructions"
+    "module_payment_instructions": "Payment instructions",
+    "module_agent_admin": "Bookings agent's admin panel"
   },
   "BotRequests": {
     "title": "Bot booking requests",
