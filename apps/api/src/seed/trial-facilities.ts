@@ -462,21 +462,21 @@ export async function applyTrialDropOff(
   const report: string[] = [];
   const rows = await prisma.warehouse.findMany({
     where: { code: { in: [...TRIAL_DROP_OFF_CODES] } },
-    select: { id: true, code: true, isActive: true, acceptsDropOff: true, hoursAr: true },
+    select: { id: true, code: true },
     orderBy: { code: 'asc' },
   });
   let marked = 0;
   for (const w of rows) {
-    if (!w.isActive || w.acceptsDropOff || w.hoursAr !== null) {
-      report.push(`نقطة تسليم، تُركت كما هي: ${w.code}`);
-      continue;
-    }
-    await warehouses.update(actor, w.id, {
-      acceptsDropOff: true,
-      hoursAr: TRIAL_HOURS_AR,
-      hoursEn: TRIAL_HOURS_EN,
-    });
-    marked += 1;
+    // Codex F169-2: hours in either language, a turned-off facility or one already receiving were
+    // set by staff. Checked under the row lock with the write, so a staff edit is never undone.
+    const done = await warehouses.updateIf(
+      actor,
+      w.id,
+      { acceptsDropOff: true, hoursAr: TRIAL_HOURS_AR, hoursEn: TRIAL_HOURS_EN },
+      (now) => now.isActive && !now.acceptsDropOff && now.hoursAr === null && now.hoursEn === null,
+    );
+    if (done) marked += 1;
+    else report.push(`نقطة تسليم، تُركت كما هي: ${w.code}`);
   }
   report.push(`نقاط تسليم جديدة: ${marked} من ${TRIAL_DROP_OFF_CODES.length}`);
   return report;

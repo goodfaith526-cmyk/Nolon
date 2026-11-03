@@ -346,4 +346,35 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
     await set(null).expect(200);
     expect((await catalog()).support).toEqual([]);
   });
+
+  it('audits a rename alone, and never leaves half a position when edits race (Codex F169-1, F169-3)', async () => {
+    const id = await point(krt, { latitude: '15', longitude: '32', acceptsDropOff: false });
+    await staff(cookies.admin)
+      .patch(`/warehouses/${id}`, { nameAr: 'اسم جديد', nameEn: 'New name' })
+      .expect(200);
+    const renamed = await t.prisma.auditEvent.findMany({
+      where: { entity: 'WAREHOUSE', entityId: id },
+    });
+    expect(renamed).toHaveLength(1);
+    expect(JSON.stringify(renamed[0]?.changes)).toContain('nameAr');
+    expect(JSON.stringify(renamed[0]?.changes)).toContain('nameEn');
+    // One moves the latitude while another clears the position: whichever goes second sees the
+    // first, so the result is both or neither, never one of the two.
+    for (let round = 0; round < 5; round += 1) {
+      await t.prisma.warehouse.update({
+        where: { id },
+        data: { latitude: '15', longitude: '32' },
+      });
+      const answers = await Promise.all([
+        staff(cookies.admin).patch(`/warehouses/${id}`, { latitude: '16' }),
+        staff(cookies.admin).patch(`/warehouses/${id}`, { latitude: null, longitude: null }),
+      ]);
+      const row = await t.prisma.warehouse.findUniqueOrThrow({ where: { id } });
+      // The clear always lands; a move checked after it is refused (it would leave half), and a
+      // move before it is cleared with the rest.
+      expect([row.latitude, row.longitude], `round ${round}`).toEqual([null, null]);
+      expect(answers[1].status).toBe(200);
+      expect([200, 400]).toContain(answers[0].status);
+    }
+  });
 });

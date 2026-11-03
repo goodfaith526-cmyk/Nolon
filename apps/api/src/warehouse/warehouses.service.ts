@@ -116,76 +116,96 @@ export class WarehousesService {
    * of the warehouse's branch, the map position both or neither) and their changes audited.
    */
   async update(user: AuthUser, id: string, input: WarehouseUpdateRequest): Promise<WarehouseDto> {
-    const before = await this.findScoped(user, id);
-    return toDto(
-      await this.prisma.$transaction(async (tx) => {
-        const locationId = input.locationId;
-        if (locationId) await this.masterData.requireLocationInTx(tx, locationId);
-        if (input.partnerId) {
-          const outlet = await tx.partner.findUnique({
-            where: { id: input.partnerId },
-            select: { kind: true, branchId: true, isActive: true },
-          });
-          if (
-            outlet?.kind !== 'SALES_OUTLET' ||
-            outlet.branchId !== before.branchId ||
-            !outlet.isActive
-          )
-            throw new BadRequestException(
-              "Choose an active sales outlet of the warehouse's branch",
-            );
-        }
-        const latitude = input.latitude === undefined ? before.latitude : input.latitude;
-        const longitude = input.longitude === undefined ? before.longitude : input.longitude;
-        if ((latitude === null) !== (longitude === null))
-          throw new BadRequestException('Set both latitude and longitude, or neither');
-        const after = await tx.warehouse.update({
-          where: { id },
-          data: {
-            nameEn: input.nameEn,
-            nameAr: input.nameAr,
-            address: input.address,
-            locationId,
-            isActive: input.isActive,
-            addressEn: input.addressEn,
-            acceptsDropOff: input.acceptsDropOff,
-            partnerId: input.partnerId,
-            mapUrl: input.mapUrl,
-            hoursAr: input.hoursAr,
-            hoursEn: input.hoursEn,
-            phone: input.phone,
-            latitude:
-              input.latitude === undefined
-                ? undefined
-                : input.latitude === null
-                  ? null
-                  : new Prisma.Decimal(input.latitude),
-            longitude:
-              input.longitude === undefined
-                ? undefined
-                : input.longitude === null
-                  ? null
-                  : new Prisma.Decimal(input.longitude),
-          },
-          include: withLocations,
+    const done = await this.updateIf(user, id, input, () => true);
+    if (!done) throw new NotFoundException('Warehouse not found');
+    return done;
+  }
+
+  /**
+   * `update`, only when `onlyIf` accepts the row as it is under the lock (null otherwise): for a
+   * write that must not overwrite what staff set meanwhile (the trial seed, Codex F169-2).
+   */
+  async updateIf(
+    user: AuthUser,
+    id: string,
+    input: WarehouseUpdateRequest,
+    onlyIf: (current: WarehouseWithLocations) => boolean,
+  ): Promise<WarehouseDto | null> {
+    const written = await this.prisma.$transaction(async (tx) => {
+      // Codex F169-3: checked and audited against the row as it is now, locked: a concurrent
+      // edit commits first and is merged in, or waits for this one.
+      await tx.$queryRaw`SELECT 1 FROM "warehouses" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const before = await tx.warehouse.findFirst({
+        where: { id, ...branchScope(user) },
+        include: withLocations,
+      });
+      if (!before) throw new NotFoundException('Warehouse not found');
+      if (!onlyIf(before)) return null;
+      const locationId = input.locationId;
+      if (locationId) await this.masterData.requireLocationInTx(tx, locationId);
+      if (input.partnerId) {
+        const outlet = await tx.partner.findUnique({
+          where: { id: input.partnerId },
+          select: { kind: true, branchId: true, isActive: true },
         });
-        const changes = DROP_OFF_FIELDS.flatMap((field) => {
-          const was = textOf(before[field]);
-          const now = textOf(after[field]);
-          return was === now ? [] : [{ field, before: was, after: now }];
+        if (
+          outlet?.kind !== 'SALES_OUTLET' ||
+          outlet.branchId !== before.branchId ||
+          !outlet.isActive
+        )
+          throw new BadRequestException("Choose an active sales outlet of the warehouse's branch");
+      }
+      const latitude = input.latitude === undefined ? before.latitude : input.latitude;
+      const longitude = input.longitude === undefined ? before.longitude : input.longitude;
+      if ((latitude === null) !== (longitude === null))
+        throw new BadRequestException('Set both latitude and longitude, or neither');
+      const after = await tx.warehouse.update({
+        where: { id },
+        data: {
+          nameEn: input.nameEn,
+          nameAr: input.nameAr,
+          address: input.address,
+          locationId,
+          isActive: input.isActive,
+          addressEn: input.addressEn,
+          acceptsDropOff: input.acceptsDropOff,
+          partnerId: input.partnerId,
+          mapUrl: input.mapUrl,
+          hoursAr: input.hoursAr,
+          hoursEn: input.hoursEn,
+          phone: input.phone,
+          latitude:
+            input.latitude === undefined
+              ? undefined
+              : input.latitude === null
+                ? null
+                : new Prisma.Decimal(input.latitude),
+          longitude:
+            input.longitude === undefined
+              ? undefined
+              : input.longitude === null
+                ? null
+                : new Prisma.Decimal(input.longitude),
+        },
+        include: withLocations,
+      });
+      const changes = DROP_OFF_FIELDS.flatMap((field) => {
+        const was = textOf(before[field]);
+        const now = textOf(after[field]);
+        return was === now ? [] : [{ field, before: was, after: now }];
+      });
+      if (changes.length > 0)
+        await this.audit.record(tx, user, {
+          branchId: after.branchId,
+          entity: 'WAREHOUSE',
+          entityId: after.id,
+          reference: after.code,
+          action: 'UPDATED',
+          changes,
         });
-        if (changes.length > 0)
-          await this.audit.record(tx, user, {
-            branchId: after.branchId,
-            entity: 'WAREHOUSE',
-            entityId: after.id,
-            reference: after.code,
-            action: 'UPDATED',
-            changes,
-          });
-        return after;
-      }),
-    );
+      return after;
+    });
+    return written && toDto(written);
   }
 
   async addLocation(
@@ -284,6 +304,10 @@ export class WarehousesService {
 
 /** The fields a customer reads about a drop-off point, audited when they change. */
 const DROP_OFF_FIELDS = [
+  // Codex F169-1: the names are what the customer reads too.
+  'nameAr',
+  'nameEn',
+  'locationId',
   'address',
   'addressEn',
   'acceptsDropOff',
