@@ -164,10 +164,13 @@
 - PATCH `/partner-contracts/:id` · `PartnerContractsController.update` · `partners/partner-contracts.controller.ts` · partner_contracts:update
 - POST `/partner-contracts/:id/approve` · `PartnerContractsController.approve` · `partners/partner-contracts.controller.ts` · partner_contracts:approve
 - POST `/partner-contracts/:id/cancel` · `PartnerContractsController.cancel` · `partners/partner-contracts.controller.ts` · partner_contracts:cancel
+- POST `/partner-statements/:id/bill` · `CommissionsController.billStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
+- POST `/partner-statements/:id/cancel` · `CommissionsController.cancelStatement` · `commissions/commissions.controller.ts` · partner_commissions:update
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
 - POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create
+- POST `/partners/:partnerId/statements` · `CommissionsController.createStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
 - POST `/party-drafts` · `PartyDraftsController.create` · `customers/party-drafts.controller.ts` · customers:update
 - PATCH `/party-drafts/:id` · `PartyDraftsController.update` · `customers/party-drafts.controller.ts` · customers:update
 - POST `/party-drafts/:id/approve` · `PartyDraftsController.approve` · `customers/party-drafts.controller.ts` · customers:update

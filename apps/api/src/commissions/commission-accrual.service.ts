@@ -36,6 +36,7 @@ import {
 } from '../shipments/commission-triggers.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { PodService } from '../transport/pod.service.js';
+import { PartnerStatementsService } from './partner-statements.service.js';
 import {
   type CommissionInvoice,
   type SlotTarget,
@@ -121,6 +122,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
     private readonly fxRates: FxRatesService,
     private readonly currencies: CurrenciesService,
     private readonly audit: AuditService,
+    private readonly statements: PartnerStatementsService,
   ) {}
 
   onModuleInit(): void {
@@ -503,7 +505,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
       }),
     ]);
     if (!partner && !seen) throw new NotFoundException('Partner not found');
-    const [open, rows, holds] = await Promise.all([
+    const [open, rows, holds, statements] = await Promise.all([
       this.prisma.commissionAccrual.groupBy({
         by: ['branchId', 'currency'],
         where: { partnerId, statementId: null, ...scope },
@@ -525,6 +527,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         include: { shipment: { select: { number: true, branchId: true } } },
         orderBy: { updatedAt: 'desc' },
       }),
+      this.statements.forPartner(user, partnerId),
     ]);
     const codes = new Map(
       (
@@ -534,8 +537,9 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         })
       ).map((b) => [b.id, b.code]),
     );
-    const adjusts = (branchId: string) =>
-      user.access.has('partner_commissions:approve', branchId) && canAccessBranch(user, branchId);
+    const may = (action: 'approve' | 'create', branchId: string) =>
+      user.access.has(`partner_commissions:${action}`, branchId) && canAccessBranch(user, branchId);
+    const adjusts = (branchId: string) => may('approve', branchId);
     return {
       partnerId,
       balances: open.map((o) => ({
@@ -544,6 +548,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         currency: o.currency,
         open: (o._sum.amount ?? ZERO).toFixed(),
         openUsd: (o._sum.amountUsd ?? ZERO).toFixed(),
+        canStatement: may('create', o.branchId),
       })),
       rows: rows.map((r) => ({
         id: r.id,
@@ -571,6 +576,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         updatedAt: h.updatedAt.toISOString(),
         canRecompute: adjusts(h.shipment.branchId),
       })),
+      statements,
       canAdjust: user.allowedBranchIds.some(adjusts),
     };
   }

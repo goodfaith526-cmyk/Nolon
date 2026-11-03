@@ -2,24 +2,29 @@
 
 import {
   COMMISSION_ROLES,
+  type CommissionBalanceDto,
   type CommissionRole,
+  type CreatePartnerStatementInput,
   type ManualCommissionInput,
   type PartnerCommissionsDto,
   type PartnerDto,
+  type PartnerStatementDto,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { Link } from '@/i18n/navigation';
+import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useMasterData } from '@/lib/master-data';
+import { todayString } from '@/lib/money';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { Money } from '../finance/common';
 
 /**
- * A partner's commissions (plan 07, rule 16): what is open per branch and currency, the commissions
- * that could not be computed (with a recompute), the latest rows, and a manual adjustment. The API
- * computes every figure and decides who may adjust; this page only shows them.
+ * A partner's commissions (plan 07, rule 16): what is open per branch and currency (with a statement
+ * of it, rule 16a), the commissions that could not be computed (with a recompute), the statements,
+ * the latest rows, and a manual adjustment. The API computes every figure and decides who may do
+ * what; this page only shows them.
  */
 export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
   const t = useTranslations('PartnerCommissions');
@@ -27,7 +32,9 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
   const master = useMasterData();
   const failure = useFailureText();
   const [data, setData] = useState<PartnerCommissionsDto | null>(null);
+  const router = useRouter();
   const [adding, setAdding] = useState(false);
+  const [stating, setStating] = useState<CommissionBalanceDto | null>(null);
   // One id per opened form: a retry of the same adjustment posts it once (F153-1).
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
@@ -68,6 +75,28 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
       reason: field(form, 'reason'),
     };
     void run(`/partners/${partner.id}/commissions/adjustments`, body, t('adjusted'));
+  }
+
+  async function makeStatement(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!stating) return;
+    const body: CreatePartnerStatementInput = {
+      branchId: stating.branchId,
+      currency: stating.currency,
+      periodTo: field(new FormData(e.currentTarget), 'periodTo'),
+    };
+    setBusy(true);
+    setNotice(null);
+    try {
+      const made = await api<PartnerStatementDto>(`/partners/${partner.id}/statements`, {
+        method: 'POST',
+        body,
+      });
+      router.push(`/partner-statements/${made.id}`);
+    } catch (err) {
+      setNotice({ ok: false, text: failure(err) });
+      setBusy(false);
+    }
   }
 
   const shipments = [...new Map((data?.rows ?? []).map((r) => [r.shipmentId, r])).values()];
@@ -155,6 +184,7 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
                     <th>{t('branch')}</th>
                     <th>{t('open')}</th>
                     <th>{t('openUsd')}</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -166,6 +196,73 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
                       </td>
                       <td dir="ltr">
                         <Money value={b.openUsd} currency="USD" />
+                      </td>
+                      <td>
+                        {b.canStatement && (
+                          <button type="button" disabled={busy} onClick={() => setStating(b)}>
+                            {t('makeStatement')}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {stating && (
+            <form className="card row" autoComplete="off" onSubmit={(e) => void makeStatement(e)}>
+              <strong>
+                {stating.branchCode} · {stating.currency}
+              </strong>
+              <label className="field">
+                {t('periodTo')}
+                <input type="date" name="periodTo" required defaultValue={todayString()} />
+              </label>
+              <div className="actions">
+                <button type="submit" className="primary" disabled={busy}>
+                  {t('makeStatement')}
+                </button>
+                <button type="button" onClick={() => setStating(null)}>
+                  {tc('cancel')}
+                </button>
+              </div>
+            </form>
+          )}
+          <h3>{t('statements')}</h3>
+          {data.statements.length === 0 ? (
+            <p className="muted">{t('noStatements')}</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('number')}</th>
+                    <th>{t('branch')}</th>
+                    <th>{t('periodTo')}</th>
+                    <th>{t('total')}</th>
+                    <th>{t('status')}</th>
+                    <th>{t('bill')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.statements.map((s) => (
+                    <tr key={s.id}>
+                      <td dir="ltr">
+                        <Link href={`/partner-statements/${s.id}`}>{s.number}</Link>
+                      </td>
+                      <td>{s.branchCode}</td>
+                      <td dir="ltr">{s.periodTo}</td>
+                      <td dir="ltr">
+                        <Money value={s.total} currency={s.currency} />
+                      </td>
+                      <td>{t(`statementStatus_${s.status}`)}</td>
+                      <td dir="ltr">
+                        {s.billId ? (
+                          <Link href={`/supplier-bills/${s.billId}`}>{s.billNumber ?? '—'}</Link>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   ))}
