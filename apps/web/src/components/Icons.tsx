@@ -226,6 +226,12 @@ export const icons = {
       <path d="M6 6l12 12M18 6 6 18" />
     </Icon>
   ),
+  window: (
+    <Icon>
+      <rect x="3" y="5" width="14" height="14" rx="2" />
+      <path d="M3 9h14M14 3h7v7M21 3l-8 8" />
+    </Icon>
+  ),
   more: (
     <Icon>
       <circle cx="5" cy="12" r="1.2" />

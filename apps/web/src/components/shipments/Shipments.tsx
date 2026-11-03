@@ -9,6 +9,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
+import { ShipmentWindowButton } from '../standalone/ShipmentWindowButton';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
@@ -97,7 +98,10 @@ export function Shipments() {
               {page.items.map((s) => (
                 <tr key={s.id} className={s.status === 'CANCELLED' ? 'inactive' : ''}>
                   <td dir="ltr">
-                    <Link href={`/shipments/${s.id}`}>{s.number}</Link>
+                    <span className="number-cell">
+                      <Link href={`/shipments/${s.id}`}>{s.number}</Link>
+                      <ShipmentWindowButton shipmentId={s.id} iconOnly />
+                    </span>
                   </td>
                   <td>{s.customerName}</td>
                   <td>
