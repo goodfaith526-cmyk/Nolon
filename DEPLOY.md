@@ -221,6 +221,15 @@ docker compose -f docker-compose.staging.yml logs -f api
 ./deploy.sh        # re-run the last deploy (needs `docker login ghcr.io` if images were pruned)
 ```
 
+### Feature switches (`switches.env`)
+
+Switches such as `CS_BOOKING_CANCEL_ENABLED` or `CS_CUSTOMER_IDENTITY_CLIENTS` are set by hand in
+`~/nolon-staging/switches.env` (mode 600), never in `.env`: the deploy job rewrites `.env` on every deploy,
+and a line added there is gone after the next merge. `deploy.sh` reads `switches.env` after `.env`
+and refuses the deploy if the file holds anything other than `CS_*` settings and comments. After a
+change, run `./deploy.sh`. Start the stack only through `deploy.sh`: a plain `docker compose up`
+does not read `switches.env`, and every switch falls back to off.
+
 ## Backups
 
 Staging holds the client's trial data and the staff assistant's drafts, so it is backed up the

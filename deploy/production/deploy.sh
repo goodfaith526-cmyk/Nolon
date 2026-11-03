@@ -4,7 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-compose() { docker compose -f docker-compose.production.yml "$@"; }
+# Feature switches set by hand on the server live in switches.env, next to .env. The deploy job
+# rewrites .env on every deploy and never touches switches.env, so a switch stays as set until it
+# is changed there. Only CS_* settings and comments are accepted: it cannot override an image, a
+# password or anything else the deploy job writes.
+env_files=(--env-file .env)
+if [ -f switches.env ]; then
+  # grep reads the file itself (no pipe, so no SIGPIPE): 1 means no other line; 0 (a line that
+  # is not allowed) or 2 (unreadable) stops the deploy.
+  status=0
+  grep -Evxq '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*' switches.env || status=$?
+  if [ "$status" -ne 1 ]; then
+    echo "switches.env must be readable and hold only CS_* settings and comments" >&2
+    exit 1
+  fi
+  env_files+=(--env-file switches.env)
+fi
+
+compose() { docker compose "${env_files[@]}" -f docker-compose.production.yml "$@"; }
 
 # Production never loads demo data; refuse an .env that asks for it.
 if grep -q "^SEED_DEMO_DATA=" .env; then
