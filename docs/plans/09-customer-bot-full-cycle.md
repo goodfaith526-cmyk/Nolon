@@ -414,7 +414,9 @@ ALTER TABLE "cs_booking_requests" ADD COLUMN "estimate_amount" DECIMAL(18,4),
 -- (Codex F165-2) القبول مربوط بنسخة: الاتنين مع بعض أو فاضيين، والنسخة المقبولة ما بتتعدى الحالية. الشرط في الخدمة
 -- وفي الاختبارات (CHECK على جدول قائم ما إضافي، زي map_url فوق)؛ لو المالك وافق على هجرة غير إضافية، بيبقى:
 --   CHECK (("estimate_accepted_at" IS NULL AND "estimate_accepted_version" IS NULL) OR
---     ("estimate_accepted_at" IS NOT NULL AND "estimate_accepted_version" BETWEEN 1 AND "estimate_version"))
+--     ("estimate_accepted_at" IS NOT NULL AND "estimate_accepted_version" IS NOT NULL
+--       AND "estimate_accepted_version" BETWEEN 1 AND "estimate_version"))
+--   (Codex F165-4) اختبار الحالتين النص فاضية: وقت بدون نسخة، ونسخة بدون وقت، الاتنين مرفوضين.
 -- FKs: estimate_currency → currencies(code)، estimated_by_id → users(id)، ON DELETE RESTRICT.
 CREATE TABLE "cs_booking_request_photos" ("id" UUID PRIMARY KEY, "request_id" UUID NOT NULL
   REFERENCES "cs_booking_requests"("id") ON DELETE RESTRICT, "idempotency_key" VARCHAR(100) NOT NULL,
