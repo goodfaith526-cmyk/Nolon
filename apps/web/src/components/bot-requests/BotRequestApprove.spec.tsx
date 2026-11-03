@@ -326,6 +326,12 @@ describe('BotRequestApprove', () => {
               validUntil: new Date(Date.now() + 86_400_000).toISOString(),
               acceptedVersion: 2,
               acceptedAt: new Date().toISOString(),
+              terms: {
+                originId: request.originId!,
+                destinationId: request.destinationId!,
+                mode: 'ROAD',
+                loadType: null,
+              },
             },
           }}
           master={master}
@@ -349,7 +355,14 @@ describe('BotRequestApprove', () => {
     const body = approved.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(body).not.toHaveProperty('lines');
     expect(body).not.toHaveProperty('pricingFingerprint');
-    expect(body.pricing).toMatchObject({ originId: request.originId, currency: 'USD' });
+    // Codex F171-2: the estimate's terms, which staff cannot change here.
+    expect(body.pricing).toMatchObject({
+      originId: request.originId,
+      destinationId: request.destinationId,
+      mode: 'ROAD',
+      currency: 'USD',
+    });
+    expect(host.querySelectorAll('select:disabled')).toHaveLength(2);
     act(() => root.unmount());
   });
 });

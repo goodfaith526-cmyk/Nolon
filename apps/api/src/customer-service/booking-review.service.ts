@@ -20,6 +20,7 @@ import type {
   CsBookingRequestStaffDto,
   CsDropOffChoiceDto,
   CsEstimateRequest,
+  CsEstimateTerms,
   CsRequestPhotoType,
   CsPriceInputs,
   CsBookingRequestSummaryDto,
@@ -35,7 +36,9 @@ import type {
   CsRouteRequest,
   CsSenderChannel,
   CreateBookingRequest,
+  LoadType,
   Permission,
+  ShippingMode,
 } from '@nolon/shared';
 import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -45,6 +48,7 @@ import { BookingConfirmChecksRegistry } from '../bookings/booking-confirm-checks
 import { BookingsService } from '../bookings/bookings.service.js';
 import { cbmFromDimensions } from '../bookings/cbm.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
+import { MasterDataService } from '../master-data/master-data.service.js';
 import {
   type CsBookingRequest,
   type CsBookingRequestItem,
@@ -162,6 +166,7 @@ export class BookingReviewService {
     private readonly currencies: CurrenciesService,
     private readonly identities: CustomerIdentityService,
     private readonly customers: CustomersService,
+    private readonly masterData: MasterDataService,
     @Inject(APP_ENV) private readonly env: AppEnv,
     confirmChecks: BookingConfirmChecksRegistry,
   ) {
@@ -347,22 +352,34 @@ export class BookingReviewService {
         message: `The estimate is valid after now and at most ${CS_ESTIMATE_MAX_DAYS} days ahead`,
       });
     await this.currencies.requireActive(input.currency);
+    // Codex F171-2: staff set the terms the estimate prices, a route of two active places.
+    const route: CsEstimateTerms = {
+      originId: input.terms.originId.toLowerCase(),
+      destinationId: input.terms.destinationId.toLowerCase(),
+      mode: input.terms.mode,
+      loadType: input.terms.loadType ?? null,
+    };
+    await this.masterData.requireRoute(route.originId, route.destinationId);
     const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       if ((row.status !== 'PENDING' && row.status !== 'ESTIMATED') || row.branchId === null)
         throw new ConflictException('Only a pending request with a branch is estimated');
       if (!user.access.has(DECIDE, row.branchId))
         throw new ForbiddenException('You may not price this request');
-      const others = await tx.csBookingRequestItem.count({
-        where: { requestId: id, isOther: true },
+      const items = await tx.csBookingRequestItem.findMany({
+        where: { requestId: id },
+        orderBy: { lineNo: 'asc' },
       });
-      if (others === 0)
+      if (!items.some((i) => i.isOther))
         throw new ConflictException({
           code: 'ESTIMATE_NOT_NEEDED',
           message: 'Only a request with an item outside the standard categories is estimated',
         });
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       await this.currencies.requireActiveInTx(tx, input.currency);
+      await this.masterData.requireLocationInTx(tx, route.originId);
+      await this.masterData.requireLocationInTx(tx, route.destinationId);
+      const terms = estimateTermsOf(route, row.services, items);
       const version = row.estimateVersion + 1;
       await this.audit.record(tx, user, {
         branchId: row.branchId,
@@ -384,6 +401,11 @@ export class BookingReviewService {
             before: row.estimateValidUntil?.toISOString() ?? null,
             after: validUntil.toISOString(),
           },
+          {
+            field: 'estimateTerms',
+            before: row.estimateTerms === null ? null : JSON.stringify(row.estimateTerms),
+            after: JSON.stringify(terms),
+          },
         ],
       });
       return tx.csBookingRequest.update({
@@ -400,6 +422,7 @@ export class BookingReviewService {
           estimatedAt: now,
           estimateAcceptedAt: null,
           estimateAcceptedVersion: null,
+          estimateTerms: termsJson(terms),
           // The request lives as long as its estimate (plan 09 section 12).
           expiresAt: validUntil,
           version: { increment: 1 },
@@ -552,6 +575,8 @@ export class BookingReviewService {
     // accepted (checked again under the lock), never at an engine price.
     const estimated = initial.items.some((i) => i.isOther);
     if (estimated && !estimateAccepted(initial)) throw estimateRequired();
+    // Codex F171-2: checked first here for a clear answer, and again under the lock.
+    if (estimated) requireEstimateTerms(initial.estimateTerms, input, initial.items);
     const lines = approvalLines(input, initial.items);
     // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
     const cargos = await Promise.all(
@@ -662,7 +687,17 @@ export class BookingReviewService {
       const totals: (Prisma.Decimal | null)[] = [];
       if (estimated) {
         // Codex F165-2: the version accepted is the current one, still valid, under the lock.
-        if (!estimateAccepted(row)) throw estimateRequired();
+        if (!estimateAccepted(row) || row.estimateCurrency === null) throw estimateRequired();
+        // Codex F171-1: the estimate's own currency, share-locked through commit: one withdrawn
+        // since the estimate needs a new estimate in an active currency.
+        if (!(await currencyActiveInTx(tx, row.estimateCurrency)))
+          throw new ConflictException({
+            code: 'ESTIMATE_CURRENCY_INACTIVE',
+            message: "The estimate's currency was withdrawn: estimate again in an active one",
+          });
+        // Codex F171-2: the acceptance covers the terms it priced, never other ones: the route,
+        // mode and load type approved, the request's services and its items under the lock.
+        requireEstimateTerms(row.estimateTerms, input, lockedItems);
         totals.push(...lines.map(() => null));
       } else {
         // F137-2: the pricing currency share-locked through commit, before the price is computed
@@ -1086,6 +1121,114 @@ function estimateAccepted(
   );
 }
 
+/**
+ * Codex F171-2: what an estimate prices, stored with it: the route, mode and load type, the
+ * request's services (sorted) and a key of its items (each line's category, quantity, pieces,
+ * dimensions and weight), so approval can book only what the customer accepted.
+ */
+type EstimateTerms = CsEstimateTerms & { services: string[]; cargo: string };
+
+function estimateTermsOf(
+  route: CsEstimateTerms,
+  services: readonly string[],
+  items: CsBookingRequestItem[],
+): EstimateTerms {
+  const cargo = items
+    .map((i) =>
+      [
+        i.lineNo,
+        i.isOther ? 'OTHER' : i.priceCategoryCode,
+        i.quantity?.toString(),
+        i.pieces,
+        i.lengthCm?.toString(),
+        i.widthCm?.toString(),
+        i.heightCm?.toString(),
+        i.weightKg?.toString(),
+      ].join(':'),
+    )
+    .join('|');
+  return {
+    originId: route.originId,
+    destinationId: route.destinationId,
+    mode: route.mode,
+    loadType: route.loadType,
+    services: [...new Set(services)].sort(),
+    cargo,
+  };
+}
+
+/** 409 ESTIMATE_TERMS_CHANGED unless the approval books what the accepted estimate priced. */
+function requireEstimateTerms(
+  stored: Prisma.JsonValue,
+  input: CsApproveRequest,
+  items: CsBookingRequestItem[],
+): void {
+  const approved = estimateTermsOf(
+    {
+      originId: input.pricing.originId.toLowerCase(),
+      destinationId: input.pricing.destinationId.toLowerCase(),
+      mode: input.pricing.mode,
+      loadType: input.pricing.loadType ?? null,
+    },
+    input.booking.services ?? [],
+    items,
+  );
+  if (!sameTerms(stored, approved))
+    throw new ConflictException({
+      code: 'ESTIMATE_TERMS_CHANGED',
+      message:
+        'The route, mode, services or items differ from the accepted estimate: estimate again',
+    });
+}
+
+function termsJson(t: EstimateTerms): Prisma.InputJsonObject {
+  return {
+    originId: t.originId,
+    destinationId: t.destinationId,
+    mode: t.mode,
+    loadType: t.loadType,
+    services: t.services,
+    cargo: t.cargo,
+  };
+}
+
+function sameTerms(stored: Prisma.JsonValue, approved: EstimateTerms): boolean {
+  const terms = storedTerms(stored);
+  return (
+    terms !== null &&
+    terms.originId === approved.originId &&
+    terms.destinationId === approved.destinationId &&
+    terms.mode === approved.mode &&
+    terms.loadType === approved.loadType &&
+    terms.cargo === approved.cargo &&
+    terms.services.join(',') === approved.services.join(',')
+  );
+}
+
+/** The stored terms read back, or null when none (an estimate made before F171-2). */
+function storedTerms(stored: Prisma.JsonValue): EstimateTerms | null {
+  if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const { originId, destinationId, mode, loadType, services, cargo } = stored;
+  if (
+    typeof originId !== 'string' ||
+    typeof destinationId !== 'string' ||
+    typeof mode !== 'string' ||
+    (loadType !== null && typeof loadType !== 'string') ||
+    !Array.isArray(services) ||
+    !services.every((v) => typeof v === 'string') ||
+    typeof cargo !== 'string'
+  )
+    return null;
+  return {
+    originId,
+    destinationId,
+    mode: mode as ShippingMode,
+    loadType: loadType as LoadType | null,
+    services: services,
+    cargo,
+  };
+}
+
 function estimateRequired(): ConflictException {
   return new ConflictException({
     code: 'ESTIMATE_REQUIRED',
@@ -1225,9 +1368,14 @@ function priceStale(price: CsApprovalPriceDto | null): ConflictException {
  * committed before (and is seen) or waits for this transaction (Codex F137-2).
  */
 async function requirePriceCurrency(tx: Tx, code: string): Promise<void> {
+  if (!(await currencyActiveInTx(tx, code))) throw priceStale(null);
+}
+
+/** Whether the currency is active, share-locked until the caller commits. */
+async function currencyActiveInTx(tx: Tx, code: string): Promise<boolean> {
   const rows = await tx.$queryRaw<{ is_active: boolean }[]>`
     SELECT "is_active" FROM "currencies" WHERE "code" = ${code} FOR SHARE`;
-  if (rows[0]?.is_active !== true) throw priceStale(null);
+  return rows[0]?.is_active === true;
 }
 
 function reasonDto(r: {
@@ -1361,6 +1509,17 @@ function staffDto(
             ...estimate,
             acceptedVersion: r.estimateAcceptedVersion,
             acceptedAt: r.estimateAcceptedAt?.toISOString() ?? null,
+            terms: (() => {
+              const terms = storedTerms(r.estimateTerms);
+              return terms
+                ? {
+                    originId: terms.originId,
+                    destinationId: terms.destinationId,
+                    mode: terms.mode,
+                    loadType: terms.loadType,
+                  }
+                : null;
+            })(),
           }
         : null;
     })(),

@@ -6,7 +6,6 @@ import type {
   CsBookingRequestStaffDto,
   CustomerSummaryDto,
   MasterDataDto,
-  ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
@@ -37,11 +36,13 @@ export function BotRequestApprove({
   const te = useTranslations('Enums');
   const name = useLocalName();
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // Codex F171-2: a request with an OTHER item books the terms its estimate priced, as set.
+  const terms = r.items.some((i) => i.isOther) ? (r.estimate?.terms ?? null) : null;
   // The route, mode and currency are common; one priced line per item (or the one-item shape's).
   const [inputs, setInputs] = useState({
-    originId: r.originId ?? '',
-    destinationId: r.destinationId ?? '',
-    mode: 'SEA' as ShippingMode,
+    originId: terms?.originId ?? r.originId ?? '',
+    destinationId: terms?.destinationId ?? r.destinationId ?? '',
+    mode: terms?.mode ?? 'SEA',
     currency: r.priceCheck?.currency ?? r.botQuotedPrice?.currency ?? '',
   });
   const byItems = r.items.length > 0;
@@ -53,6 +54,7 @@ export function BotRequestApprove({
   const [openedAt] = useState(() => Date.now());
   const estimateAccepted =
     estimate !== null &&
+    estimate.terms !== null &&
     estimate.acceptedVersion === estimate.version &&
     new Date(estimate.validUntil).getTime() > openedAt;
   const [lines, setLines] = useState<{ category: string; quantity: string }[]>(
@@ -104,7 +106,7 @@ export function BotRequestApprove({
         ...(r.profile ? { profileVersion: r.profile.version } : {}),
         paymentCurrency,
         ...(dropOffId ? { dropOffId } : {}),
-        pricing: inputs,
+        pricing: { ...inputs, ...(terms?.loadType ? { loadType: terms.loadType } : {}) },
         booking: {
           ...(customerId ? { customerId } : {}),
           services: [...r.services],
@@ -177,6 +179,7 @@ export function BotRequestApprove({
           {t('origin')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.originId}
             onChange={(e) => set({ originId: e.target.value })}
           >
@@ -194,6 +197,7 @@ export function BotRequestApprove({
           {t('destination')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.destinationId}
             onChange={(e) => set({ destinationId: e.target.value })}
           >
@@ -207,7 +211,12 @@ export function BotRequestApprove({
             ))}
           </select>
         </label>
-        <ModePicker label={t('mode')} value={inputs.mode} onChange={(mode) => set({ mode })} />
+        <ModePicker
+          label={t('mode')}
+          value={inputs.mode}
+          disabled={terms !== null}
+          onChange={(mode) => set({ mode })}
+        />
         <label className="field">
           {t('priceCurrency')}
           <select

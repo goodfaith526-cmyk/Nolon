@@ -620,10 +620,23 @@ export interface CsRequestPhotoDto {
 }
 
 /** POST /cs-booking-requests/:id/estimate: staff price the request (plan 09 section 12). */
+/**
+ * Codex F171-2: the shipping terms an estimate prices, set by staff with it. Approval books exactly
+ * these (and the request's services and items as they were); anything else needs a new estimate
+ * the customer accepts again.
+ */
+export interface CsEstimateTerms {
+  originId: string;
+  destinationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+}
+
 export interface CsEstimateRequest {
   version: number;
   amount: DecimalString;
   currency: CurrencyCode;
+  terms: Omit<CsEstimateTerms, 'loadType'> & { loadType?: LoadType | null };
   noteAr?: string | null;
   noteEn?: string | null;
   /** After now and at most CS_ESTIMATE_MAX_DAYS ahead; the request expires with it. */
@@ -897,7 +910,14 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
    * Approval of a request with an OTHER item needs `acceptedVersion` = `version` before
    * `validUntil`.
    */
-  estimate: (CsEstimateDto & { acceptedVersion: number | null; acceptedAt: string | null }) | null;
+  estimate:
+    | (CsEstimateDto & {
+        acceptedVersion: number | null;
+        acceptedAt: string | null;
+        /** The terms it prices (Codex F171-2); null for none recorded, which approval refuses. */
+        terms: CsEstimateTerms | null;
+      })
+    | null;
   photos: CsRequestPhotoDto[];
   dropOffChoices: CsDropOffChoiceDto[];
   actions: {

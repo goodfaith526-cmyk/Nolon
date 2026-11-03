@@ -3869,6 +3869,9 @@ model CsBookingRequest {
   estimatedAt             DateTime?              @map("estimated_at") @db.Timestamptz(3)
   estimateAcceptedAt      DateTime?              @map("estimate_accepted_at") @db.Timestamptz(3)
   estimateAcceptedVersion Int?                   @map("estimate_accepted_version")
+  /// Codex F171-2: what the estimate prices: { originId, destinationId, mode, loadType,
+  /// services, cargo } (cargo: a key of the items). Approval books exactly these.
+  estimateTerms           Json?                  @map("estimate_terms")
   version                 Int                    @default(1)
   expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)

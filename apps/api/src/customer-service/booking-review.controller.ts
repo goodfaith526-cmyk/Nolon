@@ -60,6 +60,15 @@ const estimateBody = z
     version,
     amount: amount.refine((v) => /[1-9]/.test(v), 'Must be above zero'),
     currency: currencyCode,
+    // Codex F171-2: the route, mode and load type the estimate prices.
+    terms: z
+      .object({
+        originId: z.uuid(),
+        destinationId: z.uuid(),
+        mode: z.enum(SHIPPING_MODES),
+        loadType: z.enum(LOAD_TYPES).nullish(),
+      })
+      .strict(),
     noteAr: optionalText(CS_ESTIMATE_NOTE_MAX),
     noteEn: optionalText(CS_ESTIMATE_NOTE_MAX),
     validUntil: z.iso.datetime({ offset: true }),

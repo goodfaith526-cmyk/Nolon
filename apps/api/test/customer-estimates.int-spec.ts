@@ -1,4 +1,6 @@
 import { createHmac, randomUUID } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import type { AddressInfo, Server } from 'node:net';
 import type {
   CsBookingRequestCreated,
   CsBookingRequestDto,
@@ -8,6 +10,7 @@ import type {
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newApiKey } from '../src/customer-service/api-key.js';
+import { Prisma } from '../src/generated/prisma/client.js';
 import { sha256 } from '../src/customer-service/customer-identity-auth.js';
 import {
   APP_ORIGIN,
@@ -41,6 +44,8 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
   const category = `${tag}B`;
   const originId = randomUUID();
   const destinationId = randomUUID();
+  const elsewhereId = randomUUID();
+  const terms = { originId, destinationId, mode: 'ROAD' };
   const telegramId = () => `${Date.now()}${Math.floor(Math.random() * 100000)}`;
   const jpeg = (n: number) => Buffer.from([0xff, 0xd8, 0xff, 0xe0, n & 0xff, (n >> 8) & 0xff]);
 
@@ -153,9 +158,20 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
   ) => ({
     expect: (status: number) => made.then(({ req }) => req.expect(status)),
   });
-  const estimate = (id: string, amount = '120', cookie = cookies.sales, app = t) =>
-    expecting(estimateRequest(id, amount, cookie, app));
-  async function estimateRequest(id: string, amount: string, cookie: string, app: TestApp) {
+  const estimate = (
+    id: string,
+    amount = '120',
+    cookie = cookies.sales,
+    app = t,
+    currency = 'USD',
+  ) => expecting(estimateRequest(id, amount, cookie, app, currency));
+  async function estimateRequest(
+    id: string,
+    amount: string,
+    cookie: string,
+    app: TestApp,
+    currency: string,
+  ) {
     const version = (
       (await staff(cookies.sales, app).get(`/cs-booking-requests/${id}`).expect(200))
         .body as CsBookingRequestStaffDto
@@ -164,20 +180,25 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
       req: staff(cookie, app).post(`/cs-booking-requests/${id}/estimate`, {
         version,
         amount,
-        currency: 'USD',
+        currency,
+        terms,
         noteAr: 'يشمل التغليف',
         validUntil: inDays(3),
       }),
     };
   }
-  const approve = (id: string) =>
+  const approve = (
+    id: string,
+    pricing: object = { originId, destinationId, mode: 'ROAD', currency: 'USD' },
+    services: string[] = [],
+  ) =>
     expecting(
       detail(id).then((shown) => ({
         req: staff(cookies.sales).post(`/cs-booking-requests/${id}/approve`, {
           version: shown.version,
           paymentCurrency: 'USD',
-          pricing: { originId, destinationId, mode: 'ROAD', currency: 'USD' },
-          booking: { customerId, services: [] },
+          pricing,
+          booking: { customerId, services },
         }),
       })),
     );
@@ -211,6 +232,7 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
     for (const [id, suffix] of [
       [originId, 'O'],
       [destinationId, 'D'],
+      [elsewhereId, 'X'],
     ] as const) {
       await t.prisma.location.create({
         data: {
@@ -297,7 +319,37 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
     const sender = telegramId();
     const id = await make(sender);
     const big = Buffer.concat([jpeg(0), Buffer.alloc(10 * 1024 * 1024)]);
-    await photo(id, big, sender).expect(413);
+    expect(code(await photo(id, big, sender).expect(413))).toBe('PHOTO_TOO_LARGE');
+    // Codex F171-3: streamed with no declared length, the 413 still arrives (no reset socket).
+    const server = t.app.getHttpServer() as Server;
+    if (!server.listening) await new Promise<void>((done) => server.listen(0, done));
+    const { port } = server.address() as AddressInfo;
+    const streamed = await new Promise<{ status: number; body: string }>((done, fail) => {
+      const req = httpRequest(
+        {
+          port,
+          method: 'POST',
+          path: `/api/v1/cs/booking-requests/${id}/photos`,
+          headers: {
+            Authorization: `Bearer ${key.key}`,
+            'Content-Type': 'image/jpeg',
+            'Transfer-Encoding': 'chunked',
+          },
+        },
+        (res) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (c: string) => (body += c));
+          res.on('end', () => done({ status: res.statusCode ?? 0, body }));
+        },
+      );
+      req.on('error', fail);
+      const mb = Buffer.alloc(1024 * 1024);
+      for (let n = 0; n < 11; n += 1) req.write(mb);
+      req.end();
+    });
+    expect(streamed.status).toBe(413);
+    expect(JSON.parse(streamed.body)).toMatchObject({ code: 'PHOTO_TOO_LARGE' });
     const other = await make(sender, true, off);
     await photo(other, jpeg(3), sender, randomUUID(), off).expect(201);
     expect(code(await estimate(other, '10', cookies.sales, off).expect(503))).toBe(
@@ -409,6 +461,7 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
         version,
         amount: '200',
         currency: 'USD',
+        terms,
         validUntil: inDays(3),
       }),
     ]);
@@ -422,5 +475,73 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
       expect(row).toMatchObject({ estimateVersion: 2, estimateAcceptedVersion: null });
       expect(row.estimateAmount?.toString()).toBe('200');
     }
+  });
+
+  it('approves only while the estimate currency is active (F171-1)', async () => {
+    const sender = telegramId();
+    const id = await make(sender);
+    const letter = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
+    const code3 = `Q${letter()}${letter()}`;
+    await t.prisma.currency.upsert({
+      where: { code: code3 },
+      create: { code: code3, nameEn: code3, nameAr: code3 },
+      update: { isActive: true },
+    });
+    await estimate(id, '120', cookies.sales, t, code3).expect(201);
+    await accept(id, 1, sender).expect(200);
+    await t.prisma.currency.update({ where: { code: code3 }, data: { isActive: false } });
+    expect(code(await approve(id).expect(409))).toBe('ESTIMATE_CURRENCY_INACTIVE');
+    expect((await detail(id)).status).toBe('pending');
+  });
+
+  it('approves only the route, mode and services the estimate priced (F171-2)', async () => {
+    const sender = telegramId();
+    const id = await make(sender);
+    await estimate(id).expect(201);
+    expect((await detail(id)).estimate?.terms).toEqual({ ...terms, loadType: null });
+    await accept(id, 1, sender).expect(200);
+    const changed = 'ESTIMATE_TERMS_CHANGED';
+    const pricing = { originId, destinationId, mode: 'ROAD', currency: 'USD' };
+    expect(code(await approve(id, { ...pricing, destinationId: elsewhereId }).expect(409))).toBe(
+      changed,
+    );
+    expect(code(await approve(id, { ...pricing, mode: 'SEA' }).expect(409))).toBe(changed);
+    const withPickup = await staff(cookies.sales).post(`/cs-booking-requests/${id}/approve`, {
+      version: (await detail(id)).version,
+      paymentCurrency: 'USD',
+      pricing,
+      booking: { customerId, services: ['PICKUP'] },
+    });
+    expect(withPickup.status).toBe(409);
+    expect(code(withPickup)).toBe(changed);
+    // An estimate recorded with no terms is never approved.
+    await t.prisma.csBookingRequest.update({
+      where: { id },
+      data: { estimateTerms: Prisma.DbNull },
+    });
+    expect(code(await approve(id).expect(409))).toBe(changed);
+    // Staff must name the terms with the estimate.
+    const shown = await detail(id);
+    await staff(cookies.sales)
+      .post(`/cs-booking-requests/${id}/estimate`, {
+        version: shown.version,
+        amount: '90',
+        currency: 'USD',
+        validUntil: inDays(3),
+      })
+      .expect(400);
+    // A new estimate on the new terms, accepted again, approves them.
+    const again = (await detail(id)).version;
+    await staff(cookies.sales)
+      .post(`/cs-booking-requests/${id}/estimate`, {
+        version: again,
+        amount: '90',
+        currency: 'USD',
+        terms: { ...terms, destinationId: elsewhereId },
+        validUntil: inDays(3),
+      })
+      .expect(201);
+    await accept(id, 2, sender).expect(200);
+    await approve(id, { ...pricing, destinationId: elsewhereId }).expect(201);
   });
 });
