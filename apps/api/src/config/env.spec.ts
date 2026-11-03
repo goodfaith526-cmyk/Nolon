@@ -51,6 +51,17 @@ describe('loadEnv', () => {
     ).toBe('http://localhost:4100/?tenant=nolon');
   });
 
+  it('accepts an https agent admin panel URL, treats an empty one as unset, refuses plain http', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    const url = 'https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp';
+    expect(loadEnv(base).AGENT_ADMIN_URL).toBeUndefined();
+    expect(loadEnv({ ...base, AGENT_ADMIN_URL: '' }).AGENT_ADMIN_URL).toBeUndefined();
+    expect(loadEnv({ ...base, AGENT_ADMIN_URL: url }).AGENT_ADMIN_URL).toBe(url);
+    expect(() =>
+      loadEnv({ ...base, AGENT_ADMIN_URL: 'http://assistant.example.com/agent-admin.html' }),
+    ).toThrow();
+  });
+
   it('reads the assistant panel switch: off unless exactly true', () => {
     const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
     expect(loadEnv(base).AGENT_ASSISTANT_PANEL).toBe(false);

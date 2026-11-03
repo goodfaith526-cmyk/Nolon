@@ -42,6 +42,8 @@ import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
+import { CsEventsService } from './cs-events.service.js';
+import { BOOKED } from './customer-stages.js';
 import { BookingConfirmChecksRegistry } from '../bookings/booking-confirm-checks.registry.js';
 import { BookingsService } from '../bookings/bookings.service.js';
 import { cbmFromDimensions } from '../bookings/cbm.js';
@@ -167,6 +169,7 @@ export class BookingReviewService {
     private readonly masterData: MasterDataService,
     @Inject(APP_ENV) private readonly env: AppEnv,
     confirmChecks: BookingConfirmChecksRegistry,
+    private readonly events: CsEventsService,
   ) {
     confirmChecks.register((tx, bookingId) => requireCargoComplete(tx, bookingId));
   }
@@ -406,7 +409,7 @@ export class BookingReviewService {
           },
         ],
       });
-      return tx.csBookingRequest.update({
+      const estimated = await tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'ESTIMATED',
@@ -427,6 +430,8 @@ export class BookingReviewService {
         },
         include: withQuote,
       });
+      await this.events.emitInTx(tx, estimated, ['request.estimated'], now);
+      return estimated;
     });
     return this.format(user, written);
   }
@@ -466,7 +471,7 @@ export class BookingReviewService {
       if (reasons.length === 0) {
         throw new ConflictException(`Unknown or inactive reason: ${input.reasonCode}`);
       }
-      return tx.csBookingRequest.update({
+      const rejected = await tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'REJECTED',
@@ -479,6 +484,8 @@ export class BookingReviewService {
         },
         include: withQuote,
       });
+      await this.events.emitInTx(tx, rejected, ['request.rejected']);
+      return rejected;
     });
     // As route: the row this transaction wrote.
     return this.format(user, written);
@@ -756,10 +763,12 @@ export class BookingReviewService {
           ? priced.reduce((sum, t) => sum.plus(t), dec('0'))
           : null;
       const firstPriced = lines.findIndex((l) => l.inputs !== null);
-      return tx.csBookingRequest.update({
+      const approved = await tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'APPROVED',
+          // Plan 09 section 5: the stage the customer now reads; a shipment stage notice compares.
+          lastStageCode: BOOKED,
           bookingId,
           paymentCurrency: input.paymentCurrency,
           approvedCategoryCode: firstPriced < 0 ? null : cargos[firstPriced]!.category,
@@ -773,6 +782,8 @@ export class BookingReviewService {
         },
         include: withQuote,
       });
+      await this.events.emitInTx(tx, approved, ['request.approved']);
+      return approved;
     });
     // As route and reject (F131-3): the row this transaction wrote.
     return this.format(user, written);

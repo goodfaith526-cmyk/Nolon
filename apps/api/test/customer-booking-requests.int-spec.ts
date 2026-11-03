@@ -321,6 +321,36 @@ describe('Customer Service booking requests (R3)', () => {
     await create(narrow.key, mineBody).expect(404);
   });
 
+  it("takes the website chat's visitor as a sender, read back by that visitor only", async () => {
+    // erp-agents docs/web-chat.md: a web visitor is 16 random hex digits, like a Telegram id, never a phone.
+    const visitor = randomUUID().replace(/-/g, '').slice(0, 16);
+    const sender = { channel: 'web', id: visitor };
+    const made = (await create(bot.key, body({ sender })).expect(201))
+      .body as CsBookingRequestCreated;
+    expect(made.status).toBe('pending');
+    const saved = await t.prisma.csBookingRequest.findUniqueOrThrow({
+      where: { id: made.requestId },
+    });
+    expect(saved).toMatchObject({ senderChannel: 'web', senderId: visitor });
+    expect(
+      (
+        (await read(bot.key, made.requestId, `web:${visitor}`).expect(200))
+          .body as CsBookingRequestDto
+      ).requestId,
+    ).toBe(made.requestId);
+    // Another visitor, another channel with the same id, or the id alone: as if it did not exist.
+    const other = randomUUID().replace(/-/g, '').slice(0, 16);
+    await read(bot.key, made.requestId, `web:${other}`).expect(404);
+    await read(bot.key, made.requestId, `telegram:${visitor}`).expect(404);
+    await read(bot.key, made.requestId, visitor).expect(404);
+    await read(otherBot.key, made.requestId, `web:${visitor}`).expect(404);
+    // Only 16 lowercase hex digits.
+    for (const id of [visitor.toUpperCase(), visitor.slice(1), `${visitor}0`, '+249912345678']) {
+      await create(bot.key, body({ sender: { channel: 'web', id } })).expect(400);
+      await read(bot.key, made.requestId, `web:${id}`).expect(404);
+    }
+  });
+
   it('leaves no request when the key or the grant changes while it is being saved (F126-1)', async () => {
     /**
      * Holds a row lock as a revocation (or a customer change) does, sends the request while it is

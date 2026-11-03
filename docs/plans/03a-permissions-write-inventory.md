@@ -40,6 +40,9 @@
 - POST `/api-clients/:id/revoke` · `ApiClientsController.revoke` · `customer-service/customer-service.controller.ts` · users:update
 - PUT `/api-clients/:id/scopes` · `ApiClientsController.setScopes` · `customer-service/customer-service.controller.ts` · users:update
 - PUT `/api-clients/:id/services` · `ApiClientsController.setServices` · `customer-service/customer-service.controller.ts` · users:update
+- POST `/api-clients/:id/webhooks` · `ApiClientsController.addWebhook` · `customer-service/customer-service.controller.ts` · users:create
+- POST `/api-clients/:id/webhooks/:endpointId/approve` · `ApiClientsController.approveWebhook` · `customer-service/customer-service.controller.ts` · users:update
+- POST `/api-clients/:id/webhooks/:endpointId/retire` · `ApiClientsController.retireWebhook` · `customer-service/customer-service.controller.ts` · users:update
 - POST `/assistant-drafts/settle` · `MyDraftsController.settle` · `my-drafts/my-drafts.controller.ts` · —
 - POST `/assistant-drafts/settle/ack` · `MyDraftsController.acknowledge` · `my-drafts/my-drafts.controller.ts` · —
 - POST `/assistant-form-reviews` · `AssistantFormReviewsController.create` · `assistant-form-reviews/assistant-form-reviews.controller.ts` · —

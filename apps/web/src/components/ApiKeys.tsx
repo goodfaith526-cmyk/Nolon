@@ -11,6 +11,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
+import { ApiKeyWebhooks } from './ApiKeyWebhooks';
 import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from './commercial/Notice';
@@ -53,6 +54,7 @@ export function ApiKeys() {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [notices, setNotices] = useState<string | null>(null);
 
   if (!can(me, 'users:view')) return <p className="error">{tc('noAccess')}</p>;
   if (!clients) {
@@ -285,6 +287,13 @@ export function ApiKeys() {
                         {t('editScopes')}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="button small"
+                      onClick={() => setNotices(notices === c.id ? null : c.id)}
+                    >
+                      {t('webhooks')}
+                    </button>
                     {c.isActive && can(me, 'users:update') && (
                       <button
                         type="button"
@@ -302,6 +311,12 @@ export function ApiKeys() {
           </table>
         </div>
       )}
+      {(() => {
+        const shown = clients.find((c) => c.id === notices);
+        return shown ? (
+          <ApiKeyWebhooks key={shown.id} client={shown} onClose={() => setNotices(null)} />
+        ) : null;
+      })()}
     </section>
   );
 }
