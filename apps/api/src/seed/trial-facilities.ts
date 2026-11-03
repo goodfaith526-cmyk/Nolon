@@ -8,26 +8,29 @@ import { type PlaceSpec, SOFT_LAUNCH_PLACES, findPlace } from './soft-launch.js'
 /**
  * Trial facilities (owner's request, 2026-11-03): collection centres in the origin cities, a
  * central distribution hub in Suakin, delivery centres in the Sudanese cities NOLON delivers to,
- * and drop-off windows in Gulf cities, each with an address, a phone number and a map position.
+ * and a window in every city of the network (drop-off in the origins, pick-up in Sudan; owner,
+ * 2026-11-03), each with an address, a phone number and a map position.
  * EVERYTHING here is made up, for trying the system only: the addresses are approximate districts,
  * the phone numbers are not NOLON's and the positions are near the named district, not a real
  * building. Every name ends in «(تجريبي)» / «(trial)», every code starts with TR- and every address
  * says it is not real, so staff can tell them apart and turn them off when the real ones arrive.
  *
- * Choices made without the client (to be confirmed by NOLON): the windows are in the Gulf cities
- * already in the system (Jeddah, Dubai, Sharjah); Cairo and Guangzhou centres belong to DXB, as
+ * Choices made without the client (to be confirmed by NOLON): Riyadh (added when missing) belongs to JED; Cairo and Guangzhou centres belong to DXB, as
  * their bot requests are routed there; Suakin belongs to PTS and Dongola to ATB.
  *
  * Safe to run again: a facility whose code exists is left exactly as it is (even when staff
- * turned it off), and nothing is deleted. Places are only read, except Suakin, which is added when
- * missing; a place that is missing or turned off is reported and its facilities skipped (a place
+ * turned it off), and nothing is deleted. Places are only read, except Suakin and Riyadh, which are
+ * added when missing; a place that is missing or turned off is reported and its facilities skipped (a place
  * staff turned off is never turned back on, Codex F160-1).
  */
 
 /** Said in every trial facility's address. */
 export const TRIAL_ADDRESS_PREFIX = 'عنوان وهمي للتجربة فقط: ';
 
-/** The only place this script may add (the hub's town); never turned back on when off. */
+/**
+ * The only places this script may add when missing (the hub's town, and Riyadh for its windows);
+ * never turned back on when off.
+ */
 export const SUAKIN: PlaceSpec = {
   code: 'SDSWA',
   kind: 'CITY',
@@ -36,6 +39,17 @@ export const SUAKIN: PlaceSpec = {
   countryCode: 'SD',
   aliases: [],
 };
+
+export const RIYADH: PlaceSpec = {
+  code: 'SARUH',
+  kind: 'CITY',
+  nameEn: 'Riyadh',
+  nameAr: 'الرياض',
+  countryCode: 'SA',
+  aliases: [],
+};
+
+export const ADDABLE_PLACES: readonly PlaceSpec[] = [SUAKIN, RIYADH];
 
 export interface FacilitySpec {
   /** TR-..., at most 20 characters. */
@@ -178,7 +192,7 @@ export const TRIAL_FACILITIES: readonly FacilitySpec[] = [
     latitude: '19.169000',
     longitude: '30.476000',
   },
-  // Drop-off windows in Gulf cities.
+  // Drop-off windows in the origin cities.
   {
     code: 'TR-JED-W1',
     kind: 'DROP_OFF_POINT',
@@ -239,6 +253,103 @@ export const TRIAL_FACILITIES: readonly FacilitySpec[] = [
     latitude: '25.300000',
     longitude: '55.375000',
   },
+  {
+    code: 'TR-CAI-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'DXB',
+    place: 'EGCAI',
+    nameAr: 'نافذة استلام القاهرة - عين شمس',
+    nameEn: 'Cairo drop-off window - Ain Shams',
+    address: 'شارع أحمد عصمت، عين شمس، القاهرة',
+    phone: '+201000000302',
+    latitude: '30.131000',
+    longitude: '31.329000',
+  },
+  {
+    code: 'TR-RUH-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'JED',
+    place: 'SARUH',
+    nameAr: 'نافذة استلام الرياض - البطحاء',
+    nameEn: 'Riyadh drop-off window - Al Batha',
+    address: 'حي البطحاء، قرب سوق البطحاء، الرياض',
+    phone: '+966500000104',
+    latitude: '24.631000',
+    longitude: '46.716000',
+  },
+  {
+    code: 'TR-RUH-W2',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'JED',
+    place: 'SARUH',
+    nameAr: 'نافذة استلام الرياض - السلي',
+    nameEn: 'Riyadh drop-off window - Al Sulay',
+    address: 'حي السلي، المنطقة الصناعية، الرياض',
+    phone: '+966500000105',
+    latitude: '24.588000',
+    longitude: '46.833000',
+  },
+  {
+    code: 'TR-CAN-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'DXB',
+    place: 'CNCAN',
+    nameAr: 'نافذة استلام قوانزو - شياوبي',
+    nameEn: 'Guangzhou drop-off window - Xiaobei',
+    address: 'منطقة شياوبي، يويشيو، قوانزو',
+    phone: '+8613000000402',
+    latitude: '23.142000',
+    longitude: '113.270000',
+  },
+  // Pick-up windows in the Sudanese cities NOLON delivers to.
+  {
+    code: 'TR-PZU-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'PTS',
+    place: 'SDPZU',
+    nameAr: 'نافذة تسليم بورتسودان - ديم مدينة',
+    nameEn: 'Port Sudan pick-up window - Deim Madina',
+    address: 'حي ديم مدينة، بورتسودان',
+    phone: '+249900000506',
+    latitude: '19.603000',
+    longitude: '37.207000',
+  },
+  {
+    code: 'TR-ATB-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'ATB',
+    place: 'SDATB',
+    nameAr: 'نافذة تسليم عطبرة - الداخلة',
+    nameEn: 'Atbara pick-up window - Al Dakhla',
+    address: 'حي الداخلة، عطبرة',
+    phone: '+249900000507',
+    latitude: '17.693000',
+    longitude: '33.976000',
+  },
+  {
+    code: 'TR-KRT-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'KRT',
+    place: 'SDKRT',
+    nameAr: 'نافذة تسليم الخرطوم - السوق العربي',
+    nameEn: 'Khartoum pick-up window - Souq Al Arabi',
+    address: 'السوق العربي، الخرطوم',
+    phone: '+249900000508',
+    latitude: '15.596000',
+    longitude: '32.531000',
+  },
+  {
+    code: 'TR-DOG-W1',
+    kind: 'DROP_OFF_POINT',
+    branchCode: 'ATB',
+    place: 'SDDOG',
+    nameAr: 'نافذة تسليم دنقلا - السوق',
+    nameEn: 'Dongola pick-up window - Market',
+    address: 'قرب السوق الكبير، دنقلا',
+    phone: '+249900000509',
+    latitude: '19.176000',
+    longitude: '30.481000',
+  },
 ];
 
 export interface TrialFacilitiesDeps {
@@ -264,9 +375,9 @@ export async function applyTrialFacilities(
   );
   const placeIds = new Map<string, string>();
   const wanted = new Set(TRIAL_FACILITIES.map((f) => f.place));
-  for (const spec of [...SOFT_LAUNCH_PLACES, SUAKIN].filter((p) => wanted.has(p.code))) {
+  for (const spec of [...SOFT_LAUNCH_PLACES, ...ADDABLE_PLACES].filter((p) => wanted.has(p.code))) {
     const place = await findPlace(prisma, spec, say);
-    if (place === null && spec.code === SUAKIN.code) {
+    if (place === null && ADDABLE_PLACES.includes(spec)) {
       const created = await masterData.createLocation(actor, {
         code: spec.code,
         kind: spec.kind,

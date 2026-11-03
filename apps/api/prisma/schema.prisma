@@ -2300,8 +2300,8 @@ model ReceiptApplication {
  * locations are rows, not code). Deactivate instead of deleting: movements reference it.
  */
 /// What a warehouse does in the network: a collection centre at an origin, the central
-/// distribution hub, a delivery centre in a destination city, or a small drop-off window where
-/// customers hand over goods. Empty: an ordinary warehouse.
+/// distribution hub, a delivery centre in a destination city, or a small window where customers
+/// hand over goods (origins) or receivers collect them (Sudan). Empty: an ordinary warehouse.
 enum WarehouseKind {
   COLLECTION_CENTER
   DISTRIBUTION_HUB

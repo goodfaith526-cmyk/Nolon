@@ -22,8 +22,8 @@ export type WarehouseReceiptStatus = (typeof WAREHOUSE_RECEIPT_STATUSES)[number]
 
 /**
  * What a warehouse does in the network (empty: an ordinary warehouse): a collection centre at an
- * origin, the central distribution hub, a delivery centre in a destination city, or a drop-off
- * window where customers hand over goods.
+ * origin, the central distribution hub, a delivery centre in a destination city, or a small
+ * window where customers hand over goods (origins) or receivers collect them (Sudan).
  */
 export const WAREHOUSE_KINDS = [
   'COLLECTION_CENTER',

@@ -4,7 +4,7 @@ import type { AuthUser } from '../src/auth/auth-user.js';
 import { MasterDataService } from '../src/master-data/master-data.service.js';
 import { SOFT_LAUNCH_PLACES, softLaunchActor } from '../src/seed/soft-launch.js';
 import {
-  SUAKIN,
+  ADDABLE_PLACES,
   TRIAL_ADDRESS_PREFIX,
   TRIAL_FACILITIES,
   type TrialFacilitiesDeps,
@@ -57,10 +57,12 @@ describe('trial-facilities data script', () => {
         await t.prisma.location.update({ where: { id: place.id }, data: { isActive: true } });
       }
     }
-    const suakin = await t.prisma.location.findUnique({ where: { code: SUAKIN.code } });
-    before.set(SUAKIN.code, suakin?.isActive ?? false);
-    if (suakin && !suakin.isActive) {
-      await t.prisma.location.update({ where: { id: suakin.id }, data: { isActive: true } });
+    for (const spec of ADDABLE_PLACES) {
+      const place = await t.prisma.location.findUnique({ where: { code: spec.code } });
+      before.set(spec.code, place?.isActive ?? false);
+      if (place && !place.isActive) {
+        await t.prisma.location.update({ where: { id: place.id }, data: { isActive: true } });
+      }
     }
   });
 
@@ -76,14 +78,18 @@ describe('trial-facilities data script', () => {
 
   it('skips the facilities of a place staff turned off, and never turns it back on', async () => {
     await t.prisma.location.update({ where: { code: 'SDDOG' }, data: { isActive: false } });
+    const atDongola = TRIAL_FACILITIES.filter((f) => f.place === 'SDDOG');
+    expect(atDongola).toHaveLength(2);
     const report = await applyTrialFacilities(deps, actor);
     expect(report).toContain('مكان موقوف: دنقلا (SDDOG)، مراكزه لم تُدخل');
     expect(report).toContain(
-      `مراكز جديدة: ${TRIAL_FACILITIES.length - 1} من ${TRIAL_FACILITIES.length}`,
+      `مراكز جديدة: ${TRIAL_FACILITIES.length - 2} من ${TRIAL_FACILITIES.length}`,
     );
     const dongola = await t.prisma.location.findUniqueOrThrow({ where: { code: 'SDDOG' } });
     expect(dongola.isActive).toBe(false);
-    expect(await t.prisma.warehouse.findUnique({ where: { code: 'TR-DOG-DC' } })).toBeNull();
+    expect(
+      await t.prisma.warehouse.count({ where: { code: { in: atDongola.map((f) => f.code) } } }),
+    ).toBe(0);
     await t.prisma.location.update({ where: { code: 'SDDOG' }, data: { isActive: true } });
   });
 
@@ -108,8 +114,10 @@ describe('trial-facilities data script', () => {
       expect(w?.address?.startsWith(TRIAL_ADDRESS_PREFIX)).toBe(true);
       expect(w?.isActive).toBe(true);
     }
-    const suakin = await t.prisma.location.findUniqueOrThrow({ where: { code: SUAKIN.code } });
-    expect(suakin).toMatchObject({ kind: 'CITY', countryCode: 'SD', isActive: true });
+    for (const spec of ADDABLE_PLACES) {
+      const place = await t.prisma.location.findUniqueOrThrow({ where: { code: spec.code } });
+      expect(place).toMatchObject({ kind: 'CITY', countryCode: spec.countryCode, isActive: true });
+    }
   });
 
   it('a second run changes nothing, and a facility staff turned off stays off', async () => {
@@ -137,7 +145,13 @@ describe('trial-facilities data script', () => {
     const list = (await t.http().get('/api/v1/warehouses').set('Cookie', cookie).expect(200))
       .body as WarehouseDto[];
     const trial = list.filter((w) => w.code.startsWith('TR-'));
-    expect(trial.map((w) => w.code).sort()).toEqual(['TR-JED-CC', 'TR-JED-W1', 'TR-JED-W2']);
+    expect(trial.map((w) => w.code).sort()).toEqual([
+      'TR-JED-CC',
+      'TR-JED-W1',
+      'TR-JED-W2',
+      'TR-RUH-W1',
+      'TR-RUH-W2',
+    ]);
     expect(trial.find((w) => w.code === 'TR-JED-CC')).toMatchObject({
       kind: 'COLLECTION_CENTER',
       phone: '+966500000101',

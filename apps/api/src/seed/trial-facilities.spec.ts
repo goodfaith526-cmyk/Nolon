@@ -2,7 +2,7 @@ import { WAREHOUSE_KINDS } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import { BRANCHES } from './branches.js';
 import { SOFT_LAUNCH_PLACES } from './soft-launch.js';
-import { SUAKIN, TRIAL_FACILITIES } from './trial-facilities.js';
+import { ADDABLE_PLACES, TRIAL_FACILITIES } from './trial-facilities.js';
 
 /** Rough bounds per country, to catch a swapped or mistyped position. */
 const BOUNDS: Record<string, { lat: [number, number]; lng: [number, number] }> = {
@@ -14,7 +14,7 @@ const BOUNDS: Record<string, { lat: [number, number]; lng: [number, number] }> =
 };
 
 describe('trial facilities', () => {
-  const places = new Map([...SOFT_LAUNCH_PLACES, SUAKIN].map((p) => [p.code, p]));
+  const places = new Map([...SOFT_LAUNCH_PLACES, ...ADDABLE_PLACES].map((p) => [p.code, p]));
 
   it('has unique trial codes the warehouse code rule accepts', () => {
     const codes = TRIAL_FACILITIES.map((f) => f.code);
@@ -32,9 +32,8 @@ describe('trial facilities', () => {
     expect(at('COLLECTION_CENTER')).toEqual(new Set(['SAJED', 'AEDXB', 'AESHJ', 'EGCAI', 'CNCAN']));
     expect(at('DISTRIBUTION_HUB')).toEqual(new Set(['SDSWA']));
     expect(at('DELIVERY_CENTER')).toEqual(new Set(['SDPZU', 'SDATB', 'SDKRT', 'SDDOG']));
-    for (const place of at('DROP_OFF_POINT')) {
-      expect(['SA', 'AE']).toContain(places.get(place)?.countryCode);
-    }
+    // A window in every city of the network but the hub's town.
+    expect(at('DROP_OFF_POINT')).toEqual(new Set([...places.keys()].filter((p) => p !== 'SDSWA')));
   });
 
   it('uses known branches and places, unique E.164 phones and positions inside the country', () => {
