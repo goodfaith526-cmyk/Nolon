@@ -4,6 +4,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# One NOLON deploy at a time on this server (staging and production share it, and their images):
+# staging's image clean-up below must never run while a production deploy is between pulling an
+# image and using it. Both stacks deploy as the same user, so they share this lock file. It is
+# held until this script exits; a second deploy waits for it (up to 30 minutes).
+exec 9> "$HOME/.nolon-deploy.lock"
+if ! flock -w 1800 9; then
+  echo "Another NOLON deploy has held the server for 30 minutes; try again later." >&2
+  exit 1
+fi
+
 # Feature switches set by hand on the server live in switches.env, next to .env. The deploy job
 # rewrites .env on every deploy and never touches switches.env, so a switch stays as set until it
 # is changed there. Only CS_* settings and comments are accepted: it cannot override an image, a
