@@ -65,10 +65,11 @@ export interface ShipmentCommissionFacts {
 export interface CommissionSyncHandler {
   /**
    * Brings the shipment's partner commissions to what they should be now, posting rule 16 for each
-   * difference. `date` is the entry date (the invoice's or the credit note's); by default the day
-   * in the shipment's branch.
+   * difference, dated on the write that caused it (plan 07, 4.1): `date` is that day (the
+   * invoice's or the credit note's), or the instant it took effect (an event's or a proof of
+   * delivery's), taken as its day in the shipment's branch; by default today there.
    */
-  syncShipmentInTx(tx: Tx, user: AuthUser, shipmentId: string, date?: string): Promise<void>;
+  syncShipmentInTx(tx: Tx, user: AuthUser, shipmentId: string, date?: string | Date): Promise<void>;
 }
 
 /**
@@ -100,7 +101,7 @@ export class CommissionTriggers {
     user: AuthUser,
     shipmentId: string,
     trigger: CommissionTrigger,
-    date?: string,
+    date?: string | Date,
   ): Promise<void> {
     if (!this.handler) throw new Error(`No commission handler registered (${trigger})`);
     await this.handler.syncShipmentInTx(tx, user, shipmentId, date);

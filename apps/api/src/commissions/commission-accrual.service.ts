@@ -1,4 +1,10 @@
-import { HttpStatus, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
+import {
+  ConflictException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+  type OnModuleInit,
+} from '@nestjs/common';
 import {
   COMMISSION_ROLES,
   type CommissionEvent,
@@ -17,6 +23,7 @@ import { InvoicesService } from '../billing/invoices.service.js';
 import { unitQuantity } from '../billing/invoice-suggestion.js';
 import { todayIn } from '../common/dates.js';
 import { type Decimal, ZERO, dec, roundMoney } from '../common/money.js';
+import { isUniqueViolation } from '../common/prisma-errors.js';
 import { codedRefusal } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { CommissionAccrual, PartnerContract, Prisma } from '../generated/prisma/client.js';
@@ -122,14 +129,14 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
     this.triggers.register(this);
   }
 
-  async syncShipmentInTx(tx: Tx, user: AuthUser, shipmentId: string, date?: string) {
+  async syncShipmentInTx(tx: Tx, user: AuthUser, shipmentId: string, date?: string | Date) {
     await this.triggers.lockInTx(tx, shipmentId);
     const facts = await this.shipments.commissionFactsInTx(tx, shipmentId);
     const shipment = new ShipmentFacts(shipmentId, facts, {
       invoices: () => this.invoices.commissionInvoicesInTx(tx, shipmentId),
       delivered: () => this.pods.fullDeliveryAtInTx(tx, shipmentId),
     });
-    const entryDate = date ?? todayIn(facts.timezone);
+    const entryDate = typeof date === 'string' ? date : todayIn(facts.timezone, date ?? new Date());
     const rows = await tx.commissionAccrual.findMany({
       where: { shipmentId, kind: { not: 'MANUAL' } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -343,12 +350,17 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
    * A manual adjustment (plan 07, 4.6): a MANUAL row and its rule 16 entry, at today's rate, with
    * the reason, on a shipment the partner holds `role` on now. Outside the sync's sums, so the next
    * sync keeps it. Recorded in the audit log under the partner.
+   *
+   * The client's `requestId` becomes the row's id (F153-1): a retry of the same adjustment, after
+   * it committed or while it commits, returns the partner's page without posting again; anything
+   * else reusing the id is refused.
    */
   async adjust(
     user: AuthUser,
     partnerId: string,
     input: ManualCommissionInput,
   ): Promise<PartnerCommissionsDto> {
+    if (await this.adjustedBefore(user, partnerId, input)) return this.forPartner(user, partnerId);
     await this.requireShipment(user, input.shipmentId);
     const currency = await this.currencies.requireActive(input.currency);
     const amount = dec(input.amount);
@@ -359,6 +371,44 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         `The amount is not zero and has at most ${currency.decimalPlaces} decimals`,
       );
     }
+    try {
+      await this.postAdjustment(user, partnerId, input, currency.code, amount);
+    } catch (error) {
+      if (!isUniqueViolation(error) || !(await this.adjustedBefore(user, partnerId, input))) {
+        throw error;
+      }
+    }
+    return this.forPartner(user, partnerId);
+  }
+
+  /** Whether the request already made this adjustment; 409 when its id made another row. */
+  private async adjustedBefore(
+    user: AuthUser,
+    partnerId: string,
+    input: ManualCommissionInput,
+  ): Promise<boolean> {
+    const done = await this.prisma.commissionAccrual.findUnique({ where: { id: input.requestId } });
+    if (!done) return false;
+    const same =
+      done.kind === 'MANUAL' &&
+      done.partnerId === partnerId &&
+      done.shipmentId === input.shipmentId &&
+      done.role === input.role &&
+      done.currency === input.currency &&
+      done.amount.eq(dec(input.amount)) &&
+      done.reason === input.reason &&
+      done.createdById === user.id;
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+    return true;
+  }
+
+  private async postAdjustment(
+    user: AuthUser,
+    partnerId: string,
+    input: ManualCommissionInput,
+    currency: string,
+    amount: Decimal,
+  ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await this.shipments.lockForChildWrite(tx, input.shipmentId, { exclusive: true });
       await this.triggers.lockInTx(tx, input.shipmentId);
@@ -371,18 +421,18 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
         );
       }
       const today = todayIn(facts.timezone);
-      const found = await this.fxRates.lookup(currency.code, today);
+      const found = await this.fxRates.lookup(currency, today);
       if (!found) {
         throw codedRefusal(
           HttpStatus.CONFLICT,
           'COMMISSION_NO_FX_RATE',
-          `No exchange rate for ${currency.code} on or before ${today}: add one first`,
+          `No exchange rate for ${currency} on or before ${today}: add one first`,
         );
       }
       const rate = dec(found.rate);
-      const usd = toUsd(amount.abs(), rate, currency.code);
+      const usd = toUsd(amount.abs(), rate, currency);
       const amountUsd = amount.isNegative() ? usd.negated() : usd;
-      const pairs = commissionLines(currency.code, rate, amount, amountUsd);
+      const pairs = commissionLines(currency, rate, amount, amountUsd);
       if (!pairs) {
         throw codedRefusal(
           HttpStatus.BAD_REQUEST,
@@ -407,12 +457,13 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
       );
       await tx.commissionAccrual.create({
         data: {
+          id: input.requestId,
           shipmentId: input.shipmentId,
           partnerId,
           role: input.role,
           kind: 'MANUAL',
           branchId: facts.branchId,
-          currency: currency.code,
+          currency: currency,
           fxRate: rate,
           amount,
           amountUsd,
@@ -431,12 +482,11 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
           {
             field: 'commission.manual',
             before: null,
-            after: `${facts.number} ${input.role} ${amount.toFixed()} ${currency.code}: ${input.reason}`,
+            after: `${facts.number} ${input.role} ${amount.toFixed()} ${currency}: ${input.reason}`,
           },
         ],
       });
     });
-    return this.forPartner(user, partnerId);
   }
 
   /**

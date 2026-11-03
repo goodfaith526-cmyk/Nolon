@@ -259,7 +259,8 @@ export class PodService implements OnModuleInit {
           data: { podId: pod.id, documentId: document.id, branchId: shipment.branchId },
         });
       }
-      await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'POD');
+      // Dated on the delivery, which can be recorded after it happened (F153-2).
+      await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'POD', deliveredAt);
       return pod.id;
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({

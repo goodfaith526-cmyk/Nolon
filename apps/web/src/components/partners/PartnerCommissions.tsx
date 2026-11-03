@@ -35,6 +35,8 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [stating, setStating] = useState<CommissionBalanceDto | null>(null);
+  // One id per opened form: a retry of the same adjustment posts it once (F153-1).
+  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
@@ -65,6 +67,7 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const body: ManualCommissionInput = {
+      requestId,
       shipmentId: field(form, 'shipmentId'),
       role: field(form, 'role') as CommissionRole,
       currency: field(form, 'currency'),
@@ -103,7 +106,13 @@ export function PartnerCommissions({ partner }: { partner: PartnerDto }) {
       <div className="row">
         <h2>{t('title')}</h2>
         {!adding && data?.canAdjust && shipments.length > 0 && (
-          <button type="button" onClick={() => setAdding(true)}>
+          <button
+            type="button"
+            onClick={() => {
+              setRequestId(crypto.randomUUID());
+              setAdding(true);
+            }}
+          >
             {t('adjust')}
           </button>
         )}

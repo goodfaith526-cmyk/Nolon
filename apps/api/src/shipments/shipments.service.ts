@@ -1905,7 +1905,8 @@ export class ShipmentsService {
       },
     });
     if (event.after) await event.after(tx);
-    await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_EVENT');
+    // Dated on the event, which can be entered after it happened (F153-2).
+    await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_EVENT', occurredAt);
     return true;
   }
 

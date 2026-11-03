@@ -506,6 +506,61 @@ describe('partner commissions, rule 16 (plan 07, PR-7b)', () => {
     expect(await rows(id, 'DISTRIBUTOR')).toEqual([]);
   });
 
+  it('dates the commission on the event, and a closed period refuses the event with it (F153-2)', async () => {
+    // A past year of this test only (others take theirs elsewhere), with a contract valid then.
+    const year = randomInt(1801, 1900);
+    const at = (monthDay: string) => `${year}-${monthDay}T08:00:00+03:00`;
+    const early = await partner('ORIGIN_CONSOLIDATOR');
+    await contract(early, {
+      validFrom: `${year}-01-01`,
+      basis: 'FIXED_PER_UNIT',
+      value: '1',
+      unit: 'PER_SHIPMENT',
+      currency: 'USD',
+      accrualEvent: 'DEPARTED',
+    });
+    const backdated = async () => {
+      const id = await shipment();
+      await r
+        .patch(`/shipments/${id}`, cookies.opsPts, { originConsolidatorId: early.id })
+        .expect(200);
+      await t.prisma.shipmentEvent.updateMany({
+        where: { shipmentId: id },
+        data: { occurredAt: new Date(at('01-02')) },
+      });
+      await t.prisma.shipment.update({ where: { id }, data: { createdAt: new Date(at('01-02')) } });
+      await status(id, 'TRIP_SCHEDULED', { occurredAt: at('03-01') }).expect(200);
+      return id;
+    };
+    const open = await backdated();
+    await status(open, 'ROAD_DEPARTED', { occurredAt: at('03-02') }).expect(200);
+    const [row] = await rows(open, 'ORIGIN_CONSOLIDATOR');
+    const entry = await t.prisma.journalEntry.findUniqueOrThrow({
+      where: { id: row?.entryId ?? '' },
+    });
+    expect(entry.entryDate.toISOString().slice(0, 10)).toBe(`${year}-03-02`);
+
+    await t.prisma.fiscalPeriod.upsert({
+      where: { year_month: { year, month: 4 } },
+      create: {
+        year,
+        month: 4,
+        startDate: new Date(`${year}-04-01`),
+        endDate: new Date(`${year}-04-30`),
+        status: 'CLOSED',
+        closedAt: new Date(),
+      },
+      update: { status: 'CLOSED', closedAt: new Date() },
+    });
+    const closed = await backdated();
+    await status(closed, 'ROAD_DEPARTED', { occurredAt: at('04-05') }).expect(409);
+    // The departure was refused with its commission: nothing of it is left.
+    expect(await t.prisma.shipment.findUniqueOrThrow({ where: { id: closed } })).toMatchObject({
+      status: 'TRIP_SCHEDULED',
+    });
+    expect(await rows(closed)).toEqual([]);
+  });
+
   describe('manual adjustments and the partner page', () => {
     let id: string;
     beforeAll(async () => {
@@ -514,6 +569,7 @@ describe('partner commissions, rule 16 (plan 07, PR-7b)', () => {
     });
     const adjust = (cookie: string, body: object, partnerId = partners.outlet.id) =>
       r.post(`/partners/${partnerId}/commissions/adjustments`, cookie, {
+        requestId: randomUUID(),
         shipmentId: id,
         role: 'SALES_OUTLET',
         currency: 'USD',
@@ -546,6 +602,26 @@ describe('partner commissions, rule 16 (plan 07, PR-7b)', () => {
         orderBy: { occurredAt: 'desc' },
       });
       expect(JSON.stringify(audit?.changes)).toContain('Agreed discount');
+    });
+
+    it('posts an adjustment once per request id, retried or sent twice at once (F153-1)', async () => {
+      const manual = () =>
+        t.prisma.commissionAccrual.count({ where: { shipmentId: id, kind: 'MANUAL' } });
+      const before = await manual();
+      const requestId = randomUUID();
+      await adjust(cookies.managerPts, { requestId, amount: '1' }).expect(201);
+      await adjust(cookies.managerPts, { requestId, amount: '1' }).expect(201);
+      expect(await manual()).toBe(before + 1);
+      // The same id with other content is another intent: refused, nothing posted.
+      await adjust(cookies.managerPts, { requestId, amount: '2' }).expect(409);
+      const twice = randomUUID();
+      const both = await Promise.all([
+        adjust(cookies.managerPts, { requestId: twice, amount: '1.5' }),
+        adjust(cookies.managerPts, { requestId: twice, amount: '1.5' }),
+      ]);
+      expect(both.map((x) => x.status)).toEqual([201, 201]);
+      expect(await manual()).toBe(before + 2);
+      await expectLedgerMatches(id);
     });
 
     it('shows open balances, rows and holds in the user’s branches only', async () => {

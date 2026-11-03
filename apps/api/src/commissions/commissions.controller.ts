@@ -30,6 +30,7 @@ const signedAmount = z.string().regex(/^-?\d{1,14}(\.\d{1,4})?$/, 'Invalid amoun
 
 const manualBody: z.ZodType<ManualCommissionInput> = z
   .object({
+    requestId: z.uuid(),
     shipmentId: z.uuid(),
     role: z.enum(COMMISSION_ROLES),
     currency: currencyCode,
