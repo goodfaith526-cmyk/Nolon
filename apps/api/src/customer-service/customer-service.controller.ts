@@ -47,6 +47,7 @@ import {
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
+  type CsWebhooksDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -62,6 +63,7 @@ import {
 } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
+import { CsWebhooksService } from './cs-webhooks.service.js';
 import { RequireApiScope } from './api-scopes.js';
 import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
@@ -323,6 +325,17 @@ const createBody = z
   .strict();
 const scopesBody = z.object({ scopes }).strict();
 const servicesBody = z.object({ services }).strict();
+
+/** Plan 09 section 5: an endpoint the key's bot receives notices at (checked by the service). */
+const webhookBody = z
+  .object({
+    url: z.string().trim().min(1).max(500),
+    audience: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/),
+  })
+  .strict();
 
 /**
  * Customer Service API (scope section 17): read-only, customer-safe, with an API key instead of a
@@ -629,7 +642,51 @@ export class CustomerMeController {
 /** The Administrator's Customer Service API keys. */
 @Controller('api-clients')
 export class ApiClientsController {
-  constructor(private readonly clients: ApiClientsService) {}
+  constructor(
+    private readonly clients: ApiClientsService,
+    private readonly webhooks: CsWebhooksService,
+  ) {}
+
+  @Get(':id/webhooks')
+  @RequirePermission('users:view')
+  listWebhooks(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.view(user, id);
+  }
+
+  @Post(':id/webhooks')
+  @RequirePermission('users:create')
+  addWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.create(user, id, parse(webhookBody, body));
+  }
+
+  @Post(':id/webhooks/:endpointId/approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  approveWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.approve(user, id, endpointId);
+  }
+
+  @Post(':id/webhooks/:endpointId/retire')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  retireWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.retire(user, id, endpointId);
+  }
 
   @Get()
   @RequirePermission('users:view')

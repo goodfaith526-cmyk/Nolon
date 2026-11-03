@@ -49,6 +49,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { trackOf } from './customer-stages.js';
+import { CsEventsService } from './cs-events.service.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
@@ -238,6 +239,7 @@ export class BookingRequestsService {
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly stages: CustomerStagesService,
     private readonly customers: CustomersService,
+    private readonly events: CsEventsService,
   ) {}
 
   /** The public tracking page of a shipment, as its QR code opens it; null when not configured. */
@@ -780,6 +782,7 @@ export class BookingRequestsService {
           },
         });
         await audit('CANCELLED', 'cancelReason');
+        await this.events.emitInTx(tx, cancelled, ['request.cancelled'], now);
         return { kind: 'cancelled' as const, row: cancelled };
       }
       if (row.status === 'APPROVED') {
@@ -793,6 +796,7 @@ export class BookingRequestsService {
           },
         });
         await audit('UPDATED', 'cancelRequestReason');
+        await this.events.emitInTx(tx, asked, ['request.cancel_requested'], now);
         return { kind: 'asked' as const, row: asked };
       }
       return { kind: 'decided' as const, row };

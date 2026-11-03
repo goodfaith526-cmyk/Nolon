@@ -1119,3 +1119,92 @@ export interface CsRejectRequest {
   reasonCode: string;
   internalNote?: string | null;
 }
+
+/**
+ * Plan 09 section 5 (N-C5): the notices NOLON sends to a key's approved endpoint, one stream per
+ * request numbered by `sequence`. A notice says only that something changed: the bot reads the
+ * truth with GET /cs/booking-requests/:id.
+ */
+export const CS_WEBHOOK_EVENT_TYPES = [
+  'request.approved',
+  'request.rejected',
+  'request.cancelled',
+  'request.cancel_requested',
+  'request.estimated',
+  'shipment.stage_changed',
+  'shipment.delivered',
+] as const;
+export type CsWebhookEventType = (typeof CS_WEBHOOK_EVENT_TYPES)[number];
+
+/** The JSON body of a notice (the receiver contract of 2026-11-03). */
+export interface CsWebhookEventBody {
+  eventId: string;
+  type: CsWebhookEventType;
+  requestId: string;
+  sequence: number;
+  /** ISO 8601. */
+  occurredAt: string;
+}
+
+/** The audience the agent project's receiver expects, offered when an endpoint is added. */
+export const CS_WEBHOOK_DEFAULT_AUDIENCE = 'erp-agents:nolon';
+
+export const CS_WEBHOOK_ENDPOINT_STATUSES = ['PENDING', 'APPROVED', 'RETIRED'] as const;
+export type CsWebhookEndpointStatus = (typeof CS_WEBHOOK_ENDPOINT_STATUSES)[number];
+
+export const CS_OUTBOX_STATUSES = [
+  'PENDING',
+  'SENDING',
+  'SENT',
+  'FAILED',
+  'CANCELLED_BY_POLICY',
+] as const;
+export type CsOutboxStatus = (typeof CS_OUTBOX_STATUSES)[number];
+
+export interface CsWebhookEndpointDto {
+  id: string;
+  url: string;
+  audience: string;
+  status: CsWebhookEndpointStatus;
+  createdByName: string;
+  createdAt: string;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  retiredAt: string | null;
+  /** A pending endpoint the viewer may approve (someone else added it). */
+  canApprove: boolean;
+}
+
+export interface CsOutboxEventDto {
+  id: string;
+  requestReference: string;
+  sequence: number;
+  type: CsWebhookEventType;
+  status: CsOutboxStatus;
+  attempts: number;
+  occurredAt: string;
+  nextAttemptAt: string;
+  sentAt: string | null;
+  /** The receiver's last HTTP status; null when no answer came (network, timeout, refused). */
+  lastStatus: number | null;
+  lastError: string | null;
+}
+
+/** A key's endpoints and its recent notices, for the Administrator. */
+export interface CsWebhooksDto {
+  /** CS_WEBHOOK_SECRET is set: needed to approve an endpoint. */
+  secretConfigured: boolean;
+  /** CS_WEBHOOK_WORKER_ENABLED: notices are sent. Off: they wait. */
+  workerEnabled: boolean;
+  /** CS_WEBHOOK_ALLOWED_HOSTS: the only host names an endpoint may use. */
+  allowedHosts: string[];
+  endpoints: CsWebhookEndpointDto[];
+  counts: Record<CsOutboxStatus, number>;
+  /** The latest notices, newest first. */
+  recent: CsOutboxEventDto[];
+}
+
+export interface CsWebhookEndpointCreate {
+  url: string;
+  audience: string;
+}

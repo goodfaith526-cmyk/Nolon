@@ -329,4 +329,41 @@ describe('Customer Service booking request cancel (plan 09 section 2)', () => {
     expect(answers.map((a) => a.status)).toEqual([200, 200, 200, 200, 200]);
     expect(await audits(id)).toHaveLength(1);
   });
+
+  it('queues one notice per cancel or cancel ask once the key has an approved endpoint (plan 09 section 5)', async () => {
+    const creator = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const approver = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const quiet = await make(telegramId());
+    const outbox = (requestId: string) =>
+      t.prisma.csOutboxEvent.findMany({ where: { requestId }, orderBy: { sequence: 'asc' } });
+    // No endpoint: nothing is queued.
+    expect(await outbox(quiet)).toEqual([]);
+    await t.prisma.csWebhookEndpoint.create({
+      data: {
+        apiClientId: clientId,
+        url: 'https://agent.example.com/api/v1/whatsapp/erp-events/nolon',
+        audience: 'erp-agents:nolon',
+        status: 'APPROVED',
+        approvedKey: clientId,
+        createdById: creator.id,
+        approvedById: approver.id,
+        approvedAt: new Date(),
+      },
+    });
+    const sender = telegramId();
+    const id = await make(sender);
+    await cancel(id, { subjectId: sender }).expect(200);
+    await cancel(id, { subjectId: sender }).expect(200);
+    expect((await outbox(id)).map((e) => [e.sequence, e.type, e.status])).toEqual([
+      [1, 'request.cancelled', 'PENDING'],
+    ]);
+    const askedBy = telegramId();
+    const asked = await make(askedBy);
+    await t.prisma.csBookingRequest.update({ where: { id: asked }, data: { status: 'APPROVED' } });
+    await cancel(asked, { subjectId: askedBy }).expect(409);
+    await cancel(asked, { subjectId: askedBy }).expect(409);
+    expect((await outbox(asked)).map((e) => [e.sequence, e.type])).toEqual([
+      [1, 'request.cancel_requested'],
+    ]);
+  });
 });
