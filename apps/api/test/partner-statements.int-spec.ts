@@ -470,6 +470,48 @@ describe('partner statements and their supplier bill, rule 16a (plan 07, PR-7c)'
     expect(await accrued(b, 'USD')).toEqual(['30', '30']);
   });
 
+  it('settles a positive statement whose old supplier nets below zero (F168-3)', async () => {
+    // A's 30 is settled, then a credit note takes 7.5 back from A; the partner moves to B, which
+    // earns 30. The statement of 22.5 clears A's -7.5 on the credit side and B's 30 on the debit.
+    const partner = await outlet();
+    const a = partner.supplierId ?? '';
+    const first = await shipment(partner.id);
+    const firstInvoice = await invoice(first);
+    const settledFirst = (await makeStatement(partner.id).expect(201)).body as PartnerStatementDto;
+    const firstBill =
+      ((await bill(settledFirst.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+    await r.post(`/supplier-bills/${firstBill}/approve`, cookies.financePts, {}).expect(200);
+    await credit(firstInvoice, '75');
+    expect(await accrued(a, 'USD')).toEqual(['-7.5', '-7.5']);
+    const b = (await supplier()).id;
+    await r.patch(`/partners/${partner.id}`, cookies.admin, { supplierId: b }).expect(200);
+    await invoice(await shipment(partner.id));
+    const statement = (await makeStatement(partner.id).expect(201)).body as PartnerStatementDto;
+    expect(statement.total).toBe('22.5');
+    const billId =
+      ((await bill(statement.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+    await r.post(`/supplier-bills/${billId}/approve`, cookies.financePts, {}).expect(200);
+    expect(await accrued(a, 'USD')).toEqual(['0', '0']);
+    expect(await accrued(b, 'USD')).toEqual(['0', '0']);
+    const approved = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } });
+    const lines = await t.prisma.journalLine.findMany({
+      where: { entryId: approved.journalEntryId ?? '' },
+    });
+    expect(lines.map((l) => [l.supplierId, l.debit.toFixed(), l.credit.toFixed()]).sort()).toEqual(
+      [
+        [a, '0', '7.5'],
+        [b, '30', '0'],
+        [b, '0', '22.5'],
+      ].sort(),
+    );
+    // Cancelling the bill gives each supplier back what it carried.
+    await r
+      .post(`/supplier-bills/${billId}/cancel`, cookies.financePts, { reason: 'Wrong period' })
+      .expect(200);
+    expect(await accrued(a, 'USD')).toEqual(['-7.5', '-7.5']);
+    expect(await accrued(b, 'USD')).toEqual(['30', '30']);
+  });
+
   it('clears rows posted before the partner had a supplier on no supplier (F168-1)', async () => {
     const partner = await outlet(false);
     const id = await shipment(partner.id);
