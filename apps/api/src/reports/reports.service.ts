@@ -5,6 +5,7 @@ import {
   type ApAgingDto,
   type ArAgingDto,
   type BalanceSheetDto,
+  type BreakEvenDto,
   type ExpectedGapDto,
   type CashMovementDto,
   type GeneralLedgerDto,
@@ -55,6 +56,7 @@ import {
   showDays,
   totalOf,
 } from './profitability.js';
+import { breakEven } from './break-even.js';
 import { unitQuantity } from '../billing/invoice-suggestion.js';
 import {
   type ExportContext,
@@ -229,6 +231,26 @@ export class ReportsService {
           : null,
       },
     };
+  }
+
+  /**
+   * Break-even of a period (plan 07, z5), for the management dashboard: the profitability
+   * report's shipments (contribution margin and its incomplete marks) and the expense lines that
+   * carry no shipment (fixed expenses), in the same branches. Planning only.
+   */
+  async breakEven(user: AuthUser, q: PeriodQuery): Promise<BreakEvenDto> {
+    const [report, fixedUsd] = await Promise.all([
+      this.shipmentProfitability(user, q),
+      this.ledger.fixedExpenses(user, q, q.branchId),
+    ]);
+    return breakEven(
+      report.shipments.map((s) => ({
+        revenueUsd: dec(s.revenueUsd),
+        costUsd: dec(s.costUsd),
+        incomplete: s.incompleteReasons.length > 0,
+      })),
+      fixedUsd,
+    );
   }
 
   /**

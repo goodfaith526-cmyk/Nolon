@@ -251,6 +251,14 @@ export function SupplierBillDetail({ id }: { id: string }) {
                           <span dir="ltr">{l.tripNumber}</span>
                         ))}
                       {l.kind === 'EXPENSE' && <span dir="ltr">{l.expenseCategoryCode}</span>}
+                      {l.kind === 'COMMISSION' &&
+                        (l.statementId && can(me, 'partner_commissions:view') ? (
+                          <Link href={`/partner-statements/${l.statementId}`} dir="ltr">
+                            {l.description}
+                          </Link>
+                        ) : (
+                          <span dir="ltr">{l.description}</span>
+                        ))}
                       {l.kind === 'CONSOLIDATION' && (
                         <>
                           {can(me, 'consolidation:view') && l.consolidationId ? (

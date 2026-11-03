@@ -44,5 +44,6 @@ import { WarehouseStockController } from './warehouse-stock.controller.js';
   ],
   controllers: [ReportsController, OperationalReportsController, WarehouseStockController],
   providers: [ReportsService, OperationalReportsService],
+  exports: [ReportsService],
 })
 export class ReportsModule {}

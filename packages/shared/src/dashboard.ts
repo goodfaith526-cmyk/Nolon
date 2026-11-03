@@ -93,6 +93,26 @@ export interface ManagementDashboardDto {
   finance: DashboardFinanceDto | null;
   /** The five customers with the most approved invoice revenue in the period. */
   topCustomers: DashboardTopCustomerDto[] | null;
+  /** Break-even for the period (plan 07, z5), with `financial_reports:view`; planning only. */
+  breakEven: BreakEvenDto | null;
+}
+
+/**
+ * Break-even of a period (plan 07, z5). Planning only: it posts nothing and is not a financial
+ * report. Contribution margin = revenue - cost of the lines carrying a shipment (the
+ * profitability report's figures); fixed expenses = expense lines carrying none.
+ */
+export interface BreakEvenDto {
+  contributionMarginUsd: DecimalString;
+  /** Shipments with revenue in the period: the average margin's divisor. */
+  shipmentsWithRevenue: number;
+  /** Contribution margin / shipments with revenue, to 2 places; null without such shipments. */
+  averageMarginUsd: DecimalString | null;
+  fixedExpensesUsd: DecimalString;
+  /** Fixed expenses / average margin, rounded up; null when the average margin is not positive. */
+  breakEvenShipments: number | null;
+  /** Shipments of the period whose figures are not final yet (PR-5): the result carries a mark. */
+  incompleteShipments: number;
 }
 
 export interface DashboardShipmentRefDto {

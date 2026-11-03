@@ -803,6 +803,8 @@ export const FORM_REFUSALS = [
   // reason to close it without charges was given: params `shipment` and `drafts` (a count).
   'SHIPMENT_CLOSE_GOODS_ON_HAND',
   'SHIPMENT_CLOSE_NOT_INVOICED',
+  // A shipment with a distributor and no live full proof of delivery (plan 07, 6): `shipment`.
+  'SHIPMENT_CLOSE_NO_POD',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',
@@ -913,6 +915,13 @@ export const FORM_REFUSALS = [
   'COMMISSION_AMOUNT_INVALID',
   'COMMISSION_NOT_PARTNER',
   'COMMISSION_NO_FX_RATE',
+  // Plan 07, 5: partner statements and the supplier bill made from one.
+  'STATEMENT_NOT_POSITIVE',
+  'PARTNER_NO_SUPPLIER',
+  'STATEMENT_ALREADY_BILLED',
+  'STATEMENT_BILLED',
+  'BILL_FROM_STATEMENT',
+  'STATEMENT_BILL_MISMATCH',
   'PROFILE_NAME_REQUIRED',
   'PROFILE_REVIEW_REQUIRED',
   'PROFILE_VERSION_CONFLICT',

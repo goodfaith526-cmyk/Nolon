@@ -224,6 +224,8 @@ export interface ShipmentCloseCheckDto {
   goodsOnHand: { warehouseCode: string; packages: number }[];
   /** An approved invoice bills it (not fully credited, or paid). */
   invoiced: boolean;
+  /** It has a distributor and no live full proof of delivery: it cannot close (plan 07, 6). */
+  podMissing: boolean;
 }
 
 /** A branch named on a shipment (one sharing it, or one it may be shared with). */

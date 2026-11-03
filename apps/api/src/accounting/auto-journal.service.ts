@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AccountsService } from './accounts.service.js';
 import { type LineSpec, USD_DECIMALS, splitAmount, toUsd } from './journal-math.js';
 import { JournalService } from './journal.service.js';
+import { sum } from './report-math.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -129,6 +130,22 @@ export type BillLineForPosting =
       /** The trip's rule 11 entry, which the line clears. */
       accrualEntryId: string;
       amount: Decimal;
+    }
+  | {
+      /** Rule 16a: a partner statement's total, clearing its rows' accrued commissions. */
+      kind: 'COMMISSION';
+      statementId: string;
+      statementNumber: string;
+      amount: Decimal;
+      /** What its rows carry in USD: what the line clears from ACCRUED_COMMISSIONS. */
+      totalUsd: Decimal;
+      /** Per shipment, the USD its rows net to: the weights of any exchange difference. */
+      shipments: readonly { shipmentId: string; netUsd: Decimal }[];
+      /**
+       * Its rows: the rule 16 entry each was posted with, and what it carries in the currency and
+       * in USD. The debit clears each on the supplier its entry named (F168-1).
+       */
+      rows: readonly { entryId: string; amount: Decimal; amountUsd: Decimal }[];
     };
 
 export interface SupplierBillForPosting {
@@ -792,7 +809,7 @@ export class AutoJournalService {
   }
 
   /**
-   * Rules 7, 8, 11a and 12, supplier bill approved: credit the payable with the total (supplier
+   * Rules 7, 8, 11a, 12 and 16a, supplier bill approved: credit the payable with the total (supplier
    * dimension) and debit, per line,
    * - a shipment cost: the charge type's cost account (the reimbursable clearing account for a
    *   reimbursable charge), with the shipment;
@@ -802,7 +819,9 @@ export class AutoJournalService {
    * - a carrier's trip: the accrued transport account, with exactly what the trip's rule 11
    *   entry accrued there (amount, rate and USD value), so the accrual is cleared. Any USD
    *   difference between the billed and the accrued cost goes to the transport cost account the
-   *   accrual debited, shared by the trip's shipments as the accrual was.
+   *   accrual debited, shared by the trip's shipments as the accrual was;
+   * - a partner statement (rule 16a): the accrued partner commissions, with what its rows carry
+   *   in USD; the difference to partner commissions, by shipment.
    * Returns the payable account used, which the bill keeps: its payments clear it there.
    */
   async supplierBillApproved(
@@ -849,6 +868,8 @@ export class AutoJournalService {
           supplierId: bill.supplierId,
           description: line.description,
         });
+      } else if (line.kind === 'COMMISSION') {
+        lines.push(...(await this.statementClearingLines(tx, bill, line)));
       } else {
         lines.push(...(await this.accrualClearingLines(tx, bill, line)));
       }
@@ -931,6 +952,145 @@ export class AutoJournalService {
       },
       lines,
     );
+  }
+
+  /**
+   * Rule 16a: debit ACCRUED_COMMISSIONS with the statement's total at exactly the USD value its
+   * rows carry, so the partner's accrual in the branch clears in the currency and in USD. The USD
+   * difference at the bill's rate goes to the partner commissions account, shared by the shipments
+   * whose rows net above zero in proportion to that net (plan 07, 4.7, F149-5); a share of zero
+   * gets no line.
+   */
+  private async statementClearingLines(
+    tx: Tx,
+    bill: SupplierBillForPosting,
+    line: Extract<BillLineForPosting, { kind: 'COMMISSION' }>,
+  ): Promise<LineSpec[]> {
+    // F168-1: rule 16 credited the supplier the partner was linked to when each row was posted (or
+    // none), and that link can change since. F168-3/F168-4: a supplier's rows can net below zero,
+    // and a row can move the currency and USD opposite ways. So each row is cleared exactly as rule
+    // 16 posted it (commissionLines: a pair in the currency carrying both when they go the same
+    // way; the currency at 0 USD and a USD pair when they go opposite ways; USD alone for a USD
+    // difference), on the supplier its entry named, then added up per supplier, currency and side.
+    // Every supplier's accrued balance returns to zero in each currency and in USD; the payable is
+    // the bill's supplier.
+    const supplierOf = await this.entrySuppliers(
+      tx,
+      line.rows.map((r) => r.entryId),
+    );
+    const accrued = await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS');
+    const parts = new Map<
+      string,
+      {
+        supplierId: string | null;
+        currency: string;
+        side: 'DEBIT' | 'CREDIT';
+        amount: Decimal;
+        amountUsd: Decimal;
+      }
+    >();
+    const add = (
+      supplierId: string | null,
+      currency: string,
+      amount: Decimal,
+      amountUsd: Decimal,
+    ) => {
+      // A row that credited accrued commissions (its amount above zero) is cleared by a debit.
+      const side = (amount.isZero() ? amountUsd : amount).gt(0) ? 'DEBIT' : 'CREDIT';
+      const key = `${supplierId ?? ''}|${currency}|${side}`;
+      const part = parts.get(key) ?? { supplierId, currency, side, amount: ZERO, amountUsd: ZERO };
+      parts.set(key, {
+        ...part,
+        amount: part.amount.plus(amount.abs()),
+        amountUsd: part.amountUsd.plus(amountUsd.abs()),
+      });
+    };
+    for (const row of line.rows) {
+      const supplierId = supplierOf.get(row.entryId);
+      if (supplierId === undefined) throw new Error(`No entry ${row.entryId}`);
+      const { amount, amountUsd } = row;
+      if (amount.isZero() || bill.currency === BASE_CURRENCY) {
+        add(
+          supplierId,
+          BASE_CURRENCY,
+          amount.isZero() ? amountUsd : amount,
+          amount.isZero() ? amountUsd : amount,
+        );
+      } else if (!amountUsd.isZero() && amount.gt(0) === amountUsd.gt(0)) {
+        add(supplierId, bill.currency, amount, amountUsd);
+      } else {
+        add(supplierId, bill.currency, amount, ZERO);
+        if (!amountUsd.isZero()) add(supplierId, BASE_CURRENCY, amountUsd, amountUsd);
+      }
+    }
+    const lines: LineSpec[] = [...parts.values()]
+      .filter((p) => p.amount.gt(0))
+      .sort((a, b) =>
+        `${a.supplierId ?? '~'}|${a.currency}|${a.side}`.localeCompare(
+          `${b.supplierId ?? '~'}|${b.currency}|${b.side}`,
+        ),
+      )
+      .map((p) => ({
+        accountId: accrued,
+        branchId: bill.branchId,
+        currency: p.currency,
+        fxRate: p.currency === BASE_CURRENCY ? dec(1) : bill.fxRate,
+        side: p.side,
+        amount: p.amount,
+        amountUsd: p.amountUsd,
+        supplierId: p.supplierId,
+        description: line.statementNumber,
+      }));
+    const signed = (l: LineSpec, v: Decimal) => (l.side === 'DEBIT' ? v : v.neg());
+    const native = sum(
+      lines.filter((l) => l.currency === bill.currency).map((l) => signed(l, l.amount)),
+    );
+    const usd = sum(lines.map((l) => signed(l, l.amountUsd ?? ZERO)));
+    if ((bill.currency !== BASE_CURRENCY && !native.eq(line.amount)) || !usd.eq(line.totalUsd)) {
+      throw new Error(`Statement ${line.statementNumber}: its rows do not add up to the bill line`);
+    }
+    const difference = toUsd(line.amount, bill.fxRate, bill.currency).minus(line.totalUsd);
+    if (difference.isZero()) return lines;
+    const weights = line.shipments.map((s) => (s.netUsd.gt(0) ? s.netUsd : ZERO));
+    const shares = splitAmount(difference.abs(), weights, USD_DECIMALS);
+    const cost = await this.accounts.roleAccount(tx, 'COMMISSION_COST');
+    line.shipments.forEach((shipment, index) => {
+      const amount = shares[index] ?? ZERO;
+      if (amount.isZero()) return;
+      lines.push({
+        accountId: cost,
+        branchId: bill.branchId,
+        currency: BASE_CURRENCY,
+        fxRate: dec(1),
+        side: difference.gt(0) ? 'DEBIT' : 'CREDIT',
+        amount,
+        amountUsd: amount,
+        shipmentId: shipment.shipmentId,
+        supplierId: bill.supplierId,
+        description: `${line.statementNumber}: billed commission difference`,
+      });
+    });
+    return lines;
+  }
+
+  /** The supplier each entry named (null: none); every line of a rule 16 entry names the same. */
+  private async entrySuppliers(
+    tx: Tx,
+    entryIds: readonly string[],
+  ): Promise<Map<string, string | null>> {
+    const named = await tx.journalLine.findMany({
+      where: { entryId: { in: [...new Set(entryIds)] } },
+      select: { entryId: true, supplierId: true },
+      distinct: ['entryId', 'supplierId'],
+    });
+    const supplierOf = new Map<string, string | null>();
+    for (const n of named) {
+      if (supplierOf.has(n.entryId) && supplierOf.get(n.entryId) !== n.supplierId) {
+        throw new Error(`Entry ${n.entryId} names more than one supplier`);
+      }
+      supplierOf.set(n.entryId, n.supplierId);
+    }
+    return supplierOf;
   }
 
   /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */
