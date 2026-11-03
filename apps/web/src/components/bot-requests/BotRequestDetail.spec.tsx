@@ -52,6 +52,7 @@ const base: CsBookingRequestStaffDto = {
   cancelledAt: null,
   cancelReason: null,
   cancelRequest: null,
+  instantAccount: null,
   actions: { canRoute: true, canReject: true, canApprove: false, canCloseCancelRequest: false },
 };
 
@@ -206,5 +207,22 @@ describe('BotRequestDetail', () => {
       path: '/cs-booking-requests/r1/cancel-request/close',
       init: { method: 'POST', body: { version: 3 } },
     });
+  });
+
+  it('says whether the instant account was made, or why it waits for staff', async () => {
+    const made = await show({
+      ...base,
+      instantAccount: { outcome: 'CREATED', customerId: 'c-9' },
+    });
+    const link = [...made.querySelectorAll('a')].find(
+      (a) => a.textContent === 'instantAccountMade',
+    );
+    expect(link?.getAttribute('href')).toContain('/customers/c-9');
+    const waits = await show({
+      ...base,
+      instantAccount: { outcome: 'NAME_MISSING', customerId: null },
+    });
+    expect(waits.textContent).toContain('instantAccountWaits');
+    expect(waits.textContent).not.toContain('instantAccountMade');
   });
 });

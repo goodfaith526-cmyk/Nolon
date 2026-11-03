@@ -754,45 +754,50 @@ enum CustomerKind {
 
 /// A NOLON customer. Branch-owned: staff see the customers of their branches only.
 model Customer {
-  profileId           String?          @map("profile_id") @db.Uuid
-  profile             CustomerProfile? @relation(fields: [profileId], references: [id], onDelete: Restrict)
-  id                  String           @id @default(uuid()) @db.Uuid
+  profileId             String?          @map("profile_id") @db.Uuid
+  profile               CustomerProfile? @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  id                    String           @id @default(uuid()) @db.Uuid
   /// NOL-CUS-000001
-  number              String           @unique @db.VarChar(30)
-  branchId            String           @map("branch_id") @db.Uuid
-  kind                CustomerKind
-  name                String           @db.VarChar(200)
-  companyName         String?          @map("company_name") @db.VarChar(200)
+  number                String           @unique @db.VarChar(30)
+  branchId              String           @map("branch_id") @db.Uuid
+  kind                  CustomerKind
+  name                  String           @db.VarChar(200)
+  companyName           String?          @map("company_name") @db.VarChar(200)
   /// E.164, e.g. +249912345678.
-  phone               String?          @db.VarChar(20)
-  whatsapp            String?          @db.VarChar(20)
-  email               String?          @db.VarChar(254)
-  countryCode         String?          @map("country_code") @db.Char(2)
-  city                String?          @db.VarChar(100)
-  address             String?
-  taxNumber           String?          @map("tax_number") @db.VarChar(50)
-  preferredCurrency   String?          @map("preferred_currency") @db.Char(3)
-  preferredLocale     String           @default("ar") @map("preferred_locale") @db.VarChar(5)
-  paymentTermsDays    Int              @default(0) @map("payment_terms_days")
-  creditLimit         Decimal?         @map("credit_limit") @db.Decimal(18, 4)
-  creditLimitCurrency String?          @map("credit_limit_currency") @db.Char(3)
-  notes               String?
-  isActive            Boolean          @default(true) @map("is_active")
+  phone                 String?          @db.VarChar(20)
+  whatsapp              String?          @db.VarChar(20)
+  email                 String?          @db.VarChar(254)
+  countryCode           String?          @map("country_code") @db.Char(2)
+  city                  String?          @db.VarChar(100)
+  address               String?
+  taxNumber             String?          @map("tax_number") @db.VarChar(50)
+  preferredCurrency     String?          @map("preferred_currency") @db.Char(3)
+  preferredLocale       String           @default("ar") @map("preferred_locale") @db.VarChar(5)
+  paymentTermsDays      Int              @default(0) @map("payment_terms_days")
+  creditLimit           Decimal?         @map("credit_limit") @db.Decimal(18, 4)
+  creditLimitCurrency   String?          @map("credit_limit_currency") @db.Char(3)
+  notes                 String?
+  isActive              Boolean          @default(true) @map("is_active")
   /// The partner sales outlet that brought the customer (plan 3.3); Outlet Staff see only theirs.
-  acquiredViaOutletId String?          @map("acquired_via_outlet_id") @db.Uuid
+  acquiredViaOutletId   String?          @map("acquired_via_outlet_id") @db.Uuid
   /// The customer's segment (plan 3.3), from the customer_segments master.
-  segmentCode         String?          @map("segment_code") @db.VarChar(20)
-  createdById         String           @map("created_by_id") @db.Uuid
-  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  segmentCode           String?          @map("segment_code") @db.VarChar(20)
+  /// The staff member who made it; null only for an account the shipping bot's key made from a
+  /// signed request (createdViaApiClientId), never both null (customers_created_by_check).
+  createdById           String?          @map("created_by_id") @db.Uuid
+  createdViaApiClientId String?          @map("created_via_api_client_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch                 Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  acquiredViaOutlet      Partner?          @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
-  segment                CustomerSegment?  @relation(fields: [segmentCode], references: [code], onDelete: Restrict)
-  preferredCurrencyRef   Currency?         @relation("CustomerPreferredCurrency", fields: [preferredCurrency], references: [code], onDelete: Restrict)
-  creditLimitCurrencyRef Currency?         @relation("CustomerCreditLimitCurrency", fields: [creditLimitCurrency], references: [code], onDelete: Restrict)
-  createdBy              User              @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  branch                 Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdViaApiClient    ApiClient?         @relation("CustomerCreatedViaApiClient", fields: [createdViaApiClientId], references: [id], onDelete: Restrict)
+  acquiredViaOutlet      Partner?           @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
+  segment                CustomerSegment?   @relation(fields: [segmentCode], references: [code], onDelete: Restrict)
+  preferredCurrencyRef   Currency?          @relation("CustomerPreferredCurrency", fields: [preferredCurrency], references: [code], onDelete: Restrict)
+  creditLimitCurrencyRef Currency?          @relation("CustomerCreditLimitCurrency", fields: [creditLimitCurrency], references: [code], onDelete: Restrict)
+  createdBy              User?              @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   contacts               CustomerContact[]
+  csInstantRequests      CsBookingRequest[] @relation("CsRequestInstantCustomer")
   parties                Party[]
   quotations             Quotation[]
   bookings               Booking[]
@@ -3487,6 +3492,7 @@ model ApiClient {
   accessEvents    CsAccessEvent[]
   quotes          CsQuote[]
   bookingRequests CsBookingRequest[]
+  customersMade   Customer[]         @relation("CustomerCreatedViaApiClient")
 
   @@map("api_clients")
 }
@@ -3639,6 +3645,20 @@ enum CsBookingRequestStatus {
   @@map("cs_booking_request_status")
 }
 
+/// What happened to the instant branch account when a signed bot request was saved (owner's spec
+/// 2026-11-03). A reason other than CREATED/REUSED leaves the account to staff on approval.
+enum CsInstantAccount {
+  CREATED
+  REUSED
+  PROFILE_REVIEW
+  NAME_MISSING
+  PROFILE_CHANGED
+  PHONE_IN_USE
+  ACCOUNT_INACTIVE
+
+  @@map("cs_instant_account")
+}
+
 /// How the goods reach NOLON: picked up from the sender, or brought to the branch.
 enum CsHandover {
   PICKUP
@@ -3725,6 +3745,11 @@ model CsBookingRequest {
   cancelRequestReason     String?                @map("cancel_request_reason") @db.VarChar(300)
   cancelRequestClosedAt   DateTime?              @map("cancel_request_closed_at") @db.Timestamptz(3)
   cancelRequestClosedById String?                @map("cancel_request_closed_by_id") @db.Uuid
+  /// The instant branch account (CS_INSTANT_CUSTOMER_ENABLED): what happened when the signed
+  /// request was saved, and the account made or reused. Null: not tried (flag off, no binding,
+  /// awaiting routing).
+  instantAccount          CsInstantAccount?      @map("instant_account")
+  instantCustomerId       String?                @map("instant_customer_id") @db.Uuid
   version                 Int                    @default(1)
   expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3740,6 +3765,7 @@ model CsBookingRequest {
   routedBy         User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
   decidedBy        User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
   cancelClosedBy   User?           @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
+  instantCustomer  Customer?       @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
   rejectReason     CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
   booking          Booking?        @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   payCurrency      Currency?       @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)

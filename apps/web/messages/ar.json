@@ -3098,7 +3098,17 @@
     "stageMapping": "أي حالة شحنة بتظهر كأي مرحلة",
     "shipmentStatus": "حالة الشحنة",
     "customerStage": "المرحلة عند الزبون",
-    "stageToStaff": "— بلا مرحلة: تواصل مع الموظف —"
+    "stageToStaff": "— بلا مرحلة: تواصل مع الموظف —",
+    "instantAccount": "حساب العميل",
+    "instantAccountMade": "الحساب اتعمل",
+    "instantAccountWaits": "الحساب منتظر الموظف ({reason})",
+    "instantAccount_CREATED": "اتعمل",
+    "instantAccount_REUSED": "موجود من قبل",
+    "instantAccount_PROFILE_REVIEW": "بيانات العميل فيها اقتراحات محتاجة مراجعة",
+    "instantAccount_NAME_MISSING": "الاسم ناقص",
+    "instantAccount_PROFILE_CHANGED": "ملف العميل اتغيّر بعد ما البوت شافو",
+    "instantAccount_PHONE_IN_USE": "الرقم مسجّل لحساب تاني في الفرع",
+    "instantAccount_ACCOUNT_INACTIVE": "حساب العميل في الفرع موقوف"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

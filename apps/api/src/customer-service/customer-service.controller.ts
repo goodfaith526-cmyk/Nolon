@@ -140,6 +140,7 @@ const requestBody = z
   .object({
     profileId: z.uuid().optional(),
     conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     sender: sender.optional(),
     contactPhone: phone.optional(),
     originId: z.uuid(),
@@ -175,6 +176,7 @@ const namesBody = z
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
     profileId: z.uuid().optional(),
     conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     channel: z.enum(CS_SENDER_CHANNELS),
     origin: botName,
     destination: botName,
@@ -342,7 +344,7 @@ export class BookingRequestsController {
     const byNames = typeof body === 'object' && body !== null && 'channel' in body;
     const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
     let binding;
-    if (input.profileId || input.conversationId) {
+    if (input.profileId || input.conversationId || input.profileVersion !== undefined) {
       if (!input.profileId || !input.conversationId || caller.kind !== 'key')
         identityError(400, 'INVALID_INPUT');
       const envelope = this.identityAuth.verify(caller.client.id, req);
@@ -357,6 +359,7 @@ export class BookingRequestsController {
       binding = {
         profileId: input.profileId,
         conversationId: input.conversationId,
+        profileVersion: input.profileVersion,
         context: envelope.context,
       };
     }

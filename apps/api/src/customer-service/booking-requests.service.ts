@@ -30,6 +30,7 @@ import { todayIn, toDbDate } from '../common/dates.js';
 import { dec } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
+import { CustomersService } from '../customers/customers.service.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -169,6 +170,7 @@ export class BookingRequestsService {
     private readonly audit: AuditService,
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly stages: CustomerStagesService,
+    private readonly customers: CustomersService,
   ) {}
 
   async create(
@@ -384,7 +386,9 @@ export class BookingRequestsService {
     const apiClientId = caller.client.id;
     return this.prisma.$transaction(async (tx) => {
       const { branchIds, services } = await currentKey(tx, caller);
-      if (binding) await this.identities.requireBookingBindingInTx(tx, apiClientId, binding);
+      const profile = binding
+        ? await this.identities.requireBookingBindingInTx(tx, apiClientId, binding)
+        : null;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
@@ -442,7 +446,29 @@ export class BookingRequestsService {
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
         },
       });
-      return { created: true, row };
+      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
+      // reuses the profile's branch account in this transaction, or says why staff will.
+      if (
+        !this.env.CS_INSTANT_CUSTOMER_ENABLED ||
+        !profile ||
+        row.status !== 'PENDING' ||
+        row.branchId === null
+      )
+        return { created: true, row };
+      const account = await this.customers.botAccountInTx(tx, {
+        profile,
+        expectedVersion: binding?.profileVersion,
+        branchId: row.branchId,
+        apiClientId,
+      });
+      if (!account) return { created: true, row };
+      return {
+        created: true,
+        row: await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: { instantAccount: account.outcome, instantCustomerId: account.customerId },
+        }),
+      };
     });
   }
 

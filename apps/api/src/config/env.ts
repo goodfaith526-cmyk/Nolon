@@ -98,6 +98,15 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  /**
+   * The owner's instant account (2026-11-03): a signed bot request for a known branch makes or
+   * reuses the profile's branch account when it is saved. Off: the account waits for approval, as
+   * before.
+   */
+  CS_INSTANT_CUSTOMER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

@@ -246,6 +246,22 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.instantAccount && (
+          <>
+            <dt>{t('instantAccount')}</dt>
+            <dd>
+              {r.instantAccount.customerId ? (
+                <Link href={`/customers/${r.instantAccount.customerId}`}>
+                  {t('instantAccountMade')}
+                </Link>
+              ) : (
+                t('instantAccountWaits', {
+                  reason: t(`instantAccount_${r.instantAccount.outcome}`),
+                })
+              )}
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>
