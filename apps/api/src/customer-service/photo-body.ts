@@ -9,7 +9,7 @@ const DISCARD_MAX_MS = 30_000;
 /**
  * Plan 09 section 12: a photo comes as the raw request body (one image, no multipart), so the
  * signed channel identity covers its exact bytes. Read here for that path only, up to 10 MB (413
- * beyond, the rest discarded), into `rawBody` and `body`; every other path keeps the JSON
+ * beyond, once the rest is discarded), into `rawBody` and `body`; every other path keeps the JSON
  * parser and its limit. The image type is checked from the bytes by the service.
  */
 export function photoBody(req: Request, res: Response, next: NextFunction): void {
@@ -17,33 +17,46 @@ export function photoBody(req: Request, res: Response, next: NextFunction): void
     next();
     return;
   }
-  // Codex F171-3: the 413 is answered first and the rest of the body read and discarded, so the
-  // client gets the answer rather than a reset socket; the connection then closes. Discarding is
-  // bounded: past DISCARD_MAX_BYTES or DISCARD_MAX_MS the socket is closed anyway.
+  // Codex F171-3: an oversize body is read to its end and discarded, and only then answered 413
+  // (with the connection closing), so a client still sending gets the answer, never a reset
+  // socket. Discarding is bounded: a declared length past DISCARD_MAX_BYTES is answered at once,
+  // and past DISCARD_MAX_BYTES read or DISCARD_MAX_MS the socket is closed anyway.
   const chunks: Buffer[] = [];
   let stopped = false;
-  const tooLarge = () => {
-    stopped = true;
-    chunks.length = 0;
+  const answer = () => {
+    if (res.headersSent) return;
     res.setHeader('Connection', 'close');
     res.status(413).json({
       statusCode: 413,
       code: 'PHOTO_TOO_LARGE',
       message: 'A photo is at most 10 MB',
     });
-    let discarded = 0;
+  };
+  const tooLarge = (read: number) => {
+    stopped = true;
+    chunks.length = 0;
+    let discarded = read;
     const timer = setTimeout(() => req.destroy(), DISCARD_MAX_MS);
     timer.unref();
     req.on('data', (chunk: Buffer) => {
       discarded += chunk.length;
       if (discarded > DISCARD_MAX_BYTES) req.destroy();
     });
+    req.on('end', () => {
+      clearTimeout(timer);
+      answer();
+    });
     req.on('close', () => clearTimeout(timer));
     req.resume();
   };
   const declared = Number(req.headers['content-length'] ?? 0);
+  if (declared > DISCARD_MAX_BYTES) {
+    answer();
+    req.destroy();
+    return;
+  }
   if (declared > CS_REQUEST_PHOTO_MAX_BYTES) {
-    tooLarge();
+    tooLarge(0);
     return;
   }
   let size = 0;
@@ -51,7 +64,7 @@ export function photoBody(req: Request, res: Response, next: NextFunction): void
     if (stopped) return;
     size += chunk.length;
     if (size > CS_REQUEST_PHOTO_MAX_BYTES) {
-      tooLarge();
+      tooLarge(size);
       return;
     }
     chunks.push(chunk);

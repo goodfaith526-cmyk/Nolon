@@ -559,7 +559,7 @@ export interface CsBookingRequestDto {
   /** Plan 09 section 11: where to bring the shipment, once approved; null before or when none. */
   dropOff: CsDropOffDto | null;
   /** Plan 09 section 12: staff's estimate, while the request is `estimated` only; else null. */
-  estimate: CsEstimateDto | null;
+  estimate: CsBotEstimateDto | null;
   /** Plan 09 section 12: how many photos the customer sent (at most CS_REQUEST_PHOTOS_MAX). */
   photoCount: number;
   /**
@@ -585,6 +585,23 @@ export interface CsEstimateDto {
   note: { ar: string; en: string } | null;
   validUntil: string;
 }
+
+/**
+ * Codex F171-2: what an estimate prices, for the bot to tell the customer before they accept it:
+ * the route (names in both languages), mode and load type staff set, and the services it covers
+ * (the request's own). The items are the customer's own, as sent. Null only for an estimate made
+ * before terms were recorded, which approval refuses.
+ */
+export interface CsEstimateTermsDto {
+  origin: { code: string; ar: string; en: string };
+  destination: { code: string; ar: string; en: string };
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  services: BookingService[];
+}
+
+/** The estimate as the bot reads it: bound to `version`, with the terms it prices. */
+export type CsBotEstimateDto = CsEstimateDto & { terms: CsEstimateTermsDto | null };
 
 /** POST /cs/booking-requests/:id/accept-estimate: the owner accepts the estimate it was shown. */
 export interface CsAcceptEstimateRequest {

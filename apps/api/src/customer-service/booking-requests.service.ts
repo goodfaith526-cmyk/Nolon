@@ -1,5 +1,5 @@
 import { dropOffDto, dropOffSelect } from './drop-off.js';
-import { estimateOf, imageTypeOf } from './estimates.js';
+import { estimateOf, imageTypeOf, storedTerms } from './estimates.js';
 import {
   CustomerIdentityService,
   type ProfileBookingBinding,
@@ -19,7 +19,9 @@ import {
   CS_OTHER_KIND,
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
+  type BookingService,
   type CsBookingRequestByNames,
+  type CsBotEstimateDto,
   type CsBookingRequestCancelled,
   type CsCancelRequestDto,
   type CsBookingRequestCreate,
@@ -675,13 +677,47 @@ export class BookingRequestsService {
           : null,
       dropOff: row.status === 'APPROVED' ? dropOffDto(row.dropOff) : null,
       // Plan 09 section 12: the estimate awaiting the customer only (an expired one is not shown).
-      estimate: stateOf(row) === 'estimated' ? estimateOf(row) : null,
+      estimate: stateOf(row) === 'estimated' ? await this.botEstimateOf(row) : null,
       photoCount: row._count.photos,
       ...track,
       // Plan 09 amendment 4: the public tracking link the shipment's QR opens, once it exists.
       shipment:
         track.shipment && shipment
           ? { ...track.shipment, trackingUrl: this.trackingUrl(shipment.trackingToken) }
+          : null,
+    };
+  }
+
+  /**
+   * Codex F171-2: the estimate with the terms it prices, for the customer to see before accepting
+   * it: the route by its names, as the locations are now (a name is shown, never decided on).
+   */
+  private async botEstimateOf(row: CsBookingRequest): Promise<CsBotEstimateDto | null> {
+    const estimate = estimateOf(row);
+    if (!estimate) return null;
+    const terms = storedTerms(row.estimateTerms);
+    if (!terms) return { ...estimate, terms: null };
+    const places = await this.prisma.location.findMany({
+      where: { id: { in: [terms.originId, terms.destinationId] } },
+      select: { id: true, code: true, nameAr: true, nameEn: true },
+    });
+    const place = (id: string) => {
+      const l = places.find((p) => p.id === id);
+      return l ? { code: l.code, ar: l.nameAr, en: l.nameEn } : null;
+    };
+    const origin = place(terms.originId);
+    const destination = place(terms.destinationId);
+    return {
+      ...estimate,
+      terms:
+        origin && destination
+          ? {
+              origin,
+              destination,
+              mode: terms.mode,
+              loadType: terms.loadType,
+              services: terms.services as BookingService[],
+            }
           : null,
     };
   }

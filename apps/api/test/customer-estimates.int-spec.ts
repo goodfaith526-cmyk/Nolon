@@ -320,36 +320,49 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
     const id = await make(sender);
     const big = Buffer.concat([jpeg(0), Buffer.alloc(10 * 1024 * 1024)]);
     expect(code(await photo(id, big, sender).expect(413))).toBe('PHOTO_TOO_LARGE');
-    // Codex F171-3: streamed with no declared length, the 413 still arrives (no reset socket).
+    // Codex F171-3: sent in parts, with a declared length or none, the client still sending gets
+    // the 413 answer itself (never a reset socket).
     const server = t.app.getHttpServer() as Server;
     if (!server.listening) await new Promise<void>((done) => server.listen(0, done));
     const { port } = server.address() as AddressInfo;
-    const streamed = await new Promise<{ status: number; body: string }>((done, fail) => {
-      const req = httpRequest(
-        {
-          port,
-          method: 'POST',
-          path: `/api/v1/cs/booking-requests/${id}/photos`,
-          headers: {
-            Authorization: `Bearer ${key.key}`,
-            'Content-Type': 'image/jpeg',
-            'Transfer-Encoding': 'chunked',
+    const mb = 1024 * 1024;
+    const send = (declared: boolean) =>
+      new Promise<{ status: number; body: string }>((done, fail) => {
+        const req = httpRequest(
+          {
+            port,
+            method: 'POST',
+            path: `/api/v1/cs/booking-requests/${id}/photos`,
+            headers: {
+              Authorization: `Bearer ${key.key}`,
+              'Content-Type': 'image/jpeg',
+              ...(declared
+                ? { 'Content-Length': String(11 * mb) }
+                : { 'Transfer-Encoding': 'chunked' }),
+            },
           },
-        },
-        (res) => {
-          let body = '';
-          res.setEncoding('utf8');
-          res.on('data', (c: string) => (body += c));
-          res.on('end', () => done({ status: res.statusCode ?? 0, body }));
-        },
-      );
-      req.on('error', fail);
-      const mb = Buffer.alloc(1024 * 1024);
-      for (let n = 0; n < 11; n += 1) req.write(mb);
-      req.end();
-    });
-    expect(streamed.status).toBe(413);
-    expect(JSON.parse(streamed.body)).toMatchObject({ code: 'PHOTO_TOO_LARGE' });
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (c: string) => (body += c));
+            res.on('end', () => done({ status: res.statusCode ?? 0, body }));
+          },
+        );
+        req.on('error', fail);
+        const part = Buffer.alloc(mb);
+        let n = 0;
+        const next = () => {
+          if (n === 11) return void req.end();
+          n += 1;
+          req.write(part, () => setImmediate(next));
+        };
+        next();
+      });
+    for (const declared of [true, false]) {
+      const answered = await send(declared);
+      expect(answered.status).toBe(413);
+      expect(JSON.parse(answered.body)).toMatchObject({ code: 'PHOTO_TOO_LARGE' });
+    }
     const other = await make(sender, true, off);
     await photo(other, jpeg(3), sender, randomUUID(), off).expect(201);
     expect(code(await estimate(other, '10', cookies.sales, off).expect(503))).toBe(
@@ -541,6 +554,17 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
         validUntil: inDays(3),
       })
       .expect(201);
+    // The bot reads the terms the estimate prices before the customer accepts it.
+    expect((await read(id, sender)).estimate).toMatchObject({
+      version: 2,
+      terms: {
+        origin: { code: `${tag}O` },
+        destination: { code: `${tag}X`, ar: 'مدينة اختبار', en: `${tag}X` },
+        mode: 'ROAD',
+        loadType: null,
+        services: [],
+      },
+    });
     await accept(id, 2, sender).expect(200);
     await approve(id, { ...pricing, destinationId: elsewhereId }).expect(201);
   });

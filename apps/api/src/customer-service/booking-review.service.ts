@@ -36,9 +36,7 @@ import type {
   CsRouteRequest,
   CsSenderChannel,
   CreateBookingRequest,
-  LoadType,
   Permission,
-  ShippingMode,
 } from '@nolon/shared';
 import { AuditService, codeEntityId } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -59,7 +57,7 @@ import {
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
-import { estimateOf } from './estimates.js';
+import { type EstimateTerms, estimateOf, storedTerms } from './estimates.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -1121,13 +1119,6 @@ function estimateAccepted(
   );
 }
 
-/**
- * Codex F171-2: what an estimate prices, stored with it: the route, mode and load type, the
- * request's services (sorted) and a key of its items (each line's category, quantity, pieces,
- * dimensions and weight), so approval can book only what the customer accepted.
- */
-type EstimateTerms = CsEstimateTerms & { services: string[]; cargo: string };
-
 function estimateTermsOf(
   route: CsEstimateTerms,
   services: readonly string[],
@@ -1203,30 +1194,6 @@ function sameTerms(stored: Prisma.JsonValue, approved: EstimateTerms): boolean {
     terms.cargo === approved.cargo &&
     terms.services.join(',') === approved.services.join(',')
   );
-}
-
-/** The stored terms read back, or null when none (an estimate made before F171-2). */
-function storedTerms(stored: Prisma.JsonValue): EstimateTerms | null {
-  if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return null;
-  const { originId, destinationId, mode, loadType, services, cargo } = stored;
-  if (
-    typeof originId !== 'string' ||
-    typeof destinationId !== 'string' ||
-    typeof mode !== 'string' ||
-    (loadType !== null && typeof loadType !== 'string') ||
-    !Array.isArray(services) ||
-    !services.every((v) => typeof v === 'string') ||
-    typeof cargo !== 'string'
-  )
-    return null;
-  return {
-    originId,
-    destinationId,
-    mode: mode as ShippingMode,
-    loadType: loadType as LoadType | null,
-    services: services,
-    cargo,
-  };
 }
 
 function estimateRequired(): ConflictException {

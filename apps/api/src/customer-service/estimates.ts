@@ -1,6 +1,12 @@
-import type { CsEstimateDto, CsRequestPhotoType } from '@nolon/shared';
+import type {
+  CsEstimateDto,
+  CsEstimateTerms,
+  CsRequestPhotoType,
+  LoadType,
+  ShippingMode,
+} from '@nolon/shared';
 import { toDecimalString } from '../common/money.js';
-import type { CsBookingRequest } from '../generated/prisma/client.js';
+import type { CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { pair } from './drop-off.js';
 
 /**
@@ -50,4 +56,35 @@ export function imageTypeOf(bytes: Buffer): CsRequestPhotoType | null {
   )
     return 'image/webp';
   return null;
+}
+
+/**
+ * Codex F171-2: what an estimate prices, stored with it: the route, mode and load type, the
+ * request's services (sorted) and a key of its items (each line's category, quantity, pieces,
+ * dimensions and weight), so approval can book only what the customer accepted.
+ */
+export type EstimateTerms = CsEstimateTerms & { services: string[]; cargo: string };
+
+/** The stored terms read back, or null when none (an estimate made before F171-2). */
+export function storedTerms(stored: Prisma.JsonValue): EstimateTerms | null {
+  if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const { originId, destinationId, mode, loadType, services, cargo } = stored;
+  if (
+    typeof originId !== 'string' ||
+    typeof destinationId !== 'string' ||
+    typeof mode !== 'string' ||
+    (loadType !== null && typeof loadType !== 'string') ||
+    !Array.isArray(services) ||
+    !services.every((v) => typeof v === 'string') ||
+    typeof cargo !== 'string'
+  )
+    return null;
+  return {
+    originId,
+    destinationId,
+    mode: mode as ShippingMode,
+    loadType: loadType as LoadType | null,
+    services: services,
+    cargo,
+  };
 }
