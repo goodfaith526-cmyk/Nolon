@@ -8,7 +8,12 @@ import {
 import type { CsWebhookEventBody, CsWebhookEventType } from '@nolon/shared';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { type DeliveryResult, type NoticeTransport, noticeHeaders } from './webhook-delivery.js';
+import {
+  type DeliveryResult,
+  type NoticeTransport,
+  checkEndpointUrl,
+  noticeHeaders,
+} from './webhook-delivery.js';
 
 /** The transport the worker sends with (tests replace it; production uses httpsTransport()). */
 export const CS_NOTICE_TRANSPORT = Symbol('CS_NOTICE_TRANSPORT');
@@ -136,6 +141,13 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
       a.requestId === b.requestId ? a.sequence - b.sequence : a.requestId < b.requestId ? -1 : 1,
     );
     for (const notice of leased) {
+      // Codex F172-3: a notice past its 24 hours is never sent, however late the worker runs
+      // (switched off, down, or a lease recovered after the deadline).
+      if (now.getTime() > notice.createdAt.getTime() + GIVE_UP_MS) {
+        await this.record(notice, { status: 'FAILED', lastError: 'EXPIRED' });
+        round.failed += 1;
+        continue;
+      }
       const endpoint = await this.allowedEndpoint(notice);
       if (!endpoint) {
         await this.record(notice, { status: 'CANCELLED_BY_POLICY', lastError: 'POLICY' });
@@ -190,10 +202,15 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
     const served = new Set(key.branches.map((b) => b.branchId));
     const branches = request.branchId === null ? request.allowedBranchIds : [request.branchId];
     if (!branches.some((b) => served.has(b))) return null;
-    return this.prisma.csWebhookEndpoint.findFirst({
+    const endpoint = await this.prisma.csWebhookEndpoint.findFirst({
       where: { apiClientId: notice.apiClientId, status: 'APPROVED' },
       select: { url: true, audience: true },
     });
+    // Codex F172-1: the address must pass today's rules (HTTPS, 443, a host still allowed), not
+    // only those of the day it was approved; the transport still guards the resolved address.
+    if (!endpoint || 'problem' in checkEndpointUrl(endpoint.url, this.env.CS_WEBHOOK_ALLOWED_HOSTS))
+      return null;
+    return endpoint;
   }
 
   /**

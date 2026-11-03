@@ -71,7 +71,8 @@ ALTER TABLE "cs_outbox" ADD CONSTRAINT "cs_outbox_api_client_id_fkey" FOREIGN KE
 ALTER TABLE "cs_outbox" ADD CONSTRAINT "cs_outbox_request_id_fkey" FOREIGN KEY ("request_id") REFERENCES "cs_booking_requests"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- Plan 09 section 5: endpoint states, approval by someone other than the creator, one approved
--- endpoint per key (approved_key is the key exactly while APPROVED), and the outbox states.
+-- endpoint per key (approved_key is the key exactly while APPROVED), and the outbox states. An
+-- approved endpoint names its approver; one retired while still pending has none (F172-2).
 ALTER TABLE "cs_webhook_endpoints" ADD CONSTRAINT "cs_webhook_endpoints_status_check"
   CHECK ("status" IN ('PENDING', 'APPROVED', 'RETIRED'));
 ALTER TABLE "cs_webhook_endpoints" ADD CONSTRAINT "cs_webhook_endpoints_approver_check"
@@ -79,7 +80,7 @@ ALTER TABLE "cs_webhook_endpoints" ADD CONSTRAINT "cs_webhook_endpoints_approver
 ALTER TABLE "cs_webhook_endpoints" ADD CONSTRAINT "cs_webhook_endpoints_approved_check"
   CHECK (("status" = 'APPROVED') = ("approved_key" IS NOT NULL)
     AND ("approved_key" IS NULL OR "approved_key" = "api_client_id")
-    AND ("status" = 'PENDING' OR "approved_by_id" IS NOT NULL));
+    AND ("status" <> 'APPROVED' OR "approved_by_id" IS NOT NULL));
 ALTER TABLE "cs_webhook_endpoints" ADD CONSTRAINT "cs_webhook_endpoints_url_check"
   CHECK ("url" LIKE 'https://%');
 ALTER TABLE "cs_outbox" ADD CONSTRAINT "cs_outbox_status_check"

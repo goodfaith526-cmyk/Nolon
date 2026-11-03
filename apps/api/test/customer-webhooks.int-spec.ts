@@ -63,8 +63,12 @@ describe('Customer Service notices (plan 09 section 5)', () => {
   let category = '';
   let createdById = '';
   const tag = `W${randomUUID().slice(0, 5).toUpperCase()}`;
-  const worker = (transport: NoticeTransport) =>
-    new CsOutboxWorker(t.prisma, { CS_WEBHOOK_SECRET: SECRET } as AppEnv, transport);
+  const worker = (transport: NoticeTransport, allowedHosts: string[] = [HOST]) =>
+    new CsOutboxWorker(
+      t.prisma,
+      { CS_WEBHOOK_SECRET: SECRET, CS_WEBHOOK_ALLOWED_HOSTS: allowedHosts } as AppEnv,
+      transport,
+    );
 
   const staff = (cookie: string) => ({
     get: (path: string, query: object = {}) =>
@@ -301,6 +305,18 @@ describe('Customer Service notices (plan 09 section 5)', () => {
         },
       }),
     ).rejects.toThrow();
+    // F172-2: an endpoint never approved is retired with no approver.
+    const unwanted = (
+      (await add({ url: `${URL_OK}?v=3`, audience: 'erp-agents:nolon' }).expect(201))
+        .body as CsWebhooksDto
+    ).endpoints[0]!;
+    expect(unwanted.status).toBe('PENDING');
+    await staff(cookies.admin)
+      .post(`/api-clients/${bot.client.id}/webhooks/${unwanted.id}/retire`, {})
+      .expect(200);
+    expect(
+      await t.prisma.csWebhookEndpoint.findUniqueOrThrow({ where: { id: unwanted.id } }),
+    ).toMatchObject({ status: 'RETIRED', approvedById: null, approvedKey: null });
     // Back to the first address for the rest of this file.
     await staff(cookies.admin)
       .post(`/api-clients/${bot.client.id}/webhooks/${second.id}/retire`, {})
@@ -436,6 +452,48 @@ describe('Customer Service notices (plan 09 section 5)', () => {
     const both = fakeReceiver();
     await Promise.all([worker(both.transport).runOnce(), worker(both.transport).runOnce()]);
     expect(both.sent.filter((s) => s.body.requestId === raced)).toHaveLength(1);
+  });
+
+  it('never sends a notice past its 24 hours, however late the worker runs (F172-3)', async () => {
+    const late = await request();
+    await approve(late);
+    const old = new Date(Date.now() - 48 * 3600_000);
+    await t.prisma.csOutboxEvent.updateMany({
+      where: { requestId: late },
+      data: { createdAt: old },
+    });
+    const recovered = await request();
+    await approve(recovered);
+    // A lease that ended after the deadline is not sent either.
+    await t.prisma.csOutboxEvent.updateMany({
+      where: { requestId: recovered },
+      data: {
+        createdAt: old,
+        status: 'SENDING',
+        attempts: 1,
+        leaseUntil: new Date(Date.now() - 1000),
+      },
+    });
+    const receiver = fakeReceiver();
+    await worker(receiver.transport).runOnce();
+    expect(
+      receiver.sent.filter((s) => s.body.requestId === late || s.body.requestId === recovered),
+    ).toEqual([]);
+    for (const id of [late, recovered])
+      expect(
+        await t.prisma.csOutboxEvent.findFirstOrThrow({ where: { requestId: id } }),
+      ).toMatchObject({ status: 'FAILED', lastError: 'EXPIRED' });
+  });
+
+  it('sends nothing to a host no longer allowed (F172-1)', async () => {
+    const id = await request();
+    await approve(id);
+    const receiver = fakeReceiver();
+    await worker(receiver.transport, []).runOnce();
+    expect(receiver.sent.filter((s) => s.body.requestId === id)).toEqual([]);
+    expect(
+      await t.prisma.csOutboxEvent.findFirstOrThrow({ where: { requestId: id } }),
+    ).toMatchObject({ status: 'CANCELLED_BY_POLICY' });
   });
 
   it('sends nothing once the key is revoked or no longer serves the branch', async () => {
