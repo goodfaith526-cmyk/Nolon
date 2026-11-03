@@ -32,8 +32,12 @@ Automatically after each successful **Deploy staging** of `main`, once the repos
 automatically). By hand: Actions > **Deploy production** > Run workflow (branch `main`), optionally
 with a full commit SHA of `main`; empty means the latest commit of `main`.
 
-1. **Check** (no secrets): the commit is on `main`, CI passed on it, **Deploy staging** succeeded
-   on it, and its three images exist in GHCR. Any failure stops here.
+1. **Check** (no secrets): the commit is on `main`, CI passed on it, a successful **Deploy
+   staging** run deployed it, and its three images exist in GHCR. Any failure stops here. What
+   staging deployed is read from the `staging-deployed-<sha>` artifact its last step uploads, never
+   from the run's own commit: a staging run started by CI can be listed under a later commit of
+   `main` than the one it deployed (`deploy/production/staging-deployed.sh`). The automatic deploy
+   takes the commit from the artifact of the staging run that triggered it.
 2. **Approval** (only if the `production` environment has required reviewers): the deploy job
    waits until one approves it. Its secrets are released only then.
 3. **Deploy**: writes the server `.env`, copies `deploy/production/` to `~/nolon-production`, and
@@ -43,7 +47,8 @@ with a full commit SHA of `main`; empty means the latest commit of `main`.
 
 ### Going back to an earlier version
 
-Run the workflow again with the earlier commit's SHA. That is safe only when no migration was added
+Run the workflow again with the earlier commit's SHA (staging must have deployed it within the
+last 90 days, which its artifact proves). That is safe only when no migration was added
 in between: migrations only go forward, and older code may not run on a newer schema. When a
 migration was added, fix forward with a new commit, or restore the backup taken right before it
 (Backups, Restore).

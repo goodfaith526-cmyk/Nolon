@@ -332,6 +332,23 @@ jobs:
             exit 1
           fi
 
+      # What this run deployed, for Deploy production to take (deploy/production/staging-deployed.sh):
+      # with workflow_run, the run's own commit can be a later one than the commit checked out here.
+      # Last, so it exists only when the deploy and the health check passed.
+      - name: Record the deployed commit
+        id: deployed
+        run: |
+          mkdir -p "$RUNNER_TEMP/deployed"
+          git rev-parse HEAD > "$RUNNER_TEMP/deployed/sha"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staging-deployed-${{ steps.deployed.outputs.sha }}
+          path: ${{ runner.temp }}/deployed/sha
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Show container logs on failure
         # Only when SSH works; otherwise it would just repeat the SSH error.
         if: failure() && steps.ssh.outcome == 'success'
