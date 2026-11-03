@@ -376,6 +376,8 @@ export const CS_REQUEST_TTL_DAYS = 14;
 export interface CsBookingRequestCreate {
   profileId?: string;
   conversationId?: string;
+  /** The profile version the bot saw: another one makes no instant account (staff decide). */
+  profileVersion?: number;
   sender?: { channel: CsSenderChannel; id: string };
   /** A number shared for contact only (Telegram's «share my number»). */
   contactPhone?: string;
@@ -415,6 +417,8 @@ export interface CsBookingRequestCreate {
 export interface CsBookingRequestByNames {
   profileId?: string;
   conversationId?: string;
+  /** The profile version the bot saw: another one makes no instant account (staff decide). */
+  profileVersion?: number;
   idempotencyKey: string;
   channel: CsSenderChannel;
   origin: CsName;
@@ -713,6 +717,11 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   cancelReason: string | null;
   /** The customer asked to cancel after approval: staff cancel the booking or close the ask. */
   cancelRequest: (CsCancelRequestDto & { reason: string | null }) | null;
+  /**
+   * The instant branch account made or reused when the signed request was saved, or why it waits
+   * for staff. Null: not tried (switched off, no signed profile, awaiting routing).
+   */
+  instantAccount: { outcome: CsInstantAccountOutcome; customerId: string | null } | null;
   actions: {
     canRoute: boolean;
     canReject: boolean;
@@ -720,6 +729,18 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
     canCloseCancelRequest: boolean;
   };
 }
+
+export const CS_INSTANT_ACCOUNT_OUTCOMES = [
+  'CREATED',
+  'REUSED',
+  'PROFILE_REVIEW',
+  'NAME_MISSING',
+  'PROFILE_CHANGED',
+  'PHONE_IN_USE',
+  'ACCOUNT_INACTIVE',
+] as const;
+/** What became of a signed bot request's instant account (owner's spec, 2026-11-03). */
+export type CsInstantAccountOutcome = (typeof CS_INSTANT_ACCOUNT_OUTCOMES)[number];
 
 /** Staff mark a customer's cancel ask as handled (plan 09 section 2). */
 export interface CsCloseCancelRequest {

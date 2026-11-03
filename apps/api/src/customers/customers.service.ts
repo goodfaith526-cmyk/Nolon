@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type {
   AuditChangeDto,
+  CsInstantAccountOutcome,
   ContactInput,
   CreateCustomerRequest,
   CustomerContactDto,
@@ -198,6 +199,84 @@ export class CustomersService {
     });
     await tx.customer.update({ where: { id: account.id }, data: { profileId: profile.id } });
     return account.id;
+  }
+
+  /**
+   * The owner's instant account (2026-11-03): the branch account of a unified profile, made or
+   * reused when a signed bot request is saved, inside its transaction. The caller has checked the
+   * signed binding and locked the profile. The checks of approval apply, but a profile that is not
+   * ready gives a reason for staff instead of a refusal, so the request is still saved: a stale
+   * profile version, identity proposals to review, no explicit name, a verified phone another
+   * account of the branch already has (never merged by phone or name), an inactive account. An
+   * unverified phone is never copied; the account is an individual with no credit or terms. The
+   * audit record names the key, never the customer's name or phone.
+   */
+  async botAccountInTx(
+    tx: Prisma.TransactionClient,
+    input: {
+      profile: {
+        id: string;
+        version: number;
+        needsReview: boolean;
+        name: string | null;
+        phone: string | null;
+        phoneVerified: boolean;
+      };
+      expectedVersion: number | undefined;
+      branchId: string;
+      apiClientId: string;
+    },
+  ): Promise<{ outcome: CsInstantAccountOutcome; customerId: string | null } | null> {
+    const { profile, branchId } = input;
+    const skip = (outcome: CsInstantAccountOutcome) => ({ outcome, customerId: null });
+    if (input.expectedVersion !== undefined && input.expectedVersion !== profile.version)
+      return skip('PROFILE_CHANGED');
+    if (profile.needsReview) return skip('PROFILE_REVIEW');
+    const existing = await tx.customer.findUnique({
+      where: { profileId_branchId: { profileId: profile.id, branchId } },
+      select: { id: true },
+    });
+    if (existing) {
+      const rows = await tx.$queryRaw<{ isActive: boolean }[]>`
+        SELECT "is_active" AS "isActive" FROM "customers" WHERE "id" = ${existing.id}::uuid FOR SHARE`;
+      return rows[0]?.isActive
+        ? { outcome: 'REUSED', customerId: existing.id }
+        : skip('ACCOUNT_INACTIVE');
+    }
+    const name = profile.name?.trim();
+    if (!name) return skip('NAME_MISSING');
+    // An inactive branch takes no new account: left to staff, as before the instant account.
+    if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) return null;
+    const phone = profile.phoneVerified ? profile.phone : null;
+    await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [branchId]);
+    if (phone && (await tx.customer.count({ where: { branchId, phone } })) > 0)
+      return skip('PHONE_IN_USE');
+    const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
+    const customer = await tx.customer.create({
+      data: {
+        number,
+        branchId,
+        kind: 'INDIVIDUAL',
+        name,
+        phone,
+        profileId: profile.id,
+        createdViaApiClientId: input.apiClientId,
+      },
+    });
+    await this.audit.recordApi(tx, {
+      branchId,
+      entity: 'CUSTOMER',
+      entityId: customer.id,
+      reference: customer.number,
+      action: 'CREATED',
+      changes: [
+        { field: 'kind', before: null, after: 'INDIVIDUAL' },
+        { field: 'profileId', before: null, after: profile.id },
+        { field: 'createdViaApiClientId', before: null, after: input.apiClientId },
+        { field: 'phoneCopied', before: null, after: phone === null ? 'no' : 'yes' },
+      ],
+    });
+    return { outcome: 'CREATED', customerId: customer.id };
   }
 
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {

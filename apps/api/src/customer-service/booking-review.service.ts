@@ -681,6 +681,10 @@ function staffDto(
             closedAt: r.cancelRequestClosedAt?.toISOString() ?? null,
             reason: r.cancelRequestReason,
           },
+    instantAccount:
+      r.instantAccount === null
+        ? null
+        : { outcome: r.instantAccount, customerId: r.instantCustomerId },
     actions: {
       canCloseCancelRequest:
         r.status === 'APPROVED' &&

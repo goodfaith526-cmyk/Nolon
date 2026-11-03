@@ -28,6 +28,8 @@ type Input = IdentityCapture | IdentityUpdate | IdentityFollowUp;
 export interface ProfileBookingBinding {
   profileId: string;
   conversationId: string;
+  /** The profile version the bot saw (optional): another one makes no instant account. */
+  profileVersion?: number;
   context: IdentityEnvelope['context'];
 }
 const DAY = 86_400_000;
