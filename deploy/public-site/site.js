@@ -82,22 +82,36 @@
     this.status = status;
     this.retryAfter = retryAfter;
   }
+  // One session request at a time: messages sent before /sessions answers wait for the
+  // same token, so a fresh visitor's first messages never split across two visitors.
+  var pendingSession = null;
   function session() {
-    return fetch(BASE + '/sessions', { method: 'POST' })
+    if (pendingSession) return pendingSession;
+    pendingSession = fetch(BASE + '/sessions', { method: 'POST' })
       .then(function (res) {
         if (!res.ok) throw new ApiError(res.status);
         return res.json();
       })
-      .then(function (b) {
-        setToken(b.token);
-        return b.token;
-      });
+      .then(
+        function (b) {
+          setToken(b.token);
+          pendingSession = null;
+          return b.token;
+        },
+        function (e) {
+          pendingSession = null;
+          throw e;
+        },
+      );
+    return pendingSession;
   }
   function call(path, init, second) {
     var t = getToken();
     var ready = t ? Promise.resolve(t) : session();
+    var used = null;
     return ready
       .then(function (tok) {
+        used = tok;
         var opts = init || {};
         var headers = { authorization: 'Bearer ' + tok };
         if (opts.json) headers['content-type'] = 'application/json';
@@ -109,7 +123,9 @@
       })
       .then(function (res) {
         if (res.status === 401 && !second) {
-          setToken(null);
+          // Only drop the token this call used; if another call already replaced it,
+          // retry with the new one instead of starting yet another session.
+          if (getToken() === used) setToken(null);
           return call(path, init, true);
         }
         if (!res.ok) throw new ApiError(res.status, Number(res.headers.get('Retry-After')) || 0);
