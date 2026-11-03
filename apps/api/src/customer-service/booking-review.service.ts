@@ -15,6 +15,7 @@ import type {
   CsApprovalPriceDto,
   CsApproveRequest,
   CsBookingRequestStaffDto,
+  CsDropOffChoiceDto,
   CsPriceInputs,
   CsBookingRequestSummaryDto,
   CsName,
@@ -22,6 +23,7 @@ import type {
   CsRejectReasonInput,
   CsRequestItemDto,
   CsResolveItem,
+  CsSetDropOff,
   CsRejectRequest,
   CsReviewFilter,
   CsCloseCancelRequest,
@@ -70,6 +72,7 @@ type Row = CsBookingRequest & {
     }[];
   } | null;
   items: CsBookingRequestItem[];
+  dropOff: CsDropOffChoiceDto | null;
 };
 type QuotedRow = Row & { quote: CsQuote | null };
 
@@ -85,6 +88,7 @@ const rowInclude = {
     },
   },
   items: { orderBy: { lineNo: 'asc' } },
+  dropOff: { select: { id: true, branchId: true, code: true, nameAr: true, nameEn: true } },
 } as const;
 const withQuote = { ...rowInclude, quote: true } as const;
 
@@ -213,6 +217,14 @@ export class BookingReviewService {
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
     const dto = staffDto(user, row, priceCheck);
+    // Plan 09 section 11: the points staff may name, while they may approve or correct.
+    // Both actions need DECIDE in the request's branch, and a point is named from that branch only.
+    if ((dto.actions.canApprove || dto.actions.canSetDropOff) && row.branchId !== null)
+      dto.dropOffChoices = await this.prisma.warehouse.findMany({
+        where: { isActive: true, acceptsDropOff: true, branchId: row.branchId },
+        orderBy: { code: 'asc' },
+        select: { id: true, branchId: true, code: true, nameAr: true, nameEn: true },
+      });
     // The request's ordinary branch permission authorises only its linked profile's minimum.
     const profile = row.profileId
       ? await this.prisma.customerProfile.findUnique({
@@ -523,6 +535,7 @@ export class BookingReviewService {
             },
           },
         });
+      const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
       // The request's total: the lines' sum when every line is priced, else none.
       const priced = totals.filter((t): t is Prisma.Decimal => t !== null);
       const total =
@@ -537,6 +550,7 @@ export class BookingReviewService {
           approvedQuantity: dec(lines[0]!.inputs.quantity),
           approvedCurrency: input.pricing.currency,
           approvedTotal: total,
+          dropOffWarehouseId: dropOffId,
           decidedById: user.id,
           decidedAt: new Date(),
           version: { increment: 1 },
@@ -545,6 +559,46 @@ export class BookingReviewService {
       });
     });
     // As route and reject (F131-3): the row this transaction wrote.
+    return this.format(user, written);
+  }
+
+  /**
+   * Plan 09 section 11: staff correct the drop-off point of an approved request, with the same
+   * checks as on approval (an active point taking shipments, in a branch where they may approve),
+   * under the request's lock and version. Audited.
+   */
+  async setDropOff(
+    user: AuthUser,
+    id: string,
+    input: CsSetDropOff,
+  ): Promise<CsBookingRequestStaffDto> {
+    const written = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id } });
+      if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+      if (row.version !== input.version)
+        throw new ConflictException('The request changed: reopen it');
+      if (row.status !== 'APPROVED' || row.branchId === null)
+        throw new ConflictException('Only an approved request has a drop-off point');
+      if (!user.access.has(DECIDE, row.branchId))
+        throw new ForbiddenException('You may not change this request');
+      const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
+      await this.audit.record(tx, user, {
+        branchId: row.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: row.id,
+        reference: row.reference,
+        action: 'UPDATED',
+        changes: [
+          { field: 'dropOffWarehouseId', before: row.dropOffWarehouseId, after: dropOffId },
+        ],
+      });
+      return tx.csBookingRequest.update({
+        where: { id },
+        data: { dropOffWarehouseId: dropOffId, version: { increment: 1 } },
+        include: withQuote,
+      });
+    });
     return this.format(user, written);
   }
 
@@ -728,6 +782,44 @@ async function requireCargoComplete(tx: Tx, bookingId: string): Promise<void> {
       message: 'Complete the cargo lines of the bot request before confirming',
       items: missing,
     });
+}
+
+/**
+ * Plan 09 section 11: the drop-off point of an approval or a correction, share-locked through
+ * commit. A named point must be active, take shipments, and be in a branch where the person may
+ * approve (400 DROP_OFF_NOT_ALLOWED otherwise). None named: the request's branch's only active
+ * point, or none when it has several or none.
+ */
+async function dropOffFor(
+  tx: Tx,
+  user: AuthUser,
+  branchId: string,
+  named: string | undefined,
+): Promise<string | null> {
+  if (named !== undefined) {
+    const rows = await tx.$queryRaw<
+      { branch_id: string; is_active: boolean; accepts_drop_off: boolean }[]
+    >`SELECT "branch_id"::text AS "branch_id", "is_active", "accepts_drop_off"
+      FROM "warehouses" WHERE "id" = ${named}::uuid FOR SHARE`;
+    const point = rows[0];
+    // A point of the request's own branch (the one deciding it), never another's.
+    if (
+      !point?.is_active ||
+      !point.accepts_drop_off ||
+      point.branch_id !== branchId ||
+      !user.access.has(DECIDE, point.branch_id)
+    )
+      throw new BadRequestException({
+        code: 'DROP_OFF_NOT_ALLOWED',
+        message: "Choose an active drop-off point of the request's branch",
+      });
+    return named;
+  }
+  const points = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id"::text AS "id" FROM "warehouses"
+    WHERE "branch_id" = ${branchId}::uuid AND "is_active" AND "accepts_drop_off"
+    LIMIT 2 FOR SHARE`;
+  return points.length === 1 ? points[0]!.id : null;
 }
 
 /** An approval line: the inputs priced, the fingerprint staff saw, and the item it prices. */
@@ -1018,7 +1110,12 @@ function staffDto(
       r.instantAccount === null
         ? null
         : { outcome: r.instantAccount, customerId: r.instantCustomerId },
+    dropOffId: r.dropOffWarehouseId,
+    dropOffPoint: r.dropOff,
+    dropOffChoices: [],
     actions: {
+      canSetDropOff:
+        r.status === 'APPROVED' && r.branchId !== null && user.access.has(DECIDE, r.branchId),
       canCloseCancelRequest:
         r.status === 'APPROVED' &&
         r.cancelRequestedAt !== null &&

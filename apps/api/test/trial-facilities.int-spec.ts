@@ -6,8 +6,12 @@ import { SOFT_LAUNCH_PLACES, softLaunchActor } from '../src/seed/soft-launch.js'
 import {
   ADDABLE_PLACES,
   TRIAL_ADDRESS_PREFIX,
+  TRIAL_DROP_OFF_CODES,
   TRIAL_FACILITIES,
+  TRIAL_HOURS_AR,
+  TRIAL_HOURS_EN,
   type TrialFacilitiesDeps,
+  applyTrialDropOff,
   applyTrialFacilities,
 } from '../src/seed/trial-facilities.js';
 import { WarehousesService } from '../src/warehouse/warehouses.service.js';
@@ -137,6 +141,60 @@ describe('trial-facilities data script', () => {
       orderBy: { code: 'asc' },
     });
     expect(after).toEqual(snapshot);
+  });
+
+  it('marks the origin facilities as drop-off points once, leaving what staff set (plan 09 section 11)', async () => {
+    // Staff already gave one its own hours; TR-JED-W2 is off (previous test).
+    await t.prisma.warehouse.update({ where: { code: 'TR-DXB-W1' }, data: { hoursAr: 'من 8' } });
+    // Codex F169-2: hours in English only are staff's too.
+    await t.prisma.warehouse.update({
+      where: { code: 'TR-JED-W1' },
+      data: { hoursEn: 'Fridays only 10-12' },
+    });
+    const report = await applyTrialDropOff(deps, actor);
+    expect(report).toContain('نقطة تسليم، تُركت كما هي: TR-JED-W2');
+    expect(report).toContain('نقطة تسليم، تُركت كما هي: TR-DXB-W1');
+    expect(report).toContain('نقطة تسليم، تُركت كما هي: TR-JED-W1');
+    expect(report).toContain(
+      `نقاط تسليم جديدة: ${TRIAL_DROP_OFF_CODES.length - 3} من ${TRIAL_DROP_OFF_CODES.length}`,
+    );
+    const rows = await t.prisma.warehouse.findMany({ where: { code: { startsWith: 'TR-' } } });
+    for (const w of rows) {
+      const marked =
+        TRIAL_DROP_OFF_CODES.includes(w.code) &&
+        !['TR-JED-W2', 'TR-DXB-W1', 'TR-JED-W1'].includes(w.code);
+      expect(w.acceptsDropOff, w.code).toBe(marked);
+      if (marked) expect([w.hoursAr, w.hoursEn], w.code).toEqual([TRIAL_HOURS_AR, TRIAL_HOURS_EN]);
+    }
+    expect(rows.find((w) => w.code === 'TR-DXB-W1')?.hoursAr).toBe('من 8');
+    expect(rows.find((w) => w.code === 'TR-JED-W1')).toMatchObject({
+      hoursAr: null,
+      hoursEn: 'Fridays only 10-12',
+      acceptsDropOff: false,
+    });
+    // Through the service, so each change is in the log.
+    const marked = rows.find((w) => w.code === 'TR-JED-CC');
+    expect(
+      await t.prisma.auditEvent.count({ where: { entity: 'WAREHOUSE', entityId: marked?.id } }),
+    ).toBeGreaterThan(0);
+    // A second run changes nothing, and a point staff turned back off stays off.
+    await t.prisma.warehouse.update({
+      where: { code: 'TR-CAI-W1' },
+      data: { acceptsDropOff: false },
+    });
+    const snapshot = await t.prisma.warehouse.findMany({
+      where: { code: { startsWith: 'TR-' } },
+      orderBy: { code: 'asc' },
+    });
+    expect(await applyTrialDropOff(deps, actor)).toContain(
+      `نقاط تسليم جديدة: 0 من ${TRIAL_DROP_OFF_CODES.length}`,
+    );
+    expect(
+      await t.prisma.warehouse.findMany({
+        where: { code: { startsWith: 'TR-' } },
+        orderBy: { code: 'asc' },
+      }),
+    ).toEqual(snapshot);
   });
 
   it('GET /warehouses shows the details, within the user’s branches only', async () => {

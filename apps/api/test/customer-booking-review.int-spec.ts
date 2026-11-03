@@ -194,6 +194,7 @@ describe('Customer Service booking request review (R3c1)', () => {
       canReject: false,
       canApprove: false,
       canCloseCancelRequest: false,
+      canSetDropOff: false,
     });
     // Finance holds no part of it.
     await staff(cookies.finance).get('/cs-booking-requests').expect(403);

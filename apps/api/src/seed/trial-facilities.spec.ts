@@ -2,7 +2,7 @@ import { WAREHOUSE_KINDS } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import { BRANCHES } from './branches.js';
 import { SOFT_LAUNCH_PLACES } from './soft-launch.js';
-import { ADDABLE_PLACES, TRIAL_FACILITIES } from './trial-facilities.js';
+import { ADDABLE_PLACES, TRIAL_DROP_OFF_CODES, TRIAL_FACILITIES } from './trial-facilities.js';
 
 /** Rough bounds per country, to catch a swapped or mistyped position. */
 const BOUNDS: Record<string, { lat: [number, number]; lng: [number, number] }> = {
@@ -54,5 +54,24 @@ describe('trial facilities', () => {
       expect(lat >= (bounds?.lat[0] ?? 0) && lat <= (bounds?.lat[1] ?? 0), f.code).toBe(true);
       expect(lng >= (bounds?.lng[0] ?? 0) && lng <= (bounds?.lng[1] ?? 0), f.code).toBe(true);
     }
+  });
+
+  it('receives cargo only at the origin centres and windows (plan 09 section 11)', () => {
+    expect([...TRIAL_DROP_OFF_CODES].sort()).toEqual(
+      [
+        ...['JED', 'DXB', 'SHJ', 'CAI', 'CAN'].map((c) => `TR-${c}-CC`),
+        ...[
+          'JED-W1',
+          'JED-W2',
+          'DXB-W1',
+          'DXB-W2',
+          'SHJ-W1',
+          'CAI-W1',
+          'RUH-W1',
+          'RUH-W2',
+          'CAN-W1',
+        ].map((c) => `TR-${c}`),
+      ].sort(),
+    );
   });
 });

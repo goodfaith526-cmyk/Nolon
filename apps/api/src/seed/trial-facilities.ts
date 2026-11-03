@@ -435,3 +435,49 @@ export async function applyTrialFacilities(
   say(`مراكز جديدة: ${created} من ${TRIAL_FACILITIES.length}`);
   return report;
 }
+
+/**
+ * Plan 09 section 11 (09-8): the trial facilities where a customer may hand over cargo, i.e. the
+ * collection centres and the windows in the origin cities (not the Sudanese windows, the delivery
+ * centres or the hub, which deliver and do not receive).
+ */
+export const TRIAL_DROP_OFF_CODES: readonly string[] = TRIAL_FACILITIES.filter(
+  // Place codes are UN/LOCODEs: SD... is in Sudan.
+  (f) =>
+    f.kind === 'COLLECTION_CENTER' || (f.kind === 'DROP_OFF_POINT' && !f.place.startsWith('SD')),
+).map((f) => f.code);
+
+export const TRIAL_HOURS_AR = 'السبت إلى الخميس، 9 صباحاً إلى 9 مساءً (تجريبي)';
+export const TRIAL_HOURS_EN = 'Saturday to Thursday, 9 am to 9 pm (trial)';
+
+/**
+ * Marks the trial drop-off facilities as drop-off points with trial opening hours, through the
+ * warehouses service (audited). Done once: a facility that already has hours, accepts drop-offs or
+ * is turned off is left as staff set it, so running it again changes nothing.
+ */
+export async function applyTrialDropOff(
+  { prisma, warehouses }: Pick<TrialFacilitiesDeps, 'prisma' | 'warehouses'>,
+  actor: AuthUser,
+): Promise<string[]> {
+  const report: string[] = [];
+  const rows = await prisma.warehouse.findMany({
+    where: { code: { in: [...TRIAL_DROP_OFF_CODES] } },
+    select: { id: true, code: true },
+    orderBy: { code: 'asc' },
+  });
+  let marked = 0;
+  for (const w of rows) {
+    // Codex F169-2: hours in either language, a turned-off facility or one already receiving were
+    // set by staff. Checked under the row lock with the write, so a staff edit is never undone.
+    const done = await warehouses.updateIf(
+      actor,
+      w.id,
+      { acceptsDropOff: true, hoursAr: TRIAL_HOURS_AR, hoursEn: TRIAL_HOURS_EN },
+      (now) => now.isActive && !now.acceptsDropOff && now.hoursAr === null && now.hoursEn === null,
+    );
+    if (done) marked += 1;
+    else report.push(`نقطة تسليم، تُركت كما هي: ${w.code}`);
+  }
+  report.push(`نقاط تسليم جديدة: ${marked} من ${TRIAL_DROP_OFF_CODES.length}`);
+  return report;
+}

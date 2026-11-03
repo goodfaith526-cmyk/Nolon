@@ -17,6 +17,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
+import { DropOffEditor } from './DropOffEditor';
 
 /** Pattern for warehouse and storage location codes: letters and digits, dash-separated. */
 const CODE_PATTERN = '[A-Za-z0-9]+(-[A-Za-z0-9]+)*';
@@ -280,6 +281,26 @@ export function Warehouses() {
                 )}
               </div>
             </div>
+            {canUpdate && (
+              <DropOffEditor
+                // Read again after a save, so the form shows what the API kept.
+                key={JSON.stringify([
+                  w.acceptsDropOff,
+                  w.address,
+                  w.addressEn,
+                  w.hoursAr,
+                  w.hoursEn,
+                  w.phone,
+                  w.mapUrl,
+                  w.latitude,
+                  w.longitude,
+                  w.partner?.id,
+                ])}
+                warehouse={w}
+                busy={busy}
+                onSave={(body) => update(w, body)}
+              />
+            )}
             <WarehouseStock stock={stock} warehouseId={w.id} />
             {w.storageLocations.length === 0 ? (
               <p className="empty">{t('noLocations')}</p>
@@ -340,10 +361,20 @@ export function Warehouses() {
 /** A facility's kind, the number customers call and a link to its position on the map. */
 function FacilityDetails({ warehouse: w }: { warehouse: WarehouseDto }) {
   const t = useTranslations('Warehouse');
-  if (!w.kind && !w.phone && !w.latitude) return null;
+  const locale = useLocale();
+  if (!w.kind && !w.phone && !w.latitude && !w.acceptsDropOff) return null;
+  const hours = locale === 'ar' ? (w.hoursAr ?? w.hoursEn) : (w.hoursEn ?? w.hoursAr);
+  const map = w.mapUrl ?? (w.latitude && w.longitude ? mapUrl(w.latitude, w.longitude) : null);
   return (
     <p className="actions">
       {w.kind && <span className="badge">{t(`kind.${w.kind}`)}</span>}
+      {w.acceptsDropOff && <span className="badge badge-ok">{t('acceptsDropOff')}</span>}
+      {hours && <span>{hours}</span>}
+      {w.partner && (
+        <span>
+          {t('outlet')}: {w.partner.name}
+        </span>
+      )}
       {w.phone && (
         <span>
           {t('phone')}:{' '}
@@ -352,8 +383,8 @@ function FacilityDetails({ warehouse: w }: { warehouse: WarehouseDto }) {
           </a>
         </span>
       )}
-      {w.latitude && w.longitude && (
-        <a href={mapUrl(w.latitude, w.longitude)} target="_blank" rel="noopener noreferrer">
+      {map && (
+        <a href={map} target="_blank" rel="noopener noreferrer">
           {t('openMap')}
         </a>
       )}

@@ -37,6 +37,8 @@ export type AuditedEntity =
       | 'API_CLIENT'
       | 'PAYMENT_INSTRUCTION'
       | 'CS_BOOKING_REQUEST'
+      | 'WAREHOUSE'
+      | 'BRANCH'
     >
   | AuditedMasterData
   | AuditedAccess;

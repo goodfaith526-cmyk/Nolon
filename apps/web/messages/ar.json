@@ -1139,7 +1139,19 @@
       "DISTRIBUTION_HUB": "مركز توزيع مركزي",
       "DELIVERY_CENTER": "مركز تسليم",
       "DROP_OFF_POINT": "نافذة استلام وتسليم"
-    }
+    },
+    "dropOffTitle": "بيانات تسليم الزبائن",
+    "dropOffHint": "زبائن بوت الحجز يُطلب منهم إحضار شحناتهم إلى مرفق نشط مُعلَّم كنقطة تسليم، بهذه البيانات، بعد الموافقة على طلبهم.",
+    "acceptsDropOff": "نقطة تسليم",
+    "addressAr": "العنوان (عربي)",
+    "addressEn": "العنوان (إنجليزي)",
+    "hoursAr": "ساعات العمل (عربي)",
+    "hoursEn": "ساعات العمل (إنجليزي)",
+    "mapUrl": "رابط الخريطة (https)",
+    "latitude": "خط العرض",
+    "longitude": "خط الطول",
+    "outlet": "منفذ البيع",
+    "saveDropOff": "حفظ بيانات التسليم"
   },
   "Customs": {
     "section": "الجمارك",
@@ -1915,7 +1927,9 @@
     "entity_API_CLIENT": "مفتاح API",
     "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع",
     "entity_CS_BOOKING_REQUEST": "طلب حجز من البوت",
-    "entity_CUSTOMER_STAGE": "مرحلة الزبون"
+    "entity_CUSTOMER_STAGE": "مرحلة الزبون",
+    "entity_WAREHOUSE": "مرفق (نقطة تسليم)",
+    "entity_BRANCH": "فرع"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -3166,7 +3180,15 @@
     "resolveItem": "اربط",
     "addBookingLine": "أضف سطراً في الحجز أولاً",
     "itemLine": "الصنف {line}",
-    "estimateRequired": "في الطلب صنف غير معياري: محتاج تقدير من الموظف قبل الموافقة (قريباً)."
+    "estimateRequired": "في الطلب صنف غير معياري: محتاج تقدير من الموظف قبل الموافقة (قريباً).",
+    "dropOff": "نقطة التسليم",
+    "dropOffAuto": "تلقائي (نقطة الفرع الوحيدة، إن وُجدت)",
+    "dropOffNone": "لم تُحدَّد",
+    "dropOffTitle": "تصحيح نقطة التسليم",
+    "dropOffHint": "يقرأ الزبون بيانات النقطة الجديدة في المرة القادمة التي يطّلع فيها البوت على الطلب.",
+    "dropOffAction": "حفظ نقطة التسليم",
+    "supportPhonesTitle": "أرقام خدمة العملاء",
+    "supportPhonesHint": "يعطي بوت الشحن الزبائن رقم فرعهم. اتركه فارغاً لعدم إظهار رقم. الصيغة الدولية، مثل +249912345678."
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

@@ -55,7 +55,16 @@ const base: CsBookingRequestStaffDto = {
   instantAccount: null,
   items: [],
   bookingLines: [],
-  actions: { canRoute: true, canReject: true, canApprove: false, canCloseCancelRequest: false },
+  dropOffId: null,
+  dropOffPoint: null,
+  dropOffChoices: [],
+  actions: {
+    canSetDropOff: false,
+    canRoute: true,
+    canReject: true,
+    canApprove: false,
+    canCloseCancelRequest: false,
+  },
 };
 
 vi.mock('next-intl', () => ({
@@ -154,6 +163,7 @@ describe('BotRequestDetail', () => {
       paymentCurrency: 'SDG',
       approvedPricing: { category: 'BARREL', quantity: '2', currency: 'USD', total: '90.00' },
       actions: {
+        canSetDropOff: false,
         canRoute: false,
         canReject: false,
         canApprove: false,
@@ -170,6 +180,7 @@ describe('BotRequestDetail', () => {
     const shown = await show({
       ...base,
       actions: {
+        canSetDropOff: false,
         canRoute: false,
         canReject: false,
         canApprove: false,
@@ -190,6 +201,7 @@ describe('BotRequestDetail', () => {
         reason: 'غيرت رأيي',
       },
       actions: {
+        canSetDropOff: false,
         canRoute: false,
         canReject: false,
         canApprove: false,

@@ -173,6 +173,18 @@ export interface BranchNameDto {
 }
 
 /** GET /master-data: everything the commercial and shipment screens need for their dropdowns. */
+/**
+ * Plan 09 amendment 4: a branch's customer service number, the one the bot shows its customers
+ * (E.164); null when not set. Master data the Administrator keeps.
+ */
+export interface BranchSupportPhoneDto {
+  branchId: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  phone: string | null;
+}
+
 export interface MasterDataDto {
   /** Every branch, by name only. */
   branches: BranchNameDto[];

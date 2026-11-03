@@ -6,7 +6,7 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { WarehousesService } from '../warehouse/warehouses.service.js';
 import { softLaunchActor } from './soft-launch.js';
-import { applyTrialFacilities } from './trial-facilities.js';
+import { applyTrialDropOff, applyTrialFacilities } from './trial-facilities.js';
 
 /**
  * Enters the trial facilities (trial-facilities.ts) into this database, through NOLON's services.
@@ -22,14 +22,13 @@ async function main(): Promise<void> {
   try {
     const prisma = app.get(PrismaService);
     const actor = await softLaunchActor(prisma, process.env.SOFT_LAUNCH_ACTOR_EMAIL || undefined);
+    const warehouses = app.get(WarehousesService);
     const report = await applyTrialFacilities(
-      {
-        prisma,
-        masterData: app.get(MasterDataService),
-        warehouses: app.get(WarehousesService),
-      },
+      { prisma, masterData: app.get(MasterDataService), warehouses },
       actor,
     );
+    // Plan 09 section 11: the origin facilities receive cargo from customers.
+    report.push(...(await applyTrialDropOff({ prisma, warehouses }, actor)));
     console.log(`As ${actor.fullName}:`);
     for (const line of report) console.log(`- ${line}`);
   } finally {

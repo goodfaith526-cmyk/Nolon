@@ -11,6 +11,7 @@ import {
   Put,
 } from '@nestjs/common';
 import {
+  type BranchSupportPhoneDto,
   CARGO_TYPES,
   LOCATION_KINDS,
   RATE_UNITS,
@@ -29,6 +30,7 @@ import {
   countryCode,
   optionalText,
   parse,
+  phone,
   quantity,
   requiredText,
 } from '../common/validation.js';
@@ -45,6 +47,7 @@ const code = (max: number) =>
     .max(max);
 
 const routingBody = z.object({ branchIds: z.array(z.uuid()).max(20) }).strict();
+const supportPhoneBody = z.object({ phone: phone.nullable() }).strict();
 const aliasesBody = z
   .object({ aliases: z.array(z.string().trim().min(1).max(100)).max(20) })
   .strict();
@@ -194,6 +197,23 @@ export class MasterDataController {
   @RequirePermission('master_data:view')
   routingBranches(): Promise<Record<string, string[]>> {
     return this.masterData.routingBranches();
+  }
+
+  /** Plan 09 amendment 4: each branch's customer service number, as the bot shows it. */
+  @Get('branches/support-phones')
+  @RequirePermission('master_data:view')
+  supportPhones(): Promise<BranchSupportPhoneDto[]> {
+    return this.masterData.supportPhones();
+  }
+
+  @Put('branches/:id/support-phone')
+  @RequirePermission('master_data:update')
+  setSupportPhone(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<BranchSupportPhoneDto[]> {
+    return this.masterData.setSupportPhone(user, id, parse(supportPhoneBody, body).phone);
   }
 
   @Put('locations/:id/routing-branches')

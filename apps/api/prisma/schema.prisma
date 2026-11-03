@@ -40,6 +40,8 @@ model Branch {
   /// ISO 4217 code; must exist in the currencies master.
   defaultCurrency       String                    @map("default_currency") @db.Char(3)
   currency              Currency                  @relation(fields: [defaultCurrency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  /// Plan 09 amendment 4: the customer service number the bot shows for this branch (E.164).
+  supportPhone          String?                   @map("support_phone") @db.VarChar(20)
   /// IANA time zone, e.g. Asia/Dubai.
   timezone              String
   isActive              Boolean                   @default(true) @map("is_active")
@@ -931,6 +933,7 @@ model Partner {
   quotationsSold        Quotation[]
   bookingsSold          Booking[]
   shipmentsSold         Shipment[]
+  dropOffWindows        Warehouse[]         @relation("WarehouseOutlet")
   shipmentsConsolidated Shipment[]          @relation("ShipmentOriginConsolidator")
   shipmentsDistributed  Shipment[]          @relation("ShipmentDistributor")
   contracts             PartnerContract[]
@@ -2321,27 +2324,40 @@ enum WarehouseKind {
 }
 
 model Warehouse {
-  id         String         @id @default(uuid()) @db.Uuid
-  branchId   String         @map("branch_id") @db.Uuid
+  id             String         @id @default(uuid()) @db.Uuid
+  branchId       String         @map("branch_id") @db.Uuid
   /// Short code, unique across branches, e.g. PTS-MAIN.
-  code       String         @unique @db.VarChar(20)
-  nameEn     String         @map("name_en") @db.VarChar(200)
-  nameAr     String         @map("name_ar") @db.VarChar(200)
-  address    String?        @db.VarChar(500)
+  code           String         @unique @db.VarChar(20)
+  nameEn         String         @map("name_en") @db.VarChar(200)
+  nameAr         String         @map("name_ar") @db.VarChar(200)
+  address        String?        @db.VarChar(500)
   /// The place the warehouse is at: a receipt that moves the shipment records it there (review D9).
-  locationId String?        @map("location_id") @db.Uuid
-  kind       WarehouseKind?
+  locationId     String?        @map("location_id") @db.Uuid
+  kind           WarehouseKind?
   /// E.164: the number customers call.
-  phone      String?        @db.VarChar(20)
+  phone          String?        @db.VarChar(20)
   /// Map position in WGS 84 degrees (both set or both empty).
-  latitude   Decimal?       @db.Decimal(9, 6)
-  longitude  Decimal?       @db.Decimal(9, 6)
-  isActive   Boolean        @default(true) @map("is_active")
-  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  latitude       Decimal?       @db.Decimal(9, 6)
+  longitude      Decimal?       @db.Decimal(9, 6)
+  /// Plan 09 section 11: the English address (`address` is the Arabic one).
+  addressEn      String?        @map("address_en") @db.VarChar(500)
+  /// Plan 09 section 11: customers bring their shipments here (a drop-off point).
+  acceptsDropOff Boolean        @default(false) @map("accepts_drop_off")
+  /// A drop-off window that belongs to a sales outlet (partner of kind SALES_OUTLET).
+  partnerId      String?        @map("partner_id") @db.Uuid
+  /// https only; when empty the read builds one from the map position.
+  mapUrl         String?        @map("map_url") @db.VarChar(500)
+  /// Opening hours as customers read them (plan 09 amendment 4).
+  hoursAr        String?        @map("hours_ar") @db.VarChar(200)
+  hoursEn        String?        @map("hours_en") @db.VarChar(200)
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch           Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
   location         Location?           @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  partner          Partner?            @relation("WarehouseOutlet", fields: [partnerId], references: [id], onDelete: Restrict)
+  csDropOffs       CsBookingRequest[]  @relation("CsRequestDropOff")
   storageLocations StorageLocation[]
   movements        WarehouseMovement[]
 
@@ -3816,6 +3832,8 @@ model CsBookingRequest {
   /// awaiting routing).
   instantAccount          CsInstantAccount?      @map("instant_account")
   instantCustomerId       String?                @map("instant_customer_id") @db.Uuid
+  /// Plan 09 section 11: where the customer brings the shipment, chosen on approval.
+  dropOffWarehouseId      String?                @map("drop_off_warehouse_id") @db.Uuid
   version                 Int                    @default(1)
   expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3833,6 +3851,7 @@ model CsBookingRequest {
   cancelClosedBy   User?                  @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
   items            CsBookingRequestItem[]
   instantCustomer  Customer?              @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
+  dropOff          Warehouse?             @relation("CsRequestDropOff", fields: [dropOffWarehouseId], references: [id], onDelete: Restrict)
   rejectReason     CsRejectReason?        @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
   booking          Booking?               @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   payCurrency      Currency?              @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)

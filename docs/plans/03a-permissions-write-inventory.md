@@ -74,6 +74,7 @@
 - POST `/credit-notes/:id/cancel` · `CreditNotesController.cancel` · `billing/billing.controller.ts` · credit_notes:cancel
 - POST `/cs-booking-requests/:id/approve` · `BookingReviewController.approve` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve, bookings:create
 - POST `/cs-booking-requests/:id/cancel-request/close` · `BookingReviewController.closeCancelRequest` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
+- POST `/cs-booking-requests/:id/drop-off` · `BookingReviewController.setDropOff` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/items/:itemId/resolve` · `BookingReviewController.resolveItem` · `customer-service/booking-review.controller.ts` · bookings:update
 - POST `/cs-booking-requests/:id/reject` · `BookingReviewController.reject` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
@@ -122,6 +123,7 @@
 - POST `/invoice-drafts/:id/reject` · `InvoiceDraftsController.reject` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
 - POST `/invoice-drafts/check` · `InvoiceDraftsController.check` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
 - POST `/invoice-drafts/suggest` · `InvoiceDraftsController.suggest` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
+- PUT `/master-data/branches/:id/support-phone` · `MasterDataController.setSupportPhone` · `master-data/master-data.controller.ts` · master_data:update
 - POST `/master-data/charge-types` · `MasterDataController.createChargeType` · `master-data/master-data.controller.ts` · master_data:create
 - PATCH `/master-data/charge-types/:code` · `MasterDataController.updateChargeType` · `master-data/master-data.controller.ts` · master_data:update
 - POST `/master-data/charge-types/:code/deactivate` · `MasterDataController.deactivateChargeType` · `master-data/master-data.controller.ts` · master_data:update

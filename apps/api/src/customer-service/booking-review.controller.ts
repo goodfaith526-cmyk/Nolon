@@ -78,6 +78,7 @@ const approveBody = z
     profileVersion: version.optional(),
     pricing: priceInputs.partial({ category: true, quantity: true }),
     lines: z.array(approveLine).min(1).max(CS_REQUEST_ITEMS_MAX).optional(),
+    dropOffId: z.uuid().optional(),
     pricingFingerprint: fingerprint.optional(),
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
     booking: bookingCreateBody
@@ -93,6 +94,7 @@ const approveBody = z
   })
   .strict();
 const resolveBody = z.object({ bookingItemId: z.uuid() }).strict();
+const dropOffBody = z.object({ version, dropOffId: z.uuid() }).strict();
 const reasonBody = z
   .object({ textAr: requiredText(300), textEn: requiredText(300), isActive: z.boolean() })
   .strict();
@@ -169,6 +171,17 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** Plan 09 section 11: the drop-off point of an approved request, corrected. */
+  @Post(':id/drop-off')
+  @RequirePermission('cs_booking_requests:approve')
+  setDropOff(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.setDropOff(user, id, parse(dropOffBody, body));
   }
 
   /**

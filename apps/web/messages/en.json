@@ -1139,7 +1139,19 @@
       "DISTRIBUTION_HUB": "Central distribution hub",
       "DELIVERY_CENTER": "Delivery centre",
       "DROP_OFF_POINT": "Drop-off and pick-up window"
-    }
+    },
+    "dropOffTitle": "Customer drop-off details",
+    "dropOffHint": "Customers of the booking bot are told to bring their shipments to an active facility marked as a drop-off point, with these details, once their request is approved.",
+    "acceptsDropOff": "Drop-off point",
+    "addressAr": "Address (Arabic)",
+    "addressEn": "Address (English)",
+    "hoursAr": "Opening hours (Arabic)",
+    "hoursEn": "Opening hours (English)",
+    "mapUrl": "Map link (https)",
+    "latitude": "Latitude",
+    "longitude": "Longitude",
+    "outlet": "Sales outlet",
+    "saveDropOff": "Save drop-off details"
   },
   "Customs": {
     "section": "Customs",
@@ -1915,7 +1927,9 @@
     "entity_API_CLIENT": "API key",
     "entity_PAYMENT_INSTRUCTION": "Payment instructions",
     "entity_CS_BOOKING_REQUEST": "Bot booking request",
-    "entity_CUSTOMER_STAGE": "Customer stage"
+    "entity_CUSTOMER_STAGE": "Customer stage",
+    "entity_WAREHOUSE": "Facility (drop-off point)",
+    "entity_BRANCH": "Branch"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -3166,7 +3180,15 @@
     "resolveItem": "Link",
     "addBookingLine": "Add a line on the booking first",
     "itemLine": "Item {line}",
-    "estimateRequired": "This request has a non-standard item: it needs a staff estimate before approval (coming soon)."
+    "estimateRequired": "This request has a non-standard item: it needs a staff estimate before approval (coming soon).",
+    "dropOff": "Drop-off point",
+    "dropOffAuto": "Automatic (the branch's only point, if it has one)",
+    "dropOffNone": "None named",
+    "dropOffTitle": "Correct the drop-off point",
+    "dropOffHint": "The customer reads the new point's details the next time the bot looks at the request.",
+    "dropOffAction": "Save drop-off point",
+    "supportPhonesTitle": "Customer service numbers",
+    "supportPhonesHint": "The shipping bot gives customers the number of their branch. Leave empty to show none. International format, e.g. +249912345678."
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

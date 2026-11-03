@@ -28,12 +28,16 @@ export class CatalogService {
     private readonly rates: RatesService,
   ) {}
 
-  async catalog(offered: readonly CsRequestService[]): Promise<CsCatalogDto> {
-    const [all, aliases, ends, routing] = await Promise.all([
+  async catalog(
+    offered: readonly CsRequestService[],
+    branchIds: readonly string[],
+  ): Promise<CsCatalogDto> {
+    const [all, aliases, ends, routing, phones] = await Promise.all([
       this.masterData.all(),
       this.masterData.locationAliases(),
       this.rates.approvedRouteEnds(todayIn('UTC')),
       this.masterData.routingBranches(),
+      this.masterData.supportPhones(),
     ]);
     // Places only: a country is a pricing scope, never a quote's or a booking's end.
     const active = all.locations.filter((l) => l.isActive && l.kind !== 'COUNTRY');
@@ -68,6 +72,20 @@ export class CatalogService {
           pricingMode: pricingModeOf(c.defaultUnit),
         })),
       services: CS_CATALOG_SERVICES.filter((s) => offered.includes(s.code)).map((s) => ({ ...s })),
+      // Plan 09 amendment 4: the key's branches' customer service numbers.
+      support: phones.flatMap((p) =>
+        p.phone !== null && branchIds.includes(p.branchId)
+          ? [
+              {
+                branchId: p.branchId,
+                code: p.code,
+                nameAr: p.nameAr,
+                nameEn: p.nameEn,
+                phone: p.phone,
+              },
+            ]
+          : [],
+      ),
     };
     const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
     return { version, ...body };
