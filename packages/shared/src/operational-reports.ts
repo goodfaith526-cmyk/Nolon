@@ -426,6 +426,8 @@ export const AUDIT_ENTITIES = [
   'PAYMENT_INSTRUCTION',
   // Plan 09 section 2: a bot's booking request cancelled, or asked to be cancelled, by its customer.
   'CS_BOOKING_REQUEST',
+  // Plan 09 section 3: the stages a customer reads, and which status shows as which.
+  'CUSTOMER_STAGE',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

@@ -467,6 +467,53 @@ export interface CsBookingRequestDto {
    * staff handled it. Null when never asked.
    */
   cancelRequest: CsCancelRequestDto | null;
+  /**
+   * Plan 09 section 3: where the booking is, in the customer's stages. BOOKED while pending or the
+   * booking is a draft; the shipment's mapped stage once confirmed. Null when rejected, cancelled
+   * or expired, or when staff must answer (attention).
+   */
+  stage: CsStageDto | null;
+  /** 'staff': the bot hands the customer to staff (on hold, cancelled, partly delivered...). */
+  attention: 'staff' | null;
+  shipment: CsShipmentTrackDto | null;
+}
+
+/** A customer stage as the bot shows it (plan 09 section 3). */
+export interface CsStageDto {
+  code: string;
+  ar: string;
+  en: string;
+  order: number;
+}
+
+export interface CsShipmentTrackDto {
+  number: string;
+  stage: CsStageDto | null;
+  city: { ar: string; en: string } | null;
+  /** When its status last changed (the latest status event). */
+  updatedAt: string;
+}
+
+/** The customer stages and the internal statuses they show for (staff master data). */
+export interface CustomerStageDto {
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface CustomerStageInput {
+  nameAr: string;
+  nameEn: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface CustomerStagesDto {
+  stages: CustomerStageDto[];
+  /** Every shipment status, with its stage or null (the customer is sent to staff). */
+  mapping: { status: ShipmentStatus; stageCode: string | null }[];
 }
 
 export interface CsCancelRequestDto {

@@ -34,6 +34,8 @@ import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
+import { trackOf } from './customer-stages.js';
+import { CustomerStagesService } from './customer-stages.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
 import { keyScopes, keyServices } from './api-scopes.js';
@@ -43,6 +45,14 @@ import { CustomerTokensService } from './customer-tokens.service.js';
 import { PaymentInstructionsService } from './payment-instructions.service.js';
 
 const DAY_MS = 86_400_000;
+
+/** A place's names and its city's, for the customer's stage city (plan 09 section 3). */
+const placeSelect = {
+  kind: true,
+  nameAr: true,
+  nameEn: true,
+  city: { select: { nameAr: true, nameEn: true } },
+} as const;
 
 /** BR-000001: the request's number for staff and the customer. */
 export function requestReference(value: bigint): string {
@@ -158,6 +168,7 @@ export class BookingRequestsService {
     private readonly identities: CustomerIdentityService,
     private readonly audit: AuditService,
     @Inject(APP_ENV) private readonly env: AppEnv,
+    private readonly stages: CustomerStagesService,
   ) {}
 
   async create(
@@ -446,7 +457,29 @@ export class BookingRequestsService {
   ): Promise<CsBookingRequestDto> {
     const row = await this.prisma.csBookingRequest.findFirst({
       where: ownedWhere(caller, id, sender),
-      include: { rejectReason: true, booking: { select: { number: true } } },
+      include: {
+        rejectReason: true,
+        booking: {
+          select: {
+            number: true,
+            status: true,
+            shipment: {
+              select: {
+                number: true,
+                status: true,
+                createdAt: true,
+                destination: { select: placeSelect },
+                currentLocation: { select: placeSelect },
+                events: {
+                  select: { occurredAt: true },
+                  orderBy: { occurredAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+      },
     });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
@@ -459,6 +492,25 @@ export class BookingRequestsService {
       );
     }
     if (!row || !served) throw new NotFoundException('Booking request not found');
+    const { stages, mapping } = await this.stages.maps();
+    const shipment = row.booking?.shipment ?? null;
+    const track = trackOf(
+      {
+        state: stateOf(row),
+        booking: row.booking && {
+          status: row.booking.status,
+          shipment: shipment && {
+            number: shipment.number,
+            status: shipment.status,
+            destination: shipment.destination,
+            currentLocation: shipment.currentLocation,
+            updatedAt: shipment.events[0]?.occurredAt ?? shipment.createdAt,
+          },
+        },
+      },
+      stages,
+      mapping,
+    );
     return {
       requestId: row.id,
       reference: row.reference,
@@ -478,6 +530,7 @@ export class BookingRequestsService {
           ? await this.payments.approvedFor(row.branchId, row.paymentCurrency)
           : null,
       cancelRequest: cancelRequestOf(row),
+      ...track,
     };
   }
 

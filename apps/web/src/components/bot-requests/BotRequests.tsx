@@ -14,6 +14,7 @@ import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { CustomerStages } from './CustomerStages';
 
 /** The shipping bot's booking requests for the staff member's branches (plan 04a section 3). */
 export function BotRequests() {
@@ -116,6 +117,7 @@ export function BotRequests() {
         </div>
       )}
       <RejectReasons editable={can(me, 'master_data:update')} />
+      {can(me, 'master_data:view') && <CustomerStages editable={can(me, 'master_data:update')} />}
     </section>
   );
 }

@@ -22,6 +22,7 @@ export const AUDITED_MASTER_DATA = [
   'CUSTOMER_SEGMENT',
   'LOCATION',
   'CS_REJECT_REASON',
+  'CUSTOMER_STAGE',
 ] as const satisfies readonly AuditEntity[];
 export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 

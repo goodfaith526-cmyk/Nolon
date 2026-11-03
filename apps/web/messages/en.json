@@ -1888,7 +1888,8 @@
     "entity_CS_REJECT_REASON": "Bot request rejection reason",
     "entity_API_CLIENT": "API key",
     "entity_PAYMENT_INSTRUCTION": "Payment instructions",
-    "entity_CS_BOOKING_REQUEST": "Bot booking request"
+    "entity_CS_BOOKING_REQUEST": "Bot booking request",
+    "entity_CUSTOMER_STAGE": "Customer stage"
   },
   "Dashboards": {
     "managementTitle": "Management dashboard",
@@ -3088,7 +3089,16 @@
     "cancelRequestClosed": "(handled)",
     "cancelRequestTitle": "The customer asked to cancel",
     "cancelRequestHint": "The booking is not cancelled automatically. Contact the customer, cancel the booking from its page if needed, then mark the ask handled.",
-    "cancelRequestCloseAction": "Mark handled"
+    "cancelRequestCloseAction": "Mark handled",
+    "stages": "Shipment stages the customer reads",
+    "stagesHint": "The stages the customer reads from the bot. A status with no stage sends the customer to staff.",
+    "addStage": "Add stage",
+    "stageCode": "Stage code",
+    "stageOrder": "Order",
+    "stageMapping": "Which shipment status shows as which stage",
+    "shipmentStatus": "Shipment status",
+    "customerStage": "Customer stage",
+    "stageToStaff": "— No stage: contact staff —"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

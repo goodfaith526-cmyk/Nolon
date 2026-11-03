@@ -313,6 +313,119 @@ describe('Customer Service booking request approval (R3c2)', () => {
     });
   });
 
+  it('reads the customer stage from the real booking and shipment (plan 09 section 3)', async () => {
+    const read = async (made: { id: string; header: string }) =>
+      (
+        await t
+          .http()
+          .get(`/api/v1/cs/booking-requests/${made.id}`)
+          .set('Authorization', `Bearer ${bot.key}`)
+          .set('X-Cs-Sender', made.header)
+          .expect(200)
+      ).body as CsBookingRequestDto;
+    const approveNew = async () => {
+      const made = await request(ids.served!);
+      expect(await read(made)).toMatchObject({
+        stage: { code: 'BOOKED', order: 1 },
+        attention: null,
+        shipment: null,
+      });
+      const { version } = await detail(cookies.salesPts, made.id);
+      const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+      const done = (
+        await approve(cookies.salesPts, made.id, {
+          version,
+          paymentCurrency: 'USD',
+          pricing: pricing(ids.served!),
+          pricingFingerprint: price.pricingFingerprint,
+          booking: booking(ids.customerPts!),
+        }).expect(201)
+      ).body as CsBookingRequestStaffDto;
+      return { made, bookingId: done.bookingId! };
+    };
+
+    // Approved but not confirmed: still a preliminary booking, never "confirmed" (F161-2).
+    const first = await approveNew();
+    expect(await read(first.made)).toMatchObject({
+      status: 'approved',
+      stage: { code: 'BOOKED' },
+      shipment: null,
+    });
+    await t.prisma.bookingItem.create({
+      data: { bookingId: first.bookingId, lineNo: 1, cargoType: 'GENERAL', quantity: 2 },
+    });
+    await staff(cookies.salesPts).post(`/bookings/${first.bookingId}/confirm`, {}).expect(200);
+    const confirmed = await read(first.made);
+    expect(confirmed).toMatchObject({
+      stage: { code: 'CONFIRMED', order: 2 },
+      attention: null,
+      shipment: { stage: { code: 'CONFIRMED' } },
+    });
+    expect(JSON.stringify(confirmed)).not.toMatch(/price|cost|internalNote/i);
+
+    const shipment = await t.prisma.shipment.findUniqueOrThrow({
+      where: { bookingId: first.bookingId },
+      include: { destination: true },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ROAD_DEPARTED' },
+    });
+    expect((await read(first.made)).shipment).toMatchObject({
+      number: shipment.number,
+      stage: { code: 'ON_ROAD' },
+      city: { en: shipment.destination.nameEn },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ON_HOLD', statusBeforeHold: 'ROAD_DEPARTED', holdReason: 'test' },
+    });
+    expect(await read(first.made)).toMatchObject({
+      stage: null,
+      attention: 'staff',
+      shipment: { number: shipment.number, stage: null },
+    });
+
+    // A draft cancelled after approval is not reported as confirmed.
+    const second = await approveNew();
+    await t.prisma.booking.update({
+      where: { id: second.bookingId },
+      data: { status: 'CANCELLED' },
+    });
+    expect(await read(second.made)).toMatchObject({
+      stage: null,
+      attention: 'staff',
+      shipment: null,
+    });
+
+    // Staff edit the mapping without code: the bot reads the new stage.
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'DEPARTED', statusBeforeHold: null, holdReason: null },
+    });
+    const put = (path: string, body: object) =>
+      t
+        .http()
+        .put(`/api/v1/customer-stages/${path}`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.admin)
+        .send(body);
+    await put('mapping/DEPARTED', { stageCode: 'AT_ORIGIN_HUB' }).expect(200);
+    try {
+      expect((await read(first.made)).stage?.code).toBe('AT_ORIGIN_HUB');
+      await put('mapping/DEPARTED', { stageCode: 'NO_SUCH' }).expect(404);
+      await t
+        .http()
+        .put('/api/v1/customer-stages/mapping/DEPARTED')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.salesPts)
+        .send({ stageCode: null })
+        .expect(403);
+    } finally {
+      await put('mapping/DEPARTED', { stageCode: 'AT_SEA' }).expect(200);
+    }
+  });
+
   it('refuses an approval that does not fit the request, and makes no booking', async () => {
     const made = await request(ids.served!);
     const { version } = await detail(cookies.salesPts, made.id);
