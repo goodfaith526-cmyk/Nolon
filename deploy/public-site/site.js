@@ -457,35 +457,23 @@
           return 'translateX(' + x.toFixed(1) + 'px)';
         }
         var back = stop > 0 ? -1 : 1;
-        // 3D: darker copies of the logo stacked behind it give the truck a body; the truck turns
-        // three-quarters while it drives and faces front when it stops.
+        // The logo itself stays exactly as drawn; only a soft ground shadow rides under the truck.
         top.classList.add('driving');
         brand.classList.add('drive');
-        var depth = [];
-        for (var d = 1; d <= 12; d++) {
-          var c = tripImg.cloneNode();
-          c.alt = '';
-          c.setAttribute('aria-hidden', 'true');
-          c.classList.add('depth');
-          c.style.left = tripImg.offsetLeft + 'px';
-          c.style.top = tripImg.offsetTop + 'px';
-          c.style.transform = 'translateZ(' + -d * 1.6 + 'px)';
-          brand.insertBefore(c, tripImg);
-          depth.push(c);
-        }
         var shade = document.createElement('span');
         shade.className = 'truck-shadow';
         shade.style.left = tripImg.offsetLeft + tripImg.offsetWidth * 0.12 + 'px';
         shade.style.width = tripImg.offsetWidth * 0.76 + 'px';
         shade.style.top = tripImg.offsetTop + ri.height * (site.lang === 'en' ? 0.64 : 0.58) + 'px';
         brand.insertBefore(shade, brand.firstChild);
-        var layers = depth.concat([tripImg]);
-        function pose(x, turn, lean) {
+        var layers = [tripImg];
+        // Light 3D: a slight perspective turn while the truck drives; the logo itself is unchanged.
+        function pose(x, lean, turn) {
           return (
             'perspective(900px) translateX(' +
             x.toFixed(1) +
             'px) rotateY(' +
-            turn +
+            (turn || 0) +
             'deg) skewX(' +
             lean +
             'deg)'
@@ -493,24 +481,24 @@
         }
         brand.animate(
           [
-            { offset: 0, transform: pose(from, -28, -4), easing: 'cubic-bezier(.25,.6,.4,1)' },
-            { offset: at(1700), transform: pose(stop + 7, -14, -4), easing: 'ease-out' },
-            { offset: at(1950), transform: pose(stop - 2, -4, 3), easing: 'ease-in-out' },
-            { offset: at(2150), transform: pose(stop, 0, 0) },
-            { offset: at(4100), transform: pose(stop, 0, 0), easing: 'ease-in-out' },
+            { offset: 0, transform: pose(from, -4, -14), easing: 'cubic-bezier(.25,.6,.4,1)' },
+            { offset: at(1700), transform: pose(stop + 7, -4, -7), easing: 'ease-out' },
+            { offset: at(1950), transform: pose(stop - 2, 3), easing: 'ease-in-out' },
+            { offset: at(2150), transform: pose(stop, 0) },
+            { offset: at(4100), transform: pose(stop, 0), easing: 'ease-in-out' },
             {
               offset: at(4500),
-              transform: pose(stop - back * 10, back * 26, 0),
+              transform: pose(stop - back * 10, 0, back * 12),
               easing: 'ease-in-out',
             },
             {
               offset: at(5500),
-              transform: pose(back * 6, back * 12, back * -3),
+              transform: pose(back * 6, back * -3, back * 5),
               easing: 'ease-out',
             },
-            { offset: at(5750), transform: pose(back * -2, 0, back * 2) },
-            { offset: at(5950), transform: pose(0, 0, 0) },
-            { offset: 1, transform: pose(0, 0, 0) },
+            { offset: at(5750), transform: pose(back * -2, back * 2) },
+            { offset: at(5950), transform: pose(0, 0) },
+            { offset: 1, transform: pose(0, 0) },
           ],
           { duration: ms },
         );
@@ -587,9 +575,6 @@
         setTimeout(function () {
           layer.remove();
           shade.remove();
-          depth.forEach(function (el) {
-            el.remove();
-          });
           brand.classList.remove('drive');
           top.classList.remove('driving');
         }, ms + 50);
