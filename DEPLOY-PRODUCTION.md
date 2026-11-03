@@ -168,8 +168,9 @@ host.
   its settings from the environment, with no config file. The endpoint must be `https://`.
 - **No migration without a backup right before it.** `deploy.sh` runs `backup.sh pre-migrate`
   first: a backup that must succeed, or the deploy stops before anything changes. Without backup
-  settings, only the first deploy onto an empty database goes through; every later deploy fails
-  until backups are set up (step 3 below). Tested in `test-backup.sh`.
+  settings (trial data only, owner decision 2026-11-03), the deploy migrates without a backup and
+  warns, so production keeps the same code as staging; set backups up (step 3 below) before
+  go-live. Tested in `test-backup.sh`.
 - **Restore is tested on every CI run** (`deploy/production/test-backup.sh`) against a local S3
   server with Object Lock: encryption, lock, a key that cannot delete, a wrong key, `restore-test`
   and `restore --replace`.
