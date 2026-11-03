@@ -273,6 +273,11 @@ export interface CsCatalogDto {
   destinations: CsCatalogPlaceDto[];
   categories: CsCatalogCategoryDto[];
   services: { code: BookingService; nameAr: string; nameEn: string }[];
+  /**
+   * Plan 09 amendment 4: the customer service numbers of the key's branches that have one, for the
+   * bot to show (a footer, a hand-over to staff).
+   */
+  support: { branchId: string; code: string; nameAr: string; nameEn: string; phone: string }[];
 }
 
 /** A location's other names, as the master-data screen sets them. */
@@ -544,6 +549,8 @@ export interface CsBookingRequestDto {
    * payment instructions' currency.
    */
   approvedPrice: { amount: DecimalString; currency: CurrencyCode } | null;
+  /** Plan 09 section 11: where to bring the shipment, once approved; null before or when none. */
+  dropOff: CsDropOffDto | null;
   /**
    * Plan 09 section 3: where the booking is, in the customer's stages. BOOKED while pending or the
    * booking is a draft; the shipment's mapped stage once confirmed. Null when rejected, cancelled
@@ -807,7 +814,14 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
    * for staff. Null: not tried (switched off, no signed profile, awaiting routing).
    */
   instantAccount: { outcome: CsInstantAccountOutcome; customerId: string | null } | null;
+  /** Plan 09 section 11: the drop-off point named (staff view), and the ones staff may name. */
+  dropOffId: string | null;
+  /** The point named, as staff read it (even if since turned off). */
+  dropOffPoint: CsDropOffChoiceDto | null;
+  dropOffChoices: CsDropOffChoiceDto[];
   actions: {
+    /** Plan 09 section 11: correct the drop-off point of an approved request. */
+    canSetDropOff: boolean;
     canRoute: boolean;
     canReject: boolean;
     canApprove: boolean;
@@ -923,7 +937,41 @@ export interface CsApproveLine {
   pricingFingerprint: string | null;
 }
 
+/**
+ * Plan 09 section 11: where the customer brings the shipment, as the bot reads it once the request
+ * is approved: the point's current details. `address` and `hours` repeat the one language given
+ * when only one is set; null when neither is. `mapUrl` is the point's own link, or one built from
+ * its map position, or null.
+ */
+export interface CsDropOffDto {
+  name: { ar: string; en: string };
+  address: { ar: string; en: string } | null;
+  phone: string | null;
+  mapUrl: string | null;
+  hours: { ar: string; en: string } | null;
+}
+
+/** A drop-off point staff may name on approval (plan 09 section 11). */
+export interface CsDropOffChoiceDto {
+  id: string;
+  branchId: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+}
+
+/** POST /cs-booking-requests/:id/drop-off: staff correct the point of an approved request. */
+export interface CsSetDropOff {
+  version: number;
+  dropOffId: string;
+}
+
 export interface CsApproveRequest {
+  /**
+   * Plan 09 section 11: the drop-off point named to the customer. Left out: the branch's only
+   * active point when it has exactly one, else none.
+   */
+  dropOffId?: string;
   profileVersion?: number;
   version: number;
   paymentCurrency: CurrencyCode;

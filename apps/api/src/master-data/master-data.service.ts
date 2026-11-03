@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  BranchSupportPhoneDto,
   CargoType,
   CodeNameDto,
   CodeNameInput,
@@ -125,6 +126,46 @@ export class MasterDataService {
       },
     });
     return { items: rows.slice(0, 20), nextPage: rows.length > 20 ? input.page + 1 : null };
+  }
+
+  /** Plan 09 amendment 4: every branch's customer service number (null when not set). */
+  async supportPhones(): Promise<BranchSupportPhoneDto[]> {
+    const rows = await this.prisma.branch.findMany({
+      select: { id: true, code: true, nameAr: true, nameEn: true, supportPhone: true },
+      orderBy: { code: 'asc' },
+    });
+    return rows.map((b) => ({
+      branchId: b.id,
+      code: b.code,
+      nameAr: b.nameAr,
+      nameEn: b.nameEn,
+      phone: b.supportPhone,
+    }));
+  }
+
+  /** Sets or clears a branch's customer service number; audited on the branch. */
+  async setSupportPhone(
+    user: AuthUser,
+    branchId: string,
+    phone: string | null,
+  ): Promise<BranchSupportPhoneDto[]> {
+    await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ code: string; support_phone: string | null }[]>`
+        SELECT "code", "support_phone" FROM "branches" WHERE "id" = ${branchId}::uuid FOR UPDATE`;
+      const before = rows[0];
+      if (!before) throw new NotFoundException('Branch not found');
+      if (before.support_phone === phone) return;
+      await tx.branch.update({ where: { id: branchId }, data: { supportPhone: phone } });
+      await this.audit.record(tx, user, {
+        branchId,
+        entity: 'BRANCH',
+        entityId: branchId,
+        reference: before.code,
+        action: 'UPDATED',
+        changes: [{ field: 'supportPhone', before: before.support_phone, after: phone }],
+      });
+    });
+    return this.supportPhones();
   }
 
   async all(): Promise<MasterDataDto> {

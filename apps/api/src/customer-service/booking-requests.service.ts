@@ -1,3 +1,4 @@
+import { dropOffDto, dropOffSelect } from './drop-off.js';
 import {
   CustomerIdentityService,
   type ProfileBookingBinding,
@@ -584,6 +585,7 @@ export class BookingRequestsService {
       where: ownedWhere(caller, id, sender),
       include: {
         rejectReason: true,
+        dropOff: { select: dropOffSelect },
         booking: {
           select: {
             number: true,
@@ -662,6 +664,7 @@ export class BookingRequestsService {
         row.status === 'APPROVED' && row.approvedTotal !== null && row.approvedCurrency !== null
           ? { amount: toDecimalString(row.approvedTotal), currency: row.approvedCurrency }
           : null,
+      dropOff: row.status === 'APPROVED' ? dropOffDto(row.dropOff) : null,
       ...track,
       // Plan 09 amendment 4: the public tracking link the shipment's QR opens, once it exists.
       shipment:

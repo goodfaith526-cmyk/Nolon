@@ -428,6 +428,10 @@ export const AUDIT_ENTITIES = [
   'CS_BOOKING_REQUEST',
   // Plan 09 section 3: the stages a customer reads, and which status shows as which.
   'CUSTOMER_STAGE',
+  // Plan 09 section 11: a facility's drop-off details (where customers bring shipments).
+  'WAREHOUSE',
+  // Plan 09 amendment 4: a branch's customer service number.
+  'BRANCH',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

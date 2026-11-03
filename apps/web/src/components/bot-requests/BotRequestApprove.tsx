@@ -54,6 +54,10 @@ export function BotRequestApprove({
   const [paymentCurrency, setPaymentCurrency] = useState(inputs.currency);
   const [prices, setPrices] = useState<{ key: string; dtos: CsApprovalPriceDto[] } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  // Plan 09 section 11: the point the customer is told to bring the shipment to (none: the
+  // branch's only point, when it has exactly one).
+  const dropOffChoices = r.dropOffChoices.filter((d) => d.branchId === r.branchId);
+  const [dropOffId, setDropOffId] = useState('');
 
   const places = master.locations.filter((l) => l.isActive && isPlace(l));
   const currencies = master.currencies.filter((c) => c.isActive);
@@ -89,6 +93,7 @@ export function BotRequestApprove({
       version: r.version,
       ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
+      ...(dropOffId ? { dropOffId } : {}),
       // Plan 09 section 4: a request with items is priced per line; the one-item shape as before.
       ...(byItems
         ? {
@@ -213,6 +218,19 @@ export function BotRequestApprove({
             ))}
           </select>
         </label>
+        {dropOffChoices.length > 0 && (
+          <label className="field">
+            {t('dropOff')}
+            <select value={dropOffId} onChange={(e) => setDropOffId(e.target.value)}>
+              <option value="">{t('dropOffAuto')}</option>
+              {dropOffChoices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {name(d)} ({d.code})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       {hasOther && <p className="error">{t('estimateRequired')}</p>}
       <div className="stack">

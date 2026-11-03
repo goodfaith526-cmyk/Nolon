@@ -1,3 +1,4 @@
+import type { PartnerRefDto } from './partners.js';
 import type { DecimalString } from './currencies.js';
 import type { WarehouseOnHandRowDto } from './operational-reports.js';
 import type { ShipmentStatus } from './shipments.js';
@@ -55,6 +56,18 @@ export interface WarehouseDto {
   /** Map position in WGS 84 degrees, both set or both null. */
   latitude: DecimalString | null;
   longitude: DecimalString | null;
+  /** Plan 09 section 11: the English address (`address` is the Arabic one). */
+  addressEn: string | null;
+  /** Customers bring their shipments here (a drop-off point the bot may name). */
+  acceptsDropOff: boolean;
+  /** The sales outlet a drop-off window belongs to, if any. */
+  partnerId: string | null;
+  partner: PartnerRefDto | null;
+  /** https only; when null the bot gets a link built from the map position. */
+  mapUrl: string | null;
+  /** Opening hours as customers read them. */
+  hoursAr: string | null;
+  hoursEn: string | null;
   isActive: boolean;
   storageLocations: StorageLocationDto[];
 }
@@ -76,6 +89,16 @@ export interface WarehouseUpdateRequest {
   address?: string | null;
   locationId?: string | null;
   isActive?: boolean;
+  /** Plan 09 section 11: the drop-off details (latitude and longitude both set or both null). */
+  addressEn?: string | null;
+  acceptsDropOff?: boolean;
+  partnerId?: string | null;
+  mapUrl?: string | null;
+  hoursAr?: string | null;
+  hoursEn?: string | null;
+  phone?: string | null;
+  latitude?: DecimalString | null;
+  longitude?: DecimalString | null;
 }
 
 export interface StorageLocationInput {

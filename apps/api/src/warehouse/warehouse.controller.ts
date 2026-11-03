@@ -23,7 +23,7 @@ import {
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission, AgentReadable } from '../auth/decorators.js';
-import { optionalText, parse, requiredText } from '../common/validation.js';
+import { optionalText, parse, phone, requiredText } from '../common/validation.js';
 import { WarehouseMovementsService } from './warehouse-movements.service.js';
 import { WarehousesService } from './warehouses.service.js';
 
@@ -45,6 +45,13 @@ const warehouseBody = z
   })
   .strict();
 
+/** A WGS 84 coordinate in degrees, up to 6 decimals, within ±limit. */
+const degrees = (limit: number) =>
+  z
+    .string()
+    .regex(/^-?\d{1,3}(\.\d{1,6})?$/, 'Degrees, up to 6 decimals')
+    .refine((v) => Math.abs(Number(v)) <= limit, `Within ±${limit} degrees`);
+
 const warehouseUpdateBody = z
   .object({
     nameEn: requiredText(200).optional(),
@@ -52,6 +59,19 @@ const warehouseUpdateBody = z
     address: optionalText(500).optional(),
     locationId: z.uuid().nullish(),
     isActive: z.boolean().optional(),
+    // Plan 09 section 11: the drop-off details the bot names on approval.
+    addressEn: optionalText(500).optional(),
+    acceptsDropOff: z.boolean().optional(),
+    partnerId: z.uuid().nullish(),
+    mapUrl: z
+      .url({ protocol: /^https$/ })
+      .max(500)
+      .nullish(),
+    hoursAr: optionalText(200).optional(),
+    hoursEn: optionalText(200).optional(),
+    phone: phone.nullish(),
+    latitude: degrees(90).nullish(),
+    longitude: degrees(180).nullish(),
   })
   .strict();
 

@@ -402,7 +402,7 @@ export class CatalogController {
 
   @Get()
   get(@CurrentApiClient() client: ApiClientAuth): Promise<CsCatalogDto> {
-    return this.catalog.catalog(client.services);
+    return this.catalog.catalog(client.services, client.allowedBranchIds);
   }
 }
 

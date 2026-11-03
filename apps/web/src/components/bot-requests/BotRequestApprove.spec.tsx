@@ -50,6 +50,9 @@ const request = {
   botQuotedPrice: { amount: '550', currency: 'USD' },
   items: [],
   bookingLines: [],
+  dropOffId: null,
+  dropOffPoint: null,
+  dropOffChoices: [],
 } as unknown as CsBookingRequestStaffDto;
 const master = {
   locations: [

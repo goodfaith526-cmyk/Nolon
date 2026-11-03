@@ -213,6 +213,20 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {(r.dropOffPoint || r.actions.canSetDropOff) && (
+          <>
+            <dt>{t('dropOff')}</dt>
+            <dd>
+              {r.dropOffPoint ? (
+                <>
+                  {localName(r.dropOffPoint)} <span dir="ltr">({r.dropOffPoint.code})</span>
+                </>
+              ) : (
+                <span className="muted">{t('dropOffNone')}</span>
+              )}
+            </dd>
+          </>
+        )}
         {r.approvedPricing && (
           <>
             <dt>{t('approvedPricing')}</dt>
@@ -365,6 +379,40 @@ export function BotRequestDetail({ id }: { id: string }) {
             </table>
           </div>
         </div>
+      )}
+
+      {r.actions.canSetDropOff && (
+        <form
+          className="card stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const dropOffId = field(new FormData(e.currentTarget), 'dropOffId');
+            if (dropOffId) void post('drop-off', { version: r.version, dropOffId });
+          }}
+        >
+          <h2>{t('dropOffTitle')}</h2>
+          <p className="muted">{t('dropOffHint')}</p>
+          <label className="field">
+            {t('dropOff')}
+            <select name="dropOffId" required defaultValue={r.dropOffId ?? ''}>
+              <option value="" disabled>
+                —
+              </option>
+              {r.dropOffChoices
+                .filter((d) => d.branchId === r.branchId)
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {localName(d)} ({d.code})
+                  </option>
+                ))}
+            </select>
+          </label>
+          <div className="actions">
+            <button type="submit" disabled={busy}>
+              {t('dropOffAction')}
+            </button>
+          </div>
+        </form>
       )}
 
       {r.actions.canCloseCancelRequest && (
