@@ -1,4 +1,4 @@
-# 09. إكمال دورة بوت الحجوزات: من الطلب حتى التسليم (N-C1 إلى N-C7)
+# 09. إكمال دورة بوت الحجوزات: من الطلب حتى التسليم (N-C1 إلى N-C9)
 
 التاريخ: 2026-11-02. الحالة: **خطة**، ما في كود قبل موافقة Codex عليها.
 المصدر: طلب مشروع المساعد (erp-agents) «إكمال دورة بوت الحجوزات» بتاريخ 2026-11-02، بعد تجربة البوت على staging.
@@ -10,6 +10,10 @@
 **مراجعة 2 (بعد Codex على `6aa00ef`):** F161-1 إلى F161-7 معالجة في الأقسام 2 و3 و4 و5 و8 و9، والترتيب اتعدّل (مراجعة
 المستندات قبل PDF، وتوافق المستهلك شرط قبل تفعيل الإلغاء)، وحماية الإشعار والتنزيل في القسمين 5 و7، وSQL كل migration
 في القسم 10. الموافقة النهائية على SQL بتكون في PR كل بند.
+
+**تعديل 3 (2026-11-03، طلب المساعد المحدّث):** بندين جداد من صاحب المشروع: N-C8 مكان التسليم في رد الموافقة (القسم 11)
+وN-C9 الأغراض الما معيارية بصور وتقدير من الموظف (القسم 12). الترتيب في القسم 1 اتعدّل، والـSQL في القسم 10. 09-1 و09-2
+اندمجوا (#163، #164).
 
 ## 0. الوضع اليوم (من الكود على `8d2061f`)
 
@@ -31,15 +35,20 @@
 
 ## 1. الترتيب (كل بند PR براهو، مكدّسة)
 
-| PR      | البند                                       | Migration | شرط قبل التفعيل                                    |
-| ------- | ------------------------------------------- | --------- | -------------------------------------------------- |
-| 09-1    | N-C1 إلغاء الطلب                            | إضافي     | PR مستهلك في erp-agents يقبل `cancelled` (القسم 9) |
-| 09-2    | N-C3 مراحل الزبون                           | إضافي     | —                                                  |
-| 09-3    | N-C2 أكتر من صنف + سعر بأصناف               | إضافي     | —                                                  |
-| 09-4    | N-C5 الإشعار (تيار أحداث واحد)              | إضافي     | عنوان استقبال معتمد + السر في البيئتين             |
-| 09-5    | N-C7 مراجعة شكل المستندات وعقد البوليصة     | لا        | مراجعة Codex للتقرير                               |
-| 09-6    | N-C4 البوليصة PDF                           | إضافي     | اختبار عرض عربي حقيقي على staging                  |
-| 09-7a/b | N-C6 قاعدة العملاء المركزية (خطة 09b أولاً) | تحدده 09b | موافقة المالك الصريحة على توسيع الوصول (القسم 8)   |
+| PR      | البند                                       | Migration | شرط قبل التفعيل                                     |
+| ------- | ------------------------------------------- | --------- | --------------------------------------------------- |
+| 09-1    | N-C1 إلغاء الطلب                            | إضافي     | PR مستهلك في erp-agents يقبل `cancelled` (القسم 9)  |
+| 09-2    | N-C3 مراحل الزبون                           | إضافي     | —                                                   |
+| 09-3    | N-C2 أكتر من صنف + سعر بأصناف               | إضافي     | —                                                   |
+| 09-4    | N-C5 الإشعار (تيار أحداث واحد)              | إضافي     | عنوان استقبال معتمد + السر في البيئتين              |
+| 09-5    | N-C7 مراجعة شكل المستندات وعقد البوليصة     | لا        | مراجعة Codex للتقرير                                |
+| 09-6    | N-C4 البوليصة PDF                           | إضافي     | اختبار عرض عربي حقيقي على staging                   |
+| 09-7a/b | N-C6 قاعدة العملاء المركزية (خطة 09b أولاً) | تحدده 09b | موافقة المالك الصريحة على توسيع الوصول (القسم 8)    |
+| 09-8    | N-C8 مكان التسليم (القسم 11)                | إضافي     | —                                                   |
+| 09-9    | N-C9 صور وتقدير الموظف (القسم 12)           | إضافي     | PR مستهلك في erp-agents يقبل `estimated` (القسم 12) |
+
+**ترتيب البناء بعد تعديل 3:** 09-3 (الأصناف، ومعاها صنف `OTHER`) ← 09-8 ← 09-9 ← 09-4 ← 09-5 ← 09-6 ← 09-7. 09-8 بدري
+لأنو البوت جاهز يعرض المكان، و09-9 قبل الإشعار عشان حدث `request.estimated` يدخل في نفس التيار.
 
 N-C5 بعد N-C1 وN-C3 عشان أحداثهم، وبتيار تسلسل واحد قبل أي منتج أحداث (F161-4). مراجعة المستندات قبل PDF عشان القالب
 والعقد يتثبتوا أولاً.
@@ -249,6 +258,70 @@ lease_until < now()) AND next_attempt_at <= now() ORDER BY ... FOR UPDATE SKIP L
 - مسارات الموظف `@AgentReadable` ومسودات المساعد الـ12 ما بتتغيّر.
 - بعد كل PR بيندمج: ملاحظة قصيرة لمشروع المساعد بالعقد والأخطاء الجديدة.
 
+## 11. N-C8 مكان التسليم في رد الموافقة
+
+- **وين بيتسجّل المكان:** نقاط التسليم هي **المرافق** في جدول `warehouses` الموجود (مراكز التجميع والتوزيع والتسليم ونوافذ
+  الاستلام)، ما جدول جديد. خيط «إضافة مراكز ومنافذ تجريبية بمواقعها» بيضيف للجدول ده نوع المرفق والتلفون والإحداثيات
+  وبيبذر المرافق التجريبية؛ 09-8 بيبني فوق أعمدتو وما بيكررها. 09-8 بيضيف بس:
+  - `address_en` (العمود الحالي `address` بيبقى العنوان العربي)،
+  - `accepts_drop_off` (افتراضي `false`): المرفق بيستلم شحنات من الزبائن،
+  - `partner_id` اختياري (FK على `partners`، شريك `SALES_OUTLET`) لنافذة استلام بتتبع منفذ،
+  - `map_url` اختياري (https بس، حد 500). لو فاضي والإحداثيات موجودة، الرابط بيتحسب
+    `https://www.google.com/maps?q=<lat>,<lng>`.
+    التعديل من شاشة المخازن الحالية بصلاحية `warehouses:update` (أو `master_data:update` حسب الموجود)، مع تدقيق.
+- **الطلب:** عمود `cs_booking_requests.drop_off_warehouse_id`. عند الموافقة الموظف بيختار `dropOffId` (اختياري في جسم
+  الموافقة). لو ما اختار: لو فرع الطلب عندو نقطة تسليم نشطة واحدة بس، هي الافتراضية؛ غير كده بيفضل فاضي و`dropOff: null`.
+  النقطة لازم تكون نشطة، و`accepts_drop_off`، وفي فرع الموظف عندو فيهو `cs_booking_requests:approve` (عادة فرع الطلب). غير
+  كده `400 DROP_OFF_NOT_ALLOWED`. مسار تصحيح بعد الموافقة: `POST /cs-booking-requests/:id/drop-off {version, dropOffId}`
+  بنفس الفحص وتدقيق.
+- **القراءة:** `GET /cs/booking-requests/:id` بيرجّع `dropOff: { name{ar,en}, address{ar,en}|null, phone|null, mapUrl|null }`
+  لما الحالة `approved` بس، وغيرها `null`. ⭐ **البيانات الحالية للنقطة** (ما لقطة لحظة الموافقة): لو الفرع صحّح تلفون أو
+  عنوان، الزبون بيشوف الصحيح. `address` بيرجع `null` لو العربي والإنجليزي الاتنين فاضيين؛ لو واحد بس موجود بيتكرر في
+  التاني. نقطة اتوقفت بعد الموافقة بترجع `dropOff: null`.
+- **اختبارات القبول الخمسة:** نقطة كاملة = الأربعة؛ `pending`/`rejected` = `null`؛ بلا خريطة ولا إحداثيات = `mapUrl: null`
+  والباقي يرجع؛ نقطة فرع تاني بدون صلاحية = `400`؛ تعديل النقطة بعد الموافقة = القراءة بالبيانات الجديدة. وزيادة: نقطة
+  ما `accepts_drop_off` مرفوضة؛ الاختيار الافتراضي لما في نقطة واحدة؛ `mapUrl` غير https مرفوض في الحفظ.
+
+## 12. N-C9 الأغراض الما معيارية: صور وتقدير الموظف
+
+- **الصنف `OTHER` (يدخل مع 09-3):** في `items[]` بالشكلين: `{ kind: "OTHER", description, pieces?, lengthCm?, widthCm?,
+heightCm?, weightKg? }`. `description` إجباري (حد 500)، وما في `quantity` ولا فئة سعر. السطر بيتحفظ في
+  `cs_booking_request_items` بـ`is_other = true` و`description`، و`price_category_code` فاضي. ⭐ طلب فيهو صنف `OTHER`
+  **ما بيتوافق عليهو مباشرة**: الموظف لازم يقدّر أولاً (`409 ESTIMATE_REQUIRED` في الموافقة). السعر من البوت لصنف `OTHER`
+  مرفوض (`400`).
+- **رفع الصور:** `POST /cs/booking-requests/:id/photos`، **جسم ثنائي خام** (صورة واحدة لكل نداء) مع `Idempotency-Key`.
+  الجسم الخام بيدخل في توقيع الهوية (sha256 للجسم، الخطة 08)، فما في multipart.
+  - إثبات صاحب الطلب زي الإلغاء (القسم 2): token الزبون، أو هوية القناة الموقّعة لموضوع المرسل. المفتاح براهو = `403`.
+  - النوع من **محتوى الملف** (JPEG/PNG/WebP بالبايتات الأولى) ما من الترويسة؛ غيرها `415 UNSUPPORTED_IMAGE`.
+  - حد 10MB للصورة (حد الجسم في المسار ده بس) و10 صور للطلب (`409 PHOTO_LIMIT`، العدّ تحت قفل صف الطلب).
+  - مسموح والطلب `pending` أو `awaiting_routing` أو `estimated`.
+  - نفس المفتاح ونفس الملف = نفس الرد؛ نفس المفتاح بملف تاني = `409`.
+  - التخزين في جدول `cs_booking_request_photos` (المحتوى `bytea` في الجدول، زي `document_contents`)، مع sha256 والحجم
+    والنوع.
+  - الموظف بيشوف الصور في شاشة الطلب عبر `GET /cs-booking-requests/:id/photos/:photoId` بصلاحية العرض في فرع الطلب، مع
+    `Content-Disposition: inline` ونوع المحتوى المحفوظ و`X-Content-Type-Options: nosniff`.
+- **تقدير الموظف:** `POST /cs-booking-requests/:id/estimate {version, amount, currency, noteAr?, noteEn?, validUntil}`.
+  - صلاحية `cs_booking_requests:approve` في فرع الطلب، والطلب `pending` بفرع.
+  - المبلغ `Decimal` أكبر من صفر، والعملة نشطة من جدول العملات.
+  - ⭐ `validUntil` بعد الآن وفي حدود 14 يوم، و`expires_at` الطلب بيتمد لحدها لو أقصر.
+  - الطلب بيبقى `ESTIMATED` (قيمة enum جديدة)، مع تدقيق. تقدير جديد على طلب `estimated` بيبدّل القديم (نسخة الطلب بتمنع
+    السباق).
+- **القراءة:** `status: "estimated"` و`estimate: { amount, currency, note{ar,en}, validUntil }` في `estimated` بس، وغيرها
+  `null`. بعد `validUntil` القراءة بتقول `expired`، والطلب بيطلع من قائمة المراجعة المفتوحة.
+- **قبول الزبون:** `POST /cs/booking-requests/:id/accept-estimate {estimateVersion}` بإثبات صاحب الطلب.
+  - قبل `validUntil` ولنفس التقدير المعروض، الطلب بيرجع `pending` مع `estimate_accepted_at`.
+  - بعد `validUntil` = `409 ESTIMATE_EXPIRED`. تقدير اتبدّل = `409 ESTIMATE_CHANGED`. التكرار = نفس الرد.
+  - ⭐ **الرفض** = الإلغاء الموجود (القسم 2)، بقى مسموح كمان في `estimated`.
+- **الموافقة بعد القبول:** الموظف بيوافق، و`approved_total`/`approved_currency` = التقدير المقبول، بدون بصمة سعر المحرّك
+  (السعر اتفق عليهو). سطور `OTHER` بتعمل سطر حجز `GENERAL` لو `pieces` موجود، وغير كده بتمسك بوابة اكتمال البضاعة (القسم 4).
+- **التوافق (زي الإلغاء):** المستهلك الحالي بيرفض حالة ما يعرفها، فـ`estimated` مقفولة بمتغير `CS_ESTIMATES_ENABLED`
+  (افتراضي `false`): مقفول = مسار التقدير `503`، ورفع الصور شغال. الترتيب: PR مستهلك في erp-agents بيقبل `estimated`
+  و`estimate` وأخطاء القبول، بعدين فتح المتغير.
+- **اختبارات القبول:** رفع من غير صاحب الطلب = 404 أو 403؛ ملف مش صورة (PDF بامتداد jpg) = 415؛ الصورة 11 = 409؛ نفس
+  المفتاح ونفس الصورة = نفس الرد؛ تقدير من موظف بدون صلاحية في الفرع = 403؛ `estimate` بيظهر في `estimated` بس؛ قبول بعد
+  `validUntil` = 409؛ موافقة طلب فيهو `OTHER` بدون تقدير = 409؛ متغير مقفول = 503.
+- **الحدث (09-4):** `request.estimated` في نفس التيار.
+
 ## 10. البيانات (SQL المقترح؛ الموافقة النهائية في PR كل بند)
 
 ```sql
@@ -303,6 +376,37 @@ CREATE TABLE "cs_document_links" ("id" UUID PRIMARY KEY, "token_hash" CHAR(64) N
   REFERENCES "cs_booking_requests"("id"), "kind" VARCHAR(20) NOT NULL, "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
   "expires_at" TIMESTAMPTZ(3) NOT NULL, "used_count" INTEGER NOT NULL DEFAULT 0, CHECK ("expires_at" > "created_at"));
 CREATE INDEX ON "cs_document_links" ("expires_at");
+
+-- 09-8 (بعد أعمدة خيط المرافق التجريبية: النوع والتلفون والإحداثيات)
+ALTER TABLE "warehouses" ADD COLUMN "address_en" VARCHAR(500),
+  ADD COLUMN "accepts_drop_off" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "partner_id" UUID, ADD COLUMN "map_url" VARCHAR(500);
+ALTER TABLE "warehouses" ADD CONSTRAINT "warehouses_partner_id_fkey"
+  FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "cs_booking_requests" ADD COLUMN "drop_off_warehouse_id" UUID;
+ALTER TABLE "cs_booking_requests" ADD CONSTRAINT "cs_booking_requests_drop_off_warehouse_id_fkey"
+  FOREIGN KEY ("drop_off_warehouse_id") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- فحص https لـ map_url في الخدمة (CHECK على جدول قائم ما إضافي).
+
+-- 09-3 (إضافة لصنف OTHER في الجدول الجديد)
+--   "is_other" BOOLEAN NOT NULL DEFAULT false, "description" VARCHAR(500),
+--   CHECK (("is_other" AND "description" IS NOT NULL AND "price_category_code" IS NULL) OR NOT "is_other")
+--   و"quantity" بيبقى nullable لصنف OTHER: CHECK ("is_other" OR "quantity" > 0).
+
+-- 09-9
+ALTER TYPE "cs_booking_request_status" ADD VALUE 'ESTIMATED';
+ALTER TABLE "cs_booking_requests" ADD COLUMN "estimate_amount" DECIMAL(18,4),
+  ADD COLUMN "estimate_currency" CHAR(3), ADD COLUMN "estimate_note_ar" VARCHAR(500),
+  ADD COLUMN "estimate_note_en" VARCHAR(500), ADD COLUMN "estimate_valid_until" TIMESTAMPTZ(3),
+  ADD COLUMN "estimate_version" INTEGER NOT NULL DEFAULT 0, ADD COLUMN "estimated_by_id" UUID,
+  ADD COLUMN "estimated_at" TIMESTAMPTZ(3), ADD COLUMN "estimate_accepted_at" TIMESTAMPTZ(3);
+-- FKs: estimate_currency → currencies(code)، estimated_by_id → users(id)، ON DELETE RESTRICT.
+CREATE TABLE "cs_booking_request_photos" ("id" UUID PRIMARY KEY, "request_id" UUID NOT NULL
+  REFERENCES "cs_booking_requests"("id") ON DELETE RESTRICT, "idempotency_key" VARCHAR(100) NOT NULL,
+  "content_type" VARCHAR(20) NOT NULL CHECK ("content_type" IN ('image/jpeg', 'image/png', 'image/webp')),
+  "size_bytes" INTEGER NOT NULL CHECK ("size_bytes" BETWEEN 1 AND 10485760), "sha256" CHAR(64) NOT NULL,
+  "content" BYTEA NOT NULL, "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+  UNIQUE ("request_id", "idempotency_key"));
 ```
 
 ما في جدول محاسبي، وما في تعديل لصف قائم. البذور في جداول جديدة. الصلاحيات الجديدة (N-C6) في الكود، وبتغيّر الوصول حتى لو
