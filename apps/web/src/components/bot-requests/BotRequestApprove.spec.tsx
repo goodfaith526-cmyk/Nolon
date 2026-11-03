@@ -68,6 +68,78 @@ afterEach(() => {
 });
 
 describe('BotRequestApprove', () => {
+  it('uses the bound profile without selecting a branch customer and sends its displayed version', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={{
+            ...request,
+            customerId: null,
+            profile: {
+              id: 'p1',
+              number: 'CP000001',
+              name: 'Explicit sender',
+              phone: null,
+              version: 7,
+            },
+          }}
+          master={master}
+          busy={false}
+          onApprove={approved}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain('Explicit sender');
+    const check = [...host.querySelectorAll('button')].find((b) => b.textContent === 'checkPrice')!;
+    await act(async () => {
+      check.click();
+      await Promise.resolve();
+    });
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit.disabled).toBe(false);
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileVersion: 7,
+        booking: { services: ['PICKUP'], requestedDeparture: null },
+      }),
+    );
+    act(() => root.unmount());
+  });
+  it('explains a missing explicit profile name and keeps approval disabled', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={{
+            ...request,
+            customerId: null,
+            profile: { id: 'p1', number: 'CP000001', name: null, phone: null, version: 1 },
+          }}
+          master={master}
+          busy={false}
+          onApprove={() => undefined}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain('profileNameRequired');
+    const check = [...host.querySelectorAll('button')].find((b) => b.textContent === 'checkPrice')!;
+    await act(async () => {
+      check.click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+    act(() => root.unmount());
+  });
   it('approves only with the price checked for the inputs as they are', async () => {
     const approved = vi.fn();
     host = document.createElement('div');

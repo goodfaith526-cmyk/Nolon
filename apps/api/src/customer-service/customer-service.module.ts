@@ -1,3 +1,11 @@
+import { CustomerStagesController } from './customer-stages.controller.js';
+import { CustomerStagesService } from './customer-stages.service.js';
+import { CustomerProfileReviewController } from './customer-profile-review.controller.js';
+import { CustomerProfileReviewService } from './customer-profile-review.service.js';
+import { CustomersModule } from '../customers/customers.module.js';
+import { CustomerIdentityController } from './customer-identity.controller.js';
+import { CustomerIdentityAuth } from './customer-identity-auth.js';
+import { CustomerIdentityService } from './customer-identity.service.js';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { BookingsModule } from '../bookings/bookings.module.js';
@@ -30,8 +38,17 @@ import { QuoteService } from './quote.service.js';
 
 /** The Customer Service API and its keys (scope section 17). */
 @Module({
-  imports: [AuditModule, BookingsModule, CurrenciesModule, MasterDataModule, RatesModule],
+  imports: [
+    CustomersModule,
+    AuditModule,
+    BookingsModule,
+    CurrenciesModule,
+    MasterDataModule,
+    RatesModule,
+  ],
   controllers: [
+    CustomerProfileReviewController,
+    CustomerIdentityController,
     CustomerServiceController,
     CustomerTokensController,
     CatalogController,
@@ -42,8 +59,12 @@ import { QuoteService } from './quote.service.js';
     BookingReviewController,
     RejectReasonsController,
     PaymentInstructionsController,
+    CustomerStagesController,
   ],
   providers: [
+    CustomerProfileReviewService,
+    CustomerIdentityAuth,
+    CustomerIdentityService,
     ApiClientGuard,
     ApiClientsService,
     CustomerServiceService,
@@ -56,6 +77,7 @@ import { QuoteService } from './quote.service.js';
     BookingRequestsService,
     BookingReviewService,
     PaymentInstructionsService,
+    CustomerStagesService,
   ],
 })
 export class CustomerServiceModule {}

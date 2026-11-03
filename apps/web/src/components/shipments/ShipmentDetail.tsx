@@ -41,6 +41,7 @@ import { ShipmentDocuments } from './ShipmentDocuments';
 import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
 import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
+import { useStandalone } from '../standalone/StandaloneShell';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -54,6 +55,21 @@ function toIso(local: string): string | undefined {
 /** A recorded time shown apart from when it was recorded when they differ by over an hour. */
 const LATE_ENTRY_MS = 60 * 60 * 1000;
 
+/**
+ * Opens the shipment in a window of its own (a browser popup: no tabs, no editable address bar in
+ * most browsers) showing only the shipment page. One window per shipment: opening it again brings
+ * the same window back.
+ */
+function openStandalone(locale: string, shipmentId: string) {
+  const name = `nolon-shipment-${shipmentId.replace(/[^A-Za-z0-9_-]/g, '')}`;
+  const opened = window.open(
+    `/${locale}/standalone/shipments/${encodeURIComponent(shipmentId)}`,
+    name,
+    'popup,width=1200,height=860',
+  );
+  opened?.focus();
+}
+
 export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
   const tc = useTranslations('Common');
@@ -63,6 +79,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const tp = useTranslations('Print');
   const locale = useLocale();
   const me = useMe();
+  const standalone = useStandalone();
   const master = useMasterData();
   const locationName = useLocationName(master);
   const localName = useLocalName();
@@ -96,6 +113,12 @@ export function ShipmentDetail({ id }: { id: string }) {
   }, [id, failure, me]);
 
   useEffect(load, [load]);
+
+  // A standalone window is named after its shipment (its title bar is all it shows of the URL).
+  const windowTitle = standalone && shipment ? `${t('shipment')} ${shipment.number}` : null;
+  useEffect(() => {
+    if (windowTitle) document.title = windowTitle;
+  }, [windowTitle]);
 
   if (!shipment) {
     return notice ? <Notice notice={notice} /> : <p className="muted">{tc('loading')}</p>;
@@ -300,7 +323,12 @@ export function ShipmentDetail({ id }: { id: string }) {
         </div>
         <div className="actions">
           <MoreMenu>
-            <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>
+            {!standalone && <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>}
+            {!standalone && (
+              <button type="button" onClick={() => openStandalone(locale, s.id)}>
+                {t('openStandalone')}
+              </button>
+            )}
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
             {(actions.canHold || canRevert || actions.canCancel) && <hr />}
             {actions.canHold && (

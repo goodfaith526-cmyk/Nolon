@@ -41,6 +41,7 @@ export const CS_SCOPES = [
   'cs:quote:read',
   'cs:booking_requests:create',
   'cs:tracking:lookup',
+  'cs:customer_profiles:write',
 ] as const;
 export type CsScope = (typeof CS_SCOPES)[number];
 
@@ -61,7 +62,7 @@ export interface CsCustomerDto {
   kind: CustomerKind;
   name: string;
   companyName: string | null;
-  phone: string;
+  phone: string | null;
   whatsapp: string | null;
   email: string | null;
   preferredLocale: string;
@@ -78,7 +79,10 @@ export interface CsShipmentSummaryDto {
   number: string;
   /** The shipment's status, machine-readable. */
   status: ShipmentStatus;
-  /** The status as public tracking shows it (null for statuses it does not show). */
+  /**
+   * Public customer vocabulary (`PUBLIC_SHIPMENT_STATUSES`). Null only for internal-only
+   * statuses (e.g. CONSOLIDATED): never treat null as in-progress. Cancelled is `'CANCELLED'`.
+   */
   publicStatus: PublicShipmentStatus | null;
   mode: ShippingMode;
   loadType: LoadType | null;
@@ -214,11 +218,48 @@ export interface CsCatalogPlaceDto {
   aliases: string[];
 }
 
+/**
+ * How a category is quoted and booked (owner, 2026-11-01): `counted` by pieces (barrels), `volume`
+ * by the CBM of the pieces' dimensions (cartons, pallets), `weight` by kilos, `flat` per shipment.
+ */
+export const CS_PRICING_MODES = ['counted', 'volume', 'weight', 'flat'] as const;
+export type CsPricingMode = (typeof CS_PRICING_MODES)[number];
+
+/** The pricing mode a category's default unit implies. */
+export function pricingModeOf(unit: RateUnit): CsPricingMode {
+  switch (unit) {
+    case 'PER_CBM':
+      return 'volume';
+    case 'PER_KG':
+      return 'weight';
+    case 'PER_SHIPMENT':
+      return 'flat';
+    case 'PER_BARREL':
+    case 'PER_PIECE':
+    case 'PER_PALLET':
+    case 'PER_CONTAINER':
+      return 'counted';
+  }
+}
+
+/** The dimensions of one piece, in centimetres (up to 2 decimals), as the customer gave them. */
+export interface CsDimensionsDto {
+  lengthCm: DecimalString;
+  widthCm: DecimalString;
+  heightCm: DecimalString;
+}
+
 export interface CsCatalogCategoryDto {
   code: string;
   nameAr: string;
   nameEn: string;
   unit: RateUnit;
+  /**
+   * What the bot must collect: `counted` a number of pieces; `volume` a number of pieces and the
+   * dimensions of one (L × W × H in centimetres), NOLON computes the CBM; `weight` kilos; `flat`
+   * nothing (one shipment).
+   */
+  pricingMode: CsPricingMode;
 }
 
 /**
@@ -248,8 +289,19 @@ export interface CsQuoteRequest {
   destinationId: string;
   /** A price category code from the catalog. */
   category: string;
-  /** In the category's unit. Without it the answer has no total. */
+  /**
+   * Counted and flat categories: in the category's unit; without it the answer has no total.
+   * Volume categories (`pricingMode: 'volume'`): the number of pieces, whole, required with the
+   * three dimensions; NOLON computes the CBM and prices it.
+   */
   quantity?: DecimalString;
+  /**
+   * One piece's dimensions in centimetres (up to 2 decimals), required for a volume category and
+   * ignored for the others. Centimetres only: the bot converts what the customer said.
+   */
+  lengthCm?: DecimalString;
+  widthCm?: DecimalString;
+  heightCm?: DecimalString;
   mode?: ShippingMode;
   loadType?: LoadType;
   currency?: CurrencyCode;
@@ -266,9 +318,17 @@ export interface CsQuoteDto {
   currency: CurrencyCode;
   unit: RateUnit;
   minimumCharge: DecimalString;
+  /**
+   * The billable quantity in `unit`: as asked for a counted or flat category; for a volume category
+   * the CBM NOLON computed. A booking request (R3) sends this same number as its `quantity`.
+   */
   quantity: DecimalString | null;
   /** max(quantity × price, minimum), rounded to the currency's places; null without a quantity. */
   total: DecimalString | null;
+  /** A volume answer echoes what it measured: the pieces, one piece's dimensions, and the CBM. */
+  pieces: DecimalString | null;
+  dimensions: CsDimensionsDto | null;
+  volumeCbm: DecimalString | null;
   includes: (typeof CS_QUOTE_INCLUDES)[number][];
   mode: ShippingMode;
   loadType: LoadType | null;
@@ -314,13 +374,29 @@ export const CS_REQUEST_TTL_DAYS = 14;
  * the key vouches its channel verified, never linked to an account by itself.
  */
 export interface CsBookingRequestCreate {
+  profileId?: string;
+  conversationId?: string;
+  /** The profile version the bot saw: another one makes no instant account (staff decide). */
+  profileVersion?: number;
   sender?: { channel: CsSenderChannel; id: string };
   /** A number shared for contact only (Telegram's «share my number»). */
   contactPhone?: string;
   originId: string;
   destinationId: string;
   category: string;
+  /**
+   * The billable quantity in the category's unit: pieces for a counted category; for a volume
+   * category the CBM the quote answered (`CsQuoteDto.quantity`), which `quoteRef` is checked against.
+   */
   quantity: DecimalString;
+  /**
+   * A volume category: the pieces and one piece's dimensions in centimetres the CBM came from,
+   * kept for staff. Optional; never a price input.
+   */
+  pieces?: number;
+  lengthCm?: DecimalString;
+  widthCm?: DecimalString;
+  heightCm?: DecimalString;
   services: (typeof CS_REQUEST_SERVICES)[number][];
   senderName: string;
   consigneeName: string;
@@ -339,6 +415,10 @@ export interface CsBookingRequestCreate {
  * does not match stays for staff. Key only, never with a customer token.
  */
 export interface CsBookingRequestByNames {
+  profileId?: string;
+  conversationId?: string;
+  /** The profile version the bot saw: another one makes no instant account (staff decide). */
+  profileVersion?: number;
   idempotencyKey: string;
   channel: CsSenderChannel;
   origin: CsName;
@@ -347,7 +427,7 @@ export interface CsBookingRequestByNames {
   quantity: number | DecimalString;
   senderName: string;
   /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
-  senderPhone: string;
+  senderPhone?: string;
   receiverName: string;
   receiverPhone: string;
   handover: (typeof CS_BOT_HANDOVERS)[number];
@@ -364,7 +444,7 @@ export const CS_BOT_HANDOVERS = ['pickup', 'dropoff'] as const;
 
 /** A request by names reads `pending` while it awaits routing: its bot knows no such state. */
 export type CsBookingRequestState =
-  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired';
+  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
 
 export interface CsBookingRequestCreated {
   requestId: string;
@@ -386,6 +466,86 @@ export interface CsBookingRequestDto {
    * once approved; null when there are none (the bot says staff will send how to pay).
    */
   paymentInstructions: CsPaymentInstructionsDto | null;
+  /**
+   * Plan 09 section 2: the customer asked to cancel after approval (staff decide); closedAt once
+   * staff handled it. Null when never asked.
+   */
+  cancelRequest: CsCancelRequestDto | null;
+  /**
+   * Plan 09 section 3: where the booking is, in the customer's stages. BOOKED while pending or the
+   * booking is a draft; the shipment's mapped stage once confirmed. Null when rejected, cancelled
+   * or expired, or when staff must answer (attention).
+   */
+  stage: CsStageDto | null;
+  /** 'staff': the bot hands the customer to staff (on hold, cancelled, partly delivered...). */
+  attention: 'staff' | null;
+  shipment: CsShipmentTrackDto | null;
+}
+
+/** A customer stage as the bot shows it (plan 09 section 3). */
+export interface CsStageDto {
+  code: string;
+  ar: string;
+  en: string;
+  order: number;
+}
+
+export interface CsShipmentTrackDto {
+  number: string;
+  stage: CsStageDto | null;
+  city: { ar: string; en: string } | null;
+  /** When its status last changed (the latest status event). */
+  updatedAt: string;
+}
+
+/**
+ * Plan 09 section 3: shipment statuses that always send the customer to staff (stage null,
+ * attention 'staff'). No mapping may give them a stage (Codex F164-1).
+ */
+export const CUSTOMER_STAGE_STAFF_STATUSES = [
+  'ON_HOLD',
+  'PARTIALLY_DELIVERED',
+  'CANCELLED',
+] as const satisfies readonly ShipmentStatus[];
+
+/** The customer stages and the internal statuses they show for (staff master data). */
+export interface CustomerStageDto {
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface CustomerStageInput {
+  nameAr: string;
+  nameEn: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface CustomerStagesDto {
+  stages: CustomerStageDto[];
+  /** Every shipment status, with its stage or null (the customer is sent to staff). */
+  mapping: { status: ShipmentStatus; stageCode: string | null }[];
+}
+
+export interface CsCancelRequestDto {
+  requestedAt: string;
+  closedAt: string | null;
+}
+
+/** POST /cs/booking-requests/:id/cancel (plan 09 section 2): the customer's words, optional. */
+export interface CsBookingRequestCancel {
+  reason?: string;
+}
+
+/** A cancellation done (or done before): the request is cancelled. */
+export interface CsBookingRequestCancelled {
+  requestId: string;
+  reference: string;
+  status: 'cancelled';
+  cancelledAt: string;
 }
 
 /** How the customer pays, as the bot shows it word for word with its version (plan 04, 4.1). */
@@ -466,6 +626,9 @@ export const CS_REVIEW_FILTERS = [
   'approved',
   'rejected',
   'expired',
+  // Plan 09 section 2: cancelled by the customer; approved ones whose customer asked to cancel.
+  'cancelled',
+  'cancel_requested',
 ] as const;
 export type CsReviewFilter = (typeof CS_REVIEW_FILTERS)[number];
 
@@ -504,6 +667,18 @@ export interface CsRequestPriceCheck {
 }
 
 export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
+  /** Volume requests: pieces and one piece's dimensions (cm) behind the billable CBM quantity. */
+  pieces: number | null;
+  dimensions: CsDimensionsDto | null;
+  profile?: {
+    id: string;
+    number: string;
+    name: string | null;
+    phone: string | null;
+    phoneVerified?: boolean;
+    needsReview?: boolean;
+    version: number;
+  } | null;
   version: number;
   allowedBranchIds: string[];
   customerNumber: string | null;
@@ -537,7 +712,39 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
     /** Null: approved with no approved price. */
     total: DecimalString | null;
   } | null;
-  actions: { canRoute: boolean; canReject: boolean; canApprove: boolean };
+  /** Plan 09 section 2: when the customer cancelled it, and why (their words). */
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  /** The customer asked to cancel after approval: staff cancel the booking or close the ask. */
+  cancelRequest: (CsCancelRequestDto & { reason: string | null }) | null;
+  /**
+   * The instant branch account made or reused when the signed request was saved, or why it waits
+   * for staff. Null: not tried (switched off, no signed profile, awaiting routing).
+   */
+  instantAccount: { outcome: CsInstantAccountOutcome; customerId: string | null } | null;
+  actions: {
+    canRoute: boolean;
+    canReject: boolean;
+    canApprove: boolean;
+    canCloseCancelRequest: boolean;
+  };
+}
+
+export const CS_INSTANT_ACCOUNT_OUTCOMES = [
+  'CREATED',
+  'REUSED',
+  'PROFILE_REVIEW',
+  'NAME_MISSING',
+  'PROFILE_CHANGED',
+  'PHONE_IN_USE',
+  'ACCOUNT_INACTIVE',
+] as const;
+/** What became of a signed bot request's instant account (owner's spec, 2026-11-03). */
+export type CsInstantAccountOutcome = (typeof CS_INSTANT_ACCOUNT_OUTCOMES)[number];
+
+/** Staff mark a customer's cancel ask as handled (plan 09 section 2). */
+export interface CsCloseCancelRequest {
+  version: number;
 }
 
 /**
@@ -580,14 +787,21 @@ export interface CsApprovalPriceDto {
  */
 export type CsApproveBooking = Omit<
   CreateBookingRequest,
-  'originLocationId' | 'destinationLocationId' | 'mode' | 'loadType' | 'cargoType' | 'items'
->;
+  | 'customerId'
+  | 'originLocationId'
+  | 'destinationLocationId'
+  | 'mode'
+  | 'loadType'
+  | 'cargoType'
+  | 'items'
+> & { customerId?: string };
 
 /**
  * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create checks, in the
  * request's branch) and the request it approves, in one transaction.
  */
 export interface CsApproveRequest {
+  profileVersion?: number;
   version: number;
   paymentCurrency: CurrencyCode;
   pricing: CsPriceInputs;

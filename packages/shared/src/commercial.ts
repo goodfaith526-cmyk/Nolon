@@ -264,7 +264,7 @@ export interface CustomerSummaryDto {
   kind: CustomerKind;
   name: string;
   companyName: string | null;
-  phone: string;
+  phone: string | null;
   isActive: boolean;
 }
 
@@ -901,6 +901,9 @@ export const FORM_REFUSALS = [
   'COMMISSION_AMOUNT_INVALID',
   'COMMISSION_NOT_PARTNER',
   'COMMISSION_NO_FX_RATE',
+  'PROFILE_NAME_REQUIRED',
+  'PROFILE_REVIEW_REQUIRED',
+  'PROFILE_VERSION_CONFLICT',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

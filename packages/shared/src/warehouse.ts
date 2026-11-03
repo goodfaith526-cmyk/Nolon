@@ -20,6 +20,19 @@ export const WAREHOUSE_RECEIPT_STATUSES = [
 ] as const satisfies readonly ShipmentStatus[];
 export type WarehouseReceiptStatus = (typeof WAREHOUSE_RECEIPT_STATUSES)[number];
 
+/**
+ * What a warehouse does in the network (empty: an ordinary warehouse): a collection centre at an
+ * origin, the central distribution hub, a delivery centre in a destination city, or a small
+ * window where customers hand over goods (origins) or receivers collect them (Sudan).
+ */
+export const WAREHOUSE_KINDS = [
+  'COLLECTION_CENTER',
+  'DISTRIBUTION_HUB',
+  'DELIVERY_CENTER',
+  'DROP_OFF_POINT',
+] as const;
+export type WarehouseKind = (typeof WAREHOUSE_KINDS)[number];
+
 export interface StorageLocationDto {
   id: string;
   code: string;
@@ -36,6 +49,12 @@ export interface WarehouseDto {
   address: string | null;
   /** The place the warehouse is at (a port, city or yard of the locations master), if set. */
   locationId: string | null;
+  kind: WarehouseKind | null;
+  /** E.164, the number customers call. */
+  phone: string | null;
+  /** Map position in WGS 84 degrees, both set or both null. */
+  latitude: DecimalString | null;
+  longitude: DecimalString | null;
   isActive: boolean;
   storageLocations: StorageLocationDto[];
 }

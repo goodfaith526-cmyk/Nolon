@@ -6,6 +6,7 @@ import {
   hasPassedLoading,
   nextStatuses,
   permissionForTransition,
+  publicStatus,
   publicTimeline,
   replayHistory,
   revertUndoes,
@@ -508,5 +509,19 @@ describe('shipment state machine: booked stages cannot be skipped', () => {
       'PARTIALLY_DELIVERED',
       'DELIVERED',
     ]);
+  });
+});
+
+describe('shipment publicStatus vocabulary (customer / bot projection)', () => {
+  it('exposes cancelled instead of null so clients do not invent in-progress', () => {
+    expect(publicStatus('CANCELLED')).toBe('CANCELLED');
+    expect(publicStatus('ON_HOLD')).toBe('ON_HOLD');
+    expect(publicStatus('CONSOLIDATED')).toBeNull();
+    expect(publicStatus('CLOSED')).toBeNull();
+  });
+
+  it('includes cancelled on the public timeline when recorded', () => {
+    const path = replayHistory([event('CREATED', 'CREATED', 0), event('STATUS', 'CANCELLED', 1)]);
+    expect(publicTimeline(path).map((e) => e.status)).toEqual(['REGISTERED', 'CANCELLED']);
   });
 });

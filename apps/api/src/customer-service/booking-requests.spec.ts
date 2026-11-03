@@ -28,6 +28,15 @@ describe('booking requests', () => {
     expect(contentHash({ ...base, requestedDate: '2030-01-01' })).not.toBe(h);
   });
 
+  it('hashes a volume request by its measurements, 120 and 120.00 the same', () => {
+    const dims = { pieces: 3, lengthCm: '120', widthCm: '100', heightCm: '150' };
+    const measured = contentHash({ ...base, quantity: '5.4', ...dims });
+    expect(measured).not.toBe(contentHash({ ...base, quantity: '5.4' }));
+    expect(contentHash({ ...base, quantity: '5.4', ...dims, lengthCm: '120.00' })).toBe(measured);
+    expect(contentHash({ ...base, quantity: '5.4', ...dims, heightCm: '151' })).not.toBe(measured);
+    expect(contentHash({ ...base, quantity: '5.4', ...dims, pieces: 4 })).not.toBe(measured);
+  });
+
   it('reads an undecided request past its time as expired', () => {
     const past = new Date(Date.now() - 1);
     const future = new Date(Date.now() + 60_000);

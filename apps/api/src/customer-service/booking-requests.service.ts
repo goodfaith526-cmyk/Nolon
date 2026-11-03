@@ -1,8 +1,13 @@
+import {
+  CustomerIdentityService,
+  type ProfileBookingBinding,
+} from './customer-identity.service.js';
 import { createHash } from 'node:crypto';
 import {
   ForbiddenException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -12,6 +17,8 @@ import {
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
   type CsBookingRequestByNames,
+  type CsBookingRequestCancelled,
+  type CsCancelRequestDto,
   type CsBookingRequestCreate,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
@@ -23,8 +30,13 @@ import { todayIn, toDbDate } from '../common/dates.js';
 import { dec } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
+import { CustomersService } from '../customers/customers.service.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AuditService } from '../audit/audit.service.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
+import { trackOf } from './customer-stages.js';
+import { CustomerStagesService } from './customer-stages.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
 import { keyScopes, keyServices } from './api-scopes.js';
@@ -34,6 +46,14 @@ import { CustomerTokensService } from './customer-tokens.service.js';
 import { PaymentInstructionsService } from './payment-instructions.service.js';
 
 const DAY_MS = 86_400_000;
+
+/** A place's names and its city's, for the customer's stage city (plan 09 section 3). */
+const placeSelect = {
+  kind: true,
+  nameAr: true,
+  nameEn: true,
+  city: { select: { nameAr: true, nameEn: true } },
+} as const;
 
 /** BR-000001: the request's number for staff and the customer. */
 export function requestReference(value: bigint): string {
@@ -61,15 +81,23 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/** A dimension as a number (120 and 120.00 are the same measurement); left out stays left out. */
+function measurement(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : dec(value).toFixed();
+}
+
 /**
  * SHA-256 of a request's content: the body without its idempotency key, keys sorted, services
- * sorted, the quantity as a number (2 and 2.0 are the same request).
+ * sorted, the quantity and the dimensions as numbers (2 and 2.0 are the same request).
  */
 export function contentHash(input: CsBookingRequestCreate): string {
   const normal: Partial<CsBookingRequestCreate> = {
     ...input,
     idempotencyKey: undefined,
     quantity: dec(input.quantity).toFixed(),
+    lengthCm: measurement(input.lengthCm),
+    widthCm: measurement(input.widthCm),
+    heightCm: measurement(input.heightCm),
     services: [...input.services].sort(),
   };
   return createHash('sha256')
@@ -138,15 +166,29 @@ export class BookingRequestsService {
     private readonly masterData: MasterDataService,
     private readonly tokens: CustomerTokensService,
     private readonly payments: PaymentInstructionsService,
+    private readonly identities: CustomerIdentityService,
+    private readonly audit: AuditService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
+    private readonly stages: CustomerStagesService,
+    private readonly customers: CustomersService,
   ) {}
 
   async create(
     caller: BookingRequestCaller,
     input: CsBookingRequestCreate,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
     if (caller.kind === 'customer' && input.sender) {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
+    if (binding && !input.sender)
+      input = {
+        ...input,
+        sender: {
+          channel: binding.context.channel === 'WHATSAPP' ? 'whatsapp' : 'telegram',
+          id: binding.context.subjectId,
+        },
+      };
     if (caller.kind === 'key' && !input.sender) {
       throw coded(
         HttpStatus.BAD_REQUEST,
@@ -176,27 +218,39 @@ export class BookingRequestsService {
     }
     const branchId = candidates.length === 1 ? (allowed[0] ?? null) : null;
 
-    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
-      ...(caller.kind === 'customer'
-        ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
-        : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
-      contactPhone: input.contactPhone ?? null,
-      contentHash: hash,
-      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
-      branchId,
-      originLocationId: input.originId,
-      destinationLocationId: input.destinationId,
-      priceCategoryCode: category.code,
-      quantity: dec(input.quantity),
-      services: input.services,
-      senderName: input.senderName,
-      consigneeName: input.consigneeName,
-      consigneePhone: input.consigneePhone,
-      handover: input.handover,
-      requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
-      quoteRef: input.quoteRef ?? null,
-      language: input.language,
-    });
+    const result = await this.save(
+      caller,
+      owner,
+      input.idempotencyKey,
+      allowed,
+      {
+        ...(caller.kind === 'customer'
+          ? { customerId: caller.token.customerId, grantId: caller.token.grantId }
+          : { senderChannel: input.sender?.channel, senderId: input.sender?.id }),
+        contactPhone: input.contactPhone ?? null,
+        contentHash: hash,
+        status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+        branchId,
+        originLocationId: input.originId,
+        destinationLocationId: input.destinationId,
+        priceCategoryCode: category.code,
+        quantity: dec(input.quantity),
+        // A volume category's pieces and dimensions, as the customer gave them, for staff.
+        pieces: input.pieces ?? null,
+        lengthCm: input.lengthCm === undefined ? null : dec(input.lengthCm),
+        widthCm: input.widthCm === undefined ? null : dec(input.widthCm),
+        heightCm: input.heightCm === undefined ? null : dec(input.heightCm),
+        services: input.services,
+        senderName: input.senderName,
+        consigneeName: input.consigneeName,
+        consigneePhone: input.consigneePhone,
+        handover: input.handover,
+        requestedDate: input.requestedDate ? toDbDate(input.requestedDate) : null,
+        quoteRef: input.quoteRef ?? null,
+        language: input.language,
+      },
+      binding,
+    );
     if (!result.created && result.row.contentHash !== hash) throw conflict();
     if (caller.kind === 'customer') {
       await this.tokens.record(
@@ -219,12 +273,19 @@ export class BookingRequestsService {
   async createByNames(
     caller: BookingRequestCaller,
     input: CsBookingRequestByNames,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
     if (caller.kind === 'customer') {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
     const client = caller.client;
-    const senderId = namesSender(input.channel, input.senderPhone);
+    if (!input.senderPhone && !binding)
+      throw coded(
+        HttpStatus.BAD_REQUEST,
+        'SENDER_REQUIRED',
+        'A contact phone or signed profile binding is required',
+      );
+    const senderId = binding?.context.subjectId ?? namesSender(input.channel, input.senderPhone!);
     const owner = `s:${input.channel}:${senderId}`;
     const hash = namesHash(input);
     const replay = await this.replay(client, owner, input.idempotencyKey, hash);
@@ -247,31 +308,38 @@ export class BookingRequestsService {
 
     const { allowed, branchId } = await this.namesRouting(client, originId);
     const quoted = input.quotedPrice ?? null;
-    const result = await this.save(caller, owner, input.idempotencyKey, allowed, {
-      senderChannel: input.channel,
-      senderId,
-      contactPhone: input.senderPhone,
-      contentHash: hash,
-      status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
-      branchId,
-      originLocationId: originId,
-      destinationLocationId: destinationId,
-      priceCategoryCode: categoryCode,
-      botNames: {
-        origin: { ...input.origin },
-        destination: { ...input.destination },
-        kind: { ...input.kind },
+    const result = await this.save(
+      caller,
+      owner,
+      input.idempotencyKey,
+      allowed,
+      {
+        senderChannel: input.channel,
+        senderId,
+        contactPhone: input.senderPhone ?? null,
+        contentHash: hash,
+        status: branchId === null ? 'AWAITING_ROUTING' : 'PENDING',
+        branchId,
+        originLocationId: originId,
+        destinationLocationId: destinationId,
+        priceCategoryCode: categoryCode,
+        botNames: {
+          origin: { ...input.origin },
+          destination: { ...input.destination },
+          kind: { ...input.kind },
+        },
+        quantity: dec(String(input.quantity)),
+        services: [],
+        senderName: input.senderName,
+        consigneeName: input.receiverName,
+        consigneePhone: input.receiverPhone,
+        handover: input.handover === 'pickup' ? 'PICKUP' : 'BRANCH_DROP',
+        botQuotedAmount: quoted ? dec(quoted.amount) : null,
+        botQuotedCurrency: quoted?.currency ?? null,
+        language: null,
       },
-      quantity: dec(String(input.quantity)),
-      services: [],
-      senderName: input.senderName,
-      consigneeName: input.receiverName,
-      consigneePhone: input.receiverPhone,
-      handover: input.handover === 'pickup' ? 'PICKUP' : 'BRANCH_DROP',
-      botQuotedAmount: quoted ? dec(quoted.amount) : null,
-      botQuotedCurrency: quoted?.currency ?? null,
-      language: null,
-    });
+      binding,
+    );
     if (!result.created && result.row.contentHash !== hash) throw conflict();
     return { created: result.created, body: createdBody(result.row) };
   }
@@ -312,11 +380,15 @@ export class BookingRequestsService {
       Prisma.CsBookingRequestUncheckedCreateInput,
       'reference' | 'apiClientId' | 'ownerRef' | 'idempotencyKey' | 'expiresAt' | 'allowedBranchIds'
     >,
+    binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; row: CsBookingRequest }> {
     const now = new Date();
     const apiClientId = caller.client.id;
     return this.prisma.$transaction(async (tx) => {
       const { branchIds, services } = await currentKey(tx, caller);
+      const profile = binding
+        ? await this.identities.requireBookingBindingInTx(tx, apiClientId, binding)
+        : null;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${owner}, 0))`;
       const again = await tx.csBookingRequest.findUnique({
         where: {
@@ -363,6 +435,9 @@ export class BookingRequestsService {
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
+          ...(binding
+            ? { profileId: binding.profileId, conversationId: binding.conversationId }
+            : {}),
           allowedBranchIds: still,
           reference: requestReference(number),
           apiClientId,
@@ -371,7 +446,29 @@ export class BookingRequestsService {
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
         },
       });
-      return { created: true, row };
+      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
+      // reuses the profile's branch account in this transaction, or says why staff will.
+      if (
+        !this.env.CS_INSTANT_CUSTOMER_ENABLED ||
+        !profile ||
+        row.status !== 'PENDING' ||
+        row.branchId === null
+      )
+        return { created: true, row };
+      const account = await this.customers.botAccountInTx(tx, {
+        profile,
+        expectedVersion: binding?.profileVersion,
+        branchId: row.branchId,
+        apiClientId,
+      });
+      if (!account) return { created: true, row };
+      return {
+        created: true,
+        row: await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: { instantAccount: account.outcome, instantCustomerId: account.customerId },
+        }),
+      };
     });
   }
 
@@ -384,23 +481,32 @@ export class BookingRequestsService {
     id: string,
     sender: { channel: CsSenderChannel; id: string } | null,
   ): Promise<CsBookingRequestDto> {
-    const owner =
-      caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
-    // A request by names belongs to the key that made it (its bot names no sender id to read by):
-    // only the key itself reads it so, never a customer token the key issued (F126-5).
-    const mine = owner === null ? null : { id, apiClientId: caller.client.id, ownerRef: owner };
-    const byKey =
-      caller.kind === 'key'
-        ? { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } }
-        : null;
-    const where = [mine, byKey].filter((w) => w !== null);
-    const row =
-      where.length === 0
-        ? null
-        : await this.prisma.csBookingRequest.findFirst({
-            where: { OR: where },
-            include: { rejectReason: true, booking: { select: { number: true } } },
-          });
+    const row = await this.prisma.csBookingRequest.findFirst({
+      where: ownedWhere(caller, id, sender),
+      include: {
+        rejectReason: true,
+        booking: {
+          select: {
+            number: true,
+            status: true,
+            shipment: {
+              select: {
+                number: true,
+                status: true,
+                createdAt: true,
+                destination: { select: placeSelect },
+                currentLocation: { select: placeSelect },
+                events: {
+                  select: { occurredAt: true },
+                  orderBy: { occurredAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
     if (caller.kind === 'customer') {
       await this.tokens.record(
@@ -412,6 +518,25 @@ export class BookingRequestsService {
       );
     }
     if (!row || !served) throw new NotFoundException('Booking request not found');
+    const { stages, mapping } = await this.stages.maps();
+    const shipment = row.booking?.shipment ?? null;
+    const track = trackOf(
+      {
+        state: stateOf(row),
+        booking: row.booking && {
+          status: row.booking.status,
+          shipment: shipment && {
+            number: shipment.number,
+            status: shipment.status,
+            destination: shipment.destination,
+            currentLocation: shipment.currentLocation,
+            updatedAt: shipment.events[0]?.occurredAt ?? shipment.createdAt,
+          },
+        },
+      },
+      stages,
+      mapping,
+    );
     return {
       requestId: row.id,
       reference: row.reference,
@@ -430,7 +555,133 @@ export class BookingRequestsService {
         row.status === 'APPROVED' && row.branchId !== null && row.paymentCurrency !== null
           ? await this.payments.approvedFor(row.branchId, row.paymentCurrency)
           : null,
+      cancelRequest: cancelRequestOf(row),
+      ...track,
     };
+  }
+
+  /**
+   * Plan 09 section 2: the owner cancels a request. The owner is proven, never asserted: a customer
+   * token's own request, or a signed channel identity (plan 08) whose subject is the request's
+   * sender. The key alone, or X-Cs-Sender, is no proof (F161-1): 403 OWNER_PROOF_REQUIRED, and the
+   * bot hands over to staff. An undecided request not expired becomes CANCELLED; one already
+   * cancelled answers the same. An approved one is not cancelled: 409 ALREADY_DECIDED, and the ask
+   * is kept once for staff (the booking is theirs to cancel). Rejected or expired: 409
+   * ALREADY_DECIDED. All under the row's lock, with the key read again (revoked or no longer
+   * serving = 404, as a read).
+   */
+  async cancel(
+    caller: BookingRequestCaller,
+    id: string,
+    proof: { channel: CsSenderChannel; subjectId: string } | null,
+    reason: string | undefined,
+  ): Promise<CsBookingRequestCancelled> {
+    if (!this.env.CS_BOOKING_CANCEL_ENABLED) {
+      throw coded(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        'CANCEL_UNAVAILABLE',
+        'Cancelling a booking request is not available yet: hand over to staff',
+      );
+    }
+    let where: Prisma.CsBookingRequestWhereInput;
+    if (caller.kind === 'customer') {
+      where = { id, apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
+    } else if (proof) {
+      where = {
+        id,
+        apiClientId: caller.client.id,
+        senderChannel: proof.channel,
+        senderId: proof.subjectId,
+      };
+    } else {
+      throw coded(
+        HttpStatus.FORBIDDEN,
+        'OWNER_PROOF_REQUIRED',
+        'Cancelling needs the customer token or a signed channel identity of the sender',
+      );
+    }
+    const found = await this.prisma.csBookingRequest.findFirst({ where, select: { id: true } });
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      if (!found) return null;
+      const { branchIds } = await currentKey(tx, caller);
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${found.id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id: found.id } });
+      if (!row || !servedBy(row, branchIds)) return null;
+      const now = new Date();
+      const audit = (action: 'CANCELLED' | 'UPDATED', field: string) =>
+        this.audit.recordApi(tx, {
+          branchId: row.branchId,
+          entity: 'CS_BOOKING_REQUEST',
+          entityId: row.id,
+          reference: row.reference,
+          action,
+          changes: [
+            { field, before: null, after: reason ?? '' },
+            { field: 'apiClient', before: null, after: caller.client.id },
+            { field: 'owner', before: null, after: row.ownerRef },
+          ],
+        });
+      if (row.status === 'CANCELLED') return { kind: 'cancelled' as const, row };
+      if (stateOf(row, now) === 'pending' || stateOf(row, now) === 'awaiting_routing') {
+        const cancelled = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: now,
+            cancelReason: reason ?? null,
+            version: { increment: 1 },
+          },
+        });
+        await audit('CANCELLED', 'cancelReason');
+        return { kind: 'cancelled' as const, row: cancelled };
+      }
+      if (row.status === 'APPROVED') {
+        if (row.cancelRequestedAt !== null) return { kind: 'asked' as const, row };
+        const asked = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: {
+            cancelRequestedAt: now,
+            cancelRequestReason: reason ?? null,
+            version: { increment: 1 },
+          },
+        });
+        await audit('UPDATED', 'cancelRequestReason');
+        return { kind: 'asked' as const, row: asked };
+      }
+      return { kind: 'decided' as const, row };
+    });
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        caller.client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        outcome ? 'OK' : 'NOT_FOUND',
+        'POST /cs/booking-requests/:id/cancel',
+      );
+    }
+    if (!outcome) throw new NotFoundException('Booking request not found');
+    const { kind, row } = outcome;
+    if (kind === 'cancelled') {
+      return {
+        requestId: row.id,
+        reference: row.reference,
+        status: 'cancelled',
+        cancelledAt: (row.cancelledAt ?? row.updatedAt).toISOString(),
+      };
+    }
+    throw new HttpException(
+      {
+        message:
+          kind === 'asked'
+            ? 'The request is approved: staff will contact the customer about cancelling'
+            : 'The request is already decided',
+        code: 'ALREADY_DECIDED',
+        statusCode: HttpStatus.CONFLICT,
+        status: stateOf(row),
+        cancelRequest: cancelRequestOf(row),
+      },
+      HttpStatus.CONFLICT,
+    );
   }
 
   /**
@@ -463,20 +714,28 @@ export class BookingRequestsService {
 
   /**
    * Section 7.1 (F119-2): a quote of this key, not expired, whose inputs are the request's: route,
-   * category and quantity. The services it priced (MAIN_FREIGHT) are always in a request; the
-   * others are staff's to price, so they never make a mismatch.
+   * category and the billable quantity (the CBM, for a volume category), and the pieces and
+   * dimensions when the request names them and the quote measured them. The services it priced
+   * (MAIN_FREIGHT) are always in a request; the others are staff's to price, so they never make a
+   * mismatch.
    */
   private async checkQuote(apiClientId: string, input: CsBookingRequestCreate): Promise<void> {
     const quote = await this.prisma.csQuote.findFirst({
       where: { ref: input.quoteRef, apiClientId },
     });
+    const sameMeasure = (sent: string | undefined, kept: Prisma.Decimal | null) =>
+      sent === undefined || kept === null || kept.eq(dec(sent));
     const same =
       quote !== null &&
       quote.originLocationId === input.originId &&
       quote.destinationLocationId === input.destinationId &&
       quote.priceCategoryCode === input.category &&
       quote.quantity !== null &&
-      quote.quantity.eq(dec(input.quantity));
+      quote.quantity.eq(dec(input.quantity)) &&
+      (input.pieces === undefined || quote.pieces === null || quote.pieces === input.pieces) &&
+      sameMeasure(input.lengthCm, quote.lengthCm) &&
+      sameMeasure(input.widthCm, quote.widthCm) &&
+      sameMeasure(input.heightCm, quote.heightCm);
     if (!same) {
       throw coded(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -546,6 +805,35 @@ function conflict(): HttpException {
     'IDEMPOTENCY_CONFLICT',
     'This idempotency key was used for another request',
   );
+}
+
+/**
+ * Which request a caller may read (section 7.2): its owner through the key that made it;
+ * a request by names belongs to the key itself (its bot names no sender to read by), never to a
+ * customer token the key issued (F126-5). Matches nothing when the caller names no owner.
+ */
+function ownedWhere(
+  caller: BookingRequestCaller,
+  id: string,
+  sender: { channel: CsSenderChannel; id: string } | null,
+): Prisma.CsBookingRequestWhereInput {
+  const owner = caller.kind === 'customer' ? ownerRef(caller) : sender && ownerRef(caller, sender);
+  const mine = owner === null ? null : { id, apiClientId: caller.client.id, ownerRef: owner };
+  const byKey =
+    caller.kind === 'key'
+      ? { id, apiClientId: caller.client.id, botNames: { not: Prisma.AnyNull } }
+      : null;
+  const where = [mine, byKey].filter((w) => w !== null);
+  return where.length === 0 ? { id: { in: [] } } : { OR: where };
+}
+
+function cancelRequestOf(row: CsBookingRequest): CsCancelRequestDto | null {
+  return row.cancelRequestedAt === null
+    ? null
+    : {
+        requestedAt: row.cancelRequestedAt.toISOString(),
+        closedAt: row.cancelRequestClosedAt?.toISOString() ?? null,
+      };
 }
 
 function createdBody(row: CsBookingRequest): CsBookingRequestCreated {

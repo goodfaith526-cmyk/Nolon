@@ -25,6 +25,29 @@ const include = {
 type Row = Prisma.ApiClientGetPayload<{ include: typeof include }>;
 
 /**
+ * A key with what `include` adds, read one query after another. Inside a transaction (one
+ * connection), Prisma reads the relations of an `include` in parallel, which pg deprecates
+ * ("client.query() when the client is already executing a query"); outside one, `include` is fine.
+ */
+async function readRow(tx: Prisma.TransactionClient, id: string): Promise<Row | null> {
+  const client = await tx.apiClient.findUnique({ where: { id } });
+  if (!client) return null;
+  const branches = await tx.apiClientBranch.findMany({
+    where: { apiClientId: id },
+    include: include.branches.include,
+  });
+  const scopes = await tx.apiClientScope.findMany({
+    where: { apiClientId: id },
+    select: include.scopes.select,
+  });
+  const createdBy = await tx.user.findUniqueOrThrow({
+    where: { id: client.createdById },
+    select: include.createdBy.select,
+  });
+  return { ...client, branches, scopes, createdBy };
+}
+
+/**
  * Customer Service API keys, managed by the Administrator (who manages user accounts). A key is
  * shown once when it is made; it can be revoked, not changed or shown again, except for its
  * scopes (what it may do). Making a key, changing its scopes and revoking it are in the audit log.
@@ -62,9 +85,11 @@ export class ApiClientsService {
           branches: { create: branchIds.map((branchId) => ({ branchId })) },
           scopes: { create: scopeRows(scopes).map((scope) => ({ scope, grantedById: user.id })) },
         },
-        include,
+        select: { id: true },
       });
-      const dto = toDto(made);
+      const row = await readRow(tx, made.id);
+      if (!row) throw new NotFoundException('API key not found');
+      const dto = toDto(row);
       await this.audit.record(tx, user, {
         branchId: null,
         entity: 'API_CLIENT',
@@ -73,7 +98,7 @@ export class ApiClientsService {
         action: 'CREATED',
         changes: changedFields(null, auditFields(dto), ['name', 'branches', 'scopes', 'services']),
       });
-      return made;
+      return row;
     });
     return { client: toDto(row), key };
   }
@@ -83,7 +108,7 @@ export class ApiClientsService {
     const scopes = ordered(given);
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "api_clients" WHERE "id" = ${id}::uuid FOR UPDATE`;
-      const before = await tx.apiClient.findUnique({ where: { id }, include });
+      const before = await readRow(tx, id);
       if (!before) throw new NotFoundException('API key not found');
       for (const b of before.branches) assertBranchAccess(user, b.branchId);
       if (!before.isActive) throw new ConflictException('The API key is revoked');
@@ -97,11 +122,13 @@ export class ApiClientsService {
           .filter((scope) => !held.has(scope))
           .map((scope) => ({ apiClientId: id, scope, grantedById: user.id })),
       });
-      const after = await tx.apiClient.update({
+      await tx.apiClient.update({
         where: { id },
         data: { customersRead: scopes.includes('cs:customers:read') },
-        include,
+        select: { id: true },
       });
+      const after = await readRow(tx, id);
+      if (!after) throw new NotFoundException('API key not found');
       const dto = toDto(after);
       await this.audit.record(tx, user, {
         branchId: null,
@@ -126,15 +153,17 @@ export class ApiClientsService {
   ): Promise<ApiClientDto> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "api_clients" WHERE "id" = ${id}::uuid FOR UPDATE`;
-      const before = await tx.apiClient.findUnique({ where: { id }, include });
+      const before = await readRow(tx, id);
       if (!before) throw new NotFoundException('API key not found');
       for (const b of before.branches) assertBranchAccess(user, b.branchId);
       if (!before.isActive) throw new ConflictException('The API key is revoked');
-      const after = await tx.apiClient.update({
+      await tx.apiClient.update({
         where: { id },
         data: serviceColumns(services),
-        include,
+        select: { id: true },
       });
+      const after = await readRow(tx, id);
+      if (!after) throw new NotFoundException('API key not found');
       const dto = toDto(after);
       await this.audit.record(tx, user, {
         branchId: null,
@@ -154,7 +183,7 @@ export class ApiClientsService {
         where: { id, isActive: true },
         data: { isActive: false, revokedAt: new Date(), revokedById: user.id },
       });
-      const row = await tx.apiClient.findUnique({ where: { id }, include });
+      const row = await readRow(tx, id);
       if (!row) throw new NotFoundException('API key not found');
       if (count === 0) throw new ConflictException('The API key is already revoked');
       const dto = toDto(row);

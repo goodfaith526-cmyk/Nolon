@@ -49,6 +49,9 @@ describe('permission matrix (annex A)', () => {
 
   // Spot checks against the annex table, row by row in its own words.
   const rows: [PermissionModule, string][] = [
+    ['customer_profiles', '— — — — — — — — — — —'],
+    ['customer_profile_intake', '— — — — — — — — — — —'],
+    ['customer_profile_followup', '— — — — — — — — — — —'],
     ['customers', 'ك ع ك ك ع ع ع ع — ك إ'],
     // Changed after the annex (owner, 2026-10-19): rate cards belong to the Sales & Marketing
     // Manager, the tenth column (Sales' cells elsewhere). The eleventh column is Outlet Staff

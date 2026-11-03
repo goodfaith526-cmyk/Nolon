@@ -262,11 +262,16 @@ describe('partners, price categories and customer segments', () => {
       expect(master.priceCategories.map((c) => c.code)).toEqual(
         expect.arrayContaining(['CARTON', 'BARREL', 'PALLET', 'SPECIAL']),
       );
+      // Owner (2026-11-01): cartons and pallets are priced by volume; barrels per piece.
       expect(master.priceCategories.find((c) => c.code === 'CARTON')).toMatchObject({
         cargoType: 'GENERAL',
-        defaultUnit: 'PER_PIECE',
+        defaultUnit: 'PER_CBM',
         isActive: true,
       });
+      expect(master.priceCategories.find((c) => c.code === 'PALLET')?.defaultUnit).toBe('PER_CBM');
+      expect(master.priceCategories.find((c) => c.code === 'BARREL')?.defaultUnit).toBe(
+        'PER_BARREL',
+      );
       expect(master.customerSegments.map((c) => c.code)).toEqual(
         expect.arrayContaining(['INDIVIDUAL', 'MERCHANT', 'BUSINESS']),
       );

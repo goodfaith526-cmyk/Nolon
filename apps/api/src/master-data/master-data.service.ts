@@ -92,6 +92,41 @@ export class MasterDataService {
     private readonly audit: AuditService,
   ) {}
 
+  /** Public reference data only: residence is not a shipping route or a branch assignment. */
+  async residenceCities(input: { q?: string; countryCode?: string; page: number }) {
+    const rows = await this.prisma.location.findMany({
+      where: {
+        kind: 'CITY',
+        isActive: true,
+        ...(input.countryCode ? { countryCode: input.countryCode } : {}),
+        ...(input.q
+          ? {
+              OR: [
+                { nameAr: { contains: input.q, mode: 'insensitive' as const } },
+                { nameEn: { contains: input.q, mode: 'insensitive' as const } },
+                { code: { contains: input.q, mode: 'insensitive' as const } },
+                {
+                  aliases: { some: { alias: { contains: input.q, mode: 'insensitive' as const } } },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ countryCode: 'asc' }, { code: 'asc' }, { id: 'asc' }],
+      skip: (input.page - 1) * 20,
+      take: 21,
+      select: {
+        id: true,
+        code: true,
+        nameAr: true,
+        nameEn: true,
+        countryCode: true,
+        aliases: { select: { alias: true }, orderBy: { alias: 'asc' } },
+      },
+    });
+    return { items: rows.slice(0, 20), nextPage: rows.length > 20 ? input.page + 1 : null };
+  }
+
   async all(): Promise<MasterDataDto> {
     const [
       branches,

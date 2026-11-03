@@ -59,7 +59,7 @@ interface MatchedCustomer {
   number: string;
   name: string;
   companyName: string | null;
-  phone: string;
+  phone: string | null;
   whatsapp: string | null;
   updatedAt: Date;
   contacts: { id: string; phone: string; updatedAt: Date }[];
