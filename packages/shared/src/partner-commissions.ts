@@ -80,6 +80,8 @@ export interface PartnerCommissionsDto {
 
 /** A manual adjustment (plan 07, 4.6): on a shipment the partner holds `role` on. */
 export interface ManualCommissionInput {
+  /** The client's id for this adjustment: a retry with it posts nothing again (F153-1). */
+  requestId: string;
   shipmentId: string;
   role: CommissionRole;
   currency: CurrencyCode;
