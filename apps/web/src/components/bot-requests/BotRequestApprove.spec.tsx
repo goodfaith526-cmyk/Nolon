@@ -52,6 +52,8 @@ const request = {
   bookingLines: [],
   dropOffId: null,
   dropOffPoint: null,
+  estimate: null,
+  photos: [],
   dropOffChoices: [],
 } as unknown as CsBookingRequestStaffDto;
 const master = {
@@ -287,6 +289,67 @@ describe('BotRequestApprove', () => {
     );
     expect(host.textContent).toContain('estimateRequired');
     expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it('approves a request with a non-standard item at the estimate the customer accepted', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const other = {
+      id: 'i1',
+      lineNo: 1,
+      category: null,
+      botKind: null,
+      isOther: true,
+      description: 'A sofa',
+      quantity: null,
+      pieces: 1,
+      dimensions: null,
+      weightKg: null,
+      quoteRef: null,
+      approvedTotal: null,
+      bookingItemId: null,
+    };
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={{
+            ...request,
+            items: [other],
+            estimate: {
+              version: 2,
+              amount: '150',
+              currency: 'USD',
+              note: null,
+              validUntil: new Date(Date.now() + 86_400_000).toISOString(),
+              acceptedVersion: 2,
+              acceptedAt: new Date().toISOString(),
+            },
+          }}
+          master={master}
+          busy={false}
+          onApprove={approved}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain('approveAtEstimate');
+    expect(host.textContent).toContain('150 USD');
+    // No engine price to check: the estimate is the price.
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'checkPrice')).toBe(
+      false,
+    );
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit.disabled).toBe(false);
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    const body = approved.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('lines');
+    expect(body).not.toHaveProperty('pricingFingerprint');
+    expect(body.pricing).toMatchObject({ originId: request.originId, currency: 'USD' });
     act(() => root.unmount());
   });
 });

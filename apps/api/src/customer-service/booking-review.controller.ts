@@ -9,10 +9,14 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  StreamableFile,
   UseFilters,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   CS_REQUEST_ITEMS_MAX,
+  CS_ESTIMATE_NOTE_MAX,
   CS_REVIEW_FILTERS,
   LOAD_TYPES,
   SHIPPING_MODES,
@@ -25,7 +29,14 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { bookingCreateBody } from '../bookings/bookings.controller.js';
-import { currencyCode, optionalText, parse, quantity, requiredText } from '../common/validation.js';
+import {
+  amount,
+  currencyCode,
+  optionalText,
+  parse,
+  quantity,
+  requiredText,
+} from '../common/validation.js';
 import { BookingReviewService, mayReview } from './booking-review.service.js';
 
 /**
@@ -43,6 +54,17 @@ const listQuery = z.object({ state: z.enum(CS_REVIEW_FILTERS).default('open') })
 const version = z.number().int().min(1);
 const routeBody = z.object({ version, branchId: z.uuid() }).strict();
 const closeBody = z.object({ version }).strict();
+/** Plan 09 section 12: staff's estimate of a request with an item outside the categories. */
+const estimateBody = z
+  .object({
+    version,
+    amount: amount.refine((v) => /[1-9]/.test(v), 'Must be above zero'),
+    currency: currencyCode,
+    noteAr: optionalText(CS_ESTIMATE_NOTE_MAX),
+    noteEn: optionalText(CS_ESTIMATE_NOTE_MAX),
+    validUntil: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 const reasonCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'A code of capitals, digits and _');
 const rejectBody = z
   .object({ version, reasonCode, internalNote: optionalText(1000).optional() })
@@ -171,6 +193,39 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** Plan 09 section 12: staff price a request with an item outside the standard categories. */
+  @Post(':id/estimate')
+  @RequirePermission('cs_booking_requests:approve')
+  estimate(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.estimate(user, id, parse(estimateBody, body));
+  }
+
+  /**
+   * Plan 09 section 12: a photo the customer sent, shown inline in its stored type and never
+   * sniffed as anything else.
+   */
+  @Get(':id/photos/:photoId')
+  @RequirePermission('cs_booking_requests:view')
+  async photo(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const photo = await this.review.photo(user, id, photoId);
+    res.set({
+      'Content-Type': photo.contentType,
+      'Content-Disposition': 'inline',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    });
+    return new StreamableFile(photo.content);
   }
 
   /** Plan 09 section 11: the drop-off point of an approved request, corrected. */

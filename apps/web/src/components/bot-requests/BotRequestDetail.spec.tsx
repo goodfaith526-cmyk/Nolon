@@ -57,9 +57,12 @@ const base: CsBookingRequestStaffDto = {
   bookingLines: [],
   dropOffId: null,
   dropOffPoint: null,
+  estimate: null,
+  photos: [],
   dropOffChoices: [],
   actions: {
     canSetDropOff: false,
+    canEstimate: false,
     canRoute: true,
     canReject: true,
     canApprove: false,
@@ -164,6 +167,7 @@ describe('BotRequestDetail', () => {
       approvedPricing: { category: 'BARREL', quantity: '2', currency: 'USD', total: '90.00' },
       actions: {
         canSetDropOff: false,
+        canEstimate: false,
         canRoute: false,
         canReject: false,
         canApprove: false,
@@ -181,6 +185,7 @@ describe('BotRequestDetail', () => {
       ...base,
       actions: {
         canSetDropOff: false,
+        canEstimate: false,
         canRoute: false,
         canReject: false,
         canApprove: false,
@@ -202,6 +207,7 @@ describe('BotRequestDetail', () => {
       },
       actions: {
         canSetDropOff: false,
+        canEstimate: false,
         canRoute: false,
         canReject: false,
         canApprove: false,

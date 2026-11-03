@@ -4,10 +4,13 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { CS_ESTIMATE_MAX_DAYS, loadTypeOf } from '@nolon/shared';
 import type {
   BookingItemInput,
   CargoType,
@@ -16,6 +19,8 @@ import type {
   CsApproveRequest,
   CsBookingRequestStaffDto,
   CsDropOffChoiceDto,
+  CsEstimateRequest,
+  CsRequestPhotoType,
   CsPriceInputs,
   CsBookingRequestSummaryDto,
   CsName,
@@ -43,11 +48,14 @@ import { CurrenciesService } from '../currencies/currencies.service.js';
 import {
   type CsBookingRequest,
   type CsBookingRequestItem,
+  type CsBookingRequestStatus,
   type CsQuote,
   Prisma,
 } from '../generated/prisma/client.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
+import { estimateOf } from './estimates.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -73,6 +81,7 @@ type Row = CsBookingRequest & {
   } | null;
   items: CsBookingRequestItem[];
   dropOff: CsDropOffChoiceDto | null;
+  photos: { id: string; contentType: string; sizeBytes: number; createdAt: Date }[];
 };
 type QuotedRow = Row & { quote: CsQuote | null };
 
@@ -89,14 +98,19 @@ const rowInclude = {
   },
   items: { orderBy: { lineNo: 'asc' } },
   dropOff: { select: { id: true, branchId: true, code: true, nameAr: true, nameEn: true } },
+  // Plan 09 section 12: the photos' details only; staff fetch each one's bytes on its own.
+  photos: {
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, contentType: true, sizeBytes: true, createdAt: true },
+  },
 } as const;
 const withQuote = { ...rowInclude, quote: true } as const;
 
+/** Staff have not decided these (plan 09 section 12: an estimate awaits the customer too). */
+const UNDECIDED: CsBookingRequestStatus[] = ['PENDING', 'AWAITING_ROUTING', 'ESTIMATED'];
+
 function undecided(r: Pick<CsBookingRequest, 'status' | 'expiresAt'>, now = new Date()): boolean {
-  return (
-    (r.status === 'PENDING' || r.status === 'AWAITING_ROUTING') &&
-    r.expiresAt.getTime() > now.getTime()
-  );
+  return UNDECIDED.includes(r.status) && r.expiresAt.getTime() > now.getTime();
 }
 
 /**
@@ -148,6 +162,7 @@ export class BookingReviewService {
     private readonly currencies: CurrenciesService,
     private readonly identities: CustomerIdentityService,
     private readonly customers: CustomersService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
     confirmChecks: BookingConfirmChecksRegistry,
   ) {
     confirmChecks.register((tx, bookingId) => requireCargoComplete(tx, bookingId));
@@ -161,12 +176,17 @@ export class BookingReviewService {
       .filter((b) => user.access.has(ROUTE, b) || user.access.has(DECIDE, b));
     const status: Prisma.CsBookingRequestWhereInput =
       filter === 'open'
-        ? { status: { in: ['PENDING', 'AWAITING_ROUTING'] }, expiresAt: { gt: now } }
+        ? { status: { in: UNDECIDED }, expiresAt: { gt: now } }
         : filter === 'expired'
-          ? { status: { in: ['PENDING', 'AWAITING_ROUTING'] }, expiresAt: { lte: now } }
-          : filter === 'pending' || filter === 'awaiting_routing'
+          ? { status: { in: UNDECIDED }, expiresAt: { lte: now } }
+          : filter === 'pending' || filter === 'awaiting_routing' || filter === 'estimated'
             ? {
-                status: filter === 'pending' ? 'PENDING' : 'AWAITING_ROUTING',
+                status:
+                  filter === 'pending'
+                    ? 'PENDING'
+                    : filter === 'estimated'
+                      ? 'ESTIMATED'
+                      : 'AWAITING_ROUTING',
                 expiresAt: { gt: now },
               }
             : filter === 'cancel_requested'
@@ -217,6 +237,14 @@ export class BookingReviewService {
       ? await this.quotes.recheck(row.quote, row.quantity, row.branchId)
       : null;
     const dto = staffDto(user, row, priceCheck);
+    // Plan 09 section 12: a request with an OTHER item, undecided, in a branch where they decide.
+    dto.actions.canEstimate =
+      this.env.CS_ESTIMATES_ENABLED &&
+      undecided(row) &&
+      (row.status === 'PENDING' || row.status === 'ESTIMATED') &&
+      row.branchId !== null &&
+      user.access.has(DECIDE, row.branchId) &&
+      row.items.some((i) => i.isOther);
     // Plan 09 section 11: the points staff may name, while they may approve or correct.
     // Both actions need DECIDE in the request's branch, and a point is named from that branch only.
     if ((dto.actions.canApprove || dto.actions.canSetDropOff) && row.branchId !== null)
@@ -283,6 +311,124 @@ export class BookingReviewService {
    * customer reads; the internal note stays with staff. One awaiting routing is rejected for the
    * branch of the person who rejects it (the first of its branches they decide in).
    */
+  /**
+   * Plan 09 section 12: staff price a request with an item outside the standard categories, for
+   * the customer to accept. With the request locked: its version, undecided and not expired,
+   * pending or estimated, with a branch where the person decides, and an OTHER item. The amount
+   * above zero in an active currency; valid after now and at most CS_ESTIMATE_MAX_DAYS ahead, and
+   * the request expires with it. Each estimate is a new version and clears an earlier acceptance
+   * (Codex F165-2): an acceptance never covers a price it did not see. Audited.
+   */
+  async estimate(
+    user: AuthUser,
+    id: string,
+    input: CsEstimateRequest,
+  ): Promise<CsBookingRequestStaffDto> {
+    if (!this.env.CS_ESTIMATES_ENABLED)
+      throw new ServiceUnavailableException({
+        code: 'ESTIMATES_UNAVAILABLE',
+        message: 'Estimates are not switched on yet',
+      });
+    const amount = dec(input.amount);
+    if (!amount.isFinite() || amount.lte(0))
+      throw new BadRequestException({
+        code: 'INVALID_AMOUNT',
+        message: 'The amount must be above zero',
+      });
+    const validUntil = new Date(input.validUntil);
+    const now = new Date();
+    if (
+      Number.isNaN(validUntil.getTime()) ||
+      validUntil.getTime() <= now.getTime() ||
+      validUntil.getTime() > now.getTime() + CS_ESTIMATE_MAX_DAYS * 86_400_000
+    )
+      throw new BadRequestException({
+        code: 'INVALID_VALID_UNTIL',
+        message: `The estimate is valid after now and at most ${CS_ESTIMATE_MAX_DAYS} days ahead`,
+      });
+    await this.currencies.requireActive(input.currency);
+    const written = await this.prisma.$transaction(async (tx) => {
+      const row = await lockRequest(tx, user, id, input.version);
+      if ((row.status !== 'PENDING' && row.status !== 'ESTIMATED') || row.branchId === null)
+        throw new ConflictException('Only a pending request with a branch is estimated');
+      if (!user.access.has(DECIDE, row.branchId))
+        throw new ForbiddenException('You may not price this request');
+      const others = await tx.csBookingRequestItem.count({
+        where: { requestId: id, isOther: true },
+      });
+      if (others === 0)
+        throw new ConflictException({
+          code: 'ESTIMATE_NOT_NEEDED',
+          message: 'Only a request with an item outside the standard categories is estimated',
+        });
+      await requireKeyServes(tx, row.apiClientId, row.branchId);
+      await this.currencies.requireActiveInTx(tx, input.currency);
+      const version = row.estimateVersion + 1;
+      await this.audit.record(tx, user, {
+        branchId: row.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: row.id,
+        reference: row.reference,
+        action: 'UPDATED',
+        changes: [
+          {
+            field: 'estimate',
+            before:
+              row.estimateAmount === null
+                ? null
+                : `v${row.estimateVersion} ${toDecimalString(row.estimateAmount)} ${row.estimateCurrency ?? ''}`,
+            after: `v${version} ${toDecimalString(amount)} ${input.currency}`,
+          },
+          {
+            field: 'estimateValidUntil',
+            before: row.estimateValidUntil?.toISOString() ?? null,
+            after: validUntil.toISOString(),
+          },
+        ],
+      });
+      return tx.csBookingRequest.update({
+        where: { id },
+        data: {
+          status: 'ESTIMATED',
+          estimateAmount: amount,
+          estimateCurrency: input.currency,
+          estimateNoteAr: input.noteAr?.trim() || null,
+          estimateNoteEn: input.noteEn?.trim() || null,
+          estimateValidUntil: validUntil,
+          estimateVersion: version,
+          estimatedById: user.id,
+          estimatedAt: now,
+          estimateAcceptedAt: null,
+          estimateAcceptedVersion: null,
+          // The request lives as long as its estimate (plan 09 section 12).
+          expiresAt: validUntil,
+          version: { increment: 1 },
+        },
+        include: withQuote,
+      });
+    });
+    return this.format(user, written);
+  }
+
+  /**
+   * Plan 09 section 12: a photo the customer sent, for staff who may view the request in its
+   * branch (or route it while unrouted), as visibleTo decides.
+   */
+  async photo(
+    user: AuthUser,
+    id: string,
+    photoId: string,
+  ): Promise<{ contentType: string; content: Uint8Array }> {
+    const row = await this.prisma.csBookingRequest.findUnique({ where: { id } });
+    if (!row || !visibleTo(user, row)) throw new NotFoundException('Booking request not found');
+    const photo = await this.prisma.csBookingRequestPhoto.findFirst({
+      where: { id: photoId, requestId: id },
+      select: { contentType: true, content: true },
+    });
+    if (!photo) throw new NotFoundException('Photo not found');
+    return photo;
+  }
+
   async reject(
     user: AuthUser,
     id: string,
@@ -402,9 +548,24 @@ export class BookingReviewService {
     if (!initial || !visibleTo(user, initial))
       throw new NotFoundException('Booking request not found');
     // Plan 09 section 4: one priced line per standard item (or the one-item shape's pricing).
+    // Plan 09 section 12: a request with an OTHER item is approved at the estimate the customer
+    // accepted (checked again under the lock), never at an engine price.
+    const estimated = initial.items.some((i) => i.isOther);
+    if (estimated && !estimateAccepted(initial)) throw estimateRequired();
     const lines = approvalLines(input, initial.items);
     // F137-1: the booking is the cargo priced, its route, mode, cargo and load type the inputs'.
-    const cargos = await Promise.all(lines.map((l) => this.quotes.cargoOf(l.inputs)));
+    const cargos = await Promise.all(
+      lines.map((l) =>
+        l.inputs
+          ? this.quotes.cargoOf(l.inputs)
+          : Promise.resolve({
+              category: null,
+              cargoType: 'GENERAL' as const,
+              unit: 'PER_PIECE' as const,
+              loadType: input.pricing.loadType ?? loadTypeOf(input.pricing.mode, 'GENERAL'),
+            }),
+      ),
+    );
     const loadTypes = new Set(cargos.map((c) => c.loadType));
     if (loadTypes.size > 1)
       throw new UnprocessableEntityException({
@@ -416,7 +577,17 @@ export class BookingReviewService {
     const made = lines.flatMap((line, index) => {
       const cargo = cargos[index]!;
       // Codex F167-1: the line books what was priced, the approved category and quantity.
-      const item = line.item ? bookingLineOf(line.item, cargo, dec(line.inputs.quantity)) : null;
+      const item = !line.item
+        ? null
+        : line.inputs && cargo.category !== null
+          ? bookingLineOf(
+              line.item,
+              { ...cargo, category: cargo.category },
+              dec(line.inputs.quantity),
+            )
+          : line.item.isOther
+            ? otherLineOf(line.item)
+            : null;
       return item && line.item ? [{ itemId: line.item.id, item }] : [];
     });
     const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
@@ -488,14 +659,21 @@ export class BookingReviewService {
       }
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       await this.currencies.requireActiveInTx(tx, input.paymentCurrency);
-      // F137-2: the pricing currency share-locked through commit, before the price is computed
-      // again; one withdrawn since staff saw the price makes it stale.
-      await requirePriceCurrency(tx, input.pricing.currency);
       const totals: (Prisma.Decimal | null)[] = [];
-      for (const line of lines) {
-        const now = await this.quotes.priceFor(line.inputs, row.branchId);
-        await requireSamePrice(tx, now, line.fingerprint);
-        totals.push(now.dto.total === null ? null : dec(now.dto.total));
+      if (estimated) {
+        // Codex F165-2: the version accepted is the current one, still valid, under the lock.
+        if (!estimateAccepted(row)) throw estimateRequired();
+        totals.push(...lines.map(() => null));
+      } else {
+        // F137-2: the pricing currency share-locked through commit, before the price is computed
+        // again; one withdrawn since staff saw the price makes it stale.
+        await requirePriceCurrency(tx, input.pricing.currency);
+        for (const line of lines) {
+          if (!line.inputs) throw estimateRequired();
+          const now = await this.quotes.priceFor(line.inputs, row.branchId);
+          await requireSamePrice(tx, now, line.fingerprint);
+          totals.push(now.dto.total === null ? null : dec(now.dto.total));
+        }
       }
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
       if (lines.some((l) => l.item !== null)) {
@@ -512,7 +690,7 @@ export class BookingReviewService {
             where: { id: line.item.id },
             data: {
               approvedCategoryCode: cargos[index]!.category,
-              approvedQuantity: dec(line.inputs.quantity),
+              approvedQuantity: line.inputs ? dec(line.inputs.quantity) : null,
               approvedTotal: totals[index] ?? null,
               bookingItemId: lineOf.get(line.item.id) ?? null,
             },
@@ -538,17 +716,22 @@ export class BookingReviewService {
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
       // The request's total: the lines' sum when every line is priced, else none.
       const priced = totals.filter((t): t is Prisma.Decimal => t !== null);
-      const total =
-        priced.length === totals.length ? priced.reduce((sum, t) => sum.plus(t), dec('0')) : null;
+      // Plan 09 section 12: an estimated request's total is the accepted estimate, in its currency.
+      const total = estimated
+        ? row.estimateAmount
+        : priced.length === totals.length
+          ? priced.reduce((sum, t) => sum.plus(t), dec('0'))
+          : null;
+      const firstPriced = lines.findIndex((l) => l.inputs !== null);
       return tx.csBookingRequest.update({
         where: { id },
         data: {
           status: 'APPROVED',
           bookingId,
           paymentCurrency: input.paymentCurrency,
-          approvedCategoryCode: cargos[0]!.category,
-          approvedQuantity: dec(lines[0]!.inputs.quantity),
-          approvedCurrency: input.pricing.currency,
+          approvedCategoryCode: firstPriced < 0 ? null : cargos[firstPriced]!.category,
+          approvedQuantity: firstPriced < 0 ? null : dec(lines[firstPriced]!.inputs!.quantity),
+          approvedCurrency: estimated ? row.estimateCurrency : input.pricing.currency,
           approvedTotal: total,
           dropOffWarehouseId: dropOffId,
           decidedById: user.id,
@@ -824,7 +1007,8 @@ async function dropOffFor(
 
 /** An approval line: the inputs priced, the fingerprint staff saw, and the item it prices. */
 interface ApprovalLine {
-  inputs: CsPriceInputs;
+  /** Null: an OTHER item (or one with no category) of an estimated request, priced by none. */
+  inputs: CsPriceInputs | null;
   fingerprint: string | null;
   item: CsBookingRequestItem | null;
 }
@@ -854,11 +1038,25 @@ function approvalLines(input: CsApproveRequest, items: CsBookingRequestItem[]): 
       },
     ];
   }
-  if (items.some((i) => i.isOther))
-    throw new ConflictException({
-      code: 'ESTIMATE_REQUIRED',
-      message: 'An item outside the standard categories needs a staff estimate first',
-    });
+  if (items.some((i) => i.isOther)) {
+    // Plan 09 section 12: the accepted estimate prices the whole request; the items' own
+    // categories and quantities make the booking lines, so staff send no lines or fingerprint.
+    if (
+      category !== undefined ||
+      quantity !== undefined ||
+      input.pricingFingerprint !== undefined ||
+      input.lines !== undefined
+    )
+      throw mismatch('A request with an estimate is approved at the estimate: send no lines');
+    return items.map((item) => ({
+      inputs:
+        !item.isOther && item.priceCategoryCode !== null && item.quantity !== null
+          ? { ...route, category: item.priceCategoryCode, quantity: toDecimalString(item.quantity) }
+          : null,
+      fingerprint: null,
+      item,
+    }));
+  }
   if (category !== undefined || quantity !== undefined || input.pricingFingerprint !== undefined)
     throw mismatch('A request with items is priced per line');
   if (input.lines === undefined)
@@ -869,6 +1067,49 @@ function approvalLines(input: CsApproveRequest, items: CsBookingRequestItem[]): 
     fingerprint: line.pricingFingerprint,
     item: items[index]!,
   }));
+}
+
+/** Codex F165-2: the customer accepted the current estimate, and it is still valid. */
+function estimateAccepted(
+  r: Pick<
+    CsBookingRequest,
+    'estimateVersion' | 'estimateAcceptedVersion' | 'estimateValidUntil' | 'estimateAmount'
+  >,
+  now = new Date(),
+): boolean {
+  return (
+    r.estimateVersion > 0 &&
+    r.estimateAmount !== null &&
+    r.estimateAcceptedVersion === r.estimateVersion &&
+    r.estimateValidUntil !== null &&
+    r.estimateValidUntil.getTime() > now.getTime()
+  );
+}
+
+function estimateRequired(): ConflictException {
+  return new ConflictException({
+    code: 'ESTIMATE_REQUIRED',
+    message: 'The customer must accept the current estimate of this request first',
+  });
+}
+
+/**
+ * Plan 09 section 12: the booking line of an OTHER item, GENERAL cargo of its pieces, described
+ * in the customer's words; no pieces, no line (staff complete it before confirming).
+ */
+function otherLineOf(item: CsBookingRequestItem): BookingItemInput | null {
+  if (item.pieces === null || item.pieces < 1) return null;
+  const decimal = (d: Prisma.Decimal | null) => (d === null ? null : toDecimalString(d));
+  const sized = item.lengthCm !== null && item.widthCm !== null && item.heightCm !== null;
+  return {
+    cargoType: 'GENERAL',
+    quantity: item.pieces,
+    description: item.description,
+    lengthCm: sized ? decimal(item.lengthCm) : null,
+    widthCm: sized ? decimal(item.widthCm) : null,
+    heightCm: sized ? decimal(item.heightCm) : null,
+    weightKg: decimal(item.weightKg),
+  };
 }
 
 /** Whether the items under the lock are the ones read before it (same rows, same values). */
@@ -1113,7 +1354,25 @@ function staffDto(
     dropOffId: r.dropOffWarehouseId,
     dropOffPoint: r.dropOff,
     dropOffChoices: [],
+    estimate: (() => {
+      const estimate = estimateOf(r);
+      return estimate
+        ? {
+            ...estimate,
+            acceptedVersion: r.estimateAcceptedVersion,
+            acceptedAt: r.estimateAcceptedAt?.toISOString() ?? null,
+          }
+        : null;
+    })(),
+    photos: r.photos.map((p) => ({
+      id: p.id,
+      contentType: p.contentType as CsRequestPhotoType,
+      sizeBytes: p.sizeBytes,
+      createdAt: p.createdAt.toISOString(),
+    })),
     actions: {
+      // Set by format(), which knows whether estimates are switched on.
+      canEstimate: false,
       canSetDropOff:
         r.status === 'APPROVED' && r.branchId !== null && user.access.has(DECIDE, r.branchId),
       canCloseCancelRequest:

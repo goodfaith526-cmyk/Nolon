@@ -482,3 +482,18 @@ pricingFingerprint}]` سطر لكل صنف بالترتيب، وبدون `catego
   `support: [{branchId, code, nameAr, nameEn, phone}]` لفروع المفتاح اللي ليها رقم بس.
 - **البذرة التجريبية:** مراكز التجميع ونوافذ الاستلام في مدن المنشأ (مش نوافذ السودان ولا مراكز التسليم ولا سواكن) بتبقى
   نقاط تسليم بمواعيد تجريبية، مرة واحدة: المرفق اللي ليهو مواعيد أو موقوف أو معلَّم من قبل بيتخلّى زي ما هو.
+
+## 15. تعديل 6 (2026-11-03): ما اتغيّر أثناء بناء 09-9
+
+- **التقدير للطلب كله:** المبلغ بيغطي كل الأصناف، المعيارية و`OTHER` مع بعض. الموافقة على طلب فيهو `OTHER` ما بيرسل
+  فيها الموظف `lines` ولا بصمة سعر (`400 LINES_MISMATCH` لو أرسلها). الأصناف المعيارية بتبقى سطور حجز بفئتها وكميتها، وصنف
+  `OTHER` بيبقى سطر `GENERAL` بعدد طرودو ووصفو. `approved_total` و`approved_currency` بيبقوا مبلغ وعملة النسخة المقبولة.
+- **الطلب بينتهي مع التقدير:** `expires_at` = `validUntil` بالضبط (مش تمديد بس)، فالقراءة بعد `validUntil` بتقول `expired`
+  والطلب بيطلع من القائمة المفتوحة. القبول بيرجّع الطلب `pending` لحدي نفس اللحظة.
+- **قائمة الموظف:** فلتر جديد `estimated`، و`open` و`expired` بيشملوا `estimated`. الرفض مسموح في `estimated`، والتوجيه لا.
+- **الصور:** مسار `POST /cs/booking-requests/:id/photos` بيقرا الجسم الخام لحدي 10MB بس في المسار ده (`413 PHOTO_TOO_LARGE`
+  فوق كده). `Idempotency-Key` إجباري (حروف وأرقام و`._:-`، حد 100)، وهو جزء من التوقيع (الخطة 08). نفس المفتاح بملف
+  تاني = `409 IDEMPOTENCY_CONFLICT`. الرد `{ photoId, contentType, sizeBytes, photoCount }`. القراءة فيها `photoCount`.
+- **القبول:** `POST /cs/booking-requests/:id/accept-estimate {estimateVersion}` بيرد `{ requestId, status, acceptedVersion }`.
+  الأخطاء: `ESTIMATE_CHANGED`، `ESTIMATE_EXPIRED`، `ALREADY_DECIDED` (ما في تقدير منتظر)، `503 ESTIMATES_UNAVAILABLE`.
+- **تقدير الموظف:** `409 ESTIMATE_NOT_NEEDED` لطلب ما فيهو صنف `OTHER`، و`400 INVALID_VALID_UNTIL` برّه المدى.
