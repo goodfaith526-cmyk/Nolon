@@ -260,9 +260,17 @@ p {
 .brand img {
   height: 84px;
   width: auto;
-  background: var(--logo-chip);
   border-radius: 12px;
   padding: 4px 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .brand img:not(.depth) {
+    filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.7))
+      drop-shadow(0 0 10px rgb(255 255 255 / 0.18));
+  }
+}
+:root[data-theme='dark'] .brand img:not(.depth) {
+  filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.7)) drop-shadow(0 0 10px rgb(255 255 255 / 0.18));
 }
 .nav {
   display: flex;
@@ -1480,6 +1488,23 @@ button:focus-visible .bot .happy,
 .brand.drive {
   position: relative;
   z-index: 2;
+  transform-style: preserve-3d;
+}
+.brand.drive img {
+  background: transparent;
+}
+.brand img.depth {
+  position: absolute;
+  filter: brightness(0.5) saturate(0.85);
+  pointer-events: none;
+}
+.truck-shadow {
+  position: absolute;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(0 0 0 / 0.28), transparent);
+  pointer-events: none;
 }
 .drive-cargo {
   position: absolute;
