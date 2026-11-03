@@ -165,7 +165,9 @@ jobs:
         run: deploy/production/test-switches.sh
       - name: Production takes the commit staging deployed (deploy/production/test-staging-deployed.sh)
         run: deploy/production/test-staging-deployed.sh
+      - name: One deploy at a time, registry login inside the lock (deploy/test-deploy-lock.sh)
+        run: deploy/test-deploy-lock.sh
       - name: Deploy scripts pass shellcheck
-        run: shellcheck deploy/*/*.sh
+        run: shellcheck deploy/*.sh deploy/*/*.sh
       - name: Workflows and deploy.sh pass actionlint (with shellcheck)
         run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
