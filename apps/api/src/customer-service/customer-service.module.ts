@@ -1,3 +1,5 @@
+import { CustomerStagesController } from './customer-stages.controller.js';
+import { CustomerStagesService } from './customer-stages.service.js';
 import { CustomerProfileReviewController } from './customer-profile-review.controller.js';
 import { CustomerProfileReviewService } from './customer-profile-review.service.js';
 import { CustomersModule } from '../customers/customers.module.js';
@@ -57,6 +59,7 @@ import { QuoteService } from './quote.service.js';
     BookingReviewController,
     RejectReasonsController,
     PaymentInstructionsController,
+    CustomerStagesController,
   ],
   providers: [
     CustomerProfileReviewService,
@@ -74,6 +77,7 @@ import { QuoteService } from './quote.service.js';
     BookingRequestsService,
     BookingReviewService,
     PaymentInstructionsService,
+    CustomerStagesService,
   ],
 })
 export class CustomerServiceModule {}

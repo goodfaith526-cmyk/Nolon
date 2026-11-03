@@ -4981,3 +4981,28 @@ model CustomerProfileReview {
   @@index([companyId, entityId, createdAt])
   @@map("customer_profile_reviews")
 }
+
+/// Plan 09 section 3: the stages a customer reads (the owner's stations), master data staff edit.
+/// sort_order orders them for display only; it never authorizes anything.
+model CustomerStage {
+  code      String  @id @db.VarChar(30)
+  nameAr    String  @map("name_ar") @db.VarChar(100)
+  nameEn    String  @map("name_en") @db.VarChar(100)
+  sortOrder Int     @map("sort_order") @db.SmallInt
+  isActive  Boolean @default(true) @map("is_active")
+
+  statuses ShipmentStatusStage[]
+
+  @@map("customer_stages")
+}
+
+/// Plan 09 section 3: which customer stage an internal shipment status shows as. A status with
+/// no row (ON_HOLD, CANCELLED, PARTIALLY_DELIVERED) sends the customer to staff.
+model ShipmentStatusStage {
+  status    ShipmentStatus @id
+  stageCode String         @map("stage_code") @db.VarChar(30)
+
+  stage CustomerStage @relation(fields: [stageCode], references: [code], onDelete: Restrict)
+
+  @@map("shipment_status_stages")
+}

@@ -96,6 +96,8 @@
 - POST `/customer-profiles/:id/reject-proposals` · `CustomerProfileReviewController.keepCurrent` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
 - PUT `/customer-profiles/follow-up-rules/:id` · `CustomerProfileReviewController.rule` · `customer-service/customer-profile-review.controller.ts` · customer_profile_followup:update
 - POST `/customer-profiles/intake/:id/resolve` · `CustomerProfileReviewController.resolve` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
+- PUT `/customer-stages/:code` · `CustomerStagesController.setStage` · `customer-service/customer-stages.controller.ts` · master_data:update
+- PUT `/customer-stages/mapping/:status` · `CustomerStagesController.setMapping` · `customer-service/customer-stages.controller.ts` · master_data:update
 - POST `/customers` · `CustomersController.create` · `customers/customers.controller.ts` · customers:create
 - PATCH `/customers/:id` · `CustomersController.update` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/:id/activate` · `CustomersController.activate` · `customers/customers.controller.ts` · customers:update

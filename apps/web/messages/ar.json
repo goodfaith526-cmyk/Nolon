@@ -1888,7 +1888,8 @@
     "entity_CS_REJECT_REASON": "سبب رفض طلب البوت",
     "entity_API_CLIENT": "مفتاح API",
     "entity_PAYMENT_INSTRUCTION": "تعليمات الدفع",
-    "entity_CS_BOOKING_REQUEST": "طلب حجز من البوت"
+    "entity_CS_BOOKING_REQUEST": "طلب حجز من البوت",
+    "entity_CUSTOMER_STAGE": "مرحلة الزبون"
   },
   "Dashboards": {
     "managementTitle": "لوحة الإدارة",
@@ -3088,7 +3089,16 @@
     "cancelRequestClosed": "(اتعالج)",
     "cancelRequestTitle": "الزبون طلب إلغاء الحجز",
     "cancelRequestHint": "الحجز ما بيتلغى تلقائياً. تواصل مع الزبون، وألغِ الحجز من صفحته لو لازم، وبعدها علّم الطلب «اتعالج».",
-    "cancelRequestCloseAction": "اتعالج"
+    "cancelRequestCloseAction": "اتعالج",
+    "stages": "مراحل الشحنة كما يقرأها الزبون",
+    "stagesHint": "دي المراحل البيقرأها الزبون من البوت. الحالة الما ليها مرحلة بتحوّل الزبون لموظف.",
+    "addStage": "إضافة مرحلة",
+    "stageCode": "رمز المرحلة",
+    "stageOrder": "الترتيب",
+    "stageMapping": "أي حالة شحنة بتظهر كأي مرحلة",
+    "shipmentStatus": "حالة الشحنة",
+    "customerStage": "المرحلة عند الزبون",
+    "stageToStaff": "— بلا مرحلة: تواصل مع الموظف —"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",
