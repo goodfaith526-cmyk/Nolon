@@ -397,7 +397,8 @@
   }
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!still) {
-    // Header logo drives in from the far left once per browser session.
+    // Header logo trip, once per browser session: the truck drives in, stops in the header's
+    // open space, loads two barrels and a parcel, drives to its place and delivers them.
     var brand = document.querySelector('.top .brand');
     var top = document.querySelector('.top');
     var drove = false;
@@ -405,23 +406,153 @@
       drove = sessionStorage.getItem('nolon-drive') === '1';
       sessionStorage.setItem('nolon-drive', '1');
     } catch (err) {}
-    if (brand && top && !drove) {
-      var startDrive = function () {
+    if (brand && top && !drove && brand.animate) {
+      var CARGO = [
+        '<svg class="cargo" viewBox="0 0 22 26" aria-hidden="true"><rect x="2" y="1" width="18" height="24" rx="4" fill="#f39531"/><rect x="2" y="7" width="18" height="2.6" fill="#c46a10"/><rect x="2" y="16.4" width="18" height="2.6" fill="#c46a10"/><rect x="5" y="3" width="3" height="20" rx="1.5" fill="#fff" fill-opacity=".35"/></svg>',
+        '<svg class="cargo" viewBox="0 0 22 26" aria-hidden="true"><rect x="2" y="1" width="18" height="24" rx="4" fill="#0a55a1"/><rect x="2" y="7" width="18" height="2.6" fill="#063a70"/><rect x="2" y="16.4" width="18" height="2.6" fill="#063a70"/><rect x="5" y="3" width="3" height="20" rx="1.5" fill="#fff" fill-opacity=".3"/></svg>',
+        '<svg class="cargo" viewBox="0 0 26 22" aria-hidden="true"><rect x="1" y="3" width="24" height="18" rx="2" fill="#c9965f"/><rect x="1" y="3" width="24" height="5" rx="2" fill="#b58049"/><rect x="11" y="3" width="4" height="18" fill="#ecd3ad"/></svg>',
+      ];
+      var tripImg = brand.querySelector(site.lang === 'en' ? 'img.en' : 'img.ar');
+      var trip = function () {
         var r = brand.getBoundingClientRect();
-        if (!r.width) return;
-        brand.style.setProperty('--drive-from', -Math.ceil(r.right + 24) + 'px');
+        var ri = tripImg.getBoundingClientRect();
+        var t = top.getBoundingClientRect();
+        if (!r.width || !ri.width) return;
+        // The widest open stretch of the header bar, between the logo, the menu and the buttons.
+        var edges = [];
+        Array.prototype.forEach.call(top.querySelector('.wrap').children, function (el) {
+          var b = el.getBoundingClientRect();
+          if (b.width) edges.push([b.left, b.right]);
+        });
+        edges.sort(function (p, q) {
+          return p[0] - q[0];
+        });
+        var gap = [0, 0];
+        for (var i = 1; i < edges.length; i++) {
+          if (edges[i][0] - edges[i - 1][1] > gap[1] - gap[0]) gap = [edges[i - 1][1], edges[i][0]];
+        }
+        var layer = document.createElement('div');
+        layer.className = 'drive-cargo';
+        layer.innerHTML = CARGO.join('');
+        top.appendChild(layer);
+        var items = Array.prototype.slice.call(layer.children);
+        var sizes = items.map(function (el) {
+          return el.getBoundingClientRect();
+        });
+        var load = sizes.reduce(function (s, b) {
+          return s + b.width + 4;
+        }, 0);
+        // Truck position at the stop, as an offset from its place; cargo waits in front of it.
+        var stop = (gap[0] + gap[1]) / 2 - (r.width + 10 + load) / 2 - r.left;
+        var from = -(r.right + 24);
+        var ground = ri.top + ri.height * (site.lang === 'en' ? 0.66 : 0.6) - t.top;
+        var bedX = ri.left + ri.width * 0.47 - t.left;
+        var bedY = ri.top + ri.height * 0.28 - t.top;
+        var out = r.left + r.width / 2 < window.innerWidth / 2 ? 1 : -1;
+        var ms = 7800;
+        function at(x) {
+          return x / ms;
+        }
+        function tx(x) {
+          return 'translateX(' + x.toFixed(1) + 'px)';
+        }
+        var back = stop > 0 ? -1 : 1;
         top.classList.add('driving');
         brand.classList.add('drive');
+        brand.animate(
+          [
+            {
+              offset: 0,
+              transform: tx(from) + ' skewX(-4deg)',
+              easing: 'cubic-bezier(.25,.6,.4,1)',
+            },
+            { offset: at(1700), transform: tx(stop + 7) + ' skewX(-4deg)', easing: 'ease-out' },
+            { offset: at(1950), transform: tx(stop - 2) + ' skewX(3deg)', easing: 'ease-in-out' },
+            { offset: at(2150), transform: tx(stop) },
+            { offset: at(4100), transform: tx(stop), easing: 'cubic-bezier(.45,0,.4,1)' },
+            {
+              offset: at(5500),
+              transform: tx(back * 6) + ' skewX(' + back * -3 + 'deg)',
+              easing: 'ease-out',
+            },
+            { offset: at(5750), transform: tx(back * -2) + ' skewX(' + back * 2 + 'deg)' },
+            { offset: at(5950), transform: 'none' },
+            { offset: 1, transform: 'none' },
+          ],
+          { duration: ms },
+        );
+        var bob = [{ transform: 'translateY(0)' }, { transform: 'translateY(-2px)' }];
+        tripImg.animate(bob, { duration: 190, iterations: 8, direction: 'alternate' });
+        tripImg.animate(bob, { duration: 190, iterations: 7, direction: 'alternate', delay: 4100 });
+        function squat(delay, dy) {
+          tripImg.animate(
+            [
+              { transform: 'translateY(0)' },
+              { transform: 'translateY(' + dy + 'px)' },
+              { transform: 'translateY(0)' },
+            ],
+            { duration: 260, delay: delay, easing: 'ease-out' },
+          );
+        }
+        function pt(x, y, s, o) {
+          return {
+            transform: 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) scale(' + s + ')',
+            opacity: o,
+          };
+        }
+        var x0 = r.right + stop + 10 - t.left;
+        items.forEach(function (el, n) {
+          var w = sizes[n].width,
+            h = sizes[n].height;
+          var gx = x0,
+            gy = ground - h;
+          x0 += w + 4;
+          var ax = bedX + stop - w / 2,
+            ay = bedY - h / 2;
+          // Waits at the stop, hops into the truck, rides along hidden, then is delivered.
+          var up = 2250 + n * 520,
+            land = up + 560;
+          var dx = bedX - w / 2,
+            outX = dx + out * (46 + n * 30);
+          var drop = t.height + 30;
+          var unload = 6050 + n * 380;
+          el.animate(
+            [
+              Object.assign({ offset: 0 }, pt(gx, gy, 0, 0)),
+              Object.assign({ offset: at(1500 + n * 120), easing: 'ease-out' }, pt(gx, gy, 0, 0)),
+              Object.assign({ offset: at(1800 + n * 120) }, pt(gx, gy - 6, 1.1, 1)),
+              Object.assign({ offset: at(1950 + n * 120) }, pt(gx, gy, 1, 1)),
+              Object.assign({ offset: at(up), easing: 'ease-out' }, pt(gx, gy, 1, 1)),
+              Object.assign(
+                { offset: at(up + 300), easing: 'ease-in' },
+                pt((gx + ax) / 2, Math.max(2, Math.min(gy, ay) - 34), 1, 1),
+              ),
+              Object.assign({ offset: at(land) }, pt(ax, ay, 0.45, 0)),
+              Object.assign({ offset: at(unload) }, pt(dx, ay, 0.45, 0)),
+              Object.assign(
+                { offset: at(unload + 200), easing: 'ease-out' },
+                pt(dx, Math.max(2, ay - 8), 1, 1),
+              ),
+              Object.assign(
+                { offset: at(unload + 480), easing: 'ease-in' },
+                pt((dx + outX) / 2, Math.max(2, ay - 30), 1, 1),
+              ),
+              Object.assign({ offset: at(unload + 900) }, pt(outX, drop, 1, 0)),
+              Object.assign({ offset: 1 }, pt(outX, drop, 1, 0)),
+            ],
+            { duration: ms },
+          );
+          squat(land - 80, 3);
+          squat(unload, -2);
+        });
+        setTimeout(function () {
+          layer.remove();
+          brand.classList.remove('drive');
+          top.classList.remove('driving');
+        }, ms + 50);
       };
-      brand.addEventListener('animationend', function (e) {
-        if (e.target !== brand) return;
-        brand.classList.remove('drive');
-        top.classList.remove('driving');
-      });
-      var logoImg = brand.querySelector(site.lang === 'en' ? 'img.en' : 'img.ar');
-      if (logoImg && !logoImg.complete)
-        logoImg.addEventListener('load', startDrive, { once: true });
-      else startDrive();
+      if (tripImg && !tripImg.complete) tripImg.addEventListener('load', trip, { once: true });
+      else if (tripImg) trip();
     }
     var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .pupil'));
     var px = 0,
