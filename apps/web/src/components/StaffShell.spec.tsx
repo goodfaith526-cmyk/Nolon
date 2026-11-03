@@ -10,6 +10,7 @@ let permissions: Permission[] = [];
 let delegations: AuthMeResponse['delegations'];
 let assistantUrl: string | null = null;
 let assistantPanel = false;
+let agentAdminUrl: string | null = null;
 const router = { replace: () => {} };
 
 vi.mock('next-intl', () => ({
@@ -38,6 +39,7 @@ vi.mock('@/lib/api', async (actual) => ({
       branches: [],
       assistantUrl,
       assistantPanel,
+      agentAdminUrl,
       delegations,
     } as unknown as AuthMeResponse),
 }));
@@ -66,6 +68,7 @@ afterEach(() => {
   host = null;
   assistantUrl = null;
   assistantPanel = false;
+  agentAdminUrl = null;
   delegations = undefined;
   Reflect.deleteProperty(window, 'matchMedia');
 });
@@ -113,6 +116,26 @@ describe('StaffShell permissions menu', () => {
     const shown = await allLinks();
     expect(shown).not.toContain('/permissions');
     expect(shown).not.toContain('/branch-permissions');
+  });
+});
+
+describe('StaffShell agent admin panel', () => {
+  const url = 'https://assistant.nolon.example/agent-admin.html?tenant=nolon&signin=erp';
+
+  it('opens the panel in a new tab from the menu when the API gives its address', async () => {
+    agentAdminUrl = url;
+    const page = await render();
+    const link = [...page.querySelectorAll<HTMLAnchorElement>('.sidebar a')].find(
+      (a) => a.getAttribute('href') === url,
+    );
+    expect(link?.target).toBe('_blank');
+    expect(link?.rel).toBe('noopener noreferrer');
+    expect(link?.textContent).toBe('agentAdmin');
+  });
+
+  it('shows no item when the API gives none', async () => {
+    const page = await render();
+    expect(page.textContent).not.toContain('agentAdmin');
   });
 });
 

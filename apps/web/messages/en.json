@@ -83,7 +83,8 @@
     "permissions": "Permissions",
     "branchPermissions": "Branch permissions",
     "paymentInstructions": "Payment instructions",
-    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window."
+    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
+    "agentAdmin": "Bookings agent admin"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -178,6 +179,7 @@
     "OUTLET_STAFF": "Outlet Staff"
   },
   "Common": {
+    "openStandalone": "Open in its own window",
     "invalidInput": "Check the fields and try again.",
     "invalidFields": "Not saved. Check: {fields}.",
     "invalidBecause": "Not saved: {reason} Check: {fields}.",
@@ -729,8 +731,7 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit",
-    "openStandalone": "Open in its own window"
+    "tabProfit": "Profit"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -3091,7 +3092,8 @@
     "levelName_N": "No access",
     "level_C": "*",
     "levelName_C": "Another mix of actions",
-    "module_payment_instructions": "Payment instructions"
+    "module_payment_instructions": "Payment instructions",
+    "module_agent_admin": "Bookings agent's admin panel"
   },
   "BotRequests": {
     "title": "Bot booking requests",

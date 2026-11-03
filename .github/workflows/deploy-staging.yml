@@ -46,6 +46,10 @@ jobs:
       ASSISTANT_URL: ${{ vars.STAGING_AGENT_ASSISTANT_URL }}
       # `true`: the assistant opens as a panel inside NOLON's pages. Empty: a new tab. Not secret.
       ASSISTANT_PANEL: ${{ vars.STAGING_AGENT_ASSISTANT_PANEL }}
+      # The bookings agent's admin panel, exactly as the agent gives it (e.g.
+      # https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp). Empty: no menu
+      # item. Shown only to holders of agent_admin:view. Not secret.
+      AGENT_ADMIN_URL: ${{ vars.STAGING_AGENT_ADMIN_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -270,6 +274,10 @@ jobs:
               *) echo "::error::STAGING_AGENT_ASSISTANT_PANEL must be true, false or empty"; exit 1 ;;
             esac
             echo "AGENT_ASSISTANT_PANEL='$ASSISTANT_PANEL'"
+            case "$AGENT_ADMIN_URL" in
+              *"'"*) echo "::error::STAGING_AGENT_ADMIN_URL must not contain a single quote"; exit 1 ;;
+            esac
+            echo "AGENT_ADMIN_URL='$AGENT_ADMIN_URL'"
             # The first Administrator (checked above). The seed creates it only if missing.
             echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
             echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"

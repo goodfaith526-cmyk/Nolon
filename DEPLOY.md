@@ -175,6 +175,16 @@ it: the assistant's `TENANT_ORIGINS` names NOLON's address as `hostOrigin` and t
 on its own address under the same site (e.g. `assistant.<NOLON's domain>`), or the panel stays
 blank or signed out. Empty or `false`: a new tab.
 
+### Bookings agent admin panel item
+
+Set the repository variable `STAGING_AGENT_ADMIN_URL` to the address the agent project gives for
+its admin panel, for example
+`https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp`, and deploy. People who
+hold `agent_admin:view` (the Administrator, and anyone the owner gives it on the permissions
+screen) then see "Bookings agent admin" in the menu; it opens in a new tab and signs in with their
+NOLON account. The panel decides who enters (its own list of admins, by NOLON user id). It must be
+https. Empty: no item. Production leaves it off until the agent signs in against production.
+
 ### 5. GitHub secrets
 
 Settings > Secrets and variables > Actions > **Secrets** > New repository secret:

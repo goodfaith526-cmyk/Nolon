@@ -9,6 +9,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
+import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -96,7 +97,10 @@ export function Bookings() {
               {page.items.map((b) => (
                 <tr key={b.id} className={b.status === 'CANCELLED' ? 'inactive' : ''}>
                   <td dir="ltr">
-                    <Link href={`/bookings/${b.id}`}>{b.number}</Link>
+                    <span className="number-cell">
+                      <Link href={`/bookings/${b.id}`}>{b.number}</Link>
+                      <StandaloneWindowButton record={{ kind: 'booking', id: b.id }} iconOnly />
+                    </span>
                   </td>
                   <td>{b.customerName}</td>
                   <td>
