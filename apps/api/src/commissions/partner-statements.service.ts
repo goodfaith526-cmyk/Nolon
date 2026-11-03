@@ -36,7 +36,7 @@ const summary = {
 
 const details = {
   ...summary,
-  partner: { select: { number: true, name: true } },
+  partner: { select: { number: true, name: true, supplierId: true } },
   accruals: {
     include: {
       shipment: { select: { number: true } },
@@ -200,7 +200,10 @@ export class PartnerStatementsService implements StatementBillHandler, OnModuleI
     await this.prisma.$transaction(async (tx) => {
       const statement = await lockStatement(tx, id);
       if (statement.status === 'BILLED' || statement.status === 'SETTLED') {
-        if (statement.billId === input.requestId) return;
+        if (statement.billId === input.requestId) {
+          await this.requireSameBillRequest(tx, user, input);
+          return;
+        }
         const bill = await tx.supplierBill.findUnique({
           where: { id: statement.billId ?? '' },
           select: { id: true, number: true },
@@ -236,6 +239,28 @@ export class PartnerStatementsService implements StatementBillHandler, OnModuleI
     return this.get(user, id);
   }
 
+  /**
+   * F168-2: a retry of the bill request returns the bill it made only when it asks for the same
+   * thing, as the same person; changed content gets 409. A request always names its due date
+   * (left empty, the form sends the API's suggestion), so the saved one is what it asked for.
+   */
+  private async requireSameBillRequest(
+    tx: Tx,
+    user: AuthUser,
+    input: PartnerStatementBillInput,
+  ): Promise<void> {
+    const bill = await tx.supplierBill.findUniqueOrThrow({
+      where: { id: input.requestId },
+      select: { createdById: true, billDate: true, dueDate: true, supplierReference: true },
+    });
+    const same =
+      bill.createdById === user.id &&
+      fromDbDate(bill.billDate) === input.billDate &&
+      fromDbDate(bill.dueDate) === input.dueDate &&
+      bill.supplierReference === (input.supplierReference ?? null);
+    if (!same) throw new ConflictException('This request id was already used: send a new id');
+  }
+
   async approvalLineInTx(
     tx: Tx,
     bill: StatementBillFacts,
@@ -246,7 +271,7 @@ export class PartnerStatementsService implements StatementBillHandler, OnModuleI
       WHERE "id" = ${statement.partnerId}::uuid FOR SHARE`;
     const rows = await tx.commissionAccrual.findMany({
       where: { statementId: statement.id },
-      select: { shipmentId: true, amount: true, amountUsd: true },
+      select: { shipmentId: true, amount: true, amountUsd: true, entryId: true },
       orderBy: [{ shipmentId: 'asc' }, { id: 'asc' }],
     });
     const mismatch = [
@@ -278,6 +303,10 @@ export class PartnerStatementsService implements StatementBillHandler, OnModuleI
       amount: bill.line.amount,
       totalUsd: statement.totalUsd,
       shipments: [...net].map(([shipmentId, netUsd]) => ({ shipmentId, netUsd })),
+      rows: rows.map((row) => {
+        if (!row.entryId) throw new Error(`A row of statement ${statement.number} has no entry`);
+        return { entryId: row.entryId, amount: row.amount, amountUsd: row.amountUsd };
+      }),
     };
   }
 
@@ -328,6 +357,7 @@ export class PartnerStatementsService implements StatementBillHandler, OnModuleI
       ...toSummary(s),
       partnerNumber: s.partner.number,
       partnerName: s.partner.name,
+      partnerSupplierId: s.partner.supplierId,
       lines: s.accruals.map((a) => ({
         shipmentId: a.shipmentId,
         shipmentNumber: a.shipment.number,

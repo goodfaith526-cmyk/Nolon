@@ -47,7 +47,7 @@ const statementBillBody: z.ZodType<PartnerStatementBillInput> = z
   .object({
     requestId: z.uuid(),
     billDate: dateString,
-    dueDate: dateString.optional(),
+    dueDate: dateString,
     supplierReference: optionalText(50).transform((v) => v ?? undefined),
   })
   .strict();

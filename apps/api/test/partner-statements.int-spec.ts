@@ -153,22 +153,33 @@ const makeStatement = (partnerId: string, cookie = cookies.financePts, money = '
     periodTo: today(),
   });
 
-const bill = (statementId: string, requestId: string = randomUUID()) =>
+const bill = (statementId: string, requestId: string = randomUUID(), over: object = {}) =>
   r.post(`/partner-statements/${statementId}/bill`, cookies.financePts, {
     requestId,
     billDate: today(),
+    dueDate: today(),
+    ...over,
   });
 
 /**
  * What the partner's supplier carries on the accrued commissions account, in the currency and in
  * USD (credit - debit): every rule 16 and 16a line of the partner names it.
  */
-async function accrued(supplierId: string, money: string) {
+async function accrued(supplierId: string | null, money: string, shipmentIds?: string[]) {
   const mapping = await t.prisma.accountMapping.findUniqueOrThrow({
     where: { role: 'ACCRUED_COMMISSIONS' },
   });
+  // Optionally only the rule 16 entries of some shipments (lines without a supplier are shared).
   const lines = await t.prisma.journalLine.findMany({
-    where: { accountId: mapping.accountId, supplierId, currency: money, branchId: pts },
+    where: {
+      accountId: mapping.accountId,
+      supplierId,
+      currency: money,
+      branchId: pts,
+      ...(shipmentIds
+        ? { entry: { source: 'COMMISSION_ACCRUAL', sourceId: { in: shipmentIds } } }
+        : {}),
+    },
   });
   return [
     sum(lines.map((l) => l.credit.minus(l.debit))).toFixed(),
@@ -308,6 +319,14 @@ describe('partner statements and their supplier bill, rule 16a (plan 07, PR-7c)'
     expect(
       ((await bill(statement.id, billId).expect(200)).body as PartnerStatementDto).billId,
     ).toBe(billId);
+    // The same request id with other content is refused, not reported as saved (F168-2).
+    for (const over of [
+      { supplierReference: 'DIFFERENT' },
+      { dueDate: '2099-12-31' },
+      { billDate: '2020-01-01', dueDate: '2020-01-01' },
+    ]) {
+      await bill(statement.id, billId, over).expect(409);
+    }
     expect(await t.prisma.supplierBill.count({ where: { supplierId } })).toBe(1);
     const draft = (await r.get(`/supplier-bills/${billId}`, cookies.financePts).expect(200))
       .body as SupplierBillDto;
@@ -415,6 +434,64 @@ describe('partner statements and their supplier bill, rule 16a (plan 07, PR-7c)'
           .expect(409)
       ).body,
     ).toMatchObject({ code: 'STATEMENT_BILL_MISMATCH' });
+  });
+
+  it('clears each row on the supplier its entry named, after the partner changed supplier (F168-1)', async () => {
+    // Accrued under supplier A, then the partner is linked to B: the bill is B's payable, and A's
+    // accrued balance is cleared on A.
+    const partner = await outlet();
+    const a = partner.supplierId ?? '';
+    const first = await shipment(partner.id);
+    await invoice(first);
+    const b = (await supplier()).id;
+    await r.patch(`/partners/${partner.id}`, cookies.admin, { supplierId: b }).expect(200);
+    const second = await shipment(partner.id);
+    await invoice(second);
+    expect(await accrued(a, 'USD')).toEqual(['30', '30']);
+    expect(await accrued(b, 'USD')).toEqual(['30', '30']);
+    const statement = (await makeStatement(partner.id).expect(201)).body as PartnerStatementDto;
+    expect(statement).toMatchObject({ total: '60', partnerSupplierId: b });
+    const billId =
+      ((await bill(statement.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+    await r.post(`/supplier-bills/${billId}/approve`, cookies.financePts, {}).expect(200);
+    expect(await accrued(a, 'USD')).toEqual(['0', '0']);
+    expect(await accrued(b, 'USD')).toEqual(['0', '0']);
+    const approved = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } });
+    const lines = await t.prisma.journalLine.findMany({
+      where: { entryId: approved.journalEntryId ?? '' },
+    });
+    const payable = lines.filter((l) => l.credit.gt(0));
+    expect(payable.map((l) => [l.supplierId, l.credit.toFixed()])).toEqual([[b, '60']]);
+    // Cancelling the bill gives each supplier back what it carried.
+    await r
+      .post(`/supplier-bills/${billId}/cancel`, cookies.financePts, { reason: 'Wrong period' })
+      .expect(200);
+    expect(await accrued(a, 'USD')).toEqual(['30', '30']);
+    expect(await accrued(b, 'USD')).toEqual(['30', '30']);
+  });
+
+  it('clears rows posted before the partner had a supplier on no supplier (F168-1)', async () => {
+    const partner = await outlet(false);
+    const id = await shipment(partner.id);
+    await invoice(id);
+    expect(await accrued(null, 'USD', [id])).toEqual(['30', '30']);
+    const linked = (await supplier()).id;
+    await r.patch(`/partners/${partner.id}`, cookies.admin, { supplierId: linked }).expect(200);
+    const statement = (await makeStatement(partner.id).expect(201)).body as PartnerStatementDto;
+    const billId =
+      ((await bill(statement.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+    await r.post(`/supplier-bills/${billId}/approve`, cookies.financePts, {}).expect(200);
+    const approved = await t.prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } });
+    const lines = await t.prisma.journalLine.findMany({
+      where: { entryId: approved.journalEntryId ?? '' },
+    });
+    expect(lines.map((l) => [l.supplierId, l.debit.toFixed(), l.credit.toFixed()]).sort()).toEqual(
+      [
+        [linked, '0', '30'],
+        [null, '30', '0'],
+      ].sort(),
+    );
+    expect(await accrued(linked, 'USD')).toEqual(['0', '0']);
   });
 
   it('clears the USD the rows carry, and shares the rate difference over the shipments above zero (F149-5)', async () => {

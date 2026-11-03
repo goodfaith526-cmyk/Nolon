@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AccountsService } from './accounts.service.js';
 import { type LineSpec, USD_DECIMALS, splitAmount, toUsd } from './journal-math.js';
 import { JournalService } from './journal.service.js';
+import { sum } from './report-math.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -140,6 +141,11 @@ export type BillLineForPosting =
       totalUsd: Decimal;
       /** Per shipment, the USD its rows net to: the weights of any exchange difference. */
       shipments: readonly { shipmentId: string; netUsd: Decimal }[];
+      /**
+       * Its rows: the rule 16 entry each was posted with, and what it carries in the currency and
+       * in USD. The debit clears each on the supplier its entry named (F168-1).
+       */
+      rows: readonly { entryId: string; amount: Decimal; amountUsd: Decimal }[];
     };
 
 export interface SupplierBillForPosting {
@@ -960,19 +966,28 @@ export class AutoJournalService {
     bill: SupplierBillForPosting,
     line: Extract<BillLineForPosting, { kind: 'COMMISSION' }>,
   ): Promise<LineSpec[]> {
-    const lines: LineSpec[] = [
-      {
-        accountId: await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS'),
-        branchId: bill.branchId,
-        currency: bill.currency,
-        fxRate: bill.fxRate,
-        side: 'DEBIT',
-        amount: line.amount,
-        amountUsd: line.totalUsd,
-        supplierId: bill.supplierId,
-        description: line.statementNumber,
-      },
-    ];
+    // F168-1: rule 16 credited the supplier the partner was linked to when each row was posted (or
+    // none), and that link can change since. Each is cleared on the supplier its entry named, so
+    // every supplier's accrued balance returns to what it was; the payable is the bill's supplier.
+    const carriers = await this.statementCarriers(tx, line.rows);
+    const accrued = await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS');
+    const lines: LineSpec[] = carriers.map((carrier) => ({
+      accountId: accrued,
+      branchId: bill.branchId,
+      currency: bill.currency,
+      fxRate: bill.fxRate,
+      side: 'DEBIT',
+      amount: carrier.amount,
+      amountUsd: carrier.amountUsd,
+      supplierId: carrier.supplierId,
+      description: line.statementNumber,
+    }));
+    if (
+      !sum(carriers.map((c) => c.amount)).eq(line.amount) ||
+      !sum(carriers.map((c) => c.amountUsd)).eq(line.totalUsd)
+    ) {
+      throw new Error(`Statement ${line.statementNumber}: its rows do not add up to the bill line`);
+    }
     const difference = toUsd(line.amount, bill.fxRate, bill.currency).minus(line.totalUsd);
     if (difference.isZero()) return lines;
     const weights = line.shipments.map((s) => (s.netUsd.gt(0) ? s.netUsd : ZERO));
@@ -995,6 +1010,57 @@ export class AutoJournalService {
       });
     });
     return lines;
+  }
+
+  /**
+   * A statement's rows grouped by the supplier their rule 16 entry named (null: none), with what
+   * each group carries. Every line of a rule 16 entry names the same supplier. Groups whose rows
+   * net to nothing in the currency and in USD get no line; the order is stable (by supplier id,
+   * none last).
+   */
+  private async statementCarriers(
+    tx: Tx,
+    rows: readonly { entryId: string; amount: Decimal; amountUsd: Decimal }[],
+  ): Promise<{ supplierId: string | null; amount: Decimal; amountUsd: Decimal }[]> {
+    const entryIds = [...new Set(rows.map((r) => r.entryId))];
+    const named = await tx.journalLine.findMany({
+      where: { entryId: { in: entryIds } },
+      select: { entryId: true, supplierId: true },
+      distinct: ['entryId', 'supplierId'],
+    });
+    const supplierOf = new Map<string, string | null>();
+    for (const n of named) {
+      if (supplierOf.has(n.entryId) && supplierOf.get(n.entryId) !== n.supplierId) {
+        throw new Error(`Entry ${n.entryId} names more than one supplier`);
+      }
+      supplierOf.set(n.entryId, n.supplierId);
+    }
+    const groups = new Map<
+      string,
+      { supplierId: string | null; amount: Decimal; amountUsd: Decimal }
+    >();
+    for (const row of rows) {
+      if (!supplierOf.has(row.entryId)) throw new Error(`No entry ${row.entryId}`);
+      const supplierId = supplierOf.get(row.entryId) ?? null;
+      const key = supplierId ?? '';
+      const group = groups.get(key) ?? { supplierId, amount: ZERO, amountUsd: ZERO };
+      groups.set(key, {
+        supplierId,
+        amount: group.amount.plus(row.amount),
+        amountUsd: group.amountUsd.plus(row.amountUsd),
+      });
+    }
+    return [...groups.values()]
+      .filter((g) => !g.amount.isZero() || !g.amountUsd.isZero())
+      .sort((a, b) =>
+        a.supplierId === b.supplierId
+          ? 0
+          : a.supplierId === null
+            ? 1
+            : b.supplierId === null
+              ? -1
+              : a.supplierId.localeCompare(b.supplierId),
+      );
   }
 
   /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */

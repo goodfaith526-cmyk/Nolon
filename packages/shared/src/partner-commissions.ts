@@ -115,8 +115,11 @@ export interface CreatePartnerStatementInput {
 export interface PartnerStatementBillInput {
   requestId: string;
   billDate: string;
-  /** Else the bill date plus the supplier's payment terms. */
-  dueDate?: string;
+  /**
+   * Always named, so a retry is compared with what was asked for (F168-2); the form fills an
+   * empty one with the API's suggestion (bill date plus the supplier's payment terms).
+   */
+  dueDate: string;
   /** The partner's own invoice number, if it sent one. */
   supplierReference?: string;
 }
@@ -160,6 +163,8 @@ export interface PartnerStatementLineDto {
 export interface PartnerStatementDto extends PartnerStatementSummaryDto {
   partnerNumber: string;
   partnerName: string;
+  /** The supplier the partner is linked to now (its bill's payee); null without one. */
+  partnerSupplierId: string | null;
   lines: PartnerStatementLineDto[];
   actions: {
     /** Make its supplier bill (a DRAFT statement). */
