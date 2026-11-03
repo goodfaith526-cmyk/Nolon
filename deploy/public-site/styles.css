@@ -260,7 +260,6 @@ p {
 .brand img {
   height: 84px;
   width: auto;
-  background: var(--logo-chip);
   border-radius: 12px;
   padding: 4px 8px;
 }
@@ -1480,6 +1479,14 @@ button:focus-visible .bot .happy,
 .brand.drive {
   position: relative;
   z-index: 2;
+}
+.truck-shadow {
+  position: absolute;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(0 0 0 / 0.28), transparent);
+  pointer-events: none;
 }
 .drive-cargo {
   position: absolute;
