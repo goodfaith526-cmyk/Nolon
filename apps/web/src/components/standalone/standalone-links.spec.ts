@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { guardStandaloneLinks, isAllowedInStandalone } from './standalone-links';
 
 const origin = 'https://nolon.example';
-const id = 'shp-1';
+const id = { kind: 'shipment', id: 'shp-1' } as const;
 
 describe('isAllowedInStandalone', () => {
   it.each([
@@ -118,5 +118,23 @@ describe('guardStandaloneLinks', () => {
     document.body.append(outside);
     expect(click(outside).defaultPrevented).toBe(false);
     cleanup();
+  });
+});
+
+describe('isAllowedInStandalone for a booking window', () => {
+  const booking = { kind: 'booking', id: 'bk-1' } as const;
+
+  it.each([
+    ['/ar/print/bookings/bk-1', true],
+    ['/print/bookings/bk-1', true],
+    ['/ar/track/abc123', true],
+    ['/ar/print/bookings/bk-2', false],
+    ['/ar/print/shipments/bk-1', false],
+    ['/api/v1/shipments/bk-1/documents/d1/file', false],
+    ['/ar/shipments/s1', false],
+    ['/ar/bookings/bk-1/edit', false],
+    ['/ar/quotations/q1', false],
+  ])('%s -> %s', (href, allowed) => {
+    expect(isAllowedInStandalone(href, origin, booking)).toBe(allowed);
   });
 });

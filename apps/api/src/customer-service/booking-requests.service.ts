@@ -1,4 +1,5 @@
 import { dropOffDto, dropOffSelect } from './drop-off.js';
+import { estimateOf, imageTypeOf, storedTerms } from './estimates.js';
 import {
   CustomerIdentityService,
   type ProfileBookingBinding,
@@ -18,13 +19,20 @@ import {
   CS_OTHER_KIND,
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
+  type BookingService,
   type CsBookingRequestByNames,
+  type CsBotEstimateDto,
   type CsBookingRequestCancelled,
   type CsCancelRequestDto,
   type CsBookingRequestCreate,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsBookingRequestState,
+  CS_REQUEST_PHOTOS_MAX,
+  CS_REQUEST_PHOTO_MAX_BYTES,
+  type CsEstimateAccepted,
+  type CsPhotoUploaded,
+  type CsRequestPhotoType,
   type CsItemMeasures,
   type CsNamesItemInput,
   type CsRequestItemInput,
@@ -41,6 +49,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { trackOf } from './customer-stages.js';
+import { CsEventsService } from './cs-events.service.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
@@ -183,7 +192,9 @@ export function stateOf(
   r: Pick<CsBookingRequest, 'status' | 'expiresAt'> & { botNames?: unknown },
   now = new Date(),
 ): CsBookingRequestState {
-  const undecided = r.status === 'PENDING' || r.status === 'AWAITING_ROUTING';
+  // An estimated request expires with its estimate (plan 09 section 12: expires_at = validUntil).
+  const undecided =
+    r.status === 'PENDING' || r.status === 'AWAITING_ROUTING' || r.status === 'ESTIMATED';
   if (undecided && r.expiresAt.getTime() <= now.getTime()) return 'expired';
   if (r.status === 'AWAITING_ROUTING' && r.botNames !== null && r.botNames !== undefined)
     return 'pending';
@@ -228,6 +239,7 @@ export class BookingRequestsService {
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly stages: CustomerStagesService,
     private readonly customers: CustomersService,
+    private readonly events: CsEventsService,
   ) {}
 
   /** The public tracking page of a shipment, as its QR code opens it; null when not configured. */
@@ -586,6 +598,7 @@ export class BookingRequestsService {
       include: {
         rejectReason: true,
         dropOff: { select: dropOffSelect },
+        _count: { select: { photos: true } },
         booking: {
           select: {
             number: true,
@@ -665,11 +678,48 @@ export class BookingRequestsService {
           ? { amount: toDecimalString(row.approvedTotal), currency: row.approvedCurrency }
           : null,
       dropOff: row.status === 'APPROVED' ? dropOffDto(row.dropOff) : null,
+      // Plan 09 section 12: the estimate awaiting the customer only (an expired one is not shown).
+      estimate: stateOf(row) === 'estimated' ? await this.botEstimateOf(row) : null,
+      photoCount: row._count.photos,
       ...track,
       // Plan 09 amendment 4: the public tracking link the shipment's QR opens, once it exists.
       shipment:
         track.shipment && shipment
           ? { ...track.shipment, trackingUrl: this.trackingUrl(shipment.trackingToken) }
+          : null,
+    };
+  }
+
+  /**
+   * Codex F171-2: the estimate with the terms it prices, for the customer to see before accepting
+   * it: the route by its names, as the locations are now (a name is shown, never decided on).
+   */
+  private async botEstimateOf(row: CsBookingRequest): Promise<CsBotEstimateDto | null> {
+    const estimate = estimateOf(row);
+    if (!estimate) return null;
+    const terms = storedTerms(row.estimateTerms);
+    if (!terms) return { ...estimate, terms: null };
+    const places = await this.prisma.location.findMany({
+      where: { id: { in: [terms.originId, terms.destinationId] } },
+      select: { id: true, code: true, nameAr: true, nameEn: true },
+    });
+    const place = (id: string) => {
+      const l = places.find((p) => p.id === id);
+      return l ? { code: l.code, ar: l.nameAr, en: l.nameEn } : null;
+    };
+    const origin = place(terms.originId);
+    const destination = place(terms.destinationId);
+    return {
+      ...estimate,
+      terms:
+        origin && destination
+          ? {
+              origin,
+              destination,
+              mode: terms.mode,
+              loadType: terms.loadType,
+              services: terms.services as BookingService[],
+            }
           : null,
     };
   }
@@ -697,23 +747,7 @@ export class BookingRequestsService {
         'Cancelling a booking request is not available yet: hand over to staff',
       );
     }
-    let where: Prisma.CsBookingRequestWhereInput;
-    if (caller.kind === 'customer') {
-      where = { id, apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
-    } else if (proof) {
-      where = {
-        id,
-        apiClientId: caller.client.id,
-        senderChannel: proof.channel,
-        senderId: proof.subjectId,
-      };
-    } else {
-      throw coded(
-        HttpStatus.FORBIDDEN,
-        'OWNER_PROOF_REQUIRED',
-        'Cancelling needs the customer token or a signed channel identity of the sender',
-      );
-    }
+    const where = provenOwner(caller, id, proof, 'Cancelling');
     const found = await this.prisma.csBookingRequest.findFirst({ where, select: { id: true } });
     const outcome = await this.prisma.$transaction(async (tx) => {
       if (!found) return null;
@@ -736,7 +770,8 @@ export class BookingRequestsService {
           ],
         });
       if (row.status === 'CANCELLED') return { kind: 'cancelled' as const, row };
-      if (stateOf(row, now) === 'pending' || stateOf(row, now) === 'awaiting_routing') {
+      // Plan 09 section 12: declining an estimate is cancelling the request.
+      if (['pending', 'awaiting_routing', 'estimated'].includes(stateOf(row, now))) {
         const cancelled = await tx.csBookingRequest.update({
           where: { id: row.id },
           data: {
@@ -747,6 +782,7 @@ export class BookingRequestsService {
           },
         });
         await audit('CANCELLED', 'cancelReason');
+        await this.events.emitInTx(tx, cancelled, ['request.cancelled'], now);
         return { kind: 'cancelled' as const, row: cancelled };
       }
       if (row.status === 'APPROVED') {
@@ -760,6 +796,7 @@ export class BookingRequestsService {
           },
         });
         await audit('UPDATED', 'cancelRequestReason');
+        await this.events.emitInTx(tx, asked, ['request.cancel_requested'], now);
         return { kind: 'asked' as const, row: asked };
       }
       return { kind: 'decided' as const, row };
@@ -796,6 +833,193 @@ export class BookingRequestsService {
       },
       HttpStatus.CONFLICT,
     );
+  }
+
+  /**
+   * Plan 09 section 12: the owner adds a photo for staff (an item outside the standard categories),
+   * one image per call, while the request is undecided (pending, awaiting routing or estimated).
+   * The owner is proven as for cancelling. The type comes from the bytes (415 UNSUPPORTED_IMAGE
+   * otherwise), at most CS_REQUEST_PHOTOS_MAX per request, counted under the row's lock (409
+   * PHOTO_LIMIT). The same key with the same bytes answers the same; with other bytes, 409.
+   */
+  async addPhoto(
+    caller: BookingRequestCaller,
+    id: string,
+    proof: { channel: CsSenderChannel; subjectId: string } | null,
+    idempotencyKey: string,
+    bytes: Buffer,
+  ): Promise<{ created: boolean; body: CsPhotoUploaded }> {
+    const where = provenOwner(caller, id, proof, 'Sending a photo');
+    const contentType = imageTypeOf(bytes);
+    if (contentType === null || bytes.length > CS_REQUEST_PHOTO_MAX_BYTES)
+      throw coded(
+        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+        'UNSUPPORTED_IMAGE',
+        'Send one JPEG, PNG or WebP image of at most 10 MB',
+      );
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const found = await this.prisma.csBookingRequest.findFirst({ where, select: { id: true } });
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      if (!found) return null;
+      const { branchIds } = await currentKey(tx, caller);
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${found.id}::uuid FOR UPDATE`;
+      const row = await tx.csBookingRequest.findUnique({ where: { id: found.id } });
+      if (!row || !servedBy(row, branchIds)) return null;
+      const same = await tx.csBookingRequestPhoto.findUnique({
+        where: { requestId_idempotencyKey: { requestId: row.id, idempotencyKey } },
+        select: { id: true, contentType: true, sizeBytes: true, sha256: true },
+      });
+      const count = await tx.csBookingRequestPhoto.count({ where: { requestId: row.id } });
+      if (same) {
+        if (same.sha256 !== digest)
+          throw coded(
+            HttpStatus.CONFLICT,
+            'IDEMPOTENCY_CONFLICT',
+            'This idempotency key was used for another photo',
+          );
+        return { created: false, photo: same, count };
+      }
+      if (!['pending', 'awaiting_routing', 'estimated'].includes(stateOf(row)))
+        throw coded(
+          HttpStatus.CONFLICT,
+          'ALREADY_DECIDED',
+          'Photos are taken only while staff have not decided the request',
+        );
+      if (count >= CS_REQUEST_PHOTOS_MAX)
+        throw coded(
+          HttpStatus.CONFLICT,
+          'PHOTO_LIMIT',
+          `A request takes at most ${CS_REQUEST_PHOTOS_MAX} photos`,
+        );
+      const photo = await tx.csBookingRequestPhoto.create({
+        data: {
+          requestId: row.id,
+          idempotencyKey,
+          contentType,
+          sizeBytes: bytes.length,
+          sha256: digest,
+          content: new Uint8Array(bytes),
+        },
+        select: { id: true, contentType: true, sizeBytes: true, sha256: true },
+      });
+      await this.audit.recordApi(tx, {
+        branchId: row.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: row.id,
+        reference: row.reference,
+        action: 'UPDATED',
+        changes: [
+          { field: 'photos', before: String(count), after: String(count + 1) },
+          { field: 'apiClient', before: null, after: caller.client.id },
+        ],
+      });
+      return { created: true, photo, count: count + 1 };
+    });
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        caller.client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        outcome ? 'OK' : 'NOT_FOUND',
+        'POST /cs/booking-requests/:id/photos',
+      );
+    }
+    if (!outcome) throw new NotFoundException('Booking request not found');
+    return {
+      created: outcome.created,
+      body: {
+        photoId: outcome.photo.id,
+        contentType: outcome.photo.contentType as CsRequestPhotoType,
+        sizeBytes: outcome.photo.sizeBytes,
+        photoCount: outcome.count,
+      },
+    };
+  }
+
+  /**
+   * Plan 09 section 12: the owner accepts the estimate it was shown, proven as for cancelling,
+   * under the row's lock: before validUntil (409 ESTIMATE_EXPIRED) and for the current version
+   * (409 ESTIMATE_CHANGED). The request is pending again with the accepted version, which approval
+   * requires. Accepting the same version again answers the same.
+   */
+  async acceptEstimate(
+    caller: BookingRequestCaller,
+    id: string,
+    proof: { channel: CsSenderChannel; subjectId: string } | null,
+    estimateVersion: number,
+  ): Promise<CsEstimateAccepted> {
+    if (!this.env.CS_ESTIMATES_ENABLED)
+      throw coded(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        'ESTIMATES_UNAVAILABLE',
+        'Estimates are not available yet: hand over to staff',
+      );
+    const where = provenOwner(caller, id, proof, 'Accepting an estimate');
+    const found = await this.prisma.csBookingRequest.findFirst({ where, select: { id: true } });
+    const row = await this.prisma.$transaction(async (tx) => {
+      if (!found) return null;
+      const { branchIds } = await currentKey(tx, caller);
+      await tx.$queryRaw`SELECT 1 FROM "cs_booking_requests" WHERE "id" = ${found.id}::uuid FOR UPDATE`;
+      const current = await tx.csBookingRequest.findUnique({ where: { id: found.id } });
+      if (!current || !servedBy(current, branchIds)) return null;
+      const now = new Date();
+      const state = stateOf(current, now);
+      // Accepted already (the same version, still pending): the same answer.
+      if (
+        state === 'pending' &&
+        current.estimateAcceptedVersion === estimateVersion &&
+        current.estimateVersion === estimateVersion
+      )
+        return current;
+      if (current.estimateVersion > 0 && current.estimateVersion !== estimateVersion)
+        throw coded(
+          HttpStatus.CONFLICT,
+          'ESTIMATE_CHANGED',
+          'Staff changed the estimate: read the request again',
+        );
+      if (
+        current.status === 'ESTIMATED' &&
+        (state === 'expired' ||
+          current.estimateValidUntil === null ||
+          current.estimateValidUntil.getTime() <= now.getTime())
+      )
+        throw coded(HttpStatus.CONFLICT, 'ESTIMATE_EXPIRED', 'The estimate is no longer valid');
+      if (state !== 'estimated')
+        throw coded(HttpStatus.CONFLICT, 'ALREADY_DECIDED', 'No estimate awaits the customer');
+      const accepted = await tx.csBookingRequest.update({
+        where: { id: current.id },
+        data: {
+          status: 'PENDING',
+          estimateAcceptedAt: now,
+          estimateAcceptedVersion: estimateVersion,
+          version: { increment: 1 },
+        },
+      });
+      await this.audit.recordApi(tx, {
+        branchId: current.branchId,
+        entity: 'CS_BOOKING_REQUEST',
+        entityId: current.id,
+        reference: current.reference,
+        action: 'UPDATED',
+        changes: [
+          { field: 'estimateAcceptedVersion', before: null, after: String(estimateVersion) },
+          { field: 'apiClient', before: null, after: caller.client.id },
+          { field: 'owner', before: null, after: current.ownerRef },
+        ],
+      });
+      return accepted;
+    });
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        caller.client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        row ? 'OK' : 'NOT_FOUND',
+        'POST /cs/booking-requests/:id/accept-estimate',
+      );
+    }
+    if (!row) throw new NotFoundException('Booking request not found');
+    return { requestId: row.id, status: stateOf(row), acceptedVersion: estimateVersion };
   }
 
   /**
@@ -920,6 +1144,33 @@ function notServed(): HttpException {
  * cs:booking_requests:create, and, for a customer token, a grant that still holds. Its branches
  * and the services its bot offers now.
  */
+/**
+ * Plan 09 sections 2 and 12: the request of a proven owner, never an asserted one: a customer
+ * token's own request, or a signed channel identity (plan 08) whose subject is its sender. The key
+ * alone is no proof: 403 OWNER_PROOF_REQUIRED.
+ */
+function provenOwner(
+  caller: BookingRequestCaller,
+  id: string,
+  proof: { channel: CsSenderChannel; subjectId: string } | null,
+  what: string,
+): Prisma.CsBookingRequestWhereInput {
+  if (caller.kind === 'customer')
+    return { id, apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
+  if (proof)
+    return {
+      id,
+      apiClientId: caller.client.id,
+      senderChannel: proof.channel,
+      senderId: proof.subjectId,
+    };
+  throw coded(
+    HttpStatus.FORBIDDEN,
+    'OWNER_PROOF_REQUIRED',
+    `${what} needs the customer token or a signed channel identity of the sender`,
+  );
+}
+
 async function currentKey(
   tx: Prisma.TransactionClient,
   caller: BookingRequestCaller,

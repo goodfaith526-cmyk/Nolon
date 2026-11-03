@@ -83,7 +83,8 @@
     "permissions": "Permissions",
     "branchPermissions": "Branch permissions",
     "paymentInstructions": "Payment instructions",
-    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window."
+    "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
+    "agentAdmin": "Bookings agent admin"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -178,6 +179,7 @@
     "OUTLET_STAFF": "Outlet Staff"
   },
   "Common": {
+    "openStandalone": "Open in its own window",
     "invalidInput": "Check the fields and try again.",
     "invalidFields": "Not saved. Check: {fields}.",
     "invalidBecause": "Not saved: {reason} Check: {fields}.",
@@ -729,8 +731,7 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit",
-    "openStandalone": "Open in its own window"
+    "tabProfit": "Profit"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -1548,7 +1549,37 @@
     "servicesHint": "The bot offers customers only what is ticked: untick pickup or delivery while NOLON does not do it.",
     "service_PICKUP": "Pickup from the customer",
     "service_LAST_MILE": "Delivery to the receiver's door",
-    "noServices": "No pickup or delivery"
+    "noServices": "No pickup or delivery",
+    "webhooks": "Notices",
+    "webhooksTitle": "Notices of {name}",
+    "webhooksHint": "Where this key's bot is told that a request or its shipment changed. One administrator adds the address, another approves it.",
+    "webhookNoSecret": "CS_WEBHOOK_SECRET is not set on the server: no address can be approved.",
+    "webhookWorkerOff": "Sending is off on this server (CS_WEBHOOK_WORKER_ENABLED): notices wait until it is on.",
+    "webhookAllowedHosts": "Allowed hosts:",
+    "webhookNone": "No address yet.",
+    "webhookUrl": "Address (https)",
+    "webhookAudience": "Audience",
+    "webhookStatus": "Status",
+    "webhook_PENDING": "Waiting for approval",
+    "webhook_APPROVED": "Approved",
+    "webhook_RETIRED": "Retired",
+    "webhookApprovedBy": "approved by {name}",
+    "webhookApprove": "Approve",
+    "webhookRetire": "Retire",
+    "webhookAdd": "Add address",
+    "webhookAdded": "Address added; another administrator approves it.",
+    "webhookApproved": "Address approved.",
+    "webhookRetired": "Address retired.",
+    "webhookRecent": "Latest notices",
+    "webhookRequest": "Request",
+    "webhookEvent": "Event",
+    "webhookAttempts": "Attempts",
+    "webhookLastAnswer": "Last answer",
+    "outbox_PENDING": "Waiting",
+    "outbox_SENDING": "Sending",
+    "outbox_SENT": "Sent",
+    "outbox_FAILED": "Failed",
+    "outbox_CANCELLED_BY_POLICY": "Cancelled (no longer allowed)"
   },
   "Reports": {
     "title": "Financial reports",
@@ -3061,7 +3092,8 @@
     "levelName_N": "No access",
     "level_C": "*",
     "levelName_C": "Another mix of actions",
-    "module_payment_instructions": "Payment instructions"
+    "module_payment_instructions": "Payment instructions",
+    "module_agent_admin": "Bookings agent's admin panel"
   },
   "BotRequests": {
     "title": "Bot booking requests",
@@ -3180,7 +3212,7 @@
     "resolveItem": "Link",
     "addBookingLine": "Add a line on the booking first",
     "itemLine": "Item {line}",
-    "estimateRequired": "This request has a non-standard item: it needs a staff estimate before approval (coming soon).",
+    "estimateRequired": "This request has a non-standard item: send an estimate and wait for the customer to accept it before approval.",
     "dropOff": "Drop-off point",
     "dropOffAuto": "Automatic (the branch's only point, if it has one)",
     "dropOffNone": "None named",
@@ -3188,7 +3220,24 @@
     "dropOffHint": "The customer reads the new point's details the next time the bot looks at the request.",
     "dropOffAction": "Save drop-off point",
     "supportPhonesTitle": "Customer service numbers",
-    "supportPhonesHint": "The shipping bot gives customers the number of their branch. Leave empty to show none. International format, e.g. +249912345678."
+    "supportPhonesHint": "The shipping bot gives customers the number of their branch. Leave empty to show none. International format, e.g. +249912345678.",
+    "state_estimated": "Estimate sent",
+    "filter_estimated": "Estimate sent",
+    "estimateTitle": "Estimate for the customer",
+    "estimateHint": "An item is outside the standard categories: price the whole request for the customer to accept before approval.",
+    "estimateVersion": "version {version}",
+    "estimateValidUntil": "valid until {date}",
+    "estimateAccepted": "accepted by the customer",
+    "estimateAwaiting": "awaiting the customer",
+    "estimateAmount": "Amount for the whole request",
+    "estimateValidUntilLabel": "Valid until (at most {days} days)",
+    "estimateNoteAr": "Note to the customer (Arabic)",
+    "estimateNoteEn": "Note to the customer (English)",
+    "estimateAction": "Send estimate",
+    "estimateReplace": "Send a new estimate",
+    "approveAtEstimate": "Approved at the estimate the customer accepted:",
+    "photosTitle": "Customer photos ({count})",
+    "photoAlt": "Photo from the customer"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

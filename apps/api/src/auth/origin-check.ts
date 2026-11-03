@@ -49,8 +49,12 @@ export function originCheck(
       /^\/api\/v1\/cs\/customer-profiles\/(?:capture|[0-9a-f-]{36}(?:\/follow-up)?)$/.test(
         req.path,
       );
-    // Plan 09: a customer's cancel, by the bot's key or a customer token, never by a cookie.
-    const cancelPath = /^\/api\/v1\/cs\/booking-requests\/[0-9a-f-]{36}\/cancel$/.test(req.path);
+    // Plan 09: a customer's cancel, photo or acceptance of an estimate, by the bot's key or a
+    // customer token, never by a cookie.
+    const cancelPath =
+      /^\/api\/v1\/cs\/booking-requests\/[0-9a-f-]{36}\/(?:cancel|photos|accept-estimate)$/.test(
+        req.path,
+      );
     if (
       exempt.has(req.path) ||
       (profilePath && /^Bearer nolcs_/.test(req.headers.authorization ?? '')) ||

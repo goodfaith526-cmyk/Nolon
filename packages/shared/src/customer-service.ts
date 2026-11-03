@@ -516,7 +516,14 @@ export const CS_BOT_HANDOVERS = ['pickup', 'dropoff'] as const;
 
 /** A request by names reads `pending` while it awaits routing: its bot knows no such state. */
 export type CsBookingRequestState =
-  'awaiting_routing' | 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  | 'awaiting_routing'
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'cancelled'
+  /** Plan 09 section 12 (behind CS_ESTIMATES_ENABLED): staff's estimate awaits the customer. */
+  | 'estimated';
 
 export interface CsBookingRequestCreated {
   requestId: string;
@@ -551,6 +558,10 @@ export interface CsBookingRequestDto {
   approvedPrice: { amount: DecimalString; currency: CurrencyCode } | null;
   /** Plan 09 section 11: where to bring the shipment, once approved; null before or when none. */
   dropOff: CsDropOffDto | null;
+  /** Plan 09 section 12: staff's estimate, while the request is `estimated` only; else null. */
+  estimate: CsBotEstimateDto | null;
+  /** Plan 09 section 12: how many photos the customer sent (at most CS_REQUEST_PHOTOS_MAX). */
+  photoCount: number;
   /**
    * Plan 09 section 3: where the booking is, in the customer's stages. BOOKED while pending or the
    * booking is a draft; the shipment's mapped stage once confirmed. Null when rejected, cancelled
@@ -561,6 +572,97 @@ export interface CsBookingRequestDto {
   attention: 'staff' | null;
   shipment: CsShipmentTrackDto | null;
 }
+
+/**
+ * Plan 09 section 12: staff's price for a request with an item outside the standard categories.
+ * `version` is what the bot sends back to accept it; the price is valid until `validUntil`.
+ */
+export interface CsEstimateDto {
+  version: number;
+  amount: DecimalString;
+  currency: CurrencyCode;
+  /** The one language given is repeated; null when staff wrote none. */
+  note: { ar: string; en: string } | null;
+  validUntil: string;
+}
+
+/**
+ * Codex F171-2: what an estimate prices, for the bot to tell the customer before they accept it:
+ * the route (names in both languages), mode and load type staff set, and the services it covers
+ * (the request's own). The items are the customer's own, as sent. Null only for an estimate made
+ * before terms were recorded, which approval refuses.
+ */
+export interface CsEstimateTermsDto {
+  origin: { code: string; ar: string; en: string };
+  destination: { code: string; ar: string; en: string };
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  services: BookingService[];
+}
+
+/** The estimate as the bot reads it: bound to `version`, with the terms it prices. */
+export type CsBotEstimateDto = CsEstimateDto & { terms: CsEstimateTermsDto | null };
+
+/** POST /cs/booking-requests/:id/accept-estimate: the owner accepts the estimate it was shown. */
+export interface CsAcceptEstimateRequest {
+  estimateVersion: number;
+}
+
+export interface CsEstimateAccepted {
+  requestId: string;
+  status: CsBookingRequestState;
+  acceptedVersion: number;
+}
+
+/** POST /cs/booking-requests/:id/photos: one image per call, raw bytes (plan 09 section 12). */
+export const CS_REQUEST_PHOTOS_MAX = 10;
+export const CS_REQUEST_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+export const CS_REQUEST_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export type CsRequestPhotoType = (typeof CS_REQUEST_PHOTO_TYPES)[number];
+
+export interface CsPhotoUploaded {
+  photoId: string;
+  contentType: CsRequestPhotoType;
+  sizeBytes: number;
+  /** The request's photos after this one. */
+  photoCount: number;
+}
+
+/** A photo as staff list it; its bytes at GET /cs-booking-requests/:id/photos/:photoId. */
+export interface CsRequestPhotoDto {
+  id: string;
+  contentType: CsRequestPhotoType;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+/** POST /cs-booking-requests/:id/estimate: staff price the request (plan 09 section 12). */
+/**
+ * Codex F171-2: the shipping terms an estimate prices, set by staff with it. Approval books exactly
+ * these (and the request's services and items as they were); anything else needs a new estimate
+ * the customer accepts again.
+ */
+export interface CsEstimateTerms {
+  originId: string;
+  destinationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+}
+
+export interface CsEstimateRequest {
+  version: number;
+  amount: DecimalString;
+  currency: CurrencyCode;
+  terms: Omit<CsEstimateTerms, 'loadType'> & { loadType?: LoadType | null };
+  noteAr?: string | null;
+  noteEn?: string | null;
+  /** After now and at most CS_ESTIMATE_MAX_DAYS ahead; the request expires with it. */
+  validUntil: string;
+}
+
+export const CS_ESTIMATE_MAX_DAYS = 14;
+/** The longest note staff add to an estimate, in each language. */
+export const CS_ESTIMATE_NOTE_MAX = 500;
 
 /** A customer stage as the bot shows it (plan 09 section 3). */
 export interface CsStageDto {
@@ -714,6 +816,8 @@ export const CS_REVIEW_FILTERS = [
   // Plan 09 section 2: cancelled by the customer; approved ones whose customer asked to cancel.
   'cancelled',
   'cancel_requested',
+  // Plan 09 section 12: an estimate awaits the customer.
+  'estimated',
 ] as const;
 export type CsReviewFilter = (typeof CS_REVIEW_FILTERS)[number];
 
@@ -818,10 +922,26 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   dropOffId: string | null;
   /** The point named, as staff read it (even if since turned off). */
   dropOffPoint: CsDropOffChoiceDto | null;
+  /**
+   * Plan 09 section 12: the latest estimate (any state), and the version the customer accepted.
+   * Approval of a request with an OTHER item needs `acceptedVersion` = `version` before
+   * `validUntil`.
+   */
+  estimate:
+    | (CsEstimateDto & {
+        acceptedVersion: number | null;
+        acceptedAt: string | null;
+        /** The terms it prices (Codex F171-2); null for none recorded, which approval refuses. */
+        terms: CsEstimateTerms | null;
+      })
+    | null;
+  photos: CsRequestPhotoDto[];
   dropOffChoices: CsDropOffChoiceDto[];
   actions: {
     /** Plan 09 section 11: correct the drop-off point of an approved request. */
     canSetDropOff: boolean;
+    /** Plan 09 section 12: price a pending (or estimated) request with an OTHER item. */
+    canEstimate: boolean;
     canRoute: boolean;
     canReject: boolean;
     canApprove: boolean;
@@ -998,4 +1118,93 @@ export interface CsRejectRequest {
   version: number;
   reasonCode: string;
   internalNote?: string | null;
+}
+
+/**
+ * Plan 09 section 5 (N-C5): the notices NOLON sends to a key's approved endpoint, one stream per
+ * request numbered by `sequence`. A notice says only that something changed: the bot reads the
+ * truth with GET /cs/booking-requests/:id.
+ */
+export const CS_WEBHOOK_EVENT_TYPES = [
+  'request.approved',
+  'request.rejected',
+  'request.cancelled',
+  'request.cancel_requested',
+  'request.estimated',
+  'shipment.stage_changed',
+  'shipment.delivered',
+] as const;
+export type CsWebhookEventType = (typeof CS_WEBHOOK_EVENT_TYPES)[number];
+
+/** The JSON body of a notice (the receiver contract of 2026-11-03). */
+export interface CsWebhookEventBody {
+  eventId: string;
+  type: CsWebhookEventType;
+  requestId: string;
+  sequence: number;
+  /** ISO 8601. */
+  occurredAt: string;
+}
+
+/** The audience the agent project's receiver expects, offered when an endpoint is added. */
+export const CS_WEBHOOK_DEFAULT_AUDIENCE = 'erp-agents:nolon';
+
+export const CS_WEBHOOK_ENDPOINT_STATUSES = ['PENDING', 'APPROVED', 'RETIRED'] as const;
+export type CsWebhookEndpointStatus = (typeof CS_WEBHOOK_ENDPOINT_STATUSES)[number];
+
+export const CS_OUTBOX_STATUSES = [
+  'PENDING',
+  'SENDING',
+  'SENT',
+  'FAILED',
+  'CANCELLED_BY_POLICY',
+] as const;
+export type CsOutboxStatus = (typeof CS_OUTBOX_STATUSES)[number];
+
+export interface CsWebhookEndpointDto {
+  id: string;
+  url: string;
+  audience: string;
+  status: CsWebhookEndpointStatus;
+  createdByName: string;
+  createdAt: string;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  retiredAt: string | null;
+  /** A pending endpoint the viewer may approve (someone else added it). */
+  canApprove: boolean;
+}
+
+export interface CsOutboxEventDto {
+  id: string;
+  requestReference: string;
+  sequence: number;
+  type: CsWebhookEventType;
+  status: CsOutboxStatus;
+  attempts: number;
+  occurredAt: string;
+  nextAttemptAt: string;
+  sentAt: string | null;
+  /** The receiver's last HTTP status; null when no answer came (network, timeout, refused). */
+  lastStatus: number | null;
+  lastError: string | null;
+}
+
+/** A key's endpoints and its recent notices, for the Administrator. */
+export interface CsWebhooksDto {
+  /** CS_WEBHOOK_SECRET is set: needed to approve an endpoint. */
+  secretConfigured: boolean;
+  /** CS_WEBHOOK_WORKER_ENABLED: notices are sent. Off: they wait. */
+  workerEnabled: boolean;
+  /** CS_WEBHOOK_ALLOWED_HOSTS: the only host names an endpoint may use. */
+  allowedHosts: string[];
+  endpoints: CsWebhookEndpointDto[];
+  counts: Record<CsOutboxStatus, number>;
+  /** The latest notices, newest first. */
+  recent: CsOutboxEventDto[];
+}
+
+export interface CsWebhookEndpointCreate {
+  url: string;
+  audience: string;
 }

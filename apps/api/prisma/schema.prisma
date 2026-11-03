@@ -162,6 +162,7 @@ model Currency {
   expenses             Expense[]
   csRequestsPaid       CsBookingRequest[]  @relation("CsRequestPaymentCurrency")
   csRequestsPriced     CsBookingRequest[]  @relation("CsRequestApprovedCurrency")
+  csRequestsEstimated  CsBookingRequest[]  @relation("CsRequestEstimateCurrency")
 
   paymentInstructions PaymentInstruction[]
 
@@ -316,6 +317,10 @@ model User {
   delegationsRevoked       BranchDelegation[]        @relation("BranchDelegationRevokedBy")
   csRequestsRouted         CsBookingRequest[]        @relation("CsRequestRoutedBy")
   csRequestsDecided        CsBookingRequest[]        @relation("CsRequestDecidedBy")
+  csRequestsEstimated      CsBookingRequest[]        @relation("CsRequestEstimatedBy")
+  csWebhooksCreated        CsWebhookEndpoint[]       @relation("CsWebhookCreatedBy")
+  csWebhooksApproved       CsWebhookEndpoint[]       @relation("CsWebhookApprovedBy")
+  csWebhooksRetired        CsWebhookEndpoint[]       @relation("CsWebhookRetiredBy")
   csRequestItemsResolved   CsBookingRequestItem[]    @relation("CsRequestItemResolvedBy")
   csRequestsCancelClosed   CsBookingRequest[]        @relation("CsRequestCancelClosedBy")
 
@@ -3522,15 +3527,17 @@ model ApiClient {
   offersPickup         Boolean                       @default(true) @map("offers_pickup")
   offersLastMile       Boolean                       @default(true) @map("offers_last_mile")
 
-  createdBy       User               @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  revokedBy       User?              @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
-  branches        ApiClientBranch[]
-  scopes          ApiClientScope[]
-  customerTokens  CsCustomerToken[]
-  accessEvents    CsAccessEvent[]
-  quotes          CsQuote[]
-  bookingRequests CsBookingRequest[]
-  customersMade   Customer[]         @relation("CustomerCreatedViaApiClient")
+  createdBy        User                @relation("ApiClientCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy        User?               @relation("ApiClientRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  branches         ApiClientBranch[]
+  scopes           ApiClientScope[]
+  customerTokens   CsCustomerToken[]
+  accessEvents     CsAccessEvent[]
+  quotes           CsQuote[]
+  bookingRequests  CsBookingRequest[]
+  customersMade    Customer[]          @relation("CustomerCreatedViaApiClient")
+  webhookEndpoints CsWebhookEndpoint[]
+  outbox           CsOutboxEvent[]
 
   @@map("api_clients")
 }
@@ -3680,6 +3687,9 @@ enum CsBookingRequestStatus {
   REJECTED
   /// The customer cancelled it before staff decided (plan 09 section 2).
   CANCELLED
+  /// Plan 09 section 12: staff priced an item outside the standard categories; the customer
+  /// accepts (back to PENDING) or cancels.
+  ESTIMATED
 
   @@map("cs_booking_request_status")
 }
@@ -3711,6 +3721,24 @@ enum CsHandover {
 /// token) or a channel identity (sender), exactly one. Every value is the customer's, as sent.
 /// Plan 09 section 4 (N-C2): one line of a bot booking request, in the bot's terms. A request
 /// made before items existed has none and is read as one item from its own columns.
+/// Plan 09 section 12: a photo the customer sent for staff (an item outside the standard
+/// categories), stored in the table like document contents. The type is read from the bytes.
+model CsBookingRequestPhoto {
+  id             String   @id @default(uuid()) @db.Uuid
+  requestId      String   @map("request_id") @db.Uuid
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(100)
+  contentType    String   @map("content_type") @db.VarChar(20)
+  sizeBytes      Int      @map("size_bytes")
+  sha256         String   @db.Char(64)
+  content        Bytes
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  request CsBookingRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, idempotencyKey])
+  @@map("cs_booking_request_photos")
+}
+
 model CsBookingRequestItem {
   id                   String    @id @default(uuid()) @db.Uuid
   requestId            String    @map("request_id") @db.Uuid
@@ -3834,29 +3862,52 @@ model CsBookingRequest {
   instantCustomerId       String?                @map("instant_customer_id") @db.Uuid
   /// Plan 09 section 11: where the customer brings the shipment, chosen on approval.
   dropOffWarehouseId      String?                @map("drop_off_warehouse_id") @db.Uuid
+  /// Plan 09 section 12: staff's estimate of the whole request (an item outside the standard
+  /// categories), numbered; the customer accepts one version, which approval then requires.
+  estimateAmount          Decimal?               @map("estimate_amount") @db.Decimal(18, 4)
+  estimateCurrency        String?                @map("estimate_currency") @db.Char(3)
+  estimateNoteAr          String?                @map("estimate_note_ar") @db.VarChar(500)
+  estimateNoteEn          String?                @map("estimate_note_en") @db.VarChar(500)
+  estimateValidUntil      DateTime?              @map("estimate_valid_until") @db.Timestamptz(3)
+  estimateVersion         Int                    @default(0) @map("estimate_version")
+  estimatedById           String?                @map("estimated_by_id") @db.Uuid
+  estimatedAt             DateTime?              @map("estimated_at") @db.Timestamptz(3)
+  estimateAcceptedAt      DateTime?              @map("estimate_accepted_at") @db.Timestamptz(3)
+  estimateAcceptedVersion Int?                   @map("estimate_accepted_version")
+  /// Codex F171-2: what the estimate prices: { originId, destinationId, mode, loadType,
+  /// services, cargo } (cargo: a key of the items). Approval books exactly these.
+  estimateTerms           Json?                  @map("estimate_terms")
+  /// Plan 09 section 5: the last event number of the request's one stream (requests and shipments).
+  eventSeq                Int                    @default(0) @map("event_seq")
+  /// The customer stage last announced (shipment.stage_changed fires only when it changes).
+  lastStageCode           String?                @map("last_stage_code") @db.VarChar(30)
   version                 Int                    @default(1)
   expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  apiClient        ApiClient              @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  customer         Customer?              @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  branch           Branch?                @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin           Location?              @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination      Location?              @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  category         PriceCategory?         @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  quote            CsQuote?               @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
-  routedBy         User?                  @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
-  decidedBy        User?                  @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
-  cancelClosedBy   User?                  @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
-  items            CsBookingRequestItem[]
-  instantCustomer  Customer?              @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
-  dropOff          Warehouse?             @relation("CsRequestDropOff", fields: [dropOffWarehouseId], references: [id], onDelete: Restrict)
-  rejectReason     CsRejectReason?        @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
-  booking          Booking?               @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  payCurrency      Currency?              @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
-  approvedCategory PriceCategory?         @relation("CsRequestApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
-  priceCurrency    Currency?              @relation("CsRequestApprovedCurrency", fields: [approvedCurrency], references: [code], onDelete: Restrict)
+  apiClient           ApiClient               @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer            Customer?               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch              Branch?                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin              Location?               @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination         Location?               @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category            PriceCategory?          @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote               CsQuote?                @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  routedBy            User?                   @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
+  decidedBy           User?                   @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  cancelClosedBy      User?                   @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
+  items               CsBookingRequestItem[]
+  instantCustomer     Customer?               @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
+  dropOff             Warehouse?              @relation("CsRequestDropOff", fields: [dropOffWarehouseId], references: [id], onDelete: Restrict)
+  estimateCurrencyRef Currency?               @relation("CsRequestEstimateCurrency", fields: [estimateCurrency], references: [code], onDelete: Restrict)
+  estimatedBy         User?                   @relation("CsRequestEstimatedBy", fields: [estimatedById], references: [id], onDelete: Restrict)
+  photos              CsBookingRequestPhoto[]
+  outbox              CsOutboxEvent[]
+  rejectReason        CsRejectReason?         @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
+  booking             Booking?                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  payCurrency         Currency?               @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
+  approvedCategory    PriceCategory?          @relation("CsRequestApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
+  priceCurrency       Currency?               @relation("CsRequestApprovedCurrency", fields: [approvedCurrency], references: [code], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
   @@index([bookingId])
@@ -3864,6 +3915,60 @@ model CsBookingRequest {
   @@index([branchId, status])
   @@index([status])
   @@map("cs_booking_requests")
+}
+
+/// Plan 09 section 5 (N-C5): where an API key's bot receives event notices. Added by one
+/// administrator, approved by another (not the creator); at most one APPROVED per key.
+model CsWebhookEndpoint {
+  id           String    @id @default(uuid()) @db.Uuid
+  apiClientId  String    @map("api_client_id") @db.Uuid
+  url          String    @db.VarChar(500)
+  audience     String    @db.VarChar(100)
+  /// PENDING, APPROVED or RETIRED.
+  status       String    @db.VarChar(10)
+  createdById  String    @map("created_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  approvedById String?   @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime? @map("approved_at") @db.Timestamptz(3)
+  retiredById  String?   @map("retired_by_id") @db.Uuid
+  retiredAt    DateTime? @map("retired_at") @db.Timestamptz(3)
+
+  /// The key while APPROVED, null otherwise: its unique index allows one approved endpoint per key.
+  approvedKey String? @unique @map("approved_key") @db.Uuid
+
+  apiClient  ApiClient @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  createdBy  User      @relation("CsWebhookCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy User?     @relation("CsWebhookApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  retiredBy  User?     @relation("CsWebhookRetiredBy", fields: [retiredById], references: [id], onDelete: Restrict)
+
+  @@index([apiClientId, status])
+  @@map("cs_webhook_endpoints")
+}
+
+/// Plan 09 section 5: one notice per event of a request's stream, sent at least once by the worker.
+model CsOutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  apiClientId   String    @map("api_client_id") @db.Uuid
+  requestId     String    @map("request_id") @db.Uuid
+  sequence      Int
+  type          String    @db.VarChar(40)
+  occurredAt    DateTime  @map("occurred_at") @db.Timestamptz(3)
+  /// PENDING, SENDING, SENT, FAILED or CANCELLED_BY_POLICY.
+  status        String    @default("PENDING") @db.VarChar(20)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @map("next_attempt_at") @db.Timestamptz(3)
+  leaseUntil    DateTime? @map("lease_until") @db.Timestamptz(3)
+  sentAt        DateTime? @map("sent_at") @db.Timestamptz(3)
+  lastStatus    Int?      @map("last_status")
+  lastError     String?   @map("last_error") @db.VarChar(300)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  apiClient ApiClient        @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  request   CsBookingRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, sequence])
+  @@index([status, nextAttemptAt])
+  @@map("cs_outbox")
 }
 
 /// Why staff reject a bot's booking request, in the words the customer sees (docs/plans/04a

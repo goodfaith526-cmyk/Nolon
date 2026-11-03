@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { type ReactNode, createContext, use, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from '@/lib/api';
 import { MeContext } from '../StaffShell';
-import { guardStandaloneLinks } from './standalone-links';
+import { type StandaloneRecord, guardStandaloneLinks } from './standalone-links';
 
 /** True inside a standalone window (one record, no way into the rest of the system). */
 export const StandaloneContext = createContext(false);
@@ -15,22 +15,23 @@ export function useStandalone(): boolean {
 }
 
 /**
- * A shipment in a window of its own: the same sign-in, permissions and branch checks as the staff
+ * A shipment or booking in a window of its own: the same sign-in, permissions and branch checks as the staff
  * screens (the API enforces them), without the menu, header or assistant, and with every link to
  * another page disabled. A lost session is reported here instead of sending the window to sign-in
  * (which would lead on into the system); the person signs in again in the main window.
  */
 export function StandaloneShell({
-  shipmentId,
+  record,
   children,
 }: {
-  shipmentId: string;
+  record: StandaloneRecord;
   children: ReactNode;
 }) {
   const t = useTranslations('Shell');
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [failure, setFailure] = useState<'signedOut' | 'failed' | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const { kind, id } = record;
 
   useEffect(() => {
     let cancelled = false;
@@ -49,8 +50,8 @@ export function StandaloneShell({
 
   useEffect(() => {
     if (!me || !root.current) return;
-    return guardStandaloneLinks(root.current, shipmentId);
-  }, [me, shipmentId]);
+    return guardStandaloneLinks(root.current, { kind, id });
+  }, [me, kind, id]);
 
   if (failure === 'signedOut') return <p className="page error">{t('standaloneSignedOut')}</p>;
   if (failure === 'failed') return <p className="page error">{t('loadFailed')}</p>;

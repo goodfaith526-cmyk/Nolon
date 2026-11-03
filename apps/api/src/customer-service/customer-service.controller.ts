@@ -35,6 +35,8 @@ import {
   LOAD_TYPES,
   SHIPPING_MODES,
   type CsBookingRequestCancelled,
+  type CsEstimateAccepted,
+  type CsPhotoUploaded,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsCatalogDto,
@@ -45,6 +47,7 @@ import {
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
+  type CsWebhooksDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -60,6 +63,7 @@ import {
 } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
+import { CsWebhooksService } from './cs-webhooks.service.js';
 import { RequireApiScope } from './api-scopes.js';
 import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
@@ -302,6 +306,13 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     : null;
 }
 const cancelBody = z.object({ reason: requiredText(300).optional() }).strict();
+const acceptEstimateBody = z.object({ estimateVersion: z.number().int().min(1) }).strict();
+/** Plan 09 section 12: the photo's idempotency key, as the signed identity covers it. */
+const photoKey = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9._:-]+$/);
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
 const services = z.array(z.enum(CS_REQUEST_SERVICES)).max(CS_REQUEST_SERVICES.length);
 const createBody = z
@@ -314,6 +325,17 @@ const createBody = z
   .strict();
 const scopesBody = z.object({ scopes }).strict();
 const servicesBody = z.object({ services }).strict();
+
+/** Plan 09 section 5: an endpoint the key's bot receives notices at (checked by the service). */
+const webhookBody = z
+  .object({
+    url: z.string().trim().min(1).max(500),
+    audience: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/),
+  })
+  .strict();
 
 /**
  * Customer Service API (scope section 17): read-only, customer-safe, with an API key instead of a
@@ -519,18 +541,67 @@ export class BookingRequestsController {
     @Req() req: RawBodyRequest<Request>,
   ): Promise<CsBookingRequestCancelled> {
     const input = parse(cancelBody, body ?? {});
-    // The owner's proof: the customer token, or a signed channel identity (plan 08) of the sender.
+    return this.requests.cancel(caller, id, this.proofOf(caller, req), input.reason);
+  }
+
+  /**
+   * Plan 09 section 12: the owner sends one photo for staff, as the raw body (JPEG, PNG or WebP,
+   * at most 10 MB), with an Idempotency-Key. 201 when added, 200 when the same photo again.
+   */
+  @Post(':id/photos')
+  async addPhoto(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Req() req: RawBodyRequest<Request>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CsPhotoUploaded> {
+    const idempotencyKey = parse(photoKey, key);
+    const bytes = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.alloc(0);
+    const { created, body } = await this.requests.addPhoto(
+      caller,
+      id,
+      this.proofOf(caller, req),
+      idempotencyKey,
+      bytes,
+    );
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return body;
+  }
+
+  /** Plan 09 section 12: the owner accepts the estimate version it was shown. */
+  @Post(':id/accept-estimate')
+  @HttpCode(HttpStatus.OK)
+  acceptEstimate(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsEstimateAccepted> {
+    const input = parse(acceptEstimateBody, body);
+    return this.requests.acceptEstimate(
+      caller,
+      id,
+      this.proofOf(caller, req),
+      input.estimateVersion,
+    );
+  }
+
+  /** The owner's proof: the customer token, or a signed channel identity (plan 08) of the sender. */
+  private proofOf(
+    caller: BookingRequestCaller,
+    req: RawBodyRequest<Request>,
+  ): { channel: 'whatsapp' | 'telegram'; subjectId: string } | null {
     const signed =
       caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
         ? this.identityAuth.verify(caller.client.id, req).context
         : null;
-    const proof = signed
+    return signed
       ? {
           channel: signed.channel === 'WHATSAPP' ? ('whatsapp' as const) : ('telegram' as const),
           subjectId: signed.subjectId,
         }
       : null;
-    return this.requests.cancel(caller, id, proof, input.reason);
   }
 }
 
@@ -571,7 +642,51 @@ export class CustomerMeController {
 /** The Administrator's Customer Service API keys. */
 @Controller('api-clients')
 export class ApiClientsController {
-  constructor(private readonly clients: ApiClientsService) {}
+  constructor(
+    private readonly clients: ApiClientsService,
+    private readonly webhooks: CsWebhooksService,
+  ) {}
+
+  @Get(':id/webhooks')
+  @RequirePermission('users:view')
+  listWebhooks(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.view(user, id);
+  }
+
+  @Post(':id/webhooks')
+  @RequirePermission('users:create')
+  addWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.create(user, id, parse(webhookBody, body));
+  }
+
+  @Post(':id/webhooks/:endpointId/approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  approveWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.approve(user, id, endpointId);
+  }
+
+  @Post(':id/webhooks/:endpointId/retire')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  retireWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.retire(user, id, endpointId);
+  }
 
   @Get()
   @RequirePermission('users:view')

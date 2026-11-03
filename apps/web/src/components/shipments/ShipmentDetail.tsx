@@ -42,6 +42,7 @@ import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
 import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { useStandalone } from '../standalone/StandaloneShell';
+import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -54,21 +55,6 @@ function toIso(local: string): string | undefined {
 
 /** A recorded time shown apart from when it was recorded when they differ by over an hour. */
 const LATE_ENTRY_MS = 60 * 60 * 1000;
-
-/**
- * Opens the shipment in a window of its own (a browser popup: no tabs, no editable address bar in
- * most browsers) showing only the shipment page. One window per shipment: opening it again brings
- * the same window back.
- */
-function openStandalone(locale: string, shipmentId: string) {
-  const name = `nolon-shipment-${shipmentId.replace(/[^A-Za-z0-9_-]/g, '')}`;
-  const opened = window.open(
-    `/${locale}/standalone/shipments/${encodeURIComponent(shipmentId)}`,
-    name,
-    'popup,width=1200,height=860',
-  );
-  opened?.focus();
-}
 
 export function ShipmentDetail({ id }: { id: string }) {
   const t = useTranslations('Shipments');
@@ -115,7 +101,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   useEffect(load, [load]);
 
   // A standalone window is named after its shipment (its title bar is all it shows of the URL).
-  const windowTitle = standalone && shipment ? `${t('shipment')} ${shipment.number}` : null;
+  const windowTitle = standalone && shipment ? shipment.number : null;
   useEffect(() => {
     if (windowTitle) document.title = windowTitle;
   }, [windowTitle]);
@@ -311,7 +297,10 @@ export function ShipmentDetail({ id }: { id: string }) {
         <div>
           <div className="title-row">
             <h1>
-              {t('shipment')} <span dir="ltr">{s.number}</span>
+              <span className="record-kind">{t('shipment')}</span>{' '}
+              <span dir="ltr" className="record-number">
+                {s.number}
+              </span>
             </h1>
             <StatusBadge kind="shipment" status={s.status} />
           </div>
@@ -324,13 +313,9 @@ export function ShipmentDetail({ id }: { id: string }) {
           </p>
         </div>
         <div className="actions">
+          {!standalone && <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} />}
           <MoreMenu>
             {!standalone && <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>}
-            {!standalone && (
-              <button type="button" onClick={() => openStandalone(locale, s.id)}>
-                {t('openStandalone')}
-              </button>
-            )}
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
             {(actions.canHold || canRevert || actions.canCancel) && <hr />}
             {actions.canHold && (

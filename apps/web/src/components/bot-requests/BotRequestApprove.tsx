@@ -6,7 +6,6 @@ import type {
   CsBookingRequestStaffDto,
   CustomerSummaryDto,
   MasterDataDto,
-  ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
@@ -37,15 +36,27 @@ export function BotRequestApprove({
   const te = useTranslations('Enums');
   const name = useLocalName();
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // Codex F171-2: a request with an OTHER item books the terms its estimate priced, as set.
+  const terms = r.items.some((i) => i.isOther) ? (r.estimate?.terms ?? null) : null;
   // The route, mode and currency are common; one priced line per item (or the one-item shape's).
   const [inputs, setInputs] = useState({
-    originId: r.originId ?? '',
-    destinationId: r.destinationId ?? '',
-    mode: 'SEA' as ShippingMode,
+    originId: terms?.originId ?? r.originId ?? '',
+    destinationId: terms?.destinationId ?? r.destinationId ?? '',
+    mode: terms?.mode ?? 'SEA',
     currency: r.priceCheck?.currency ?? r.botQuotedPrice?.currency ?? '',
   });
   const byItems = r.items.length > 0;
   const hasOther = r.items.some((i) => i.isOther);
+  // Plan 09 section 12: a request with an OTHER item is approved at the estimate the customer
+  // accepted (the current version, still valid); the API checks it again.
+  const estimate = r.estimate;
+  // When the form opened: the API checks validity again at approval.
+  const [openedAt] = useState(() => Date.now());
+  const estimateAccepted =
+    estimate !== null &&
+    estimate.terms !== null &&
+    estimate.acceptedVersion === estimate.version &&
+    new Date(estimate.validUntil).getTime() > openedAt;
   const [lines, setLines] = useState<{ category: string; quantity: string }[]>(
     byItems
       ? r.items.map((i) => ({ category: i.category ?? '', quantity: i.quantity ?? '' }))
@@ -86,8 +97,25 @@ export function BotRequestApprove({
   const linesReady = lines.every((l) => categoryOf(l.category) !== undefined && l.quantity !== '');
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!priced || (!customerId && !r.profile?.name) || r.profile?.needsReview) return;
-    if (!linesReady || hasOther) return;
+    const customerOk = (!!customerId || !!r.profile?.name) && !r.profile?.needsReview;
+    if (!hasOther && (!priced || !customerOk)) return;
+    if (hasOther) {
+      if (!estimateAccepted || !customerOk) return;
+      onApprove({
+        version: r.version,
+        ...(r.profile ? { profileVersion: r.profile.version } : {}),
+        paymentCurrency,
+        ...(dropOffId ? { dropOffId } : {}),
+        pricing: { ...inputs, ...(terms?.loadType ? { loadType: terms.loadType } : {}) },
+        booking: {
+          ...(customerId ? { customerId } : {}),
+          services: [...r.services],
+          requestedDeparture: r.requestedDate,
+        },
+      });
+      return;
+    }
+    if (!linesReady || !priced) return;
     const first = lines[0]!;
     onApprove({
       version: r.version,
@@ -117,11 +145,9 @@ export function BotRequestApprove({
   }
 
   const ready =
-    priced !== null &&
-    !hasOther &&
+    (hasOther ? estimateAccepted : priced !== null && linesReady) &&
     !r.profile?.needsReview &&
     (customerId !== null || !!r.profile?.name) &&
-    linesReady &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
     inputs.destinationId !== '';
@@ -153,6 +179,7 @@ export function BotRequestApprove({
           {t('origin')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.originId}
             onChange={(e) => set({ originId: e.target.value })}
           >
@@ -170,6 +197,7 @@ export function BotRequestApprove({
           {t('destination')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.destinationId}
             onChange={(e) => set({ destinationId: e.target.value })}
           >
@@ -183,7 +211,12 @@ export function BotRequestApprove({
             ))}
           </select>
         </label>
-        <ModePicker label={t('mode')} value={inputs.mode} onChange={(mode) => set({ mode })} />
+        <ModePicker
+          label={t('mode')}
+          value={inputs.mode}
+          disabled={terms !== null}
+          onChange={(mode) => set({ mode })}
+        />
         <label className="field">
           {t('priceCurrency')}
           <select
@@ -232,79 +265,93 @@ export function BotRequestApprove({
           </label>
         )}
       </div>
-      {hasOther && <p className="error">{t('estimateRequired')}</p>}
-      <div className="stack">
-        {lines.map((line, index) => {
-          const category = categoryOf(line.category);
-          const item = r.items[index];
-          const price = priced?.[index];
-          return (
-            <div key={item?.id ?? 'single'} className="form-grid">
-              {byItems && <strong>{t('itemLine', { line: item?.lineNo ?? index + 1 })}</strong>}
-              <label className="field">
-                {t('category')}
-                <select
-                  required
-                  value={line.category}
-                  onChange={(e) => setLine(index, { category: e.target.value })}
-                >
-                  <option value="" disabled>
-                    —
-                  </option>
-                  {master.priceCategories.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {name(c)} ({c.code})
+      {hasOther &&
+        (estimateAccepted && estimate ? (
+          <p>
+            {t('approveAtEstimate')}{' '}
+            <strong dir="ltr">
+              {estimate.amount} {estimate.currency}
+            </strong>
+          </p>
+        ) : (
+          <p className="error">{t('estimateRequired')}</p>
+        ))}
+      {!hasOther && (
+        <div className="stack">
+          {lines.map((line, index) => {
+            const category = categoryOf(line.category);
+            const item = r.items[index];
+            const price = priced?.[index];
+            return (
+              <div key={item?.id ?? 'single'} className="form-grid">
+                {byItems && <strong>{t('itemLine', { line: item?.lineNo ?? index + 1 })}</strong>}
+                <label className="field">
+                  {t('category')}
+                  <select
+                    required
+                    value={line.category}
+                    onChange={(e) => setLine(index, { category: e.target.value })}
+                  >
+                    <option value="" disabled>
+                      —
                     </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                {t('quantity')}
-                <input
-                  required
-                  dir="ltr"
-                  inputMode="decimal"
-                  value={line.quantity}
-                  onChange={(e) => setLine(index, { quantity: e.target.value.trim() })}
-                />
-                {category && (
-                  <span className="muted">
-                    {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
+                    {master.priceCategories.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {name(c)} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  {t('quantity')}
+                  <input
+                    required
+                    dir="ltr"
+                    inputMode="decimal"
+                    value={line.quantity}
+                    onChange={(e) => setLine(index, { quantity: e.target.value.trim() })}
+                  />
+                  {category && (
+                    <span className="muted">
+                      {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
+                    </span>
+                  )}
+                </label>
+                {byItems && price && (
+                  <span className="muted" dir="ltr">
+                    {price.state === 'priced'
+                      ? `${price.total} ${price.currency}`
+                      : t(`priceNone_${price.reason ?? 'NO_RATE'}`)}
                   </span>
                 )}
-              </label>
-              {byItems && price && (
-                <span className="muted" dir="ltr">
-                  {price.state === 'priced'
-                    ? `${price.total} ${price.currency}`
-                    : t(`priceNone_${price.reason ?? 'NO_RATE'}`)}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="row">
-        <button type="button" onClick={() => void check()} disabled={busy || hasOther}>
-          {t('checkPrice')}
-        </button>
-        {priced ? (
-          priced.every((p) => p.state === 'priced') ? (
-            <span>
-              <span dir="ltr">
-                {totalOf(priced)} {priced[0]?.currency}
-              </span>{' '}
-              <span className="muted">{t('priceSource')}</span>
-            </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!hasOther && (
+        <div className="row">
+          <button type="button" onClick={() => void check()} disabled={busy}>
+            {t('checkPrice')}
+          </button>
+          {priced ? (
+            priced.every((p) => p.state === 'priced') ? (
+              <span>
+                <span dir="ltr">
+                  {totalOf(priced)} {priced[0]?.currency}
+                </span>{' '}
+                <span className="muted">{t('priceSource')}</span>
+              </span>
+            ) : (
+              <span className="muted">
+                {t(`priceNone_${priced.find((p) => p.state !== 'priced')?.reason ?? 'NO_RATE'}`)}
+              </span>
+            )
           ) : (
-            <span className="muted">
-              {t(`priceNone_${priced.find((p) => p.state !== 'priced')?.reason ?? 'NO_RATE'}`)}
-            </span>
-          )
-        ) : (
-          <span className="muted">{t('checkPriceFirst')}</span>
-        )}
-      </div>
+            <span className="muted">{t('checkPriceFirst')}</span>
+          )}
+        </div>
+      )}
       {failed && <p className="error">{failed}</p>}
       <div className="actions">
         <button type="submit" className="primary" disabled={busy || !ready}>

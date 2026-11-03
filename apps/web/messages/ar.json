@@ -83,7 +83,8 @@
     "permissions": "الصلاحيات",
     "branchPermissions": "صلاحيات الفرع",
     "paymentInstructions": "تعليمات الدفع",
-    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة."
+    "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة.",
+    "agentAdmin": "إدارة وكيل الحجوزات"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -178,6 +179,7 @@
     "OUTLET_STAFF": "موظف منفذ"
   },
   "Common": {
+    "openStandalone": "افتح في نافذة مستقلة",
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
     "invalidFields": "لم يُحفظ. راجع: {fields}.",
     "invalidBecause": "لم يُحفظ: {reason} راجع: {fields}.",
@@ -729,8 +731,7 @@
     "widthCm": "العرض (سم)",
     "heightCm": "الارتفاع (سم)",
     "lineDescription": "الوصف",
-    "tabProfit": "الربحية",
-    "openStandalone": "افتح في نافذة مستقلة"
+    "tabProfit": "الربحية"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -1548,7 +1549,37 @@
     "servicesHint": "لا يعرض البوت على العملاء إلا ما هو محدد: ألغِ الاستلام أو التوصيل ما دامت نولون لا تقدمه.",
     "service_PICKUP": "الاستلام من العميل",
     "service_LAST_MILE": "التوصيل لباب المستلم",
-    "noServices": "بدون استلام أو توصيل"
+    "noServices": "بدون استلام أو توصيل",
+    "webhooks": "الإشعارات",
+    "webhooksTitle": "إشعارات {name}",
+    "webhooksHint": "العنوان اللي بيتبلّغ فيه بوت المفتاح ده لما الطلب أو شحنتو تتغيّر. مدير بيضيف العنوان، ومدير تاني بيعتمدو.",
+    "webhookNoSecret": "CS_WEBHOOK_SECRET ما مضبوط في الخادم: ما بنقدر نعتمد أي عنوان.",
+    "webhookWorkerOff": "الإرسال مقفول في الخادم ده (CS_WEBHOOK_WORKER_ENABLED): الإشعارات بتنتظر لحدي ما يتفتح.",
+    "webhookAllowedHosts": "المضيفين المسموحين:",
+    "webhookNone": "ما في عنوان لسه.",
+    "webhookUrl": "العنوان (https)",
+    "webhookAudience": "الجمهور",
+    "webhookStatus": "الحالة",
+    "webhook_PENDING": "منتظر الاعتماد",
+    "webhook_APPROVED": "معتمد",
+    "webhook_RETIRED": "متوقف",
+    "webhookApprovedBy": "اعتمدو {name}",
+    "webhookApprove": "اعتماد",
+    "webhookRetire": "إيقاف",
+    "webhookAdd": "إضافة عنوان",
+    "webhookAdded": "العنوان اتضاف؛ مدير تاني بيعتمدو.",
+    "webhookApproved": "العنوان اتعتمد.",
+    "webhookRetired": "العنوان اتوقف.",
+    "webhookRecent": "آخر الإشعارات",
+    "webhookRequest": "الطلب",
+    "webhookEvent": "الحدث",
+    "webhookAttempts": "المحاولات",
+    "webhookLastAnswer": "آخر رد",
+    "outbox_PENDING": "منتظر",
+    "outbox_SENDING": "بيترسل",
+    "outbox_SENT": "اترسل",
+    "outbox_FAILED": "فشل",
+    "outbox_CANCELLED_BY_POLICY": "اتلغى (ما مسموح تاني)"
   },
   "Reports": {
     "title": "التقارير المالية",
@@ -3061,7 +3092,8 @@
     "levelName_N": "بدون صلاحية",
     "level_C": "*",
     "levelName_C": "مزيج آخر من الأفعال",
-    "module_payment_instructions": "تعليمات الدفع"
+    "module_payment_instructions": "تعليمات الدفع",
+    "module_agent_admin": "لوحة إدارة وكيل الحجوزات"
   },
   "BotRequests": {
     "title": "طلبات الحجز من البوت",
@@ -3180,7 +3212,7 @@
     "resolveItem": "اربط",
     "addBookingLine": "أضف سطراً في الحجز أولاً",
     "itemLine": "الصنف {line}",
-    "estimateRequired": "في الطلب صنف غير معياري: محتاج تقدير من الموظف قبل الموافقة (قريباً).",
+    "estimateRequired": "في الطلب صنف غير معياري: أرسل تقديراً وانتظر قبول الزبون قبل الموافقة.",
     "dropOff": "نقطة التسليم",
     "dropOffAuto": "تلقائي (نقطة الفرع الوحيدة، إن وُجدت)",
     "dropOffNone": "لم تُحدَّد",
@@ -3188,7 +3220,24 @@
     "dropOffHint": "يقرأ الزبون بيانات النقطة الجديدة في المرة القادمة التي يطّلع فيها البوت على الطلب.",
     "dropOffAction": "حفظ نقطة التسليم",
     "supportPhonesTitle": "أرقام خدمة العملاء",
-    "supportPhonesHint": "يعطي بوت الشحن الزبائن رقم فرعهم. اتركه فارغاً لعدم إظهار رقم. الصيغة الدولية، مثل +249912345678."
+    "supportPhonesHint": "يعطي بوت الشحن الزبائن رقم فرعهم. اتركه فارغاً لعدم إظهار رقم. الصيغة الدولية، مثل +249912345678.",
+    "state_estimated": "أُرسل التقدير",
+    "filter_estimated": "أُرسل التقدير",
+    "estimateTitle": "تقدير السعر للزبون",
+    "estimateHint": "في صنف خارج الفئات المعتادة: سعّر الطلب كله، والزبون يقبل قبل الموافقة.",
+    "estimateVersion": "النسخة {version}",
+    "estimateValidUntil": "صالح حتى {date}",
+    "estimateAccepted": "قبله الزبون",
+    "estimateAwaiting": "في انتظار الزبون",
+    "estimateAmount": "المبلغ للطلب كله",
+    "estimateValidUntilLabel": "صالح حتى (أقصاه {days} يوماً)",
+    "estimateNoteAr": "ملاحظة للزبون (عربي)",
+    "estimateNoteEn": "ملاحظة للزبون (إنجليزي)",
+    "estimateAction": "إرسال التقدير",
+    "estimateReplace": "إرسال تقدير جديد",
+    "approveAtEstimate": "الموافقة بالتقدير الذي قبله الزبون:",
+    "photosTitle": "صور الزبون ({count})",
+    "photoAlt": "صورة من الزبون"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

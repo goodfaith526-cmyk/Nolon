@@ -73,7 +73,11 @@ services:
       CS_CUSTOMER_FOLLOWUP_ENABLED: ${CS_CUSTOMER_FOLLOWUP_ENABLED:-false}
       CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: ${CS_CUSTOMER_BOOKING_IDENTITY_ENABLED:-false}
       CS_BOOKING_CANCEL_ENABLED: ${CS_BOOKING_CANCEL_ENABLED:-false}
+      CS_ESTIMATES_ENABLED: ${CS_ESTIMATES_ENABLED:-false}
       CS_INSTANT_CUSTOMER_ENABLED: ${CS_INSTANT_CUSTOMER_ENABLED:-false}
+      CS_WEBHOOK_SECRET: ${CS_WEBHOOK_SECRET:-}
+      CS_WEBHOOK_ALLOWED_HOSTS: ${CS_WEBHOOK_ALLOWED_HOSTS:-}
+      CS_WEBHOOK_WORKER_ENABLED: ${CS_WEBHOOK_WORKER_ENABLED:-false}
       CS_CUSTOMER_IDENTITY_COMPANY_ID: ${CS_CUSTOMER_IDENTITY_COMPANY_ID:-}
       CS_CUSTOMER_IDENTITY_CLIENTS: ${CS_CUSTOMER_IDENTITY_CLIENTS:-}
       # Host nginx, then this stack's Caddy (which trusts nginx and appends to X-Forwarded-For),
@@ -84,6 +88,8 @@ services:
       # The staff AI assistant stays off in production until it passes its own gates: no button.
       AGENT_ASSISTANT_URL: ''
       AGENT_ASSISTANT_PANEL: ''
+      # The bookings agent signs in against staging only for now: no admin panel item here.
+      AGENT_ADMIN_URL: ''
     depends_on:
       postgres:
         condition: service_healthy
