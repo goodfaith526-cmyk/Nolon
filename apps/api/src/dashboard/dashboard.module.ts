@@ -12,6 +12,7 @@ import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { TransportModule } from '../transport/transport.module.js';
 import { WarehouseModule } from '../warehouse/warehouse.module.js';
 import { DashboardFiguresService } from './dashboard-figures.service.js';
+import { ReportsModule } from '../reports/reports.module.js';
 import { DashboardController } from './dashboard.controller.js';
 import { DashboardService } from './dashboard.service.js';
 
@@ -29,6 +30,7 @@ import { DashboardService } from './dashboard.service.js';
     CustomsModule,
     MyDraftsModule,
     AlertsModule,
+    ReportsModule,
   ],
   controllers: [DashboardController],
   providers: [DashboardService, DashboardFiguresService],

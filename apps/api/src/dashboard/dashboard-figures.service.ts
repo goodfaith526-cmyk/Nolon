@@ -13,6 +13,7 @@ import { BillingReportsService } from '../billing/billing-reports.service.js';
 import { todayIn } from '../common/dates.js';
 import { dec } from '../common/money.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ReportsService } from '../reports/reports.service.js';
 import { ShipmentReportsService } from '../shipments/shipment-reports.service.js';
 import { TripReportsService } from '../transport/trip-reports.service.js';
 import { WarehouseReportsService } from '../warehouse/warehouse-reports.service.js';
@@ -47,6 +48,7 @@ export class DashboardFiguresService {
     private readonly billing: BillingReportsService,
     private readonly warehouse: WarehouseReportsService,
     private readonly trips: TripReportsService,
+    private readonly reports: ReportsService,
   ) {}
 
   async management(user: AuthUser, q: DashboardQuery): Promise<ManagementDashboardDto> {
@@ -57,6 +59,7 @@ export class DashboardFiguresService {
       from: q.from ?? monthStart(q.to ?? today),
       to: q.to ?? today,
       branchId: q.branchId,
+      withBreakEven: true,
     });
   }
 
@@ -89,19 +92,21 @@ export class DashboardFiguresService {
 
   private async figures(
     user: AuthUser,
-    q: { from: string; to: string; branchId?: string },
+    q: { from: string; to: string; branchId?: string; withBreakEven?: boolean },
   ): Promise<ManagementDashboardDto> {
     // Each part covers the branches where its permission is held (plan 03, section 5.3).
     const can = (permission: Permission) =>
       q.branchId ? user.access.has(permission, q.branchId) : user.access.any(permission);
     const finance = can('financial_reports:view');
     const financeUser = withPermissions(user, 'financial_reports:view');
-    const [shipments, financeFigures, topCustomers] = await Promise.all([
+    const [shipments, financeFigures, topCustomers, breakEven] = await Promise.all([
       can('shipments:view')
         ? this.shipments.dashboard(withPermissions(user, 'shipments:view'), q)
         : null,
       finance ? this.finance(financeUser, q) : null,
       finance ? this.billing.revenueByCustomer(financeUser, q, TOP_CUSTOMERS) : null,
+      // Plan 07, z5: on the management dashboard, planning only, with the finance permission.
+      finance && q.withBreakEven ? this.reports.breakEven(financeUser, q) : null,
     ]);
     return {
       from: q.from,
@@ -111,6 +116,7 @@ export class DashboardFiguresService {
       finance: financeFigures,
       topCustomers:
         topCustomers?.map((c) => ({ ...c, revenueUsd: c.revenueUsd.toFixed() })) ?? null,
+      breakEven,
     };
   }
 

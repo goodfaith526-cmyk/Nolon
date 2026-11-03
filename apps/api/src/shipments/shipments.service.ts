@@ -345,7 +345,7 @@ export class ShipmentsService {
     const shipment = await this.findScoped(user, id);
     const dto = this.toDto(user, shipment);
     if (dto.actions.transitions.includes('CLOSED')) {
-      dto.actions.closeCheck = await this.closeCheck(this.prisma, shipment.id);
+      dto.actions.closeCheck = await this.closeCheck(this.prisma, shipment);
     }
     if (dto.actions.canShareBranches) {
       dto.shareableBranches = await this.prisma.branch.findMany({
@@ -1805,17 +1805,34 @@ export class ShipmentsService {
     );
   }
 
-  /** What closing the shipment needs now (B1-5): its goods on hand, and whether it is invoiced. */
-  private async closeCheck(tx: Tx, shipmentId: string): Promise<ShipmentCloseCheckDto> {
-    const [goodsOnHand, { approved }] = await Promise.all([
-      this.stock.get().goodsOnHandInTx(tx, shipmentId),
-      this.invoices.get().liveInvoicesInTx(tx, shipmentId),
+  /**
+   * What closing the shipment needs now (B1-5): its goods on hand, whether it is invoiced, and
+   * for a shipment with a distributor whether its proof of delivery is missing (plan 07, 6).
+   */
+  private async closeCheck(
+    tx: Tx,
+    shipment: { id: string; distributorId: string | null },
+  ): Promise<ShipmentCloseCheckDto> {
+    const [goodsOnHand, { approved }, podMissing] = await Promise.all([
+      this.stock.get().goodsOnHandInTx(tx, shipment.id),
+      this.invoices.get().liveInvoicesInTx(tx, shipment.id),
+      this.podMissingInTx(tx, shipment),
     ]);
-    return { goodsOnHand, invoiced: approved.length > 0 };
+    return { goodsOnHand, invoiced: approved.length > 0, podMissing };
+  }
+
+  /** A shipment with a distributor and no live full proof of delivery (plan 07, 6). */
+  private async podMissingInTx(
+    tx: Tx,
+    shipment: { id: string; distributorId: string | null },
+  ): Promise<boolean> {
+    if (shipment.distributorId === null) return false;
+    return (await this.links.fullDeliveryAtInTx(tx, shipment.id)) === null;
   }
 
   /**
-   * Owner decision Q1: a shipment closes with none of its goods in any warehouse, and with an
+   * Owner decision Q1: a shipment closes with none of its goods in any warehouse, its full proof
+   * of delivery when it has a distributor (plan 07, 6), and with an
    * approved invoice billing it or a reason it is closed without charges (recorded on the closing
    * event). The caller holds the shipment's row lock exclusively; warehouse movements and invoice
    * approvals lock it before they write, so neither changes between this check and the commit.
@@ -1825,6 +1842,16 @@ export class ShipmentsService {
     shipment: LockedShipment,
     noChargeReason: string | null,
   ): Promise<void> {
+    // Plan 07, 6 (d4): the distributor's delivery is proven before the shipment closes; a
+    // no-charge reason does not stand in for it. Proofs of delivery lock the shipment first.
+    if (await this.podMissingInTx(tx, shipment)) {
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_CLOSE_NO_POD',
+        `Shipment ${shipment.number} has a distributor: record its full proof of delivery before closing it`,
+        { shipment: shipment.number },
+      );
+    }
     const goods = await this.stock.get().goodsOnHandInTx(tx, shipment.id);
     if (goods.length > 0) {
       const warehouses = goods.map((g) => `${g.warehouseCode} (${g.packages})`).join(', ');

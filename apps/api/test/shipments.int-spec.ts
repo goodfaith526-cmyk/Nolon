@@ -588,7 +588,11 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       // Owner decision Q1 (B1-5): no approved invoice bills it, so it closes only with a reason.
       const delivered = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
         .body as ShipmentDto;
-      expect(delivered.actions.closeCheck).toEqual({ goodsOnHand: [], invoiced: false });
+      expect(delivered.actions.closeCheck).toEqual({
+        goodsOnHand: [],
+        invoiced: false,
+        podMissing: false,
+      });
       const refused = await move(s.id, cookies.opsDxb, 'CLOSED').expect(409);
       expect(refused.body).toMatchObject({
         code: 'SHIPMENT_CLOSE_NOT_INVOICED',

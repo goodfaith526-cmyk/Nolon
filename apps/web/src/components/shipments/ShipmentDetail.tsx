@@ -271,7 +271,9 @@ export function ShipmentDetail({ id }: { id: string }) {
   // Closing (B1-5): goods left in a warehouse block it; no approved invoice needs a reason.
   const closing = chosenStatus === 'CLOSED';
   const closeCheck = actions.closeCheck;
-  const goodsBlockClose = closing && (closeCheck?.goodsOnHand.length ?? 0) > 0;
+  // Plan 07, 6: a shipment with a distributor closes only after its proof of delivery.
+  const goodsBlockClose =
+    closing && ((closeCheck?.goodsOnHand.length ?? 0) > 0 || closeCheck?.podMissing === true);
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
   const chosenLocation = pickedLocation ?? suggested ?? '';
   // A warehouse status: recorded as a goods receipt when possible (the warehouse's place is then
@@ -449,6 +451,7 @@ export function ShipmentDetail({ id }: { id: string }) {
               })}
             </p>
           )}
+          {closing && closeCheck?.podMissing && <p className="warning">{t('closeNoPod')}</p>}
           {closing && closeCheck && !closeCheck.invoiced && (
             <>
               <p className="warning">{t('closeNotInvoiced')}</p>

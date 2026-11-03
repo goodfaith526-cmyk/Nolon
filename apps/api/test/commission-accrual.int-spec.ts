@@ -7,6 +7,7 @@ import type {
   PartnerCommissionsDto,
   PartnerContractDto,
   PartnerDto,
+  ShipmentDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Prisma } from '../src/generated/prisma/client.js';
@@ -504,6 +505,38 @@ describe('partner commissions, rule 16 (plan 07, PR-7b)', () => {
     await status(id, 'ROAD_ARRIVED').expect(200);
     await status(id, 'DELIVERED').expect(200);
     expect(await rows(id, 'DISTRIBUTOR')).toEqual([]);
+
+    // Plan 07, 6 (d4): nor does it close; a reason to close without charges does not help.
+    const page = (await r.get(`/shipments/${id}`, cookies.opsPts).expect(200)).body as ShipmentDto;
+    expect(page.actions.closeCheck).toMatchObject({ podMissing: true });
+    for (const extra of [{}, { noChargeReason: 'Closed without charges by agreement' }]) {
+      const refused = await status(id, 'CLOSED', extra).expect(409);
+      expect(refused.body).toMatchObject({ code: 'SHIPMENT_CLOSE_NO_POD' });
+    }
+  });
+
+  it('a shipment with a distributor closes once its full proof of delivery is recorded (d4)', async () => {
+    const id = await shipment();
+    await r
+      .patch(`/shipments/${id}`, cookies.opsPts, { distributorId: partners.distributor.id })
+      .expect(200);
+    await invoice(id);
+    await status(id, 'TRIP_SCHEDULED').expect(200);
+    await status(id, 'ROAD_DEPARTED').expect(200);
+    await status(id, 'ROAD_ARRIVED').expect(200);
+    await t
+      .http()
+      .post(`/api/v1/shipments/${id}/pods`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', cookies.opsPts)
+      .field('recipientName', 'Ahmed Ali')
+      .field('recipientCapacity', 'Consignee')
+      .field('shipmentStatus', 'DELIVERED')
+      .attach('signature', PNG, 'signature.png')
+      .expect(201);
+    const page = (await r.get(`/shipments/${id}`, cookies.opsPts).expect(200)).body as ShipmentDto;
+    expect(page.actions.closeCheck).toMatchObject({ podMissing: false });
+    await status(id, 'CLOSED').expect(200);
   });
 
   it('dates the commission on the event, and a closed period refuses the event with it (F153-2)', async () => {
