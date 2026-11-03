@@ -101,7 +101,7 @@
   }
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!still) {
-    var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .bot-eyes'));
+    var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .pupil'));
     var px = 0, py = 0, queued = false;
     function look() {
       queued = false;
@@ -111,7 +111,7 @@
         var flip = site.getAttribute('dir') === 'rtl' ? -1 : 1;
         var dx = (px - (r.left + r.width / 2)) * flip, dy = py - (r.top + r.height / 2);
         var d = Math.sqrt(dx * dx + dy * dy) || 1, k = Math.min(1, d / 260);
-        g.setAttribute('transform', 'translate(' + (dx / d * 3.5 * k).toFixed(2) + ' ' + (dy / d * 2.5 * k).toFixed(2) + ')');
+        g.setAttribute('transform', 'translate(' + (dx / d * 2.8 * k).toFixed(2) + ' ' + (dy / d * 3.4 * k).toFixed(2) + ')');
       });
     }
     window.addEventListener('pointermove', function (e) {

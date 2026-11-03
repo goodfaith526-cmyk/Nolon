@@ -242,14 +242,14 @@ footer a:hover { color: var(--on-navy); }
 .bot { display: block; overflow: visible; }
 .bot .eye { transform-box: fill-box; transform-origin: center; }
 .bot .wheel { transform-box: fill-box; transform-origin: center; }
-.bot .bot-eyes { transition: transform .12s ease-out; }
+.bot .pupil { transition: transform .12s ease-out; }
 .bot .happy { transition: opacity .15s; }
 .bot .eye { transition: opacity .15s; }
-button:hover .bot .eye, button:focus-visible .bot .eye, .ch.main:hover .bot .eye { opacity: 0; }
+button:hover .bot .eye, button:focus-visible .bot .eye, .ch.main:hover .bot .eye { opacity: 0; animation: none; }
 button:hover .bot .happy, button:focus-visible .bot .happy, .ch.main:hover .bot .happy { opacity: 1; }
 #site[dir="rtl"] .bot { transform: scaleX(-1); }
 @media (prefers-reduced-motion: no-preference) {
-  .bot .bot-body { animation: idle 3.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+  .bot .bot-body { animation: idle 3s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
   .bot .eye { animation: blink 4.8s infinite; }
   .bot-md .eye { animation-delay: 1.6s; }
   .bot .bot-lines { animation: lines 1.6s ease-in-out infinite; }
@@ -257,7 +257,7 @@ button:hover .bot .happy, button:focus-visible .bot .happy, .ch.main:hover .bot 
   button:hover .bot .wheel, .ch.main:hover .bot .wheel { animation: spin .6s linear infinite; }
   .fab-bubble:not([hidden]) { animation: pop .35s cubic-bezier(.2,1.4,.4,1); }
 }
-@keyframes idle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes idle { 0%, 100% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-3px) rotate(-1.5deg); } 50% { transform: translateY(0) rotate(0); } 75% { transform: translateY(-3px) rotate(1.5deg); } 86% { transform: translateY(0); } 91% { transform: translateY(-6px); } 96% { transform: translateY(0); } }
 @keyframes hop { from { transform: translateY(0) rotate(0); } to { transform: translateY(-4px) rotate(-3deg); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 0%, 91%, 97%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.1); } }
