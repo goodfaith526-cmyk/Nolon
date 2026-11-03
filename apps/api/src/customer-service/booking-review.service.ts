@@ -36,6 +36,7 @@ import { fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { BookingConfirmChecksRegistry } from '../bookings/booking-confirm-checks.registry.js';
 import { BookingsService } from '../bookings/bookings.service.js';
+import { cbmFromDimensions } from '../bookings/cbm.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import {
   type CsBookingRequest,
@@ -819,6 +820,17 @@ function bookingLineOf(
   const decimal = (d: Prisma.Decimal | null) => (d === null ? null : toDecimalString(d));
   // A partial set (a request saved before intake required all three) stays on the item only.
   const sized = item.lengthCm !== null && item.widthCm !== null && item.heightCm !== null;
+  // Codex F167-1: a booking line's volume is its pieces' dimensions when it has them, and its
+  // weight is the customer's when given. An approved CBM or kg that disagrees with those facts
+  // makes no line: neither is dropped (the item keeps the facts, the request the approved
+  // quantity), and staff add the line with the right measurements before confirming.
+  if (
+    cargo.unit === 'PER_CBM' &&
+    sized &&
+    !cbmFromDimensions(item.lengthCm!, item.widthCm!, item.heightCm!, count).eq(quantity)
+  )
+    return null;
+  if (cargo.unit === 'PER_KG' && item.weightKg !== null && !item.weightKg.eq(quantity)) return null;
   return {
     cargoType: cargo.cargoType,
     quantity: count,

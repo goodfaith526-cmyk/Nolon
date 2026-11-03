@@ -388,6 +388,50 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
     expect(changed.made.volumeCbm?.toString()).toBe('0.6');
   });
 
+  it("never books an approved CBM or kg against the customer's measurements (Codex F167-1)", async () => {
+    const approveOne = async (items: object[], category: string, quantity: string) => {
+      const id = await request(items);
+      return (
+        await approve(id, await approveBody(id, [await line(id, category, quantity)])).expect(201)
+      ).body as CsBookingRequestStaffDto;
+    };
+    const dims = { pieces: 2, lengthCm: '50', widthCm: '50', heightCm: '50' };
+    // 2 pieces of 50 x 50 x 50 cm are 0.25 CBM: approved as 0.25, the line keeps the dimensions.
+    const same = await approveOne(
+      [{ category: cat.cbm, quantity: '0.25', ...dims }],
+      cat.cbm,
+      '0.25',
+    );
+    const made = await t.prisma.bookingItem.findUniqueOrThrow({
+      where: { id: same.items[0]!.bookingItemId! },
+    });
+    expect(made.volumeCbm?.toString()).toBe('0.25');
+    expect(made.lengthCm?.toString()).toBe('50');
+    // Approved as 0.5: no line is made from the contradiction; the item stays open for staff,
+    // with the customer's dimensions, and the request keeps the approved 0.5 and its price.
+    const differs = await approveOne(
+      [{ category: cat.cbm, quantity: '0.25', ...dims }],
+      cat.cbm,
+      '0.5',
+    );
+    expect(differs.items[0]).toMatchObject({
+      bookingItemId: null,
+      dimensions: { lengthCm: '50', widthCm: '50', heightCm: '50' },
+      approvedTotal: '50',
+    });
+    expect(differs.approvedPricing).toMatchObject({ quantity: '0.5', total: '50' });
+    expect(await t.prisma.bookingItem.count({ where: { bookingId: differs.bookingId! } })).toBe(0);
+    // A booking with no line is not confirmed (and with a line, CARGO_INCOMPLETE until resolved).
+    await confirm(differs.bookingId!).expect(400);
+    // A weight the customer gave and a different approved kg: the same.
+    const weight = await approveOne(
+      [{ category: cat.kg, quantity: '30', pieces: 1, weightKg: '30' }],
+      cat.kg,
+      '45',
+    );
+    expect(weight.items[0]?.bookingItemId).toBeNull();
+  });
+
   it('refuses a partial set of dimensions at intake, naming the missing ones (Codex F167-2)', async () => {
     const byIds = await botPost('/cs/booking-requests', {
       ...base(),
