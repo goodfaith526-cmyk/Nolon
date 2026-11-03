@@ -310,11 +310,8 @@ jobs:
           # The backup tools are production's, shared (DEPLOY.md, Backups).
           (cd deploy/production && scp backup.sh backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
-          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
-          status=0
-          remote "bash $dir/deploy.sh" || status=$?
-          remote "docker logout ghcr.io" || true
-          exit "$status"
+          # deploy.sh logs in and out inside its server-wide lock (Codex F183-1).
+          printf '%s' "$GHCR_TOKEN" | remote "bash $dir/deploy.sh --registry-login '${{ github.actor }}'"
 
       - name: Health check
         run: |
