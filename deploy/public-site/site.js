@@ -93,17 +93,11 @@
   var seen = false;
   try { seen = sessionStorage.getItem('nolon-hi') === '1'; } catch (err) {}
   if (!seen) {
-    // Greet from the corner once the mascot in the hero has scrolled out of view.
-    var peek = document.querySelector('.peek'), heroVisible = true, ready = false;
-    function maybeGreet() {
-      if (seen || !ready || heroVisible || !chat.hidden) return;
-      seen = true; bubble.hidden = false;
+    setTimeout(function () {
+      if (!chat.hidden) return;
+      bubble.hidden = false;
       try { sessionStorage.setItem('nolon-hi', '1'); } catch (err) {}
-    }
-    if (peek && 'IntersectionObserver' in window) {
-      new IntersectionObserver(function (en) { heroVisible = en[0].isIntersecting; maybeGreet(); }).observe(peek);
-    } else { heroVisible = false; }
-    setTimeout(function () { ready = true; maybeGreet(); }, 1500);
+    }, 3500);
   }
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!still) {
@@ -114,9 +108,10 @@
       eyes.forEach(function (g) {
         var r = g.ownerSVGElement.getBoundingClientRect();
         if (!r.width) return;
-        var dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2);
+        var flip = site.getAttribute('dir') === 'rtl' ? -1 : 1;
+        var dx = (px - (r.left + r.width / 2)) * flip, dy = py - (r.top + r.height / 2);
         var d = Math.sqrt(dx * dx + dy * dy) || 1, k = Math.min(1, d / 260);
-        g.setAttribute('transform', 'translate(' + (dx / d * 5 * k).toFixed(2) + ' ' + (dy / d * 4 * k).toFixed(2) + ')');
+        g.setAttribute('transform', 'translate(' + (dx / d * 3.5 * k).toFixed(2) + ' ' + (dy / d * 2.5 * k).toFixed(2) + ')');
       });
     }
     window.addEventListener('pointermove', function (e) {
