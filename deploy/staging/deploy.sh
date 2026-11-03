@@ -4,7 +4,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-compose() { docker compose -f docker-compose.staging.yml "$@"; }
+# Feature switches set by hand on the server live in switches.env, next to .env. The deploy job
+# rewrites .env on every deploy and never touches switches.env, so a switch stays as set until it
+# is changed there. Only CS_* settings and comments are accepted: it cannot override an image, a
+# password or anything else the deploy job writes.
+env_files=(--env-file .env)
+if [ -f switches.env ]; then
+  if grep -Evx '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*' switches.env | grep -q .; then
+    echo "switches.env may hold only CS_* settings and comments" >&2
+    exit 1
+  fi
+  env_files+=(--env-file switches.env)
+fi
+
+compose() { docker compose "${env_files[@]}" -f docker-compose.staging.yml "$@"; }
 
 # Staging is private unless .env says otherwise on purpose; refuse a missing or unknown mode.
 if ! grep -Eqx "BASIC_AUTH=(on|off)" .env; then
