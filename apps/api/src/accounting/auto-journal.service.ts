@@ -971,17 +971,58 @@ export class AutoJournalService {
     // every supplier's accrued balance returns to what it was; the payable is the bill's supplier.
     const carriers = await this.statementCarriers(tx, line.rows);
     const accrued = await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS');
-    const lines: LineSpec[] = carriers.map((carrier) => ({
-      accountId: accrued,
-      branchId: bill.branchId,
-      currency: bill.currency,
-      fxRate: bill.fxRate,
-      side: 'DEBIT',
-      amount: carrier.amount,
-      amountUsd: carrier.amountUsd,
-      supplierId: carrier.supplierId,
-      description: line.statementNumber,
-    }));
+    // A supplier's rows can net below zero (F168-3: a credit note after its earlier rows were
+    // settled), in the currency, in USD or in both: each part is cleared on its own side.
+    const lines: LineSpec[] = carriers.flatMap((carrier) => {
+      const common = {
+        accountId: accrued,
+        branchId: bill.branchId,
+        supplierId: carrier.supplierId,
+        description: line.statementNumber,
+      };
+      const side = (v: Decimal) => (v.gt(0) ? ('DEBIT' as const) : ('CREDIT' as const));
+      const { amount, amountUsd } = carrier;
+      if (
+        amount.isZero() === false &&
+        amount.isNeg() === amountUsd.isNeg() &&
+        !amountUsd.isZero()
+      ) {
+        return [
+          {
+            ...common,
+            currency: bill.currency,
+            fxRate: bill.fxRate,
+            side: side(amount),
+            amount: amount.abs(),
+            amountUsd: amountUsd.abs(),
+          },
+        ];
+      }
+      // Signs differ, or one of them is zero (never in USD, where both are the same): the
+      // currency part carries no USD, and the USD a line in USD.
+      const parts: LineSpec[] = [];
+      if (!amount.isZero()) {
+        parts.push({
+          ...common,
+          currency: bill.currency,
+          fxRate: bill.fxRate,
+          side: side(amount),
+          amount: amount.abs(),
+          amountUsd: ZERO,
+        });
+      }
+      if (!amountUsd.isZero()) {
+        parts.push({
+          ...common,
+          currency: BASE_CURRENCY,
+          fxRate: dec(1),
+          side: side(amountUsd),
+          amount: amountUsd.abs(),
+          amountUsd: amountUsd.abs(),
+        });
+      }
+      return parts;
+    });
     if (
       !sum(carriers.map((c) => c.amount)).eq(line.amount) ||
       !sum(carriers.map((c) => c.amountUsd)).eq(line.totalUsd)
