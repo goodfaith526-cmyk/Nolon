@@ -199,6 +199,28 @@ export interface ContainerCostForPosting {
   shares: readonly { shipmentId: string; amount: Decimal }[];
 }
 
+/** Rule 16: one change of a partner's commission on a shipment (plan 07, 4.1 and 4.7). */
+export interface CommissionChangeForPosting {
+  shipmentId: string;
+  shipmentNumber: string;
+  /** The shipment's branch. */
+  branchId: string;
+  /** YYYY-MM-DD: the day of the write that changed it. */
+  entryDate: string;
+  partnerNumber: string;
+  /** The partner's supplier, when it has one: the payable its statement will be billed to. */
+  supplierId: string | null;
+  /** In the slot's currency or in USD, each with its explicit USD value (commissionLines). */
+  pairs: readonly {
+    currency: string;
+    fxRate: Decimal;
+    amount: Decimal;
+    amountUsd: Decimal;
+    accrues: boolean;
+  }[];
+  description: string;
+}
+
 /** A customer's or supplier's open item at go-live (rule 15). */
 export interface OpeningItemForPosting {
   sourceId: string;
@@ -619,6 +641,54 @@ export class AutoJournalService {
         description,
         source,
         sourceId: cost.sourceId,
+        userId,
+      },
+      lines,
+    );
+  }
+
+  /**
+   * Rule 16, a partner's commission accrued, raised, reduced or reversed: debit partner commissions
+   * on the shipment (a cost of the shipment), credit accrued partner commissions; the other way
+   * round for a reduction. Each pair carries its USD value explicitly, so the accrued account's
+   * USD balance is always the sum of the sub-ledger's rows (plan 07, 4.7).
+   */
+  async commissionChanged(
+    tx: Tx,
+    change: CommissionChangeForPosting,
+    userId: string,
+  ): Promise<JournalEntry> {
+    const cost = await this.accounts.roleAccount(tx, 'COMMISSION_COST');
+    const accrued = await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS');
+    const lines: LineSpec[] = [];
+    for (const pair of change.pairs) {
+      const common = {
+        branchId: change.branchId,
+        currency: pair.currency,
+        fxRate: pair.fxRate,
+        amount: pair.amount,
+        amountUsd: pair.amountUsd,
+        supplierId: change.supplierId,
+        description: `${change.partnerNumber} ${change.shipmentNumber}`,
+      };
+      lines.push(
+        {
+          ...common,
+          accountId: cost,
+          side: pair.accrues ? 'DEBIT' : 'CREDIT',
+          shipmentId: change.shipmentId,
+        },
+        { ...common, accountId: accrued, side: pair.accrues ? 'CREDIT' : 'DEBIT' },
+      );
+    }
+    return this.journal.post(
+      tx,
+      {
+        branchId: change.branchId,
+        entryDate: change.entryDate,
+        description: change.description,
+        source: 'COMMISSION_ACCRUAL',
+        sourceId: change.shipmentId,
         userId,
       },
       lines,

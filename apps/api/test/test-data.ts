@@ -22,6 +22,13 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
     await tx.podCancellation.deleteMany({ where: { pod: { shipment: createdBy } } });
     await tx.tripDepartureUndo.deleteMany({ where: { trip: createdBy } });
     await tx.shipmentCargoCorrection.deleteMany({ where: { shipment: createdBy } });
+    // Partner commissions (plan 07) are append-only too; their entries stay, as every entry does.
+    await tx.commissionAccrual.deleteMany({
+      where: { OR: [{ shipment: createdBy }, { partner: createdBy }] },
+    });
+  });
+  await prisma.commissionHold.deleteMany({
+    where: { OR: [{ shipment: createdBy }, { partner: createdBy }] },
   });
   await prisma.podPhoto.deleteMany({ where: { pod: { shipment: createdBy } } });
   await prisma.proofOfDelivery.deleteMany({ where: { shipment: createdBy } });
