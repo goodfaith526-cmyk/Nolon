@@ -25,6 +25,7 @@ import type { PageQuery } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
 import { relievedUsd } from './invoice-math.js';
 
 export interface CreditNoteFilters extends PageQuery {
@@ -69,6 +70,7 @@ export class CreditNotesService {
     private readonly prisma: PrismaService,
     private readonly autoJournal: AutoJournalService,
     private readonly currencies: CurrenciesService,
+    private readonly commissions: CommissionTriggers,
   ) {}
 
   async list(user: AuthUser, filters: CreditNoteFilters): Promise<Page<CreditNoteSummaryDto>> {
@@ -202,6 +204,7 @@ export class CreditNotesService {
       ) {
         throw new ConflictException('The invoice is not approved');
       }
+      if (invoice.shipmentId) await this.commissions.lockInTx(tx, invoice.shipmentId);
       const open = openAmount(invoice);
       if (note.amount.gt(open)) {
         throw new BadRequestException(
@@ -267,6 +270,16 @@ export class CreditNotesService {
           creditedUsd: { increment: cleared },
         },
       });
+      // A smaller base for a percentage commission (plan 07, 4.2), on the credit note's date.
+      if (invoice.shipmentId && !invoice.isOpening) {
+        await this.commissions.shipmentChangedInTx(
+          tx,
+          user,
+          invoice.shipmentId,
+          'CREDIT_NOTE_APPROVED',
+          creditDate,
+        );
+      }
     });
     return this.get(user, id);
   }

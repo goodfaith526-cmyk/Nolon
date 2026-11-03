@@ -60,6 +60,9 @@ import {
   ShipmentInvoicesRegistry,
 } from '../shipments/shipment-invoices.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
+import { AccountsService } from '../accounting/accounts.service.js';
+import type { CommissionInvoice } from '../commissions/commission-math.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
 import { isLiveInvoice } from './live-invoice.js';
 import {
@@ -203,6 +206,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     private readonly masterData: MasterDataService,
     private readonly rates: RatesService,
     private readonly shipmentInvoices: ShipmentInvoicesRegistry,
+    private readonly commissions: CommissionTriggers,
+    private readonly accounts: AccountsService,
   ) {}
 
   onModuleInit(): void {
@@ -221,6 +226,36 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       approved: live.flatMap((i) => (i.status === 'APPROVED' && i.number ? [i.number] : [])),
       drafts: live.filter((i) => i.status === 'DRAFT').length,
     };
+  }
+
+  /**
+   * For a percentage commission (plan 07, 4.2), in the caller's transaction: the shipment's
+   * approved invoices (not opening items), each with its lines that are not reimbursable charges
+   * and the credit notes approved against it.
+   */
+  async commissionInvoicesInTx(
+    tx: Tx,
+    shipmentId: string,
+  ): Promise<(CommissionInvoice & { invoiceDate: string })[]> {
+    const invoices = await tx.customerInvoice.findMany({
+      where: { shipmentId, status: 'APPROVED', isOpening: false },
+      include: { lines: { select: { chargeTypeCode: true, lineTotal: true } } },
+      orderBy: [{ invoiceDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    const reimbursable = await this.accounts.reimbursableCodes(
+      tx,
+      invoices.flatMap((i) => i.lines.map((l) => l.chargeTypeCode)),
+    );
+    return invoices.map((i) => ({
+      currency: i.currency,
+      fxRate: i.fxRate,
+      total: i.total,
+      credited: i.creditedAmount,
+      commissionable: i.lines
+        .filter((l) => !reimbursable.has(l.chargeTypeCode))
+        .reduce((sum, l) => sum.plus(l.lineTotal), dec(0)),
+      invoiceDate: fromDbDate(i.invoiceDate),
+    }));
   }
 
   async list(user: AuthUser, filters: InvoiceFilters): Promise<Page<CustomerInvoiceSummaryDto>> {
@@ -1171,6 +1206,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       // The shipment first, then the invoice: the order a shipment's cancellation takes them in.
       await this.lockBilledShipment(tx, shipmentId);
       await lockStatus(tx, id, 'DRAFT');
+      await this.commissions.lockInTx(tx, shipmentId);
       const invoice = await tx.customerInvoice.findUniqueOrThrow({
         where: { id },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -1204,6 +1240,14 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           approvedById: user.id,
         },
       });
+      // The INVOICED event, and a percentage's base (plan 07, 4.2), on the invoice's date.
+      await this.commissions.shipmentChangedInTx(
+        tx,
+        user,
+        shipmentId,
+        'INVOICE_APPROVED',
+        invoiceDate,
+      );
     });
     return this.get(user, existing.id);
   }

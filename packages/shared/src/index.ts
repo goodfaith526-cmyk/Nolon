@@ -36,4 +36,5 @@ export * from './new-customer-quotation-drafts.js';
 export * from './assistant-form-reviews.js';
 export * from './access-control.js';
 export * from './partner-contracts.js';
+export * from './partner-commissions.js';
 export * from './rate-costs.js';

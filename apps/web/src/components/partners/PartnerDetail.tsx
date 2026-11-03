@@ -9,6 +9,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useCountryName } from '../CountrySelect';
 import { useRecord } from '../finance/common';
 import { can, useMe } from '../StaffShell';
+import { PartnerCommissions } from './PartnerCommissions';
 import { PartnerContracts } from './PartnerContracts';
 import { PartnerFields, partnerFields } from './Partners';
 
@@ -120,6 +121,7 @@ export function PartnerDetail({ id }: { id: string }) {
         </dl>
       )}
       {can(me, 'partner_contracts:view') && <PartnerContracts partner={p} />}
+      {can(me, 'partner_commissions:view') && <PartnerCommissions partner={p} />}
       <p className="muted">{t('commissionsLater')}</p>
     </section>
   );
