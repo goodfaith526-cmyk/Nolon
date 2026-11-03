@@ -12,6 +12,11 @@ import { BookingsModule } from '../bookings/bookings.module.js';
 import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { RatesModule } from '../rates/rates.module.js';
+import { ShipmentsModule } from '../shipments/shipments.module.js';
+import { CsEventsService } from './cs-events.service.js';
+import { CS_NOTICE_TRANSPORT, CsOutboxWorker } from './cs-outbox.worker.js';
+import { CsWebhooksService } from './cs-webhooks.service.js';
+import { httpsTransport } from './webhook-delivery.js';
 import { BookingRequestGuard } from './booking-request.guard.js';
 import { BookingReviewController, RejectReasonsController } from './booking-review.controller.js';
 import { BookingReviewService } from './booking-review.service.js';
@@ -46,6 +51,7 @@ import { QuoteService } from './quote.service.js';
     CurrenciesModule,
     MasterDataModule,
     RatesModule,
+    ShipmentsModule,
   ],
   controllers: [
     CustomerProfileReviewController,
@@ -80,6 +86,10 @@ import { QuoteService } from './quote.service.js';
     BookingReviewService,
     PaymentInstructionsService,
     CustomerStagesService,
+    CsEventsService,
+    CsWebhooksService,
+    CsOutboxWorker,
+    { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },
   ],
 })
 export class CustomerServiceModule {}

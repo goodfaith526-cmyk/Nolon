@@ -124,6 +124,33 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 5 (N-C5): the HMAC secret notices are signed with (the receiver's
+   * CS_WEBHOOK_SECRET). Unset: no endpoint can be approved and nothing is sent.
+   */
+  CS_WEBHOOK_SECRET: emptyAsUnset(z.string().min(32).max(256).optional()),
+  /** Comma-separated host names an endpoint may use (https, port 443). Empty: none. */
+  CS_WEBHOOK_ALLOWED_HOSTS: emptyAsUnset(
+    z
+      .string()
+      .default('')
+      .transform((v) =>
+        v
+          .split(',')
+          .map((h) => h.trim().toLowerCase())
+          .filter((h) => h !== ''),
+      )
+      .pipe(
+        z.array(
+          z.string().regex(/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/),
+        ),
+      ),
+  ),
+  /** `true`: this process sends the outbox. Off (default): notices wait in the outbox. */
+  CS_WEBHOOK_WORKER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

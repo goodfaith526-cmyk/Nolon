@@ -50,6 +50,7 @@ import {
   ShipmentLinksRegistry,
   type ShipmentLinkBlocker,
 } from './shipment-links.registry.js';
+import { ShipmentStatusListenersRegistry } from './shipment-status-listeners.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -212,6 +213,7 @@ export class ShipmentsService {
     private readonly links: ShipmentLinksRegistry,
     private readonly containers: ShipmentContainerRegistry,
     private readonly commissions: CommissionTriggers,
+    private readonly statusListeners: ShipmentStatusListenersRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -599,7 +601,7 @@ export class ShipmentsService {
       include: { items: { orderBy: { lineNo: 'asc' } } },
     });
     const now = new Date();
-    return tx.shipment.create({
+    const created = await tx.shipment.create({
       data: {
         number: booking.number,
         branchId: booking.branchId,
@@ -648,6 +650,13 @@ export class ShipmentsService {
       },
       select: { id: true },
     });
+    await this.statusListeners.notifyInTx(tx, {
+      shipmentId: created.id,
+      bookingId: booking.id,
+      status: 'CREATED',
+      occurredAt: now,
+    });
+    return created;
   }
 
   async update(user: AuthUser, id: string, input: ShipmentUpdateRequest): Promise<ShipmentDto> {
@@ -1934,6 +1943,12 @@ export class ShipmentsService {
     if (event.after) await event.after(tx);
     // Dated on the event, which can be entered after it happened (F153-2).
     await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_EVENT', occurredAt);
+    await this.statusListeners.notifyInTx(tx, {
+      shipmentId: id,
+      bookingId: shipment.bookingId,
+      status: event.status,
+      occurredAt,
+    });
     return true;
   }
 
