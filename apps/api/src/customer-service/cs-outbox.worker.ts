@@ -95,6 +95,9 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
     @Inject(CS_NOTICE_TRANSPORT) private readonly transport: NoticeTransport,
   ) {}
 
+  /** The time now, read again before each send (Codex F172-3); replaceable in tests. */
+  clock: () => Date = () => new Date();
+
   onApplicationBootstrap(): void {
     if (!this.env.CS_WEBHOOK_WORKER_ENABLED) return;
     this.timer = setInterval(() => {
@@ -140,15 +143,23 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
     leased.sort((a, b) =>
       a.requestId === b.requestId ? a.sequence - b.sequence : a.requestId < b.requestId ? -1 : 1,
     );
+    // Codex F172-3: a notice past its 24 hours is never sent, however late the worker runs
+    // (switched off, down, a lease recovered after the deadline, or a slow batch before it).
+    const expired = (notice: Leased) =>
+      this.clock().getTime() > notice.createdAt.getTime() + GIVE_UP_MS;
     for (const notice of leased) {
-      // Codex F172-3: a notice past its 24 hours is never sent, however late the worker runs
-      // (switched off, down, or a lease recovered after the deadline).
-      if (now.getTime() > notice.createdAt.getTime() + GIVE_UP_MS) {
+      if (expired(notice)) {
         await this.record(notice, { status: 'FAILED', lastError: 'EXPIRED' });
         round.failed += 1;
         continue;
       }
       const endpoint = await this.allowedEndpoint(notice);
+      // Checked again just before the send, after the awaited policy read.
+      if (expired(notice)) {
+        await this.record(notice, { status: 'FAILED', lastError: 'EXPIRED' });
+        round.failed += 1;
+        continue;
+      }
       if (!endpoint) {
         await this.record(notice, { status: 'CANCELLED_BY_POLICY', lastError: 'POLICY' });
         round.cancelled += 1;

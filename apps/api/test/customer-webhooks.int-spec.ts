@@ -485,6 +485,36 @@ describe('Customer Service notices (plan 09 section 5)', () => {
       ).toMatchObject({ status: 'FAILED', lastError: 'EXPIRED' });
   });
 
+  it('does not send a notice that expires while the batch sends earlier ones (F172-3)', async () => {
+    const first = await request();
+    await approve(first);
+    const second = await request();
+    await approve(second);
+    // Both expire 500 ms from now; the first send takes 750 ms.
+    const created = new Date(Date.now() - 24 * 3600_000 + 500);
+    await t.prisma.csOutboxEvent.updateMany({
+      where: { requestId: { in: [first, second] } },
+      data: { createdAt: created },
+    });
+    const sent: string[] = [];
+    const slow: NoticeTransport = {
+      async send(_url, _headers, raw) {
+        const { requestId } = JSON.parse(raw.toString('utf8')) as { requestId: string };
+        if (requestId === first || requestId === second) {
+          sent.push(requestId);
+          await new Promise((done) => setTimeout(done, 750));
+        }
+        return { status: 200, error: null };
+      },
+    };
+    const [a, b] = [first, second].sort();
+    await worker(slow).runOnce();
+    expect(sent).toEqual([a]);
+    expect(
+      await t.prisma.csOutboxEvent.findFirstOrThrow({ where: { requestId: b } }),
+    ).toMatchObject({ status: 'FAILED', lastError: 'EXPIRED' });
+  });
+
   it('sends nothing to a host no longer allowed (F172-1)', async () => {
     const id = await request();
     await approve(id);
