@@ -3119,7 +3119,19 @@
     "instantAccount_NAME_MISSING": "the name is missing",
     "instantAccount_PROFILE_CHANGED": "the customer profile changed after the bot read it",
     "instantAccount_PHONE_IN_USE": "another account of the branch has this phone",
-    "instantAccount_ACCOUNT_INACTIVE": "the customer's branch account is inactive"
+    "instantAccount_ACCOUNT_INACTIVE": "the customer's branch account is inactive",
+    "itemsTitle": "Request items",
+    "itemsIncomplete": "Some items have no booking line: add the line on the booking and link it here before confirming.",
+    "pieces": "Pieces",
+    "dimensions": "Dimensions (cm)",
+    "weightKg": "Weight (kg)",
+    "approvedTotal": "Priced",
+    "bookingLine": "Booking line",
+    "otherItem": "Non-standard item",
+    "resolveItem": "Link",
+    "addBookingLine": "Add a line on the booking first",
+    "itemLine": "Item {line}",
+    "estimateRequired": "This request has a non-standard item: it needs a staff estimate before approval (coming soon)."
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

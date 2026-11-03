@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   CS_DAILY_REQUESTS,
+  CS_OTHER_KIND,
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
   type CsBookingRequestByNames,
@@ -23,11 +24,14 @@ import {
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsBookingRequestState,
+  type CsItemMeasures,
+  type CsNamesItemInput,
+  type CsRequestItemInput,
   type CsRequestService,
   type CsSenderChannel,
 } from '@nolon/shared';
 import { todayIn, toDbDate } from '../common/dates.js';
-import { dec } from '../common/money.js';
+import { dec, toDecimalString } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -86,15 +90,66 @@ function measurement(value: string | undefined): string | undefined {
   return value === undefined ? undefined : dec(value).toFixed();
 }
 
+/** An item as hashed: its numbers as numbers, so 2 and 2.0 are the same item (plan 09 section 4). */
+function normalItem(item: CsRequestItemInput | CsNamesItemInput): Record<string, unknown> {
+  const measures: CsItemMeasures = item;
+  return {
+    ...item,
+    ...('quantity' in item ? { quantity: dec(String(item.quantity)).toFixed() } : {}),
+    lengthCm: measurement(measures.lengthCm),
+    widthCm: measurement(measures.widthCm),
+    heightCm: measurement(measures.heightCm),
+    weightKg: measurement(measures.weightKg),
+  };
+}
+
+/** One request item as stored (plan 09 section 4), without its request. */
+type ItemRow = Omit<
+  Prisma.CsBookingRequestItemUncheckedCreateInput,
+  'id' | 'requestId' | 'quantity'
+> & { quantity?: Prisma.Decimal | null };
+
+/** The measurements of an item, as stored. */
+function measuresOf(item: CsItemMeasures) {
+  return {
+    pieces: item.pieces ?? null,
+    lengthCm: item.lengthCm === undefined ? null : dec(item.lengthCm),
+    widthCm: item.widthCm === undefined ? null : dec(item.widthCm),
+    heightCm: item.heightCm === undefined ? null : dec(item.heightCm),
+    weightKg: item.weightKg === undefined ? null : dec(item.weightKg),
+  };
+}
+
+/** An OTHER item (plan 09 section 12): the customer's description, never a category or price. */
+function otherRow(lineNo: number, item: CsItemMeasures & { description: string }): ItemRow {
+  return { lineNo, isOther: true, description: item.description, ...measuresOf(item) };
+}
+
+/**
+ * The request columns its items fill (plan 09 section 4): the first standard item's category and
+ * quantity, so reads that predate items still describe the request; an OTHER-only request has no
+ * category and its first item's pieces (or 1) as quantity.
+ */
+function rootOf(rows: readonly ItemRow[]): { category: string | null; quantity: Prisma.Decimal } {
+  const first = rows.find((r) => !r.isOther);
+  if (first?.quantity !== undefined && first.quantity !== null)
+    return { category: first.priceCategoryCode ?? null, quantity: first.quantity };
+  return {
+    category: first?.priceCategoryCode ?? null,
+    quantity: dec(String(rows[0]?.pieces ?? 1)),
+  };
+}
+
 /**
  * SHA-256 of a request's content: the body without its idempotency key, keys sorted, services
  * sorted, the quantity and the dimensions as numbers (2 and 2.0 are the same request).
  */
 export function contentHash(input: CsBookingRequestCreate): string {
-  const normal: Partial<CsBookingRequestCreate> = {
+  const normal: Record<string, unknown> = {
     ...input,
     idempotencyKey: undefined,
-    quantity: dec(input.quantity).toFixed(),
+    quantity: input.quantity === undefined ? undefined : dec(input.quantity).toFixed(),
+    items: input.items?.map(normalItem),
     lengthCm: measurement(input.lengthCm),
     widthCm: measurement(input.widthCm),
     heightCm: measurement(input.heightCm),
@@ -110,7 +165,8 @@ export function namesHash(input: CsBookingRequestByNames): string {
   const normal = {
     ...input,
     idempotencyKey: undefined,
-    quantity: dec(String(input.quantity)).toFixed(),
+    quantity: input.quantity === undefined ? undefined : dec(String(input.quantity)).toFixed(),
+    items: input.items?.map(normalItem),
     quotedPrice: input.quotedPrice ?? null,
   };
   return createHash('sha256')
@@ -173,6 +229,12 @@ export class BookingRequestsService {
     private readonly customers: CustomersService,
   ) {}
 
+  /** The public tracking page of a shipment, as its QR code opens it; null when not configured. */
+  private trackingUrl(token: string): string | null {
+    const base = this.env.PUBLIC_WEB_URL ?? this.env.CORS_ORIGINS[0];
+    return base ? `${base.replace(/\/+$/, '')}/track/${token}` : null;
+  }
+
   async create(
     caller: BookingRequestCaller,
     input: CsBookingRequestCreate,
@@ -203,11 +265,24 @@ export class BookingRequestsService {
     if (replay) return { created: false, body: replay };
 
     await this.masterData.requireRoute(input.originId, input.destinationId);
-    const category = await this.masterData.requirePriceCategory(input.category, null);
     if (input.requestedDate !== undefined && input.requestedDate < todayIn('UTC')) {
       throw coded(HttpStatus.BAD_REQUEST, 'BAD_DATE', 'requestedDate must be today (UTC) or later');
     }
-    if (input.quoteRef !== undefined) await this.checkQuote(client.id, input);
+    // Plan 09 section 4: items, or the original one-item shape (the controller allows one only).
+    const items = input.items ? await this.itemsById(client.id, input, input.items) : [];
+    let root: { category: string | null; quantity: Prisma.Decimal };
+    if (input.items) {
+      root = rootOf(items);
+    } else {
+      const category = await this.masterData.requirePriceCategory(input.category!, null);
+      if (input.quoteRef !== undefined)
+        await this.checkQuote(client.id, {
+          ...input,
+          category: category.code,
+          quantity: input.quantity!,
+        });
+      root = { category: category.code, quantity: dec(input.quantity!) };
+    }
 
     // Section 6: the branch from the origin's rules only, never from the customer's words. The key's
     // branches are the ceiling: one branch outside them, or no candidate inside them, is refused.
@@ -233,8 +308,9 @@ export class BookingRequestsService {
         branchId,
         originLocationId: input.originId,
         destinationLocationId: input.destinationId,
-        priceCategoryCode: category.code,
-        quantity: dec(input.quantity),
+        priceCategoryCode: root.category,
+        quantity: root.quantity,
+        ...(items.length > 0 ? { items: { create: items } } : {}),
         // A volume category's pieces and dimensions, as the customer gave them, for staff.
         pieces: input.pieces ?? null,
         lengthCm: input.lengthCm === undefined ? null : dec(input.lengthCm),
@@ -301,10 +377,32 @@ export class BookingRequestsService {
     const originId = matchPlace(input.origin, places);
     const matchedTo = matchPlace(input.destination, places);
     const destinationId = matchedTo === originId ? null : matchedTo;
-    const categoryCode = matchCategory(
-      input.kind,
-      all.priceCategories.filter((c) => c.isActive),
+    const active = all.priceCategories.filter((c) => c.isActive);
+    // Plan 09 section 4: each item's kind matched as the one-item shape's is; OTHER is described.
+    const items: ItemRow[] = (input.items ?? []).map((item, index) =>
+      item.kind === CS_OTHER_KIND
+        ? otherRow(index + 1, item)
+        : {
+            lineNo: index + 1,
+            priceCategoryCode: matchCategory(item.kind, active),
+            botKind: { ...item.kind },
+            quantity: dec(String(item.quantity)),
+            ...measuresOf(item),
+          },
     );
+    const firstKind = input.items?.[0];
+    const kind =
+      input.kind ??
+      (firstKind === undefined || firstKind.kind === CS_OTHER_KIND
+        ? {
+            ar: firstKind?.description.slice(0, 200) ?? '',
+            en: firstKind?.description.slice(0, 200) ?? '',
+          }
+        : firstKind.kind);
+    const root = input.items
+      ? rootOf(items)
+      : { category: matchCategory(input.kind!, active), quantity: dec(String(input.quantity)) };
+    const categoryCode = root.category;
 
     const { allowed, branchId } = await this.namesRouting(client, originId);
     const quoted = input.quotedPrice ?? null;
@@ -326,9 +424,10 @@ export class BookingRequestsService {
         botNames: {
           origin: { ...input.origin },
           destination: { ...input.destination },
-          kind: { ...input.kind },
+          kind: { ...kind },
         },
-        quantity: dec(String(input.quantity)),
+        quantity: root.quantity,
+        ...(items.length > 0 ? { items: { create: items } } : {}),
         services: [],
         senderName: input.senderName,
         consigneeName: input.receiverName,
@@ -494,6 +593,7 @@ export class BookingRequestsService {
                 number: true,
                 status: true,
                 createdAt: true,
+                trackingToken: true,
                 destination: { select: placeSelect },
                 currentLocation: { select: placeSelect },
                 events: {
@@ -556,7 +656,18 @@ export class BookingRequestsService {
           ? await this.payments.approvedFor(row.branchId, row.paymentCurrency)
           : null,
       cancelRequest: cancelRequestOf(row),
+      // Plan 09 amendment 4: the price staff approved (the engine's, in the pricing currency),
+      // once approved; null when approved with no engine price.
+      approvedPrice:
+        row.status === 'APPROVED' && row.approvedTotal !== null && row.approvedCurrency !== null
+          ? { amount: toDecimalString(row.approvedTotal), currency: row.approvedCurrency }
+          : null,
       ...track,
+      // Plan 09 amendment 4: the public tracking link the shipment's QR opens, once it exists.
+      shipment:
+        track.shipment && shipment
+          ? { ...track.shipment, trackingUrl: this.trackingUrl(shipment.trackingToken) }
+          : null,
     };
   }
 
@@ -719,7 +830,46 @@ export class BookingRequestsService {
    * (MAIN_FREIGHT) are always in a request; the others are staff's to price, so they never make a
    * mismatch.
    */
-  private async checkQuote(apiClientId: string, input: CsBookingRequestCreate): Promise<void> {
+  /**
+   * A request's items by ids (plan 09 section 4): each category active, each quote the key's and
+   * for that item; an OTHER item is kept as described. Read before the save, as the one-item shape.
+   */
+  private async itemsById(
+    apiClientId: string,
+    input: Pick<CsBookingRequestCreate, 'originId' | 'destinationId'>,
+    items: readonly CsRequestItemInput[],
+  ): Promise<ItemRow[]> {
+    const rows: ItemRow[] = [];
+    for (const [index, item] of items.entries()) {
+      const lineNo = index + 1;
+      if ('kind' in item) {
+        rows.push(otherRow(lineNo, item));
+        continue;
+      }
+      const category = await this.masterData.requirePriceCategory(item.category, null);
+      if (item.quoteRef !== undefined)
+        await this.checkQuote(apiClientId, { ...input, ...item, category: category.code });
+      rows.push({
+        lineNo,
+        priceCategoryCode: category.code,
+        quantity: dec(item.quantity),
+        quoteRef: item.quoteRef ?? null,
+        ...measuresOf(item),
+      });
+    }
+    return rows;
+  }
+
+  private async checkQuote(
+    apiClientId: string,
+    input: Pick<
+      CsBookingRequestCreate,
+      'originId' | 'destinationId' | 'quoteRef' | 'pieces' | 'lengthCm' | 'widthCm' | 'heightCm'
+    > & {
+      category: string;
+      quantity: string;
+    },
+  ): Promise<void> {
     const quote = await this.prisma.csQuote.findFirst({
       where: { ref: input.quoteRef, apiClientId },
     });

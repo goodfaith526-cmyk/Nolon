@@ -48,6 +48,8 @@ const request = {
   requestedDate: null,
   priceCheck: null,
   botQuotedPrice: { amount: '550', currency: 'USD' },
+  items: [],
+  bookingLines: [],
 } as unknown as CsBookingRequestStaffDto;
 const master = {
   locations: [
@@ -190,5 +192,98 @@ describe('BotRequestApprove', () => {
       await Promise.resolve();
     });
     expect(submit.disabled).toBe(true);
+  });
+  it('prices a request with items line by line and sends one line per item', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const item = (id: string, lineNo: number, quantity: string) => ({
+      id,
+      lineNo,
+      category: 'BARREL',
+      botKind: null,
+      isOther: false,
+      description: null,
+      quantity,
+      pieces: null,
+      dimensions: null,
+      weightKg: null,
+      quoteRef: null,
+      approvedTotal: null,
+      bookingItemId: null,
+    });
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={{ ...request, items: [item('i1', 1, '2'), item('i2', 2, '3')] }}
+          master={master}
+          busy={false}
+          onApprove={approved}
+        />,
+      ),
+    );
+    const check = [...host.querySelectorAll('button')].find((b) => b.textContent === 'checkPrice')!;
+    await act(async () => {
+      check.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('quantity=3');
+    // Two lines priced 80.00 each: their sum, shown as a decimal string.
+    expect(host.textContent).toContain('160.00 USD');
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pricing: { originId: 'jed', destinationId: 'krt', mode: 'SEA', currency: 'USD' },
+        lines: [
+          { category: 'BARREL', quantity: '2', pricingFingerprint: 'a'.repeat(64) },
+          { category: 'BARREL', quantity: '3', pricingFingerprint: 'a'.repeat(64) },
+        ],
+      }),
+    );
+    expect(approved.mock.calls[0]![0]).not.toHaveProperty('pricingFingerprint');
+    act(() => root.unmount());
+  });
+  it('holds approval of a request with a non-standard item', () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={{
+            ...request,
+            items: [
+              {
+                id: 'i1',
+                lineNo: 1,
+                category: null,
+                botKind: null,
+                isOther: true,
+                description: 'A sofa',
+                quantity: null,
+                pieces: 1,
+                dimensions: null,
+                weightKg: null,
+                quoteRef: null,
+                approvedTotal: null,
+                bookingItemId: null,
+              },
+            ],
+          }}
+          master={master}
+          busy={false}
+          onApprove={() => undefined}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain('estimateRequired');
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+    act(() => root.unmount());
   });
 });

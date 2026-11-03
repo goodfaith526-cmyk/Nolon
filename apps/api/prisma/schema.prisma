@@ -314,6 +314,7 @@ model User {
   delegationsRevoked       BranchDelegation[]        @relation("BranchDelegationRevokedBy")
   csRequestsRouted         CsBookingRequest[]        @relation("CsRequestRoutedBy")
   csRequestsDecided        CsBookingRequest[]        @relation("CsRequestDecidedBy")
+  csRequestItemsResolved   CsBookingRequestItem[]    @relation("CsRequestItemResolvedBy")
   csRequestsCancelClosed   CsBookingRequest[]        @relation("CsRequestCancelClosedBy")
 
   paymentInstructionsMade     PaymentInstruction[] @relation("PaymentInstructionCreatedBy")
@@ -955,12 +956,14 @@ model PriceCategory {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  rateCards      RateCard[]
-  quotationLines QuotationLine[]
-  csRequests     CsBookingRequest[]
-  csApprovals    CsBookingRequest[] @relation("CsRequestApprovedCategory")
-  bookingItems   BookingItem[]
-  contracts      PartnerContract[]
+  rateCards       RateCard[]
+  quotationLines  QuotationLine[]
+  csRequests      CsBookingRequest[]
+  csApprovals     CsBookingRequest[]     @relation("CsRequestApprovedCategory")
+  csItems         CsBookingRequestItem[] @relation("CsRequestItemCategory")
+  csItemApprovals CsBookingRequestItem[] @relation("CsRequestItemApprovedCategory")
+  bookingItems    BookingItem[]
+  contracts       PartnerContract[]
 
   @@map("price_categories")
 }
@@ -1464,9 +1467,10 @@ model BookingItem {
   /// NOLON screens only (plan 3.3, 7.2): the line's price category, of the line's cargo type.
   priceCategoryCode String?   @map("price_category_code") @db.VarChar(20)
 
-  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  containerType ContainerType? @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
-  priceCategory PriceCategory? @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  booking       Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  containerType ContainerType?        @relation(fields: [containerTypeCode], references: [code], onDelete: Restrict)
+  priceCategory PriceCategory?        @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  csRequestItem CsBookingRequestItem?
 
   @@unique([bookingId, lineNo])
   @@index([priceCategoryCode])
@@ -3641,9 +3645,10 @@ model CsQuote {
   expiresAt             DateTime     @map("expires_at") @db.Timestamptz(3)
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  apiClient ApiClient          @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  rateCard  RateCard           @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
+  apiClient ApiClient              @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  rateCard  RateCard               @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
   requests  CsBookingRequest[]
+  items     CsBookingRequestItem[]
 
   @@index([apiClientId, createdAt])
   @@index([rateCardId])
@@ -3688,6 +3693,49 @@ enum CsHandover {
 /// A booking request from a customer-service client (R3, docs/plans/04 section 7): a draft only,
 /// never a booking, shipment, invoice or journal entry. Its owner is a customer (through a customer
 /// token) or a channel identity (sender), exactly one. Every value is the customer's, as sent.
+/// Plan 09 section 4 (N-C2): one line of a bot booking request, in the bot's terms. A request
+/// made before items existed has none and is read as one item from its own columns.
+model CsBookingRequestItem {
+  id                   String    @id @default(uuid()) @db.Uuid
+  requestId            String    @map("request_id") @db.Uuid
+  lineNo               Int       @map("line_no") @db.SmallInt
+  /// Null for an OTHER item (and for a by-names kind that matched no category).
+  priceCategoryCode    String?   @map("price_category_code") @db.VarChar(20)
+  /// The kind as the bot named it ({ar, en}), for a request by names.
+  botKind              Json?     @map("bot_kind")
+  /// Plan 09 section 12: an item outside the standard categories, described by the customer.
+  isOther              Boolean   @default(false) @map("is_other")
+  description          String?   @db.VarChar(500)
+  /// The billable quantity in the category's unit; null for an OTHER item.
+  quantity             Decimal?  @db.Decimal(18, 4)
+  /// The real number of packages, when the customer gave it.
+  pieces               Int?
+  lengthCm             Decimal?  @map("length_cm") @db.Decimal(10, 2)
+  widthCm              Decimal?  @map("width_cm") @db.Decimal(10, 2)
+  heightCm             Decimal?  @map("height_cm") @db.Decimal(10, 2)
+  weightKg             Decimal?  @map("weight_kg") @db.Decimal(12, 3)
+  /// A quote the bot showed for this item (advisory for staff, never a price).
+  quoteRef             String?   @map("quote_ref") @db.VarChar(40)
+  /// What staff priced on approval, per line.
+  approvedCategoryCode String?   @map("approved_category_code") @db.VarChar(20)
+  approvedQuantity     Decimal?  @map("approved_quantity") @db.Decimal(18, 4)
+  approvedTotal        Decimal?  @map("approved_total") @db.Decimal(18, 4)
+  /// The booking line this item became; null until it has one (CARGO_INCOMPLETE).
+  bookingItemId        String?   @unique @map("booking_item_id") @db.Uuid
+  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedById         String?   @map("resolved_by_id") @db.Uuid
+
+  request          CsBookingRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  category         PriceCategory?   @relation("CsRequestItemCategory", fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  approvedCategory PriceCategory?   @relation("CsRequestItemApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
+  quote            CsQuote?         @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  bookingItem      BookingItem?     @relation(fields: [bookingItemId], references: [id], onDelete: SetNull)
+  resolvedBy       User?            @relation("CsRequestItemResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, lineNo])
+  @@map("cs_booking_request_items")
+}
+
 model CsBookingRequest {
   profileId               String?                @map("profile_id") @db.Uuid
   conversationId          String?                @map("conversation_id") @db.VarChar(128)
@@ -3773,22 +3821,23 @@ model CsBookingRequest {
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  apiClient        ApiClient       @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
-  customer         Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  branch           Branch?         @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  origin           Location?       @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination      Location?       @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  category         PriceCategory?  @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
-  quote            CsQuote?        @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
-  routedBy         User?           @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
-  decidedBy        User?           @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
-  cancelClosedBy   User?           @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
-  instantCustomer  Customer?       @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
-  rejectReason     CsRejectReason? @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
-  booking          Booking?        @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  payCurrency      Currency?       @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
-  approvedCategory PriceCategory?  @relation("CsRequestApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
-  priceCurrency    Currency?       @relation("CsRequestApprovedCurrency", fields: [approvedCurrency], references: [code], onDelete: Restrict)
+  apiClient        ApiClient              @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  customer         Customer?              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch           Branch?                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  origin           Location?              @relation("CsRequestOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination      Location?              @relation("CsRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  category         PriceCategory?         @relation(fields: [priceCategoryCode], references: [code], onDelete: Restrict)
+  quote            CsQuote?               @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  routedBy         User?                  @relation("CsRequestRoutedBy", fields: [routedById], references: [id], onDelete: Restrict)
+  decidedBy        User?                  @relation("CsRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  cancelClosedBy   User?                  @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
+  items            CsBookingRequestItem[]
+  instantCustomer  Customer?              @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
+  rejectReason     CsRejectReason?        @relation(fields: [rejectReasonCode], references: [code], onDelete: Restrict)
+  booking          Booking?               @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  payCurrency      Currency?              @relation("CsRequestPaymentCurrency", fields: [paymentCurrency], references: [code], onDelete: Restrict)
+  approvedCategory PriceCategory?         @relation("CsRequestApprovedCategory", fields: [approvedCategoryCode], references: [code], onDelete: Restrict)
+  priceCurrency    Currency?              @relation("CsRequestApprovedCurrency", fields: [approvedCurrency], references: [code], onDelete: Restrict)
 
   @@unique([apiClientId, ownerRef, idempotencyKey])
   @@index([bookingId])

@@ -313,6 +313,33 @@ export interface CsQuoteRequest {
  * NOLON's price for a route from its own engine (R2): a guide, not a formal quotation. No cost,
  * margin, staff or internal note. `quoteRef` names it in a booking request (R3) until it expires.
  */
+/**
+ * POST /cs/quotes (plan 09 section 4): several items of one route, each as GET /cs/quote takes it.
+ * The route, mode, load type, currency and date are common; each item names its category and its
+ * quantity or (volume category) pieces and dimensions.
+ */
+export interface CsQuotesRequest extends Omit<
+  CsQuoteRequest,
+  'category' | 'quantity' | 'lengthCm' | 'widthCm' | 'heightCm'
+> {
+  items: Pick<CsQuoteRequest, 'category' | 'quantity' | 'lengthCm' | 'widthCm' | 'heightCm'>[];
+}
+
+/** Why POST /cs/quotes has no total: an item has no price, or no total, or the currencies differ. */
+export type CsQuotesTotalReason = 'ITEM_NOT_PRICED' | 'ITEM_WITHOUT_TOTAL' | 'CURRENCIES_DIFFER';
+
+export interface CsQuotesDto {
+  /** In the request's order: the item's quote (its own quoteRef), or why it has none. */
+  items: {
+    quote: CsQuoteDto | null;
+    error: { code: string; message: string; status: number } | null;
+  }[];
+  /** The items' totals summed, in their one currency; null with `totalReason` otherwise. */
+  total: DecimalString | null;
+  currency: CurrencyCode | null;
+  totalReason: CsQuotesTotalReason | null;
+}
+
 export interface CsQuoteDto {
   price: DecimalString;
   currency: CurrencyCode;
@@ -338,6 +365,8 @@ export interface CsQuoteDto {
   source: { rateCardId: string; approvedAt: string; quotedOn: DateString };
   quoteRef: string;
   quoteRefExpiresAt: string;
+  /** Plan 09 amendment 4: until when this quote holds (the same instant as quoteRefExpiresAt). */
+  validUntil: string;
   /** A note for the customer on the card: none yet, so always null. */
   customerNote: { ar: string; en: string } | null;
   /**
@@ -368,6 +397,38 @@ export const CS_DAILY_REQUESTS = 5;
 /** A request nobody decided in this long is expired. */
 export const CS_REQUEST_TTL_DAYS = 14;
 
+/** Plan 09 section 4: at most this many items in one request. */
+export const CS_REQUEST_ITEMS_MAX = 10;
+
+/** Plan 09 section 12: an item outside the standard categories, described by the customer. */
+export const CS_OTHER_KIND = 'OTHER';
+
+/** The measurements an item may carry, all optional, never a price input by themselves. */
+export interface CsItemMeasures {
+  /** The real number of packages (whole), when known. */
+  pieces?: number;
+  lengthCm?: DecimalString;
+  widthCm?: DecimalString;
+  heightCm?: DecimalString;
+  weightKg?: DecimalString;
+}
+
+/** One item of a request by ids: a category and its billable quantity, or an OTHER item. */
+export type CsRequestItemInput =
+  | (CsItemMeasures & {
+      category: string;
+      /** The billable quantity in the category's unit (CBM for PER_CBM, kg for PER_KG). */
+      quantity: DecimalString;
+      /** A quote (R2) of the same key for this item. */
+      quoteRef?: string;
+    })
+  | (CsItemMeasures & { kind: typeof CS_OTHER_KIND; description: string });
+
+/** One item of a request by names: the kind the customer saw, or an OTHER item. */
+export type CsNamesItemInput =
+  | (CsItemMeasures & { kind: CsName; quantity: number | DecimalString })
+  | (CsItemMeasures & { kind: typeof CS_OTHER_KIND; description: string });
+
 /**
  * A booking request (R3, docs/plans/04 section 7.1). With a customer token the owner is the
  * token's customer, and `sender` is refused; without one `sender` is required: a channel identity
@@ -383,12 +444,15 @@ export interface CsBookingRequestCreate {
   contactPhone?: string;
   originId: string;
   destinationId: string;
-  category: string;
+  /** One item (the original shape); with `items` it is refused (ITEMS_AND_SINGLE). */
+  category?: string;
   /**
    * The billable quantity in the category's unit: pieces for a counted category; for a volume
    * category the CBM the quote answered (`CsQuoteDto.quantity`), which `quoteRef` is checked against.
    */
-  quantity: DecimalString;
+  quantity?: DecimalString;
+  /** Plan 09 section 4: 1 to 10 items in place of `category`/`quantity`. */
+  items?: CsRequestItemInput[];
   /**
    * A volume category: the pieces and one piece's dimensions in centimetres the CBM came from,
    * kept for staff. Optional; never a price input.
@@ -423,8 +487,11 @@ export interface CsBookingRequestByNames {
   channel: CsSenderChannel;
   origin: CsName;
   destination: CsName;
-  kind: CsName;
-  quantity: number | DecimalString;
+  /** One item (the original shape); with `items` it is refused (ITEMS_AND_SINGLE). */
+  kind?: CsName;
+  quantity?: number | DecimalString;
+  /** Plan 09 section 4: 1 to 10 items in place of `kind`/`quantity`. */
+  items?: CsNamesItemInput[];
   senderName: string;
   /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
   senderPhone?: string;
@@ -472,6 +539,12 @@ export interface CsBookingRequestDto {
    */
   cancelRequest: CsCancelRequestDto | null;
   /**
+   * Plan 09 amendment 4: the total staff approved (NOLON's price, in its pricing currency), once
+   * approved; null before, or when staff approved with no engine price. The customer pays in the
+   * payment instructions' currency.
+   */
+  approvedPrice: { amount: DecimalString; currency: CurrencyCode } | null;
+  /**
    * Plan 09 section 3: where the booking is, in the customer's stages. BOOKED while pending or the
    * booking is a draft; the shipment's mapped stage once confirmed. Null when rejected, cancelled
    * or expired, or when staff must answer (attention).
@@ -496,6 +569,11 @@ export interface CsShipmentTrackDto {
   city: { ar: string; en: string } | null;
   /** When its status last changed (the latest status event). */
   updatedAt: string;
+  /**
+   * Plan 09 amendment 4: the public tracking page (what the shipment's QR opens), for the bot to
+   * show or draw as a QR; null when NOLON has no public address configured.
+   */
+  trackingUrl: string | null;
 }
 
 /**
@@ -692,6 +770,13 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   language: 'ar' | 'en' | null;
   /** The names the customer saw, for a request by names. */
   botNames: { origin: CsName; destination: CsName; kind: CsName } | null;
+  /**
+   * Plan 09 section 4: the request's items as sent (empty for a request in the original one-item
+   * shape, which `category`/`quantity` describe), and, once approved, the booking line each became.
+   */
+  items: CsRequestItemDto[];
+  /** The approved booking's lines, for staff to complete an item that made none. */
+  bookingLines: CsBookingLineDto[];
   /** The price the bot says it showed from its own material: a claim, never NOLON's price. */
   botQuotedPrice: { amount: DecimalString; currency: string } | null;
   quoteRef: string | null;
@@ -741,6 +826,37 @@ export const CS_INSTANT_ACCOUNT_OUTCOMES = [
 ] as const;
 /** What became of a signed bot request's instant account (owner's spec, 2026-11-03). */
 export type CsInstantAccountOutcome = (typeof CS_INSTANT_ACCOUNT_OUTCOMES)[number];
+
+export interface CsRequestItemDto {
+  id: string;
+  lineNo: number;
+  /** Null for an OTHER item, or a by-names kind that matched no category. */
+  category: string | null;
+  botKind: CsName | null;
+  isOther: boolean;
+  description: string | null;
+  quantity: DecimalString | null;
+  pieces: number | null;
+  dimensions: CsDimensionsDto | null;
+  weightKg: DecimalString | null;
+  quoteRef: string | null;
+  approvedTotal: DecimalString | null;
+  /** The booking line it became; null while it made none (CARGO_INCOMPLETE on confirm). */
+  bookingItemId: string | null;
+}
+
+export interface CsBookingLineDto {
+  id: string;
+  lineNo: number;
+  cargoType: string;
+  quantity: number;
+  description: string | null;
+}
+
+/** Staff link an item that made no booking line to the line they added (plan 09 section 4). */
+export interface CsResolveItem {
+  bookingItemId: string;
+}
 
 /** Staff mark a customer's cancel ask as handled (plan 09 section 2). */
 export interface CsCloseCancelRequest {
@@ -800,13 +916,28 @@ export type CsApproveBooking = Omit<
  * POST /cs-booking-requests/:id/approve: the booking to make (the ordinary create checks, in the
  * request's branch) and the request it approves, in one transaction.
  */
+/** One approved line of a request with items: its category, quantity and price fingerprint. */
+export interface CsApproveLine {
+  category: string;
+  quantity: DecimalString;
+  pricingFingerprint: string | null;
+}
+
 export interface CsApproveRequest {
   profileVersion?: number;
   version: number;
   paymentCurrency: CurrencyCode;
-  pricing: CsPriceInputs;
-  /** The fingerprint of the price staff saw; null when they saw no approved price. */
-  pricingFingerprint: string | null;
+  /**
+   * The route, mode, load type and currency priced; `category`/`quantity` for a request in the
+   * one-item shape. A request with items sends `lines` (one per standard item, in order) instead.
+   */
+  pricing: Omit<CsPriceInputs, 'category' | 'quantity'> & {
+    category?: string;
+    quantity?: DecimalString;
+  };
+  lines?: CsApproveLine[];
+  /** The fingerprint of the price staff saw (one-item shape); null when they saw no price. */
+  pricingFingerprint?: string | null;
   booking: CsApproveBooking;
 }
 

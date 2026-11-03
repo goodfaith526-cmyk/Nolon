@@ -53,6 +53,8 @@ const base: CsBookingRequestStaffDto = {
   cancelReason: null,
   cancelRequest: null,
   instantAccount: null,
+  items: [],
+  bookingLines: [],
   actions: { canRoute: true, canReject: true, canApprove: false, canCloseCancelRequest: false },
 };
 

@@ -361,7 +361,11 @@ describe('Customer Service booking request approval (R3c2)', () => {
       attention: null,
       shipment: { stage: { code: 'CONFIRMED' } },
     });
-    expect(JSON.stringify(confirmed)).not.toMatch(/price|cost|internalNote/i);
+    // The stage and shipment carry no price or cost; the approved total is its own field
+    // (plan 09 amendment 4), the price the customer was approved at.
+    const { approvedPrice, ...rest } = confirmed;
+    expect(approvedPrice).toEqual({ amount: '80', currency: 'USD' });
+    expect(JSON.stringify(rest)).not.toMatch(/price|cost|internalNote/i);
 
     const shipment = await t.prisma.shipment.findUniqueOrThrow({
       where: { bookingId: first.bookingId },
