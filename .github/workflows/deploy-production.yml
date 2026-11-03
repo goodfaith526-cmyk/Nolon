@@ -1,11 +1,18 @@
 name: Deploy production
 
-# Deploys one commit of main to production, by hand only (Actions > Deploy production > Run
-# workflow). It builds nothing: it runs the exact images that commit already ran on staging, so a
-# commit reaches production only after CI passed on it and the staging deploy of it succeeded.
-# The deploy job then waits for approval in the `production` environment. Setup and required
-# secrets: DEPLOY-PRODUCTION.md.
+# Deploys a commit of main to production. It builds nothing: it runs the exact images that commit
+# already ran on staging, so a commit reaches production only after CI passed on it and the staging
+# deploy of it succeeded (migrations included). Two ways in:
+# - Automatic: when the repository variable PRODUCTION_AUTO_DEPLOY is `true`, every successful
+#   Deploy staging of main is followed by the same commit here, so both run the same code.
+# - By hand (Actions > Deploy production > Run workflow), e.g. to go back to an earlier commit.
+# If the `production` environment has required reviewers, the deploy job waits for approval.
+# Setup and required secrets: DEPLOY-PRODUCTION.md.
 on:
+  workflow_run:
+    workflows: [Deploy staging]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       commit:
@@ -24,7 +31,12 @@ permissions:
 jobs:
   check:
     name: Check the commit passed CI and staging
-    if: github.ref == 'refs/heads/main'
+    # By hand: from main only. Automatic: only after a successful staging deploy of main, and
+    # only once production is switched to follow staging (PRODUCTION_AUTO_DEPLOY=true).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      vars.PRODUCTION_AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,7 +52,8 @@ jobs:
       - name: Resolve the commit
         id: commit
         env:
-          INPUT_COMMIT: ${{ inputs.commit }}
+          # Automatic runs deploy the commit staging just deployed.
+          INPUT_COMMIT: ${{ github.event.workflow_run.head_sha || inputs.commit }}
         run: |
           if [ -z "$INPUT_COMMIT" ]; then
             sha="$(git rev-parse HEAD)"

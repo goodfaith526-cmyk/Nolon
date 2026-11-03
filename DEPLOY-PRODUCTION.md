@@ -21,17 +21,21 @@ Differences from staging:
   the per-IP sign-in limit on (docs/plans/01-auth-and-permissions.md, S1).
 - **The staff AI assistant is off.** No assistant button, whatever staging's settings are.
 - **Nothing is built for production.** It runs the exact images a commit already ran on staging.
-- **Manual and approved.** Only by hand, and the deploy job waits for a reviewer's approval.
+- **Same code as staging.** With `PRODUCTION_AUTO_DEPLOY=true`, every successful staging deploy of
+  `main` is followed by a production deploy of the same commit. Staging goes first, so a broken
+  build, migration or health check stops there and never reaches production.
 
 ## How a deploy runs
 
-Actions > **Deploy production** > Run workflow (branch `main`). Optionally give a full commit SHA of
-`main`; empty means the latest commit of `main`.
+Automatically after each successful **Deploy staging** of `main`, once the repository variable
+`PRODUCTION_AUTO_DEPLOY` is `true` (set it after the first deploy works; until then nothing runs
+automatically). By hand: Actions > **Deploy production** > Run workflow (branch `main`), optionally
+with a full commit SHA of `main`; empty means the latest commit of `main`.
 
 1. **Check** (no secrets): the commit is on `main`, CI passed on it, **Deploy staging** succeeded
    on it, and its three images exist in GHCR. Any failure stops here.
-2. **Approval**: the deploy job waits in the `production` environment until a required reviewer
-   approves it. Its secrets are released only then.
+2. **Approval** (only if the `production` environment has required reviewers): the deploy job
+   waits until one approves it. Its secrets are released only then.
 3. **Deploy**: writes the server `.env`, copies `deploy/production/` to `~/nolon-production`, and
    runs `deploy.sh` there: pull images, start PostgreSQL, take a backup (`backup.sh pre-migrate`),
    `prisma migrate deploy`, base seed, start api/web/caddy and wait until their health checks pass.
@@ -64,7 +68,8 @@ else. A separate key means production's access can be revoked without touching s
 
 Settings > Environments > New environment > `production`:
 
-- **Required reviewers**: yourself. Every production deploy then waits for your approval.
+- **Required reviewers**: optional. With yourself as reviewer, every production deploy (the
+  automatic ones too) waits for your approval; without, production follows staging on its own.
 - **Deployment branches and tags**: Selected branches > `main`.
 
 ### 3. Secrets and variables of that environment
