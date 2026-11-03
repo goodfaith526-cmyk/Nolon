@@ -967,66 +967,86 @@ export class AutoJournalService {
     line: Extract<BillLineForPosting, { kind: 'COMMISSION' }>,
   ): Promise<LineSpec[]> {
     // F168-1: rule 16 credited the supplier the partner was linked to when each row was posted (or
-    // none), and that link can change since. Each is cleared on the supplier its entry named, so
-    // every supplier's accrued balance returns to what it was; the payable is the bill's supplier.
-    const carriers = await this.statementCarriers(tx, line.rows);
+    // none), and that link can change since. F168-3/F168-4: a supplier's rows can net below zero,
+    // and a row can move the currency and USD opposite ways. So each row is cleared exactly as rule
+    // 16 posted it (commissionLines: a pair in the currency carrying both when they go the same
+    // way; the currency at 0 USD and a USD pair when they go opposite ways; USD alone for a USD
+    // difference), on the supplier its entry named, then added up per supplier, currency and side.
+    // Every supplier's accrued balance returns to zero in each currency and in USD; the payable is
+    // the bill's supplier.
+    const supplierOf = await this.entrySuppliers(
+      tx,
+      line.rows.map((r) => r.entryId),
+    );
     const accrued = await this.accounts.roleAccount(tx, 'ACCRUED_COMMISSIONS');
-    // A supplier's rows can net below zero (F168-3: a credit note after its earlier rows were
-    // settled), in the currency, in USD or in both: each part is cleared on its own side.
-    const lines: LineSpec[] = carriers.flatMap((carrier) => {
-      const common = {
+    const parts = new Map<
+      string,
+      {
+        supplierId: string | null;
+        currency: string;
+        side: 'DEBIT' | 'CREDIT';
+        amount: Decimal;
+        amountUsd: Decimal;
+      }
+    >();
+    const add = (
+      supplierId: string | null,
+      currency: string,
+      amount: Decimal,
+      amountUsd: Decimal,
+    ) => {
+      // A row that credited accrued commissions (its amount above zero) is cleared by a debit.
+      const side = (amount.isZero() ? amountUsd : amount).gt(0) ? 'DEBIT' : 'CREDIT';
+      const key = `${supplierId ?? ''}|${currency}|${side}`;
+      const part = parts.get(key) ?? { supplierId, currency, side, amount: ZERO, amountUsd: ZERO };
+      parts.set(key, {
+        ...part,
+        amount: part.amount.plus(amount.abs()),
+        amountUsd: part.amountUsd.plus(amountUsd.abs()),
+      });
+    };
+    for (const row of line.rows) {
+      const supplierId = supplierOf.get(row.entryId);
+      if (supplierId === undefined) throw new Error(`No entry ${row.entryId}`);
+      const { amount, amountUsd } = row;
+      if (amount.isZero() || bill.currency === BASE_CURRENCY) {
+        add(
+          supplierId,
+          BASE_CURRENCY,
+          amount.isZero() ? amountUsd : amount,
+          amount.isZero() ? amountUsd : amount,
+        );
+      } else if (!amountUsd.isZero() && amount.gt(0) === amountUsd.gt(0)) {
+        add(supplierId, bill.currency, amount, amountUsd);
+      } else {
+        add(supplierId, bill.currency, amount, ZERO);
+        if (!amountUsd.isZero()) add(supplierId, BASE_CURRENCY, amountUsd, amountUsd);
+      }
+    }
+    const lines: LineSpec[] = [...parts.values()]
+      .filter((p) => p.amount.gt(0))
+      .sort((a, b) =>
+        `${a.supplierId ?? '~'}|${a.currency}|${a.side}`.localeCompare(
+          `${b.supplierId ?? '~'}|${b.currency}|${b.side}`,
+        ),
+      )
+      .map((p) => ({
         accountId: accrued,
         branchId: bill.branchId,
-        supplierId: carrier.supplierId,
+        currency: p.currency,
+        fxRate: p.currency === BASE_CURRENCY ? dec(1) : bill.fxRate,
+        side: p.side,
+        amount: p.amount,
+        amountUsd: p.amountUsd,
+        supplierId: p.supplierId,
         description: line.statementNumber,
-      };
-      const side = (v: Decimal) => (v.gt(0) ? ('DEBIT' as const) : ('CREDIT' as const));
-      const { amount, amountUsd } = carrier;
-      if (
-        amount.isZero() === false &&
-        amount.isNeg() === amountUsd.isNeg() &&
-        !amountUsd.isZero()
-      ) {
-        return [
-          {
-            ...common,
-            currency: bill.currency,
-            fxRate: bill.fxRate,
-            side: side(amount),
-            amount: amount.abs(),
-            amountUsd: amountUsd.abs(),
-          },
-        ];
-      }
-      // Signs differ, or one of them is zero (never in USD, where both are the same): the
-      // currency part carries no USD, and the USD a line in USD.
-      const parts: LineSpec[] = [];
-      if (!amount.isZero()) {
-        parts.push({
-          ...common,
-          currency: bill.currency,
-          fxRate: bill.fxRate,
-          side: side(amount),
-          amount: amount.abs(),
-          amountUsd: ZERO,
-        });
-      }
-      if (!amountUsd.isZero()) {
-        parts.push({
-          ...common,
-          currency: BASE_CURRENCY,
-          fxRate: dec(1),
-          side: side(amountUsd),
-          amount: amountUsd.abs(),
-          amountUsd: amountUsd.abs(),
-        });
-      }
-      return parts;
-    });
-    if (
-      !sum(carriers.map((c) => c.amount)).eq(line.amount) ||
-      !sum(carriers.map((c) => c.amountUsd)).eq(line.totalUsd)
-    ) {
+      }));
+    const signed = (l: LineSpec, v: Decimal) => (l.side === 'DEBIT' ? v : v.neg());
+    const native = sum(
+      lines.filter((l) => l.currency === bill.currency).map((l) => signed(l, l.amount)),
+    );
+    const usd = sum(lines.map((l) => signed(l, l.amountUsd ?? ZERO)));
+    if ((bill.currency !== BASE_CURRENCY && !native.eq(line.amount)) || !usd.eq(line.totalUsd)) {
       throw new Error(`Statement ${line.statementNumber}: its rows do not add up to the bill line`);
     }
     const difference = toUsd(line.amount, bill.fxRate, bill.currency).minus(line.totalUsd);
@@ -1053,19 +1073,13 @@ export class AutoJournalService {
     return lines;
   }
 
-  /**
-   * A statement's rows grouped by the supplier their rule 16 entry named (null: none), with what
-   * each group carries. Every line of a rule 16 entry names the same supplier. Groups whose rows
-   * net to nothing in the currency and in USD get no line; the order is stable (by supplier id,
-   * none last).
-   */
-  private async statementCarriers(
+  /** The supplier each entry named (null: none); every line of a rule 16 entry names the same. */
+  private async entrySuppliers(
     tx: Tx,
-    rows: readonly { entryId: string; amount: Decimal; amountUsd: Decimal }[],
-  ): Promise<{ supplierId: string | null; amount: Decimal; amountUsd: Decimal }[]> {
-    const entryIds = [...new Set(rows.map((r) => r.entryId))];
+    entryIds: readonly string[],
+  ): Promise<Map<string, string | null>> {
     const named = await tx.journalLine.findMany({
-      where: { entryId: { in: entryIds } },
+      where: { entryId: { in: [...new Set(entryIds)] } },
       select: { entryId: true, supplierId: true },
       distinct: ['entryId', 'supplierId'],
     });
@@ -1076,32 +1090,7 @@ export class AutoJournalService {
       }
       supplierOf.set(n.entryId, n.supplierId);
     }
-    const groups = new Map<
-      string,
-      { supplierId: string | null; amount: Decimal; amountUsd: Decimal }
-    >();
-    for (const row of rows) {
-      if (!supplierOf.has(row.entryId)) throw new Error(`No entry ${row.entryId}`);
-      const supplierId = supplierOf.get(row.entryId) ?? null;
-      const key = supplierId ?? '';
-      const group = groups.get(key) ?? { supplierId, amount: ZERO, amountUsd: ZERO };
-      groups.set(key, {
-        supplierId,
-        amount: group.amount.plus(row.amount),
-        amountUsd: group.amountUsd.plus(row.amountUsd),
-      });
-    }
-    return [...groups.values()]
-      .filter((g) => !g.amount.isZero() || !g.amountUsd.isZero())
-      .sort((a, b) =>
-        a.supplierId === b.supplierId
-          ? 0
-          : a.supplierId === null
-            ? 1
-            : b.supplierId === null
-              ? -1
-              : a.supplierId.localeCompare(b.supplierId),
-      );
+    return supplierOf;
   }
 
   /** Rule 11a: the lines that clear one trip's accrual, and the cost difference if any. */

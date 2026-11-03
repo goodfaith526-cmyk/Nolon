@@ -111,8 +111,9 @@ async function shipment(salesOutletId: string): Promise<string> {
 /** An approved invoice of 300 freight: a commission of 30 in its currency. */
 async function invoice(
   shipmentId: string,
-  money: { currency: string; fxRate?: string } = { currency: 'USD' },
+  money: { currency: string; fxRate?: string; price?: string } = { currency: 'USD' },
 ): Promise<string> {
+  const { price = '300', ...priced } = money;
   const draft = (
     await r
       .post('/customer-invoices', cookies.financePts, { shipmentId, acknowledgedInvoiceIds: [] })
@@ -120,11 +121,11 @@ async function invoice(
   ).body as CustomerInvoiceDto;
   await r
     .patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
-      ...money,
+      ...priced,
       repriced: true,
       invoiceDate: today(),
       dueDate: today(),
-      lines: [{ chargeTypeCode: freight, quantity: '1', unitPrice: '300' }],
+      lines: [{ chargeTypeCode: freight, quantity: '1', unitPrice: price }],
     })
     .expect(200);
   await r.post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200);
@@ -511,6 +512,75 @@ describe('partner statements and their supplier bill, rule 16a (plan 07, PR-7c)'
     expect(await accrued(a, 'USD')).toEqual(['-7.5', '-7.5']);
     expect(await accrued(b, 'USD')).toEqual(['30', '30']);
   });
+
+  // F168-4: A's rows carry the currency and USD opposite ways (a credit at one rate, an accrual at
+  // another); each supplier is cleared in the currency it carries, per currency and in USD.
+  for (const [name, laterPrice, carriesA] of [
+    ['opposite signs', '300', ['22.5', '-4.5']],
+    ['nothing in the currency', '75', ['0', '-6.75']],
+  ] as const) {
+    it(`clears a supplier whose rows net to ${name} in its own currency (F168-4)`, async () => {
+      const rate = (value: string) =>
+        r
+          .put('/accounting/fx-rates', cookies.financePts, {
+            currency,
+            rateDate: today(),
+            rate: value,
+          })
+          .expect(200);
+      const partner = await outlet();
+      const a = partner.supplierId ?? '';
+      // A: 30 at 1, settled; a quarter credited (-7.5 at 1); then 10% of the later price at 10.
+      const first = await shipment(partner.id);
+      const firstInvoice = await invoice(first, { currency, fxRate: '1' });
+      await rate('1');
+      const settled = (await makeStatement(partner.id, cookies.financePts, currency).expect(201))
+        .body as PartnerStatementDto;
+      const settledBill =
+        ((await bill(settled.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+      await r.post(`/supplier-bills/${settledBill}/approve`, cookies.financePts, {}).expect(200);
+      await credit(firstInvoice, '75');
+      await invoice(await shipment(partner.id), { currency, fxRate: '10', price: laterPrice });
+      const carried = async (supplierId: string) => {
+        const [inCurrency, inUsdLines] = [
+          await accrued(supplierId, currency),
+          await accrued(supplierId, 'USD'),
+        ];
+        return {
+          native: inCurrency[0],
+          usd: dec(inCurrency[1] ?? '0')
+            .plus(inUsdLines[1] ?? '0')
+            .toFixed(),
+          currencyUsd: inCurrency[1],
+          usdLines: inUsdLines,
+        };
+      };
+      const before = await carried(a);
+      expect([before.native, before.usd]).toEqual(carriesA);
+      // B: 30 at 1.
+      const b = (await supplier()).id;
+      await r.patch(`/partners/${partner.id}`, cookies.admin, { supplierId: b }).expect(200);
+      await invoice(await shipment(partner.id), { currency, fxRate: '1' });
+      const statement = (await makeStatement(partner.id, cookies.financePts, currency).expect(201))
+        .body as PartnerStatementDto;
+      const billId =
+        ((await bill(statement.id).expect(200)).body as PartnerStatementDto).billId ?? '';
+      await r.post(`/supplier-bills/${billId}/approve`, cookies.financePts, {}).expect(200);
+      // Each supplier's balance is zero in each currency it carries, and in USD.
+      for (const supplierId of [a, b]) {
+        expect(await accrued(supplierId, currency)).toEqual(['0', '0']);
+        expect(await accrued(supplierId, 'USD')).toEqual(
+          supplierId === a ? before.usdLines : ['0', '0'],
+        );
+      }
+      // Cancelling the bill gives each back what it carried, currency by currency.
+      await r
+        .post(`/supplier-bills/${billId}/cancel`, cookies.financePts, { reason: 'Wrong period' })
+        .expect(200);
+      expect(await carried(a)).toEqual(before);
+      expect(await accrued(b, currency)).toEqual(['30', '30']);
+    });
+  }
 
   it('clears rows posted before the partner had a supplier on no supplier (F168-1)', async () => {
     const partner = await outlet(false);
