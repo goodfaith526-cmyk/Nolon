@@ -397,6 +397,32 @@
   }
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!still) {
+    // Header logo drives in from the far left once per browser session.
+    var brand = document.querySelector('.top .brand');
+    var top = document.querySelector('.top');
+    var drove = false;
+    try {
+      drove = sessionStorage.getItem('nolon-drive') === '1';
+      sessionStorage.setItem('nolon-drive', '1');
+    } catch (err) {}
+    if (brand && top && !drove) {
+      var startDrive = function () {
+        var r = brand.getBoundingClientRect();
+        if (!r.width) return;
+        brand.style.setProperty('--drive-from', -Math.ceil(r.right + 24) + 'px');
+        top.classList.add('driving');
+        brand.classList.add('drive');
+      };
+      brand.addEventListener('animationend', function (e) {
+        if (e.target !== brand) return;
+        brand.classList.remove('drive');
+        top.classList.remove('driving');
+      });
+      var logoImg = brand.querySelector(site.lang === 'en' ? 'img.en' : 'img.ar');
+      if (logoImg && !logoImg.complete)
+        logoImg.addEventListener('load', startDrive, { once: true });
+      else startDrive();
+    }
     var eyes = Array.prototype.slice.call(document.querySelectorAll('.bot .pupil'));
     var px = 0,
       py = 0,
