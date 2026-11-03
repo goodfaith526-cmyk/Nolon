@@ -178,6 +178,7 @@
     "OUTLET_STAFF": "Outlet Staff"
   },
   "Common": {
+    "openStandalone": "Open in its own window",
     "invalidInput": "Check the fields and try again.",
     "invalidFields": "Not saved. Check: {fields}.",
     "invalidBecause": "Not saved: {reason} Check: {fields}.",
@@ -729,8 +730,7 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit",
-    "openStandalone": "Open in its own window"
+    "tabProfit": "Profit"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",

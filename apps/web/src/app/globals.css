@@ -2299,7 +2299,29 @@ tr.subtotal td {
   white-space: normal;
 }
 
-/* A shipment in a window of its own (/standalone/...): links to other pages are switched off
+/* A record in a window of its own: its number, big, heads the window (owner ask 2026-11-03);
+   the kind (shipment / booking) sits small above it. */
+.standalone-root .page-head h1 {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+}
+
+.standalone-root .record-kind {
+  color: var(--muted);
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.standalone-root .record-number {
+  font-size: 2.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+/* A shipment or booking in a window of its own (/standalone/...): links to other pages are switched off
    (standalone-links.ts). A link in text reads as plain text; a link styled as a button (a page
    action, such as a new trip) is not shown at all. */
 .standalone-root a[data-standalone-blocked] {

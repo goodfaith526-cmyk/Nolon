@@ -9,7 +9,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
-import { ShipmentWindowButton } from '../standalone/ShipmentWindowButton';
+import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
@@ -100,7 +100,7 @@ export function Shipments() {
                   <td dir="ltr">
                     <span className="number-cell">
                       <Link href={`/shipments/${s.id}`}>{s.number}</Link>
-                      <ShipmentWindowButton shipmentId={s.id} iconOnly />
+                      <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} iconOnly />
                     </span>
                   </td>
                   <td>{s.customerName}</td>

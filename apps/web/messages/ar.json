@@ -178,6 +178,7 @@
     "OUTLET_STAFF": "موظف منفذ"
   },
   "Common": {
+    "openStandalone": "افتح في نافذة مستقلة",
     "invalidInput": "راجع الحقول وحاول مرة أخرى.",
     "invalidFields": "لم يُحفظ. راجع: {fields}.",
     "invalidBecause": "لم يُحفظ: {reason} راجع: {fields}.",
@@ -729,8 +730,7 @@
     "widthCm": "العرض (سم)",
     "heightCm": "الارتفاع (سم)",
     "lineDescription": "الوصف",
-    "tabProfit": "الربحية",
-    "openStandalone": "افتح في نافذة مستقلة"
+    "tabProfit": "الربحية"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",

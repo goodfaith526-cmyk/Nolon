@@ -2,20 +2,21 @@
 
 import { useLocale, useTranslations } from 'next-intl';
 import { icons } from '../Icons';
-import { openShipmentWindow } from './open-window';
+import { openStandaloneWindow } from './open-window';
+import type { StandaloneRecord } from './standalone-links';
 
 /**
- * A visible "open in its own window" button for one shipment (icon only in tables, icon and text
- * on the shipment page), so the window is one click away wherever a shipment is listed.
+ * A visible "open in its own window" button for one shipment or booking (icon only in tables, icon
+ * and text on a record page), so the window is one click away wherever the record is listed.
  */
-export function ShipmentWindowButton({
-  shipmentId,
+export function StandaloneWindowButton({
+  record,
   iconOnly,
 }: {
-  shipmentId: string;
+  record: StandaloneRecord;
   iconOnly?: boolean;
 }) {
-  const t = useTranslations('Shipments');
+  const t = useTranslations('Common');
   const locale = useLocale();
   const label = t('openStandalone');
   return (
@@ -24,7 +25,7 @@ export function ShipmentWindowButton({
       className={iconOnly ? 'ghost icon-button window-button' : undefined}
       title={label}
       aria-label={iconOnly ? label : undefined}
-      onClick={() => openShipmentWindow(locale, shipmentId)}
+      onClick={() => openStandaloneWindow(locale, record)}
     >
       {icons.window}
       {!iconOnly && <span>{label}</span>}
