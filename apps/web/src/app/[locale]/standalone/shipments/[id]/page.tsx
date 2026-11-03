@@ -9,7 +9,7 @@ export default async function StandaloneShipmentPage({
 }) {
   const { id } = await params;
   return (
-    <StandaloneShell shipmentId={id}>
+    <StandaloneShell record={{ kind: 'shipment', id }}>
       <ShipmentDetail id={id} />
     </StandaloneShell>
   );
