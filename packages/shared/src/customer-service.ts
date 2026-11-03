@@ -494,6 +494,16 @@ export interface CsShipmentTrackDto {
   updatedAt: string;
 }
 
+/**
+ * Plan 09 section 3: shipment statuses that always send the customer to staff (stage null,
+ * attention 'staff'). No mapping may give them a stage (Codex F164-1).
+ */
+export const CUSTOMER_STAGE_STAFF_STATUSES = [
+  'ON_HOLD',
+  'PARTIALLY_DELIVERED',
+  'CANCELLED',
+] as const satisfies readonly ShipmentStatus[];
+
 /** The customer stages and the internal statuses they show for (staff master data). */
 export interface CustomerStageDto {
   code: string;

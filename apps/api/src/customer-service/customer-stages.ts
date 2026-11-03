@@ -1,4 +1,9 @@
-import type { CsBookingRequestState, CsShipmentTrackDto, CsStageDto } from '@nolon/shared';
+import {
+  CUSTOMER_STAGE_STAFF_STATUSES,
+  type CsBookingRequestState,
+  type CsShipmentTrackDto,
+  type CsStageDto,
+} from '@nolon/shared';
 
 /** A customer stage row, as stored. */
 export interface StageRow {
@@ -42,6 +47,8 @@ export interface Track {
 export const BOOKED = 'BOOKED';
 /** Stages where the city is the shipment's destination, not where it was last seen. */
 const DESTINATION_CITY_STAGES = new Set(['ON_ROAD', 'AT_DESTINATION_HUB', 'DELIVERED']);
+/** Always staff, whatever the mapping says (Codex F164-1). */
+const STAFF_STATUSES: ReadonlySet<string> = new Set(CUSTOMER_STAGE_STAFF_STATUSES);
 
 function stageDto(row: StageRow | undefined): CsStageDto | null {
   return row && row.isActive
@@ -79,7 +86,7 @@ export function trackOf(
   if (booking.status === 'DRAFT' || shipment === null) {
     return { ...none, stage: stageDto(stages.get(BOOKED)) };
   }
-  const code = mapping.get(shipment.status);
+  const code = STAFF_STATUSES.has(shipment.status) ? undefined : mapping.get(shipment.status);
   const stage = code === undefined ? null : stageDto(stages.get(code));
   const track: CsShipmentTrackDto = {
     number: shipment.number,

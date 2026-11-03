@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  CUSTOMER_STAGE_STAFF_STATUSES,
   SHIPMENT_STATUSES,
   type CustomerStageDto,
   type CustomerStageInput,
@@ -93,6 +94,11 @@ export class CustomerStagesService {
     status: ShipmentStatus,
     stageCode: string | null,
   ): Promise<CustomerStagesDto> {
+    if (stageCode !== null && (CUSTOMER_STAGE_STAFF_STATUSES as readonly string[]).includes(status))
+      throw new BadRequestException({
+        code: 'STAGE_STAFF_ONLY',
+        message: 'This status always sends the customer to staff',
+      });
     await this.prisma.$transaction(async (tx) => {
       if (stageCode !== null) {
         const found = await tx.$queryRaw<{ code: string }[]>`

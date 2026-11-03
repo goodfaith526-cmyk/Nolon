@@ -114,4 +114,15 @@ describe('trackOf (plan 09 section 3)', () => {
     off.set('AT_SEA', stage('AT_SEA', 0, false));
     expect(trackOf(approved('CONFIRMED', 'DEPARTED'), off, mapping).attention).toBe('staff');
   });
+
+  it('keeps on hold, partly delivered and cancelled with staff even when mapped (F164-1)', () => {
+    for (const status of ['ON_HOLD', 'PARTIALLY_DELIVERED', 'CANCELLED']) {
+      const mapped = new Map([...mapping, [status, 'DELIVERED']]);
+      expect(trackOf(approved('CONFIRMED', status), stages, mapped)).toMatchObject({
+        stage: null,
+        attention: 'staff',
+        shipment: { number: 'BK00001', stage: null, city: null },
+      });
+    }
+  });
 });

@@ -414,6 +414,8 @@ describe('Customer Service booking request approval (R3c2)', () => {
     try {
       expect((await read(first.made)).stage?.code).toBe('AT_ORIGIN_HUB');
       await put('mapping/DEPARTED', { stageCode: 'NO_SUCH' }).expect(404);
+      // F164-1: a held shipment can never be mapped to a success stage.
+      await put('mapping/ON_HOLD', { stageCode: 'DELIVERED' }).expect(400);
       await t
         .http()
         .put('/api/v1/customer-stages/mapping/DEPARTED')

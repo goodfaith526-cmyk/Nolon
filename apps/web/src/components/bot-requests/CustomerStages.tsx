@@ -1,6 +1,10 @@
 'use client';
 
-import type { CustomerStageDto, CustomerStagesDto } from '@nolon/shared';
+import {
+  CUSTOMER_STAGE_STAFF_STATUSES,
+  type CustomerStageDto,
+  type CustomerStagesDto,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
@@ -12,6 +16,8 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
  * as which. Master data: the Administrator edits it here, without code; a status with no stage
  * sends the customer to staff.
  */
+const staffStatuses: ReadonlySet<string> = new Set(CUSTOMER_STAGE_STAFF_STATUSES);
+
 export function CustomerStages({ editable }: { editable: boolean }) {
   const t = useTranslations('BotRequests');
   const tc = useTranslations('Common');
@@ -89,7 +95,13 @@ export function CustomerStages({ editable }: { editable: boolean }) {
       <p className="muted">{t('stagesHint')}</p>
       <Notice notice={notice} />
       {editing !== null && (
-        <form className="stack" autoComplete="off" onSubmit={(e) => void save(e)}>
+        // Keyed by the stage edited (Codex F164-2): switching stages starts a fresh form.
+        <form
+          key={editing === 'new' ? 'new' : editing.code}
+          className="stack"
+          autoComplete="off"
+          onSubmit={(e) => void save(e)}
+        >
           <div className="grid">
             {editing === 'new' && (
               <label className="field">
@@ -196,26 +208,29 @@ export function CustomerStages({ editable }: { editable: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {data.mapping.map((m) => (
-                  <tr key={m.status}>
-                    <td>{te(`shipment_${m.status}`)}</td>
-                    <td>
-                      <select
-                        value={m.stageCode ?? ''}
-                        disabled={!editable || busy}
-                        aria-label={t('customerStage')}
-                        onChange={(e) => void map(m.status, e.target.value)}
-                      >
-                        <option value="">{t('stageToStaff')}</option>
-                        {data.stages.map((s) => (
-                          <option key={s.code} value={s.code}>
-                            {stageName(s)}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
+                {data.mapping.map((m) => {
+                  const staffOnly = staffStatuses.has(m.status);
+                  return (
+                    <tr key={m.status}>
+                      <td>{te(`shipment_${m.status}`)}</td>
+                      <td>
+                        <select
+                          value={m.stageCode ?? ''}
+                          disabled={!editable || busy || staffOnly}
+                          aria-label={t('customerStage')}
+                          onChange={(e) => void map(m.status, e.target.value)}
+                        >
+                          <option value="">{t('stageToStaff')}</option>
+                          {data.stages.map((s) => (
+                            <option key={s.code} value={s.code}>
+                              {stageName(s)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
