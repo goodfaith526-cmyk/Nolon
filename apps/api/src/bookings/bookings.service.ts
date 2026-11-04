@@ -45,6 +45,11 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { draftBranch } from '../drafts/draft-rules.js';
+import {
+  AGREED_TERMS_VERSION,
+  agreedTermsHash,
+  agreedTermsReconciled,
+} from '../billing/agreed-terms.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, LoadType, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -54,7 +59,7 @@ import {
   toPartnerRef,
 } from '../partners/partner-refs.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { QuotationsService } from '../quotations/quotations.service.js';
+import { type AgreedRequestLine, QuotationsService } from '../quotations/quotations.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { BookingConfirmChecksRegistry } from './booking-confirm-checks.registry.js';
 import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
@@ -536,6 +541,8 @@ export class BookingsService {
         },
         select: { id: true },
       });
+      // Plan 12 section 1: what the quotation priced, pinned as the booking is made from it.
+      if (prepared.quotationId) await this.pinAgreedTermsInTx(tx, created.id);
       return created.id;
     } catch (error) {
       if (prepared.quotationId && isUniqueViolation(error)) {
@@ -543,6 +550,108 @@ export class BookingsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Plan 12 section 1: the booking's agreed terms as they are now, inside the caller's
+   * transaction: the hash of its quotation's lines and its own lines (agreedTermsHash), the hash
+   * pinned when the price was agreed, and whether the quotation is still APPROVED. Null for a
+   * booking with no quotation.
+   */
+  async agreedTermsInTx(
+    tx: Tx,
+    bookingId: string,
+  ): Promise<{
+    quotationId: string;
+    approved: boolean;
+    current: string;
+    /** Codex F193-1: the quotation's quantities are those of the booking's goods. */
+    reconciled: boolean;
+    pinned: string | null;
+  } | null> {
+    const booking = await tx.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      include: {
+        items: true,
+        quotation: {
+          include: { lines: { include: { rateCard: { select: { containerTypeCode: true } } } } },
+        },
+      },
+    });
+    const quotation = booking.quotation;
+    if (!quotation) return null;
+    const input = {
+      booking: {
+        originLocationId: booking.originLocationId,
+        destinationLocationId: booking.destinationLocationId,
+        mode: booking.mode,
+        loadType: booking.loadType,
+        cargoType: booking.cargoType,
+        services: booking.services,
+        items: booking.items,
+      },
+      quotation: {
+        id: quotation.id,
+        updatedAt: quotation.updatedAt,
+        currency: quotation.currency,
+        lines: quotation.lines.map((l) => ({
+          ...l,
+          containerTypeCode: l.rateCard?.containerTypeCode ?? null,
+        })),
+      },
+    };
+    return {
+      quotationId: quotation.id,
+      approved: quotation.status === 'APPROVED',
+      current: agreedTermsHash(input),
+      reconciled: agreedTermsReconciled(input),
+      // An older version's hash is never compared with this version's.
+      pinned: booking.agreedTermsVersion === AGREED_TERMS_VERSION ? booking.agreedTermsHash : null,
+    };
+  }
+
+  /**
+   * Plan 12 section 1: pins the booking's agreed terms as they are now, in the transaction that
+   * agrees the price (a booking made from a quotation; a bot request's approval).
+   */
+  async pinAgreedTermsInTx(tx: Tx, bookingId: string): Promise<void> {
+    const terms = await this.agreedTermsInTx(tx, bookingId);
+    if (!terms) throw new Error('Agreed terms are pinned on a booking with a quotation');
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: { agreedTermsHash: terms.current, agreedTermsVersion: AGREED_TERMS_VERSION },
+    });
+  }
+
+  /**
+   * Plan 12 section 1: the prices staff approved for a bot request, made an APPROVED quotation
+   * (source BOT_REQUEST) of the booking just made from it, in the approval's transaction, and the
+   * booking's agreed terms pinned. The booking has no quotation yet.
+   */
+  async agreeFromRequestInTx(
+    tx: Tx,
+    user: AuthUser,
+    bookingId: string,
+    agreed: { requestId: string; currency: string; lines: readonly AgreedRequestLine[] },
+  ): Promise<void> {
+    const booking = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    if (booking.quotationId !== null) throw new Error('The booking already has a quotation');
+    const quotationId = await this.quotations.insertFromRequestInTx(tx, user, {
+      ...agreed,
+      branchId: booking.branchId,
+      customerId: booking.customerId,
+      salesOutletId: booking.salesOutletId,
+      header: {
+        originLocationId: booking.originLocationId,
+        destinationLocationId: booking.destinationLocationId,
+        mode: booking.mode,
+        loadType: booking.loadType,
+        cargoType: booking.cargoType,
+        cargoDescription: booking.cargoDescription,
+      },
+    });
+    await tx.booking.update({ where: { id: bookingId }, data: { quotationId } });
+    await this.pinAgreedTermsInTx(tx, bookingId);
   }
 
   /** Drafts only; the items are replaced as a whole. */
@@ -662,22 +771,23 @@ export class BookingsService {
     await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       await this.confirmInTx(tx, user, id);
-      await this.finalChecksInTx(tx, id);
+      await this.finalChecksInTx(tx, user, id);
     });
     return this.get(user, id);
   }
 
   /**
-   * The checks that end a transaction confirming a booking (plan 06 ب6: the customer's credit
-   * limit, under its advisory lock). Every caller of confirmInTx calls this as its LAST step,
-   * after all its own writes, and writes nothing after it.
+   * The step that ends a transaction confirming a booking: billing's invoice made on confirmation,
+   * then the customer's credit limit under its advisory lock (plan 06 ب6, plan 12 section 2.3).
+   * Every caller of confirmInTx calls this as its LAST step, after all its own writes, and writes
+   * nothing after it. `user` is the person confirming.
    */
-  async finalChecksInTx(tx: Tx, bookingId: string): Promise<void> {
+  async finalChecksInTx(tx: Tx, user: AuthUser, bookingId: string): Promise<void> {
     const booking = await tx.booking.findUniqueOrThrow({
       where: { id: bookingId },
-      select: { customerId: true },
+      select: { id: true, customerId: true },
     });
-    await this.confirmChecks.runFinal(tx, booking);
+    await this.confirmChecks.runFinal(tx, { ...booking, user });
   }
 
   /**

@@ -33,7 +33,7 @@ import type {
   ShippingMode,
   WarehouseReceiptStatus,
 } from '@nolon/shared';
-import { WAREHOUSE_RECEIPT_STATUSES } from '@nolon/shared';
+import { HANDOVER_OVERRIDE_MIN_LENGTH, WAREHOUSE_RECEIPT_STATUSES } from '@nolon/shared';
 import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
@@ -70,6 +70,7 @@ import { oldNumberTerm } from '../common/old-numbers.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { codedRefusal, fieldRefusal, type PageQuery } from '../common/validation.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
+import { AuditService } from '../audit/audit.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { requestHash } from '../drafts/draft-rules.js';
 import type { Prisma, ShipmentItem } from '../generated/prisma/client.js';
@@ -192,6 +193,18 @@ type ShipmentWithSummary = Prisma.ShipmentGetPayload<{ include: typeof summary }
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
 /** Roles that may cancel a shipment after loading (annex B: Branch Manager). */
+/** Plan 12 section 3: statuses set by hand that hand the goods over (gated). */
+const HANDOVER_STATUSES: ReadonlySet<ShipmentStatus> = new Set([
+  'PARTIALLY_DELIVERED',
+  'DELIVERED',
+]);
+
+/** Plan 12 section 3: who handed goods over without the payment gate, and why. */
+export interface HandoverOverride {
+  reason: string;
+  byId: string;
+}
+
 const LATE_CANCEL_ROLES = ['ADMINISTRATOR', 'BRANCH_MANAGER'] as const;
 
 /**
@@ -215,7 +228,67 @@ export class ShipmentsService {
     private readonly commissions: CommissionTriggers,
     private readonly statusListeners: ShipmentStatusListenersRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Plan 12 section 3: a handover's override of the payment gate, checked before anything is
+   * written: null without a reason; with one, handover_payment:approve in the shipment's branch
+   * (403) and at least HANDOVER_OVERRIDE_MIN_LENGTH characters (400). Null with the gate off.
+   */
+  handoverOverride(
+    user: AuthUser,
+    branchId: string,
+    reason: string | null | undefined,
+  ): HandoverOverride | null {
+    if (!this.env.HANDOVER_PAYMENT_GATE_ENABLED) return null;
+    const trimmed = reason?.trim() ?? '';
+    if (reason === null || reason === undefined) return null;
+    if (!user.access.has('handover_payment:approve', branchId)) {
+      throw new ForbiddenException('You may not hand goods over without their payment');
+    }
+    if (trimmed.length < HANDOVER_OVERRIDE_MIN_LENGTH) {
+      throw new BadRequestException(
+        `paymentOverrideReason: at least ${HANDOVER_OVERRIDE_MIN_LENGTH} characters`,
+      );
+    }
+    return { reason: trimmed, byId: user.id };
+  }
+
+  /**
+   * Plan 12 section 3: the LAST step of a handover's transaction (a release from a warehouse at
+   * the shipment's destination, a POD, PARTIALLY_DELIVERED or DELIVERED set by hand), under the
+   * shipment lock the caller holds. Billing's gate on the current state, or the override recorded
+   * in the audit log. Nothing with the gate off.
+   */
+  async handoverGateInTx(
+    tx: Tx,
+    user: AuthUser,
+    shipmentId: string,
+    override: HandoverOverride | null,
+    what: string,
+  ): Promise<void> {
+    if (!this.env.HANDOVER_PAYMENT_GATE_ENABLED) return;
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      select: { id: true, number: true, customerId: true, branchId: true },
+    });
+    if (override) {
+      await this.audit.record(tx, user, {
+        branchId: shipment.branchId,
+        entity: 'SHIPMENT',
+        entityId: shipment.id,
+        reference: shipment.number,
+        action: 'APPROVED',
+        changes: [
+          { field: 'paymentOverride', before: null, after: what },
+          { field: 'paymentOverrideReason', before: null, after: override.reason },
+        ],
+      });
+      return;
+    }
+    await this.invoices.get().requireHandoverInTx(tx, shipment);
+  }
 
   async list(user: AuthUser, filters: ShipmentFilters): Promise<Page<ShipmentSummaryDto>> {
     const route = await this.masterData.matchRoute(filters);
@@ -373,74 +446,24 @@ export class ShipmentsService {
    * For billing: what an invoice for this shipment starts from. 404 unless the user may see the
    * shipment in its own branch (not only as a branch sharing it).
    */
-  async billingSource(
-    user: AuthUser,
-    id: string,
-  ): Promise<{
-    id: string;
-    number: string;
-    branchId: string;
-    customerId: string;
-    status: ShipmentStatus;
-    quotationId: string | null;
-    originLocationId: string;
-    destinationLocationId: string;
-    mode: ShippingMode;
-    loadType: LoadType | null;
-    cargoType: CargoType;
-    services: BookingService[];
-    items: {
-      cargoType: CargoType;
-      containerTypeCode: string | null;
-      quantity: number;
-      weightKg: Prisma.Decimal | null;
-      volumeCbm: Prisma.Decimal | null;
-    }[];
-    /** The price category of each of its booking's cargo lines (null: none). */
-    priceCategoryCodes: (string | null)[];
-    salesOutletId: string | null;
-  }> {
+  async billingSource(user: AuthUser, id: string): Promise<BillingSource> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
-    const shipment = await this.prisma.shipment.findFirst({
-      where: { AND: [{ id }, this.scope(user), branchScope(user)] },
-      select: {
-        id: true,
-        number: true,
-        branchId: true,
-        customerId: true,
-        status: true,
-        salesOutletId: true,
-        originLocationId: true,
-        destinationLocationId: true,
-        mode: true,
-        loadType: true,
-        cargoType: true,
-        services: true,
-        items: {
-          select: {
-            cargoType: true,
-            containerTypeCode: true,
-            quantity: true,
-            weightKg: true,
-            volumeCbm: true,
-          },
-          orderBy: { lineNo: 'asc' },
-        },
-        booking: {
-          select: {
-            quotationId: true,
-            items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
-          },
-        },
-      },
+    const shipment = await readBillingSource(this.prisma, {
+      AND: [{ id }, this.scope(user), branchScope(user)],
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
-    const { booking, ...rest } = shipment;
-    return {
-      ...rest,
-      quotationId: booking.quotationId,
-      priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
-    };
+    return shipment;
+  }
+
+  /**
+   * billingSource read inside the caller's transaction, for the invoice made when its booking is
+   * confirmed (plan 12 section 2): the caller confirmed the booking in the user's branches in this
+   * same transaction, so the shipment is not scoped again.
+   */
+  async billingSourceInTx(tx: Tx, id: string): Promise<BillingSource> {
+    const shipment = await readBillingSource(tx, { id });
+    if (!shipment) throw new Error(`Shipment ${id} not found in its confirming transaction`);
+    return shipment;
   }
 
   /** For other modules (documents): 404 unless the user may see the shipment. */
@@ -927,17 +950,28 @@ export class ShipmentsService {
     id: string,
     input: ShipmentStatusRequest,
   ): Promise<ShipmentDto> {
-    await this.findScoped(user, id);
+    const found = await this.findScoped(user, id);
     const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
     if (occurredAt.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
       throw new BadRequestException('The time of a status change cannot be in the future');
     }
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEvent(
-      user,
-      id,
-      this.statusPlan(user, { ...input, occurredAt, entered: input.occurredAt !== undefined }),
-    );
+    const handover = HANDOVER_STATUSES.has(input.status);
+    const override = handover
+      ? this.handoverOverride(user, found.branchId, input.paymentOverrideReason)
+      : null;
+    await this.prisma.$transaction(async (tx) => {
+      const applied = await this.applyEventInTx(
+        tx,
+        user,
+        id,
+        this.statusPlan(user, { ...input, occurredAt, entered: input.occurredAt !== undefined }),
+      );
+      // Plan 12 section 3: delivered by hand is a handover; the gate is the last step.
+      if (applied && handover) {
+        await this.handoverGateInTx(tx, user, id, override, `status ${input.status}`);
+      }
+    });
     return this.get(user, id);
   }
 
@@ -987,12 +1021,16 @@ export class ShipmentsService {
     input: { status: ShipmentStatus; locationId?: string | null; note?: string | null },
   ): Promise<void> {
     if (input.locationId) await this.masterData.requireLocation(input.locationId);
-    await this.applyEventInTx(
+    const applied = await this.applyEventInTx(
       tx,
       user,
       id,
       this.statusPlan(user, { ...input, occurredAt: new Date() }),
     );
+    // Plan 12 section 3: an approved status draft that delivers is a handover, with no override.
+    if (applied && HANDOVER_STATUSES.has(input.status)) {
+      await this.handoverGateInTx(tx, user, id, null, `status ${input.status}`);
+    }
   }
 
   private statusPlan(
@@ -1792,6 +1830,11 @@ export class ShipmentsService {
         // it would strand them.
         const blocker = await this.links.cancelBlockerInTx(tx, shipment.id);
         if (blocker) throw cancelRefusal(shipment.number, blocker);
+        // Plan 12 section 2: the draft made on confirmation goes with the shipment; a draft a
+        // person made, and any approved invoice, still block it.
+        await this.invoices
+          .get()
+          .cancelAutoDraftsInTx(tx, shipment.id, `Shipment cancelled: ${reason}`);
         await this.requireNoLiveInvoices(tx, shipment);
         await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
       },
@@ -2300,6 +2343,7 @@ function actionsFor(
     canEdit: canUpdate && isActive(s.status),
     canCorrectCargo: user.access.has('shipments:update', s.branchId) && isActive(s.status),
     canShareBranches: canUpdate && isActive(s.status) && canAccessBranch(user, s.branchId),
+    canOverridePayment: user.access.has('handover_payment:approve', s.branchId),
   };
 }
 
@@ -2381,5 +2425,77 @@ function toSummary(s: ShipmentWithSummary): ShipmentSummaryDto {
     status: s.status,
     eta: fromDbDateOrNull(s.eta),
     createdAt: s.createdAt.toISOString(),
+  };
+}
+
+/** What an invoice for a shipment starts from (ShipmentsService.billingSource). */
+export interface BillingSource {
+  id: string;
+  number: string;
+  branchId: string;
+  customerId: string;
+  status: ShipmentStatus;
+  quotationId: string | null;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  cargoType: CargoType;
+  services: BookingService[];
+  items: {
+    cargoType: CargoType;
+    containerTypeCode: string | null;
+    quantity: number;
+    weightKg: Prisma.Decimal | null;
+    volumeCbm: Prisma.Decimal | null;
+  }[];
+  /** The price category of each of its booking's cargo lines (null: none). */
+  priceCategoryCodes: (string | null)[];
+  salesOutletId: string | null;
+}
+
+async function readBillingSource(
+  db: Tx | PrismaService,
+  where: Prisma.ShipmentWhereInput,
+): Promise<BillingSource | null> {
+  const shipment = await db.shipment.findFirst({
+    where,
+    select: {
+      id: true,
+      number: true,
+      branchId: true,
+      customerId: true,
+      status: true,
+      salesOutletId: true,
+      originLocationId: true,
+      destinationLocationId: true,
+      mode: true,
+      loadType: true,
+      cargoType: true,
+      services: true,
+      items: {
+        select: {
+          cargoType: true,
+          containerTypeCode: true,
+          quantity: true,
+          weightKg: true,
+          volumeCbm: true,
+        },
+        orderBy: { lineNo: 'asc' },
+      },
+      booking: {
+        select: {
+          quotationId: true,
+          items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
+        },
+      },
+    },
+  });
+  if (!shipment) return null;
+  const { booking, ...rest } = shipment;
+  return {
+    ...rest,
+    quotationId: booking.quotationId,
+    priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
   };
 }

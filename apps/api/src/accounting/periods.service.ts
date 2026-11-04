@@ -1,6 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import type { FiscalPeriodDto } from '@nolon/shared';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
+import { codedRefusal } from '../common/validation.js';
 import type { FiscalPeriod, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -40,7 +41,13 @@ export class PeriodsService {
     const period = rows[0];
     if (!period) throw new Error(`Period ${year}-${month} missing`);
     if (period.status !== 'OPEN') {
-      throw new ConflictException(`The period ${date.slice(0, 7)} is closed`);
+      // Coded (plan 12 section 2.3): an automatic approval keeps its draft on this refusal.
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'PERIOD_CLOSED',
+        `The period ${date.slice(0, 7)} is closed`,
+        { period: date.slice(0, 7) },
+      );
     }
     return period.id;
   }

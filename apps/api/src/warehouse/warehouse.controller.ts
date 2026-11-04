@@ -121,6 +121,8 @@ export const releaseBody = z
     partyName: optionalText(200),
     note: optionalText(1000),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
+    // Plan 12 section 3: checked by the service (permission, length).
+    paymentOverrideReason: optionalText(1000),
   })
   .strict();
 

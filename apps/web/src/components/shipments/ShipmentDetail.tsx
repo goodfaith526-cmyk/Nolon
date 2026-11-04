@@ -194,6 +194,7 @@ export function ShipmentDetail({ id }: { id: string }) {
         locationId: field(form, 'locationId') || null,
         note: field(form, 'note') || null,
         noChargeReason: field(form, 'noChargeReason').trim() || null,
+        paymentOverrideReason: field(form, 'paymentOverrideReason').trim() || null,
       },
       t('statusChanged'),
     );
@@ -256,6 +257,8 @@ export function ShipmentDetail({ id }: { id: string }) {
   const chosenStatus = nextStatus || actions.transitions[0] || '';
   // Closing (B1-5): goods left in a warehouse block it; no approved invoice needs a reason.
   const closing = chosenStatus === 'CLOSED';
+  // Plan 12 section 3: delivered by hand hands the goods over (the payment gate).
+  const handingOver = chosenStatus === 'DELIVERED' || chosenStatus === 'PARTIALLY_DELIVERED';
   const closeCheck = actions.closeCheck;
   // Plan 07, 6: a shipment with a distributor closes only after its proof of delivery.
   const goodsBlockClose =
@@ -453,6 +456,12 @@ export function ShipmentDetail({ id }: { id: string }) {
             </>
           )}
           {closing && <p className="muted">{t('closeCostsReminder')}</p>}
+          {handingOver && shipment.actions.canOverridePayment && (
+            <label className="field">
+              <span>{t('paymentOverrideReason')}</span>
+              <input name="paymentOverrideReason" maxLength={1000} />
+            </label>
+          )}
           {!withReceipt && suggested && chosenLocation !== suggested && (
             <p className="warning">
               {t('locationNotUsual', {

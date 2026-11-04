@@ -79,6 +79,8 @@ const statusBody = z
     locationId: z.uuid().nullish(),
     note: optionalText(1000),
     noChargeReason: shipmentReason.nullish(),
+    // Plan 12 section 3: checked by the service (permission, length).
+    paymentOverrideReason: optionalText(1000),
   })
   .strict()
   .refine((b) => !b.noChargeReason || b.status === 'CLOSED', {

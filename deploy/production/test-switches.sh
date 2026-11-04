@@ -34,6 +34,13 @@ for stack in staging production; do
   printf '%s\n' '# comment' '' '  ' 'CS_BOOKING_CANCEL_ENABLED=true' \
     "CS_CUSTOMER_IDENTITY_CLIENTS='{\"k\":{\"accounts\":[]}}'" > "$work/switches.env"
   expect "$stack" ok "CS_* settings, comments and blank lines"
+  printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED=true' 'HANDOVER_PAYMENT_GATE_ENABLED=false' \
+    > "$work/switches.env"
+  expect "$stack" ok "the plan 12 billing switches"
+  printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED=yes' > "$work/switches.env"
+  expect "$stack" refused "a billing switch that is not true or false"
+  printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED_X=true' > "$work/switches.env"
+  expect "$stack" refused "another BILLING_ key"
   printf '%s\n' 'CS_A=true' 'API_IMAGE=evil:1' > "$work/switches.env"
   expect "$stack" refused "one forbidden line"
   printf 'CS_A=true\n' > "$work/switches.env"

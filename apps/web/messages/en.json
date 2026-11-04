@@ -618,6 +618,7 @@
     "partiesFromOnlyParty": "Suggested: the customer's only party, as consignee. Change it if needed."
   },
   "Shipments": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "title": "Shipments",
     "publicLookup": "Public tracking page",
     "search": "Shipment, BL, container or customer",
@@ -845,7 +846,19 @@
     "creditDate": "Credit date",
     "fromAdvance": "From advance",
     "pricingNotice_QUOTATION_ROUTE_CHANGED": "The shipment's route or mode changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving.",
-    "pricingNotice_QUOTATION_CATEGORY_CHANGED": "The shipment's price categories changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving."
+    "pricingNotice_QUOTATION_CATEGORY_CHANGED": "The shipment's price categories changed since quotation {number}: its agreed prices no longer apply, and the prices here come from the rate cards. Check them before approving.",
+    "autoApproved": "Approved automatically when the booking was confirmed by {name} ({rule}).",
+    "autoRule_AGREED_PRICE": "the agreed price",
+    "autoRule_RATE_CARD_WITH_RIGHT": "rate card prices, confirmed by a person who may approve invoices",
+    "autoDraft": "Made when the booking was confirmed, and left as a draft: {reason}",
+    "autoNote_PRICE_INCOMPLETE": "some charges could not be priced. Complete the lines, then approve.",
+    "autoNote_AGREED_TERMS_CHANGED": "the booking changed after its price was agreed. Check the prices, then approve.",
+    "autoNote_AGREED_PRICE_MISMATCH": "the agreed quotation does not price the booking's cargo as it was booked. Check the prices, then approve.",
+    "autoNote_NO_APPROVE_RIGHT": "the person who confirmed it may not approve invoices.",
+    "autoNote_PERIOD_CLOSED": "the accounting period of its date is closed.",
+    "autoNote_CREDIT_LIMIT_EXCEEDED": "approving it would take the customer over their credit limit.",
+    "autoNote_CREDIT_LIMIT_NO_RATE": "an exchange rate needed to check the credit limit is missing.",
+    "autoNote_SWITCH_OFF": "automatic approval is turned off."
   },
   "Receipts": {
     "title": "Receipts",
@@ -1054,6 +1067,7 @@
     "closedNotice": "Period closed."
   },
   "Warehouse": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "title": "Warehouses",
     "hint": "Warehouses of your branches and their storage locations. Deactivate a warehouse or location instead of deleting it.",
     "add": "Add warehouse",
@@ -1203,6 +1217,7 @@
     "supplierCostsHint": "Lines of supplier bills for this shipment that are customs charges or from the file's broker. They are the bills' own costs, shown here only: they are not added to the fees above, and nothing is posted from this page. Totals count approved bills; cancelled bills are left out."
   },
   "Transport": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "tripsTitle": "Trips",
     "tripsHint": "Road legs of your branches: own vehicles and hired carriers. A driver sees the trips assigned to them.",
     "tripSearch": "Trip number",
@@ -1498,24 +1513,28 @@
     "kind_CUSTOMS_STALLED": "Stalled customs files",
     "kind_STORAGE_EXCEEDED": "Goods stored too long",
     "kind_TRIP_LATE": "Late trips",
+    "kind_SHIPMENT_NOT_INVOICED": "Shipments not invoiced",
     "rule_SHIPMENT_ARRIVING_SOON": "Still on the way, with the ETA {days, plural, =0 {today} one {within # day} other {within # days}}.",
     "rule_SHIPMENT_PAST_ETA": "Not delivered more than {days, plural, =0 {0 days} one {# day} other {# days}} after the ETA.",
     "rule_INVOICE_OVERDUE": "Not fully paid more than {days, plural, =0 {0 days} one {# day} other {# days}} after the due date.",
     "rule_CUSTOMS_STALLED": "Not cleared and not updated for more than {days, plural, one {# day} other {# days}}.",
     "rule_STORAGE_EXCEEDED": "In the warehouse for more than {days, plural, one {# day} other {# days}}.",
     "rule_TRIP_LATE": "Not arrived {days, plural, =0 {after the planned arrival} one {# day after the planned arrival} other {# days after the planned arrival}}.",
+    "rule_SHIPMENT_NOT_INVOICED": "Confirmed more than {days, plural, =0 {0 days} one {# day} other {# days}} ago with no approved invoice.",
     "detail_SHIPMENT_ARRIVING_SOON": "Customer",
     "detail_SHIPMENT_PAST_ETA": "Customer",
     "detail_INVOICE_OVERDUE": "Customer",
     "detail_CUSTOMS_STALLED": "Customs status",
     "detail_STORAGE_EXCEEDED": "Warehouse",
     "detail_TRIP_LATE": "Driver or carrier",
+    "detail_SHIPMENT_NOT_INVOICED": "Customer",
     "since_SHIPMENT_ARRIVING_SOON": "ETA",
     "since_SHIPMENT_PAST_ETA": "ETA",
     "since_INVOICE_OVERDUE": "Due date",
     "since_CUSTOMS_STALLED": "Last update",
     "since_STORAGE_EXCEEDED": "In since",
-    "since_TRIP_LATE": "Planned arrival"
+    "since_TRIP_LATE": "Planned arrival",
+    "since_SHIPMENT_NOT_INVOICED": "Confirmed"
   },
   "ApiAccess": {
     "title": "API access",
@@ -2876,7 +2895,11 @@
     "BILL_FROM_STATEMENT": "This bill was made from a partner statement. Cancel it and make it again from the statement.",
     "STATEMENT_BILL_MISMATCH": "This bill no longer matches its statement. Cancel it and make it again from the statement.",
     "CREDIT_LIMIT_EXCEEDED": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment first, or have a manager raise the limit.",
-    "CREDIT_LIMIT_NO_RATE": "There is no exchange rate for {currency} to check customer {customer}'s credit limit. Add the rate first."
+    "CREDIT_LIMIT_NO_RATE": "There is no exchange rate for {currency} to check customer {customer}'s credit limit. Add the rate first.",
+    "PERIOD_CLOSED": "The accounting period {period} is closed: choose a date in an open period, or have finance reopen it.",
+    "HANDOVER_NOT_INVOICED": "Shipment {shipment} has no approved invoice. Approve its invoice before the goods are handed over.",
+    "HANDOVER_UNPAID": "Shipment {shipment} still has {balance} {currency} to pay. Record the payment before the goods are handed over.",
+    "HANDOVER_OVER_LIMIT": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment before the goods are handed over."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -3108,7 +3131,8 @@
     "level_C": "*",
     "levelName_C": "Another mix of actions",
     "module_payment_instructions": "Payment instructions",
-    "module_agent_admin": "Bookings agent's admin panel"
+    "module_agent_admin": "Bookings agent's admin panel",
+    "module_handover_payment": "Hand goods over without payment (with a reason)"
   },
   "BotRequests": {
     "title": "Bot booking requests",

@@ -14,6 +14,8 @@ export const ALERT_KINDS = [
   'CUSTOMS_STALLED',
   'STORAGE_EXCEEDED',
   'TRIP_LATE',
+  // Plan 12 section 7: a confirmed shipment with no approved main invoice.
+  'SHIPMENT_NOT_INVOICED',
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
@@ -25,6 +27,7 @@ export const ALERT_PERMISSIONS: Record<AlertKind, Permission> = {
   CUSTOMS_STALLED: 'customs:view',
   STORAGE_EXCEEDED: 'warehouse:view',
   TRIP_LATE: 'transport_trips:view',
+  SHIPMENT_NOT_INVOICED: 'customer_invoices:view',
 };
 
 /** The longest wait an alert can be set to, in days. */

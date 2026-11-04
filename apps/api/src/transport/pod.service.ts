@@ -160,6 +160,8 @@ export class PodService implements OnModuleInit {
         // The cancel's own rule (F133-1): not offered to a branch that only shares the shipment.
         canCancel:
           !user.agent && mayCancelPods(user, shipment.branchId) && shipment.status !== 'CLOSED',
+        canOverridePayment:
+          canRecord && user.access.has('handover_payment:approve', shipment.branchId),
       },
     };
   }
@@ -183,6 +185,12 @@ export class PodService implements OnModuleInit {
       throw new BadRequestException('The delivery time cannot be in the future');
     }
     const tripId = await this.resolveTrip(user, shipmentId, fields.tripId ?? null);
+    // Plan 12 section 3: a POD hands the goods over; an override is checked before anything.
+    const override = this.shipments.handoverOverride(
+      user,
+      shipment.branchId,
+      fields.paymentOverrideReason,
+    );
     const signatureFile = await this.documents.prepare({
       typeCode: SIGNATURE_TYPE,
       fileName: signature.fileName,
@@ -249,6 +257,8 @@ export class PodService implements OnModuleInit {
           statusApplied: applied ? (fields.shipmentStatus ?? null) : null,
           signatureDocumentId: signed.id,
           createdById: user.id,
+          paymentOverrideReason: override?.reason ?? null,
+          paymentOverrideById: override?.byId ?? null,
         },
         select: { id: true },
       });
@@ -263,6 +273,8 @@ export class PodService implements OnModuleInit {
       }
       // Dated on the delivery, which can be recorded after it happened (F153-2).
       await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'POD', deliveredAt);
+      // Plan 12 section 3: the handover gate, the last step (the credit lock is the last lock).
+      await this.shipments.handoverGateInTx(tx, user, shipmentId, override, `POD ${number}`);
       return pod.id;
     });
     const pod = await this.prisma.proofOfDelivery.findFirstOrThrow({

@@ -231,6 +231,12 @@ export interface GoodsReleaseRequest {
   partyName?: string | null;
   note?: string | null;
   occurredAt?: string;
+  /**
+   * Plan 12 section 3: hands the goods over without the invoice or payment the handover gate asks
+   * for. Only with handover_payment:approve in the shipment's branch; at least
+   * HANDOVER_OVERRIDE_MIN_LENGTH characters. Recorded with the handover and in the audit log.
+   */
+  paymentOverrideReason?: string | null;
 }
 
 /**

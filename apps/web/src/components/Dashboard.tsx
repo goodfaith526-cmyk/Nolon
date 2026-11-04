@@ -56,6 +56,7 @@ interface ActionItem {
 /** How pressing each alert is: overdue money and late goods first, arrivals ahead last. */
 const ALERT_TONE: Record<AlertKind, ActionItem['tone']> = {
   INVOICE_OVERDUE: 'bad',
+  SHIPMENT_NOT_INVOICED: 'warn',
   SHIPMENT_PAST_ETA: 'bad',
   TRIP_LATE: 'bad',
   CUSTOMS_STALLED: 'warn',

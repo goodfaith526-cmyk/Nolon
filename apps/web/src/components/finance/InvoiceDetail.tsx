@@ -147,6 +147,19 @@ export function InvoiceDetail({ id }: { id: string }) {
         </div>
       </div>
       <PricingNotice invoice={inv} />
+      {inv.autoApproval && (
+        <p className="muted" role="status">
+          {t('autoApproved', {
+            name: inv.autoApproval.initiatedByName,
+            rule: t(`autoRule_${inv.autoApproval.rule}`),
+          })}
+        </p>
+      )}
+      {inv.status === 'DRAFT' && inv.autoNote && (
+        <p className="warning" role="status">
+          {t('autoDraft', { reason: t(`autoNote_${inv.autoNote}`) })}
+        </p>
+      )}
       <Notice notice={notice} />
       {inv.actions.canApprove && creditBlock && (
         <p className="error" role="status">

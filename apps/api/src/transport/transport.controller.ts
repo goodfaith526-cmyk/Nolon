@@ -200,6 +200,8 @@ const podBody = z
       .union([z.enum(POD_STATUSES), z.literal('')])
       .optional()
       .transform((v) => v || null),
+    // Plan 12 section 3: checked by the service (permission, length).
+    paymentOverrideReason: optionalText(1000),
   })
   .strict();
 

@@ -212,6 +212,11 @@ export interface ShipmentActionsDto {
   canCorrectCargo: boolean;
   /** Only users of the shipment's own branch choose the branches sharing it. */
   canShareBranches: boolean;
+  /**
+   * Plan 12 section 3: handover_payment:approve in the shipment's branch. The release, POD and
+   * delivered forms then offer a reason to hand the goods over without the invoice or payment.
+   */
+  canOverridePayment: boolean;
 }
 
 /**
@@ -326,6 +331,9 @@ export interface ShipmentUpdateRequest {
 /** At most this many other branches share one shipment. */
 export const MAX_SHARED_BRANCHES = 5;
 
+/** Plan 12 section 3: the shortest reason that overrides the handover gate. */
+export const HANDOVER_OVERRIDE_MIN_LENGTH = 10;
+
 export interface ShipmentStatusRequest {
   status: ShipmentStatus;
   /** Defaults to now; may be earlier when recorded after the fact, never in the future. */
@@ -338,6 +346,12 @@ export interface ShipmentStatusRequest {
    * on any other status, and when an approved invoice bills the shipment (B1-5).
    */
   noChargeReason?: string | null;
+  /**
+   * Plan 12 section 3: hands the goods over without the invoice or payment the handover gate asks
+   * for. Only with handover_payment:approve in the shipment's branch; at least
+   * HANDOVER_OVERRIDE_MIN_LENGTH characters. Recorded with the handover and in the audit log.
+   */
+  paymentOverrideReason?: string | null;
 }
 
 export interface ShipmentHoldRequest {

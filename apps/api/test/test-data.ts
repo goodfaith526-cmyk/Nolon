@@ -65,6 +65,11 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.customsFee.deleteMany({ where: { shipment: createdBy } });
   await prisma.customsClearance.deleteMany({ where: { shipment: createdBy } });
   await prisma.document.deleteMany({ where: { shipment: createdBy } });
+  // Plan 12 section 2: confirming makes the shipment's invoice as a draft, which restricts
+  // deleting the shipment; a draft posts nothing. Approved invoices are never deleted.
+  await prisma.customerInvoice.deleteMany({
+    where: { status: { not: 'APPROVED' }, shipment: createdBy, draft: null },
+  });
   await prisma.shipment.deleteMany({ where: createdBy });
   // Entry drafts are created by the assistant's agent-it- users, for it- customers. A booking
   // for a new customer goes before the customer draft it names and the booking it created.

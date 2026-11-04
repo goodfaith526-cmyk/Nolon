@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module.js';
 import { BookingLifecycleModule } from '../bookings/booking-lifecycle.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { DraftsModule } from '../drafts/drafts.module.js';
@@ -20,6 +21,7 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
 
 @Module({
   imports: [
+    AuditModule,
     CustomersModule,
     MasterDataModule,
     BookingLifecycleModule,

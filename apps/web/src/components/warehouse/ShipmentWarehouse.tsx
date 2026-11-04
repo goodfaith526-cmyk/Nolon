@@ -206,6 +206,7 @@ export function ShipmentWarehouse({
       partyName: field(f, 'partyName').trim() || null,
       note: field(f, 'note').trim() || null,
       occurredAt: toIso(field(f, 'occurredAt')),
+      paymentOverrideReason: field(f, 'paymentOverrideReason').trim() || null,
     };
     void submit('releases', body, (m) => t('releasedNotice', { number: m.number }));
   }
@@ -487,6 +488,12 @@ export function ShipmentWarehouse({
                 <span>{t('collectedBy')}</span>
                 <input name="partyName" maxLength={200} />
               </label>
+              {shipment.actions.canOverridePayment && (
+                <label className="field">
+                  <span>{t('paymentOverrideReason')}</span>
+                  <input name="paymentOverrideReason" maxLength={1000} />
+                </label>
+              )}
               <label className="field">
                 <span>{t('occurredAt')}</span>
                 <input name="occurredAt" type="datetime-local" />

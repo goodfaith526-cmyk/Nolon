@@ -383,6 +383,8 @@ export interface ShipmentPodsDto {
      * closed). The API still checks each cancel.
      */
     canCancel: boolean;
+    /** Plan 12 section 3: may give a reason to hand the goods over without payment. */
+    canOverridePayment: boolean;
   };
 }
 
@@ -398,6 +400,12 @@ export interface PodFields {
   note?: string | null;
   tripId?: string | null;
   shipmentStatus?: PodStatus | null;
+  /**
+   * Plan 12 section 3: hands the goods over without the invoice or payment the handover gate asks
+   * for. Only with handover_payment:approve in the shipment's branch; at least
+   * HANDOVER_OVERRIDE_MIN_LENGTH characters. Recorded with the handover and in the audit log.
+   */
+  paymentOverrideReason?: string | null;
 }
 
 export const MAX_POD_PHOTOS = 5;

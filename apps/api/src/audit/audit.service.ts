@@ -39,6 +39,8 @@ export type AuditedEntity =
       | 'CS_BOOKING_REQUEST'
       | 'WAREHOUSE'
       | 'BRANCH'
+      // Plan 12 section 3: goods handed over without the payment gate.
+      | 'SHIPMENT'
     >
   | AuditedMasterData
   | AuditedAccess;
