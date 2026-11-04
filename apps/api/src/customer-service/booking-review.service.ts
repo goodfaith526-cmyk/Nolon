@@ -757,6 +757,8 @@ export class BookingReviewService {
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       await this.currencies.requireActiveInTx(tx, input.paymentCurrency);
       const totals: (Prisma.Decimal | null)[] = [];
+      // Plan 12 section 1: each line's engine price, for the quotation that pins it.
+      const prices: (CsApprovalPriceDto | null)[] = [];
       if (estimated) {
         // Codex F165-2: the version accepted is the current one, still valid, under the lock.
         if (!estimateAccepted(row) || row.estimateCurrency === null) throw estimateRequired();
@@ -780,9 +782,11 @@ export class BookingReviewService {
           const now = await this.quotes.priceFor(line.inputs, row.branchId);
           await requireSamePrice(tx, now, line.fingerprint);
           totals.push(now.dto.total === null ? null : dec(now.dto.total));
+          prices.push(now.dto);
         }
       }
       const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      let lineOf = new Map<string, string | null>();
       if (lines.some((l) => l.item !== null)) {
         // The booking's lines in order, as made from `made`: each item linked to its line.
         const bookingLines = await tx.bookingItem.findMany({
@@ -790,7 +794,7 @@ export class BookingReviewService {
           orderBy: { lineNo: 'asc' },
           select: { id: true },
         });
-        const lineOf = new Map(made.map((m, index) => [m.itemId, bookingLines[index]?.id ?? null]));
+        lineOf = new Map(made.map((m, index) => [m.itemId, bookingLines[index]?.id ?? null]));
         for (const [index, line] of lines.entries()) {
           if (!line.item) continue;
           await tx.csBookingRequestItem.update({
@@ -820,6 +824,50 @@ export class BookingReviewService {
             },
           },
         });
+      // Plan 12 section 1: the prices approved, as an APPROVED quotation pinned on the booking.
+      // Only when every line is priced: a request priced in part has no agreed price.
+      const agreedLines = estimated
+        ? row.estimateAmount !== null && row.estimateCurrency !== null
+          ? [
+              {
+                rateCardId: null,
+                unit: 'PER_SHIPMENT' as const,
+                quantity: dec(1),
+                unitPrice: row.estimateAmount,
+                minimumCharge: dec(0),
+                lineTotal: row.estimateAmount,
+                priceCategoryCode: null,
+                bookingItemId: null,
+                coversAllItems: true,
+              },
+            ]
+          : null
+        : lines.every(
+              (_, index) =>
+                (totals[index] ?? null) !== null && (prices[index]?.rateCardId ?? null) !== null,
+            )
+          ? lines.map((line, index) => {
+              const price = prices[index]!;
+              return {
+                rateCardId: price.rateCardId,
+                unit: price.unit ?? ('PER_PIECE' as const),
+                quantity: dec(line.inputs!.quantity),
+                unitPrice: dec(price.unitPrice ?? '0'),
+                minimumCharge: dec(price.minimumCharge ?? '0'),
+                lineTotal: totals[index]!,
+                priceCategoryCode: cargos[index]!.category,
+                bookingItemId: line.item ? (lineOf.get(line.item.id) ?? null) : null,
+                coversAllItems: false,
+              };
+            })
+          : null;
+      if (agreedLines !== null) {
+        await this.bookings.agreeFromRequestInTx(tx, user, bookingId, {
+          requestId: row.id,
+          currency: estimated ? row.estimateCurrency! : input.pricing.currency,
+          lines: agreedLines,
+        });
+      }
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
       const receiver = this.env.CS_RECEIVER_CUSTOMER_ENABLED
         ? await this.receiverAccountInTx(

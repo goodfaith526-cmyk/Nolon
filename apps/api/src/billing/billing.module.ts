@@ -15,6 +15,7 @@ import {
   InvoicesController,
   ReceiptsController,
 } from './billing.controller.js';
+import { AutoInvoiceService } from './auto-invoice.service.js';
 import { CreditLimitService } from './credit-limit.service.js';
 import { CreditNotesService } from './credit-notes.service.js';
 import { CustomerStatementService } from './customer-statement.service.js';
@@ -50,6 +51,7 @@ import { ReceiptsService } from './receipts.service.js';
   ],
   providers: [
     InvoicesService,
+    AutoInvoiceService,
     ReceiptsService,
     ReceiptApplicationsService,
     CreditNotesService,

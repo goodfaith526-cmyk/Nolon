@@ -19,6 +19,11 @@ export interface LiveShipmentInvoices {
 export interface ShipmentInvoicesHandler {
   /** In the caller's transaction, which holds the shipment's row lock exclusively. */
   liveInvoicesInTx(tx: Tx, shipmentId: string): Promise<LiveShipmentInvoices>;
+  /**
+   * Plan 12 section 2: cancels the drafts made when the shipment's booking was confirmed (they
+   * post nothing), as the shipment is cancelled, in the caller's transaction.
+   */
+  cancelAutoDraftsInTx(tx: Tx, shipmentId: string, reason: string): Promise<void>;
 }
 
 @Injectable()

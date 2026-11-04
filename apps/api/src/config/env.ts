@@ -123,6 +123,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 12 section 2.1: an invoice made when its booking is confirmed is approved by the system
+   * rule (an agreed price whose terms still match, or a rate card price confirmed by a person who
+   * may approve invoices). Off: the invoice is always made as a draft for finance.
+   */
+  BILLING_AUTO_APPROVE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * The owner's instant account (2026-11-03): a signed bot request for a known branch makes or
    * reuses the profile's branch account when it is saved. Off: the account waits for approval, as
    * before.

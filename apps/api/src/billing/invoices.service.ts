@@ -19,6 +19,7 @@ import type {
   PriceSource,
   RateUnit,
   CustomerInvoiceSummaryDto,
+  InvoiceAutoNote,
   InvoiceKind,
   InvoiceStatus,
   OpeningCustomerItemRequest,
@@ -28,6 +29,7 @@ import type {
   ShipmentInvoiceRefDto,
   UpdateCustomerInvoiceRequest,
 } from '@nolon/shared';
+import { INVOICE_AUTO_NOTES } from '@nolon/shared';
 import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
@@ -165,6 +167,12 @@ export interface InvoiceDerivation {
 }
 
 type BillingSource = Awaited<ReturnType<ShipmentsService['billingSource']>>;
+
+/** Plan 12 section 2.2: what kept an invoice made on confirmation a draft. */
+export type AutoInvoiceNote = InvoiceAutoNote;
+
+const isAutoNote = (note: string | null): note is InvoiceAutoNote =>
+  note !== null && (INVOICE_AUTO_NOTES as readonly string[]).includes(note);
 type QuotedPrices = Awaited<ReturnType<QuotationsService['invoiceSource']>>;
 
 const details = {
@@ -172,6 +180,7 @@ const details = {
   customer: { select: { name: true } },
   shipment: { select: { number: true } },
   journalEntry: { select: { number: true } },
+  autoInitiatedBy: { select: { fullName: true } },
   allocations: {
     include: {
       receipt: { select: { id: true, number: true, receiptDate: true, status: true } },
@@ -215,6 +224,19 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
 
   onModuleInit(): void {
     this.shipmentInvoices.register(this);
+  }
+
+  /**
+   * Plan 12 section 2: the drafts made when the shipment's booking was confirmed that no one has
+   * touched since (they carry autoNote: an edit or approval clears it) are cancelled, with
+   * `reason`, under the shipment's lock: as the shipment is cancelled, or as a person makes its
+   * MAIN invoice by hand or approves an invoice draft for it. They post nothing.
+   */
+  async cancelAutoDraftsInTx(tx: Tx, shipmentId: string, reason: string): Promise<void> {
+    await tx.customerInvoice.updateMany({
+      where: { shipmentId, status: 'DRAFT', autoNote: { not: null } },
+      data: { status: 'CANCELLED', cancelReason: reason, cancelledAt: new Date() },
+    });
   }
 
   /** For a shipment's cancellation, under its exclusive row lock: the invoices that still bill it. */
@@ -582,6 +604,13 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     const created = await this.prisma.$transaction(async (tx) => {
       await this.lockShipmentInvoices(tx, derived.shipmentId);
+      if (kind === 'MAIN') {
+        await this.cancelAutoDraftsInTx(
+          tx,
+          derived.shipmentId,
+          'Replaced by an invoice made by hand',
+        );
+      }
       await this.requireInvoiceRules(tx, derived.shipmentId, {
         kind,
         creating: true,
@@ -639,8 +668,38 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       throw new ConflictException('A cancelled shipment is not invoiced');
     }
     const customer = await this.customers.requireCustomer(user, shipment.customerId);
-    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: shipment.branchId } });
-    const { quotation, drift } = await this.agreedPrices(shipment);
+    return this.deriveFrom(this.prisma, shipment, customer, asked);
+  }
+
+  /**
+   * deriveForShipment inside the caller's transaction, for the invoice made when the shipment's
+   * booking is confirmed in it (plan 12 section 2.2): the same rules, read where the shipment and
+   * (for a bot request) its quotation were just written. With `agreedTermsMatch` (the booking
+   * still hashes as when its price was agreed, section 1), the quotation prices it whole: its
+   * fingerprint already covers every line, so quotationDrift's coarser check is not asked.
+   */
+  async deriveForShipmentInTx(
+    tx: Tx,
+    shipmentId: string,
+    options: { agreedTermsMatch: boolean },
+  ): Promise<InvoiceDerivation> {
+    const shipment = await this.shipments.billingSourceInTx(tx, shipmentId);
+    const customer = await tx.customer.findUniqueOrThrow({
+      where: { id: shipment.customerId },
+      select: { preferredCurrency: true, paymentTermsDays: true },
+    });
+    return this.deriveFrom(tx, shipment, customer, {}, options.agreedTermsMatch);
+  }
+
+  private async deriveFrom(
+    db: Tx | PrismaService,
+    shipment: BillingSource,
+    customer: { preferredCurrency: string | null; paymentTermsDays: number },
+    asked: { currency?: string; invoiceDate?: string },
+    agreedTermsMatch = false,
+  ): Promise<InvoiceDerivation> {
+    const branch = await db.branch.findUniqueOrThrow({ where: { id: shipment.branchId } });
+    const { quotation, drift } = await this.agreedPrices(shipment, db, agreedTermsMatch);
     const chosen = invoiceCurrency({
       requested: asked.currency ?? null,
       quotation: quotation?.currency ?? null,
@@ -994,7 +1053,11 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
    * quotation, or when the shipment no longer is what it priced (quotationDrift), with the reason
    * then, so the invoice is priced from the rate cards and says why.
    */
-  private async agreedPrices(shipment: BillingSource): Promise<{
+  private async agreedPrices(
+    shipment: BillingSource,
+    db: Tx | PrismaService = this.prisma,
+    agreedTermsMatch = false,
+  ): Promise<{
     quotation: QuotedPrices;
     drift: {
       code: 'QUOTATION_ROUTE_CHANGED' | 'QUOTATION_CATEGORY_CHANGED';
@@ -1002,9 +1065,10 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     } | null;
   }> {
     const quotation = shipment.quotationId
-      ? await this.quotations.invoiceSource(shipment.quotationId)
+      ? await this.quotations.invoiceSource(shipment.quotationId, db)
       : null;
     if (quotation === null) return { quotation: null, drift: null };
+    if (agreedTermsMatch) return { quotation, drift: null };
     const drift = quotationDrift(quotation, shipment);
     if (drift === null) return { quotation, drift: null };
     return {
@@ -1107,6 +1171,11 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
    */
   async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedInvoice): Promise<string> {
     await this.lockShipmentInvoices(tx, prepared.shipmentId);
+    await this.cancelAutoDraftsInTx(
+      tx,
+      prepared.shipmentId,
+      'Replaced by an approved invoice draft',
+    );
     await this.requireInvoiceRules(tx, prepared.shipmentId, {
       kind: 'MAIN',
       creating: true,
@@ -1199,6 +1268,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           notes: input.notes ?? null,
           total,
           totalUsd: toUsd(total, fxRate, currency.code),
+          // Plan 12: a draft made on confirmation that a person edits is theirs from now on.
+          autoNote: null,
           lines: {
             create: lines.map((l, index) => ({
               lineNo: index + 1,
@@ -1230,60 +1301,158 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     await this.prisma.$transaction(async (tx) => {
       // The shipment first, then the invoice: the order a shipment's cancellation takes them in.
       await this.lockShipmentInvoices(tx, shipmentId);
-      await lockStatus(tx, id, 'DRAFT');
-      await this.commissions.lockInTx(tx, shipmentId);
-      const invoice = await tx.customerInvoice.findUniqueOrThrow({
-        where: { id },
-        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      const { customerId } = await this.approveInTx(tx, user, id, shipmentId, {
+        approvedById: user.id,
       });
-      if (invoice.lines.length === 0 || !invoice.total.gt(0)) {
-        throw new BadRequestException('An invoice needs at least one line with an amount');
-      }
-      if (invoice.shipmentId !== shipmentId) throw new Error('A draft keeps its shipment');
-      await this.requireInvoiceRules(tx, shipmentId, {
-        kind: invoice.kind,
-        invoiceId: id,
-        creating: false,
-        approving: true,
-        charges: invoice.lines.map((l) => l.chargeTypeCode),
-      });
-      const invoiceDate = fromDbDate(invoice.invoiceDate);
-      const year = invoiceDate.slice(0, 4);
-      const number = formatDocumentNumber(
-        'INV',
-        await nextSequenceValue(tx, 'INVOICE', year),
-        year,
-      );
-      const totalUsd = toUsd(invoice.total, invoice.fxRate, invoice.currency);
-      const { entry, receivableAccountId } = await this.autoJournal.customerInvoiceApproved(
-        tx,
-        { ...invoice, shipmentId, number, totalUsd },
-        user.id,
-      );
-      await tx.customerInvoice.update({
-        where: { id },
-        data: {
-          status: 'APPROVED',
-          number,
-          totalUsd,
-          journalEntryId: entry.id,
-          receivableAccountId,
-          approvedAt: new Date(),
-          approvedById: user.id,
-        },
-      });
-      // The INVOICED event, and a percentage's base (plan 07, 4.2), on the invoice's date.
-      await this.commissions.shipmentChangedInTx(
-        tx,
-        user,
-        shipmentId,
-        'INVOICE_APPROVED',
-        invoiceDate,
-      );
       // Plan 06 ب6: the last step, with this invoice approved: over the limit refuses it all.
-      await this.credit.requireWithinLimitInTx(tx, invoice.customerId);
+      await this.credit.requireWithinLimitInTx(tx, customerId);
     });
     return this.get(user, existing.id);
+  }
+
+  /**
+   * Plan 12 section 2.2: the shipment's MAIN invoice made as a DRAFT inside the transaction that
+   * confirms its booking, under the shipment's lock and ب3's rules, with the lines the
+   * derivation fills (deriveForShipmentInTx); posts nothing. Null, with why, when no line can be
+   * priced or the currency has no rate on the invoice date. `user` is the person confirming.
+   */
+  async insertDerivedDraftInTx(
+    tx: Tx,
+    user: AuthUser,
+    derived: InvoiceDerivation,
+  ): Promise<{ id: string; total: Decimal } | { none: 'NO_PRICED_LINE' | 'NO_FX_RATE' }> {
+    const lines = derived.lines.flatMap((l) =>
+      l.use === 'FILL' && l.quantity !== null && l.unitPrice !== null
+        ? [{ ...l, quantity: l.quantity, unitPrice: l.unitPrice }]
+        : [],
+    );
+    if (lines.length === 0) return { none: 'NO_PRICED_LINE' };
+    const { lineTotals, total } = computeInvoiceAmounts(lines, derived.currency.decimalPlaces);
+    if (!total.gt(0)) return { none: 'NO_PRICED_LINE' };
+    let fxRate: Decimal;
+    try {
+      fxRate = await this.fxRates.resolve(derived.currency.code, derived.invoiceDate);
+    } catch (error) {
+      if (error instanceof BadRequestException) return { none: 'NO_FX_RATE' };
+      throw error;
+    }
+    await this.lockShipmentInvoices(tx, derived.shipmentId);
+    await this.requireInvoiceRules(tx, derived.shipmentId, {
+      kind: 'MAIN',
+      creating: true,
+      charges: lines.map((l) => l.chargeTypeCode),
+    });
+    const created = await tx.customerInvoice.create({
+      data: {
+        kind: 'MAIN',
+        branchId: derived.branchId,
+        customerId: derived.customerId,
+        shipmentId: derived.shipmentId,
+        currency: derived.currency.code,
+        fxRate,
+        invoiceDate: toDbDate(derived.invoiceDate),
+        dueDate: toDbDate(derived.dueDate),
+        total,
+        totalUsd: toUsd(total, fxRate, derived.currency.code),
+        createdById: user.id,
+        lines: {
+          create: lines.map((l, index) => ({
+            lineNo: index + 1,
+            chargeTypeCode: l.chargeTypeCode,
+            description: l.description,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            lineTotal: lineTotals[index] ?? dec(0),
+          })),
+        },
+      },
+      select: { id: true, total: true },
+    });
+    return created;
+  }
+
+  /**
+   * Numbers a draft invoice and posts its entry (annex C rules 1-2), with the commissions it
+   * triggers, inside the caller's transaction, which holds the shipment's lock (the shipment
+   * first, then the invoice). The invoice date must fall in an open period (409 PERIOD_CLOSED).
+   * `actor` is the person approving, or for an automatic approval the person confirming
+   * (plan 12 section 2.1): `approval` says which. The caller ends with the credit check.
+   */
+  async approveInTx(
+    tx: Tx,
+    actor: AuthUser,
+    id: string,
+    shipmentId: string,
+    approval:
+      | { approvedById: string }
+      | {
+          approvedById: string | null;
+          approvalSource: 'AUTO_ON_CONFIRM';
+          autoRule: 'AGREED_PRICE' | 'RATE_CARD_WITH_RIGHT';
+          autoTermsHash: string | null;
+        },
+  ): Promise<{ customerId: string }> {
+    await lockStatus(tx, id, 'DRAFT');
+    await this.commissions.lockInTx(tx, shipmentId);
+    const invoice = await tx.customerInvoice.findUniqueOrThrow({
+      where: { id },
+      include: { lines: { orderBy: { lineNo: 'asc' } } },
+    });
+    if (invoice.lines.length === 0 || !invoice.total.gt(0)) {
+      throw new BadRequestException('An invoice needs at least one line with an amount');
+    }
+    if (invoice.shipmentId !== shipmentId) throw new Error('A draft keeps its shipment');
+    await this.requireInvoiceRules(tx, shipmentId, {
+      kind: invoice.kind,
+      invoiceId: id,
+      creating: false,
+      approving: true,
+      charges: invoice.lines.map((l) => l.chargeTypeCode),
+    });
+    const invoiceDate = fromDbDate(invoice.invoiceDate);
+    const year = invoiceDate.slice(0, 4);
+    const number = formatDocumentNumber('INV', await nextSequenceValue(tx, 'INVOICE', year), year);
+    const totalUsd = toUsd(invoice.total, invoice.fxRate, invoice.currency);
+    const { entry, receivableAccountId } = await this.autoJournal.customerInvoiceApproved(
+      tx,
+      { ...invoice, shipmentId, number, totalUsd },
+      actor.id,
+    );
+    await tx.customerInvoice.update({
+      where: { id },
+      data: {
+        status: 'APPROVED',
+        number,
+        totalUsd,
+        journalEntryId: entry.id,
+        receivableAccountId,
+        approvedAt: new Date(),
+        approvedById: approval.approvedById,
+        autoNote: null,
+        ...('approvalSource' in approval
+          ? {
+              approvalSource: approval.approvalSource,
+              autoRule: approval.autoRule,
+              autoInitiatedById: actor.id,
+              autoTermsHash: approval.autoTermsHash,
+            }
+          : {}),
+      },
+    });
+    // The INVOICED event, and a percentage's base (plan 07, 4.2), on the invoice's date.
+    await this.commissions.shipmentChangedInTx(
+      tx,
+      actor,
+      shipmentId,
+      'INVOICE_APPROVED',
+      invoiceDate,
+    );
+    return { customerId: invoice.customerId };
+  }
+
+  /** Plan 12 section 2.2: why an invoice made on confirmation stayed a draft. */
+  async noteAutoDraftInTx(tx: Tx, id: string, note: AutoInvoiceNote): Promise<void> {
+    await tx.customerInvoice.update({ where: { id }, data: { autoNote: note } });
   }
 
   /** A draft is cancelled with a reason. An approved invoice needs a credit note instead. */
@@ -1515,6 +1684,11 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
     journalEntryNumber: i.journalEntry?.number ?? null,
     approvedAt: i.approvedAt?.toISOString() ?? null,
     cancelReason: i.cancelReason,
+    autoApproval:
+      i.approvalSource === 'AUTO_ON_CONFIRM' && i.autoRule !== null
+        ? { rule: i.autoRule, initiatedByName: i.autoInitiatedBy?.fullName ?? '' }
+        : null,
+    autoNote: isAutoNote(i.autoNote) ? i.autoNote : null,
     pricingNotice: null,
     actions: {
       canEdit: isDraft && user.access.has('customer_invoices:update', i.branchId),

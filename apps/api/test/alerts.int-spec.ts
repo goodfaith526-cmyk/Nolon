@@ -301,6 +301,7 @@ describe('internal alerts', () => {
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
+      'SHIPMENT_NOT_INVOICED',
     ]);
     const late = find(ops, 'SHIPMENT_PAST_ETA', ids.late);
     expect(late).toMatchObject({ branchCode: 'DXB', detail: customer.name, since: old });
@@ -450,6 +451,8 @@ describe('internal alerts', () => {
     expect(settings.map((s) => s.kind)).toEqual([
       'SHIPMENT_ARRIVING_SOON',
       ...Object.keys(DEFAULT_WAITS),
+      // Plan 12: a starting wait in code, no row until the Administrator sets one.
+      'SHIPMENT_NOT_INVOICED',
     ]);
     await get('/alerts/settings', cookies.management).expect(403);
     await get('/alerts/settings', cookies.managerDxb).expect(403);

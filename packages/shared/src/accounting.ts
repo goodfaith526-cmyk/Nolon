@@ -345,6 +345,22 @@ export interface InvoicePricingNotice {
   quotationNumber: string;
 }
 
+/** Plan 12 section 2.1: the rule an invoice was approved by on its booking's confirmation. */
+export const INVOICE_AUTO_RULES = ['AGREED_PRICE', 'RATE_CARD_WITH_RIGHT'] as const;
+export type InvoiceAutoRule = (typeof INVOICE_AUTO_RULES)[number];
+
+/** Plan 12 section 2.2: why an invoice made on a booking's confirmation stayed a draft. */
+export const INVOICE_AUTO_NOTES = [
+  'PRICE_INCOMPLETE',
+  'AGREED_TERMS_CHANGED',
+  'NO_APPROVE_RIGHT',
+  'PERIOD_CLOSED',
+  'CREDIT_LIMIT_EXCEEDED',
+  'CREDIT_LIMIT_NO_RATE',
+  'SWITCH_OFF',
+] as const;
+export type InvoiceAutoNote = (typeof INVOICE_AUTO_NOTES)[number];
+
 export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   fxRate: FxRateString;
   /**
@@ -361,6 +377,13 @@ export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
   journalEntryNumber: string | null;
   approvedAt: string | null;
   cancelReason: string | null;
+  /**
+   * Plan 12 section 2.1: approved by the system rule when its booking was confirmed, with the
+   * rule and the person whose confirmation made it; null for an invoice a person approved.
+   */
+  autoApproval: { rule: InvoiceAutoRule; initiatedByName: string } | null;
+  /** Plan 12 section 2.2: why an invoice made on confirmation stayed a draft; else null. */
+  autoNote: InvoiceAutoNote | null;
   /**
    * On a draft of a shipment booked from a quotation the shipment no longer is (its route, mode
    * or price categories changed, plan 5.2): its prices come from the rate cards, not the

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { AuthUser } from '../auth/auth-user.js';
 import type { Prisma } from '../generated/prisma/client.js';
 
 type Tx = Prisma.TransactionClient;
@@ -12,11 +13,15 @@ type Tx = Prisma.TransactionClient;
 export type BookingConfirmCheck = (tx: Tx, bookingId: string) => Promise<void>;
 
 /**
- * A check that must be the LAST step of a transaction that confirms a booking, after every write
- * of that transaction (plan 06 ب6, F147-2: billing's credit limit, under the customer's advisory
- * lock). BookingsService.finalChecksInTx runs them; every caller of confirmInTx calls it last.
+ * The LAST step of a transaction that confirms a booking, after every write of that transaction:
+ * billing's invoice made on confirmation and the customer's credit check under its advisory lock
+ * (plan 06 ب6, F147-2; plan 12 section 2.3). BookingsService.finalChecksInTx runs it; every
+ * caller of confirmInTx calls that last. `user` is the person confirming.
  */
-export type BookingFinalCheck = (tx: Tx, booking: { customerId: string }) => Promise<void>;
+export type BookingFinalCheck = (
+  tx: Tx,
+  booking: { id: string; customerId: string; user: AuthUser },
+) => Promise<void>;
 
 @Injectable()
 export class BookingConfirmChecksRegistry {
@@ -35,7 +40,10 @@ export class BookingConfirmChecksRegistry {
     for (const check of this.checks) await check(tx, bookingId);
   }
 
-  async runFinal(tx: Tx, booking: { customerId: string }): Promise<void> {
+  async runFinal(
+    tx: Tx,
+    booking: { id: string; customerId: string; user: AuthUser },
+  ): Promise<void> {
     for (const check of this.finals) await check(tx, booking);
   }
 }

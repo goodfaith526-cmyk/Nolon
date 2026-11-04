@@ -25,7 +25,10 @@ import { withPermissions } from '../auth/branch-scope.js';
  * Starting waits of alerts added after alert_settings was created: used until the Administrator
  * sets one (then a row holds it). Days before the ETA for SHIPMENT_ARRIVING_SOON.
  */
-const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = { SHIPMENT_ARRIVING_SOON: 3 };
+const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = {
+  SHIPMENT_ARRIVING_SOON: 3,
+  SHIPMENT_NOT_INVOICED: 0,
+};
 
 /** Alerts whose rows point at a shipment by id only: its number comes from the shipments module. */
 const BY_SHIPMENT: readonly AlertKind[] = ['CUSTOMS_STALLED', 'STORAGE_EXCEEDED'];
@@ -142,6 +145,8 @@ export class AlertsService {
         return this.warehouse.heldTooLong(user, days, ALERT_LIST_LIMIT);
       case 'TRIP_LATE':
         return this.trips.late(user, days, ALERT_LIST_LIMIT);
+      case 'SHIPMENT_NOT_INVOICED':
+        return this.billing.uninvoicedShipments(user, days, ALERT_LIST_LIMIT);
     }
   }
 

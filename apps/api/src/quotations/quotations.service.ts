@@ -16,6 +16,8 @@ import type {
   QuotationInput,
   QuotationStatus,
   QuotationSummaryDto,
+  CargoType,
+  LoadType,
   RateUnit,
   ShippingMode,
 } from '@nolon/shared';
@@ -73,6 +75,19 @@ type QuotationWithDetails = Quotation & {
 };
 
 type Tx = Prisma.TransactionClient;
+
+/** A line of the prices approved for a bot request (plan 12 section 1). */
+export interface AgreedRequestLine {
+  rateCardId: string | null;
+  unit: RateUnit;
+  quantity: Prisma.Decimal;
+  unitPrice: Prisma.Decimal;
+  minimumCharge: Prisma.Decimal;
+  lineTotal: Prisma.Decimal;
+  priceCategoryCode: string | null;
+  bookingItemId: string | null;
+  coversAllItems: boolean;
+}
 
 /** Largest amount a Decimal(18, 4) column holds. */
 const MAX_AMOUNT = dec('99999999999999.9999');
@@ -147,7 +162,10 @@ export class QuotationsService {
    * For billing: the agreed currency and lines of the quotation a shipment was booked from. The
    * caller has already checked access to the shipment.
    */
-  async invoiceSource(id: string): Promise<{
+  async invoiceSource(
+    id: string,
+    db: Tx | PrismaService = this.prisma,
+  ): Promise<{
     id: string;
     number: string;
     updatedAt: Date;
@@ -166,7 +184,7 @@ export class QuotationsService {
       unit: RateUnit;
     }[];
   } | null> {
-    const quotation = await this.prisma.quotation.findUnique({
+    const quotation = await db.quotation.findUnique({
       where: { id },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
     });
@@ -375,6 +393,78 @@ export class QuotationsService {
       },
       include: details,
     });
+  }
+
+  /**
+   * Plan 12 section 1: an APPROVED quotation (source BOT_REQUEST) holding the prices staff
+   * approved for a bot request, made inside the approval's transaction for the booking made from
+   * it (BookingsService.agreeFromRequestInTx). A rate card line takes its card's charge type; the
+   * estimate line is FREIGHT. Never edited or sent: only a DRAFT or SENT quotation is.
+   */
+  async insertFromRequestInTx(
+    tx: Tx,
+    user: AuthUser,
+    input: {
+      requestId: string;
+      branchId: string;
+      customerId: string;
+      salesOutletId: string | null;
+      currency: string;
+      header: {
+        originLocationId: string;
+        destinationLocationId: string;
+        mode: ShippingMode;
+        loadType: LoadType | null;
+        cargoType: CargoType;
+        cargoDescription: string | null;
+      };
+      lines: readonly AgreedRequestLine[];
+    },
+  ): Promise<string> {
+    const cards = await tx.rateCard.findMany({
+      where: { id: { in: input.lines.flatMap((l) => (l.rateCardId ? [l.rateCardId] : [])) } },
+      select: { id: true, chargeTypeCode: true },
+    });
+    const chargeOf = new Map(cards.map((c) => [c.id, c.chargeTypeCode]));
+    const total = input.lines.reduce((sum, l) => sum.plus(l.lineTotal), ZERO);
+    const today = await this.branchToday(input.branchId);
+    const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
+    const created = await tx.quotation.create({
+      data: {
+        ...input.header,
+        number,
+        branchId: input.branchId,
+        customerId: input.customerId,
+        salesOutletId: input.salesOutletId,
+        currency: input.currency,
+        subtotal: total,
+        total,
+        validUntil: toDbDate(today),
+        status: 'APPROVED',
+        decidedAt: new Date(),
+        source: 'BOT_REQUEST',
+        csRequestId: input.requestId,
+        createdById: user.id,
+        lines: {
+          create: input.lines.map((l, index) => ({
+            lineNo: index + 1,
+            chargeTypeCode: (l.rateCardId ? chargeOf.get(l.rateCardId) : undefined) ?? 'FREIGHT',
+            rateCardId: l.rateCardId,
+            unit: l.unit,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            minimumCharge: l.minimumCharge,
+            lineTotal: l.lineTotal,
+            priceCategoryCode: l.priceCategoryCode,
+            priceSource: l.rateCardId ? 'RATE_CARD' : 'TYPED',
+            bookingItemId: l.bookingItemId,
+            coversAllItems: l.coversAllItems,
+          })),
+        },
+      },
+      select: { id: true },
+    });
+    return created.id;
   }
 
   /** Drafts only; the lines are replaced as a whole. */

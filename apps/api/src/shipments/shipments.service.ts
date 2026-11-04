@@ -373,74 +373,24 @@ export class ShipmentsService {
    * For billing: what an invoice for this shipment starts from. 404 unless the user may see the
    * shipment in its own branch (not only as a branch sharing it).
    */
-  async billingSource(
-    user: AuthUser,
-    id: string,
-  ): Promise<{
-    id: string;
-    number: string;
-    branchId: string;
-    customerId: string;
-    status: ShipmentStatus;
-    quotationId: string | null;
-    originLocationId: string;
-    destinationLocationId: string;
-    mode: ShippingMode;
-    loadType: LoadType | null;
-    cargoType: CargoType;
-    services: BookingService[];
-    items: {
-      cargoType: CargoType;
-      containerTypeCode: string | null;
-      quantity: number;
-      weightKg: Prisma.Decimal | null;
-      volumeCbm: Prisma.Decimal | null;
-    }[];
-    /** The price category of each of its booking's cargo lines (null: none). */
-    priceCategoryCodes: (string | null)[];
-    salesOutletId: string | null;
-  }> {
+  async billingSource(user: AuthUser, id: string): Promise<BillingSource> {
     // Invoices belong to the owning branch: a sharing branch sees the shipment, not its billing.
-    const shipment = await this.prisma.shipment.findFirst({
-      where: { AND: [{ id }, this.scope(user), branchScope(user)] },
-      select: {
-        id: true,
-        number: true,
-        branchId: true,
-        customerId: true,
-        status: true,
-        salesOutletId: true,
-        originLocationId: true,
-        destinationLocationId: true,
-        mode: true,
-        loadType: true,
-        cargoType: true,
-        services: true,
-        items: {
-          select: {
-            cargoType: true,
-            containerTypeCode: true,
-            quantity: true,
-            weightKg: true,
-            volumeCbm: true,
-          },
-          orderBy: { lineNo: 'asc' },
-        },
-        booking: {
-          select: {
-            quotationId: true,
-            items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
-          },
-        },
-      },
+    const shipment = await readBillingSource(this.prisma, {
+      AND: [{ id }, this.scope(user), branchScope(user)],
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
-    const { booking, ...rest } = shipment;
-    return {
-      ...rest,
-      quotationId: booking.quotationId,
-      priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
-    };
+    return shipment;
+  }
+
+  /**
+   * billingSource read inside the caller's transaction, for the invoice made when its booking is
+   * confirmed (plan 12 section 2): the caller confirmed the booking in the user's branches in this
+   * same transaction, so the shipment is not scoped again.
+   */
+  async billingSourceInTx(tx: Tx, id: string): Promise<BillingSource> {
+    const shipment = await readBillingSource(tx, { id });
+    if (!shipment) throw new Error(`Shipment ${id} not found in its confirming transaction`);
+    return shipment;
   }
 
   /** For other modules (documents): 404 unless the user may see the shipment. */
@@ -1792,6 +1742,11 @@ export class ShipmentsService {
         // it would strand them.
         const blocker = await this.links.cancelBlockerInTx(tx, shipment.id);
         if (blocker) throw cancelRefusal(shipment.number, blocker);
+        // Plan 12 section 2: the draft made on confirmation goes with the shipment; a draft a
+        // person made, and any approved invoice, still block it.
+        await this.invoices
+          .get()
+          .cancelAutoDraftsInTx(tx, shipment.id, `Shipment cancelled: ${reason}`);
         await this.requireNoLiveInvoices(tx, shipment);
         await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
       },
@@ -2381,5 +2336,77 @@ function toSummary(s: ShipmentWithSummary): ShipmentSummaryDto {
     status: s.status,
     eta: fromDbDateOrNull(s.eta),
     createdAt: s.createdAt.toISOString(),
+  };
+}
+
+/** What an invoice for a shipment starts from (ShipmentsService.billingSource). */
+export interface BillingSource {
+  id: string;
+  number: string;
+  branchId: string;
+  customerId: string;
+  status: ShipmentStatus;
+  quotationId: string | null;
+  originLocationId: string;
+  destinationLocationId: string;
+  mode: ShippingMode;
+  loadType: LoadType | null;
+  cargoType: CargoType;
+  services: BookingService[];
+  items: {
+    cargoType: CargoType;
+    containerTypeCode: string | null;
+    quantity: number;
+    weightKg: Prisma.Decimal | null;
+    volumeCbm: Prisma.Decimal | null;
+  }[];
+  /** The price category of each of its booking's cargo lines (null: none). */
+  priceCategoryCodes: (string | null)[];
+  salesOutletId: string | null;
+}
+
+async function readBillingSource(
+  db: Tx | PrismaService,
+  where: Prisma.ShipmentWhereInput,
+): Promise<BillingSource | null> {
+  const shipment = await db.shipment.findFirst({
+    where,
+    select: {
+      id: true,
+      number: true,
+      branchId: true,
+      customerId: true,
+      status: true,
+      salesOutletId: true,
+      originLocationId: true,
+      destinationLocationId: true,
+      mode: true,
+      loadType: true,
+      cargoType: true,
+      services: true,
+      items: {
+        select: {
+          cargoType: true,
+          containerTypeCode: true,
+          quantity: true,
+          weightKg: true,
+          volumeCbm: true,
+        },
+        orderBy: { lineNo: 'asc' },
+      },
+      booking: {
+        select: {
+          quotationId: true,
+          items: { select: { priceCategoryCode: true }, orderBy: { lineNo: 'asc' } },
+        },
+      },
+    },
+  });
+  if (!shipment) return null;
+  const { booking, ...rest } = shipment;
+  return {
+    ...rest,
+    quotationId: booking.quotationId,
+    priceCategoryCodes: booking.items.map((i) => i.priceCategoryCode),
   };
 }

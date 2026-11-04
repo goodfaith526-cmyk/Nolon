@@ -943,6 +943,8 @@ export const FORM_REFUSALS = [
   'PROFILE_VERSION_CONFLICT',
   // Client decision ب6 (plan 06): the customer's credit limit on confirm and invoice approval.
   'CREDIT_LIMIT_EXCEEDED',
+  // Plan 12 section 2.3: an accounting period closed for the document's date.
+  'PERIOD_CLOSED',
   'CREDIT_LIMIT_NO_RATE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];

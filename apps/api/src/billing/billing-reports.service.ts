@@ -67,6 +67,37 @@ export class BillingReportsService {
   }
 
   /**
+   * Plan 12 section 7: shipments of the user's branches confirmed more than `graceDays` days ago
+   * (in their branch's time zone), not cancelled, with no live approved MAIN invoice (approved,
+   * and not credited in full while unpaid: live-invoice.ts). Oldest first.
+   */
+  async uninvoicedShipments(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT s."id" AS "refId", s."number", b."code" AS "branchCode", c."name" AS "detail",
+                 (s."created_at" AT TIME ZONE b."timezone")::date AS "since",
+                 ((now() AT TIME ZONE b."timezone")::date
+                   - (s."created_at" AT TIME ZONE b."timezone")::date)::int AS "days"
+          FROM "shipments" s
+          JOIN "branches" b ON b."id" = s."branch_id"
+          JOIN "customers" c ON c."id" = s."customer_id"
+          WHERE s."branch_id" IN ${uuidList(branchIds)}
+            AND s."status" <> 'CANCELLED'
+            AND NOT EXISTS (
+              SELECT 1 FROM "customer_invoices" i
+              WHERE i."shipment_id" = s."id" AND i."kind" = 'MAIN' AND i."status" = 'APPROVED'
+                AND NOT (i."paid_amount" = 0 AND i."credited_amount" >= i."total"))
+        ) uninvoiced
+        WHERE "days" > ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
+  }
+
+  /**
    * Open approved invoices as of a date: the total less the receipts allocated to it that were
    * dated on or before the date and not cancelled by then (a cancellation counts from its
    * reversing entry's date), less the receipt advances applied to it on or before the date and
@@ -396,8 +427,13 @@ export class BillingReportsService {
              coalesce(i."number", '—') AS "reference", NULL AS "status", NULL AS "detail"
       FROM "customer_invoices" i
       UNION ALL
-      SELECT i."branch_id", i."approved_at", i."approved_by_id", 'INVOICE', 'APPROVED',
-             i."number", NULL, NULL
+      SELECT i."branch_id", i."approved_at",
+             COALESCE(i."approved_by_id", i."auto_initiated_by_id"), 'INVOICE', 'APPROVED',
+             i."number", NULL,
+             -- Plan 12 section 2.1: an automatic approval names its rule and agreed terms.
+             CASE WHEN i."approval_source" = 'AUTO_ON_CONFIRM'
+                  THEN concat_ws(' ', 'AUTO_ON_CONFIRM', i."auto_rule"::text, i."auto_terms_hash")
+             END
       FROM "customer_invoices" i WHERE i."approved_at" IS NOT NULL
       UNION ALL
       SELECT i."branch_id", i."cancelled_at", NULL, 'INVOICE', 'CANCELLED',

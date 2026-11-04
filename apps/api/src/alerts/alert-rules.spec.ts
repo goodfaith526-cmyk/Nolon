@@ -31,6 +31,7 @@ describe('which alerts concern a user', () => {
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
+      'SHIPMENT_NOT_INVOICED',
     ]);
     expect(kindsOf(['WAREHOUSE'])).toEqual([
       'SHIPMENT_ARRIVING_SOON',

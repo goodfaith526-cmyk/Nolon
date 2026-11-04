@@ -7,7 +7,6 @@ import { Prisma } from '../generated/prisma/client.js';
 import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { codedRefusal } from '../common/validation.js';
-import { BookingConfirmChecksRegistry } from '../bookings/booking-confirm-checks.registry.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { type CreditPosition, type CreditSnapshotRow, creditPosition } from './credit-limit.js';
 
@@ -20,7 +19,14 @@ type Db = Prisma.TransactionClient | PrismaService;
  * reversal changes an invoice's paidAmount and the advance together in one transaction, so this
  * statement sees both before or both after it, never a mix. Never split into several queries.
  */
-export function creditSnapshotSql(customerId: string, today: string): Prisma.Sql {
+export function creditSnapshotSql(
+  customerId: string,
+  today: string,
+  ownInvoiceId: string | null = null,
+): Prisma.Sql {
+  // Plan 12 section 2.3: an invoice approved in this transaction is read apart (`own`), so one
+  // statement gives the balance before it and with it.
+  const own = ownInvoiceId ?? '00000000-0000-0000-0000-000000000000';
   return Prisma.sql`
     WITH c AS (
       SELECT cu."name", cu."number", cu."credit_limit"::text AS "limit",
@@ -32,7 +38,13 @@ export function creditSnapshotSql(customerId: string, today: string): Prisma.Sql
       SELECT i."currency", SUM(i."total" - i."paid_amount" - i."credited_amount") AS "amount"
       FROM "customer_invoices" i
       WHERE i."customer_id" = ${customerId}::uuid AND i."status" = 'APPROVED'
+        AND i."id" <> ${own}::uuid
       GROUP BY i."currency"
+    ), own AS (
+      SELECT i."currency", i."total" - i."paid_amount" - i."credited_amount" AS "amount"
+      FROM "customer_invoices" i
+      WHERE i."id" = ${own}::uuid AND i."customer_id" = ${customerId}::uuid
+        AND i."status" = 'APPROVED'
     ), adv AS (
       SELECT r."currency",
              SUM(r."amount"
@@ -48,6 +60,7 @@ export function creditSnapshotSql(customerId: string, today: string): Prisma.Sql
       FROM "fx_rates" f
       WHERE f."rate_date" <= ${today}::date
         AND f."currency" IN (SELECT "currency" FROM inv UNION SELECT "currency" FROM adv
+                             UNION SELECT "currency" FROM own
                              UNION SELECT "limitCurrency" FROM c)
       ORDER BY f."currency", f."rate_date" DESC
     )
@@ -56,6 +69,8 @@ export function creditSnapshotSql(customerId: string, today: string): Prisma.Sql
                 FROM inv), '[]'::json) AS "invoices",
       COALESCE((SELECT json_agg(json_build_object('currency', "currency", 'amount', "amount"::text))
                 FROM adv), '[]'::json) AS "advances",
+      COALESCE((SELECT json_agg(json_build_object('currency', "currency", 'amount', "amount"::text))
+                FROM own), '[]'::json) AS "own",
       COALESCE((SELECT json_agg(json_build_object('currency', "currency", 'rate', "rate"))
                 FROM rates), '[]'::json) AS "rates",
       -- F192-1: the branches whose documents make up the balance (an open approved invoice, an
@@ -81,7 +96,12 @@ type SnapshotResult = CreditSnapshotRow & {
   number: string;
   /** The branches of the documents in the balance (F192-1). */
   branches: readonly string[];
+  /** The invoice read apart (creditSnapshotSql's `ownInvoiceId`), when it is approved. */
+  own: readonly { currency: string; amount: string }[];
 };
+
+/** What an automatic approval's credit statement decided (plan 12 section 2.3). */
+export type AutoApprovalCredit = 'WITHIN' | 'CREDIT_LIMIT_EXCEEDED' | 'CREDIT_LIMIT_NO_RATE';
 
 /**
  * Client decision ب6: a customer with a credit limit gets no booking confirmed and no invoice
@@ -93,13 +113,7 @@ export class CreditLimitService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
-    confirmChecks: BookingConfirmChecksRegistry,
-  ) {
-    // Every booking confirmation ends with the customer's credit check (BookingsService).
-    confirmChecks.registerFinal((tx, booking) =>
-      this.requireWithinLimitInTx(tx, booking.customerId),
-    );
-  }
+  ) {}
 
   /**
    * The customer's position now, for a screen (read without a lock: the server decides on confirm
@@ -182,40 +196,75 @@ export class CreditLimitService {
    * rate it needs is missing (409 CREDIT_LIMIT_NO_RATE). Nothing is locked after it.
    */
   async requireWithinLimitInTx(tx: Prisma.TransactionClient, customerId: string): Promise<void> {
-    await tx.$executeRaw`
-      SELECT pg_advisory_xact_lock(hashtextextended('credit:' || ${customerId}, 0))`;
+    await lockCredit(tx, customerId);
     const row = await this.snapshot(tx, customerId);
     if (!row) return;
-    const position = creditPosition(row);
-    if (position.kind === 'NO_RATE') {
-      throw codedRefusal(
-        HttpStatus.CONFLICT,
-        'CREDIT_LIMIT_NO_RATE',
-        `No exchange rate for ${position.currency} to check customer ${row.name}'s credit limit: add one first`,
-        { currency: position.currency, customer: row.name },
-      );
-    }
-    if (position.kind === 'EXCEEDED') {
-      const params = {
-        customer: row.name,
-        limit: toDecimalString(position.limit),
-        currency: position.currency,
-      };
-      // F192-1: no balance here. It is company-wide, and the person refused may work in one
-      // branch only; the customer page shows it to those who may see it.
-      throw codedRefusal(
-        HttpStatus.CONFLICT,
-        'CREDIT_LIMIT_EXCEEDED',
-        `Customer ${row.name} is over their credit limit of ${params.limit} ${params.currency}: record their payment first, or have a manager raise the limit`,
-        params,
-      );
-    }
+    refuseOver(row, creditPosition(row));
   }
 
-  private async snapshot(db: Db, customerId: string): Promise<SnapshotResult | null> {
+  /**
+   * Plan 12 section 2.3, the last step of a confirmation whose invoice `invoiceId` was approved
+   * automatically inside a savepoint: the customer's advisory lock, then ONE statement read with
+   * the invoice apart. The balance before it is the confirmation's own check (plan 06): over the
+   * limit, or a rate it needs missing, refuses the whole transaction (409, as
+   * requireWithinLimitInTx). With it: over the limit, or only its currency without a rate, gives
+   * that code, and the caller rolls the approval back to its savepoint.
+   */
+  async autoApprovalCheckInTx(
+    tx: Prisma.TransactionClient,
+    customerId: string,
+    invoiceId: string,
+  ): Promise<AutoApprovalCredit> {
+    await lockCredit(tx, customerId);
+    const row = await this.snapshot(tx, customerId, invoiceId);
+    if (!row) return 'WITHIN';
+    refuseOver(row, creditPosition(row));
+    const after = creditPosition({ ...row, invoices: [...row.invoices, ...row.own] });
+    if (after.kind === 'EXCEEDED') return 'CREDIT_LIMIT_EXCEEDED';
+    return after.kind === 'NO_RATE' ? 'CREDIT_LIMIT_NO_RATE' : 'WITHIN';
+  }
+
+  private async snapshot(
+    db: Db,
+    customerId: string,
+    ownInvoiceId: string | null = null,
+  ): Promise<SnapshotResult | null> {
     const rows = await db.$queryRaw<SnapshotResult[]>(
-      creditSnapshotSql(customerId, todayIn('UTC')),
+      creditSnapshotSql(customerId, todayIn('UTC'), ownInvoiceId),
     );
     return rows[0] ?? null;
+  }
+}
+
+/** The customer's credit advisory lock (plan 06 ب6): the last lock of the transaction. */
+async function lockCredit(tx: Prisma.TransactionClient, customerId: string): Promise<void> {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtextextended('credit:' || ${customerId}, 0))`;
+}
+
+/** 409 when the position is over the limit, or a rate it needs is missing. */
+function refuseOver(row: SnapshotResult, position: CreditPosition): void {
+  if (position.kind === 'NO_RATE') {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'CREDIT_LIMIT_NO_RATE',
+      `No exchange rate for ${position.currency} to check customer ${row.name}'s credit limit: add one first`,
+      { currency: position.currency, customer: row.name },
+    );
+  }
+  if (position.kind === 'EXCEEDED') {
+    const params = {
+      customer: row.name,
+      limit: toDecimalString(position.limit),
+      currency: position.currency,
+    };
+    // F192-1: no balance here. It is company-wide, and the person refused may work in one branch
+    // only; the customer page shows it to those who may see it.
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'CREDIT_LIMIT_EXCEEDED',
+      `Customer ${row.name} is over their credit limit of ${params.limit} ${params.currency}: record their payment first, or have a manager raise the limit`,
+      params,
+    );
   }
 }
