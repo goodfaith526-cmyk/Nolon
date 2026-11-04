@@ -2,6 +2,7 @@ import { CustomerIdentityController } from './customer-identity.controller.js';
 import { Reflector } from '@nestjs/core';
 import { CS_SCOPES } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
+import { MarketingController } from '../marketing/marketing.controller.js';
 import { API_SCOPE_KEY, keyScopes, scopeRows } from './api-scopes.js';
 import {
   CatalogController,
@@ -19,6 +20,7 @@ describe('Customer Service API scopes', () => {
     CatalogController,
     QuoteController,
     BookingRequestsController,
+    MarketingController,
   ])('names a scope on every route of the API-key controller %o', (controller) => {
     const reflector = new Reflector();
     const proto = controller.prototype as unknown as Record<string, unknown>;

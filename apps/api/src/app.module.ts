@@ -12,6 +12,7 @@ import { CustomsModule } from './customs/customs.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
 import { AssistantFormReviewsModule } from './assistant-form-reviews/assistant-form-reviews.module.js';
 import { CustomerServiceModule } from './customer-service/customer-service.module.js';
+import { MarketingModule } from './marketing/marketing.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { ExpensesModule } from './expenses/expenses.module.js';
@@ -66,6 +67,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     ReportsModule,
     AlertsModule,
     CustomerServiceModule,
+    MarketingModule,
     AssistantFormReviewsModule,
   ],
 })

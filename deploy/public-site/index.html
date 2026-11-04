@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>نولون | شحن من العالم إلى السودان</title>
-    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="styles.css?v=15" />
     <meta
       name="description"
       content="نولون للخدمات اللوجستية: شحن الكراتين والبراميل والباليتات والحاويات من أي مكان في العالم إلى باب بيتك في السودان، بسعر ثابت وتتبّع في كل مرحلة."
@@ -103,10 +103,29 @@
                 ><span class="ar">رحلة شحنة</span><span class="en">A shipment's journey</span> ·
                 <span class="mono">BK00142</span></span
               >
-              <span class="tag"><span class="ar">مثال</span><span class="en">Example</span></span>
+              <span class="route-tools"
+                ><button
+                  class="route-pause"
+                  id="route-pause"
+                  type="button"
+                  aria-pressed="false"
+                  hidden
+                >
+                  <span class="when-on" aria-hidden="true">❚❚</span
+                  ><span class="when-off" aria-hidden="true">▶</span>
+                  <span class="when-on"
+                    ><span class="ar">إيقاف الحركة</span><span class="en">Pause motion</span></span
+                  ><span class="when-off"
+                    ><span class="ar">تشغيل الحركة</span><span class="en">Play motion</span></span
+                  ></button
+                ><span class="tag"
+                  ><span class="ar">مثال</span><span class="en">Example</span></span
+                ></span
+              >
             </div>
             <svg viewBox="0 0 420 150" role="img" aria-label="Jeddah, Port Sudan, Atbara, Khartoum">
               <path
+                id="route-dxb"
                 d="M30 40 C 120 20, 170 70, 210 78"
                 fill="none"
                 stroke="#a9bdd4"
@@ -115,6 +134,7 @@
                 stroke-dasharray="5 6"
               />
               <path
+                id="route-jed"
                 d="M30 115 C 110 120, 160 95, 210 78"
                 fill="none"
                 stroke="#a9bdd4"
@@ -144,8 +164,8 @@
                 </text>
                 <text x="395" y="124" text-anchor="middle" fill="#a9bdd4">KRT</text>
               </g>
-              <!-- Where the shipment is now. Drawn at the current station; site.js slides it
-                   there along the orange line once, unless the visitor turned motion off. -->
+              <!-- Cargo on the route. Drawn at the current station; site.js runs it over the whole
+                   route and back, with a pause between trips, unless motion is turned off. -->
               <g id="route-marker" transform="translate(330 52)" aria-hidden="true">
                 <!-- One barrel and one parcel riding on the line, same art as the logo trip. -->
                 <g transform="scale(1.35)">
@@ -1214,6 +1234,6 @@
       </div>
     </div>
 
-    <script src="site.js?v=13" defer></script>
+    <script src="site.js?v=15" defer></script>
   </body>
 </html>

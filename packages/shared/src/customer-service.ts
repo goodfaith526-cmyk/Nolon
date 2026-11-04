@@ -42,6 +42,8 @@ export const CS_SCOPES = [
   'cs:booking_requests:create',
   'cs:tracking:lookup',
   'cs:customer_profiles:write',
+  'cs:marketing:read',
+  'cs:marketing:revenue:read',
 ] as const;
 export type CsScope = (typeof CS_SCOPES)[number];
 

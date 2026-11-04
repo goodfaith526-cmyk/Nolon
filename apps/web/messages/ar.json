@@ -1542,6 +1542,8 @@
     "scope_booking_requests_create": "إرسال طلبات حجز",
     "scope_customer_profiles_write": "إنشاء واستكمال هوية العميل (لا تمنح قراءة المعاملات)",
     "scope_tracking_lookup": "التتبّع برقم الشحنة والهاتف",
+    "scope_marketing_read": "ملخص التسويق: أرقام مجمّعة فقط بدون بيانات عملاء",
+    "scope_marketing_revenue_read": "ملخص التسويق: مع الإيراد (يحتاج صلاحية ملخص التسويق)",
     "editScopes": "تغيير الصلاحيات",
     "saveScopes": "حفظ الصلاحيات",
     "cancel": "إلغاء",
