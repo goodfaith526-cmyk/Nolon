@@ -559,17 +559,51 @@ export class BookingRequestsService {
         caller.kind === 'key' && !profile && this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED
           ? await this.requestSenderInTx(tx, apiClientId, owner, data)
           : null;
+      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
+      // reuses the profile's branch account in this transaction, or says why staff will.
+      const account =
+        this.env.CS_INSTANT_CUSTOMER_ENABLED &&
+        profile &&
+        data.status === 'PENDING' &&
+        typeof data.branchId === 'string'
+          ? await this.customers.botAccountInTx(tx, {
+              profile,
+              expectedVersion: binding?.profileVersion,
+              apiClientId,
+            })
+          : null;
+      const senderCustomerId = sender?.create
+        ? await this.customers.phoneCustomerCreateInTx(tx, {
+            name: sender.name,
+            phone: sender.phone,
+            apiClientId,
+          })
+        : (sender?.customerId ?? null);
+      const otherCustomerId = other?.create
+        ? await this.customers.phoneCustomerCreateInTx(tx, {
+            name: other.name,
+            phone: other.phone,
+            apiClientId,
+          })
+        : (other?.customerId ?? null);
       // Owner, 2026-11-04: the request's number is its booking's (BK), from the start. A request
-      // that is rejected or expires leaves its number unused.
+      // that is rejected or expires leaves its number unused. Taken after every customer-key lock
+      // above, the order staff booking for a new customer takes them in (Codex F195-1).
       const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
           otherSenderName: other?.name ?? null,
           otherSenderPhone: other?.phone ?? null,
-          otherSenderCustomerId: other?.customerId ?? null,
+          otherSenderCustomerId: otherCustomerId,
           ...(binding
             ? { profileId: binding.profileId, conversationId: binding.conversationId }
+            : {}),
+          ...(account
+            ? { instantAccount: account.outcome, instantCustomerId: account.customerId }
+            : {}),
+          ...(sender
+            ? { instantAccount: sender.outcome, instantCustomerId: senderCustomerId }
             : {}),
           allowedBranchIds: still,
           reference: number,
@@ -579,50 +613,7 @@ export class BookingRequestsService {
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
         },
       });
-      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
-      // reuses the profile's branch account in this transaction, or says why staff will.
-      let saved = row;
-      if (
-        this.env.CS_INSTANT_CUSTOMER_ENABLED &&
-        profile &&
-        row.status === 'PENDING' &&
-        row.branchId !== null
-      ) {
-        const account = await this.customers.botAccountInTx(tx, {
-          profile,
-          expectedVersion: binding?.profileVersion,
-          apiClientId,
-        });
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { instantAccount: account.outcome, instantCustomerId: account.customerId },
-        });
-      }
-      if (sender) {
-        const customerId = sender.create
-          ? await this.customers.phoneCustomerCreateInTx(tx, {
-              name: sender.name,
-              phone: sender.phone,
-              apiClientId,
-            })
-          : sender.customerId;
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { instantAccount: sender.outcome, instantCustomerId: customerId },
-        });
-      }
-      if (other?.create) {
-        const customerId = await this.customers.phoneCustomerCreateInTx(tx, {
-          name: other.name,
-          phone: other.phone,
-          apiClientId,
-        });
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { otherSenderCustomerId: customerId },
-        });
-      }
-      return { created: true, row: saved };
+      return { created: true, row };
     });
   }
 
