@@ -1514,6 +1514,7 @@
     "kind_STORAGE_EXCEEDED": "Goods stored too long",
     "kind_TRIP_LATE": "Late trips",
     "kind_SHIPMENT_NOT_INVOICED": "Shipments not invoiced",
+    "kind_BOOKING_DRAFT_FROM_REQUEST": "Bot bookings not confirmed",
     "rule_SHIPMENT_ARRIVING_SOON": "Still on the way, with the ETA {days, plural, =0 {today} one {within # day} other {within # days}}.",
     "rule_SHIPMENT_PAST_ETA": "Not delivered more than {days, plural, =0 {0 days} one {# day} other {# days}} after the ETA.",
     "rule_INVOICE_OVERDUE": "Not fully paid more than {days, plural, =0 {0 days} one {# day} other {# days}} after the due date.",
@@ -1521,6 +1522,7 @@
     "rule_STORAGE_EXCEEDED": "In the warehouse for more than {days, plural, one {# day} other {# days}}.",
     "rule_TRIP_LATE": "Not arrived {days, plural, =0 {after the planned arrival} one {# day after the planned arrival} other {# days after the planned arrival}}.",
     "rule_SHIPMENT_NOT_INVOICED": "Confirmed more than {days, plural, =0 {0 days} one {# day} other {# days}} ago with no approved invoice.",
+    "rule_BOOKING_DRAFT_FROM_REQUEST": "Made from an approved bot request more than {days, plural, =0 {0 days} one {# day} other {# days}} ago and still a draft.",
     "detail_SHIPMENT_ARRIVING_SOON": "Customer",
     "detail_SHIPMENT_PAST_ETA": "Customer",
     "detail_INVOICE_OVERDUE": "Customer",
@@ -1528,13 +1530,15 @@
     "detail_STORAGE_EXCEEDED": "Warehouse",
     "detail_TRIP_LATE": "Driver or carrier",
     "detail_SHIPMENT_NOT_INVOICED": "Customer",
+    "detail_BOOKING_DRAFT_FROM_REQUEST": "Customer",
     "since_SHIPMENT_ARRIVING_SOON": "ETA",
     "since_SHIPMENT_PAST_ETA": "ETA",
     "since_INVOICE_OVERDUE": "Due date",
     "since_CUSTOMS_STALLED": "Last update",
     "since_STORAGE_EXCEEDED": "In since",
     "since_TRIP_LATE": "Planned arrival",
-    "since_SHIPMENT_NOT_INVOICED": "Confirmed"
+    "since_SHIPMENT_NOT_INVOICED": "Confirmed",
+    "since_BOOKING_DRAFT_FROM_REQUEST": "Made"
   },
   "ApiAccess": {
     "title": "API access",

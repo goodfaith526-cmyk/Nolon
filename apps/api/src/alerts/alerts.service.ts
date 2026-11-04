@@ -13,6 +13,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { BillingReportsService } from '../billing/billing-reports.service.js';
 import type { AlertRows } from '../common/alert-rows.js';
 import { CustomsReportsService } from '../customs/customs-reports.service.js';
+import { BookingRequestReportsService } from '../customer-service/booking-request-reports.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentReportsService } from '../shipments/shipment-reports.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -28,6 +29,7 @@ import { withPermissions } from '../auth/branch-scope.js';
 const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = {
   SHIPMENT_ARRIVING_SOON: 3,
   SHIPMENT_NOT_INVOICED: 0,
+  BOOKING_DRAFT_FROM_REQUEST: 1,
 };
 
 /** Alerts whose rows point at a shipment by id only: its number comes from the shipments module. */
@@ -48,6 +50,7 @@ export class AlertsService {
     private readonly customs: CustomsReportsService,
     private readonly warehouse: WarehouseReportsService,
     private readonly trips: TripReportsService,
+    private readonly bookingRequests: BookingRequestReportsService,
   ) {}
 
   /** The alerts this user is concerned by, each kind with its rows (most urgent first). */
@@ -147,6 +150,8 @@ export class AlertsService {
         return this.trips.late(user, days, ALERT_LIST_LIMIT);
       case 'SHIPMENT_NOT_INVOICED':
         return this.billing.uninvoicedShipments(user, days, ALERT_LIST_LIMIT);
+      case 'BOOKING_DRAFT_FROM_REQUEST':
+        return this.bookingRequests.draftBookings(user, days, ALERT_LIST_LIMIT);
     }
   }
 

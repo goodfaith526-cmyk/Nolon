@@ -72,6 +72,8 @@ const LIST_LIMIT = 200;
 const VIEW: Permission = 'cs_booking_requests:view';
 const ROUTE: Permission = 'cs_booking_requests:update';
 const DECIDE: Permission = 'cs_booking_requests:approve';
+/** Plan 12 section 4: who may confirm the booking an approval makes (as POST bookings/:id/confirm). */
+const CONFIRM_BOOKING: Permission = 'bookings:approve';
 
 type Row = CsBookingRequest & {
   customer: { number: string } | null;
@@ -910,6 +912,16 @@ export class BookingReviewService {
         include: withQuote,
       });
       await this.events.emitInTx(tx, approved, ['request.approved']);
+      // Plan 12 section 4: one staff decision, one result. With the switch on and the person
+      // allowed to confirm bookings in the branch, the booking is confirmed here, after the
+      // request's rows (its cargo check reads them) and request.approved (shipment notices follow
+      // it). Every confirm check runs; a refusal undoes the whole approval. The invoice step and
+      // the credit limit come last (finalChecksInTx). Without the right, the booking stays a draft
+      // for someone who may confirm it (alert BOOKING_DRAFT_FROM_REQUEST).
+      if (this.env.CS_APPROVE_CONFIRMS_ENABLED && user.access.has(CONFIRM_BOOKING, row.branchId)) {
+        await this.bookings.confirmInTx(tx, user, bookingId);
+        await this.bookings.finalChecksInTx(tx, user, bookingId);
+      }
       return approved;
     });
     // As route and reject (F131-3): the row this transaction wrote.

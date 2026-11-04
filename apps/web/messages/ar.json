@@ -1514,6 +1514,7 @@
     "kind_STORAGE_EXCEEDED": "بضائع تجاوزت مدة التخزين",
     "kind_TRIP_LATE": "رحلات متأخرة",
     "kind_SHIPMENT_NOT_INVOICED": "شحنات بلا فاتورة",
+    "kind_BOOKING_DRAFT_FROM_REQUEST": "حجوزات البوت غير المؤكدة",
     "rule_SHIPMENT_ARRIVING_SOON": "ما زالت في الطريق، وموعد وصولها خلال {days} يوم.",
     "rule_SHIPMENT_PAST_ETA": "لم تُسلّم بعد مرور أكثر من {days} يوم على موعد الوصول.",
     "rule_INVOICE_OVERDUE": "لم تُسدد كاملة بعد مرور أكثر من {days} يوم على تاريخ الاستحقاق.",
@@ -1521,6 +1522,7 @@
     "rule_STORAGE_EXCEEDED": "في المستودع منذ أكثر من {days} يوم.",
     "rule_TRIP_LATE": "لم تصل بعد مرور {days} يوم على موعد الوصول المخطط.",
     "rule_SHIPMENT_NOT_INVOICED": "مؤكدة منذ أكثر من {days} يوم بلا فاتورة معتمدة.",
+    "rule_BOOKING_DRAFT_FROM_REQUEST": "أُنشئ من طلب بوت معتمد منذ أكثر من {days} يوم وما زال مسودة.",
     "detail_SHIPMENT_ARRIVING_SOON": "العميل",
     "detail_SHIPMENT_PAST_ETA": "العميل",
     "detail_INVOICE_OVERDUE": "العميل",
@@ -1528,13 +1530,15 @@
     "detail_STORAGE_EXCEEDED": "المستودع",
     "detail_TRIP_LATE": "السائق أو الناقل",
     "detail_SHIPMENT_NOT_INVOICED": "العميل",
+    "detail_BOOKING_DRAFT_FROM_REQUEST": "العميل",
     "since_SHIPMENT_ARRIVING_SOON": "موعد الوصول",
     "since_SHIPMENT_PAST_ETA": "موعد الوصول",
     "since_INVOICE_OVERDUE": "تاريخ الاستحقاق",
     "since_CUSTOMS_STALLED": "آخر تحديث",
     "since_STORAGE_EXCEEDED": "في المستودع منذ",
     "since_TRIP_LATE": "الوصول المخطط",
-    "since_SHIPMENT_NOT_INVOICED": "تاريخ التأكيد"
+    "since_SHIPMENT_NOT_INVOICED": "تاريخ التأكيد",
+    "since_BOOKING_DRAFT_FROM_REQUEST": "تاريخ الإنشاء"
   },
   "ApiAccess": {
     "title": "الوصول عبر الـ API",

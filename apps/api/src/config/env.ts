@@ -150,6 +150,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 12 section 4: approving a bot request also confirms its booking in the same transaction
+   * (shipment and invoice made then), when the person may confirm bookings in that branch. Off:
+   * approval leaves the booking a draft, and the BOOKING_DRAFT_FROM_REQUEST alert lists it.
+   */
+  CS_APPROVE_CONFIRMS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Plan 09e section 3 (owner, 2026-11-04): when staff approve a bot request, the receiver gets a
    * customer of their own (made or linked by international phone, marked unverified). Off: none.
    */

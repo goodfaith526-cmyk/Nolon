@@ -1,4 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import type { AuthUser } from '../auth/auth-user.js';
+import { reportBranchIds } from '../auth/branch-scope.js';
+import { type AlertRows, type AlertSqlRow, alertRows } from '../common/alert-rows.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { sqlDate, uuidList } from '../common/report-sql.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -58,5 +61,33 @@ export class BookingRequestReportsService {
              OR (r."branch_id" IS NULL AND r."allowed_branch_ids" && ${branches}))
         AND ${day} BETWEEN ${sqlDate(from)} AND ${sqlDate(to)}
       GROUP BY 1, 2, 3, 4, 5`;
+  }
+
+  /**
+   * Plan 12 section 7, alert BOOKING_DRAFT_FROM_REQUEST: bookings made by approving a bot request
+   * that are still drafts more than `graceDays` after they were made (days in the booking's
+   * branch), in the user's report branches. The detail is the booking's customer.
+   */
+  async draftBookings(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT k."id" AS "refId", k."number", b."code" AS "branchCode", c."name" AS "detail",
+                 (k."created_at" AT TIME ZONE b."timezone")::date AS "since",
+                 ((now() AT TIME ZONE b."timezone")::date
+                   - (k."created_at" AT TIME ZONE b."timezone")::date)::int AS "days"
+          FROM "bookings" k
+          JOIN "branches" b ON b."id" = k."branch_id"
+          JOIN "customers" c ON c."id" = k."customer_id"
+          WHERE k."branch_id" IN ${uuidList(branchIds)}
+            AND k."status" = 'DRAFT'
+            AND EXISTS (SELECT 1 FROM "cs_booking_requests" r WHERE r."booking_id" = k."id")
+        ) drafts
+        WHERE "days" > ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
   }
 }

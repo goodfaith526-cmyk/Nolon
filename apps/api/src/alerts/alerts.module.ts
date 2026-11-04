@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BillingModule } from '../billing/billing.module.js';
+import { CustomerServiceModule } from '../customer-service/customer-service.module.js';
 import { CustomsModule } from '../customs/customs.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
 import { TransportModule } from '../transport/transport.module.js';
@@ -9,7 +10,14 @@ import { AlertsService } from './alerts.service.js';
 
 /** The five internal alerts (scope section 15), worked out by the modules that own the records. */
 @Module({
-  imports: [ShipmentsModule, BillingModule, CustomsModule, WarehouseModule, TransportModule],
+  imports: [
+    ShipmentsModule,
+    BillingModule,
+    CustomsModule,
+    WarehouseModule,
+    TransportModule,
+    CustomerServiceModule,
+  ],
   controllers: [AlertsController],
   providers: [AlertsService],
   exports: [AlertsService],

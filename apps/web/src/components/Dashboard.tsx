@@ -57,6 +57,7 @@ interface ActionItem {
 const ALERT_TONE: Record<AlertKind, ActionItem['tone']> = {
   INVOICE_OVERDUE: 'bad',
   SHIPMENT_NOT_INVOICED: 'warn',
+  BOOKING_DRAFT_FROM_REQUEST: 'warn',
   SHIPMENT_PAST_ETA: 'bad',
   TRIP_LATE: 'bad',
   CUSTOMS_STALLED: 'warn',
