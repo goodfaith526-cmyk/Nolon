@@ -38,6 +38,9 @@ let from: string;
 let to: string;
 let freight: string;
 let duties: string;
+// The same pair for an additional services invoice: ب3 keeps a charge type off both kinds.
+let extraFreight: string;
+let extraDuties: string;
 let customer: CustomerDto;
 let tag: string;
 // A currency of this run only: no exchange rate until the test adds one.
@@ -104,17 +107,22 @@ async function shipment(
   return confirmed.shipmentId;
 }
 
-/** An approved invoice of 300 freight and 100 reimbursable duties (USD unless given). */
+/**
+ * An approved invoice of 300 freight and 100 reimbursable duties (USD unless given). Naming an
+ * earlier invoice makes it an additional services invoice, on charge types of its own (ب3).
+ */
 async function invoice(
   shipmentId: string,
   acknowledged: string[] = [],
   money: { currency: string; fxRate?: string } = { currency: 'USD' },
 ): Promise<string> {
+  const additional = acknowledged.length > 0;
   const draft = (
     await r
       .post('/customer-invoices', cookies.financePts, {
         shipmentId,
         acknowledgedInvoiceIds: acknowledged,
+        ...(additional ? { kind: 'ADDITIONAL' } : {}),
       })
       .expect(201)
   ).body as CustomerInvoiceDto;
@@ -125,8 +133,8 @@ async function invoice(
       invoiceDate: today(),
       dueDate: today(),
       lines: [
-        { chargeTypeCode: freight, quantity: '1', unitPrice: '300' },
-        { chargeTypeCode: duties, quantity: '1', unitPrice: '100' },
+        { chargeTypeCode: additional ? extraFreight : freight, quantity: '1', unitPrice: '300' },
+        { chargeTypeCode: additional ? extraDuties : duties, quantity: '1', unitPrice: '100' },
       ],
     })
     .expect(200);
@@ -240,6 +248,22 @@ beforeAll(async () => {
   });
   await t.prisma.chargeTypePosting.create({
     data: { chargeTypeCode: duties, isReimbursable: true },
+  });
+  extraFreight = `${tag}G`;
+  extraDuties = `${tag}E`;
+  await t.prisma.chargeType.create({
+    data: {
+      code: extraFreight,
+      nameEn: 'Extra freight',
+      nameAr: 'نولون إضافي',
+      service: 'MAIN_FREIGHT',
+    },
+  });
+  await t.prisma.chargeType.create({
+    data: { code: extraDuties, nameEn: 'Extra duties', nameAr: 'رسوم إضافية', service: 'CUSTOMS' },
+  });
+  await t.prisma.chargeTypePosting.create({
+    data: { chargeTypeCode: extraDuties, isReimbursable: true },
   });
   await t.prisma.currency.create({
     data: { code: currency, nameEn: 'ZZ test', nameAr: 'ZZ test', decimalPlaces: 2 },
