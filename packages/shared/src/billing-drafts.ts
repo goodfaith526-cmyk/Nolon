@@ -214,17 +214,15 @@ export interface InvoiceDraftDto
   /** Null until the created invoice is itself approved and numbered. */
   invoiceNumber: string | null;
   /**
-   * While the draft is open, the invoices of its shipment that are not cancelled: approving it
-   * adds another one, and the approval repeats their ids (InvoiceDraftApproveRequest).
+   * While the draft is open, the invoices of its shipment that are not cancelled. Approving the
+   * draft adds a MAIN invoice, refused while the shipment has a live one (ب3).
    */
   shipmentInvoices: ShipmentInvoiceRefDto[];
 }
 
-/** POST /invoice-drafts/:id/approve: the version reviewed, and the shipment's invoices seen. */
+/** POST /invoice-drafts/:id/approve: the version reviewed. */
 export interface InvoiceDraftApproveRequest {
   version: number;
-  /** As in CreateCustomerInvoiceRequest; left out, the shipment must have no invoice. */
-  acknowledgedInvoiceIds?: string[];
 }
 
 export type InvoiceDraftListItemDto = Omit<

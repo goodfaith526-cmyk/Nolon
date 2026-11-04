@@ -2,11 +2,10 @@
 
 import type { InvoiceDraftDto, InvoiceDraftSuggestedValuesDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { Notice } from '../commercial/Notice';
 import { Money, useRecord } from '../finance/common';
-import { OtherInvoicesCheck } from '../finance/OtherInvoicesCheck';
+import { ShipmentInvoiceRefs } from '../finance/ShipmentInvoiceRefs';
 import { DraftFrame } from './DraftFrame';
 import { DraftPriceSourceNote } from './DraftPriceSourceNote';
 import { MissingFields } from './MissingFields';
@@ -31,12 +30,6 @@ export function InvoiceDraftReview({ id }: { id: string }) {
     missingHeader ? `/invoice-drafts/${id}/suggested-values` : null,
     draft?.version,
   );
-  // The shipment's other invoices, ticked as checked for the list read (Q3): once the list
-  // changes (a refused approval reloads the draft), the tick is asked for again.
-  const listed = (draft?.shipmentInvoices ?? []).map((i) => `${i.id}:${i.status}`).join(',');
-  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
-  const confirmed = confirmedFor === listed;
-  const setConfirmed = (checked: boolean) => setConfirmedFor(checked ? listed : null);
   if (notice) return <Notice notice={notice} />;
   if (!draft) return <p className="muted">{tc('loading')}</p>;
   const inv = draft.request;
@@ -59,13 +52,6 @@ export function InvoiceDraftReview({ id }: { id: string }) {
         systemPriced
           ? `${t('invoiceApproveHint')} ${t('systemPriceHint')}`
           : t('invoiceApproveHint')
-      }
-      approveBody={
-        draft.shipmentInvoices.length === 0
-          ? {}
-          : confirmed
-            ? { acknowledgedInvoiceIds: draft.shipmentInvoices.map((i) => i.id) }
-            : null
       }
       result={
         draft.invoiceId
@@ -90,13 +76,7 @@ export function InvoiceDraftReview({ id }: { id: string }) {
           onChanged={setRecord}
         />
       )}
-      {draft.actions.canDecide && (
-        <OtherInvoicesCheck
-          invoices={draft.shipmentInvoices}
-          checked={confirmed}
-          onChange={setConfirmed}
-        />
-      )}
+      {draft.actions.canDecide && <ShipmentInvoiceRefs invoices={draft.shipmentInvoices} />}
       <dl className="details">
         <dt>{ti('shipment')}</dt>
         <dd dir="ltr">

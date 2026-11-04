@@ -3,6 +3,7 @@
 import {
   INVOICE_STATUSES,
   type CustomerInvoiceSummaryDto,
+  type InvoiceKind,
   type InvoiceStatus,
   type Page,
 } from '@nolon/shared';
@@ -19,6 +20,14 @@ import { Money } from './common';
 export function InvoiceNumber({ number }: { number: string | null }) {
   const t = useTranslations('Invoices');
   return number ? <span dir="ltr">{number}</span> : <span>{t('draftNumber')}</span>;
+}
+
+/** Marks an additional-charges invoice (client decision ب3); a main invoice shows nothing. */
+export function InvoiceKindLabel({ kind }: { kind: InvoiceKind }) {
+  const t = useTranslations('Invoices');
+  return kind === 'ADDITIONAL' ? (
+    <span className="badge badge-invoice-kind">{t('additional')}</span>
+  ) : null;
 }
 
 export function Invoices() {
@@ -113,7 +122,8 @@ export function Invoices() {
                     <td className="nowrap">
                       <Link href={`/invoices/${i.id}`}>
                         <InvoiceNumber number={i.number} />
-                      </Link>
+                      </Link>{' '}
+                      <InvoiceKindLabel kind={i.kind} />
                     </td>
                     <td dir="ltr">{i.invoiceDate}</td>
                     <td>{i.customerName}</td>

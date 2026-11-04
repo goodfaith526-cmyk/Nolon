@@ -13,7 +13,7 @@ import { StatusBadge } from '../StatusBadge';
 import { CreditNoteFields, creditNoteFields } from './CreditNoteDetail';
 import { CreditNoteNumber } from './CreditNotes';
 import { Money, useRecord } from './common';
-import { InvoiceNumber } from './Invoices';
+import { InvoiceKindLabel, InvoiceNumber } from './Invoices';
 import { PricingNotice } from './InvoiceForm';
 import { PrintLink } from '../print/PrintLink';
 
@@ -94,6 +94,7 @@ export function InvoiceDetail({ id }: { id: string }) {
           </h1>
           <StatusBadge kind="invoice" status={inv.status} />
           {inv.status === 'APPROVED' && <StatusBadge kind="payment" status={inv.paymentStatus} />}
+          <InvoiceKindLabel kind={inv.kind} />
         </div>
         <div className="actions">
           <MoreMenu>

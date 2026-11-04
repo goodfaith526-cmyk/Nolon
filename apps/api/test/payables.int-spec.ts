@@ -9,6 +9,7 @@ import type {
   CreditNoteDto,
   CustomerDto,
   CustomerInvoiceDto,
+  CustomerInvoiceSummaryDto,
   CustomerStatementDto,
   ExpenseCategoryDto,
   ExpenseDto,
@@ -17,6 +18,7 @@ import type {
   AuditLogEntryDto,
   JournalEntryDto,
   OpenAccrualsDto,
+  Page,
   ReceiptDto,
   SupplierBillDto,
   SupplierDto,
@@ -812,49 +814,218 @@ describe('credit notes, payables, expenses and opening balances', () => {
     });
   });
 
-  describe('a second invoice for a shipment names the invoices it has (decision Q3)', () => {
-    const create = (
-      shipmentId: string,
-      acknowledgedInvoiceIds?: string[],
-      cookie = cookies.financePts,
-    ) =>
-      post('/customer-invoices', cookie, {
-        shipmentId,
-        ...(acknowledgedInvoiceIds ? { acknowledgedInvoiceIds } : {}),
+  describe('one main invoice per shipment, and additional-charges invoices (client decision ب3)', () => {
+    type Kind = 'MAIN' | 'ADDITIONAL';
+    type Line = { chargeTypeCode: string; quantity: string; unitPrice: string };
+    const create = (shipmentId: string, kind?: Kind, cookie = cookies.financePts) =>
+      post('/customer-invoices', cookie, { shipmentId, ...(kind ? { kind } : {}) });
+    const created = async (shipmentId: string, kind?: Kind) =>
+      (await create(shipmentId, kind).expect(201)).body as CustomerInvoiceDto;
+    const setLines = (id: string, lines: Line[]) =>
+      patch(`/customer-invoices/${id}`, cookies.financePts, {
+        currency: 'SDG',
+        fxRate: '600',
+        invoiceDate: d('03-10'),
+        dueDate: d('03-10'),
+        lines,
       });
-    const refused = (res: Response, approved: string, drafts: string) => {
+    const approve = (id: string) => post(`/customer-invoices/${id}/approve`, cookies.financePts);
+    const line = (chargeTypeCode: string, unitPrice = '1000'): Line => ({
+      chargeTypeCode,
+      quantity: '1',
+      unitPrice,
+    });
+    const refused = (res: Response, code: string, params: Record<string, string> = {}) => {
       expect(res.status).toBe(409);
-      expect(res.body).toMatchObject({
-        code: 'SHIPMENT_ALREADY_INVOICED',
-        params: { approved, drafts },
-      });
+      expect(res.body).toMatchObject({ code, params });
     };
+    /** An additional-charges invoice with these lines, approved unless `approved` is false. */
+    const additional = async (shipmentId: string, lines: Line[], approved = true) => {
+      const invoice = await created(shipmentId, 'ADDITIONAL');
+      await setLines(invoice.id, lines).expect(200);
+      if (approved) await approve(invoice.id).expect(200);
+      return invoice;
+    };
+    const fullCredit = async (invoice: CustomerInvoiceDto) => {
+      const note = await creditNoteDraft(invoice.id, invoice.total);
+      await post(`/credit-notes/${note.id}/approve`, cookies.managerPts).expect(200);
+    };
+    const pay = (invoiceId: string, amount: string) =>
+      post('/receipts', cookies.financePts, {
+        customerId: customer.id,
+        receiptDate: d('03-15'),
+        currency: 'SDG',
+        fxRate: '600',
+        amount,
+        cashAccountId: cashSdg.id,
+        allocations: [{ invoiceId, amount }],
+      }).expect(201);
 
-    it('is refused until the request names exactly the invoices that are not cancelled', async () => {
-      const invoice = await approvedInvoice();
-      const shipmentId = invoice.shipmentId ?? '';
-      // Another branch and a missing permission are refused first.
-      await create(shipmentId, [invoice.id], cookies.financeJed).expect(404);
-      await create(shipmentId, [invoice.id], cookies.salesPts).expect(403);
-      refused(await create(shipmentId), invoice.number ?? '', '0');
-      refused(await create(shipmentId, []), invoice.number ?? '', '0');
-      refused(await create(shipmentId, [randomUUID()]), invoice.number ?? '', '0');
-      refused(await create(shipmentId, [invoice.id, randomUUID()]), invoice.number ?? '', '0');
-      const second = (await create(shipmentId, [invoice.id]).expect(201))
-        .body as CustomerInvoiceDto;
-      // A third one names both; once the second draft is cancelled, the first alone.
-      refused(await create(shipmentId, [invoice.id]), invoice.number ?? '', '1');
-      await post(`/customer-invoices/${second.id}/cancel`, cookies.financePts, {
-        reason: 'Duplicate',
+    it('a second main invoice is refused while the first is live (rule 1)', async () => {
+      // The first one a draft.
+      const shipmentId = await shipment();
+      const first = await created(shipmentId);
+      expect(first.kind).toBe('MAIN');
+      await create(shipmentId, 'MAIN', cookies.financeJed).expect(404);
+      await create(shipmentId, 'MAIN', cookies.salesPts).expect(403);
+      refused(await create(shipmentId), 'SHIPMENT_ALREADY_INVOICED', {
+        invoices: '—',
+        drafts: '1',
+      });
+      // The old Q3 confirmation is accepted and opens nothing.
+      refused(
+        await post('/customer-invoices', cookies.financePts, {
+          shipmentId,
+          acknowledgedInvoiceIds: [first.id],
+        }),
+        'SHIPMENT_ALREADY_INVOICED',
+      );
+      // Cancelled: a new main invoice is allowed.
+      await post(`/customer-invoices/${first.id}/cancel`, cookies.financePts, {
+        reason: 'Redo',
       }).expect(200);
-      await create(shipmentId, [invoice.id]).expect(201);
-      // A shipment without invoices takes none named, and refuses a list.
-      const fresh = await shipment();
-      refused(await create(fresh, [invoice.id]), '—', '0');
-      await create(fresh).expect(201);
+      await created(shipmentId);
+
+      // Approved, then part-paid: refused; credited in full unpaid: allowed.
+      const approved = await approvedInvoice();
+      const id = approved.shipmentId ?? '';
+      const number = approved.number ?? '';
+      refused(await create(id), 'SHIPMENT_ALREADY_INVOICED', { invoices: number, drafts: '0' });
+      const paid = await approvedInvoice();
+      await pay(paid.id, '100000');
+      refused(await create(paid.shipmentId ?? ''), 'SHIPMENT_ALREADY_INVOICED');
+      await fullCredit(approved);
+      expect((await created(id)).kind).toBe('MAIN');
     });
 
-    it('two first invoices created at once: one is created, the other is refused', async () => {
+    it('an additional-charges invoice needs a live main one, and starts empty (rules 2, 4)', async () => {
+      const shipmentId = await shipment();
+      refused(await create(shipmentId, 'ADDITIONAL'), 'ADDITIONAL_NEEDS_MAIN');
+      const main = await created(shipmentId);
+      const extra = await created(shipmentId, 'ADDITIONAL');
+      expect(extra).toMatchObject({ kind: 'ADDITIONAL', lines: [], total: '0' });
+      // The list says which is which, and which still bill the shipment.
+      const list = (
+        await get(`/customer-invoices?shipmentId=${shipmentId}`, cookies.financePts).expect(200)
+      ).body as Page<CustomerInvoiceSummaryDto>;
+      expect(list.items.map((i) => [i.id, i.kind, i.live]).sort()).toEqual(
+        [
+          [main.id, 'MAIN', true],
+          [extra.id, 'ADDITIONAL', true],
+        ].sort(),
+      );
+      // The main invoice cancelled: the additional one stays, and is edited and approved as any.
+      await post(`/customer-invoices/${main.id}/cancel`, cookies.financePts, {
+        reason: 'Redo',
+      }).expect(200);
+      await setLines(extra.id, [line('STORAGE')]).expect(200);
+      await approve(extra.id).expect(200);
+      refused(await create(shipmentId, 'ADDITIONAL'), 'ADDITIONAL_NEEDS_MAIN');
+    });
+
+    it('a charge type is on one kind only, in both directions (rule 3)', async () => {
+      // An additional invoice with a charge the main one has: refused on edit.
+      const shipmentId = await shipment();
+      const main = await created(shipmentId);
+      await setLines(main.id, [line('FREIGHT')]).expect(200);
+      const extra = await created(shipmentId, 'ADDITIONAL');
+      refused(
+        await setLines(extra.id, [line('STORAGE'), line('FREIGHT')]),
+        'CHARGE_ON_OTHER_INVOICE',
+        {
+          charges: 'FREIGHT',
+          invoices: '—',
+        },
+      );
+      await setLines(extra.id, [line('STORAGE')]).expect(200);
+      await approve(extra.id).expect(200);
+      const extraNumber = (await invoiceRow(extra.id)).number ?? '';
+      // The main draft taking the additional invoice's charge: refused on edit...
+      refused(
+        await setLines(main.id, [line('FREIGHT'), line('STORAGE')]),
+        'CHARGE_ON_OTHER_INVOICE',
+        {
+          charges: 'STORAGE',
+          invoices: extraNumber,
+        },
+      );
+      // ...and on approval, however the line got there.
+      const mainRow = await invoiceRow(main.id);
+      await t.prisma.customerInvoiceLine.create({
+        data: {
+          invoiceId: main.id,
+          lineNo: 2,
+          chargeTypeCode: 'STORAGE',
+          quantity: new Prisma.Decimal(1),
+          unitPrice: new Prisma.Decimal(1),
+          lineTotal: new Prisma.Decimal(1),
+        },
+      });
+      expect(mainRow.status).toBe('DRAFT');
+      refused(await approve(main.id), 'CHARGE_ON_OTHER_INVOICE', { charges: 'STORAGE' });
+      await t.prisma.customerInvoiceLine.deleteMany({
+        where: { invoiceId: main.id, chargeTypeCode: 'STORAGE' },
+      });
+      await approve(main.id).expect(200);
+
+      // A replacement main invoice (after a full credit note) with that charge: refused too.
+      await fullCredit(
+        (await get(`/customer-invoices/${main.id}`, cookies.financePts)).body as CustomerInvoiceDto,
+      );
+      const replacement = await created(shipmentId);
+      refused(await setLines(replacement.id, [line('STORAGE')]), 'CHARGE_ON_OTHER_INVOICE', {
+        charges: 'STORAGE',
+      });
+      await setLines(replacement.id, [line('FREIGHT')]).expect(200);
+      await approve(replacement.id).expect(200);
+    });
+
+    it('additional charges after the main invoice is paid; the same charge again on another', async () => {
+      const main = await approvedInvoice();
+      const shipmentId = main.shipmentId ?? '';
+      await pay(main.id, main.total);
+      expect((await invoiceRow(main.id)).paidAmount.toFixed()).toBe(main.total);
+      await additional(shipmentId, [line('STORAGE', '500')]);
+      // A second month of storage: the same charge on another additional invoice is allowed.
+      await additional(shipmentId, [line('STORAGE', '500')]);
+      const rows = await t.prisma.customerInvoice.findMany({
+        where: { shipmentId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(rows.map((i) => [i.kind, i.status])).toEqual([
+        ['MAIN', 'APPROVED'],
+        ['ADDITIONAL', 'APPROVED'],
+        ['ADDITIONAL', 'APPROVED'],
+      ]);
+    });
+
+    it('a shipment with two live main invoices from before ب3 keeps them (F147-3)', async () => {
+      const first = await approvedInvoice();
+      const shipmentId = first.shipmentId ?? '';
+      // Allowed by the old Q3 confirmation: another approved, paid invoice of the shipment.
+      const second = await approvedInvoice();
+      await t.prisma.customerInvoice.update({
+        where: { id: second.id },
+        data: { shipmentId },
+      });
+      await pay(second.id, '100000');
+      // Both stay as they are, main invoices both.
+      const rows = await t.prisma.customerInvoice.findMany({ where: { shipmentId } });
+      expect(rows.map((i) => [i.kind, i.status])).toEqual([
+        ['MAIN', 'APPROVED'],
+        ['MAIN', 'APPROVED'],
+      ]);
+      refused(await create(shipmentId), 'SHIPMENT_ALREADY_INVOICED', { drafts: '0' });
+      // An additional invoice is checked against both of them.
+      const extra = await created(shipmentId, 'ADDITIONAL');
+      refused(await setLines(extra.id, [line('DUTIES')]), 'CHARGE_ON_OTHER_INVOICE', {
+        charges: 'DUTIES',
+      });
+      await setLines(extra.id, [line('STORAGE')]).expect(200);
+      await approve(extra.id).expect(200);
+    });
+
+    it('two first main invoices created at once: one is created, the other is refused', async () => {
       const shipmentId = await shipment();
       const { pending } = await t.prisma.$transaction(
         async (tx) => {
@@ -867,6 +1038,32 @@ describe('credit notes, payables, expenses and opening balances', () => {
       );
       expect((await pending).map((r) => r.status).sort()).toEqual([201, 409]);
       expect(await t.prisma.customerInvoice.count({ where: { shipmentId } })).toBe(1);
+    });
+
+    it('the same charge put on both kinds at once: exactly one edit succeeds', async () => {
+      const shipmentId = await shipment();
+      const main = await created(shipmentId);
+      await setLines(main.id, [line('FREIGHT')]).expect(200);
+      const extra = await created(shipmentId, 'ADDITIONAL');
+      const { pending } = await t.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM "shipments" WHERE "id" = ${shipmentId}::uuid FOR UPDATE`;
+          const started = Promise.all([
+            setLines(main.id, [line('FREIGHT'), line('STORAGE')]),
+            setLines(extra.id, [line('STORAGE')]),
+          ]);
+          await waitForLockWaiter(t.prisma, 2);
+          return { pending: started };
+        },
+        { timeout: 15_000 },
+      );
+      const statuses = (await pending).map((r) => r.status);
+      expect([...statuses].sort()).toEqual([200, 409]);
+      const holders = await t.prisma.customerInvoiceLine.findMany({
+        where: { invoice: { shipmentId }, chargeTypeCode: 'STORAGE' },
+        select: { invoiceId: true },
+      });
+      expect(holders).toHaveLength(1);
     });
   });
 

@@ -47,7 +47,7 @@ export function InvoicePrint({ id }: { id: string }) {
       <PageStyle />
       <PrintToolbar back={`/invoices/${id}`} ready={master !== null && qr !== null} />
       <DocumentSheet
-        title={tp('invoiceTitle')}
+        title={tp(inv.kind === 'ADDITIONAL' ? 'additionalInvoiceTitle' : 'invoiceTitle')}
         number={inv.number ?? t('draftNumber')}
         date={<span dir="ltr">{inv.invoiceDate}</span>}
         branchId={inv.branchId}
