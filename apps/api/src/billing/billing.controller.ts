@@ -106,6 +106,8 @@ const allocationSuggestionQuery = z.strictObject({
   customerId: z.uuid(),
   currency: currencyCode,
   amount,
+  // Plan 09f: the receiving branch; a receipt settles invoices of its own branch only.
+  branchId: z.uuid().optional(),
 });
 const applyReceiptBody = z
   .object({

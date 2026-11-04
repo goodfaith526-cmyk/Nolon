@@ -281,7 +281,7 @@ export class NewCustomerQuotationDraftsService {
       const [taken] = (
         await this.customers.duplicateIssues(
           this.prisma,
-          [{ branchId, phone: values.customer.phone ?? undefined }],
+          [{ phone: values.customer.phone ?? undefined }],
           user,
         )
       ).flat();
@@ -372,11 +372,7 @@ export class NewCustomerQuotationDraftsService {
         // assistant can say so instead of proposing a duplicate; it is checked again under the
         // lock on approval.
         throwFirstConflict(
-          await this.customers.duplicateIssues(
-            tx,
-            [{ branchId, phone: customer.phone ?? undefined }],
-            user,
-          ),
+          await this.customers.duplicateIssues(tx, [{ phone: customer.phone ?? undefined }], user),
         );
         if (replaced) await replaceInTx(tx, replaced);
         const draft = await tx.newCustomerQuotationDraft.create({
@@ -431,11 +427,7 @@ export class NewCustomerQuotationDraftsService {
       await requireBranchMemberInTx(tx, user, current.branchId);
       if (customerPatch.phone) {
         throwFirstConflict(
-          await this.customers.duplicateIssues(
-            tx,
-            [{ branchId: current.branchId, phone: customerPatch.phone }],
-            user,
-          ),
+          await this.customers.duplicateIssues(tx, [{ phone: customerPatch.phone }], user),
         );
       }
       await tx.newCustomerQuotationDraft.update({
@@ -687,7 +679,7 @@ export class NewCustomerQuotationDraftsService {
       throwFirstConflict(
         await this.customers.duplicateIssues(
           this.prisma,
-          [{ branchId: draft.branchId, phone: values.customer.phone ?? undefined }],
+          [{ phone: values.customer.phone ?? undefined }],
           user,
         ),
       );

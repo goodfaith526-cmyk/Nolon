@@ -22,7 +22,7 @@ const JEDDAH = {
 // Stable across renders, as the real hooks are: effects depend on them.
 const ME = { permissions: ['*'], allBranches: false, branches: [DUBAI, JEDDAH] };
 const failed = () => 'failed';
-const CUSTOMER = { id: 'c1', branchId: 'b2', name: 'Tariq', number: 'C1' } as CustomerSummaryDto;
+const CUSTOMER = { id: 'c1', name: 'Tariq', number: 'C1' } as CustomerSummaryDto;
 
 vi.mock('next-intl', () => ({
   useTranslations: () => (key: string) => key,
@@ -229,6 +229,7 @@ describe('receipt (functional review C3, C9)', () => {
   const invoice = (id: string, currency: string, balance: string) => ({
     id,
     number: id,
+    branchId: 'b1',
     currency,
     balance,
     total: balance,
@@ -237,15 +238,31 @@ describe('receipt (functional review C3, C9)', () => {
     shipmentNumber: null,
   });
 
-  it("suggests the open invoices' one currency and the customer's branch today", async () => {
+  it("suggests the open invoices' one currency and the receiving branch's today", async () => {
     invoices = [invoice('i1', 'SAR', '40'), invoice('i2', 'SAR', '60')];
     await render(<ReceiptForm />);
     expect(control<HTMLSelectElement>('currency').value).toBe('');
     click(document.querySelector('#pick-customer'));
     await flush();
     expect(control<HTMLSelectElement>('currency').value).toBe('SAR');
-    expect(control<HTMLInputElement>('receiptDate').value).toBe('2026-10-20');
+    expect(control<HTMLInputElement>('receiptDate').value).toBe('2026-10-19');
     expect(control<HTMLSelectElement>('cashAccount').value).toBe('cash-sar');
+  });
+
+  it("lists only the receiving branch's open invoices, and its today (plan 09f)", async () => {
+    invoices = [invoice('i1', 'SAR', '40'), { ...invoice('i2', 'SAR', '60'), branchId: 'b2' }];
+    await render(<ReceiptForm />);
+    click(document.querySelector('#pick-customer'));
+    await flush();
+    const listed = () =>
+      [...document.querySelectorAll('tbody tr')].map((r) => r.textContent ?? '').join('|');
+    // i1 owes 40 (Dubai), i2 owes 60 (Jeddah).
+    expect(listed()).toContain('40 SAR');
+    expect(listed()).not.toContain('60 SAR');
+    change(control<HTMLSelectElement>('workBranch'), 'b2');
+    expect(listed()).toContain('60 SAR');
+    expect(listed()).not.toContain('40 SAR');
+    expect(control<HTMLInputElement>('receiptDate').value).toBe('2026-10-20');
   });
 
   it('suggests no currency when the invoices are in several', async () => {
@@ -272,7 +289,7 @@ describe('receipt (functional review C3, C9)', () => {
     click(button('distribute'));
     await flush();
     expect(api).toHaveBeenCalledWith(
-      '/receipts/allocation-suggestion?customerId=c1&currency=SAR&amount=45',
+      '/receipts/allocation-suggestion?customerId=c1&currency=SAR&amount=45&branchId=b1',
     );
     expect(shares()).toEqual(['40', '']);
     expect(document.body.textContent).toContain('distributedRest');
@@ -283,6 +300,7 @@ describe('receipt beyond the first page of invoices (Codex F94-1)', () => {
   const invoice = (n: number) => ({
     id: `i${n}`,
     number: `i${n}`,
+    branchId: 'b1',
     currency: 'SAR',
     balance: '10',
     total: '10',

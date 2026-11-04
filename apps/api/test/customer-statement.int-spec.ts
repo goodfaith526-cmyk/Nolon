@@ -225,7 +225,6 @@ describe('customer statement', () => {
       customerId: customer.id,
       customerNumber: customer.number,
       customerName: customer.name,
-      customerBranchId: pts,
       branchId: null,
       from: d('02-01'),
       to: later,

@@ -181,8 +181,8 @@ export class CustomerTokensService {
   }
 
   /**
-   * Active customers of the key's branches whose phone or WhatsApp is `phone`, or with an active
-   * authorized person (may inquire) with that phone. Read from the tables: nothing of them is
+   * Active customers whose phone or WhatsApp is `phone`, or with an active authorized person (may
+   * inquire) with that phone. Customers are central (plan 09f): any branch of the key finds them. Read from the tables: nothing of them is
    * returned but the number and the label.
    */
   private async matching(client: ApiClientAuth, phone: string): Promise<MatchedCustomer[]> {
@@ -190,7 +190,6 @@ export class CustomerTokensService {
     const contactMatch = { phone, canInquire: true, isActive: true };
     return this.prisma.customer.findMany({
       where: {
-        branchId: { in: [...client.allowedBranchIds] },
         isActive: true,
         OR: [{ phone }, { whatsapp: phone }, { contacts: { some: contactMatch } }],
       },

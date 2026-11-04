@@ -196,7 +196,6 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
       await t.prisma.customer.create({
         data: {
           number: `${tag}-1`,
-          branchId: pts,
           name: `${tag} customer`,
           phone: uniquePhone(),
           kind: 'COMPANY',

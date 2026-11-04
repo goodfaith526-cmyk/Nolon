@@ -215,6 +215,32 @@ describe('partners named on customers, quotations, bookings and shipments', () =
       });
     });
 
+    it('takes an outlet of any branch where the user adds customers, with no branch sent (F189-2)', async () => {
+      const both = await signIn(t, (await createUser(t.prisma, ['SALES'], ['DXB', 'JED'])).email);
+      // Plan 09f: the form sends no branch; an outlet of either of the user's branches is taken.
+      for (const outlet of [outlets.dxb, outlets.a]) {
+        const made = (
+          await r
+            .post(
+              '/customers',
+              both,
+              without(customerBody({ acquiredViaOutletId: outlet.id }), 'branchId'),
+            )
+            .expect(201)
+        ).body as CustomerDto;
+        expect(made.acquiredViaOutlet?.id).toBe(outlet.id);
+      }
+      // Still not an outlet of a branch the user does not hold.
+      const res = await r
+        .post(
+          '/customers',
+          cookies.salesJed,
+          without(customerBody({ acquiredViaOutletId: outlets.dxb.id }), 'branchId'),
+        )
+        .expect(400);
+      expect(refusal(res.body)).toMatchObject({ code: 'PARTNER_NOT_USABLE' });
+    });
+
     it('keeps an outlet the customer holds after the outlet is deactivated', async () => {
       const outlet = await partner('SALES_OUTLET', jed, cookies.jedManager);
       const customer = await newCustomer(cookies.salesJed, { acquiredViaOutletId: outlet.id });

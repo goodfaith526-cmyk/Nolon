@@ -64,7 +64,7 @@ import {
   partyCompleteness,
   requireApprovable,
 } from '../drafts/draft-completeness.js';
-import { CustomersService } from './customers.service.js';
+import { CustomersService, customerScope } from './customers.service.js';
 
 const LABEL = 'party draft';
 const ASSISTANT_ONLY = 'Party drafts are proposed by the assistant';
@@ -79,11 +79,13 @@ const details = {
 type DraftRow = Prisma.PartyDraftGetPayload<{ include: typeof details }>;
 
 /**
- * The drafts a user sees: those of a customer in their branches (access follows the customer, as
- * it always has), and those naming no customer yet, by the draft's own branch.
+ * The drafts a user sees: by the draft's own branch (customers have no branch, plan 09f), and for
+ * outlet staff only those of their outlets' customers or naming no customer yet.
  */
 function draftScope(user: AuthUser): Prisma.PartyDraftWhereInput {
-  return { OR: [{ customer: branchScope(user) }, { customerId: null, ...branchScope(user) }] };
+  const customers = customerScope(user);
+  if (Object.keys(customers).length === 0) return branchScope(user);
+  return { ...branchScope(user), OR: [{ customerId: null }, { customer: customers }] };
 }
 
 /** A party draft's customer and party, as stored (a missing value is null). */
@@ -185,8 +187,12 @@ export class PartyDraftsService {
     customerId: string | null,
     branchId: string | null | undefined,
   ): Promise<{ branchId: string }> {
-    const customer = customerId ? await this.customers.prepareAddParty(user, customerId) : null;
-    return { branchId: draftBranch(user, branchId, customer?.branchId ?? null) };
+    if (customerId) await this.customers.prepareAddParty(user, customerId);
+    // Plan 09f: a customer is of no branch; for a customer, a user of one branch drafts in it.
+    // With no customer yet, the branch is named, as for every draft without a subject.
+    const only =
+      customerId && user.allowedBranchIds.length === 1 ? user.allowedBranchIds[0]! : null;
+    return { branchId: draftBranch(user, branchId ?? only, null) };
   }
 
   async create(

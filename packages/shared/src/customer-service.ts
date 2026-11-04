@@ -60,7 +60,6 @@ export interface CsContactDto {
 
 export interface CsCustomerDto {
   number: string;
-  branchCode: string;
   kind: CustomerKind;
   name: string;
   companyName: string | null;

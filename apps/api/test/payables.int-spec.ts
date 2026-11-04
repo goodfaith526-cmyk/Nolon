@@ -2044,10 +2044,12 @@ describe('credit notes, payables, expenses and opening balances', () => {
         .body as CustomerInvoiceDto;
       expect(made.branchId).toBe(pts);
       await post('/customer-invoices/opening', cookie, { ...item, branchId: jed }).expect(409);
-      // An older client's retry names no branch: the customer's (PTS) is the work branch.
+      // Plan 09f: a customer has no branch, so a user of two branches must name one.
       const { branchId: _omitted, ...legacy } = item;
       void _omitted;
-      const again = (await post('/customer-invoices/opening', cookie, legacy).expect(201))
+      const ask = await post('/customer-invoices/opening', cookie, legacy).expect(400);
+      expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED' });
+      const again = (await post('/customer-invoices/opening', cookie, item).expect(201))
         .body as CustomerInvoiceDto;
       expect(again.id).toBe(made.id);
     });

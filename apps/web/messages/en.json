@@ -220,7 +220,8 @@
     "loadTypeFollows": "Follows the cargo type: FCL for a container, LCL otherwise. Pick one to keep it.",
     "chooseCountry": "Choose a country",
     "countriesInUse": "Countries in use",
-    "allCountries": "All countries"
+    "allCountries": "All countries",
+    "workBranch": "Document branch"
   },
   "Customers": {
     "title": "Customers",

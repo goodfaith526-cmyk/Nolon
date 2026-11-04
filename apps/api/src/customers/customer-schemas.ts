@@ -64,9 +64,11 @@ const screenFields = {
 };
 
 /** A customer row of the Excel import. */
-export const importCustomerBody = z.object({ branchId: z.uuid(), ...customerFields }).strict();
+// Plan 09f: a customer is of no branch. `branchId` on create names the branch the user acts in
+// (permission and sales outlet), optional for a user with one such branch.
+export const importCustomerBody = z.object({ ...customerFields }).strict();
 export const createCustomerBody = z
-  .object({ branchId: z.uuid(), ...customerFields, ...screenFields })
+  .object({ branchId: z.uuid().optional(), ...customerFields, ...screenFields })
   .strict();
 export const updateCustomerBody = z
   .object({ ...customerFields, ...screenFields })

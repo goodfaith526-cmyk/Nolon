@@ -98,12 +98,11 @@ describe('Customer Service booking request approval (R3c2)', () => {
   const approve = (cookie: string, id: string, body: object) =>
     staff(cookie).post(`/cs-booking-requests/${id}/approve`, body);
   const bookingsOf = (customerId: string) => t.prisma.booking.count({ where: { customerId } });
-  const customer = async (branch: string) =>
+  const customer = async () =>
     (
       await t.prisma.customer.create({
         data: {
           number: `${tag}-${++n}`,
-          branchId: branch,
           name: `${tag} customer ${n}`,
           phone: uniquePhone(),
           kind: 'COMPANY',
@@ -195,8 +194,8 @@ describe('Customer Service booking request approval (R3c2)', () => {
         },
       })
     ).id;
-    ids.customerPts = await customer(pts);
-    ids.customerJed = await customer(jed);
+    ids.customerPts = await customer();
+    ids.customerJed = await customer();
   });
 
   afterAll(async () => {
@@ -469,7 +468,6 @@ describe('Customer Service booking request approval (R3c2)', () => {
     });
     expect(made1.branchId).toBe(pts);
     expect(made1.customer).toMatchObject({
-      branchId: pts,
       kind: 'INDIVIDUAL',
       name: `${tag} Web Sender`,
       phone,
@@ -547,7 +545,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
     await t.prisma.csBookingRequest.update({
       where: { id: made.id },
       data: {
-        customerId: await customer(pts),
+        customerId: await customer(),
         grantId: 'g_test',
         senderChannel: null,
         senderId: null,

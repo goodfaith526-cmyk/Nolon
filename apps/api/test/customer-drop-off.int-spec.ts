@@ -198,7 +198,6 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
       await t.prisma.customer.create({
         data: {
           number: `${tag}-1`,
-          branchId: krt,
           name: `${tag} customer`,
           phone: uniquePhone(),
           kind: 'COMPANY',

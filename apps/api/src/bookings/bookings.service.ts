@@ -306,7 +306,7 @@ export class BookingsService {
     const prepared = await this.prepare(customer.id, input);
     return {
       // Plan 09d: the branch the work is done in, never the customer's by rule.
-      branchId: inBranch ?? workBranch(user, 'bookings:create', input.branchId, customer.branchId),
+      branchId: inBranch ?? workBranch(user, 'bookings:create', input.branchId),
       customerId: customer.id,
       quotationId: null,
       ...prepared,
@@ -386,7 +386,7 @@ export class BookingsService {
     // Plan 09d: the branch the draft names, or the work branch for the customer; with no
     // customer yet, the branch the draft names (one of the user's).
     const branchId = customer
-      ? workBranch(user, 'bookings:create', givenBranchId, customer.branchId)
+      ? workBranch(user, 'bookings:create', givenBranchId)
       : draftBranch(user, givenBranchId, null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;
@@ -504,7 +504,7 @@ export class BookingsService {
       : null;
     if (fromQuotation) {
       await assertOutletInTx(tx, user, fromQuotation.salesOutletId, 'Quotation not found');
-      await this.customers.lockActiveCustomerInTx(tx, prepared.branchId, prepared.customerId);
+      await this.customers.lockActiveCustomerInTx(tx, prepared.customerId);
       requireQuotedOutlet(prepared.salesOutletId, fromQuotation.salesOutletId);
     }
     const salesOutletId = fromQuotation

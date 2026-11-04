@@ -89,10 +89,10 @@ describe('CustomersService.duplicateIssues', () => {
     const issues = await service().customers.duplicateIssues(
       client,
       [
-        { branchId: 'b1', phone: '+249900000001' },
-        { branchId: 'b1', phone: '+249900000002', taxNumber: ' tx-1 ' },
-        { branchId: 'b2', phone: '+249900000001', taxNumber: 'TX-1' },
-        { branchId: 'b1', phone: '+249900000001', taxNumber: 'TX-1', excludeId: 'c1' },
+        { phone: '+249900000001' },
+        { phone: '+249900000002', taxNumber: ' tx-1 ' },
+        { phone: '+249900000001', taxNumber: 'TX-1' },
+        { phone: '+249900000001', taxNumber: 'TX-1', excludeId: 'c1' },
       ],
       staff(),
     );
@@ -110,7 +110,7 @@ describe('CustomersService.duplicateIssues', () => {
   });
 
   it('names the holder to Outlet Staff of its outlet only; to others it is "another customer"', async () => {
-    const keys = [{ branchId: 'b1', phone: '+249900000001', taxNumber: 'TX-1' }];
+    const keys = [{ phone: '+249900000001', taxNumber: 'TX-1' }];
     const own = await service().customers.duplicateIssues(client, keys, staff(['o1']));
     expect(own[0]?.map((i) => i.message)).toEqual([
       'Customer CS00001 has this phone',

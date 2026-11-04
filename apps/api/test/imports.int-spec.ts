@@ -25,8 +25,8 @@ import { RATE_UNIQUE_RULE } from '../src/rates/rates.service.js';
 import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
 import { lyingZipBomb } from './zip-bomb.js';
 
+// Plan 09f: a customer is of no branch, so the template has no branch column.
 const CUSTOMER_HEADER = [
-  'Branch code',
   'Customer type',
   'Name',
   'Phone',
@@ -101,7 +101,6 @@ describe('Excel import of customers and rates', () => {
     overrides: Partial<Record<string, ExcelJS.CellValue>> = {},
   ): ExcelJS.CellValue[] {
     const row: Record<string, ExcelJS.CellValue> = {
-      branch: 'DXB',
       kind: 'COMPANY',
       name: 'Imported Trading',
       phone: phone(),
@@ -113,7 +112,6 @@ describe('Excel import of customers and rates', () => {
       ...overrides,
     };
     return [
-      row.branch,
       row.kind,
       row.name,
       row.phone,
@@ -268,7 +266,7 @@ describe('Excel import of customers and rates', () => {
   });
 
   describe('templates', () => {
-    it('downloads the customer template with the user’s branches and active currencies', async () => {
+    it('downloads the customer template with no branch column and the active currencies', async () => {
       const res = await t
         .http()
         .get('/api/v1/customers/import/template?locale=en')
@@ -284,14 +282,9 @@ describe('Excel import of customers and rates', () => {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(res.body as Parameters<ExcelJS.Xlsx['load']>[0]);
       const [data, , lists] = wb.worksheets;
-      // One branch: the code may be left empty (that branch).
-      expect(data?.getCell('A1').value).toBe('Branch code');
-      const listed: string[] = [];
-      lists?.eachRow((row, n) => {
-        if (n > 1) listed.push(row.getCell(1).text);
-      });
-      expect(listed.filter((c) => c !== '')).toEqual(['DXB']);
-      expect(lists?.getCell('C2').text).toMatch(/^[A-Z]{3}$/);
+      expect(data?.getCell('A1').value).toBe('Customer type *');
+      expect(lists?.getCell('A1').text).not.toBe('Branches');
+      expect(lists?.getCell('A2').text).toMatch(/^[A-Z]{3}$/);
     });
 
     it('downloads the rate template in Arabic', async () => {
@@ -334,7 +327,7 @@ describe('Excel import of customers and rates', () => {
       expect(await myCustomers()).toBe(before);
     });
 
-    it('reports each bad row and column: branch, currency, amount, duplicates', async () => {
+    it('reports each bad row and column: currency, amount, duplicates', async () => {
       const existing = phone();
       await t
         .http()
@@ -352,7 +345,6 @@ describe('Excel import of customers and rates', () => {
       const twice = phone();
       const file = await xlsx([
         CUSTOMER_HEADER,
-        customerRow({ branch: 'JED' }),
         customerRow({ currency: 'XYZ' }),
         customerRow({ limit: '12.34567' }),
         customerRow({ limit: '1,000' }),
@@ -369,25 +361,24 @@ describe('Excel import of customers and rates', () => {
       const preview = (
         await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
       ).body as ImportPreviewDto;
-      expect(preview.totalRows).toBe(12);
+      expect(preview.totalRows).toBe(11);
       expect(preview.validRows).toBe(1);
       expect(codesOf(preview)).toEqual([
-        [2, 'branchCode', 'BRANCH_NOT_ALLOWED'],
-        [3, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
-        [4, 'creditLimit', 'AMOUNT_NOT_EXACT'],
-        [5, 'creditLimit', 'INVALID_AMOUNT'],
-        [6, 'creditLimitCurrency', 'CREDIT_LIMIT_PAIR'],
-        [8, 'phone', 'DUPLICATE_IN_FILE'],
-        [9, 'phone', 'DUPLICATE_IN_DB'],
-        [10, 'taxNumber', 'DUPLICATE_IN_DB'],
-        [11, 'name', 'REQUIRED'],
-        [11, 'phone', 'INVALID_FORMAT'],
+        [2, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
+        [3, 'creditLimit', 'AMOUNT_NOT_EXACT'],
+        [4, 'creditLimit', 'INVALID_AMOUNT'],
+        [5, 'creditLimitCurrency', 'CREDIT_LIMIT_PAIR'],
+        [7, 'phone', 'DUPLICATE_IN_FILE'],
+        [8, 'phone', 'DUPLICATE_IN_DB'],
+        [9, 'taxNumber', 'DUPLICATE_IN_DB'],
+        [10, 'name', 'REQUIRED'],
+        [10, 'phone', 'INVALID_FORMAT'],
+        [11, 'kind', 'INVALID_VALUE'],
+        [11, 'paymentTermsDays', 'INVALID_VALUE'],
         [12, 'kind', 'INVALID_VALUE'],
-        [12, 'paymentTermsDays', 'INVALID_VALUE'],
-        [13, 'kind', 'INVALID_VALUE'],
-        [13, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
+        [12, 'preferredCurrency', 'UNKNOWN_CURRENCY'],
       ]);
-      expect(preview.issues.find((i) => i.row === 8)?.otherRow).toBe(7);
+      expect(preview.issues.find((i) => i.row === 7)?.otherRow).toBe(6);
     });
 
     it('commits nothing when any row fails', async () => {
@@ -428,7 +419,7 @@ describe('Excel import of customers and rates', () => {
         orderBy: { number: 'asc' },
       });
       expect(saved.map((c) => c.phone)).toEqual(phones);
-      expect(saved.every((c) => c.branchId === dxb && /^CS\d{5,}$/.test(c.number))).toBe(true);
+      expect(saved.every((c) => /^CS\d{5,}$/.test(c.number))).toBe(true);
       expect(new Set(saved.map((c) => c.number)).size).toBe(3);
       expect(saved[0]?.creditLimit?.toFixed()).toBe('5000.25');
       expect(saved[1]?.creditLimit?.toFixed()).toBe('99999999999999.5');
@@ -470,106 +461,19 @@ describe('Excel import of customers and rates', () => {
       ]);
     });
 
-    it('commits nothing when a row names a branch the user does not hold', async () => {
-      const before = await myCustomers();
-      const file = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ branch: 'JED' })]);
-      const body = (
-        await commit('/customers/import', cookies.salesDxb, file, randomUUID()).expect(422)
-      ).body as ImportRowsInvalidBody;
-      expect(codesOf(body.preview)).toEqual([[3, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
-      expect(await myCustomers()).toBe(before);
-    });
-
-    it('takes the only branch of a one-branch user for an empty branch code', async () => {
-      const file = await xlsx([
-        CUSTOMER_HEADER,
-        customerRow({ branch: null }),
-        customerRow({ branch: 'DXB' }),
-      ]);
-      const preview = (
-        await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
-      ).body as ImportPreviewDto;
-      expect(preview).toMatchObject({ totalRows: 2, validRows: 2, issues: [] });
-      const done = (
-        await commit('/customers/import', cookies.salesDxb, file, randomUUID()).expect(201)
-      ).body as ImportResultDto;
-      const made = await t.prisma.customer.findMany({ where: { id: { in: done.ids } } });
-      expect(made.map((c) => c.branchId)).toEqual([dxb, dxb]);
-
-      // Without the column at all, too.
-      const noColumn = await xlsx([
-        CUSTOMER_HEADER.slice(1),
-        customerRow({ branch: null }).slice(1),
-      ]);
-      await upload('/customers/import/preview', cookies.salesDxb, noColumn)
-        .expect(200)
-        .expect((res) => expect((res.body as ImportPreviewDto).validRows).toBe(1));
-    });
-
-    it('still checks a branch code given by a one-branch user, and an inactive only branch', async () => {
-      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: 'JED' })]);
-      const preview = (
-        await upload('/customers/import/preview', cookies.salesDxb, file).expect(200)
-      ).body as ImportPreviewDto;
-      expect(codesOf(preview)).toEqual([[2, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
-
-      // The only branch is not active: an empty code is not taken for it.
-      await t.prisma.branch.update({ where: { id: zzi }, data: { isActive: false } });
-      try {
-        const empty = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);
-        const inactive = (
-          await upload('/customers/import/preview', cookies.salesZzi, empty).expect(200)
-        ).body as ImportPreviewDto;
-        expect(codesOf(inactive)).toEqual([[2, 'branchCode', 'BRANCH_NOT_ALLOWED']]);
-      } finally {
-        await t.prisma.branch.update({ where: { id: zzi }, data: { isActive: true } });
-      }
-    });
-
-    it('refuses a phone two rows of different branches share (plan 09d, F184-6)', async () => {
+    it('refuses a phone two rows share, from a user of two branches (plan 09d, F184-6)', async () => {
       const before = await myCustomers();
       const shared = phone();
       const file = await xlsx([
         CUSTOMER_HEADER,
         customerRow({ phone: shared }),
-        customerRow({ branch: 'JED', phone: shared }),
+        customerRow({ phone: shared }),
       ]);
       const body = (
         await commit('/customers/import', cookies.salesDxbJed, file, randomUUID()).expect(422)
       ).body as ImportRowsInvalidBody;
       expect(codesOf(body.preview)).toEqual([[3, 'phone', 'DUPLICATE_IN_FILE']]);
       expect(await myCustomers()).toBe(before);
-    });
-
-    it('needs the branch code from a user of several branches', async () => {
-      const before = await myCustomers();
-      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);
-      const body = (
-        await commit('/customers/import', cookies.salesDxbJed, file, randomUUID()).expect(422)
-      ).body as ImportRowsInvalidBody;
-      expect(codesOf(body.preview)).toEqual([[2, 'branchCode', 'REQUIRED']]);
-      expect(await myCustomers()).toBe(before);
-      // Their template marks it required.
-      const template = await t
-        .http()
-        .get('/api/v1/customers/import/template?locale=en')
-        .set('Cookie', cookies.salesDxbJed)
-        .buffer(true)
-        .parse((response, done) => {
-          const chunks: Buffer[] = [];
-          response.on('data', (c: Buffer) => chunks.push(c));
-          response.on('end', () => done(null, Buffer.concat(chunks)));
-        })
-        .expect(200);
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.load(template.body as Parameters<ExcelJS.Xlsx['load']>[0]);
-      expect(wb.worksheets[0]?.getCell('A1').value).toBe('Branch code *');
-      // Without the column, their file is refused as a whole.
-      const noColumn = await xlsx([
-        CUSTOMER_HEADER.slice(1),
-        customerRow({ branch: null }).slice(1),
-      ]);
-      await upload('/customers/import/preview', cookies.salesDxbJed, noColumn).expect(400);
     });
 
     it('replays only an exact retry: another file, user or kind under the request id is a 409', async () => {
@@ -617,7 +521,7 @@ describe('Excel import of customers and rates', () => {
       expect(await myCustomers()).toBe(before + 2);
     });
 
-    it('two concurrent imports with the same phone in one branch: one succeeds, one is a 422', async () => {
+    it('two concurrent imports with the same phone: one succeeds, one is a 422', async () => {
       const shared = phone();
       const one = await xlsx([CUSTOMER_HEADER, customerRow({ phone: shared })]);
       const two = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ phone: shared })]);
@@ -634,7 +538,7 @@ describe('Excel import of customers and rates', () => {
       expect(refused.preview.issues.map((i) => [i.column, i.code])).toEqual([
         ['phone', 'DUPLICATE_IN_DB'],
       ]);
-      expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: shared } })).toBe(1);
+      expect(await t.prisma.customer.count({ where: { phone: shared } })).toBe(1);
     });
 
     it('takes a full file of IMPORT_MAX_ROWS rows in one transaction, and refuses one more', async () => {
@@ -940,7 +844,7 @@ describe('Excel import of customers and rates', () => {
       await edit(other.id, { taxNumber: `tx-${taken}` }).expect(409);
       // Saving a customer's own phone and tax number again is no duplicate.
       await edit(first.id, { phone: taken, taxNumber: `tx-${taken}`, name: 'Renamed' }).expect(200);
-      expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: taken } })).toBe(1);
+      expect(await t.prisma.customer.count({ where: { phone: taken } })).toBe(1);
     });
 
     it('refuses a single create or edit that repeats a draft or approved rate (409)', async () => {
@@ -1007,7 +911,7 @@ describe('Excel import of customers and rates', () => {
           [() => patch(`/customers/${a.id}`, { name: 'Stale form', phone: old })],
         );
         expect(res?.status).toBe(409);
-        expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: old } })).toBe(1);
+        expect(await t.prisma.customer.count({ where: { phone: old } })).toBe(1);
       });
 
       it('tax number', async () => {
@@ -1031,7 +935,7 @@ describe('Excel import of customers and rates', () => {
         expect(res?.status).toBe(409);
         expect(
           await t.prisma.customer.count({
-            where: { branchId: dxb, taxNumber: { equals: old, mode: 'insensitive' } },
+            where: { taxNumber: { equals: old, mode: 'insensitive' } },
           }),
         ).toBe(1);
       });
@@ -1090,7 +994,7 @@ describe('Excel import of customers and rates', () => {
           expect([created.status, imported.status]).toEqual([201, 422]);
           expect(refusedCodes(imported)).toEqual([['phone', 'DUPLICATE_IN_DB']]);
         }
-        expect(await t.prisma.customer.count({ where: { branchId: dxb, phone: shared } })).toBe(1);
+        expect(await t.prisma.customer.count({ where: { phone: shared } })).toBe(1);
       });
 
       it(`import and a single create race on one tax number (${order}): one writes, the other is refused`, async () => {
@@ -1117,7 +1021,7 @@ describe('Excel import of customers and rates', () => {
         }
         expect(
           await t.prisma.customer.count({
-            where: { branchId: dxb, taxNumber: { equals: tax, mode: 'insensitive' } },
+            where: { taxNumber: { equals: tax, mode: 'insensitive' } },
           }),
         ).toBe(1);
       });
@@ -1157,37 +1061,8 @@ describe('Excel import of customers and rates', () => {
       tx.branch.update({ where: { id: zzi }, data: { isActive: false } });
     const reactivate = () =>
       t.prisma.branch.update({ where: { id: zzi }, data: { isActive: true } });
-    const zziCustomers = () => t.prisma.customer.count({ where: { branchId: zzi } });
 
-    it('a deactivation committed first refuses the import waiting on the branch (422)', async () => {
-      const before = await zziCustomers();
-      const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: 'ZZI' })]);
-      try {
-        const { pending } = await t.prisma.$transaction(
-          async (tx) => {
-            await deactivate(tx);
-            // The import passed its first checks (the deactivation is not committed yet) and
-            // waits on the branch row inside its transaction.
-            const sent = commit('/customers/import', cookies.salesZzi, file, randomUUID()).then(
-              (res) => res,
-            );
-            await waitForLockWaiter(t.prisma, 1);
-            return { pending: sent };
-          },
-          { timeout: 20_000 },
-        );
-        const res = await pending;
-        expect(res.status).toBe(422);
-        expect(
-          (res.body as ImportRowsInvalidBody).preview.issues.map((i) => [i.column, i.code]),
-        ).toEqual([['branchCode', 'BRANCH_NOT_ALLOWED']]);
-        expect(await zziCustomers()).toBe(before);
-      } finally {
-        await reactivate();
-      }
-    });
-
-    it('the same holds for rates', async () => {
+    it('a deactivation committed first refuses the rate import waiting on the branch (422)', async () => {
       const before = await t.prisma.rateCard.count({ where: { branchId: zzi } });
       const file = await xlsx([RATE_HEADER, rateRow({ branch: 'ZZI' })]);
       try {
@@ -1208,42 +1083,6 @@ describe('Excel import of customers and rates', () => {
           (res.body as ImportRowsInvalidBody).preview.issues.map((i) => [i.column, i.code]),
         ).toEqual([['branchCode', 'BRANCH_NOT_ALLOWED']]);
         expect(await t.prisma.rateCard.count({ where: { branchId: zzi } })).toBe(before);
-      } finally {
-        await reactivate();
-      }
-    });
-
-    it('an import that holds the branch first commits, and the deactivation waits for it', async () => {
-      const before = await zziCustomers();
-      const file = await xlsx([
-        CUSTOMER_HEADER,
-        customerRow({ branch: 'ZZI' }),
-        customerRow({ branch: 'ZZI' }),
-      ]);
-      try {
-        let deactivated: Promise<unknown> = Promise.resolve();
-        const { pending } = await t.prisma.$transaction(
-          async (tx) => {
-            // Barrier: the import locks the branch row, then waits on the customer rule lock.
-            await lockCustomerKeys(tx);
-            const sent = commit('/customers/import', cookies.salesZzi, file, randomUUID()).then(
-              (res) => res,
-            );
-            await waitForLockWaiter(t.prisma, 1);
-            deactivated = t.prisma.$transaction((other) => deactivate(other)).then((b) => b);
-            // The deactivation waits on the branch row the import holds.
-            await waitForLockWaiter(t.prisma, 2);
-            return { pending: sent };
-          },
-          { timeout: 20_000 },
-        );
-        const res = await pending;
-        expect(res.status).toBe(201);
-        await deactivated;
-        expect(await zziCustomers()).toBe(before + 2);
-        expect((await t.prisma.branch.findUniqueOrThrow({ where: { id: zzi } })).isActive).toBe(
-          false,
-        );
       } finally {
         await reactivate();
       }

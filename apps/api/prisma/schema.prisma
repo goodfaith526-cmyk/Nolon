@@ -51,7 +51,6 @@ model Branch {
   users               UserBranch[]
   routingRules        BranchRoutingRule[]
   csRequests          CsBookingRequest[]
-  customers           Customer[]
   partners            Partner[]
   commissionAccruals  CommissionAccrual[]
   partnerStatements   PartnerStatement[]
@@ -767,7 +766,6 @@ model Customer {
   id                    String           @id @default(uuid()) @db.Uuid
   /// NOL-CUS-000001
   number                String           @unique @db.VarChar(30)
-  branchId              String           @map("branch_id") @db.Uuid
   kind                  CustomerKind
   name                  String           @db.VarChar(200)
   companyName           String?          @map("company_name") @db.VarChar(200)
@@ -797,7 +795,6 @@ model Customer {
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch                 Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   createdViaApiClient    ApiClient?         @relation("CustomerCreatedViaApiClient", fields: [createdViaApiClientId], references: [id], onDelete: Restrict)
   acquiredViaOutlet      Partner?           @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
   segment                CustomerSegment?   @relation(fields: [segmentCode], references: [code], onDelete: Restrict)
@@ -828,8 +825,7 @@ model Customer {
   csAccessEvents CsAccessEvent[]
   csRequests     CsBookingRequest[]
 
-  @@unique([profileId, branchId])
-  @@index([branchId])
+  @@index([profileId])
   @@index([phone])
   @@index([acquiredViaOutletId])
   @@index([segmentCode])

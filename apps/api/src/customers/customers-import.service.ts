@@ -1,7 +1,7 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import {
   CUSTOMER_KINDS,
-  type CreateCustomerRequest,
+  type CustomerInput,
   type CustomerImportColumn,
   type ImportPreviewDto,
   type ImportResultDto,
@@ -32,18 +32,10 @@ import { importCustomerBody } from './customer-schemas.js';
 import { CustomersService, normalizeTaxNumber } from './customers.service.js';
 
 type Column = CustomerImportColumn;
-type Row = CheckedRow<Column, CreateCustomerRequest>;
+type Row = CheckedRow<Column, CustomerInput>;
 
 /** The customer template (scope 18). Keys match CUSTOMER_IMPORT_COLUMNS. */
 export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
-  {
-    key: 'branchCode',
-    kind: 'code',
-    required: true,
-    list: 'branches',
-    label: { en: 'Branch code', ar: 'رمز الفرع' },
-    hint: { en: 'One of your branches (Lists sheet)', ar: 'أحد فروعك (ورقة القوائم)' },
-  },
   {
     key: 'kind',
     kind: 'code',
@@ -74,8 +66,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: true,
     label: { en: 'Phone', ar: 'الهاتف' },
     hint: {
-      en: 'International form, e.g. +249912345678. Unique per branch.',
-      ar: 'بالصيغة الدولية مثل ‎+249912345678. لا يتكرر داخل الفرع.',
+      en: 'International form, e.g. +249912345678. Unique across the company.',
+      ar: 'بالصيغة الدولية مثل ‎+249912345678. لا يتكرر في الشركة.',
     },
   },
   {
@@ -124,8 +116,8 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
     required: false,
     label: { en: 'Tax number', ar: 'الرقم الضريبي' },
     hint: {
-      en: 'Up to 50 characters. Unique per branch (case does not matter).',
-      ar: 'حتى 50 حرفاً. لا يتكرر داخل الفرع (دون اعتبار لحالة الأحرف).',
+      en: 'Up to 50 characters. Unique across the company (case does not matter).',
+      ar: 'حتى 50 حرفاً. لا يتكرر في الشركة (دون اعتبار لحالة الأحرف).',
     },
   },
   {
@@ -179,38 +171,12 @@ export const CUSTOMER_COLUMNS: readonly ImportColumn<Column>[] = [
   },
 ];
 
-/**
- * The template's columns for this user. A user with one branch may leave the branch code empty
- * (or leave the column out): the row is for that branch (`check`). Everyone else names it.
- */
-function columnsFor(user: AuthUser): readonly ImportColumn<Column>[] {
-  if (user.allowedBranchIds.length !== 1) return CUSTOMER_COLUMNS;
-  return CUSTOMER_COLUMNS.map((c) =>
-    c.key === 'branchCode'
-      ? {
-          ...c,
-          required: false,
-          hint: {
-            en: 'Your branch (Lists sheet); empty means your branch',
-            ar: 'فرعك (ورقة القوائم)؛ إذا تُرك فارغاً فهو فرعك',
-          },
-        }
-      : c,
-  );
-}
-
 const KIND_LABELS = {
   COMPANY: { en: 'Company', ar: 'شركة' },
   INDIVIDUAL: { en: 'Individual', ar: 'فرد' },
 } as const;
 
-/** Request field of each column (the same name, except the branch, given by its code). */
-function fieldOf(column: Column): string {
-  return column === 'branchCode' ? 'branchId' : column;
-}
-
 function columnOf(field: string): Column | null {
-  if (field === 'branchId') return 'branchCode';
   return CUSTOMER_COLUMNS.find((c) => c.key === field)?.key ?? null;
 }
 
@@ -221,7 +187,7 @@ function kindOf(column: Column) {
 /**
  * Excel import of customers (scope 6 and 18). Each row is checked with the same request schema
  * and reference rules as POST /customers, plus duplicates: a phone or tax number repeated within
- * the file, or already held by a customer of the same branch (the rule CustomersService enforces
+ * the file, or already held by another customer (the rule CustomersService enforces
  * on every write). Commit writes every row in one transaction, or nothing when any row fails.
  */
 @Injectable()
@@ -235,24 +201,23 @@ export class CustomersImportService implements OnModuleInit {
 
   onModuleInit(): void {
     this.importRecords.register('customers', (client, { from, to }, take) =>
-      client.customer.findMany({
-        where: { id: { gte: from, lte: to } },
-        select: { id: true, branchId: true },
-        take,
-      }),
+      client.customer
+        .findMany({
+          where: { id: { gte: from, lte: to } },
+          select: { id: true },
+          take,
+        })
+        .then((rows) => rows.map((r) => ({ id: r.id, branchId: null }))),
     );
   }
 
   async template(user: AuthUser, locale: Locale): Promise<{ fileName: string; data: Buffer }> {
-    const [branches, currencies] = await Promise.all([
-      this.userBranches(user),
-      this.currencies.listActive(),
-    ]);
+    const currencies = await this.currencies.listActive();
     const name = (n: { nameEn: string; nameAr: string }) => (locale === 'ar' ? n.nameAr : n.nameEn);
     const data = await buildTemplate({
       locale,
       sheetName: { en: 'Customers', ar: 'العملاء' },
-      columns: columnsFor(user),
+      columns: CUSTOMER_COLUMNS,
       notes: [
         {
           en: 'Each row creates a new customer with the next customer number. Existing customers are never changed.',
@@ -260,11 +225,6 @@ export class CustomersImportService implements OnModuleInit {
         },
       ],
       lists: [
-        {
-          key: 'branches',
-          title: { en: 'Branches', ar: 'الفروع' },
-          items: branches.map((b) => ({ code: b.code, name: name(b) })),
-        },
         {
           key: 'currencies',
           title: { en: 'Currencies', ar: 'العملات' },
@@ -289,7 +249,7 @@ export class CustomersImportService implements OnModuleInit {
   }
 
   async preview(user: AuthUser, file: UploadedWorkbook | undefined): Promise<ImportPreviewDto> {
-    return buildPreview('customers', columnsFor(user), await this.check(user, file));
+    return buildPreview('customers', CUSTOMER_COLUMNS, await this.check(user, file));
   }
 
   /**
@@ -299,7 +259,7 @@ export class CustomersImportService implements OnModuleInit {
    * requestId reused for anything else is refused (409).
    *
    * Inside the transaction, CustomersService checks again, under the locks every customer write
-   * takes, that each branch is still active and that no phone or tax number has been taken
+   * takes, that no phone or tax number has been taken
    * meanwhile (by another import or a single create or update); any such row refuses the file.
    */
   async commit(
@@ -311,7 +271,7 @@ export class CustomersImportService implements OnModuleInit {
     const done = await previousImport(this.importRecords.lookups(), this.prisma, user, request);
     if (done) return done;
     const rows = await this.check(user, file);
-    const invalid = () => rowsInvalid(buildPreview('customers', columnsFor(user), rows));
+    const invalid = () => rowsInvalid(buildPreview('customers', CUSTOMER_COLUMNS, rows));
     const ready = rows.flatMap((r) =>
       r.input && r.issues.length === 0 ? [{ row: r, input: r.input }] : [],
     );
@@ -332,53 +292,16 @@ export class CustomersImportService implements OnModuleInit {
     }, IMPORT_TRANSACTION);
   }
 
-  /** The user's active branches: the only ones a row may name. */
-  private userBranches(user: AuthUser) {
-    return this.prisma.branch.findMany({
-      where: { id: { in: [...user.allowedBranchIds] }, isActive: true },
-      orderBy: { code: 'asc' },
-    });
-  }
-
   private async check(user: AuthUser, file: UploadedWorkbook | undefined): Promise<Row[]> {
-    const columns = columnsFor(user);
+    const columns = CUSTOMER_COLUMNS;
     const sheet = await readImportSheet(file, columns);
-    const branches = await this.userBranches(user);
-    const branchIds = new Map(branches.map((b) => [b.code, b.id]));
-    // A user with one branch (taken from the session on every preview and commit, so a branch
-    // removed from them meanwhile is not used): an empty branch code is that branch.
-    const [only] = user.allowedBranchIds.length === 1 ? user.allowedBranchIds : [];
     const checkReferences = this.customers.referenceChecker();
     const rows: Row[] = [];
     for (const { row, values, issues } of sheet) {
       const input: Record<string, unknown> = {};
       for (const column of columns) {
         const value = values[column.key];
-        if (value !== null) input[fieldOf(column.key)] = value;
-      }
-      if (typeof values.branchCode === 'string') {
-        const id = branchIds.get(values.branchCode);
-        if (id) {
-          input.branchId = id;
-        } else {
-          delete input.branchId;
-          addIssues(issues, [
-            issue(row, 'branchCode', 'BRANCH_NOT_ALLOWED', 'Not one of your active branches'),
-          ]);
-        }
-      } else if (
-        values.branchCode === null &&
-        only !== undefined &&
-        // A code that could not be read is reported as it is, not replaced.
-        !issues.some((i) => i.column === 'branchCode')
-      ) {
-        if (branches.some((b) => b.id === only)) {
-          input.branchId = only;
-        } else {
-          addIssues(issues, [
-            issue(row, 'branchCode', 'BRANCH_NOT_ALLOWED', 'Not one of your active branches'),
-          ]);
-        }
+        if (value !== null) input[column.key] = value;
       }
       if (typeof input.preferredLocale === 'string') {
         input.preferredLocale = input.preferredLocale.toLowerCase();

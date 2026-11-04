@@ -137,6 +137,10 @@ export async function actorAt(
 export const LEDGER_PREFIX = 'ledger-it-';
 
 export async function deleteTestUsers(prisma: PrismaService): Promise<void> {
+  // Branch permissions a test user granted would block deleting them (created_by RESTRICT).
+  await prisma.userBranchPermission.deleteMany({
+    where: { createdBy: { email: { startsWith: 'it-' } } },
+  });
   await prisma.user.deleteMany({ where: { email: { startsWith: 'it-' } } });
 }
 

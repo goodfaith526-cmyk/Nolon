@@ -107,7 +107,8 @@ afterEach(() => {
 });
 
 describe('one branch: no branch to choose (functional review B7)', () => {
-  it('customer form sends the only branch without asking; two branches are asked', async () => {
+  it('customer form never asks or sends a branch, with one branch or two (plan 09f)', async () => {
+    branches = [DUBAI, JEDDAH];
     await render(<CustomerForm onCancel={() => {}} onSaved={() => {}} />);
     expect(byName('branchId')).toBeNull();
     change(byName<HTMLInputElement>('name') as HTMLInputElement, 'Tariq');
@@ -119,14 +120,8 @@ describe('one branch: no branch to choose (functional review B7)', () => {
     await flush();
     expect(api).toHaveBeenCalledWith('/customers', {
       method: 'POST',
-      body: expect.objectContaining({ branchId: 'b1' }) as unknown,
+      body: expect.not.objectContaining({ branchId: expect.anything() as unknown }) as unknown,
     });
-
-    act(() => root.unmount());
-    document.body.replaceChildren();
-    branches = [DUBAI, JEDDAH];
-    await render(<CustomerForm onCancel={() => {}} onSaved={() => {}} />);
-    expect(byName<HTMLSelectElement>('branchId')?.value).toBe('b1');
   });
 
   it('rate form and container form hide the branch with one', async () => {

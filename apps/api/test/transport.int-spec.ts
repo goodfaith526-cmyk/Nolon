@@ -824,6 +824,7 @@ describe('inland transport: fleet, trips, POD', () => {
       const booking = (
         await post('/bookings', cookies.opsBoth, {
           customerId: ptsCustomer.id,
+          branchId: pts,
           originLocationId: portSudan,
           destinationLocationId: khartoum,
           mode: 'ROAD',

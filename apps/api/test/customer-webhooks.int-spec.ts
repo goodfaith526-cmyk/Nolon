@@ -203,7 +203,6 @@ describe('Customer Service notices (plan 09 section 5)', () => {
       await t.prisma.customer.create({
         data: {
           number: `${tag}-1`,
-          branchId: krt,
           name: `${tag} customer`,
           phone: uniquePhone(),
           kind: 'COMPANY',

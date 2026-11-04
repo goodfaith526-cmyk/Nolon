@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
-import { onlyBranch } from '@/lib/branches';
+import { onlyBranch, writableBranches } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -23,7 +23,6 @@ export function Customers({ startCreating = false }: { startCreating?: boolean }
   const t = useTranslations('Customers');
   const tc = useTranslations('Common');
   const me = useMe();
-  const name = useLocalName();
   const failure = useFailureText();
   const router = useRouter();
   const [q, setQ] = useState('');
@@ -43,11 +42,6 @@ export function Customers({ startCreating = false }: { startCreating?: boolean }
   useEffect(() => load(''), [load]);
 
   if (!can(me, 'customers:view')) return <p className="error">{tc('noAccess')}</p>;
-
-  const branchLabel = (id: string) => {
-    const branch = me.branches.find((b) => b.id === id);
-    return branch ? name(branch) : '';
-  };
 
   return (
     <section className="stack">
@@ -98,7 +92,6 @@ export function Customers({ startCreating = false }: { startCreating?: boolean }
                 <th>{t('number')}</th>
                 <th>{t('name')}</th>
                 <th>{t('phone')}</th>
-                <th>{t('branch')}</th>
                 <th>{tc('status')}</th>
               </tr>
             </thead>
@@ -113,7 +106,6 @@ export function Customers({ startCreating = false }: { startCreating?: boolean }
                     {c.companyName ? <div className="muted">{c.companyName}</div> : null}
                   </td>
                   <td dir="ltr">{c.phone}</td>
-                  <td>{branchLabel(c.branchId)}</td>
                   <td>{c.isActive ? tc('active') : tc('inactive')}</td>
                 </tr>
               ))}
@@ -152,11 +144,8 @@ export function CustomerForm({
   const failure = useFailureText();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
-  // With one branch the user is not asked (functional review B7); the API checks it on save.
+  // Plan 09f: a customer is of no branch, so the form asks for none.
   const single = onlyBranch(me);
-  const [branchId, setBranchId] = useState(
-    customer?.branchId ?? single?.id ?? me.branches[0]?.id ?? '',
-  );
   const [preferredCurrency, setPreferredCurrency] = useState(customer?.preferredCurrency ?? '');
   const [country, setCountry] = useState(customer?.countryCode ?? '');
   // The credit limit's currency (functional review B8). An existing limit keeps its currency. A
@@ -167,7 +156,7 @@ export function CustomerForm({
   const [creditCurrencyChoice, setCreditCurrency] = useState<string | null>(
     hasLimit ? (customer?.creditLimitCurrency ?? null) : null,
   );
-  const branchCurrency = me.branches.find((b) => b.id === branchId)?.defaultCurrency ?? '';
+  const branchCurrency = (single ?? me.branches[0])?.defaultCurrency ?? '';
   const creditCurrency = creditCurrencyChoice ?? (preferredCurrency || branchCurrency);
   const [creditLimitText, setCreditLimitText] = useState(customer?.creditLimit ?? '');
   const heldOutlet = customer?.acquiredViaOutlet ?? null;
@@ -208,10 +197,7 @@ export function CustomerForm({
     try {
       const saved = customer
         ? await api<CustomerDto>(`/customers/${customer.id}`, { method: 'PATCH', body })
-        : await api<CustomerDto>('/customers', {
-            method: 'POST',
-            body: { ...body, branchId },
-          });
+        : await api<CustomerDto>('/customers', { method: 'POST', body });
       onSaved(saved);
     } catch (err) {
       setNotice({ ok: false, text: failure(err) });
@@ -227,23 +213,6 @@ export function CustomerForm({
       <h2>{customer ? t('editTitle', { name: customer.name }) : t('add')}</h2>
       <Notice notice={notice} />
       <div className="grid">
-        {!customer && !single && (
-          <label className="field">
-            {t('branch')}
-            <select
-              name="branchId"
-              required
-              value={branchId}
-              onChange={(e) => setBranchId(e.target.value)}
-            >
-              {me.branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {name(b)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
         <label className="field">
           {t('kind')}
           <select name="kind" defaultValue={customer?.kind ?? 'COMPANY'}>
@@ -384,7 +353,9 @@ export function CustomerForm({
           {t('acquiredViaOutlet')}
           <PartnerSelect
             kind="SALES_OUTLET"
-            branchIds={[branchId]}
+            branchIds={(customer ? me.branches : writableBranches(me, 'customers:create')).map(
+              (b) => b.id,
+            )}
             held={heldOutlet}
             value={outletId}
             onChange={setOutletId}

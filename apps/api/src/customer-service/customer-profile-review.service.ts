@@ -188,9 +188,7 @@ export class CustomerProfileReviewService {
           input.accountId,
           true,
         );
-        if (!account || !user.access.has('customers:update', account.branchId))
-          identityError(404, 'PROFILE_NOT_BOUND');
-        assertBranchAccess(user, account.branchId);
+        if (!account) identityError(404, 'PROFILE_NOT_BOUND');
         if (!account.isActive) identityError(409, 'CUSTOMER_INACTIVE');
         profileId =
           account.profileId ??

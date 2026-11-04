@@ -220,7 +220,8 @@
     "loadTypeFollows": "يتبع نوع البضاعة: FCL للحاوية وLCL لغيرها. اختر قيمة لتثبيتها.",
     "chooseCountry": "اختر الدولة",
     "countriesInUse": "دول مستخدمة",
-    "allCountries": "كل الدول"
+    "allCountries": "كل الدول",
+    "workBranch": "فرع المستند"
   },
   "Customers": {
     "title": "العملاء",

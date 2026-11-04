@@ -14,7 +14,6 @@ export const IMPORT_MAX_ROWS = 5000;
 
 /** Template columns, in template order. Keys are what the preview and errors refer to. */
 export const CUSTOMER_IMPORT_COLUMNS = [
-  'branchCode',
   'kind',
   'name',
   'companyName',

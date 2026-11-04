@@ -211,7 +211,7 @@ export class QuotationsService {
     // suggests; never the customer's branch of registration by default.
     let at: string;
     try {
-      at = workBranch(user, 'quotations:create', branchId, customer.branchId);
+      at = workBranch(user, 'quotations:create', branchId);
     } catch (error) {
       const own = user.access
         .branchesWith(['quotations:create'])
@@ -248,7 +248,7 @@ export class QuotationsService {
   async prepareCreate(user: AuthUser, input: CreateQuotationRequest) {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     // Plan 09d: the branch the work is done in, never the customer's by rule.
-    const branchId = workBranch(user, 'quotations:create', input.branchId, customer.branchId);
+    const branchId = workBranch(user, 'quotations:create', input.branchId);
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return {
@@ -279,7 +279,7 @@ export class QuotationsService {
     // Plan 09d: the branch the draft names, or the work branch for the customer; with no
     // customer yet, the branch the draft names (one of the user's).
     const branchId = customer
-      ? workBranch(user, 'quotations:create', givenBranchId, customer.branchId)
+      ? workBranch(user, 'quotations:create', givenBranchId)
       : draftBranch(user, givenBranchId, null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;

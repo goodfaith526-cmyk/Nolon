@@ -114,7 +114,6 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
     const accounts = await accountsOf(first.profileId!);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
-      branchId: dxb,
       kind: 'INDIVIDUAL',
       name: 'Chat Name First',
       phone: null,
@@ -140,11 +139,10 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
     const profile = await t.prisma.customerProfile.findUniqueOrThrow({
       where: { id: r.profileId! },
     });
-    const make = (branch: string, isActive: boolean, n: number) =>
+    const make = (isActive: boolean, n: number) =>
       t.prisma.customer.create({
         data: {
           number: `ZZFM${randomUUID().slice(0, 8)}${n}`,
-          branchId: branch,
           name: 'Chat Name',
           kind: 'INDIVIDUAL',
           isActive,
@@ -152,14 +150,13 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
           createdById: creatorId,
         },
       });
-    // Older data: an inactive account first, then an active one in another branch.
-    const inactive = await make(jed, false, 1);
-    const active = await make(dxb, true, 2);
+    // Older data: an inactive account first, then an active one.
+    const inactive = await make(false, 1);
+    const active = await make(true, 2);
     await t.prisma.$transaction((tx) =>
       t.app.get(CustomersService).channelAccountInTx(tx, {
         profile: { ...profile, name: 'Full Given Name' },
         channelName: 'Chat Name',
-        branchId: dxb,
         apiClientId: clientId,
       }),
     );
@@ -187,7 +184,6 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
             t.app.get(CustomersService).channelAccountInTx(other, {
               profile: { ...profile, name: 'Given Bot Name' },
               channelName: 'Chat Name Race',
-              branchId: dxb,
               apiClientId: clientId,
             }),
           )

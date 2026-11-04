@@ -33,8 +33,9 @@ another module's tables or internals.
    `branchId` taken from the authenticated user's allowed branches, never from an unchecked
    request field. Cross-branch access exists only for roles that hold an explicit permission
    for it. Forgetting the filter is a data leak, not a bug.
-   Exception (owner, 2026-11-04, plan 09d): the customer record is central, not branch-owned.
-   Any user with `customers:view` sees any customer; outlet staff stay limited to their outlets.
+   Exception (owner, 2026-11-04, plans 09d and 09f): the customer record is central and has no
+   branch at all. Any user with `customers:view` sees any customer; outlet staff stay limited to
+   their outlets.
    Documents (quotations, bookings, shipments, invoices, receipts, journals) stay branch-owned,
    written in a branch the user writes in.
 3. **Posted journal entries are immutable.** Once a journal entry is posted, it and its lines
