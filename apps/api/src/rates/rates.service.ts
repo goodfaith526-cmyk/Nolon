@@ -18,7 +18,7 @@ import type {
   RouteMatch,
   ShippingMode,
 } from '@nolon/shared';
-import { hasSeaLeg } from '@nolon/shared';
+import { hasSeaLeg, type MarketingPriceDto } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
@@ -756,6 +756,65 @@ export class RatesService {
       origins: [...new Set(rates.map((r) => r.originLocationId))],
       destinations: [...new Set(rates.map((r) => r.destinationLocationId))],
     };
+  }
+
+  /**
+   * The marketing summary's prices (docs/plans/11): the APPROVED freight cards of every branch
+   * valid on `onDate` that price a shipment type, as the bot's quotes read them. Selling price
+   * only: no cost, margin or staff name. Read-only.
+   */
+  async marketingPrices(onDate: string): Promise<MarketingPriceDto[]> {
+    const day = toDbDate(onDate);
+    const rates = await this.prisma.rateCard.findMany({
+      where: {
+        status: 'APPROVED',
+        chargeTypeCode: 'FREIGHT',
+        priceCategoryCode: { not: null },
+        validFrom: { lte: day },
+        OR: [{ validTo: null }, { validTo: { gte: day } }],
+      },
+      select: {
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        priceCategoryCode: true,
+        unit: true,
+        price: true,
+        minimumCharge: true,
+        currency: true,
+        validFrom: true,
+        validTo: true,
+        transitDays: true,
+      },
+      orderBy: [
+        { originLocationId: 'asc' },
+        { destinationLocationId: 'asc' },
+        { mode: 'asc' },
+        { priceCategoryCode: 'asc' },
+        { validFrom: 'asc' },
+      ],
+    });
+    return rates.flatMap((r) =>
+      r.priceCategoryCode === null
+        ? []
+        : [
+            {
+              originId: r.originLocationId,
+              destinationId: r.destinationLocationId,
+              mode: r.mode,
+              loadType: r.loadType,
+              category: r.priceCategoryCode,
+              unit: r.unit,
+              price: toDecimalString(r.price),
+              minimumCharge: toDecimalString(r.minimumCharge),
+              currency: r.currency,
+              validFrom: fromDbDate(r.validFrom),
+              validTo: fromDbDateOrNull(r.validTo),
+              transitDays: r.transitDays,
+            },
+          ],
+    );
   }
 
   /**

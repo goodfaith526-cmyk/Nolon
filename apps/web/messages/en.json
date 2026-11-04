@@ -1541,6 +1541,8 @@
     "scope_booking_requests_create": "Send booking requests",
     "scope_customer_profiles_write": "Capture and enrich customer identity (no transaction reads)",
     "scope_tracking_lookup": "Track by shipment number and phone",
+    "scope_marketing_read": "Marketing summary: aggregate numbers only, no customer data",
+    "scope_marketing_revenue_read": "Marketing summary: include revenue (needs the marketing summary scope)",
     "editScopes": "Change scopes",
     "saveScopes": "Save scopes",
     "cancel": "Cancel",

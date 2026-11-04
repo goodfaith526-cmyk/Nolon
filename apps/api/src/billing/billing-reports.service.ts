@@ -322,6 +322,66 @@ export class BillingReportsService {
   }
 
   /**
+   * The marketing summary's revenue (docs/plans/11) in `branchIds`, by month, the shipment's route
+   * and currency: approved invoices (as the revenue report: posted, no opening item) by invoice
+   * date, and approved credit notes against such invoices by credit date, between `from` and `to`.
+   * In the invoice currency, never converted. No customer, invoice or number.
+   */
+  async marketingRevenue(
+    branchIds: readonly string[],
+    from: string,
+    to: string,
+  ): Promise<
+    {
+      month: string;
+      originId: string;
+      destinationId: string;
+      currency: string;
+      invoiced: Decimal;
+      credited: Decimal;
+    }[]
+  > {
+    if (branchIds.length === 0) return [];
+    const rows = await this.prisma.$queryRaw<
+      {
+        month: string;
+        originId: string;
+        destinationId: string;
+        currency: string;
+        invoiced: Decimal;
+        credited: Decimal;
+      }[]
+    >`
+      WITH amounts AS (
+        SELECT i."invoice_date" AS "day", i."shipment_id", i."currency",
+               i."total" AS "invoiced", 0::numeric AS "credited"
+        FROM "customer_invoices" i
+        JOIN "journal_entries" ie ON ie."id" = i."journal_entry_id" AND ie."status" = 'POSTED'
+        WHERE i."status" = 'APPROVED'
+          AND NOT i."is_opening"
+          AND i."branch_id" IN ${uuidList(branchIds)}
+          AND i."invoice_date" BETWEEN ${sqlDate(from)} AND ${sqlDate(to)}
+        UNION ALL
+        SELECT n."credit_date", i."shipment_id", i."currency", 0::numeric, n."amount"
+        FROM "credit_notes" n
+        JOIN "customer_invoices" i ON i."id" = n."invoice_id" AND NOT i."is_opening"
+        WHERE n."status" = 'APPROVED'
+          AND n."branch_id" IN ${uuidList(branchIds)}
+          AND n."credit_date" BETWEEN ${sqlDate(from)} AND ${sqlDate(to)}
+      )
+      SELECT to_char(a."day", 'YYYY-MM') AS "month",
+             s."origin_location_id"::text AS "originId",
+             s."destination_location_id"::text AS "destinationId",
+             a."currency"::text AS "currency",
+             sum(a."invoiced") AS "invoiced", sum(a."credited") AS "credited"
+      FROM amounts a
+      JOIN "shipments" s ON s."id" = a."shipment_id"
+      GROUP BY 1, 2, 3, 4
+      ORDER BY 1, 2, 3, 4`;
+    return rows.map((r) => ({ ...r, invoiced: dec(r.invoiced), credited: dec(r.credited) }));
+  }
+
+  /**
    * Audit log: invoices created, approved and cancelled, receipts created and cancelled, and
    * credit notes created, approved and cancelled, recorded in the period (days in the document's
    * branch), newest first. A draft has no number yet ("—"). An invoice cancellation does not

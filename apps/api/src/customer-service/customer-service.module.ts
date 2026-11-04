@@ -20,6 +20,7 @@ import { httpsTransport } from './webhook-delivery.js';
 import { BookingRequestGuard } from './booking-request.guard.js';
 import { BookingReviewController, RejectReasonsController } from './booking-review.controller.js';
 import { BookingReviewService } from './booking-review.service.js';
+import { BookingRequestReportsService } from './booking-request-reports.service.js';
 import { BookingRequestsService } from './booking-requests.service.js';
 import { CatalogService } from './catalog.service.js';
 import { ApiClientGuard } from './api-client.guard.js';
@@ -90,6 +91,8 @@ import { QuoteService } from './quote.service.js';
     CsWebhooksService,
     CsOutboxWorker,
     { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },
+    BookingRequestReportsService,
   ],
+  exports: [ApiClientGuard, BookingRequestReportsService],
 })
 export class CustomerServiceModule {}
