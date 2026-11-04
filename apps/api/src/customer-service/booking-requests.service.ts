@@ -632,7 +632,12 @@ export class BookingRequestsService {
     tx: Prisma.TransactionClient,
     apiClientId: string,
     owner: string,
-    data: { senderName?: string | null; contactPhone?: string | null },
+    data: {
+      senderName?: string | null;
+      contactPhone?: string | null;
+      senderChannel?: string | null;
+      senderId?: string | null;
+    },
   ): Promise<{
     outcome: 'CREATED' | 'REUSED' | 'PHONE_IN_USE' | 'ACCOUNT_INACTIVE' | 'NAME_MISSING';
     customerId: string | null;
@@ -641,7 +646,13 @@ export class BookingRequestsService {
     phone: string | null;
   }> {
     const name = data.senderName?.trim() ?? '';
-    const phone = internationalPhone(data.contactPhone);
+    // Codex F191-4: a WhatsApp number is international by the channel's contract, also written
+    // as digits (249…, as namesSender reads it); a local Telegram or web number stays unresolved.
+    const whatsapp =
+      data.senderChannel === 'whatsapp'
+        ? internationalPhone(namesSender('whatsapp', data.contactPhone ?? data.senderId ?? ''))
+        : null;
+    const phone = internationalPhone(data.contactPhone) ?? whatsapp;
     const linked = (customerId: string, isActive: boolean) => ({
       outcome: isActive ? ('REUSED' as const) : ('ACCOUNT_INACTIVE' as const),
       customerId: isActive ? customerId : null,

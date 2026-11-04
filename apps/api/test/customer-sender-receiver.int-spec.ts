@@ -457,4 +457,60 @@ describe('Other sender and receiver customers (plan 09e)', () => {
     const quiet = await request(off, {});
     expect(await row(quiet)).toMatchObject({ instantAccount: null, instantCustomerId: null });
   });
+
+  /** A request in the bot's own words (the names form), as the website and WhatsApp bots send. */
+  async function byNames(app: TestApp, extra: object) {
+    const place = (suffix: string) => ({
+      ar: `Sender ${tag}${suffix}`,
+      en: `Sender ${tag}${suffix}`,
+    });
+    const made = (
+      await app
+        .http()
+        .post('/api/v1/cs/booking-requests')
+        .set('Authorization', `Bearer ${bot.key}`)
+        .send({
+          idempotencyKey: randomUUID().replaceAll('-', ''),
+          channel: 'whatsapp',
+          origin: place('SRV'),
+          destination: place('DES'),
+          kind: { ar: category, en: category },
+          quantity: 1,
+          senderName: 'Names Sender',
+          receiverName: 'Receiver',
+          receiverPhone: '0912345678',
+          handover: 'dropoff',
+          ...extra,
+        })
+        .expect(201)
+    ).body as CsBookingRequestCreated;
+    return row(made.requestId);
+  }
+
+  it('reads a WhatsApp number in digits as international; leaves a local one unresolved (F191-4)', async () => {
+    const known = uniquePhone();
+    const existing = await customer(known);
+    const linked = await byNames(on, { senderPhone: known.slice(1) });
+    expect(linked).toMatchObject({ instantAccount: 'REUSED', instantCustomerId: existing.id });
+
+    const fresh = uniquePhone();
+    const made = await byNames(on, { senderPhone: fresh.slice(1) });
+    expect(made.instantAccount).toBe('CREATED');
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: made.instantCustomerId! } }),
+    ).toMatchObject({ phone: fresh, phoneUnverified: true });
+
+    // A local Telegram number: no country guessed, a file with no phone, the same one next time.
+    const local = `09${randomInt(10_000_000, 99_999_999)}`;
+    const first = await byNames(on, { channel: 'telegram', senderPhone: local });
+    expect(first.instantAccount).toBe('CREATED');
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: first.instantCustomerId! } }),
+    ).toMatchObject({ phone: null });
+    const again = await byNames(on, { channel: 'telegram', senderPhone: local });
+    expect(again).toMatchObject({
+      instantAccount: 'REUSED',
+      instantCustomerId: first.instantCustomerId,
+    });
+  });
 });
