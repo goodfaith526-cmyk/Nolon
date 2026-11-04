@@ -414,6 +414,36 @@ p {
   color: var(--on-navy);
   font-size: 14px;
 }
+.route-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.route-pause {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--on-navy-muted);
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 999px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.route-pause:hover {
+  color: var(--on-navy);
+  border-color: rgb(255 255 255 / 0.35);
+}
+.route-pause[hidden] {
+  display: none;
+}
+.route-pause[aria-pressed='true'] .when-on,
+.route-pause[aria-pressed='false'] .when-off {
+  display: none;
+}
 .route svg {
   width: 100%;
   height: auto;

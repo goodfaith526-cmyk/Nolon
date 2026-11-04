@@ -619,67 +619,116 @@
     );
   }
 
-  /* Route card: one barrel and one parcel ride the whole route, origin (Dubai or Jeddah, taking
+  /* Route card: one barrel and one parcel ride the whole route, origin (Jeddah or Dubai, taking
      turns) → Port Sudan → Atbara → Khartoum, rest a few seconds, ride back, rest, and repeat.
-     Only runs while the card is on screen; during rests nothing runs at all. Without JS, or
-     with reduced motion, the cargo simply sits at the current station (#route-now). */
+     Runs only while the card is on screen, motion is allowed and the visitor has not paused it
+     (WCAG 2.2.2: the button stops every pending frame and timer). During rests only one timer
+     is pending. Without JS, or with reduced motion, the cargo sits still at the current
+     station, where the markup draws it. */
   var line = document.getElementById('route-line');
   var marker = document.getElementById('route-marker');
+  var pauseBtn = document.getElementById('route-pause');
   var legs = [document.getElementById('route-jed'), document.getElementById('route-dxb')];
+  var motionQuery = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
   if (
-    !still &&
     line &&
     marker &&
+    pauseBtn &&
     legs[0] &&
     legs[1] &&
     line.getTotalLength &&
     window.requestAnimationFrame
   ) {
+    var home = marker.getAttribute('transform');
     var lineLen = line.getTotalLength();
+    var RIDE_MS = 9000;
     var trip = 0; // even: ride out to Khartoum, odd: ride back to the origin
+    var riding = false; // false: resting before the next trip
+    var progress = 0; // 0..1 through the current ride
+    var restMs = 800; // the first rest is short, so the ride starts soon after load
+    var frame = 0;
+    var timer = 0;
+    var paused = false;
+    var reduced = !!(motionQuery && motionQuery.matches);
     var onScreen = true;
-    var waiting = false;
-    var place = function (leg, d) {
+    var place = function () {
+      var leg = legs[Math.floor(trip / 2) % 2];
       var legLen = leg.getTotalLength();
+      // Ease in and out, so it pulls away and brakes gently.
+      var e = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      var d = (legLen + lineLen) * (trip % 2 === 1 ? 1 - e : e);
       var p = d < legLen ? leg.getPointAtLength(d) : line.getPointAtLength(d - legLen);
       marker.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')');
     };
-    var ride = function () {
-      waiting = false;
-      if (!onScreen) {
-        waiting = true;
+    var halt = function () {
+      if (frame) cancelAnimationFrame(frame);
+      if (timer) clearTimeout(timer);
+      frame = 0;
+      timer = 0;
+    };
+    var run = function () {
+      halt();
+      if (paused || reduced || !onScreen) return;
+      if (!riding) {
+        timer = setTimeout(function () {
+          timer = 0;
+          riding = true;
+          progress = 0;
+          run();
+        }, restMs);
         return;
       }
-      var leg = legs[Math.floor(trip / 2) % 2];
-      var back = trip % 2 === 1;
-      var total = leg.getTotalLength() + lineLen;
-      var ms = 9000;
       var t0 = 0;
+      var from = progress;
       var step = function (now) {
-        if (!t0) t0 = now;
-        var k = Math.min(1, (now - t0) / ms);
-        // Ease in and out, so it pulls away and brakes gently.
-        var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-        place(leg, total * (back ? 1 - e : e));
-        if (k < 1) {
-          requestAnimationFrame(step);
+        frame = 0;
+        if (!t0) t0 = now - from * RIDE_MS;
+        progress = Math.min(1, (now - t0) / RIDE_MS);
+        place();
+        if (progress < 1) {
+          frame = requestAnimationFrame(step);
         } else {
           trip++;
-          setTimeout(ride, 3500);
+          riding = false;
+          progress = 0;
+          restMs = 3500;
+          run();
         }
       };
-      requestAnimationFrame(step);
+      frame = requestAnimationFrame(step);
     };
-    place(legs[0], 0);
+    var applyMotion = function () {
+      pauseBtn.hidden = reduced;
+      if (reduced) {
+        halt();
+        marker.setAttribute('transform', home);
+      } else {
+        place();
+        run();
+      }
+    };
+    pauseBtn.addEventListener('click', function () {
+      paused = !paused;
+      pauseBtn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+      run();
+    });
+    if (motionQuery) {
+      var onMotion = function () {
+        reduced = motionQuery.matches;
+        applyMotion();
+      };
+      if (motionQuery.addEventListener) motionQuery.addEventListener('change', onMotion);
+      else if (motionQuery.addListener) motionQuery.addListener(onMotion);
+    }
     if ('IntersectionObserver' in window) {
       new IntersectionObserver(
         function (entries) {
           onScreen = entries[0].isIntersecting;
-          if (onScreen && waiting) ride();
+          run();
         },
         { threshold: 0.2 },
       ).observe(line.ownerSVGElement || line);
     }
-    setTimeout(ride, 800);
+    applyMotion();
   }
 })();
