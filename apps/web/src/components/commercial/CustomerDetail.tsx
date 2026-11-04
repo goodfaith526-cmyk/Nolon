@@ -56,6 +56,22 @@ export function CustomerDetail({ id }: { id: string }) {
     }
   }
 
+  // Plan 09e (F191-1): staff confirm a phone someone else typed; only then may it grant tokens.
+  async function confirmPhone() {
+    setNotice(null);
+    try {
+      setCustomer(
+        await api<CustomerDto>(`/customers/${id}`, {
+          method: 'PATCH',
+          body: { phoneVerified: true },
+        }),
+      );
+      setNotice({ ok: true, text: t('confirmPhone') });
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    }
+  }
+
   function addContact(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -136,7 +152,22 @@ export function CustomerDetail({ id }: { id: string }) {
           <dt>{t('companyName')}</dt>
           <dd>{customer.companyName ?? '—'}</dd>
           <dt>{t('phone')}</dt>
-          <dd dir="ltr">{customer.phone}</dd>
+          <dd>
+            <bdi dir="ltr">{customer.phone}</bdi>
+            {customer.phoneUnverified ? (
+              <>
+                <span className="muted"> ({t('phoneUnverified')})</span>
+                {canEdit ? (
+                  <>
+                    {' '}
+                    <button type="button" onClick={() => void confirmPhone()}>
+                      {t('confirmPhone')}
+                    </button>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+          </dd>
           <dt>{t('whatsapp')}</dt>
           <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
           <dt>{t('email')}</dt>

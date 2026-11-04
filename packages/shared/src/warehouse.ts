@@ -129,6 +129,9 @@ export interface WarehouseMovementDto {
   weightKg: DecimalString | null;
   condition: GoodsCondition | null;
   partyName: string | null;
+  /** Plan 09e: the ID the person who handed the goods over showed (receipts only), as typed. */
+  partyIdType: string | null;
+  partyIdNumber: string | null;
   note: string | null;
   occurredAt: string;
   /** The shipment status this receipt applied, or null when it only recorded the goods. */
@@ -206,6 +209,9 @@ export interface GoodsReceiptRequest {
   weightKg?: DecimalString | null;
   condition: GoodsCondition;
   partyName?: string | null;
+  /** Plan 09e: the ID type (free text, e.g. passport) and number the person handing over showed. */
+  partyIdType?: string | null;
+  partyIdNumber?: string | null;
   note?: string | null;
   /** Defaults to now; may be earlier, never in the future. */
   occurredAt?: string;

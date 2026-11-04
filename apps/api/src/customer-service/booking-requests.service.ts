@@ -35,6 +35,7 @@ import {
   type CsRequestPhotoType,
   type CsItemMeasures,
   type CsNamesItemInput,
+  type CsOtherSender,
   type CsRequestItemInput,
   type CsRequestService,
   type CsSenderChannel,
@@ -42,6 +43,7 @@ import {
 import { todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
+import { internationalPhone, samePhone } from '../common/phones.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -253,7 +255,7 @@ export class BookingRequestsService {
     input: CsBookingRequestCreate,
     binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
-    if (caller.kind === 'customer' && input.sender) {
+    if (caller.kind === 'customer' && (input.sender || input.otherSender)) {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
     if (binding && !input.sender)
@@ -330,6 +332,7 @@ export class BookingRequestsService {
         widthCm: input.widthCm === undefined ? null : dec(input.widthCm),
         heightCm: input.heightCm === undefined ? null : dec(input.heightCm),
         services: input.services,
+        ...otherSenderData(input.otherSender),
         senderName: input.senderName,
         consigneeName: input.consigneeName,
         consigneePhone: input.consigneePhone,
@@ -442,6 +445,7 @@ export class BookingRequestsService {
         quantity: root.quantity,
         ...(items.length > 0 ? { items: { create: items } } : {}),
         services: [],
+        ...otherSenderData(input.otherSender),
         senderName: input.senderName,
         consigneeName: input.receiverName,
         consigneePhone: input.receiverPhone,
@@ -543,10 +547,21 @@ export class BookingRequestsService {
           `At most ${CS_DAILY_REQUESTS} new requests a day`,
         );
       }
+      // Plan 09e: the other sender's customer found (row-locked) before any customer-key lock;
+      // one to make is made last, after the owner's instant account (Codex F191-3).
+      const other = await this.otherSenderInTx(tx, data, profile?.phone ?? null);
+      // Owner, 2026-11-04: a request with no profile (the website chat) registers its sender too.
+      const sender =
+        caller.kind === 'key' && !profile && this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED
+          ? await this.requestSenderInTx(tx, apiClientId, owner, data)
+          : null;
       const number = await nextSequenceValue(tx, 'CS_BOOKING_REQUEST');
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
+          otherSenderName: other?.name ?? null,
+          otherSenderPhone: other?.phone ?? null,
+          otherSenderCustomerId: other?.customerId ?? null,
           ...(binding
             ? { profileId: binding.profileId, conversationId: binding.conversationId }
             : {}),
@@ -560,26 +575,141 @@ export class BookingRequestsService {
       });
       // The owner's instant account (2026-11-03): a signed request for a known branch makes or
       // reuses the profile's branch account in this transaction, or says why staff will.
+      let saved = row;
       if (
-        !this.env.CS_INSTANT_CUSTOMER_ENABLED ||
-        !profile ||
-        row.status !== 'PENDING' ||
-        row.branchId === null
-      )
-        return { created: true, row };
-      const account = await this.customers.botAccountInTx(tx, {
-        profile,
-        expectedVersion: binding?.profileVersion,
-        apiClientId,
-      });
-      return {
-        created: true,
-        row: await tx.csBookingRequest.update({
+        this.env.CS_INSTANT_CUSTOMER_ENABLED &&
+        profile &&
+        row.status === 'PENDING' &&
+        row.branchId !== null
+      ) {
+        const account = await this.customers.botAccountInTx(tx, {
+          profile,
+          expectedVersion: binding?.profileVersion,
+          apiClientId,
+        });
+        saved = await tx.csBookingRequest.update({
           where: { id: row.id },
           data: { instantAccount: account.outcome, instantCustomerId: account.customerId },
-        }),
-      };
+        });
+      }
+      if (sender) {
+        const customerId = sender.create
+          ? await this.customers.phoneCustomerCreateInTx(tx, {
+              name: sender.name,
+              phone: sender.phone,
+              apiClientId,
+            })
+          : sender.customerId;
+        saved = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: { instantAccount: sender.outcome, instantCustomerId: customerId },
+        });
+      }
+      if (other?.create) {
+        const customerId = await this.customers.phoneCustomerCreateInTx(tx, {
+          name: other.name,
+          phone: other.phone,
+          apiClientId,
+        });
+        saved = await tx.csBookingRequest.update({
+          where: { id: row.id },
+          data: { otherSenderCustomerId: customerId },
+        });
+      }
+      return { created: true, row: saved };
     });
+  }
+
+  /**
+   * Owner, 2026-11-04: the sender of a request with no profile (the website chat) is registered
+   * when it arrives, not only on approval. The same sender of the same key is the customer their
+   * earlier request made; else the one customer holding their international phone (linked
+   * unchanged, row-locked here; several link none, PHONE_IN_USE); else a new individual (made
+   * last, under the customer-key lock), its phone marked unverified, or with no phone when the one
+   * given is local. An inactive customer is ACCOUNT_INACTIVE and links none: staff decide.
+   */
+  private async requestSenderInTx(
+    tx: Prisma.TransactionClient,
+    apiClientId: string,
+    owner: string,
+    data: {
+      senderName?: string | null;
+      contactPhone?: string | null;
+      senderChannel?: string | null;
+      senderId?: string | null;
+    },
+  ): Promise<{
+    outcome: 'CREATED' | 'REUSED' | 'PHONE_IN_USE' | 'ACCOUNT_INACTIVE' | 'NAME_MISSING';
+    customerId: string | null;
+    create: boolean;
+    name: string;
+    phone: string | null;
+  }> {
+    const name = data.senderName?.trim() ?? '';
+    // Codex F191-4: a WhatsApp number is international by the channel's contract, also written
+    // as digits (249…, as namesSender reads it); a local Telegram or web number stays unresolved.
+    const whatsapp =
+      data.senderChannel === 'whatsapp'
+        ? internationalPhone(namesSender('whatsapp', data.contactPhone ?? data.senderId ?? ''))
+        : null;
+    const phone = internationalPhone(data.contactPhone) ?? whatsapp;
+    const linked = (customerId: string, isActive: boolean) => ({
+      outcome: isActive ? ('REUSED' as const) : ('ACCOUNT_INACTIVE' as const),
+      customerId: isActive ? customerId : null,
+      create: false,
+      name,
+      phone,
+    });
+    const earlier = await tx.csBookingRequest.findFirst({
+      where: { apiClientId, ownerRef: owner, profileId: null, instantCustomerId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { instantCustomerId: true },
+    });
+    if (earlier?.instantCustomerId) {
+      const [row] = await tx.$queryRaw<{ isActive: boolean }[]>`
+        SELECT "is_active" AS "isActive" FROM "customers"
+        WHERE "id" = ${earlier.instantCustomerId}::uuid FOR SHARE`;
+      return linked(earlier.instantCustomerId, row?.isActive ?? false);
+    }
+    if (phone !== null) {
+      const match = await this.customers.phoneMatchInTx(tx, phone);
+      if (match.kind === 'ONE') return linked(match.customerId, match.isActive);
+      if (match.kind === 'AMBIGUOUS')
+        return { outcome: 'PHONE_IN_USE', customerId: null, create: false, name, phone };
+    }
+    if (!name) return { outcome: 'NAME_MISSING', customerId: null, create: false, name, phone };
+    return { outcome: 'CREATED', customerId: null, create: true, name, phone };
+  }
+
+  /**
+   * Plan 09e section 2: an explicit other sender. One whose phone is the chat owner's (the shared
+   * contact phone or the profile's) is the owner: null, nothing is kept. Else, with the identity
+   * switch on, the one customer with that phone is linked unchanged (row-locked here); several
+   * link none (Codex F191-2, approval refuses); none is to be made (`create`). Off, approval does
+   * the same. The chat owner's own customer is never touched.
+   */
+  private async otherSenderInTx(
+    tx: Prisma.TransactionClient,
+    data: {
+      otherSenderName?: string | null;
+      otherSenderPhone?: string | null;
+      contactPhone?: string | null;
+    },
+    profilePhone: string | null,
+  ): Promise<{ name: string; phone: string; customerId: string | null; create: boolean } | null> {
+    const name = data.otherSenderName ?? null;
+    const phone = data.otherSenderPhone ?? null;
+    if (name === null || phone === null) return null;
+    if (samePhone(phone, data.contactPhone ?? null) || samePhone(phone, profilePhone)) return null;
+    if (!this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED)
+      return { name, phone, customerId: null, create: false };
+    const match = await this.customers.phoneMatchInTx(tx, phone);
+    return {
+      name,
+      phone,
+      customerId: match.kind === 'ONE' ? match.customerId : null,
+      create: match.kind === 'NONE',
+    };
   }
 
   /**
@@ -1240,4 +1370,12 @@ function cancelRequestOf(row: CsBookingRequest): CsCancelRequestDto | null {
 
 function createdBody(row: CsBookingRequest): CsBookingRequestCreated {
   return { requestId: row.id, status: stateOf(row), reference: row.reference };
+}
+
+/** Plan 09e section 2: the other sender's columns, from the bot's explicit marker. */
+function otherSenderData(other: CsOtherSender | undefined): {
+  otherSenderName: string | null;
+  otherSenderPhone: string | null;
+} {
+  return { otherSenderName: other?.name.trim() ?? null, otherSenderPhone: other?.phone ?? null };
 }

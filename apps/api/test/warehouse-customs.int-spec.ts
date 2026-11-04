@@ -236,11 +236,17 @@ describe('warehouse and customs', () => {
           condition: 'DAMAGED',
           storageLocationId: dxbWarehouse.storageLocations[0]?.id,
           partyName: 'Truck 42',
+          // Plan 09e section 4: the ID the person handing over showed.
+          partyIdType: 'Passport',
+          partyIdNumber: 'P1234567',
           note: 'Two cartons wet',
         }).expect(201)
       ).body as WarehouseMovementDto;
       expect(first).toMatchObject({
         kind: 'RECEIPT',
+        partyName: 'Truck 42',
+        partyIdType: 'Passport',
+        partyIdNumber: 'P1234567',
         packages: 6,
         weightKg: '600.5',
         condition: 'DAMAGED',

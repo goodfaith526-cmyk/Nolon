@@ -103,6 +103,9 @@ export const receiptBody = z
     weightKg,
     condition: z.enum(GOODS_CONDITIONS),
     partyName: optionalText(200),
+    // Plan 09e section 4: the ID the person handing over showed, as typed (free text).
+    partyIdType: optionalText(50),
+    partyIdNumber: optionalText(50),
     note: optionalText(1000),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     shipmentStatus: z.enum(WAREHOUSE_RECEIPT_STATUSES).nullish(),

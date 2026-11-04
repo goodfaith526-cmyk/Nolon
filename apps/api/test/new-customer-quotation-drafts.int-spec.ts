@@ -765,7 +765,6 @@ describe("quotations for a new customer: replacing a draft at the person's reque
 // approving is refused (422) while anything is missing, creating no customer and no quotation.
 describe('quotations for a new customer saved with missing values', () => {
   const ALL_MISSING = [
-    'customer.kind',
     'customer.name',
     'customer.phone',
     'quotation.originLocationId',

@@ -277,6 +277,33 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.otherSender && (
+          <>
+            <dt>{t('otherSender')}</dt>
+            <dd>
+              {r.otherSender.customerId ? (
+                <Link href={`/customers/${r.otherSender.customerId}`}>{r.otherSender.name}</Link>
+              ) : (
+                r.otherSender.name
+              )}{' '}
+              <span dir="ltr">{r.otherSender.phone}</span>
+            </dd>
+          </>
+        )}
+        {r.receiverAccount && (
+          <>
+            <dt>{t('receiverAccount')}</dt>
+            <dd>
+              {r.receiverAccount.customerId ? (
+                <Link href={`/customers/${r.receiverAccount.customerId}`}>
+                  {t(`receiverAccount_${r.receiverAccount.outcome}`)}
+                </Link>
+              ) : (
+                t(`receiverAccount_${r.receiverAccount.outcome}`)
+              )}
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>
@@ -519,6 +546,7 @@ export function BotRequestDetail({ id }: { id: string }) {
           master={master}
           busy={busy}
           onApprove={(body) => void post('approve', body)}
+          defaultCurrency={me.branches.find((b) => b.id === r.branchId)?.defaultCurrency}
         />
       )}
     </section>

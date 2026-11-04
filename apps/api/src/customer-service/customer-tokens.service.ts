@@ -60,6 +60,8 @@ interface MatchedCustomer {
   name: string;
   companyName: string | null;
   phone: string | null;
+  /** Plan 09e (F191-1): a phone someone else typed grants nothing until staff confirm it. */
+  phoneUnverified: boolean;
   whatsapp: string | null;
   updatedAt: Date;
   contacts: { id: string; phone: string; updatedAt: Date }[];
@@ -70,7 +72,7 @@ interface MatchedCustomer {
  * WhatsApp, then the first authorized person (may inquire) with that phone.
  */
 export function bestGrant(c: MatchedCustomer, phone: string): Grant | null {
-  if (c.phone === phone) return { kind: 'CUSTOMER_PHONE', contactId: null };
+  if (c.phone === phone && !c.phoneUnverified) return { kind: 'CUSTOMER_PHONE', contactId: null };
   if (c.whatsapp === phone) return { kind: 'CUSTOMER_WHATSAPP', contactId: null };
   const contact = c.contacts.find((k) => k.phone === phone);
   return contact ? { kind: 'CONTACT_PHONE', contactId: contact.id } : null;
@@ -191,7 +193,13 @@ export class CustomerTokensService {
     return this.prisma.customer.findMany({
       where: {
         isActive: true,
-        OR: [{ phone }, { whatsapp: phone }, { contacts: { some: contactMatch } }],
+        // Plan 09e (F191-1): a phone someone else typed (phoneUnverified) grants nothing until
+        // staff confirm it; the WhatsApp number and authorized persons are staff-entered.
+        OR: [
+          { phone, phoneUnverified: false },
+          { whatsapp: phone },
+          { contacts: { some: contactMatch } },
+        ],
       },
       select: {
         id: true,
@@ -199,6 +207,7 @@ export class CustomerTokensService {
         name: true,
         companyName: true,
         phone: true,
+        phoneUnverified: true,
         whatsapp: true,
         updatedAt: true,
         contacts: {

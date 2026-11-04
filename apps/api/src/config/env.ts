@@ -132,6 +132,14 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 09e section 3 (owner, 2026-11-04): when staff approve a bot request, the receiver gets a
+   * customer of their own (made or linked by international phone, marked unverified). Off: none.
+   */
+  CS_RECEIVER_CUSTOMER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Plan 09 section 5 (N-C5): the HMAC secret notices are signed with (the receiver's
    * CS_WEBHOOK_SECRET). Unset: no endpoint can be approved and nothing is sent.
    */

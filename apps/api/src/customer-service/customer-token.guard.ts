@@ -59,6 +59,7 @@ const grantInclude = {
       number: true,
       isActive: true,
       phone: true,
+      phoneUnverified: true,
       whatsapp: true,
       updatedAt: true,
     },
@@ -88,7 +89,9 @@ function grantHolds(row: GrantRow): boolean {
   const { customer, contact } = row;
   const matched =
     row.grantKind === 'CUSTOMER_PHONE'
-      ? customer.phone !== null && sha256(customer.phone) === row.phoneHash
+      ? customer.phone !== null &&
+        !customer.phoneUnverified &&
+        sha256(customer.phone) === row.phoneHash
       : row.grantKind === 'CUSTOMER_WHATSAPP'
         ? customer.whatsapp !== null && sha256(customer.whatsapp) === row.phoneHash
         : contact !== null &&

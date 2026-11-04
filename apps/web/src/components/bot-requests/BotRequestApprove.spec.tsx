@@ -34,6 +34,11 @@ vi.mock('@/lib/api', () => ({
     return Promise.resolve(priced);
   },
 }));
+vi.mock('@/i18n/navigation', () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 vi.mock('../commercial/CustomerPicker', () => ({ CustomerPicker: () => null }));
 vi.mock('../commercial/ModePicker', () => ({ ModePicker: () => null }));
 const { BotRequestApprove } = await import('./BotRequestApprove');
@@ -49,6 +54,7 @@ const request = {
   quantity: '2',
   customerId: 'c1',
   customerNumber: 'C-0009',
+  consigneePhone: '+249900000002',
   services: ['PICKUP'],
   requestedDate: null,
   priceCheck: null,
@@ -303,6 +309,92 @@ describe('BotRequestApprove', () => {
       await Promise.resolve();
     });
     expect(approved).toHaveBeenCalledTimes(1);
+    act(() => root.unmount());
+  });
+  it('books the other sender the bot named, with the receiver phone staff typed (plan 09e)', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const other = {
+      ...request,
+      customerId: null,
+      customerNumber: null,
+      profile: null,
+      consigneePhone: '0912000333',
+      otherSender: { name: 'Huda', phone: '+249911000111', customerId: null },
+    } as unknown as CsBookingRequestStaffDto;
+    act(() =>
+      root.render(
+        <BotRequestApprove request={other} master={master} busy={false} onApprove={approved} />,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(host.textContent).toContain('Huda');
+    expect(host.textContent).not.toContain('newCustomerFromRequest');
+    const phone = host.querySelector<HTMLInputElement>('input[type="tel"]')!;
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- applied with the element as `this` below
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      set?.call(phone, '+249912000333');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledTimes(1);
+    const body = approved.mock.calls[0]![0] as CsApproveRequest;
+    expect(body).toMatchObject({ receiverPhone: '+249912000333' });
+    expect(body).not.toHaveProperty('newCustomerFromRequest');
+    expect(body.booking).not.toHaveProperty('customerId');
+    act(() => root.unmount());
+  });
+  it('books the sender registered on arrival, priced in the branch currency (owner 2026-11-04)', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const web = {
+      ...request,
+      customerId: null,
+      customerNumber: null,
+      profile: null,
+      senderName: 'Web Sender',
+      botQuotedPrice: null,
+      instantAccount: { outcome: 'CREATED', customerId: 'c-web' },
+    } as unknown as CsBookingRequestStaffDto;
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={web}
+          master={master}
+          busy={false}
+          onApprove={approved}
+          defaultCurrency="USD"
+        />,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Priced as the form opened, in the branch's currency.
+    expect(calls.some((c) => c.includes('currency=USD'))).toBe(true);
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/customers/c-web');
+    expect(host.textContent).not.toContain('newCustomerFromRequest');
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledTimes(1);
+    const body = approved.mock.calls[0]![0] as CsApproveRequest;
+    expect(body).not.toHaveProperty('newCustomerFromRequest');
+    expect(body.booking).not.toHaveProperty('customerId');
+    expect(body.paymentCurrency).toBe('USD');
     act(() => root.unmount());
   });
   it('holds approval of a request with a non-standard item', () => {
