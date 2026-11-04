@@ -29,9 +29,12 @@ numbers for its plan, instead of assumptions. One read, aggregates only, no cust
 
 ## Rules behind the numbers
 
-- **Prices** are every branch's APPROVED `FREIGHT` cards valid today that price a shipment type:
-  the cards the bot's quotes read (`RatesService.systemScopedRates`). Selling price only: no cost,
-  margin, branch or staff name.
+- **Prices** are the freight cards of every branch a bot quote can use today, one per offer, as
+  `RatesService.systemScopedRates` reads them: APPROVED and valid today; of cards that differ only
+  by their start date, the latest started (Codex F186-1); and a shipment type, currency and both
+  places still active, as the quote's checks (F186-2). Each card is the price of its own route
+  scope (a place, a city or a country: `places[].kind`); for one place the quote prefers the
+  narrowest scope. Selling price only: no cost, margin, branch or staff name.
 - **Branches**: requests, bookings and revenue are the key's branches' only (rule 2). A request
   still awaiting routing counts for a key that serves one of its candidate branches.
 - **Requests**: bot requests made in the period (the day in the request's branch, UTC while awaiting

@@ -31,7 +31,7 @@ describe('Marketing summary', () => {
   let today = '';
   const tag = `MK${randomUUID().slice(0, 5).toUpperCase()}`;
   const year = randomInt(1000, 1800);
-  const ids = { origin: '', dest: '', category: '', other: '', shipment: '' };
+  const ids = { origin: '', dest: '', category: '', other: '', off: '', shipment: '' };
   const cookies = { admin: '', salesPts: '', salesJed: '', financePts: '', managerPts: '' };
   const keys = {
     marketing: null as ApiClientCreatedDto | null,
@@ -142,6 +142,7 @@ describe('Marketing summary', () => {
     for (const [key, suffix] of [
       ['category', 'A'],
       ['other', 'B'],
+      ['off', 'C'],
     ] as const) {
       ids[key] = `${tag}${suffix}`;
       await t.prisma.priceCategory.create({
@@ -154,7 +155,13 @@ describe('Marketing summary', () => {
         },
       });
     }
-    const card = (status: 'APPROVED' | 'DRAFT', price: string, validTo: Date | null = null) =>
+    const card = (
+      status: 'APPROVED' | 'DRAFT',
+      price: string,
+      validTo: Date | null = null,
+      startedDaysAgo = 30,
+      category = ids.category,
+    ) =>
       t.prisma.rateCard.create({
         data: {
           branchId: jed,
@@ -162,13 +169,13 @@ describe('Marketing summary', () => {
           destinationLocationId: ids.dest,
           mode: 'ROAD',
           cargoType: 'GENERAL',
-          priceCategoryCode: ids.category,
+          priceCategoryCode: category,
           chargeTypeCode: 'FREIGHT',
           unit: 'PER_PIECE',
           price,
           minimumCharge: '50',
           currency: 'USD',
-          validFrom: new Date(Date.now() - 30 * 86_400_000),
+          validFrom: new Date(Date.now() - startedDaysAgo * 86_400_000),
           validTo,
           transitDays: 9,
           status,
@@ -181,6 +188,11 @@ describe('Marketing summary', () => {
     await card('APPROVED', '123.4567');
     await card('DRAFT', '999');
     await card('APPROVED', '888', new Date(Date.now() - 2 * 86_400_000));
+    // F186-1: a later revision of the same offer is the price quoted; the older one is not shown.
+    await card('APPROVED', '222', null, 5);
+    // F186-2: a card of a shipment type no longer offered is not a price.
+    await card('APPROVED', '333', null, 30, ids.off);
+    await t.prisma.priceCategory.update({ where: { code: ids.off }, data: { isActive: false } });
 
     customer = (
       await post('/customers', cookies.salesPts, {
@@ -304,7 +316,7 @@ describe('Marketing summary', () => {
         loadType: null,
         category: ids.category,
         unit: 'PER_PIECE',
-        price: '123.4567',
+        price: '222',
         minimumCharge: '50',
         currency: 'USD',
         validFrom: prices[0]?.validFrom,
