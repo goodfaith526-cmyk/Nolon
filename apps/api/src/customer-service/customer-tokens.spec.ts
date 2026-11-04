@@ -8,6 +8,7 @@ const customer = {
   name: 'A',
   companyName: null,
   phone: '+249911111111',
+  phoneUnverified: false,
   whatsapp: '+249922222222',
   updatedAt: new Date('2026-10-01T00:00:00Z'),
   contacts: [{ id: 'k2', phone: '+249933333333', updatedAt: new Date('2026-10-02T00:00:00Z') }],
@@ -28,6 +29,13 @@ describe('customer tokens', () => {
       contactId: 'k2',
     });
     expect(bestGrant(customer, '+249944444444')).toBeNull();
+  });
+
+  it('grants nothing on a phone someone else typed until staff confirm it (plan 09e, F191-1)', () => {
+    expect(bestGrant({ ...customer, phoneUnverified: true }, customer.phone)).toBeNull();
+    expect(bestGrant({ ...customer, phoneUnverified: true }, '+249922222222')?.kind).toBe(
+      'CUSTOMER_WHATSAPP',
+    );
   });
 
   it('versions a grant by the latest change of the records it rests on', () => {

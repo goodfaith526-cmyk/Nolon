@@ -305,6 +305,8 @@ export interface PartyDto {
 }
 
 export interface CustomerDto extends CustomerSummaryDto {
+  /** Plan 09e: the phone was typed by someone else (a receiver, another sender), not confirmed. */
+  phoneUnverified: boolean;
   whatsapp: string | null;
   email: string | null;
   countryCode: string | null;

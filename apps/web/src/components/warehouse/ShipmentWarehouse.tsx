@@ -179,6 +179,8 @@ export function ShipmentWarehouse({
       weightKg: field(f, 'weightKg').trim() || null,
       condition: field(f, 'condition') as GoodsCondition,
       partyName: field(f, 'partyName').trim() || null,
+      partyIdType: field(f, 'partyIdType').trim() || null,
+      partyIdNumber: field(f, 'partyIdNumber').trim() || null,
       note: field(f, 'note').trim() || null,
       occurredAt: toIso(field(f, 'occurredAt')),
       shipmentStatus: (field(f, 'shipmentStatus') || null) as WarehouseReceiptStatus | null,
@@ -387,6 +389,14 @@ export function ShipmentWarehouse({
                 <input name="partyName" maxLength={200} />
               </label>
               <label className="field">
+                <span>{t('partyIdType')}</span>
+                <input name="partyIdType" maxLength={50} />
+              </label>
+              <label className="field">
+                <span>{t('partyIdNumber')}</span>
+                <input name="partyIdNumber" maxLength={50} dir="ltr" />
+              </label>
+              <label className="field">
                 <span>{t('occurredAt')}</span>
                 <input name="occurredAt" type="datetime-local" />
               </label>
@@ -585,6 +595,11 @@ export function ShipmentWarehouse({
                   {m.partyName && (
                     <div className="muted">
                       {m.kind === 'RECEIPT' ? t('deliveredBy') : t('collectedBy')}: {m.partyName}
+                    </div>
+                  )}
+                  {(m.partyIdType || m.partyIdNumber) && (
+                    <div className="muted">
+                      {t('partyId')}: {[m.partyIdType, m.partyIdNumber].filter(Boolean).join(' ')}
                     </div>
                   )}
                   {m.statusApplied && <StatusBadge kind="shipment" status={m.statusApplied} />}

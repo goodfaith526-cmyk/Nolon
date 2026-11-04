@@ -73,6 +73,8 @@ export const createCustomerBody = z
 export const updateCustomerBody = z
   .object({ ...customerFields, ...screenFields })
   .partial()
+  // Plan 09e (F191-1): staff confirm a phone someone else typed; only then may it grant tokens.
+  .extend({ phoneVerified: z.literal(true).optional() })
   .strict();
 
 /** A party of a customer (shipper, consignee, notify party): its endpoint and party drafts. */

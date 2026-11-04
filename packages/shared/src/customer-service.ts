@@ -469,6 +469,12 @@ export interface CsBookingRequestCreate {
   widthCm?: DecimalString;
   heightCm?: DecimalString;
   services: (typeof CS_REQUEST_SERVICES)[number][];
+  /**
+   * Plan 09e section 2: set only when the customer said explicitly that the sender is another
+   * person, with that person's name and international phone. That person becomes the booking's
+   * customer; the chat owner's own file is never changed.
+   */
+  otherSender?: CsOtherSender;
   senderName: string;
   consigneeName: string;
   consigneePhone: string;
@@ -499,6 +505,12 @@ export interface CsBookingRequestByNames {
   quantity?: number | DecimalString;
   /** Plan 09 section 4: 1 to 10 items in place of `kind`/`quantity`. */
   items?: CsNamesItemInput[];
+  /**
+   * Plan 09e section 2: set only when the customer said explicitly that the sender is another
+   * person, with that person's name and international phone. That person becomes the booking's
+   * customer; the chat owner's own file is never changed.
+   */
+  otherSender?: CsOtherSender;
   senderName: string;
   /** Digits: on WhatsApp the number WhatsApp verified; on Telegram the one the customer wrote. */
   senderPhone?: string;
@@ -507,6 +519,12 @@ export interface CsBookingRequestByNames {
   handover: (typeof CS_BOT_HANDOVERS)[number];
   /** The price the bot showed from its own material: kept for staff to check, never a price. */
   quotedPrice?: { amount: DecimalString; currency: string } | null;
+}
+
+export interface CsOtherSender {
+  name: string;
+  /** +E.164. */
+  phone: string;
 }
 
 export interface CsName {
@@ -920,6 +938,13 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
    * for staff. Null: not tried (switched off, no signed profile, awaiting routing).
    */
   instantAccount: { outcome: CsInstantAccountOutcome; customerId: string | null } | null;
+  /**
+   * Plan 09e section 2: the other sender the bot named explicitly, and their customer once linked
+   * (when saved with the identity switch on, else on approval). Null: the chat's owner sends.
+   */
+  otherSender: { name: string; phone: string; customerId: string | null } | null;
+  /** Plan 09e section 3: the receiver's customer made or linked on approval, or why none. */
+  receiverAccount: { outcome: CsReceiverAccountOutcome; customerId: string | null } | null;
   /** Plan 09 section 11: the drop-off point named (staff view), and the ones staff may name. */
   dropOffId: string | null;
   /** The point named, as staff read it (even if since turned off). */
@@ -962,6 +987,16 @@ export const CS_INSTANT_ACCOUNT_OUTCOMES = [
 ] as const;
 /** What became of a signed bot request's instant account (owner's spec, 2026-11-03). */
 export type CsInstantAccountOutcome = (typeof CS_INSTANT_ACCOUNT_OUTCOMES)[number];
+
+export const CS_RECEIVER_ACCOUNT_OUTCOMES = [
+  'CREATED',
+  'LINKED',
+  'PHONE_LOCAL',
+  'SAME_AS_SENDER',
+  'CUSTOMER_INACTIVE',
+  'PHONE_AMBIGUOUS',
+] as const;
+export type CsReceiverAccountOutcome = (typeof CS_RECEIVER_ACCOUNT_OUTCOMES)[number];
 
 export interface CsRequestItemDto {
   id: string;
@@ -1115,6 +1150,11 @@ export interface CsApproveRequest {
    * approval's transaction, instead of staff choosing one. Not with `booking.customerId`.
    */
   newCustomerFromRequest?: true;
+  /**
+   * Plan 09e section 3: the receiver's international phone (+E.164) when the request has only a
+   * local one, for the receiver's own customer (behind CS_RECEIVER_CUSTOMER_ENABLED).
+   */
+  receiverPhone?: string;
 }
 
 export interface CsRouteRequest {

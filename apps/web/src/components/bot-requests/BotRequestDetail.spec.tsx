@@ -53,6 +53,8 @@ const base: CsBookingRequestStaffDto = {
   cancelReason: null,
   cancelRequest: null,
   instantAccount: null,
+  otherSender: null,
+  receiverAccount: null,
   items: [],
   bookingLines: [],
   dropOffId: null,
@@ -244,5 +246,23 @@ describe('BotRequestDetail', () => {
     });
     expect(waits.textContent).toContain('instantAccountWaits');
     expect(waits.textContent).not.toContain('instantAccountMade');
+  });
+
+  it("shows the other sender and the receiver's file (plan 09e)", async () => {
+    const shown = await show({
+      ...base,
+      otherSender: { name: 'Huda', phone: '+249911000111', customerId: 'c-7' },
+      receiverAccount: { outcome: 'CREATED', customerId: 'c-8' },
+    });
+    const hrefs = [...shown.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.some((h) => h.endsWith('/customers/c-7'))).toBe(true);
+    expect(hrefs.some((h) => h.endsWith('/customers/c-8'))).toBe(true);
+    expect(shown.textContent).toContain('+249911000111');
+    const none = await show({
+      ...base,
+      receiverAccount: { outcome: 'PHONE_LOCAL', customerId: null },
+    });
+    expect(none.textContent).toContain('receiverAccount_PHONE_LOCAL');
+    expect(none.textContent).not.toContain('otherSender');
   });
 });

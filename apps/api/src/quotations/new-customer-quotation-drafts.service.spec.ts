@@ -88,7 +88,6 @@ describe('quotations for a new customer: the stored customer and the hash', () =
     });
     expect(missing).toEqual(
       expect.arrayContaining([
-        'customer.kind',
         'customer.phone',
         'quotation.originLocationId',
         'quotation.validUntil',

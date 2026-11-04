@@ -304,10 +304,12 @@ export interface CustomerGate {
   phone?: Maybe<string>;
 }
 
-/** A new customer's details (customer schemas): the kind, the name and the phone. */
+/**
+ * A new customer's details (customer schemas): the name and the phone. The kind is optional
+ * (owner, 2026-11-04, plan 09e section 1): an unset kind is made an individual on approval.
+ */
 export function customerCompleteness(values: CustomerGate): Completeness {
   return new Findings()
-    .require('kind', values.kind)
     .require('name', values.name)
     .require('phone', values.phone)
     .check('kind', values.kind, oneOf(CUSTOMER_KINDS))

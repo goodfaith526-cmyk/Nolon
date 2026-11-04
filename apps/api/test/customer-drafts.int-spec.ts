@@ -500,7 +500,7 @@ describe("customer drafts: the staff member's words", () => {
 // only its branch (security context); the rest is filled in on review (PATCH), and approving is
 // refused (422) while anything is missing, creating no customer.
 describe('customer drafts saved with missing values', () => {
-  const MISSING = ['kind', 'name', 'phone'];
+  const MISSING = ['name', 'phone'];
   const read = async (id: string) =>
     (await r.get(`/customer-drafts/${id}`, cookies.salesDxb).expect(200)).body as CustomerDraftDto;
 
@@ -532,7 +532,7 @@ describe('customer drafts saved with missing values', () => {
         name: 'Partly Filled',
       }).expect(201)
     ).body as EntryDraftSummaryDto;
-    expect(partial.missingFields).toEqual(['kind', 'phone']);
+    expect(partial.missingFields).toEqual(['phone']);
   });
 
   it('still checks every value given and the branch', async () => {

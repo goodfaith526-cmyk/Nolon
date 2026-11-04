@@ -34,6 +34,7 @@ import {
   currencyCode,
   optionalText,
   parse,
+  phone,
   quantity,
   requiredText,
 } from '../common/validation.js';
@@ -124,6 +125,7 @@ const approveBody = z
       })
       .partial({ customerId: true }),
     newCustomerFromRequest: z.literal(true).optional(),
+    receiverPhone: phone.optional(),
   })
   .strict();
 const resolveBody = z.object({ bookingItemId: z.uuid() }).strict();

@@ -783,6 +783,8 @@ model Customer {
   creditLimit           Decimal?         @map("credit_limit") @db.Decimal(18, 4)
   creditLimitCurrency   String?          @map("credit_limit_currency") @db.Char(3)
   notes                 String?
+  /// Plan 09e: the phone was typed by someone else (a receiver, another sender), not confirmed.
+  phoneUnverified       Boolean          @default(false) @map("phone_unverified")
   isActive              Boolean          @default(true) @map("is_active")
   /// The partner sales outlet that brought the customer (plan 3.3); Outlet Staff see only theirs.
   acquiredViaOutletId   String?          @map("acquired_via_outlet_id") @db.Uuid
@@ -803,6 +805,8 @@ model Customer {
   createdBy              User?              @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   contacts               CustomerContact[]
   csInstantRequests      CsBookingRequest[] @relation("CsRequestInstantCustomer")
+  csOtherSenderRequests  CsBookingRequest[] @relation("CsRequestOtherSender")
+  csReceiverRequests     CsBookingRequest[] @relation("CsRequestReceiver")
   parties                Party[]
   quotations             Quotation[]
   bookings               Booking[]
@@ -2441,6 +2445,9 @@ model WarehouseMovement {
   condition         GoodsCondition?
   /// Who delivered the goods (receipt) or collected them (release).
   partyName         String?               @map("party_name") @db.VarChar(200)
+  /// Plan 09e section 4: the ID the person who handed over the goods showed (receipt), as typed.
+  partyIdType       String?               @map("party_id_type") @db.VarChar(50)
+  partyIdNumber     String?               @map("party_id_number") @db.VarChar(50)
   note              String?
   occurredAt        DateTime              @map("occurred_at") @db.Timestamptz(3)
   /// The shipment status this receipt moved the shipment to, through the state machine.
@@ -3719,6 +3726,19 @@ enum CsInstantAccount {
   @@map("cs_instant_account")
 }
 
+/// Plan 09e section 3: what happened to the receiver's customer when staff approved a request.
+enum CsReceiverAccount {
+  CREATED
+  LINKED
+  PHONE_LOCAL
+  SAME_AS_SENDER
+  CUSTOMER_INACTIVE
+  /// Codex F191-2: several customers hold the phone; none is chosen.
+  PHONE_AMBIGUOUS
+
+  @@map("cs_receiver_account")
+}
+
 /// How the goods reach NOLON: picked up from the sender, or brought to the branch.
 enum CsHandover {
   PICKUP
@@ -3873,6 +3893,14 @@ model CsBookingRequest {
   instantCustomerId       String?                @map("instant_customer_id") @db.Uuid
   /// Plan 09 section 11: where the customer brings the shipment, chosen on approval.
   dropOffWarehouseId      String?                @map("drop_off_warehouse_id") @db.Uuid
+  /// Plan 09e section 2: the bot said explicitly that the sender is another person than the
+  /// chat's owner, with that person's name and international phone, and the customer it became.
+  otherSenderName         String?                @map("other_sender_name") @db.VarChar(200)
+  otherSenderPhone        String?                @map("other_sender_phone") @db.VarChar(20)
+  otherSenderCustomerId   String?                @map("other_sender_customer_id") @db.Uuid
+  /// Plan 09e section 3: the receiver's customer made or linked on approval, and what happened.
+  receiverAccount         CsReceiverAccount?     @map("receiver_account")
+  receiverCustomerId      String?                @map("receiver_customer_id") @db.Uuid
   /// Plan 09 section 12: staff's estimate of the whole request (an item outside the standard
   /// categories), numbered; the customer accepts one version, which approval then requires.
   estimateAmount          Decimal?               @map("estimate_amount") @db.Decimal(18, 4)
@@ -3909,6 +3937,8 @@ model CsBookingRequest {
   cancelClosedBy      User?                   @relation("CsRequestCancelClosedBy", fields: [cancelRequestClosedById], references: [id], onDelete: Restrict)
   items               CsBookingRequestItem[]
   instantCustomer     Customer?               @relation("CsRequestInstantCustomer", fields: [instantCustomerId], references: [id], onDelete: Restrict)
+  otherSenderCustomer Customer?               @relation("CsRequestOtherSender", fields: [otherSenderCustomerId], references: [id], onDelete: Restrict)
+  receiverCustomer    Customer?               @relation("CsRequestReceiver", fields: [receiverCustomerId], references: [id], onDelete: Restrict)
   dropOff             Warehouse?              @relation("CsRequestDropOff", fields: [dropOffWarehouseId], references: [id], onDelete: Restrict)
   estimateCurrencyRef Currency?               @relation("CsRequestEstimateCurrency", fields: [estimateCurrency], references: [code], onDelete: Restrict)
   estimatedBy         User?                   @relation("CsRequestEstimatedBy", fields: [estimatedById], references: [id], onDelete: Restrict)
