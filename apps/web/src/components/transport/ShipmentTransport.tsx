@@ -256,6 +256,12 @@ export function ShipmentPods({
                   <td>
                     {p.recipientName}
                     <div className="muted">{p.recipientCapacity}</div>
+                    {(p.recipientIdType || p.recipientIdNumber) && (
+                      <div className="muted">
+                        {t('recipientId')}:{' '}
+                        {[p.recipientIdType, p.recipientIdNumber].filter(Boolean).join(' ')}
+                      </div>
+                    )}
                     {p.note && <div className="pre">{p.note}</div>}
                     {p.cancellation && (
                       <div className="muted">

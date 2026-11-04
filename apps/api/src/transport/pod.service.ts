@@ -98,6 +98,9 @@ export class PodService implements OnModuleInit {
     this.shipmentLinks.register({
       // Plan 07, 6: a shipment with a distributor closes only once fully delivered with a POD.
       fullDeliveryAtInTx: (tx, shipmentId) => this.fullDeliveryAtInTx(tx, shipmentId),
+      // Plan 12 section 6: delivered by hand needs a reason only with no live POD.
+      hasLivePodInTx: async (tx, shipmentId) =>
+        (await tx.proofOfDelivery.count({ where: { shipmentId, cancellation: null } })) > 0,
       revertBlockerInTx: async (tx, shipmentId, step) => {
         if (step.note === null) return null;
         const pod = await tx.proofOfDelivery.findFirst({
@@ -251,6 +254,8 @@ export class PodService implements OnModuleInit {
           tripId,
           recipientName: fields.recipientName,
           recipientCapacity: fields.recipientCapacity,
+          recipientIdType: fields.recipientIdType ?? null,
+          recipientIdNumber: fields.recipientIdNumber ?? null,
           deliveredAt,
           packages: fields.packages ?? null,
           note: fields.note ?? null,
@@ -484,6 +489,8 @@ function toDto(p: PodWithDetails): PodDto {
     tripNumber: p.trip?.number ?? null,
     recipientName: p.recipientName,
     recipientCapacity: p.recipientCapacity,
+    recipientIdType: p.recipientIdType,
+    recipientIdNumber: p.recipientIdNumber,
     deliveredAt: p.deliveredAt.toISOString(),
     packages: p.packages,
     note: p.note,

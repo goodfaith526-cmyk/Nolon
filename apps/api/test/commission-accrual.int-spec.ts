@@ -527,7 +527,7 @@ describe('partner commissions, rule 16 (plan 07, PR-7b)', () => {
     await status(id, 'TRIP_SCHEDULED').expect(200);
     await status(id, 'ROAD_DEPARTED').expect(200);
     await status(id, 'ROAD_ARRIVED').expect(200);
-    await status(id, 'DELIVERED').expect(200);
+    await status(id, 'DELIVERED', { deliveryReason: 'Handed over at the office' }).expect(200);
     expect(await rows(id, 'DISTRIBUTOR')).toEqual([]);
 
     // Plan 07, 6 (d4): nor does it close; a reason to close without charges does not help.

@@ -18,6 +18,8 @@ export const ALERT_KINDS = [
   'SHIPMENT_NOT_INVOICED',
   // Plan 12 section 7: a booking made by approving a bot request, still a draft.
   'BOOKING_DRAFT_FROM_REQUEST',
+  // Plan 12 section 7: delivered and not closed.
+  'DELIVERED_NOT_CLOSED',
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
@@ -31,6 +33,7 @@ export const ALERT_PERMISSIONS: Record<AlertKind, Permission> = {
   TRIP_LATE: 'transport_trips:view',
   SHIPMENT_NOT_INVOICED: 'customer_invoices:view',
   BOOKING_DRAFT_FROM_REQUEST: 'bookings:view',
+  DELIVERED_NOT_CLOSED: 'shipments:view',
 };
 
 /** The longest wait an alert can be set to, in days. */

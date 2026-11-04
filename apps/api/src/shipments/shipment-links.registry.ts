@@ -52,6 +52,8 @@ export interface ShipmentLinkHandler {
    * shipment with a distributor needs one (plan 07, 6).
    */
   fullDeliveryAtInTx?(tx: Tx, shipmentId: string): Promise<Date | null>;
+  /** Plan 12 section 6: whether a live proof of delivery of this module records a delivery. */
+  hasLivePodInTx?(tx: Tx, shipmentId: string): Promise<boolean>;
 }
 
 @Injectable()
@@ -88,6 +90,13 @@ export class ShipmentLinksRegistry {
       if (at) return at;
     }
     return null;
+  }
+
+  async hasLivePodInTx(tx: Tx, shipmentId: string): Promise<boolean> {
+    for (const handler of this.handlers) {
+      if (await handler.hasLivePodInTx?.(tx, shipmentId)) return true;
+    }
+    return false;
   }
 
   async locationEffectsInTx(tx: Tx, shipmentId: string): Promise<LocationEffect[]> {

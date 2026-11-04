@@ -967,6 +967,20 @@ export class ShipmentsService {
         id,
         this.statusPlan(user, { ...input, occurredAt, entered: input.occurredAt !== undefined }),
       );
+      // Plan 12 section 6: delivered by hand with no live proof of delivery says why (recorded
+      // on the event); checked under the shipment lock the event took.
+      if (
+        applied &&
+        handover &&
+        !input.deliveryReason &&
+        !(await this.links.hasLivePodInTx(tx, id))
+      ) {
+        throw fieldRefusal(
+          'DELIVERY_REASON_REQUIRED',
+          'Delivered by hand with no proof of delivery: say why',
+          ['deliveryReason'],
+        );
+      }
       // Plan 12 section 3: delivered by hand is a handover; the gate is the last step.
       if (applied && handover) {
         await this.handoverGateInTx(tx, user, id, override, `status ${input.status}`);
@@ -1047,6 +1061,7 @@ export class ShipmentsService {
       locationId?: string | null;
       note?: string | null;
       noChargeReason?: string | null;
+      deliveryReason?: string | null;
     },
   ): Planner {
     return (shipment, path) => {
@@ -1087,7 +1102,12 @@ export class ShipmentsService {
         occurredAt: input.occurredAt,
         locationId: input.locationId ?? null,
         note: input.note ?? null,
-        reason: input.status === 'CLOSED' ? (input.noChargeReason ?? null) : null,
+        reason:
+          input.status === 'CLOSED'
+            ? (input.noChargeReason ?? null)
+            : HANDOVER_STATUSES.has(input.status)
+              ? (input.deliveryReason ?? null)
+              : null,
         update: {
           status: input.status,
           ...(input.status === 'CLOSED' ? { closedAt: new Date() } : {}),

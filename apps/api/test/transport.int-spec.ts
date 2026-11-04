@@ -539,6 +539,8 @@ describe('inland transport: fleet, trips, POD', () => {
         await recordPod(mine.id, cookies.driver, {
           recipientName: 'Ahmed Ali',
           recipientCapacity: 'Consignee',
+          recipientIdType: 'Passport',
+          recipientIdNumber: 'P1234567',
           packages: '4',
           shipmentStatus: 'DELIVERED',
         })
@@ -548,6 +550,9 @@ describe('inland transport: fleet, trips, POD', () => {
       ).body as PodDto;
       expect(pod).toMatchObject({
         recipientName: 'Ahmed Ali',
+        // Plan 12 section 6: the ID the recipient showed.
+        recipientIdType: 'Passport',
+        recipientIdNumber: 'P1234567',
         tripId: own.id,
         packages: 4,
         statusApplied: 'DELIVERED',
@@ -892,7 +897,10 @@ describe('inland transport: fleet, trips, POD', () => {
       await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'ROAD_ARRIVED' }).expect(
         200,
       );
-      await post(`/shipments/${a.id}/status`, cookies.admin, { status: 'DELIVERED' }).expect(200);
+      await post(`/shipments/${a.id}/status`, cookies.admin, {
+        status: 'DELIVERED',
+        deliveryReason: 'Handed over at the office',
+      }).expect(200);
       const events = await t.prisma.shipmentEvent.count({ where: { shipmentId: a.id } });
 
       const arrived = (

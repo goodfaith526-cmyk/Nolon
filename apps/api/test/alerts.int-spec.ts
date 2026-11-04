@@ -303,6 +303,7 @@ describe('internal alerts', () => {
       'TRIP_LATE',
       'SHIPMENT_NOT_INVOICED',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     const late = find(ops, 'SHIPMENT_PAST_ETA', ids.late);
     expect(late).toMatchObject({ branchCode: 'DXB', detail: customer.name, since: old });
@@ -347,6 +348,7 @@ describe('internal alerts', () => {
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     // Customs staff: no trips, no invoices.
     expect((await alerts(cookies.customsDxb)).groups.map((g) => g.kind)).toEqual([
@@ -355,6 +357,7 @@ describe('internal alerts', () => {
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     // A driver: only their own late trips (not the branch's shipments).
     const own = await alerts(cookies.driver);
@@ -457,6 +460,7 @@ describe('internal alerts', () => {
       // Plan 12: a starting wait in code, no row until the Administrator sets one.
       'SHIPMENT_NOT_INVOICED',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     await get('/alerts/settings', cookies.management).expect(403);
     await get('/alerts/settings', cookies.managerDxb).expect(403);

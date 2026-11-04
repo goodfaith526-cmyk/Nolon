@@ -8,7 +8,11 @@ import { limitedToOwnTrips } from '../auth/own-trips.js';
  */
 export function concerns(user: AuthUser, kind: AlertKind): boolean {
   if (!user.access.any(ALERT_PERMISSIONS[kind])) return false;
-  if (kind === 'SHIPMENT_PAST_ETA' || kind === 'SHIPMENT_ARRIVING_SOON') {
+  if (
+    kind === 'SHIPMENT_PAST_ETA' ||
+    kind === 'SHIPMENT_ARRIVING_SOON' ||
+    kind === 'DELIVERED_NOT_CLOSED'
+  ) {
     return !limitedToOwnTrips(user, 'shipments');
   }
   return true;

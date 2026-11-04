@@ -298,8 +298,14 @@ describe('handover gate (plan 12 section 3)', () => {
       if (!next) throw new Error(`No way to delivery from ${s.status}`);
       await post(`/shipments/${id}/status`, cookies.ops, { status: next }).expect(200);
     }
+    // Plan 12 section 6: with no proof of delivery, delivered by hand says why.
+    const unexplained = await post(`/shipments/${id}/status`, cookies.ops, {
+      status: 'DELIVERED',
+    }).expect(400);
+    expect(unexplained.body).toMatchObject({ code: 'DELIVERY_REASON_REQUIRED' });
     const byHand = await post(`/shipments/${id}/status`, cookies.ops, {
       status: 'DELIVERED',
+      deliveryReason: 'Handed over at the office',
     }).expect(409);
     expect(byHand.body).toMatchObject({ code: 'HANDOVER_NOT_INVOICED' });
     expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status).not.toBe(
@@ -308,8 +314,18 @@ describe('handover gate (plan 12 section 3)', () => {
     // With the override: delivered, and in the audit log.
     await post(`/shipments/${id}/status`, cookies.overrider, {
       status: 'DELIVERED',
+      deliveryReason: 'Handed over at the office',
       paymentOverrideReason: 'Owner agreed to collect later',
     }).expect(200);
+    // The reason is the delivery event's.
+    expect(
+      (
+        await t.prisma.shipmentEvent.findFirstOrThrow({
+          where: { shipmentId: id, status: 'DELIVERED' },
+          orderBy: { id: 'desc' },
+        })
+      ).reason,
+    ).toBe('Handed over at the office');
     expect(
       await t.prisma.auditEvent.count({
         where: { entity: 'SHIPMENT', entityId: id, action: 'APPROVED' },

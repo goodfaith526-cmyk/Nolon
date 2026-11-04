@@ -79,6 +79,8 @@ const statusBody = z
     locationId: z.uuid().nullish(),
     note: optionalText(1000),
     noChargeReason: shipmentReason.nullish(),
+    // Plan 12 section 6: delivered by hand with no proof of delivery (checked by the service).
+    deliveryReason: shipmentReason.nullish(),
     // Plan 12 section 3: checked by the service (permission, length).
     paymentOverrideReason: optionalText(1000),
   })
@@ -86,7 +88,11 @@ const statusBody = z
   .refine((b) => !b.noChargeReason || b.status === 'CLOSED', {
     message: 'A no-charge reason is given only when closing',
     path: ['noChargeReason'],
-  });
+  })
+  .refine(
+    (b) => !b.deliveryReason || b.status === 'DELIVERED' || b.status === 'PARTIALLY_DELIVERED',
+    { message: 'A delivery reason is given only when delivering', path: ['deliveryReason'] },
+  );
 const holdBody = z.object({ reason: shipmentReason, note: optionalText(1000) }).strict();
 const noteBody = z.object({ note: optionalText(1000) }).strict();
 const reasonBody = z.object({ reason: shipmentReason }).strict();

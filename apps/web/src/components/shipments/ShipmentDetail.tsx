@@ -195,6 +195,7 @@ export function ShipmentDetail({ id }: { id: string }) {
         note: field(form, 'note') || null,
         noChargeReason: field(form, 'noChargeReason').trim() || null,
         paymentOverrideReason: field(form, 'paymentOverrideReason').trim() || null,
+        deliveryReason: field(form, 'deliveryReason').trim() || null,
       },
       t('statusChanged'),
     );
@@ -456,6 +457,17 @@ export function ShipmentDetail({ id }: { id: string }) {
             </>
           )}
           {closing && <p className="muted">{t('closeCostsReminder')}</p>}
+          {handingOver && (
+            <label className="field">
+              <span>{t('deliveryReason')}</span>
+              <input
+                name="deliveryReason"
+                minLength={SHIPMENT_REASON_MIN_LENGTH}
+                maxLength={1000}
+                placeholder={t('deliveryReasonHint')}
+              />
+            </label>
+          )}
           {handingOver && shipment.actions.canOverridePayment && (
             <label className="field">
               <span>{t('paymentOverrideReason')}</span>

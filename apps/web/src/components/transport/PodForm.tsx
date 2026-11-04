@@ -88,6 +88,8 @@ export function PodForm({
     const body = new FormData();
     body.set('recipientName', field(f, 'recipientName').trim());
     body.set('recipientCapacity', field(f, 'recipientCapacity').trim());
+    body.set('recipientIdType', field(f, 'recipientIdType').trim());
+    body.set('recipientIdNumber', field(f, 'recipientIdNumber').trim());
     const deliveredAt = toIso(field(f, 'deliveredAt'));
     if (deliveredAt) body.set('deliveredAt', deliveredAt);
     body.set('packages', field(f, 'packages').trim());
@@ -131,6 +133,14 @@ export function PodForm({
             maxLength={100}
             placeholder={t('capacityHint')}
           />
+        </label>
+        <label className="field">
+          <span>{t('recipientIdType')}</span>
+          <input name="recipientIdType" maxLength={50} autoComplete="off" />
+        </label>
+        <label className="field">
+          <span>{t('recipientIdNumber')}</span>
+          <input name="recipientIdNumber" maxLength={50} autoComplete="off" dir="ltr" />
         </label>
         <label className="field">
           <span>{t('deliveredAt')}</span>
