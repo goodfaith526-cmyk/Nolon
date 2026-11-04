@@ -2830,6 +2830,7 @@
     "CUSTOMS_FEE_BILLED": "The customs fee «{description}» is already on invoice {invoices}.",
     "CUSTOMS_FEE_INVOICED": "This fee has been put on an invoice, so it is kept.",
     "DELIVERY_REASON_REQUIRED": "This shipment has no proof of delivery: say why it was delivered.",
+    "DELIVERY_PROOF_REQUIRED": "This shipment has no proof of delivery. Record it, or mark the shipment delivered from its page with a reason.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
     "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",

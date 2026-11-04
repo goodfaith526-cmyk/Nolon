@@ -403,6 +403,29 @@ describe('shipment status drafts: a person reviews', () => {
     ).toBe('DRAFT');
   });
 
+  it('refuses to deliver through a draft with no proof of delivery (plan 12 section 6)', async () => {
+    const shipment = await roadShipment();
+    for (const status of [
+      'TRIP_SCHEDULED',
+      'ROAD_DEPARTED',
+      'ROAD_ARRIVED',
+      'RECEIVED_DESTINATION_WAREHOUSE',
+    ]) {
+      await r.post(`/shipments/${shipment.id}/status`, cookies.opsDxb, { status }).expect(200);
+    }
+    const draft = await statusDraft(
+      statusRequest(shipment.id, { status: 'DELIVERED', note: null }),
+    );
+    const refused = await r
+      .post(`/shipment-status-drafts/${draft.id}/approve`, cookies.opsDxb, { version: 1 })
+      .expect(409);
+    expect(refused.body).toMatchObject({ code: 'DELIVERY_PROOF_REQUIRED' });
+    expect(await shipmentStatus(shipment.id)).toBe('RECEIVED_DESTINATION_WAREHOUSE');
+    expect(
+      (await t.prisma.shipmentStatusDraft.findUniqueOrThrow({ where: { id: draft.id } })).state,
+    ).toBe('DRAFT');
+  });
+
   it('approves at "now" even after a status entered a few minutes ahead, also when queued', async () => {
     const shipment = await roadShipment();
     const ahead = new Date(Date.now() + 4 * 60 * 1000).toISOString();

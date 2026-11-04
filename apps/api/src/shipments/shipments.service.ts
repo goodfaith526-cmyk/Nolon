@@ -1041,6 +1041,19 @@ export class ShipmentsService {
       id,
       this.statusPlan(user, { ...input, occurredAt: new Date() }),
     );
+    // Plan 12 section 6: a draft carries no delivery reason, so with no live proof of delivery
+    // it is refused (fail closed); staff deliver it from the shipment with a reason instead.
+    if (
+      applied &&
+      HANDOVER_STATUSES.has(input.status) &&
+      !(await this.links.hasLivePodInTx(tx, id))
+    ) {
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'DELIVERY_PROOF_REQUIRED',
+        'This shipment has no proof of delivery: record it, or deliver from the shipment with a reason',
+      );
+    }
     // Plan 12 section 3: an approved status draft that delivers is a handover, with no override.
     if (applied && HANDOVER_STATUSES.has(input.status)) {
       await this.handoverGateInTx(tx, user, id, null, `status ${input.status}`);

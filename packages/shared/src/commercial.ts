@@ -818,6 +818,7 @@ export const FORM_REFUSALS = [
   'CUSTOMS_FEE_INVOICED',
   // Plan 12 section 6: delivered by hand with no live proof of delivery and no reason.
   'DELIVERY_REASON_REQUIRED',
+  'DELIVERY_PROOF_REQUIRED',
   // Approving a supplier bill whose reference other bills of the supplier and branch carry (or
   // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
   // dash) and `drafts` (a count).
