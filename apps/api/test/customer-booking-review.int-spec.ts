@@ -528,7 +528,7 @@ describe('Customer Service booking request review (R3c1)', () => {
   });
 
   it('keeps a request readable when its quote’s currency is deactivated (F131-2)', async () => {
-    const code = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    const code = `QF${String.fromCharCode(65 + randomInt(26))}`;
     await t.prisma.currency.upsert({
       where: { code },
       create: { code, nameEn: `Test ${code}`, nameAr: `تجربة ${code}`, decimalPlaces: 2 },

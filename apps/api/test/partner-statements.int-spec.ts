@@ -40,7 +40,7 @@ let freight: string;
 let customer: CustomerDto;
 let tag: string;
 // A currency of this run only, so its exchange rates are the test's.
-const currency = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+const currency = `QD${String.fromCharCode(65 + randomInt(26))}`;
 const cookies = {
   admin: '',
   salesPts: '',

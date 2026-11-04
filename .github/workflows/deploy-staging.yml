@@ -310,11 +310,8 @@ jobs:
           # The backup tools are production's, shared (DEPLOY.md, Backups).
           (cd deploy/production && scp backup.sh backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
-          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
-          status=0
-          remote "bash $dir/deploy.sh" || status=$?
-          remote "docker logout ghcr.io" || true
-          exit "$status"
+          # deploy.sh logs in and out inside its server-wide lock (Codex F183-1).
+          printf '%s' "$GHCR_TOKEN" | remote "bash $dir/deploy.sh --registry-login '${{ github.actor }}'"
 
       - name: Health check
         run: |
@@ -331,6 +328,23 @@ jobs:
             echo "::error::https://$SITE_DOMAIN/ar answered $code, expected $expected"
             exit 1
           fi
+
+      # What this run deployed, for Deploy production to take (deploy/production/staging-deployed.sh):
+      # with workflow_run, the run's own commit can be a later one than the commit checked out here.
+      # Last, so it exists only when the deploy and the health check passed.
+      - name: Record the deployed commit
+        id: deployed
+        run: |
+          mkdir -p "$RUNNER_TEMP/deployed"
+          git rev-parse HEAD > "$RUNNER_TEMP/deployed/sha"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staging-deployed-${{ steps.deployed.outputs.sha }}
+          path: ${{ runner.temp }}/deployed/sha
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Show container logs on failure
         # Only when SSH works; otherwise it would just repeat the SSH error.

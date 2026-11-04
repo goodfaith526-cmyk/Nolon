@@ -316,6 +316,7 @@ export function ShipmentDetail({ id }: { id: string }) {
           {!standalone && <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} />}
           <MoreMenu>
             {!standalone && <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>}
+            {!standalone && <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} />}
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
             {(actions.canHold || canRevert || actions.canCancel) && <hr />}
             {actions.canHold && (

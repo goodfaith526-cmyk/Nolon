@@ -36,7 +36,7 @@ describe('partner contracts, rate card costs and the expected margin', () => {
   let jeddahPort: string;
   let portSudan: string;
   // A currency of this test only: no exchange rate until the test adds one.
-  const testCurrency = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+  const testCurrency = `QC${String.fromCharCode(65 + randomInt(26))}`;
   const cookies = {
     admin: '',
     pricingJed: '',

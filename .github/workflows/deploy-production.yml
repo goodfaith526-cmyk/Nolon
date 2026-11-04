@@ -1,11 +1,18 @@
 name: Deploy production
 
-# Deploys one commit of main to production, by hand only (Actions > Deploy production > Run
-# workflow). It builds nothing: it runs the exact images that commit already ran on staging, so a
-# commit reaches production only after CI passed on it and the staging deploy of it succeeded.
-# The deploy job then waits for approval in the `production` environment. Setup and required
-# secrets: DEPLOY-PRODUCTION.md.
+# Deploys a commit of main to production. It builds nothing: it runs the exact images that commit
+# already ran on staging, so a commit reaches production only after CI passed on it and the staging
+# deploy of it succeeded (migrations included). Two ways in:
+# - Automatic: when the repository variable PRODUCTION_AUTO_DEPLOY is `true`, every successful
+#   Deploy staging of main is followed by the same commit here, so both run the same code.
+# - By hand (Actions > Deploy production > Run workflow), e.g. to go back to an earlier commit.
+# If the `production` environment has required reviewers, the deploy job waits for approval.
+# Setup and required secrets: DEPLOY-PRODUCTION.md.
 on:
+  workflow_run:
+    workflows: [Deploy staging]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       commit:
@@ -24,7 +31,12 @@ permissions:
 jobs:
   check:
     name: Check the commit passed CI and staging
-    if: github.ref == 'refs/heads/main'
+    # By hand: from main only. Automatic: only after a successful staging deploy of main, and
+    # only once production is switched to follow staging (PRODUCTION_AUTO_DEPLOY=true).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      vars.PRODUCTION_AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,9 +52,15 @@ jobs:
       - name: Resolve the commit
         id: commit
         env:
+          GH_TOKEN: ${{ github.token }}
           INPUT_COMMIT: ${{ inputs.commit }}
+          # Automatic runs deploy the commit that staging run actually deployed, read from the
+          # artifact it uploaded, never from its run metadata (Codex F173-1).
+          STAGING_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          if [ -z "$INPUT_COMMIT" ]; then
+          if [ -n "$STAGING_RUN_ID" ]; then
+            sha="$(deploy/production/staging-deployed.sh run "$STAGING_RUN_ID")"
+          elif [ -z "$INPUT_COMMIT" ]; then
             sha="$(git rev-parse HEAD)"
           elif [[ "$INPUT_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
             sha="$INPUT_COMMIT"
@@ -57,23 +75,19 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Deploying $sha: $(git log -1 --format=%s "$sha")"
 
-      - name: CI passed and staging was deployed on this commit
+      - name: CI passed and staging deployed this commit
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.commit.outputs.sha }}
         run: |
-          passed() {
-            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$1" --commit "$SHA" \
-              --status success --limit 1 --json databaseId --jq length
-          }
-          if [ "$(passed ci.yml)" != 1 ]; then
+          ok=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" \
+            --status success --limit 1 --json databaseId --jq length)
+          if [ "$ok" != 1 ]; then
             echo "::error::CI has not passed on $SHA."
             exit 1
           fi
-          if [ "$(passed deploy-staging.yml)" != 1 ]; then
-            echo "::error::$SHA was never deployed to staging successfully. Production runs only what staging ran first."
-            exit 1
-          fi
+          # A staging run's own commit is not what it deployed; its artifact is.
+          deploy/production/staging-deployed.sh check "$SHA"
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -189,9 +203,9 @@ jobs:
             esac
           done
           if [ "$set_count" = 0 ]; then
-            # Allowed only to bootstrap: on the server, backup.sh pre-migrate refuses to migrate a
-            # database that holds anything without a successful backup.
-            echo "::warning::Backups are not set up: this deploy works only onto an empty database (the first deploy). Any later deploy fails until they are (DEPLOY-PRODUCTION.md, Backups)"
+            # Trial data (owner decision 2026-11-03): backup.sh pre-migrate then migrates without a
+            # backup, with a warning. Set backups up before go-live.
+            echo "::warning::Backups are not set up: this deploy migrates WITHOUT a backup (trial data only). Set them up before go-live (DEPLOY-PRODUCTION.md, Backups)"
           fi
 
       # Fails in seconds on a bad key or host key, before anything changes on the server.
@@ -274,11 +288,8 @@ jobs:
           (cd deploy/production && scp docker-compose.production.yml Caddyfile deploy.sh backup.sh \
             backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
-          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
-          status=0
-          remote "bash $dir/deploy.sh" || status=$?
-          remote "docker logout ghcr.io" || true
-          exit "$status"
+          # deploy.sh logs in and out inside its server-wide lock (Codex F183-1).
+          printf '%s' "$GHCR_TOKEN" | remote "bash $dir/deploy.sh --registry-login '${{ github.actor }}'"
 
       - name: Health check
         run: |
