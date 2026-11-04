@@ -511,6 +511,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
         select: { number: true, shipment: { select: { id: true, number: true } } },
       });
       if (!booking.shipment) throw new Error(`Booking ${bookingId} was confirmed with no shipment`);
+      // Plan 06 ب6: the credit check is the transaction's last step, after the container writes.
+      await this.bookings.finalChecksInTx(tx, bookingId);
       return {
         bookingId,
         bookingNumber: booking.number,

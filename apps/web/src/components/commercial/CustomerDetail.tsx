@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Money } from '../finance/common';
+import { useCreditBlock, useCustomerCredit } from '../finance/CustomerCredit';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
@@ -24,9 +25,12 @@ export function CustomerDetail({ id }: { id: string }) {
   const name = useLocalName();
   const master = useMasterData();
   const failure = useFailureText();
+  const block = useCreditBlock();
   const [customer, setCustomer] = useState<CustomerDto | null>(null);
   const [mode, setMode] = useState<Mode>('view');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // Client decision ب6: the open balance against the limit, for those who see the limit.
+  const credit = useCustomerCredit(can(me, 'customer_invoices:view') ? id : null);
 
   const load = useCallback(() => {
     api<CustomerDto>(`/customers/${id}`)
@@ -189,6 +193,21 @@ export function CustomerDetail({ id }: { id: string }) {
               '—'
             )}
           </dd>
+          {credit && credit.state !== 'NO_LIMIT' && (
+            <>
+              <dt>{t('openBalance')}</dt>
+              <dd dir="ltr">
+                {credit.balance !== null ? (
+                  <Money value={credit.balance} currency={credit.currency ?? undefined} />
+                ) : (
+                  '—'
+                )}
+                {credit.state !== 'WITHIN' && (
+                  <span className="error"> {block(credit, customer.name)}</span>
+                )}
+              </dd>
+            </>
+          )}
           <dt>{t('segment')}</dt>
           <dd>{segmentName(customer.segmentCode)}</dd>
           <dt>{t('acquiredViaOutlet')}</dt>

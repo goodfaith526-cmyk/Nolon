@@ -660,13 +660,30 @@ export class BookingsService {
    */
   async confirm(user: AuthUser, id: string): Promise<BookingDto> {
     await this.findScoped(user, id);
-    await this.prisma.$transaction((tx) => this.confirmInTx(tx, user, id));
+    await this.prisma.$transaction(async (tx) => {
+      await this.confirmInTx(tx, user, id);
+      await this.finalChecksInTx(tx, id);
+    });
     return this.get(user, id);
   }
 
   /**
+   * The checks that end a transaction confirming a booking (plan 06 ب6: the customer's credit
+   * limit, under its advisory lock). Every caller of confirmInTx calls this as its LAST step,
+   * after all its own writes, and writes nothing after it.
+   */
+  async finalChecksInTx(tx: Tx, bookingId: string): Promise<void> {
+    const booking = await tx.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { customerId: true },
+    });
+    await this.confirmChecks.runFinal(tx, booking);
+  }
+
+  /**
    * Confirms a draft booking of the user's branches (the caller checked that) inside the caller's
-   * transaction; the id of the shipment it creates.
+   * transaction; the id of the shipment it creates. The caller ends its transaction with
+   * finalChecksInTx (plan 06 ب6).
    */
   async confirmInTx(tx: Tx, user: AuthUser, id: string): Promise<{ id: string }> {
     const rows = await tx.$queryRaw<{ status: string }[]>`

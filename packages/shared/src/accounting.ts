@@ -321,6 +321,25 @@ export interface InvoicePaymentDto {
   applicationId: string | null;
 }
 
+/**
+ * A customer's credit position (client decision ب6, plan 06), for screens: the server decides
+ * on confirm and approve, a screen only shows this and greys the button with the reason.
+ * `balance` is in the limit's currency. With `invoiceId`, the position once that draft is approved.
+ */
+export interface CustomerCreditDto {
+  customerId: string;
+  state: 'NO_LIMIT' | 'WITHIN' | 'EXCEEDED' | 'NO_RATE';
+  /**
+   * The company-wide open balance in the limit's currency; null without a limit or a rate, or when
+   * part of it comes from a branch whose invoices the reader may not see (F192-1).
+   */
+  balance: DecimalString | null;
+  limit: DecimalString | null;
+  currency: CurrencyCode | null;
+  /** The currency with no exchange rate (state NO_RATE). */
+  missingRateCurrency: CurrencyCode | null;
+}
+
 export interface InvoicePricingNotice {
   code: 'QUOTATION_ROUTE_CHANGED' | 'QUOTATION_CATEGORY_CHANGED';
   quotationNumber: string;

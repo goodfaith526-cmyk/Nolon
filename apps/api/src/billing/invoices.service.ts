@@ -64,6 +64,7 @@ import { ShipmentsService } from '../shipments/shipments.service.js';
 import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { CommissionInvoice } from '../commissions/commission-math.js';
+import { CreditLimitService } from './credit-limit.service.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
 import { isLiveInvoice } from './live-invoice.js';
 import {
@@ -209,6 +210,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     private readonly shipmentInvoices: ShipmentInvoicesRegistry,
     private readonly commissions: CommissionTriggers,
     private readonly accounts: AccountsService,
+    private readonly credit: CreditLimitService,
   ) {}
 
   onModuleInit(): void {
@@ -1278,6 +1280,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         'INVOICE_APPROVED',
         invoiceDate,
       );
+      // Plan 06 ب6: the last step, with this invoice approved: over the limit refuses it all.
+      await this.credit.requireWithinLimitInTx(tx, invoice.customerId);
     });
     return this.get(user, existing.id);
   }

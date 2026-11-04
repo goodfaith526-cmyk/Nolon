@@ -666,6 +666,8 @@ export class NewCustomerBookingDraftsService {
           where: { id },
           data: { ...approvedFields(user), bookingId },
         });
+        // Plan 06 ب6: a booking confirmed into a container ends with the credit check.
+        if (consolidationId) await this.bookings.finalChecksInTx(tx, bookingId);
       }
     });
     return this.get(user, id);
