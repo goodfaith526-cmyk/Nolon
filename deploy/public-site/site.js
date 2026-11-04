@@ -619,58 +619,67 @@
     );
   }
 
-  /* Route card: one marker slides slowly along the orange line from Port Sudan and stops at
-     the shipment's current station (#route-now). Plays once, when the card comes into view.
-     Without JS, or with reduced motion, the marker simply sits at the current station. */
+  /* Route card: one barrel and one parcel ride the whole route, origin (Dubai or Jeddah, taking
+     turns) → Port Sudan → Atbara → Khartoum, rest a few seconds, ride back, rest, and repeat.
+     Only runs while the card is on screen; during rests nothing runs at all. Without JS, or
+     with reduced motion, the cargo simply sits at the current station (#route-now). */
   var line = document.getElementById('route-line');
   var marker = document.getElementById('route-marker');
-  var nowStop = document.getElementById('route-now');
-  if (!still && line && marker && nowStop && line.getTotalLength && window.requestAnimationFrame) {
-    var total = line.getTotalLength();
-    var sx = Number(nowStop.getAttribute('cx'));
-    var sy = Number(nowStop.getAttribute('cy'));
-    // Distance along the line where it passes closest to the current station.
-    var stopAt = 0;
-    var best = Infinity;
-    for (var i = 0; i <= 200; i++) {
-      var q = line.getPointAtLength((total * i) / 200);
-      var d = (q.x - sx) * (q.x - sx) + (q.y - sy) * (q.y - sy);
-      if (d < best) {
-        best = d;
-        stopAt = (total * i) / 200;
-      }
-    }
-    var place = function (len) {
-      var p = line.getPointAtLength(len);
+  var legs = [document.getElementById('route-jed'), document.getElementById('route-dxb')];
+  if (
+    !still &&
+    line &&
+    marker &&
+    legs[0] &&
+    legs[1] &&
+    line.getTotalLength &&
+    window.requestAnimationFrame
+  ) {
+    var lineLen = line.getTotalLength();
+    var trip = 0; // even: ride out to Khartoum, odd: ride back to the origin
+    var onScreen = true;
+    var waiting = false;
+    var place = function (leg, d) {
+      var legLen = leg.getTotalLength();
+      var p = d < legLen ? leg.getPointAtLength(d) : line.getPointAtLength(d - legLen);
       marker.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')');
     };
     var ride = function () {
-      var ms = 4200;
+      waiting = false;
+      if (!onScreen) {
+        waiting = true;
+        return;
+      }
+      var leg = legs[Math.floor(trip / 2) % 2];
+      var back = trip % 2 === 1;
+      var total = leg.getTotalLength() + lineLen;
+      var ms = 9000;
       var t0 = 0;
       var step = function (now) {
         if (!t0) t0 = now;
         var k = Math.min(1, (now - t0) / ms);
         // Ease in and out, so it pulls away and brakes gently.
         var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-        place(stopAt * e);
-        if (k < 1) requestAnimationFrame(step);
+        place(leg, total * (back ? 1 - e : e));
+        if (k < 1) {
+          requestAnimationFrame(step);
+        } else {
+          trip++;
+          setTimeout(ride, 3500);
+        }
       };
       requestAnimationFrame(step);
     };
-    place(0);
+    place(legs[0], 0);
     if ('IntersectionObserver' in window) {
-      var io = new IntersectionObserver(
+      new IntersectionObserver(
         function (entries) {
-          if (entries[0].isIntersecting) {
-            io.disconnect();
-            setTimeout(ride, 500);
-          }
+          onScreen = entries[0].isIntersecting;
+          if (onScreen && waiting) ride();
         },
-        { threshold: 0.5 },
-      );
-      io.observe(line.ownerSVGElement || line);
-    } else {
-      setTimeout(ride, 500);
+        { threshold: 0.2 },
+      ).observe(line.ownerSVGElement || line);
     }
+    setTimeout(ride, 800);
   }
 })();
