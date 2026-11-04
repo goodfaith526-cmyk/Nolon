@@ -808,6 +808,14 @@ export const FORM_REFUSALS = [
   'SHIPMENT_ALREADY_INVOICED',
   'ADDITIONAL_NEEDS_MAIN',
   'CHARGE_ON_OTHER_INVOICE',
+  // Plan 12 section 5: a line naming a customs fee bills one fee of the invoice's shipment, once,
+  // under the charge CUSTOMS, in the fee's currency, on an additional services invoice. Params
+  // `description` (the fee's, or a dash). A fee another live invoice of the shipment bills:
+  // `description` and `invoices` (numbers, or a dash).
+  'CUSTOMS_FEE_LINE',
+  'CUSTOMS_FEE_BILLED',
+  // Removing a customs fee an invoice line names: no params.
+  'CUSTOMS_FEE_INVOICED',
   // Approving a supplier bill whose reference other bills of the supplier and branch carry (or
   // carried other bills when the person looked). Params `reference`, `approved` (numbers, or a
   // dash) and `drafts` (a count).

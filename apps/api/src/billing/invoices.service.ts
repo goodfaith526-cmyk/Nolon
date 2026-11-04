@@ -67,6 +67,12 @@ import { CommissionTriggers } from '../shipments/commission-triggers.registry.js
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { CommissionInvoice } from '../commissions/commission-math.js';
 import { CreditLimitService } from './credit-limit.service.js';
+import {
+  CUSTOMS_FEE_CHARGE,
+  feeLinesProblem,
+  feesCurrency,
+  unbilledFees,
+} from './customs-fee-lines.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
 import { isLiveInvoice } from './live-invoice.js';
 import {
@@ -599,19 +605,37 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     kind: InvoiceKind = 'MAIN',
   ): Promise<CustomerInvoiceDto> {
     const derived = await this.deriveForShipment(user, shipmentId, {});
-    const { currency, invoiceDate } = derived;
+    const { invoiceDate } = derived;
+    // Plan 12 section 5: an additional services invoice offers the customs fees no live invoice
+    // bills, in their currency when they share one (and it is still active).
+    let currency = derived.currency;
+    if (kind === 'ADDITIONAL') {
+      const offered = unbilledFees(...(await this.feeState(this.prisma, derived.shipmentId)));
+      const code = feesCurrency(offered, currency.code);
+      if (code !== currency.code && (await this.currencies.isActive(code)))
+        currency = await this.currencies.requireActive(code);
+    }
     const fxRate = await this.fxRates.resolve(currency.code, invoiceDate);
-    const lines =
-      kind === 'MAIN'
-        ? derived.lines.flatMap((l) =>
-            l.use === 'FILL' && l.quantity !== null && l.unitPrice !== null
-              ? [{ ...l, quantity: l.quantity, unitPrice: l.unitPrice }]
-              : [],
-          )
-        : [];
-    const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     const created = await this.prisma.$transaction(async (tx) => {
       await this.lockShipmentInvoices(tx, derived.shipmentId);
+      const lines =
+        kind === 'MAIN'
+          ? derived.lines.flatMap((l) =>
+              l.use === 'FILL' && l.quantity !== null && l.unitPrice !== null
+                ? [{ ...l, quantity: l.quantity, unitPrice: l.unitPrice, customsFeeId: null }]
+                : [],
+            )
+          : // Read again under the lock: one line per unbilled fee in the invoice's currency.
+            unbilledFees(...(await this.feeState(tx, derived.shipmentId)))
+              .filter((f) => f.currency === currency.code)
+              .map((f) => ({
+                chargeTypeCode: CUSTOMS_FEE_CHARGE,
+                description: f.description,
+                quantity: dec(1),
+                unitPrice: f.amount,
+                customsFeeId: f.id,
+              }));
+      const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
       if (kind === 'MAIN') {
         await this.cancelAutoDraftsInTx(
           tx,
@@ -645,6 +669,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
               quantity: l.quantity,
               unitPrice: l.unitPrice,
               lineTotal: lineTotals[index] ?? dec(0),
+              customsFeeId: l.customsFeeId,
             })),
           },
         },
@@ -1236,6 +1261,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       ...l,
       quantity: dec(l.quantity),
       unitPrice: dec(l.unitPrice),
+      customsFeeId: l.customsFeeId?.toLowerCase() ?? null,
     }));
     const { lineTotals, total } = computeInvoiceAmounts(lines, currency.decimalPlaces);
     if (!existing.shipmentId) throw new Error('A draft bills a shipment');
@@ -1249,6 +1275,12 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         invoiceId: id,
         creating: false,
         charges: lines.map((l) => l.chargeTypeCode),
+      });
+      await this.requireFeeLines(tx, shipmentId, {
+        id,
+        kind: existing.kind,
+        currency: currency.code,
+        lines,
       });
       // The line prices are amounts in the invoice's currency: a new currency keeps none of them
       // as they stand (3,670 AED is not 3,670 USD). The request says it priced the lines anew.
@@ -1286,6 +1318,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
               quantity: l.quantity,
               unitPrice: l.unitPrice,
               lineTotal: lineTotals[index] ?? dec(0),
+              customsFeeId: l.customsFeeId,
             })),
           },
         },
@@ -1491,6 +1524,76 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     if (status === 'CANCELLED') throw new ConflictException('The shipment was cancelled');
   }
 
+  /** Plan 12 section 5: the shipment's customs fees and its invoices, as the fee rules read them. */
+  private async feeState(db: Tx | PrismaService, shipmentId: string) {
+    const fees = await db.customsFee.findMany({
+      where: { shipmentId },
+      select: { id: true, description: true, currency: true, amount: true, createdAt: true },
+    });
+    const invoices = await db.customerInvoice.findMany({
+      where: { shipmentId },
+      select: {
+        id: true,
+        number: true,
+        kind: true,
+        status: true,
+        total: true,
+        paidAmount: true,
+        creditedAmount: true,
+        lines: { select: { chargeTypeCode: true, customsFeeId: true } },
+      },
+    });
+    return [fees, invoices] as const;
+  }
+
+  /**
+   * Plan 12 section 5, under lockShipmentInvoices: each line naming a customs fee bills one fee of
+   * the shipment, once, under CUSTOMS, in the fee's currency, on an additional services invoice
+   * (400 CUSTOMS_FEE_LINE), that no other live invoice of the shipment bills (409
+   * CUSTOMS_FEE_BILLED).
+   */
+  private async requireFeeLines(
+    tx: Tx,
+    shipmentId: string,
+    write: {
+      id: string;
+      kind: InvoiceKind;
+      currency: string;
+      lines: readonly { chargeTypeCode: string; customsFeeId: string | null }[];
+    },
+  ): Promise<void> {
+    if (write.lines.every((l) => l.customsFeeId === null)) return;
+    const [fees, invoices] = await this.feeState(tx, shipmentId);
+    const wrong = feeLinesProblem({ ...write, fees });
+    if (wrong !== null) {
+      throw fieldRefusal(
+        'CUSTOMS_FEE_LINE',
+        'A customs fee is billed once, under CUSTOMS, in its own currency, on an additional services invoice of its shipment',
+        ['lines'],
+        { description: fees.find((f) => f.id === wrong)?.description ?? '—' },
+      );
+    }
+    const open = new Set(unbilledFees(fees, invoices, write.id).map((f) => f.id));
+    const taken = write.lines.find((l) => l.customsFeeId !== null && !open.has(l.customsFeeId));
+    if (taken?.customsFeeId) {
+      const feeId = taken.customsFeeId;
+      const on = invoices.filter(
+        (i) =>
+          i.id !== write.id &&
+          isLiveInvoice(i) &&
+          (i.lines.some((l) => l.customsFeeId === feeId) ||
+            (i.kind === 'MAIN' && i.lines.some((l) => l.chargeTypeCode === CUSTOMS_FEE_CHARGE))),
+      );
+      const description = fees.find((f) => f.id === feeId)?.description ?? '—';
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'CUSTOMS_FEE_BILLED',
+        `The customs fee ${description} is already on ${numbersOf(on)}`,
+        { description, invoices: numbersOf(on) },
+      );
+    }
+  }
+
   /**
    * A shipment's invoices (client decision ب3, plan 06), under lockShipmentInvoices: one live
    * MAIN invoice (rule 1, on creating or approving one); an ADDITIONAL invoice is created only
@@ -1661,6 +1764,7 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
       quantity: l.quantity.toFixed(),
       unitPrice: l.unitPrice.toFixed(),
       lineTotal: l.lineTotal.toFixed(),
+      customsFeeId: l.customsFeeId,
     })),
     payments: [
       ...i.allocations.map((a) => ({

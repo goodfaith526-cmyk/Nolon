@@ -1521,7 +1521,7 @@
     "rule_CUSTOMS_STALLED": "Not cleared and not updated for more than {days, plural, one {# day} other {# days}}.",
     "rule_STORAGE_EXCEEDED": "In the warehouse for more than {days, plural, one {# day} other {# days}}.",
     "rule_TRIP_LATE": "Not arrived {days, plural, =0 {after the planned arrival} one {# day after the planned arrival} other {# days after the planned arrival}}.",
-    "rule_SHIPMENT_NOT_INVOICED": "Confirmed more than {days, plural, =0 {0 days} one {# day} other {# days}} ago with no approved invoice.",
+    "rule_SHIPMENT_NOT_INVOICED": "No approved invoice more than {days, plural, =0 {0 days} one {# day} other {# days}} after the shipment was made, or customs fees not invoiced that long after they were recorded.",
     "rule_BOOKING_DRAFT_FROM_REQUEST": "Made from an approved bot request more than {days, plural, =0 {0 days} one {# day} other {# days}} ago and still a draft.",
     "detail_SHIPMENT_ARRIVING_SOON": "Customer",
     "detail_SHIPMENT_PAST_ETA": "Customer",
@@ -1537,7 +1537,7 @@
     "since_CUSTOMS_STALLED": "Last update",
     "since_STORAGE_EXCEEDED": "In since",
     "since_TRIP_LATE": "Planned arrival",
-    "since_SHIPMENT_NOT_INVOICED": "Confirmed",
+    "since_SHIPMENT_NOT_INVOICED": "Since",
     "since_BOOKING_DRAFT_FROM_REQUEST": "Made"
   },
   "ApiAccess": {
@@ -2817,6 +2817,9 @@
     "SHIPMENT_ALREADY_INVOICED": "Shipment {shipment} already has its invoice ({invoices}). Bill new services on an additional services invoice, or issue a credit note covering the invoice in full and then create a new one.",
     "ADDITIONAL_NEEDS_MAIN": "Shipment {shipment} has no invoice yet. Create its invoice first; additional services go on a separate invoice after it.",
     "CHARGE_ON_OTHER_INVOICE": "On shipment {shipment}, {charges} is already on invoice {invoices}. A charge goes either on the shipment's invoice or on additional services invoices, not both.",
+    "CUSTOMS_FEE_LINE": "The customs fee «{description}» is billed once, under the customs charge, in the fee's own currency, on an additional services invoice of its shipment.",
+    "CUSTOMS_FEE_BILLED": "The customs fee «{description}» is already on invoice {invoices}.",
+    "CUSTOMS_FEE_INVOICED": "This fee has been put on an invoice, so it is kept.",
     "CONTAINER_BOOKING_NOT_LCL_SEA": "Container {container} takes LCL sea bookings only: make it a sea LCL booking.",
     "CONTAINER_BOOKING_OTHER_PORT": "Container {container} loads at another port: the booking must leave from that port.",
     "CONTAINER_BOOKING_NO_MAIN_FREIGHT": "A booking in container {container} includes the main freight: add it to the services.",

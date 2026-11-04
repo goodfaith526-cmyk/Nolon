@@ -267,6 +267,8 @@ export interface CustomerInvoiceLineDto {
   quantity: DecimalString;
   unitPrice: DecimalString;
   lineTotal: DecimalString;
+  /** Plan 12 section 5: the shipment's customs fee this line bills, if any. */
+  customsFeeId: string | null;
 }
 
 export interface CustomerInvoiceLineInput {
@@ -274,6 +276,8 @@ export interface CustomerInvoiceLineInput {
   description?: string | null;
   quantity: DecimalString;
   unitPrice: DecimalString;
+  /** Plan 12 section 5: keeps a line on the customs fee it bills (charge CUSTOMS). */
+  customsFeeId?: string | null;
 }
 
 export interface CustomerInvoiceSummaryDto {

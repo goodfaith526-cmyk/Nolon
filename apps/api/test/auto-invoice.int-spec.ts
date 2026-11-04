@@ -1,6 +1,9 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
+  AlertsDto,
   ApiClientCreatedDto,
+  CustomerInvoiceDto,
+  ShipmentCustomsDto,
   BookingDto,
   CsApprovalPriceDto,
   CsBookingRequestCreated,
@@ -49,6 +52,15 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
         .set('Origin', APP_ORIGIN)
         .set('Cookie', cookie)
         .send(body),
+    patch: (path: string, body: object = {}) =>
+      app()
+        .http()
+        .patch(`/api/v1${path}`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send(body),
+    delete: (path: string) =>
+      app().http().delete(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie),
   });
   const route = { originId: '', destinationId: '', mode: 'ROAD', currency: 'USD' };
 
@@ -478,5 +490,109 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
     expect(
       (await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: draft.id } })).status,
     ).toBe('CANCELLED');
+  });
+  it('offers the customs fees no invoice bills on the additional services invoice (section 5)', async () => {
+    const bookingId = await cardBooking(await newCustomer());
+    await confirm(bookingId, cookies.approver).expect(200);
+    expect((await onlyInvoice(bookingId)).status).toBe('APPROVED');
+    const shipment = await t.prisma.shipment.findUniqueOrThrow({ where: { bookingId } });
+    const admin = staff(cookies.admin);
+    const finance = staff(cookies.approver);
+    for (const [description, amount] of [
+      ['Duty', '30'],
+      ['Inspection', '20'],
+    ] as const) {
+      await admin
+        .post(`/shipments/${shipment.id}/customs/fees`, { description, amount, currency: 'USD' })
+        .expect(201);
+    }
+    // Recorded two days ago and not invoiced: the shipment is listed.
+    await t.prisma.customsFee.updateMany({
+      where: { shipmentId: shipment.id },
+      data: { createdAt: new Date(Date.now() - 2 * 86_400_000) },
+    });
+    // Oldest first, as offered (one time now: then by id).
+    const fees = await t.prisma.customsFee.findMany({
+      where: { shipmentId: shipment.id },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const listed = async () =>
+      ((await finance.get('/alerts').expect(200)).body as AlertsDto).groups
+        .find((g) => g.kind === 'SHIPMENT_NOT_INVOICED')
+        ?.items.some((a) => a.refId === shipment.id) ?? false;
+    expect(await listed()).toBe(true);
+
+    // One line per fee, under CUSTOMS, at its amount, linked to it.
+    const extra = (
+      await finance
+        .post('/customer-invoices', { shipmentId: shipment.id, kind: 'ADDITIONAL' })
+        .expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(extra.currency).toBe('USD');
+    expect(
+      extra.lines.map((l) => [l.chargeTypeCode, l.description, l.unitPrice, l.customsFeeId]),
+    ).toEqual(fees.map((f) => ['CUSTOMS', f.description, f.amount.toFixed(), f.id]));
+
+    // On a live draft, a fee is not offered again, nor billed twice.
+    const second = (
+      await finance
+        .post('/customer-invoices', { shipmentId: shipment.id, kind: 'ADDITIONAL' })
+        .expect(201)
+    ).body as CustomerInvoiceDto;
+    expect(second.lines).toEqual([]);
+    const body = (lines: object[]) => ({
+      currency: 'USD',
+      invoiceDate: extra.invoiceDate,
+      dueDate: extra.dueDate,
+      lines,
+    });
+    const feeLine = (id: string, amount: string) => ({
+      chargeTypeCode: 'CUSTOMS',
+      quantity: '1',
+      unitPrice: amount,
+      customsFeeId: id,
+    });
+    const taken = await finance
+      .patch(`/customer-invoices/${second.id}`, body([feeLine(fees[0]!.id, '30')]))
+      .expect(409);
+    expect(taken.body).toMatchObject({ code: 'CUSTOMS_FEE_BILLED' });
+    // Under another charge, or twice on one invoice: refused.
+    const wrong = await finance
+      .patch(
+        `/customer-invoices/${extra.id}`,
+        body([{ ...feeLine(fees[0]!.id, '30'), chargeTypeCode: 'DOCS' }]),
+      )
+      .expect(400);
+    expect(wrong.body).toMatchObject({ code: 'CUSTOMS_FEE_LINE' });
+    await finance
+      .patch(
+        `/customer-invoices/${extra.id}`,
+        body([feeLine(fees[0]!.id, '30'), feeLine(fees[0]!.id, '30')]),
+      )
+      .expect(400);
+    // Edited and kept: the links stay.
+    await finance
+      .patch(
+        `/customer-invoices/${extra.id}`,
+        body([feeLine(fees[0]!.id, '35'), feeLine(fees[1]!.id, '20')]),
+      )
+      .expect(200);
+
+    // A fee on an invoice stays on its customs file.
+    const kept = await admin
+      .delete(`/shipments/${shipment.id}/customs/fees/${fees[0]!.id}`)
+      .expect(409);
+    expect(kept.body).toMatchObject({ code: 'CUSTOMS_FEE_INVOICED' });
+    expect(
+      (
+        (await admin.get(`/shipments/${shipment.id}/customs`).expect(200))
+          .body as ShipmentCustomsDto
+      ).fees,
+    ).toHaveLength(2);
+
+    // Approved, the fees are invoiced: the shipment is no longer listed.
+    expect(await listed()).toBe(true);
+    await finance.post(`/customer-invoices/${extra.id}/approve`).expect(200);
+    expect(await listed()).toBe(false);
   });
 });

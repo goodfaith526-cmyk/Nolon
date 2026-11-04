@@ -74,7 +74,11 @@ const updateInvoiceBody = z
     invoiceDate: dateString,
     dueDate: dateString,
     notes: optionalText(2000),
-    lines: z.array(invoiceLine).min(1).max(100),
+    // Plan 12 section 5: a line keeps the customs fee it bills.
+    lines: z
+      .array(invoiceLine.extend({ customsFeeId: z.uuid().nullish() }))
+      .min(1)
+      .max(100),
     repriced: z.boolean().optional(),
   })
   .strict();
