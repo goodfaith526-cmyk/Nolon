@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { dec } from '../common/money.js';
 import { autoApprovalRule } from './auto-invoice.service.js';
@@ -20,34 +20,58 @@ const filled = (priceSource: DerivedInvoiceLine['priceSource']): DerivedInvoiceL
 
 const quoted = { lines: [filled('QUOTATION')], unresolved: [] };
 const carded = { lines: [filled('RATE_CARD')], unresolved: [] };
-const matching = { approved: true, matches: true };
+const matching = { approved: true, matches: true, reconciled: true };
 
 describe('autoApprovalRule (plan 12 section 2.1)', () => {
   it('approves an agreed price whose terms still match, with or without the right', () => {
     for (const mayApprove of [true, false]) {
       expect(
-        autoApprovalRule({ enabled: true, derivation: quoted, agreed: matching, mayApprove }),
+        autoApprovalRule({
+          enabled: true,
+          derivation: quoted,
+          agreed: matching,
+          services: [],
+          mayApprove,
+        }),
       ).toEqual({ rule: 'AGREED_PRICE' });
     }
   });
 
   it('keeps a draft when the agreed terms changed, or the quotation is no longer approved', () => {
     for (const agreed of [
-      { approved: true, matches: false },
-      { approved: false, matches: true },
+      { approved: true, matches: false, reconciled: true },
+      { approved: false, matches: true, reconciled: true },
     ]) {
       expect(
-        autoApprovalRule({ enabled: true, derivation: quoted, agreed, mayApprove: true }),
+        autoApprovalRule({
+          enabled: true,
+          derivation: quoted,
+          agreed,
+          services: [],
+          mayApprove: true,
+        }),
       ).toEqual({ note: 'AGREED_TERMS_CHANGED' });
     }
   });
 
   it('approves rate card prices only for a confirmer who may approve invoices', () => {
     expect(
-      autoApprovalRule({ enabled: true, derivation: carded, agreed: null, mayApprove: true }),
+      autoApprovalRule({
+        enabled: true,
+        derivation: carded,
+        agreed: null,
+        services: [],
+        mayApprove: true,
+      }),
     ).toEqual({ rule: 'RATE_CARD_WITH_RIGHT' });
     expect(
-      autoApprovalRule({ enabled: true, derivation: carded, agreed: null, mayApprove: false }),
+      autoApprovalRule({
+        enabled: true,
+        derivation: carded,
+        agreed: null,
+        services: [],
+        mayApprove: false,
+      }),
     ).toEqual({ note: 'NO_APPROVE_RIGHT' });
   });
 
@@ -64,7 +88,13 @@ describe('autoApprovalRule (plan 12 section 2.1)', () => {
       { lines: [], unresolved: [] },
     ]) {
       expect(
-        autoApprovalRule({ enabled: true, derivation, agreed: null, mayApprove: true }),
+        autoApprovalRule({
+          enabled: true,
+          derivation,
+          agreed: null,
+          services: [],
+          mayApprove: true,
+        }),
       ).toEqual({ note: 'PRICE_INCOMPLETE' });
     }
   });
@@ -72,16 +102,64 @@ describe('autoApprovalRule (plan 12 section 2.1)', () => {
   it('never approves a mix of agreed and rate card prices', () => {
     const mixed = { lines: [filled('QUOTATION'), filled('RATE_CARD')], unresolved: [] };
     expect(
-      autoApprovalRule({ enabled: true, derivation: mixed, agreed: matching, mayApprove: true }),
+      autoApprovalRule({
+        enabled: true,
+        derivation: mixed,
+        agreed: matching,
+        services: [],
+        mayApprove: true,
+      }),
     ).toEqual({ note: 'PRICE_INCOMPLETE' });
+  });
+
+  it('keeps a draft when the quotation does not price the booked cargo (F193-1)', () => {
+    const agreed = { approved: true, matches: true, reconciled: false };
+    expect(
+      autoApprovalRule({
+        enabled: true,
+        derivation: quoted,
+        agreed,
+        services: [],
+        mayApprove: true,
+      }),
+    ).toEqual({ note: 'AGREED_PRICE_MISMATCH' });
+  });
+
+  it('keeps a draft when a booked service has no priced line (F193-2)', () => {
+    const customsOnly = {
+      lines: [{ ...filled('RATE_CARD'), service: 'CUSTOMS' as const }],
+      unresolved: [],
+    };
+    const decide = (services: string[]) =>
+      autoApprovalRule({
+        enabled: true,
+        derivation: customsOnly,
+        agreed: null,
+        services,
+        mayApprove: true,
+      });
+    expect(decide(['MAIN_FREIGHT', 'CUSTOMS'])).toEqual({ note: 'PRICE_INCOMPLETE' });
+    expect(decide(['CUSTOMS'])).toEqual({ rule: 'RATE_CARD_WITH_RIGHT' });
   });
 
   it('keeps a draft with the switch off, whatever else holds', () => {
     expect(
-      autoApprovalRule({ enabled: false, derivation: quoted, agreed: matching, mayApprove: true }),
+      autoApprovalRule({
+        enabled: false,
+        derivation: quoted,
+        agreed: matching,
+        services: [],
+        mayApprove: true,
+      }),
     ).toEqual({ note: 'SWITCH_OFF' });
     expect(
-      autoApprovalRule({ enabled: false, derivation: carded, agreed: null, mayApprove: true }),
+      autoApprovalRule({
+        enabled: false,
+        derivation: carded,
+        agreed: null,
+        services: [],
+        mayApprove: true,
+      }),
     ).toEqual({ note: 'SWITCH_OFF' });
   });
 });
@@ -98,7 +176,11 @@ function sources(dir: string): string[] {
 describe('automatic approval is server-only (plan 12 section 2.1, F190-1)', () => {
   const root = join(import.meta.dirname, '..');
   const files = sources(root).map((path) => ({
-    path: path.slice(root.length + 1),
+    // Forward slashes on every system (Codex ran it on Windows).
+    path: path
+      .slice(root.length + 1)
+      .split(sep)
+      .join('/'),
     text: readFileSync(path, 'utf8'),
   }));
 

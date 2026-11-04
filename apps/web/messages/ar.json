@@ -853,6 +853,7 @@
     "autoDraft": "أُنشئت عند تأكيد الحجز وبقيت مسودة: {reason}",
     "autoNote_PRICE_INCOMPLETE": "بعض الرسوم لم يُعرف سعرها. أكمل البنود ثم اعتمدها.",
     "autoNote_AGREED_TERMS_CHANGED": "تغيّر الحجز بعد الاتفاق على السعر. راجع الأسعار ثم اعتمدها.",
+    "autoNote_AGREED_PRICE_MISMATCH": "عرض السعر المتفق عليه ما بيطابق بضاعة الحجز زي ما اتسجلت. راجع الأسعار ثم اعتمدها.",
     "autoNote_NO_APPROVE_RIGHT": "من أكّد الحجز لا يملك صلاحية اعتماد الفواتير.",
     "autoNote_PERIOD_CLOSED": "الفترة المحاسبية لتاريخها مقفولة.",
     "autoNote_CREDIT_LIMIT_EXCEEDED": "اعتمادها يتجاوز بالعميل حد الائتمان.",

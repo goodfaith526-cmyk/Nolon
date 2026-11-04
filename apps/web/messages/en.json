@@ -853,6 +853,7 @@
     "autoDraft": "Made when the booking was confirmed, and left as a draft: {reason}",
     "autoNote_PRICE_INCOMPLETE": "some charges could not be priced. Complete the lines, then approve.",
     "autoNote_AGREED_TERMS_CHANGED": "the booking changed after its price was agreed. Check the prices, then approve.",
+    "autoNote_AGREED_PRICE_MISMATCH": "the agreed quotation does not price the booking's cargo as it was booked. Check the prices, then approve.",
     "autoNote_NO_APPROVE_RIGHT": "the person who confirmed it may not approve invoices.",
     "autoNote_PERIOD_CLOSED": "the accounting period of its date is closed.",
     "autoNote_CREDIT_LIMIT_EXCEEDED": "approving it would take the customer over their credit limit.",

@@ -45,7 +45,11 @@ import { isUniqueViolation } from '../common/prisma-errors.js';
 import { onFields } from '../common/rule-issues.js';
 import { fieldRefusal, type PageQuery } from '../common/validation.js';
 import { draftBranch } from '../drafts/draft-rules.js';
-import { AGREED_TERMS_VERSION, agreedTermsHash } from '../billing/agreed-terms.js';
+import {
+  AGREED_TERMS_VERSION,
+  agreedTermsHash,
+  agreedTermsReconciled,
+} from '../billing/agreed-terms.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type { Booking, BookingItem, LoadType, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -561,6 +565,8 @@ export class BookingsService {
     quotationId: string;
     approved: boolean;
     current: string;
+    /** Codex F193-1: the quotation's quantities are those of the booking's goods. */
+    reconciled: boolean;
     pinned: string | null;
   } | null> {
     const booking = await tx.booking.findUniqueOrThrow({
@@ -574,7 +580,7 @@ export class BookingsService {
     });
     const quotation = booking.quotation;
     if (!quotation) return null;
-    const current = agreedTermsHash({
+    const input = {
       booking: {
         originLocationId: booking.originLocationId,
         destinationLocationId: booking.destinationLocationId,
@@ -593,11 +599,12 @@ export class BookingsService {
           containerTypeCode: l.rateCard?.containerTypeCode ?? null,
         })),
       },
-    });
+    };
     return {
       quotationId: quotation.id,
       approved: quotation.status === 'APPROVED',
-      current,
+      current: agreedTermsHash(input),
+      reconciled: agreedTermsReconciled(input),
       // An older version's hash is never compared with this version's.
       pinned: booking.agreedTermsVersion === AGREED_TERMS_VERSION ? booking.agreedTermsHash : null,
     };

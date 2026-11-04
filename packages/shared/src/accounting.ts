@@ -353,6 +353,8 @@ export type InvoiceAutoRule = (typeof INVOICE_AUTO_RULES)[number];
 export const INVOICE_AUTO_NOTES = [
   'PRICE_INCOMPLETE',
   'AGREED_TERMS_CHANGED',
+  // Codex F193-1: the quotation's quantities are not those of the booking's goods.
+  'AGREED_PRICE_MISMATCH',
   'NO_APPROVE_RIGHT',
   'PERIOD_CLOSED',
   'CREDIT_LIMIT_EXCEEDED',

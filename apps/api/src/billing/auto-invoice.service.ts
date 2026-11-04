@@ -26,11 +26,17 @@ export type AutoApprovalRule = 'AGREED_PRICE' | 'RATE_CARD_WITH_RIGHT';
 export function autoApprovalRule(input: {
   enabled: boolean;
   derivation: Pick<InvoiceDerivation, 'lines' | 'unresolved'>;
-  /** The booking's quotation: null with none; `matches` when its pinned terms hash the same. */
-  agreed: { approved: boolean; matches: boolean } | null;
+  /**
+   * The booking's quotation: null with none; `matches` when its pinned terms hash the same,
+   * `reconciled` when its quantities are those of the booking's goods (agreedTermsReconciled).
+   */
+  agreed: { approved: boolean; matches: boolean; reconciled: boolean } | null;
   mayApprove: boolean;
+  /** The shipment's booked services: priced from rate cards, each needs a line (Codex F193-2). */
+  services: readonly string[];
 }): { rule: AutoApprovalRule } | { note: AutoInvoiceNote } {
   const { lines, unresolved } = input.derivation;
+  const filled = lines.filter((l) => l.use === 'FILL');
   const complete =
     lines.length > 0 &&
     unresolved.length === 0 &&
@@ -39,11 +45,17 @@ export function autoApprovalRule(input: {
   if (input.agreed !== null && !(input.agreed.approved && input.agreed.matches)) {
     return { note: 'AGREED_TERMS_CHANGED' };
   }
+  if (input.agreed !== null && !input.agreed.reconciled) return { note: 'AGREED_PRICE_MISMATCH' };
   if (!complete) return { note: 'PRICE_INCOMPLETE' };
   let rule: AutoApprovalRule;
   if (input.agreed !== null && sources.size === 1 && sources.has('QUOTATION')) {
     rule = 'AGREED_PRICE';
   } else if (input.agreed === null && sources.size === 1 && sources.has('RATE_CARD')) {
+    // A booked service no rate card prices leaves the invoice short (the agreed terms already
+    // hash the booked services, so a quotation needs no such check).
+    if (!input.services.every((s) => filled.some((l) => l.service === s))) {
+      return { note: 'PRICE_INCOMPLETE' };
+    }
     if (!input.mayApprove) return { note: 'NO_APPROVE_RIGHT' };
     rule = 'RATE_CARD_WITH_RIGHT';
   } else {
@@ -98,7 +110,7 @@ export class AutoInvoiceService {
     const { user } = booking;
     const shipment = await tx.shipment.findUnique({
       where: { bookingId: booking.id },
-      select: { id: true, branchId: true },
+      select: { id: true, branchId: true, services: true },
     });
     if (!shipment) throw new Error(`Booking ${booking.id} was confirmed with no shipment`);
     const terms = await this.bookings.agreedTermsInTx(tx, booking.id);
@@ -108,11 +120,12 @@ export class AutoInvoiceService {
         : {
             approved: terms.approved,
             matches: terms.pinned !== null && terms.pinned === terms.current,
+            reconciled: terms.reconciled,
           };
     let derivation: InvoiceDerivation;
     try {
       derivation = await this.invoices.deriveForShipmentInTx(tx, shipment.id, {
-        agreedTermsMatch: agreed !== null && agreed.approved && agreed.matches,
+        agreedTermsMatch: agreed !== null && agreed.approved && agreed.matches && agreed.reconciled,
       });
     } catch (error) {
       // A refusal of the derivation (an inactive currency, ...) leaves the shipment uninvoiced,
@@ -135,6 +148,7 @@ export class AutoInvoiceService {
       mayApprove:
         user.allowedBranchIds.includes(shipment.branchId) &&
         user.access.has('customer_invoices:approve', shipment.branchId),
+      services: shipment.services,
     });
     if ('note' in decided) {
       await this.fallbackInTx(tx, draft.id, booking.customerId, decided.note);

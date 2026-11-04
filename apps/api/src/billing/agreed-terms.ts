@@ -122,3 +122,35 @@ export function agreedTermsHash(input: AgreedTermsInput): string {
     }),
   });
 }
+
+/**
+ * Codex F193-1: whether the quotation priced these goods. A hash that still matches proves only
+ * that nothing changed since the price was agreed; a booking made from a quotation may carry other
+ * cargo from the start. Each line's quantity must be the billable quantity its unit takes on the
+ * goods it prices: its own booking line, or every line for a line of the whole quotation. A line
+ * covering all items (an estimate) is the whole booking's agreed amount. A line bound to a booking
+ * line that is gone, or a quantity the cargo does not give exactly, does not reconcile.
+ */
+export function agreedTermsReconciled(input: AgreedTermsInput): boolean {
+  const { booking, quotation } = input;
+  const cargoOf = (items: readonly AgreedLine[]) =>
+    items.map((i) => ({
+      cargoType: i.cargoType,
+      containerTypeCode: i.containerTypeCode,
+      quantity: i.quantity,
+      weightKg: i.weightKg,
+      volumeCbm: i.volumeCbm,
+    }));
+  if (quotation.lines.length === 0) return false;
+  return quotation.lines.every((l) => {
+    if (l.coversAllItems) return true;
+    let goods = booking.items;
+    if (l.bookingItemId !== null) {
+      const id = l.bookingItemId.toLowerCase();
+      goods = booking.items.filter((i) => i.id.toLowerCase() === id);
+      if (goods.length === 0) return false;
+    }
+    const billable = unitQuantity(l.unit, cargoOf(goods), l.containerTypeCode, booking.cargoType);
+    return billable !== null && billable.eq(l.quantity);
+  });
+}

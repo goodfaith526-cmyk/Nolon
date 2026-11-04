@@ -16,6 +16,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { BookingsService } from '../src/bookings/bookings.service.js';
 import { uniquePhone } from './test-data.js';
 
 /**
@@ -124,7 +125,10 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
   }
 
   /** A staff booking of 2 CBM at the rate card's 100 per CBM: 200. */
-  async function cardBooking(customerId: string): Promise<string> {
+  async function cardBooking(
+    customerId: string,
+    services: string[] = ['MAIN_FREIGHT'],
+  ): Promise<string> {
     return (
       (
         await staff(cookies.sales)
@@ -134,7 +138,7 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
             destinationLocationId: ids.dest,
             mode: 'ROAD',
             cargoType: 'GENERAL',
-            services: ['MAIN_FREIGHT'],
+            services,
             items: [
               {
                 cargoType: 'GENERAL',
@@ -316,6 +320,35 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
       autoNote: 'AGREED_TERMS_CHANGED',
       number: null,
       journalEntryId: null,
+    });
+  });
+
+  it('keeps a draft when the agreed quotation did not price the cargo booked (F193-1)', async () => {
+    const approved = await agreedBooking(await newCustomer());
+    const bookingId = approved.bookingId!;
+    // The booking carries 4 barrels where 3 were priced, with the terms pinned on it as they are:
+    // the hash matches, but the quotation does not price these goods.
+    const barrels = await t.prisma.bookingItem.findFirstOrThrow({
+      where: { bookingId, cargoType: 'BARREL' },
+    });
+    await t.prisma.bookingItem.update({ where: { id: barrels.id }, data: { quantity: 4 } });
+    const bookings = t.app.get(BookingsService);
+    await t.prisma.$transaction((tx) => bookings.pinAgreedTermsInTx(tx, bookingId));
+    await confirm(bookingId, cookies.approver).expect(200);
+    expect(await onlyInvoice(bookingId)).toMatchObject({
+      status: 'DRAFT',
+      autoNote: 'AGREED_PRICE_MISMATCH',
+      number: null,
+    });
+  });
+
+  it('keeps a draft when a booked service has no price (F193-2)', async () => {
+    // Customs is booked, and no rate card prices it: the freight alone is not the invoice.
+    const bookingId = await cardBooking(await newCustomer(), ['MAIN_FREIGHT', 'CUSTOMS']);
+    await confirm(bookingId, cookies.approver).expect(200);
+    expect(await onlyInvoice(bookingId)).toMatchObject({
+      status: 'DRAFT',
+      autoNote: 'PRICE_INCOMPLETE',
     });
   });
 
