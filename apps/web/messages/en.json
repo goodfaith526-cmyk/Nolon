@@ -3238,7 +3238,10 @@
     "estimateReplace": "Send a new estimate",
     "approveAtEstimate": "Approved at the estimate the customer accepted:",
     "photosTitle": "Customer photos ({count})",
-    "photoAlt": "Photo from the customer"
+    "photoAlt": "Photo from the customer",
+    "newCustomerFromRequest": "New customer from the request: {name}",
+    "chooseExistingCustomer": "Choose an existing customer",
+    "useRequestCustomer": "New customer from the request's details"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

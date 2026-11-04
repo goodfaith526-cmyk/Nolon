@@ -122,6 +122,7 @@ const approveBody = z
         items: true,
       })
       .partial({ customerId: true }),
+    newCustomerFromRequest: z.literal(true).optional(),
   })
   .strict();
 const resolveBody = z.object({ bookingItemId: z.uuid() }).strict();

@@ -17,10 +17,13 @@ export function CustomerPicker({
   value,
   onChange,
   allowCreate = false,
+  branchId,
 }: {
   value: CustomerSummaryDto | null;
   onChange: (c: CustomerSummaryDto | null) => void;
   allowCreate?: boolean;
+  /** Only customers of this branch (e.g. a bot request's branch, whose booking must match). */
+  branchId?: string;
 }) {
   const t = useTranslations('Common');
   const me = useMe();
@@ -35,7 +38,9 @@ export function CustomerPicker({
     setFailed(false);
     try {
       const page = await api<Page<CustomerSummaryDto>>(
-        `/customers?pageSize=20&q=${encodeURIComponent(q)}`,
+        `/customers?pageSize=20&q=${encodeURIComponent(q)}${
+          branchId ? `&branchId=${encodeURIComponent(branchId)}` : ''
+        }`,
       );
       setResults(page.items.filter((c) => c.isActive));
       setSearched(true);

@@ -48,7 +48,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
   });
 
-  async function request(origin: string) {
+  async function request(origin: string, extra: object = {}) {
     const from = { channel: 'whatsapp', id: uniquePhone() };
     const made = (
       await t
@@ -68,6 +68,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
           handover: 'PICKUP',
           language: 'ar',
           idempotencyKey: `approve-${randomUUID()}`,
+          ...extra,
         })
         .expect(201)
     ).body as CsBookingRequestCreated;
@@ -430,6 +431,70 @@ describe('Customer Service booking request approval (R3c2)', () => {
     } finally {
       await put('mapping/DEPARTED', { stageCode: 'AT_SEA' }).expect(200);
     }
+  });
+
+  it('books a new customer made from an unlinked request, in its branch (client request 2026-11-04)', async () => {
+    const phone = uniquePhone();
+    const made = await request(ids.served!, {
+      senderName: `${tag} Web Sender`,
+      contactPhone: phone,
+    });
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const body = {
+      version,
+      paymentCurrency: 'USD',
+      pricing: pricing(ids.served!),
+      pricingFingerprint: price.pricingFingerprint,
+      newCustomerFromRequest: true,
+      booking: { services: [] },
+    };
+    const customers = () => t.prisma.customer.count({ where: { phone } });
+
+    // Not with a chosen customer; not for another branch's staff; nothing is made.
+    await approve(cookies.salesPts, made.id, {
+      ...body,
+      booking: booking(ids.customerPts!),
+    }).expect(400);
+    await approve(cookies.salesJed, made.id, body).expect(404);
+    await approve(cookies.ops, made.id, body).expect(403);
+    expect(await customers()).toBe(0);
+
+    const done = (await approve(cookies.salesPts, made.id, body).expect(201))
+      .body as CsBookingRequestStaffDto;
+    expect(done.status).toBe('approved');
+    const made1 = await t.prisma.booking.findUniqueOrThrow({
+      where: { id: done.bookingId! },
+      include: { customer: true },
+    });
+    expect(made1.branchId).toBe(pts);
+    expect(made1.customer).toMatchObject({
+      branchId: pts,
+      kind: 'INDIVIDUAL',
+      name: `${tag} Web Sender`,
+      phone,
+      createdById,
+      createdViaApiClientId: bot.client.id,
+    });
+    expect(await customers()).toBe(1);
+  });
+
+  it('never matches an unlinked request to a customer by phone: staff choose that customer', async () => {
+    const taken = await t.prisma.customer.findUniqueOrThrow({ where: { id: ids.customerPts! } });
+    const made = await request(ids.served!, { contactPhone: taken.phone });
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const before = await bookingsOf(ids.customerPts!);
+    await approve(cookies.salesPts, made.id, {
+      version,
+      paymentCurrency: 'USD',
+      pricing: pricing(ids.served!),
+      pricingFingerprint: price.pricingFingerprint,
+      newCustomerFromRequest: true,
+      booking: { services: [] },
+    }).expect(409);
+    expect(await bookingsOf(ids.customerPts!)).toBe(before);
+    expect((await detail(cookies.salesPts, made.id)).status).toBe('pending');
   });
 
   it('refuses an approval that does not fit the request, and makes no booking', async () => {

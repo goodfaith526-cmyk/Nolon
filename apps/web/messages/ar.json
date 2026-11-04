@@ -3238,7 +3238,10 @@
     "estimateReplace": "إرسال تقدير جديد",
     "approveAtEstimate": "الموافقة بالتقدير الذي قبله الزبون:",
     "photosTitle": "صور الزبون ({count})",
-    "photoAlt": "صورة من الزبون"
+    "photoAlt": "صورة من الزبون",
+    "newCustomerFromRequest": "عميل جديد من الطلب: {name}",
+    "chooseExistingCustomer": "اختيار عميل موجود",
+    "useRequestCustomer": "عميل جديد من بيانات الطلب"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

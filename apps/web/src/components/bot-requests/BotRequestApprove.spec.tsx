@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import type { CsApprovalPriceDto, CsBookingRequestStaffDto, MasterDataDto } from '@nolon/shared';
+import type {
+  CsApprovalPriceDto,
+  CsApproveRequest,
+  CsBookingRequestStaffDto,
+  MasterDataDto,
+} from '@nolon/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -198,7 +203,7 @@ describe('BotRequestApprove', () => {
     });
     expect(submit.disabled).toBe(true);
   });
-  it('prices a request with items line by line and sends one line per item', async () => {
+  it('prices a request with items line by line as it opens and sends one line per item', async () => {
     const approved = vi.fn();
     host = document.createElement('div');
     document.body.append(host);
@@ -228,9 +233,8 @@ describe('BotRequestApprove', () => {
         />,
       ),
     );
-    const check = [...host.querySelectorAll('button')].find((b) => b.textContent === 'checkPrice')!;
+    // Client request 2026-11-04: a complete request is priced as the form opens, once.
     await act(async () => {
-      check.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(calls).toHaveLength(2);
@@ -252,6 +256,53 @@ describe('BotRequestApprove', () => {
       }),
     );
     expect(approved.mock.calls[0]![0]).not.toHaveProperty('pricingFingerprint');
+    act(() => root.unmount());
+  });
+  it('books a new customer from an unlinked request by default, or a chosen one instead', async () => {
+    const approved = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const unlinked = {
+      ...request,
+      customerId: null,
+      customerNumber: null,
+      profile: null,
+      senderName: 'Web Sender',
+      contactPhone: '+971500000001',
+    } as unknown as CsBookingRequestStaffDto;
+    act(() =>
+      root.render(
+        <BotRequestApprove request={unlinked} master={master} busy={false} onApprove={approved} />,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(host.textContent).toContain('newCustomerFromRequest');
+    expect(host.textContent).toContain('+971500000001');
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledTimes(1);
+    expect(approved.mock.calls[0]![0]).toMatchObject({ newCustomerFromRequest: true });
+    expect((approved.mock.calls[0]![0] as CsApproveRequest).booking).not.toHaveProperty(
+      'customerId',
+    );
+
+    // Choosing an existing customer instead: no new customer, and none chosen yet, so no approval.
+    const choose = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'chooseExistingCustomer',
+    )!;
+    act(() => choose.click());
+    expect(host.textContent).toContain('useRequestCustomer');
+    await act(async () => {
+      submit.form!.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(approved).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
   it('holds approval of a request with a non-standard item', () => {

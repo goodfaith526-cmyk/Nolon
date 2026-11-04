@@ -629,15 +629,24 @@ export class BookingReviewService {
       cargoType: cargoTypes.size === 1 ? cargos[0]!.cargoType : 'GENERAL',
       items: made.map((m) => m.item),
     };
-    if (!initial.profileId && !booking.customerId)
+    // A request linked to no one (the website chat) may book a customer made from what the bot
+    // sent (client request 2026-11-04): never together with a chosen customer.
+    const fromRequest = input.newCustomerFromRequest === true;
+    if (fromRequest && (initial.profileId || initial.customerId || booking.customerId))
+      throw new BadRequestException({
+        code: 'NEW_CUSTOMER_NOT_ALLOWED',
+        message: 'A new customer is made only for a request linked to no customer',
+      });
+    if (!initial.profileId && !booking.customerId && !fromRequest)
       throw new BadRequestException('Choose the booking customer');
     const prepareProfile =
-      initial.profileId && initial.branchId
+      (initial.profileId || fromRequest) && initial.branchId
         ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
         : null;
-    const legacyPrepared = !initial.profileId
-      ? await this.bookings.prepareCreate(user, { ...booking, customerId: booking.customerId! })
-      : null;
+    const legacyPrepared =
+      !initial.profileId && !fromRequest
+        ? await this.bookings.prepareCreate(user, { ...booking, customerId: booking.customerId! })
+        : null;
     const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);
       if (row.status !== 'PENDING' || row.branchId === null) {
@@ -672,6 +681,16 @@ export class BookingReviewService {
         const accountId = await this.customers.profileAccountInTx(tx, user, profile, row.branchId);
         if (booking.customerId && booking.customerId !== accountId)
           throw new BadRequestException('A linked request uses its own customer');
+        prepared = prepareProfile(accountId);
+      } else if (fromRequest) {
+        if (row.customerId !== null || !prepareProfile)
+          throw new ConflictException('The request changed: reopen it');
+        const accountId = await this.customers.requestAccountInTx(tx, user, {
+          branchId: row.branchId,
+          name: row.senderName,
+          phone: row.contactPhone,
+          apiClientId: row.apiClientId,
+        });
         prepared = prepareProfile(accountId);
       }
       if (!prepared) throw new ConflictException('The request changed: reopen it');

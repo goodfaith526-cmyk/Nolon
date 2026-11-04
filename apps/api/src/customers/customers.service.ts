@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -198,6 +199,43 @@ export class CustomersService {
       phone: profile.phoneVerified ? profile.phone : null,
     });
     await tx.customer.update({ where: { id: account.id }, data: { profileId: profile.id } });
+    return account.id;
+  }
+
+  /**
+   * The customer of an approved bot request linked to no one (the website chat; client request
+   * 2026-11-04): made in the request's branch from the sender name and contact phone the bot sent,
+   * inside the approval's transaction, with the ordinary create checks. Never matched to an existing
+   * customer by phone or name: a phone another customer of the branch has is a 409, and staff
+   * choose that customer instead.
+   */
+  async requestAccountInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    input: { branchId: string; name: string; phone: string | null; apiClientId: string },
+  ): Promise<string> {
+    assertBranchAccess(user, input.branchId);
+    if (!user.access.has('customers:create', input.branchId))
+      throw new ForbiddenException({
+        code: 'CUSTOMER_CREATE_FORBIDDEN',
+        message: 'You may not add customers in this branch: choose an existing one',
+      });
+    const name = input.name.trim();
+    if (!name)
+      throw new BadRequestException({
+        code: 'SENDER_NAME_REQUIRED',
+        message: 'The request has no sender name: choose the customer',
+      });
+    const account = await this.createInTx(tx, user, {
+      branchId: input.branchId,
+      kind: 'INDIVIDUAL',
+      name,
+      phone: input.phone,
+    });
+    await tx.customer.update({
+      where: { id: account.id },
+      data: { createdViaApiClientId: input.apiClientId },
+    });
     return account.id;
   }
 
