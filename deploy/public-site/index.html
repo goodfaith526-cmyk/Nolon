@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>نولون | شحن من العالم إلى السودان</title>
-    <link rel="stylesheet" href="styles.css?v=11" />
+    <link rel="stylesheet" href="styles.css?v=12" />
     <meta
       name="description"
       content="نولون للخدمات اللوجستية: شحن الكراتين والبراميل والباليتات والحاويات من أي مكان في العالم إلى باب بيتك في السودان، بسعر ثابت وتتبّع في كل مرحلة."
@@ -123,6 +123,7 @@
                 stroke-dasharray="5 6"
               />
               <path
+                id="route-line"
                 d="M210 78 C 270 70, 300 55, 330 52 S 380 72, 395 98"
                 fill="none"
                 stroke="#f39531"
@@ -132,16 +133,22 @@
                 <circle cx="30" cy="40" r="5" fill="#f2f6fb" />
                 <circle cx="30" cy="115" r="5" fill="#f2f6fb" />
                 <circle cx="210" cy="78" r="7" fill="#f39531" />
-                <circle cx="210" cy="78" r="12" fill="none" stroke="#f39531" stroke-opacity=".35" />
-                <circle cx="330" cy="52" r="5" fill="#f2f6fb" fill-opacity=".55" />
+                <circle cx="330" cy="52" r="12" fill="none" stroke="#f39531" stroke-opacity=".35" />
+                <circle id="route-now" cx="330" cy="52" r="5" fill="#f39531" />
                 <circle cx="395" cy="98" r="5" fill="#f2f6fb" fill-opacity=".55" />
                 <text x="30" y="24" text-anchor="middle" fill="#f2f6fb">DXB</text>
                 <text x="30" y="140" text-anchor="middle" fill="#f2f6fb">JED</text>
-                <text x="210" y="108" text-anchor="middle" fill="#f39531" font-weight="600">
-                  PTS
+                <text x="210" y="108" text-anchor="middle" fill="#f2f6fb">PTS</text>
+                <text x="330" y="32" text-anchor="middle" fill="#f39531" font-weight="600">
+                  ATB
                 </text>
-                <text x="330" y="36" text-anchor="middle" fill="#a9bdd4">ATB</text>
                 <text x="395" y="124" text-anchor="middle" fill="#a9bdd4">KRT</text>
+              </g>
+              <!-- Where the shipment is now. Drawn at the current station; site.js slides it
+                   there along the orange line once, unless the visitor turned motion off. -->
+              <g id="route-marker" transform="translate(330 52)" aria-hidden="true">
+                <circle r="9" fill="#f39531" fill-opacity=".25" />
+                <circle r="4.5" fill="#fff" stroke="#f39531" stroke-width="2" />
               </g>
             </svg>
             <ol class="stages">
@@ -158,19 +165,19 @@
                   ><span class="ar">شُحنت بحراً</span><span class="en">Shipped by sea</span></span
                 ><time>05 NOV</time>
               </li>
+              <li class="done">
+                <span class="dot"></span
+                ><span
+                  ><span class="ar">وصلت بورتسودان وخلّصت الجمارك</span
+                  ><span class="en">Arrived Port Sudan, cleared customs</span></span
+                ><time>08 NOV</time>
+              </li>
               <li class="now">
                 <span class="dot"></span
                 ><span
-                  ><span class="ar">وصلت بورتسودان، في التخليص</span
-                  ><span class="en">Arrived Port Sudan, in customs</span></span
-                ><time>08 NOV</time>
-              </li>
-              <li>
-                <span class="dot"></span
-                ><span
-                  ><span class="ar">في الطريق إلى الخرطوم</span
-                  ><span class="en">On the road to Khartoum</span></span
-                ><time>—</time>
+                  ><span class="ar">في الطريق إلى الخرطوم، وصلت عطبرة</span
+                  ><span class="en">On the road to Khartoum, reached Atbara</span></span
+                ><time>10 NOV</time>
               </li>
               <li>
                 <span class="dot"></span
@@ -1190,6 +1197,6 @@
       </div>
     </div>
 
-    <script src="site.js?v=11" defer></script>
+    <script src="site.js?v=12" defer></script>
   </body>
 </html>

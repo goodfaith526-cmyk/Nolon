@@ -618,4 +618,59 @@
       { passive: true },
     );
   }
+
+  /* Route card: one marker slides slowly along the orange line from Port Sudan and stops at
+     the shipment's current station (#route-now). Plays once, when the card comes into view.
+     Without JS, or with reduced motion, the marker simply sits at the current station. */
+  var line = document.getElementById('route-line');
+  var marker = document.getElementById('route-marker');
+  var nowStop = document.getElementById('route-now');
+  if (!still && line && marker && nowStop && line.getTotalLength && window.requestAnimationFrame) {
+    var total = line.getTotalLength();
+    var sx = Number(nowStop.getAttribute('cx'));
+    var sy = Number(nowStop.getAttribute('cy'));
+    // Distance along the line where it passes closest to the current station.
+    var stopAt = 0;
+    var best = Infinity;
+    for (var i = 0; i <= 200; i++) {
+      var q = line.getPointAtLength((total * i) / 200);
+      var d = (q.x - sx) * (q.x - sx) + (q.y - sy) * (q.y - sy);
+      if (d < best) {
+        best = d;
+        stopAt = (total * i) / 200;
+      }
+    }
+    var place = function (len) {
+      var p = line.getPointAtLength(len);
+      marker.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')');
+    };
+    var ride = function () {
+      var ms = 4200;
+      var t0 = 0;
+      var step = function (now) {
+        if (!t0) t0 = now;
+        var k = Math.min(1, (now - t0) / ms);
+        // Ease in and out, so it pulls away and brakes gently.
+        var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        place(stopAt * e);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    place(0);
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(
+        function (entries) {
+          if (entries[0].isIntersecting) {
+            io.disconnect();
+            setTimeout(ride, 500);
+          }
+        },
+        { threshold: 0.5 },
+      );
+      io.observe(line.ownerSVGElement || line);
+    } else {
+      setTimeout(ride, 500);
+    }
+  }
 })();
