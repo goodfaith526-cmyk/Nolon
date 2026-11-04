@@ -633,7 +633,8 @@ describe('consolidated LCL containers', () => {
     // Warehouse only views containers, PTS books only its customers. (Sales book into a
     // container too, container_booking: container-booking-drafts.int-spec.ts.)
     await post(path, cookies.warehouseJed, body).expect(403);
-    await post(path, cookies.opsPts, body).expect(404);
+    // Plan 09d: any branch books any customer; an unknown one is not found.
+    await post(path, cookies.opsPts, { ...body, customerId: randomUUID() }).expect(404);
     // The route and mode are the container's, never the request's.
     await post(path, cookies.opsJed, { ...body, mode: 'ROAD' }).expect(400);
     await post(path, cookies.opsJed, { ...body, originLocationId: khartoum }).expect(400);
@@ -712,10 +713,10 @@ describe('consolidated LCL containers', () => {
       services: ['CUSTOMS'],
       items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: '100', volumeCbm: '1' }],
     };
-    // Not a JED customer, though: PTS does not see them.
+    // An unknown customer is not found (any branch's customer is bookable since plan 09d).
     await post(`/consolidations/${created.id}/bookings`, cookies.opsPts, {
       ...body,
-      customerId: customers[0].id,
+      customerId: randomUUID(),
     }).expect(404);
     const made = (
       await post(`/consolidations/${created.id}/bookings`, cookies.opsPts, body).expect(201)

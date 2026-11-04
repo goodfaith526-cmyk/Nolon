@@ -883,10 +883,11 @@ describe('list filters', () => {
         sorted('custDxbCompany', 'custJed'),
       );
       expect(await listIds(`${q}&isActive=false`, managerBoth)).toEqual(sorted('custDxbInactive'));
+      // Plan 09d: customers are central; the branch filter is the branch of registration.
       expect(await listIds(`${q}&isActive=true&kind=COMPANY`, managerDxb)).toEqual(
-        sorted('custDxbCompany'),
+        sorted('custDxbCompany', 'custJed'),
       );
-      await get(`${q}&branchId=${jed}`, managerDxb).expect(403);
+      expect(await listIds(`${q}&branchId=${jed}`, managerDxb)).toEqual(sorted('custJed'));
       await get(`${q}&kind=PERSON`, managerBoth).expect(400);
       await get(`${q}&isActive=1`, managerBoth).expect(400);
     });
