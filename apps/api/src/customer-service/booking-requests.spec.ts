@@ -1,6 +1,11 @@
 import type { CsBookingRequestCreate } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
-import { contentHash, namesSender, requestReference, stateOf } from './booking-requests.service.js';
+import {
+  contentHash,
+  namesSender,
+  reservedBookingNumber,
+  stateOf,
+} from './booking-requests.service.js';
 
 const base: CsBookingRequestCreate = {
   originId: 'o',
@@ -60,8 +65,9 @@ describe('booking requests', () => {
     expect(namesSender('telegram', '0912345678')).toBe('tel:0912345678');
   });
 
-  it('numbers requests BR-000001', () => {
-    expect(requestReference(1n)).toBe('BR-000001');
-    expect(requestReference(1234567n)).toBe('BR-1234567');
+  it('keeps a request BK number for its booking, never an old BR number', () => {
+    expect(reservedBookingNumber('BK00019')).toBe('BK00019');
+    expect(reservedBookingNumber('BK123456')).toBe('BK123456');
+    expect(reservedBookingNumber('BR-000018')).toBeUndefined();
   });
 });

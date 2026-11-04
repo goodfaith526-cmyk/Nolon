@@ -50,17 +50,13 @@ export function formatShortNumber(prefix: 'BK' | 'QT' | 'CS', value: bigint): st
 }
 
 /**
- * Route numbers (owner, 2026-10-27): an LCL booking DXB-KRT-0001, a shared container
- * DXB-KRT-C0001. Four digits, a fifth after 9999; one counter per kind and route letters.
+ * Route numbers (owner, 2026-10-27): a shared container DXB-KRT-C0001. Four digits, a fifth after
+ * 9999; one counter per route letters. LCL bookings had route numbers (DXB-KRT-0001) until the
+ * owner made every booking BK (2026-11-04); those numbers stay as they were.
  */
 export function formatRouteNumber(letters: string, value: bigint, container = false): string {
   return `${letters}-${container ? 'C' : ''}${value.toString().padStart(4, '0')}`;
 }
 
 /** The counter of route numbers of one kind (number_sequences.doc_type; the letters are the key). */
-export const ROUTE_SEQUENCES = { booking: 'LCL_BOOKING', container: 'LCL_CONTAINER' } as const;
-
-/** Whether a booking number is a route number of these letters (DXB-KRT-0001 of DXB-KRT). */
-export function isRouteNumberOf(number: string, letters: string): boolean {
-  return number.startsWith(`${letters}-`) && /^\d{4,}$/.test(number.slice(letters.length + 1));
-}
+export const ROUTE_SEQUENCES = { container: 'LCL_CONTAINER' } as const;

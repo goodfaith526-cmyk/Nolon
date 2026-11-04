@@ -72,7 +72,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
         })
         .expect(201)
     ).body as CsBookingRequestCreated;
-    return { id: made.requestId, header: `whatsapp:${from.id}` };
+    return { id: made.requestId, reference: made.reference, header: `whatsapp:${from.id}` };
   }
   const detail = async (cookie: string, id: string) =>
     (await staff(cookie).get(`/cs-booking-requests/${id}`).expect(200))
@@ -266,7 +266,9 @@ describe('Customer Service booking request approval (R3c2)', () => {
       version: version + 1,
       actions: { canRoute: false, canReject: false, canApprove: false },
     });
-    expect(done.bookingNumber).not.toBeNull();
+    // Owner, 2026-11-04: the booking keeps the BK number the request took when it arrived.
+    expect(made.reference).toMatch(/^BK\d{5,}$/);
+    expect(done.bookingNumber).toBe(made.reference);
     const made1 = await t.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
     // F137-1: the booking is the cargo priced, with no line; the request keeps what was priced.
     expect(made1).toMatchObject({

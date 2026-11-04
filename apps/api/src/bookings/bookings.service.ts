@@ -33,13 +33,7 @@ import {
   routeWhere,
 } from '../common/list-filters.js';
 import { toDecimalStringOrNull } from '../common/money.js';
-import {
-  ROUTE_SEQUENCES,
-  formatRouteNumber,
-  formatShortNumber,
-  isRouteNumberOf,
-  nextSequenceValue,
-} from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { oldNumberTerm } from '../common/old-numbers.js';
 import { isUniqueViolation } from '../common/prisma-errors.js';
 import { onFields } from '../common/rule-issues.js';
@@ -51,7 +45,7 @@ import {
   agreedTermsReconciled,
 } from '../billing/agreed-terms.js';
 import { CustomersService } from '../customers/customers.service.js';
-import type { Booking, BookingItem, LoadType, Prisma } from '../generated/prisma/client.js';
+import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import {
   PartnerRefsService,
@@ -477,29 +471,23 @@ export class BookingsService {
   }
 
   /**
-   * A new booking's number, inside the caller's transaction: an LCL booking takes its route's next
-   * number (DXB-KRT-0001), any other booking the next BK number. The shipment keeps it.
+   * A new booking's number, inside the caller's transaction: the next BK number, whatever its
+   * cargo or load type (owner, 2026-11-04: one BK series, kept by its shipment).
    */
-  private async allocateNumber(
-    tx: Tx,
-    header: { loadType: LoadType | null; originLocationId: string; destinationLocationId: string },
-  ): Promise<string> {
-    if (header.loadType !== 'LCL') {
-      return formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
-    }
-    const letters = await this.masterData.routeLetters(
-      tx,
-      header.originLocationId,
-      header.destinationLocationId,
-    );
-    return formatRouteNumber(
-      letters,
-      await nextSequenceValue(tx, ROUTE_SEQUENCES.booking, letters),
-    );
+  private async allocateNumber(tx: Tx): Promise<string> {
+    return formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
   }
 
-  /** Records a prepared booking (DRAFT) in the caller's transaction; its id. */
-  async insertInTx(tx: Tx, user: AuthUser, prepared: PreparedBooking): Promise<string> {
+  /**
+   * Records a prepared booking (DRAFT) in the caller's transaction; its id. `reserved`: the BK
+   * number a bot request took when it arrived, which its booking keeps (owner, 2026-11-04).
+   */
+  async insertInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedBooking,
+    reserved?: string,
+  ): Promise<string> {
     // Sold through the outlet of its quotation, or (Outlet Staff, plan 4.2) through theirs, or
     // the one of the branch's outlets the person names. For Outlet Staff the outlet is checked as
     // it is now, first in the transaction.
@@ -526,7 +514,7 @@ export class BookingsService {
           branchIds: [prepared.branchId],
           field: 'salesOutletId',
         });
-    const number = await this.allocateNumber(tx, prepared.header);
+    const number = reserved ?? (await this.allocateNumber(tx));
     try {
       const created = await tx.booking.create({
         data: {
@@ -694,12 +682,8 @@ export class BookingsService {
         branchIds: [existing.branchId],
         field: 'salesOutletId',
       });
-      const number = await this.renumberDraftInTx(tx, user, id, prepared.header);
-      await casStatus(tx, id, ['DRAFT'], {
-        ...prepared.header,
-        salesOutletId,
-        ...(number ? { number } : {}),
-      });
+      await this.lockDraftInTx(tx, id);
+      await casStatus(tx, id, ['DRAFT'], { ...prepared.header, salesOutletId });
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
       await tx.bookingItem.createMany({
         data: prepared.items.map((item) => ({ ...item, bookingId: id })),
@@ -709,56 +693,15 @@ export class BookingsService {
   }
 
   /**
-   * A draft whose route or LCL/FCL changes in this edit takes a number of its new series when its
-   * number no longer fits it (an LCL booking's route letters, or BK for any other); the old number
-   * is left unused and the change is logged. Under the booking row lock that confirm also takes,
-   * so a booking is never confirmed with a number of a route it no longer has. Null: unchanged.
+   * Locks a draft being edited (the booking row lock that confirm also takes) and checks it is
+   * still a draft. Its number never changes: a BK number fits any route (owner, 2026-11-04).
    */
-  private async renumberDraftInTx(
-    tx: Tx,
-    user: AuthUser,
-    id: string,
-    header: { loadType: LoadType | null; originLocationId: string; destinationLocationId: string },
-  ): Promise<string | null> {
-    const rows = await tx.$queryRaw<
-      { number: string; status: string; origin: string; destination: string; lcl: boolean }[]
-    >`
-      SELECT "number", "status"::text AS "status", "origin_location_id"::text AS "origin",
-             "destination_location_id"::text AS "destination",
-             COALESCE("load_type" = 'LCL', false) AS "lcl"
-      FROM "bookings" WHERE "id" = ${id}::uuid FOR UPDATE`;
-    const current = rows[0];
-    if (current?.status !== 'DRAFT') {
+  private async lockDraftInTx(tx: Tx, id: string): Promise<void> {
+    const rows = await tx.$queryRaw<{ status: string }[]>`
+      SELECT "status"::text AS "status" FROM "bookings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+    if (rows[0]?.status !== 'DRAFT') {
       throw new ConflictException('Booking changed meanwhile; reload and retry');
     }
-    const lcl = header.loadType === 'LCL';
-    const routeChanged =
-      header.originLocationId.toLowerCase() !== current.origin ||
-      header.destinationLocationId.toLowerCase() !== current.destination ||
-      lcl !== current.lcl;
-    if (!routeChanged) return null;
-    if (lcl) {
-      const letters = await this.masterData.routeLetters(
-        tx,
-        header.originLocationId,
-        header.destinationLocationId,
-      );
-      if (isRouteNumberOf(current.number, letters)) return null;
-    } else if (/^BK\d+$/.test(current.number)) {
-      return null;
-    }
-    const number = await this.allocateNumber(tx, header);
-    await tx.referenceRenumbering.create({
-      data: {
-        kind: 'BOOKING',
-        recordId: id,
-        oldNumber: current.number,
-        newNumber: number,
-        reason: 'DRAFT_ROUTE_CHANGE',
-        userId: user.id,
-      },
-    });
-    return number;
   }
 
   /**
@@ -891,15 +834,6 @@ export class BookingsService {
     const items = [];
     for (const [index, item] of input.items.entries()) {
       items.push({ lineNo: index + 1, ...(await this.prepareItem(item, `items.${index}`)) });
-    }
-    // An LCL booking is numbered by its route: a place without letters is refused here, so a
-    // draft's check says so before anything is saved.
-    if (cargo.loadType === 'LCL') {
-      await this.masterData.routeLetters(
-        this.prisma,
-        input.originLocationId,
-        input.destinationLocationId,
-      );
     }
     return {
       header: {

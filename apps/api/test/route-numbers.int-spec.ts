@@ -21,10 +21,10 @@ import {
 } from './auth-test-app.js';
 import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
-// Route numbers (plan docs/reviews/lcl-numbering-capacity-plan-2026-10-27.md): an LCL booking is
-// numbered by its route's letters (JED-PTS-0001), any other booking BK00001, and a confirmed
-// booking's shipment keeps the booking's number. A shared container is JED-PTS-C0001 on its own
-// counter. The people keep the ledger prefix: containers are not removed by the usual cleanup.
+// Numbers: every booking BK00001 (owner, 2026-11-04; LCL bookings had route numbers like
+// JED-PTS-0001 before, plan docs/reviews/lcl-numbering-capacity-plan-2026-10-27.md), and a
+// confirmed booking's shipment keeps the booking's number. A shared container is JED-PTS-C0001 on
+// its own route counter. The people keep the ledger prefix: containers are not removed by the usual cleanup.
 
 let t: TestApp;
 let jed: string;
@@ -98,14 +98,15 @@ afterAll(async () => {
 });
 
 describe('booking numbers', () => {
-  it('numbers an LCL booking by its route, any other BK; the shipment keeps it', async () => {
+  it('numbers every booking BK, LCL or not, and the shipment keeps it (owner, 2026-11-04)', async () => {
     const lcl = await book(loc.SAJED!, loc.SDPZU!);
-    expect(lcl.number).toMatch(/^JED-PTS-\d{4,}$/);
+    expect(lcl.number).toMatch(/^BK\d{5,}$/);
     const fcl = await book(loc.SAJED!, loc.SDPZU!, 'FCL');
     expect(fcl.number).toMatch(/^BK\d{5,}$/);
     const unset = await book(loc.SAJED!, loc.SDPZU!, null);
     expect(unset.number).toMatch(/^BK\d{5,}$/);
-    expect(serial(unset.number)).toBe(serial(fcl.number) + 1);
+    expect(serial(fcl.number)).toBeGreaterThan(serial(lcl.number));
+    expect(serial(unset.number)).toBeGreaterThan(serial(fcl.number));
 
     for (const booking of [lcl, fcl]) {
       const confirmed = (
@@ -118,46 +119,10 @@ describe('booking numbers', () => {
     }
   });
 
-  it('counts each route on its own, and aliases of one city share a counter', async () => {
-    const first = await book(loc.SAJED!, loc.SDPZU!);
-    const second = await book(loc.SAJED!, loc.SDPZU!);
-    expect(serial(second.number)).toBe(serial(first.number) + 1);
-    const other = await book(loc.SAJED!, loc.SDKRT!);
-    expect(other.number).toMatch(/^JED-KRT-\d{4,}$/);
-    const third = await book(loc.SAJED!, loc.SDPZU!);
-    expect(serial(third.number)).toBe(serial(second.number) + 1);
-
-    // Jebel Ali and Dubai are both DXB.
-    const jebelAli = await book(loc.AEJEA!, loc.SDPZU!);
-    const dubai = await book(loc.AEDXB!, loc.SDPZU!);
-    expect(jebelAli.number).toMatch(/^DXB-PTS-\d{4,}$/);
-    expect(dubai.number).toMatch(/^DXB-PTS-\d{4,}$/);
-    expect(serial(dubai.number)).toBe(serial(jebelAli.number) + 1);
-  });
-
-  it("refuses an LCL booking at a place without letters, and uses its city's", async () => {
+  it('books LCL at a place without route letters: a BK number needs none', async () => {
     const bare = await createLocation('1A');
-    const refused = (
-      await post('/bookings', cookies.salesJed, {
-        customerId: customer.id,
-        ...fields(bare.id, loc.SDPZU!),
-      }).expect(400)
-    ).body as { code: string; fields: string[]; params: Record<string, string> };
-    expect(refused).toMatchObject({
-      code: 'ROUTE_CODE_MISSING',
-      fields: ['originLocationId'],
-      params: { location: bare.code },
-    });
-    // The same place takes FCL bookings: BK numbers need no letters.
-    expect((await book(bare.id, loc.SDPZU!, 'FCL')).number).toMatch(/^BK\d{5,}$/);
-    // No booking was half made.
-    expect(
-      await t.prisma.booking.count({ where: { originLocationId: bare.id, loadType: 'LCL' } }),
-    ).toBe(0);
-
-    const city = await createLocation('2C', { kind: 'CITY', shortCode: 'ZQX' });
-    const port = await createLocation('2P', { cityId: city.id });
-    expect((await book(port.id, loc.SDPZU!)).number).toMatch(/^ZQX-PTS-\d{4,}$/);
+    const lcl = await book(bare.id, loc.SDPZU!);
+    expect(lcl.number).toMatch(/^BK\d{5,}$/);
   });
 });
 
@@ -196,60 +161,28 @@ describe('route letters in master data', () => {
 });
 
 describe('a draft whose route changes', () => {
-  it('takes a number of its new series, and is found by its old one', async () => {
+  it('keeps its BK number on any route or load type, and logs no renumbering', async () => {
     const draft = await book(loc.SAJED!, loc.SDPZU!);
-    // An edit that keeps the route keeps the number.
-    const same = (
-      await patch(`/bookings/${draft.id}`, cookies.salesJed, {
-        ...fields(loc.SAJED!, loc.SDPZU!),
-        specialInstructions: 'Fragile',
-      }).expect(200)
-    ).body as BookingDto;
-    expect(same.number).toBe(draft.number);
-
-    const moved = (
-      await patch(`/bookings/${draft.id}`, cookies.salesJed, fields(loc.SAJED!, loc.SDKRT!)).expect(
-        200,
-      )
-    ).body as BookingDto;
-    expect(moved.number).toMatch(/^JED-KRT-\d{4,}$/);
-    const fcl = (
-      await patch(
-        `/bookings/${draft.id}`,
-        cookies.salesJed,
-        fields(loc.SAJED!, loc.SDKRT!, 'FCL'),
-      ).expect(200)
-    ).body as BookingDto;
-    expect(fcl.number).toMatch(/^BK\d{5,}$/);
-    // FCL on another route keeps its BK number: BK fits any route.
-    const fclAgain = (
-      await patch(
-        `/bookings/${draft.id}`,
-        cookies.salesJed,
-        fields(loc.SAJED!, loc.SDPZU!, 'FCL'),
-      ).expect(200)
-    ).body as BookingDto;
-    expect(fclAgain.number).toBe(fcl.number);
-
-    const mappings = await t.prisma.referenceRenumbering.findMany({
-      where: { kind: 'BOOKING', recordId: draft.id },
-      orderBy: { id: 'asc' },
-    });
-    expect(mappings.map((m) => [m.oldNumber, m.newNumber, m.reason])).toEqual([
-      [draft.number, moved.number, 'DRAFT_ROUTE_CHANGE'],
-      [moved.number, fcl.number, 'DRAFT_ROUTE_CHANGE'],
-    ]);
-
-    const found = (await get(`/bookings?q=${draft.number}`, cookies.salesJed).expect(200))
-      .body as Page<BookingSummaryDto>;
-    expect(found.items.map((b) => b.id)).toContain(draft.id);
-    // Another branch's staff never find it, by any number.
+    for (const body of [
+      { ...fields(loc.SAJED!, loc.SDPZU!), specialInstructions: 'Fragile' },
+      fields(loc.SAJED!, loc.SDKRT!),
+      fields(loc.SAJED!, loc.SDKRT!, 'FCL'),
+      fields(loc.AEDXB!, loc.SDPZU!),
+    ]) {
+      const edited = (await patch(`/bookings/${draft.id}`, cookies.salesJed, body).expect(200))
+        .body as BookingDto;
+      expect(edited.number).toBe(draft.number);
+    }
+    expect(
+      await t.prisma.referenceRenumbering.count({ where: { kind: 'BOOKING', recordId: draft.id } }),
+    ).toBe(0);
+    // Another branch's staff never find it.
     const elsewhere = (await get(`/bookings?q=${draft.number}`, cookies.salesDxb).expect(200))
       .body as Page<BookingSummaryDto>;
     expect(elsewhere.items.map((b) => b.id)).not.toContain(draft.id);
   });
 
-  it('never confirms a booking under a number of a route it no longer has', async () => {
+  it('is edited and confirmed one at a time under the booking row lock', async () => {
     const draft = await book(loc.SAJED!, loc.SDPZU!);
     let release = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -281,6 +214,7 @@ describe('a draft whose route changes', () => {
       include: { shipment: true },
     });
     expect(booking.status).toBe('CONFIRMED');
+    expect(booking.number).toBe(draft.number);
     expect(booking.shipment?.number).toBe(booking.number);
   });
 
@@ -304,13 +238,12 @@ describe('shared containers', () => {
           shipmentIds: [],
         }).expect(201)
       ).body as ConsolidationSummaryDto;
-    const booking = await book(loc.SAJED!, loc.SDPZU!);
     const first = await make();
     const second = await make();
     expect(first.number).toMatch(/^JED-PTS-C\d{4,}$/);
     expect(serial(second.number)).toBe(serial(first.number) + 1);
-    // Bookings on the route count on, untouched by containers.
-    expect(serial((await book(loc.SAJED!, loc.SDPZU!)).number)).toBe(serial(booking.number) + 1);
+    // Bookings on the route stay BK, untouched by containers.
+    expect((await book(loc.SAJED!, loc.SDPZU!)).number).toMatch(/^BK\d{5,}$/);
   });
 });
 
@@ -377,6 +310,13 @@ describe('old NOL-BK bookings after the renumbering already ran', () => {
           where: { id: confirmed.shipmentId! },
           data: { number: oldFcl },
         });
+        // Bookings are BK since 2026-11-04: the route counter the migration reads may not exist yet.
+        await tx.$executeRaw`
+          INSERT INTO "number_sequences" ("doc_type", "period_key", "next_value")
+          SELECT 'LCL_BOOKING', 'JED-PTS', COALESCE(max(substring("number" FROM 9)::bigint) + 1, 1)
+          FROM "bookings" WHERE "number" ~ '^JED-PTS-[0-9]{4,}$'
+          ON CONFLICT ("doc_type", "period_key")
+          DO UPDATE SET "next_value" = GREATEST("number_sequences"."next_value", EXCLUDED."next_value")`;
         const counters = async () =>
           Object.fromEntries(
             (

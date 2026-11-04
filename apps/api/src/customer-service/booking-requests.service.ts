@@ -42,7 +42,7 @@ import {
 } from '@nolon/shared';
 import { todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
-import { nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { internationalPhone, samePhone } from '../common/phones.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -71,9 +71,13 @@ const placeSelect = {
   city: { select: { nameAr: true, nameEn: true } },
 } as const;
 
-/** BR-000001: the request's number for staff and the customer. */
-export function requestReference(value: bigint): string {
-  return `BR-${value.toString().padStart(6, '0')}`;
+/**
+ * A request's number as its booking keeps it. Since 2026-11-04 a request takes the next BK number
+ * when it arrives (owner: one number from request to shipment); an older request's BR-000001 is
+ * not a booking number, so its booking takes a new BK number.
+ */
+export function reservedBookingNumber(reference: string): string | undefined {
+  return /^BK\d{5,}$/.test(reference) ? reference : undefined;
 }
 
 /** The owner of a request: the customer and the reason of its match, or a channel identity. */
@@ -555,7 +559,9 @@ export class BookingRequestsService {
         caller.kind === 'key' && !profile && this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED
           ? await this.requestSenderInTx(tx, apiClientId, owner, data)
           : null;
-      const number = await nextSequenceValue(tx, 'CS_BOOKING_REQUEST');
+      // Owner, 2026-11-04: the request's number is its booking's (BK), from the start. A request
+      // that is rejected or expires leaves its number unused.
+      const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
@@ -566,7 +572,7 @@ export class BookingRequestsService {
             ? { profileId: binding.profileId, conversationId: binding.conversationId }
             : {}),
           allowedBranchIds: still,
-          reference: requestReference(number),
+          reference: number,
           apiClientId,
           ownerRef: owner,
           idempotencyKey,
