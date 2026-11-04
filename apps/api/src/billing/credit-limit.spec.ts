@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Prisma } from '../generated/prisma/client.js';
-import { type CreditSnapshotRow, creditPosition } from './credit-limit.js';
+import { type CreditSnapshotRow, creditPosition, handoverDecision } from './credit-limit.js';
 import { creditSnapshotSql } from './credit-limit.service.js';
 
 const row = (over: Partial<CreditSnapshotRow>): CreditSnapshotRow => ({
@@ -98,5 +98,42 @@ describe('creditSnapshotSql (F147-2)', () => {
       expect(text).toContain(table);
     }
     expect(text.split(';').filter((s) => s.trim() !== '')).toHaveLength(1);
+  });
+});
+
+describe('handoverDecision (plan 12 section 3)', () => {
+  const ship = (over: Partial<CreditSnapshotRow> = {}, mainApproved = 1, open: string[] = []) => ({
+    ...row(over),
+    mainApproved,
+    shipmentOpen: open.map((amount) => ({ currency: 'USD', amount })),
+  });
+  const kind = (r: ReturnType<typeof ship>) => handoverDecision(r).kind;
+
+  it('needs a live approved MAIN invoice, whatever is paid', () => {
+    expect(kind(ship({ limit: null }, 0, ['0']))).toBe('HANDOVER_NOT_INVOICED');
+    expect(kind(ship({ limit: '1000000' }, 0))).toBe('HANDOVER_NOT_INVOICED');
+  });
+
+  it('without a limit or with a limit of 0, needs the shipment fully paid', () => {
+    for (const limit of [null, '0']) {
+      expect(kind(ship({ limit }, 1, ['0']))).toBe('OK');
+      expect(kind(ship({ limit }, 1, []))).toBe('OK');
+      const unpaid = handoverDecision(ship({ limit }, 1, ['0', '25.5']));
+      expect(unpaid).toMatchObject({ kind: 'HANDOVER_UNPAID', currency: 'USD' });
+      expect('balance' in unpaid && unpaid.balance.toFixed()).toBe('25.5');
+    }
+    // An unapplied advance does not pay the shipment.
+    expect(
+      kind(ship({ limit: '0', advances: [{ currency: 'USD', amount: '100' }] }, 1, ['100'])),
+    ).toBe('HANDOVER_UNPAID');
+  });
+
+  it('with a positive limit, needs the customer within it, and every rate', () => {
+    const over = { invoices: [{ currency: 'USD', amount: '1500' }] };
+    expect(kind(ship({ limit: '2000', ...over }, 1, ['1500']))).toBe('OK');
+    expect(kind(ship({ limit: '1000', ...over }, 1, ['1500']))).toBe('HANDOVER_OVER_LIMIT');
+    expect(
+      kind(ship({ limit: '1000', invoices: [{ currency: 'AED', amount: '10' }] }, 1, ['0'])),
+    ).toBe('CREDIT_LIMIT_NO_RATE');
   });
 });

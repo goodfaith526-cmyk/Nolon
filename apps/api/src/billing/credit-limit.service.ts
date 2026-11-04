@@ -8,7 +8,13 @@ import { todayIn } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { codedRefusal } from '../common/validation.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { type CreditPosition, type CreditSnapshotRow, creditPosition } from './credit-limit.js';
+import {
+  type CreditPosition,
+  type CreditSnapshotRow,
+  type HandoverShipmentRow,
+  creditPosition,
+  handoverDecision,
+} from './credit-limit.js';
 
 type Db = Prisma.TransactionClient | PrismaService;
 
@@ -23,10 +29,13 @@ export function creditSnapshotSql(
   customerId: string,
   today: string,
   ownInvoiceId: string | null = null,
+  shipmentId: string | null = null,
 ): Prisma.Sql {
   // Plan 12 section 2.3: an invoice approved in this transaction is read apart (`own`), so one
   // statement gives the balance before it and with it.
   const own = ownInvoiceId ?? '00000000-0000-0000-0000-000000000000';
+  // Plan 12 section 3: a handover reads its shipment's invoices in the same snapshot.
+  const ship = shipmentId ?? '00000000-0000-0000-0000-000000000000';
   return Prisma.sql`
     WITH c AS (
       SELECT cu."name", cu."number", cu."credit_limit"::text AS "limit",
@@ -55,6 +64,11 @@ export function creditSnapshotSql(
       FROM "receipts" r
       WHERE r."customer_id" = ${customerId}::uuid AND r."status" = 'POSTED'
       GROUP BY r."currency"
+    ), shp AS (
+      SELECT i."kind", i."currency", i."total" - i."paid_amount" - i."credited_amount" AS "open"
+      FROM "customer_invoices" i
+      WHERE i."shipment_id" = ${ship}::uuid AND i."customer_id" = ${customerId}::uuid
+        AND i."status" = 'APPROVED' AND i."credited_amount" < i."total"
     ), rates AS (
       SELECT DISTINCT ON (f."currency") f."currency", f."rate"::text AS "rate"
       FROM "fx_rates" f
@@ -87,18 +101,23 @@ export function creditSnapshotSql(
                           WHERE a."receipt_id" = r."id"), 0)
               - COALESCE((SELECT SUM(p."amount") FROM "receipt_applications" p
                           WHERE p."receipt_id" = r."id" AND p."status" = 'ACTIVE'), 0) <> 0
-      ) b), '[]'::json) AS "branches"
+      ) b), '[]'::json) AS "branches",
+      (SELECT count(*) FROM shp WHERE "kind" = 'MAIN')::int AS "mainApproved",
+      COALESCE((SELECT json_agg(json_build_object('currency', o."currency", 'amount', o."open"::text))
+                FROM (SELECT "currency", SUM("open") AS "open" FROM shp GROUP BY "currency") o),
+               '[]'::json) AS "shipmentOpen"
     FROM c`;
 }
 
-type SnapshotResult = CreditSnapshotRow & {
-  name: string;
-  number: string;
-  /** The branches of the documents in the balance (F192-1). */
-  branches: readonly string[];
-  /** The invoice read apart (creditSnapshotSql's `ownInvoiceId`), when it is approved. */
-  own: readonly { currency: string; amount: string }[];
-};
+type SnapshotResult = CreditSnapshotRow &
+  HandoverShipmentRow & {
+    name: string;
+    number: string;
+    /** The branches of the documents in the balance (F192-1). */
+    branches: readonly string[];
+    /** The invoice read apart (creditSnapshotSql's `ownInvoiceId`), when it is approved. */
+    own: readonly { currency: string; amount: string }[];
+  };
 
 /** What an automatic approval's credit statement decided (plan 12 section 2.3). */
 export type AutoApprovalCredit = 'WITHIN' | 'CREDIT_LIMIT_EXCEEDED' | 'CREDIT_LIMIT_NO_RATE';
@@ -224,13 +243,74 @@ export class CreditLimitService {
     return after.kind === 'NO_RATE' ? 'CREDIT_LIMIT_NO_RATE' : 'WITHIN';
   }
 
+  /**
+   * Plan 12 section 3: the handover gate, the LAST step of a handover's transaction (a destination
+   * release, a POD, delivered by hand), after its rows and under the shipment lock the caller
+   * holds: the customer's credit lock, then ONE statement read on the current state.
+   */
+  async requireHandoverInTx(
+    tx: Prisma.TransactionClient,
+    shipment: { id: string; number: string; customerId: string },
+  ): Promise<void> {
+    await lockCredit(tx, shipment.customerId);
+    const row = await this.snapshot(tx, shipment.customerId, null, shipment.id);
+    if (!row) return;
+    const decided = handoverDecision(row);
+    switch (decided.kind) {
+      case 'OK':
+        return;
+      case 'HANDOVER_NOT_INVOICED':
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          decided.kind,
+          `Shipment ${shipment.number} has no approved invoice: approve its invoice before the goods are handed over`,
+          { shipment: shipment.number },
+        );
+      case 'HANDOVER_UNPAID': {
+        const params = {
+          shipment: shipment.number,
+          balance: toDecimalString(decided.balance),
+          currency: decided.currency,
+        };
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          decided.kind,
+          `Shipment ${shipment.number} still has ${params.balance} ${params.currency} to pay: record the payment before the goods are handed over`,
+          params,
+        );
+      }
+      case 'HANDOVER_OVER_LIMIT': {
+        // No balance, as CREDIT_LIMIT_EXCEEDED (F192-1): it is company-wide.
+        const params = {
+          customer: row.name,
+          limit: toDecimalString(decided.limit),
+          currency: decided.currency,
+        };
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          decided.kind,
+          `Customer ${row.name} is over their credit limit of ${params.limit} ${params.currency}: record their payment before the goods are handed over`,
+          params,
+        );
+      }
+      case 'CREDIT_LIMIT_NO_RATE':
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          decided.kind,
+          `No exchange rate for ${decided.currency} to check customer ${row.name}'s credit limit: add one first`,
+          { currency: decided.currency, customer: row.name },
+        );
+    }
+  }
+
   private async snapshot(
     db: Db,
     customerId: string,
     ownInvoiceId: string | null = null,
+    shipmentId: string | null = null,
   ): Promise<SnapshotResult | null> {
     const rows = await db.$queryRaw<SnapshotResult[]>(
-      creditSnapshotSql(customerId, todayIn('UTC'), ownInvoiceId),
+      creditSnapshotSql(customerId, todayIn('UTC'), ownInvoiceId, shipmentId),
     );
     return rows[0] ?? null;
   }

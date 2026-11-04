@@ -87,6 +87,7 @@ export const PERMISSION_MODULES = [
   // The bookings agent's admin panel (docs/plans/10-agent-admin-button.md): view shows the menu
   // item that opens it. The panel itself decides who enters (its own list of admins).
   'agent_admin',
+  'handover_payment',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -182,6 +183,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // The agent's request (2026-11-03): the owner and Shaker only. The Administrator sees the item;
   // the owner gives agent_admin:view to anyone else on the permissions screen.
   agent_admin: 'VNNNNNNNNNN',
+  // Plan 12 section 3: handover_payment:approve hands goods over without the invoice or payment
+  // the handover gate asks for, with a reason. No role holds it; the Administrator grants it.
+  handover_payment: 'NNNNNNNNNNN',
 };
 
 /**

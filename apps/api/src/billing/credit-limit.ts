@@ -67,3 +67,41 @@ export function creditPosition(row: CreditSnapshotRow): CreditPosition {
     currency: target,
   };
 }
+
+/** Plan 12 section 3: the shipment's side of the handover gate, read in the credit statement. */
+export interface HandoverShipmentRow {
+  /** Live approved MAIN invoices of the shipment (approved, not fully credited). */
+  mainApproved: number;
+  /** Left to pay on the shipment's live approved invoices (MAIN and ADDITIONAL), per currency. */
+  shipmentOpen: readonly { currency: string; amount: string }[];
+}
+
+export type HandoverDecision =
+  | { kind: 'OK' }
+  | { kind: 'HANDOVER_NOT_INVOICED' }
+  | { kind: 'HANDOVER_UNPAID'; balance: Decimal; currency: string }
+  | { kind: 'HANDOVER_OVER_LIMIT'; limit: Decimal; currency: string }
+  | { kind: 'CREDIT_LIMIT_NO_RATE'; currency: string };
+
+/**
+ * Plan 12 section 3, the handover gate on the current state. (a) A live approved MAIN invoice
+ * bills the shipment. (b) Without a limit, or a limit of 0 (cash): nothing is left to pay on the
+ * shipment's live approved invoices (an unapplied advance does not count). A positive limit: the
+ * customer's open balance is within it (plan 06's position; a missing rate refuses).
+ */
+export function handoverDecision(row: CreditSnapshotRow & HandoverShipmentRow): HandoverDecision {
+  if (row.mainApproved === 0) return { kind: 'HANDOVER_NOT_INVOICED' };
+  if (row.limit === null || row.limitCurrency === null || dec(row.limit).isZero()) {
+    const unpaid = row.shipmentOpen.find((p) => dec(p.amount).gt(0));
+    return unpaid
+      ? { kind: 'HANDOVER_UNPAID', balance: dec(unpaid.amount), currency: unpaid.currency }
+      : { kind: 'OK' };
+  }
+  const position = creditPosition(row);
+  if (position.kind === 'NO_RATE')
+    return { kind: 'CREDIT_LIMIT_NO_RATE', currency: position.currency };
+  if (position.kind === 'EXCEEDED') {
+    return { kind: 'HANDOVER_OVER_LIMIT', limit: position.limit, currency: position.currency };
+  }
+  return { kind: 'OK' };
+}

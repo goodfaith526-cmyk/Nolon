@@ -24,6 +24,14 @@ export interface ShipmentInvoicesHandler {
    * post nothing), as the shipment is cancelled, in the caller's transaction.
    */
   cancelAutoDraftsInTx(tx: Tx, shipmentId: string, reason: string): Promise<void>;
+  /**
+   * Plan 12 section 3: the handover gate, the last step of a handover's transaction (409 when the
+   * shipment is not invoiced, not paid or the customer is over the limit).
+   */
+  requireHandoverInTx(
+    tx: Tx,
+    shipment: { id: string; number: string; customerId: string },
+  ): Promise<void>;
 }
 
 @Injectable()

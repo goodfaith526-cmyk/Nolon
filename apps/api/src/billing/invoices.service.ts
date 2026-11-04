@@ -226,6 +226,14 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     this.shipmentInvoices.register(this);
   }
 
+  /** Plan 12 section 3: the handover gate (ShipmentInvoicesHandler), in the caller's transaction. */
+  async requireHandoverInTx(
+    tx: Tx,
+    shipment: { id: string; number: string; customerId: string },
+  ): Promise<void> {
+    await this.credit.requireHandoverInTx(tx, shipment);
+  }
+
   /**
    * Plan 12 section 2: the drafts made when the shipment's booking was confirmed that no one has
    * touched since (they carry autoNote: an edit or approval clears it) are cancelled, with

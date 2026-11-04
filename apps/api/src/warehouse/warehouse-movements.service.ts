@@ -33,7 +33,7 @@ import type {
 } from '../shipments/shipment-stock.registry.js';
 import { ShipmentLinksRegistry } from '../shipments/shipment-links.registry.js';
 import { ShipmentStockRegistry } from '../shipments/shipment-stock.registry.js';
-import { ShipmentsService } from '../shipments/shipments.service.js';
+import { type HandoverOverride, ShipmentsService } from '../shipments/shipments.service.js';
 import { isActive } from '../shipments/state-machine.js';
 import {
   canRelease,
@@ -79,6 +79,8 @@ export interface PreparedRelease {
   shipmentId: string;
   branchId: string;
   occurredAt: Date;
+  /** Plan 12 section 3: the handover gate's override, used when the release is a handover. */
+  override: HandoverOverride | null;
 }
 
 /** A goods receipt checked by prepareReceipt, ready for receiveInTx. */
@@ -388,13 +390,22 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
   async prepareRelease(
     user: AuthUser,
     shipmentId: string,
-    input: Pick<GoodsReleaseRequest, 'occurredAt'>,
+    input: Pick<GoodsReleaseRequest, 'occurredAt' | 'paymentOverrideReason'>,
   ): Promise<PreparedRelease> {
     const shipment = await this.shipments.requireAccessible(user, shipmentId);
     if (shipment.status === 'CLOSED') {
       throw new ConflictException('A closed shipment cannot release goods');
     }
-    return { shipmentId, branchId: shipment.branchId, occurredAt: occurredAtOf(input.occurredAt) };
+    return {
+      shipmentId,
+      branchId: shipment.branchId,
+      occurredAt: occurredAtOf(input.occurredAt),
+      override: this.shipments.handoverOverride(
+        user,
+        shipment.branchId,
+        input.paymentOverrideReason,
+      ),
+    };
   }
 
   /**
@@ -440,6 +451,12 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         `Cannot release ${input.packages} packages: at most ${releasable} can leave this warehouse at that time`,
       );
     }
+    // Plan 12 section 3: a release from a warehouse at the shipment's destination hands the goods
+    // over; releases at the origin and loading moves are not gated.
+    const handover =
+      warehouse.locationId !== null &&
+      warehouse.locationId === (await this.shipments.destinationInTx(tx, shipmentId));
+    const override = handover ? prepared.override : null;
     const number = await this.nextNumber(tx, 'RELEASE', warehouse);
     const movement = await tx.warehouseMovement.create({
       data: {
@@ -454,9 +471,14 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         note: input.note ?? null,
         occurredAt,
         createdById: user.id,
+        paymentOverrideReason: override?.reason ?? null,
+        paymentOverrideById: override?.byId ?? null,
       },
       select: { id: true },
     });
+    if (handover) {
+      await this.shipments.handoverGateInTx(tx, user, shipmentId, override, `release ${number}`);
+    }
     return movement.id;
   }
 

@@ -94,6 +94,9 @@ export function PodForm({
     body.set('note', field(f, 'note').trim());
     body.set('tripId', field(f, 'tripId'));
     body.set('shipmentStatus', field(f, 'shipmentStatus'));
+    if (actions.canOverridePayment) {
+      body.set('paymentOverrideReason', field(f, 'paymentOverrideReason').trim());
+    }
     body.set('signature', png, 'signature.png');
     for (const photo of photos) body.append('photos', photo, photo.name);
     setBusy(true);
@@ -178,6 +181,12 @@ export function PodForm({
         <span>{t('note')}</span>
         <textarea name="note" maxLength={1000} rows={2} />
       </label>
+      {actions.canOverridePayment && (
+        <label className="field">
+          <span>{t('paymentOverrideReason')}</span>
+          <input name="paymentOverrideReason" maxLength={1000} />
+        </label>
+      )}
       <div className="field">
         <span>{t('signature')}</span>
         <SignaturePad onReady={onReady} />

@@ -618,6 +618,7 @@
     "partiesFromOnlyParty": "Suggested: the customer's only party, as consignee. Change it if needed."
   },
   "Shipments": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "title": "Shipments",
     "publicLookup": "Public tracking page",
     "search": "Shipment, BL, container or customer",
@@ -1065,6 +1066,7 @@
     "closedNotice": "Period closed."
   },
   "Warehouse": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "title": "Warehouses",
     "hint": "Warehouses of your branches and their storage locations. Deactivate a warehouse or location instead of deleting it.",
     "add": "Add warehouse",
@@ -1214,6 +1216,7 @@
     "supplierCostsHint": "Lines of supplier bills for this shipment that are customs charges or from the file's broker. They are the bills' own costs, shown here only: they are not added to the fees above, and nothing is posted from this page. Totals count approved bills; cancelled bills are left out."
   },
   "Transport": {
+    "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
     "tripsTitle": "Trips",
     "tripsHint": "Road legs of your branches: own vehicles and hired carriers. A driver sees the trips assigned to them.",
     "tripSearch": "Trip number",
@@ -2892,7 +2895,10 @@
     "STATEMENT_BILL_MISMATCH": "This bill no longer matches its statement. Cancel it and make it again from the statement.",
     "CREDIT_LIMIT_EXCEEDED": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment first, or have a manager raise the limit.",
     "CREDIT_LIMIT_NO_RATE": "There is no exchange rate for {currency} to check customer {customer}'s credit limit. Add the rate first.",
-    "PERIOD_CLOSED": "The accounting period {period} is closed: choose a date in an open period, or have finance reopen it."
+    "PERIOD_CLOSED": "The accounting period {period} is closed: choose a date in an open period, or have finance reopen it.",
+    "HANDOVER_NOT_INVOICED": "Shipment {shipment} has no approved invoice. Approve its invoice before the goods are handed over.",
+    "HANDOVER_UNPAID": "Shipment {shipment} still has {balance} {currency} to pay. Record the payment before the goods are handed over.",
+    "HANDOVER_OVER_LIMIT": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment before the goods are handed over."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -3124,7 +3130,8 @@
     "level_C": "*",
     "levelName_C": "Another mix of actions",
     "module_payment_instructions": "Payment instructions",
-    "module_agent_admin": "Bookings agent's admin panel"
+    "module_agent_admin": "Bookings agent's admin panel",
+    "module_handover_payment": "Hand goods over without payment (with a reason)"
   },
   "BotRequests": {
     "title": "Bot booking requests",

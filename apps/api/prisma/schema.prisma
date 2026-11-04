@@ -241,6 +241,7 @@ model User {
 
   warehouseMovements                WarehouseMovement[]             @relation("WarehouseMovementCreatedBy")
   warehouseMovementCancellations    WarehouseMovementCancellation[] @relation("WarehouseMovementCancelledBy")
+  warehouseMovementPaymentOverrides WarehouseMovement[]             @relation("WarehouseMovementPaymentOverrideBy")
   podCancellations                  PodCancellation[]               @relation("PodCancelledBy")
   shipmentCargoCorrections          ShipmentCargoCorrection[]       @relation("CargoCorrectedBy")
   tripDepartureUndos                TripDepartureUndo[]             @relation("TripDepartureUndoneBy")
@@ -291,6 +292,7 @@ model User {
   tripExpensesCreated    TripExpense[]      @relation("TripExpenseCreatedBy")
   tripExpensesCancelled  TripExpense[]      @relation("TripExpenseCancelledBy")
   podsCreated            ProofOfDelivery[]  @relation("PodCreatedBy")
+  podPaymentOverrides    ProofOfDelivery[]  @relation("PodPaymentOverrideBy")
 
   creditNotesCreated       CreditNote[]      @relation("CreditNoteCreatedBy")
   creditNotesApproved      CreditNote[]      @relation("CreditNoteApprovedBy")
@@ -2480,38 +2482,42 @@ enum GoodsCondition {
  * belongs to the shipment's file); the warehouse carries its own branch.
  */
 model WarehouseMovement {
-  id                String                @id @default(uuid()) @db.Uuid
+  id                    String                @id @default(uuid()) @db.Uuid
   /// NOL-GRN-2026-000001 (receipt) or NOL-GRL-2026-000001 (release).
-  number            String                @unique @db.VarChar(30)
-  kind              WarehouseMovementKind
-  branchId          String                @map("branch_id") @db.Uuid
-  shipmentId        String                @map("shipment_id") @db.Uuid
-  warehouseId       String                @map("warehouse_id") @db.Uuid
-  storageLocationId String?               @map("storage_location_id") @db.Uuid
+  number                String                @unique @db.VarChar(30)
+  kind                  WarehouseMovementKind
+  branchId              String                @map("branch_id") @db.Uuid
+  shipmentId            String                @map("shipment_id") @db.Uuid
+  warehouseId           String                @map("warehouse_id") @db.Uuid
+  storageLocationId     String?               @map("storage_location_id") @db.Uuid
   /// Number of packages (pieces, pallets, containers) received or released.
-  packages          Int
-  weightKg          Decimal?              @map("weight_kg") @db.Decimal(12, 3)
+  packages              Int
+  weightKg              Decimal?              @map("weight_kg") @db.Decimal(12, 3)
   /// Required on receipts.
-  condition         GoodsCondition?
+  condition             GoodsCondition?
   /// Who delivered the goods (receipt) or collected them (release).
-  partyName         String?               @map("party_name") @db.VarChar(200)
+  partyName             String?               @map("party_name") @db.VarChar(200)
   /// Plan 09e section 4: the ID the person who handed over the goods showed (receipt), as typed.
-  partyIdType       String?               @map("party_id_type") @db.VarChar(50)
-  partyIdNumber     String?               @map("party_id_number") @db.VarChar(50)
-  note              String?
-  occurredAt        DateTime              @map("occurred_at") @db.Timestamptz(3)
+  partyIdType           String?               @map("party_id_type") @db.VarChar(50)
+  partyIdNumber         String?               @map("party_id_number") @db.VarChar(50)
+  note                  String?
+  occurredAt            DateTime              @map("occurred_at") @db.Timestamptz(3)
   /// The shipment status this receipt moved the shipment to, through the state machine.
-  statusApplied     ShipmentStatus?       @map("status_applied")
-  createdById       String                @map("created_by_id") @db.Uuid
-  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  statusApplied         ShipmentStatus?       @map("status_applied")
+  createdById           String                @map("created_by_id") @db.Uuid
+  /// Plan 12 section 3: why a destination release went out without the invoice or payment.
+  paymentOverrideReason String?               @map("payment_override_reason")
+  paymentOverrideById   String?               @map("payment_override_by_id") @db.Uuid
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  branch          Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment        Shipment                 @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  warehouse       Warehouse                @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  storageLocation StorageLocation?         @relation(fields: [storageLocationId], references: [id], onDelete: Restrict)
-  createdBy       User                     @relation("WarehouseMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  photos          WarehouseMovementPhoto[]
-  grnDraft        GrnDraft?
+  branch            Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment          Shipment                 @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  warehouse         Warehouse                @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  storageLocation   StorageLocation?         @relation(fields: [storageLocationId], references: [id], onDelete: Restrict)
+  createdBy         User                     @relation("WarehouseMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  paymentOverrideBy User?                    @relation("WarehouseMovementPaymentOverrideBy", fields: [paymentOverrideById], references: [id], onDelete: Restrict)
+  photos            WarehouseMovementPhoto[]
+  grnDraft          GrnDraft?
 
   releaseDraft GoodsReleaseDraft?
   /// B3-1 (docs/plans/05-correction-contracts.md, 1): set once the movement is cancelled.
@@ -3124,32 +3130,36 @@ model PodCancellation {
 }
 
 model ProofOfDelivery {
-  id                  String          @id @default(uuid()) @db.Uuid
+  id                    String          @id @default(uuid()) @db.Uuid
   /// NOL-POD-2026-000001
-  number              String          @unique @db.VarChar(30)
+  number                String          @unique @db.VarChar(30)
   /// The shipment's branch.
-  branchId            String          @map("branch_id") @db.Uuid
-  shipmentId          String          @map("shipment_id") @db.Uuid
-  tripId              String?         @map("trip_id") @db.Uuid
-  recipientName       String          @map("recipient_name") @db.VarChar(200)
-  recipientCapacity   String          @map("recipient_capacity") @db.VarChar(100)
-  deliveredAt         DateTime        @map("delivered_at") @db.Timestamptz(3)
-  packages            Int?
-  note                String?
-  statusApplied       ShipmentStatus? @map("status_applied")
+  branchId              String          @map("branch_id") @db.Uuid
+  shipmentId            String          @map("shipment_id") @db.Uuid
+  tripId                String?         @map("trip_id") @db.Uuid
+  recipientName         String          @map("recipient_name") @db.VarChar(200)
+  recipientCapacity     String          @map("recipient_capacity") @db.VarChar(100)
+  deliveredAt           DateTime        @map("delivered_at") @db.Timestamptz(3)
+  packages              Int?
+  note                  String?
+  statusApplied         ShipmentStatus? @map("status_applied")
   /// The on-screen signature, a PNG shipment document of type POD.
-  signatureDocumentId String          @unique @map("signature_document_id") @db.Uuid
-  createdById         String          @map("created_by_id") @db.Uuid
-  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  signatureDocumentId   String          @unique @map("signature_document_id") @db.Uuid
+  createdById           String          @map("created_by_id") @db.Uuid
+  /// Plan 12 section 3: why the goods were handed over without the invoice or payment.
+  paymentOverrideReason String?         @map("payment_override_reason")
+  paymentOverrideById   String?         @map("payment_override_by_id") @db.Uuid
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  branch       Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment     Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  trip         Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
-  signature    Document         @relation("PodSignature", fields: [signatureDocumentId], references: [id], onDelete: Restrict)
-  createdBy    User             @relation("PodCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  photos       PodPhoto[]
+  branch            Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment          Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  trip              Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  signature         Document         @relation("PodSignature", fields: [signatureDocumentId], references: [id], onDelete: Restrict)
+  createdBy         User             @relation("PodCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  paymentOverrideBy User?            @relation("PodPaymentOverrideBy", fields: [paymentOverrideById], references: [id], onDelete: Restrict)
+  photos            PodPhoto[]
   /// B3-2 (docs/plans/05-correction-contracts.md, 2): set once the POD is cancelled.
-  cancellation PodCancellation?
+  cancellation      PodCancellation?
 
   @@index([shipmentId])
   @@index([tripId])

@@ -946,6 +946,10 @@ export const FORM_REFUSALS = [
   // Plan 12 section 2.3: an accounting period closed for the document's date.
   'PERIOD_CLOSED',
   'CREDIT_LIMIT_NO_RATE',
+  // Plan 12 section 3: the handover gate (a destination release, a POD, delivered by hand).
+  'HANDOVER_NOT_INVOICED',
+  'HANDOVER_UNPAID',
+  'HANDOVER_OVER_LIMIT',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 
