@@ -258,6 +258,9 @@ export class AuditService {
         ${andIf(q.entity, (e) => Prisma.sql`x."entity" = ${e}`)}
       ORDER BY x."occurred_at" DESC, x."id" DESC
       LIMIT ${q.limit + 1}`;
+    // A customer's credit limit is shown only to whoever may read it on the customer (holders of
+    // customer_invoices:view, as the customer screen masks it); the stored record is unchanged.
+    const hideCredit = !user.access.any('customer_invoices:view');
     return rows.map((r) => ({
       at: r.at.toISOString(),
       branchCode: r.branchCode ?? '—',
@@ -268,8 +271,14 @@ export class AuditService {
       reference: r.reference,
       status: null,
       detail: null,
-      changes: r.changes,
+      changes:
+        hideCredit && r.entity === 'CUSTOMER'
+          ? r.changes.filter((c) => !CUSTOMER_CREDIT_FIELDS.has(c.field))
+          : r.changes,
       source: r.source,
     }));
   }
 }
+
+/** The customer fields that only holders of customer_invoices:view read (plan 09d). */
+const CUSTOMER_CREDIT_FIELDS = new Set(['creditLimit', 'creditLimitCurrency']);

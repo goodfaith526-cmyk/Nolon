@@ -475,6 +475,36 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await get(`/reports/audit-log?${around()}`, cookie).expect(403);
     });
 
+    it('hides a customer’s credit-limit changes from who may not read the limit (F189-1)', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      await patch(`/customers/${c.id}`, cookies.salesDxb, {
+        city: 'Sharjah',
+        creditLimit: '73219',
+        creditLimitCurrency: 'USD',
+      }).expect(200);
+      // Another branch's manager, denied customer_invoices:view: the customer's other changes
+      // only. The stored record keeps them (a manager with the permission sees them).
+      const denied = await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED']);
+      await t.prisma.userBranchPermission.create({
+        data: {
+          userId: denied.id,
+          branchId: jed,
+          permission: 'customer_invoices:view',
+          effect: 'DENY',
+          sourceKey: '00000000-0000-0000-0000-000000000000',
+          createdById: ids.admin,
+        },
+      });
+      const fieldsSeen = async (cookie: string) =>
+        (await entries(cookie, `userId=${ids.salesDxb}&entity=CUSTOMER`))
+          .filter((e) => e.reference.startsWith(c.number) && e.action === 'UPDATED')
+          .flatMap((e) => (e.changes ?? []).map((x) => x.field));
+      expect(await fieldsSeen(await signIn(t, denied.email))).toEqual(['city']);
+      expect(await fieldsSeen(cookies.managerDxb)).toEqual(
+        expect.arrayContaining(['city', 'creditLimit', 'creditLimitCurrency']),
+      );
+    });
+
     it('records contact and party changes, before and after, under the customer', async () => {
       const c = await createCustomer(cookies.salesDxb, dxb);
       const withContact = (

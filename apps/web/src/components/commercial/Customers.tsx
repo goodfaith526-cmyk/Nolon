@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
-import { onlyBranch } from '@/lib/branches';
+import { onlyBranch, writableBranches } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { can, useMe } from '../StaffShell';
@@ -353,7 +353,9 @@ export function CustomerForm({
           {t('acquiredViaOutlet')}
           <PartnerSelect
             kind="SALES_OUTLET"
-            branchIds={me.branches.map((b) => b.id)}
+            branchIds={(customer ? me.branches : writableBranches(me, 'customers:create')).map(
+              (b) => b.id,
+            )}
             held={heldOutlet}
             value={outletId}
             onChange={setOutletId}

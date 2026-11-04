@@ -127,6 +127,13 @@ function maskCredit(user: AuthUser, dto: CustomerDto): CustomerDto {
   return seesCredit(user) ? dto : { ...dto, creditLimit: null, creditLimitCurrency: null };
 }
 
+/** The user's branches where they may add customers. */
+function createBranches(user: AuthUser): string[] {
+  return user.access
+    .branchesWith(['customers:create'])
+    .filter((id) => user.allowedBranchIds.includes(id));
+}
+
 /**
  * Plan 09f: the branch a customer write acts in, for the permission check and an Outlet Staff
  * member's outlet only; the customer itself is of no branch, so no one is asked for it (owner,
@@ -138,9 +145,7 @@ function actingBranch(user: AuthUser, given: string | null | undefined): string 
     assertBranchAccess(user, given);
     return given;
   }
-  const first = user.access
-    .branchesWith(['customers:create'])
-    .find((id) => user.allowedBranchIds.includes(id));
+  const first = createBranches(user)[0];
   if (!first) throw new ForbiddenException('You may not add customers');
   return first;
 }
@@ -555,7 +560,9 @@ export class CustomersService {
       kind: 'SALES_OUTLET',
       requested,
       held: ownOutletId,
-      branchIds: [branchId],
+      // The customer is of no branch (plan 09f): an outlet of any branch where the user adds
+      // customers. Outlet Staff stay limited to their own outlet (chooseInTx).
+      branchIds: createBranches(user),
       field: 'acquiredViaOutletId',
     });
     await lockCustomerKeys(tx);
