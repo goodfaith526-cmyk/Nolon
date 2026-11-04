@@ -70,19 +70,20 @@ export class CustomerIdentityService {
   }
 
   /**
-   * The branch of registration of a customer made from a first message: the key's only branch,
-   * else CS_CUSTOMER_IDENTITY_HOME_BRANCH (a branch code); none, and no customer is made.
+   * The branch of registration of a customer made from a first message. The customer is central
+   * (plan 09d) and this branch is shown only, never a rule, so no one chooses it (owner,
+   * 2026-11-04): the first active branch of the key by code. None active, and no customer is made.
    */
   private async homeBranch(
     tx: Prisma.TransactionClient,
     branches: readonly { branchId: string }[],
   ): Promise<string | null> {
-    if (branches.length === 1) return branches[0]!.branchId;
-    const code = this.env.CS_CUSTOMER_IDENTITY_HOME_BRANCH;
-    if (!code) return null;
-    const branch = await tx.branch.findFirst({ where: { code }, select: { id: true } });
-    // Only a branch the key serves: the setting never reaches past the key's branches.
-    return branch && branches.some((b) => b.branchId === branch.id) ? branch.id : null;
+    const branch = await tx.branch.findFirst({
+      where: { id: { in: branches.map((b) => b.branchId) }, isActive: true },
+      orderBy: { code: 'asc' },
+      select: { id: true },
+    });
+    return branch?.id ?? null;
   }
 
   async write(

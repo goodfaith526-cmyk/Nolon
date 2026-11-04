@@ -84,7 +84,6 @@ services:
       CS_CUSTOMER_IDENTITY_COMPANY_ID: ${CS_CUSTOMER_IDENTITY_COMPANY_ID:-}
       CS_CUSTOMER_IDENTITY_CLIENTS: ${CS_CUSTOMER_IDENTITY_CLIENTS:-}
       CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED: ${CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED:-false}
-      CS_CUSTOMER_IDENTITY_HOME_BRANCH: ${CS_CUSTOMER_IDENTITY_HOME_BRANCH:-}
       # Until Caddy trusts the host nginx and passes the real client IP, every sign-in reaches the
       # API from one address, so only the per-email limit is on (docs/plans/01-auth-and-permissions.md S1).
       LOGIN_IP_LIMIT_ENABLED: 'false'
