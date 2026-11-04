@@ -204,11 +204,7 @@ export function BotRequestApprove({
             </div>
           ) : (
             <div className="stack">
-              <CustomerPicker
-                value={customer}
-                onChange={setCustomer}
-                branchId={r.branchId ?? undefined}
-              />
+              <CustomerPicker value={customer} onChange={setCustomer} />
               {mayUseRequest ? (
                 <button type="button" onClick={() => setFromRequest(true)}>
                   {t('useRequestCustomer')}

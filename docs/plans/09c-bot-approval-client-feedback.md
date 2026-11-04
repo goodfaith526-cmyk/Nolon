@@ -6,13 +6,13 @@ Khartoum) and asked for four things. This note records what this PR does with ea
 ## 1. "Not saved: The booking's customer is not of the request's branch"
 
 **Cause.** A website-chat request is linked to no customer and no profile, so staff chose the
-customer with the general customer search. That search lists every branch's customers. A
+customer with the general customer search. That search lists every branch's customers, and a
 customer of another branch fails the approval's rule: a booking and its customer belong to the
-request's branch.
+same branch.
 
-**Change.** On the approve form, the search lists only customers of the request's branch
-(`CustomerPicker branchId`). The rule stays the same. Customers shared across branches are plan 09b
-(09-7).
+**Change.** The tie between a customer and a branch is removed entirely (owner, 2026-11-04). See
+plan [09d](09d-customer-not-tied-to-branch.md), which replaces 09b. This PR carries that plan,
+and its build steps (09-7a..c) follow its review.
 
 ## 2. "Register the customer directly"
 
