@@ -406,8 +406,12 @@ describe("NOLON's suggestions on the review screens", () => {
       },
     });
     const el = await show(draft, <ReceiptDraftReview id="d1" />);
-    expect(api).toHaveBeenCalledWith('/receipt-drafts/cash-accounts?customerId=c1&currency=USD');
-    expect(api).toHaveBeenCalledWith('/receipt-drafts/open-invoices?customerId=c1&currency=USD');
+    expect(api).toHaveBeenCalledWith(
+      '/receipt-drafts/cash-accounts?customerId=c1&currency=USD&branchId=b1',
+    );
+    expect(api).toHaveBeenCalledWith(
+      '/receipt-drafts/open-invoices?customerId=c1&currency=USD&branchId=b1',
+    );
     const options = [...el.querySelectorAll('option')].map((o) => o.textContent);
     expect(options).toContain('1010 · Cash · USD');
     expect(options).toContain('openInvoiceChoice(INV-1,20,USD)');

@@ -80,11 +80,21 @@ const rejectBody = z
   .strict();
 const listQuery = z.object({ status: z.enum(DRAFT_STATUSES).optional() }).strict();
 // `currency` (optional): only accounts in the receipt's currency (the review screen's choices).
+// Plan 09d: `branchId` is the branch that receives (the draft's); required when the user writes
+// in several branches and none is the customer's.
 const cashAccountsQuery = z
-  .object({ customerId: z.uuid(), currency: currencyCode.optional() })
+  .object({
+    customerId: z.uuid(),
+    currency: currencyCode.optional(),
+    branchId: z.uuid().optional(),
+  })
   .strict();
 const openInvoicesQuery = z
-  .object({ customerId: z.uuid(), currency: currencyCode.optional() })
+  .object({
+    customerId: z.uuid(),
+    currency: currencyCode.optional(),
+    branchId: z.uuid().optional(),
+  })
   .strict();
 
 /**
@@ -133,8 +143,8 @@ export class ReceiptDraftsController {
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
   ): Promise<{ items: ReceiptCashAccountDto[] }> {
-    const { customerId, currency } = parse(cashAccountsQuery, query);
-    return { items: await this.drafts.cashAccounts(user, customerId, currency) };
+    const { customerId, currency, branchId } = parse(cashAccountsQuery, query);
+    return { items: await this.drafts.cashAccounts(user, customerId, currency, branchId) };
   }
 
   /** The customer's open invoices a receipt may settle (the assistant's pick list). */
@@ -145,8 +155,8 @@ export class ReceiptDraftsController {
     @CurrentUser() user: AuthUser,
     @Query() query: unknown,
   ): Promise<{ items: ReceiptOpenInvoiceDto[] }> {
-    const { customerId, currency } = parse(openInvoicesQuery, query);
-    return { items: await this.drafts.openInvoices(user, customerId, currency) };
+    const { customerId, currency, branchId } = parse(openInvoicesQuery, query);
+    return { items: await this.drafts.openInvoices(user, customerId, currency, branchId) };
   }
 
   @Get()

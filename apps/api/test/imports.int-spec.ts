@@ -526,6 +526,21 @@ describe('Excel import of customers and rates', () => {
       }
     });
 
+    it('refuses a phone two rows of different branches share (plan 09d, F184-6)', async () => {
+      const before = await myCustomers();
+      const shared = phone();
+      const file = await xlsx([
+        CUSTOMER_HEADER,
+        customerRow({ phone: shared }),
+        customerRow({ branch: 'JED', phone: shared }),
+      ]);
+      const body = (
+        await commit('/customers/import', cookies.salesDxbJed, file, randomUUID()).expect(422)
+      ).body as ImportRowsInvalidBody;
+      expect(codesOf(body.preview)).toEqual([[3, 'phone', 'DUPLICATE_IN_FILE']]);
+      expect(await myCustomers()).toBe(before);
+    });
+
     it('needs the branch code from a user of several branches', async () => {
       const before = await myCustomers();
       const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);

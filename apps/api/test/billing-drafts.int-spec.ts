@@ -810,13 +810,55 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
     );
   });
 
+  it('lists the cash accounts of the receiving branch only, never the customer\u2019s by default (F184-5)', async () => {
+    const dxb = await branchId(t.prisma, 'DXB');
+    const dxbCustomer = (
+      await r
+        .post('/customers', cookies.admin, {
+          branchId: dxb,
+          kind: 'COMPANY',
+          name: 'Receipt pick DXB',
+          phone: uniquePhone(),
+        })
+        .expect(201)
+    ).body as { id: string };
+    const q = `customerId=${dxbCustomer.id}`;
+    // PTS and JED, none the customer's: the branch must be named.
+    const ask = await pick('cash-accounts', q, tokens.financeTwo).expect(400);
+    expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED', fields: ['branchId'] });
+    await pick('cash-accounts', `${q}&branchId=${dxb}`, tokens.financeTwo).expect(403);
+    await pick('open-invoices', `${q}&branchId=${dxb}`, tokens.financeTwo).expect(403);
+    const listed = (
+      (await pick('cash-accounts', `${q}&branchId=${jed}`, tokens.financeTwo).expect(200)).body as {
+        items: ReceiptCashAccountDto[];
+      }
+    ).items.map((a) => a.id);
+    expect(listed).toContain(cashJed.id);
+    expect(listed).not.toContain(cashUsd.id);
+  });
+
+  it('pre-checks an incomplete receipt draft in the branch it names (F184-9)', async () => {
+    const result = (
+      await r
+        .agentPost('/receipt-drafts/check', tokens.financeTwo, {
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+          branchId: jed,
+          currency: 'USD',
+          allocations: [],
+        })
+        .expect(200)
+    ).body as { ok: boolean };
+    expect(result.ok).toBe(true);
+  });
+
   it('serves a customer of another branch (plan 09d), and is refused without the create permission, or malformed', async () => {
     for (const path of ['cash-accounts', 'open-invoices']) {
       // Plan 09d: the customer is central; JED's lists are JED's own.
       await pick(path, `customerId=${customer.id}`, tokens.financeJed).expect(200);
       await pick(path, `customerId=${customer.id}`, tokens.sales).expect(403);
       await pick(path, 'customerId=nope').expect(400);
-      await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
+      await pick(path, `customerId=${customer.id}&branchId=nope`).expect(400);
     }
     await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
     // A currency (the review screen's filter, functional review هـ6) must be a code too.
@@ -902,7 +944,6 @@ describe('invoice drafts saved with missing values', () => {
   });
 
   it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
-    const jed = await branchId(t.prisma, 'JED');
     const shipmentId = await shipment();
     const before = await t.prisma.invoiceDraft.count();
     const refused = async (body: object, status: number) =>
@@ -1004,7 +1045,6 @@ describe('receipt drafts saved with missing values', () => {
   });
 
   it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
-    const jed = await branchId(t.prisma, 'JED');
     const before = await t.prisma.receiptDraft.count();
     const refused = async (body: object, status: number) =>
       (await createReceiptDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
@@ -1012,9 +1052,8 @@ describe('receipt drafts saved with missing values', () => {
       };
     expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
     await refused({ branchId: jed }, 403);
-    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
-      'BRANCH_MISMATCH',
-    );
+    // Plan 09d: the customer's receipt is written in a branch the user writes in.
+    await refused({ customerId: customer.id, branchId: jed }, 403);
     await refused({ branchId: pts, amount: 'lots' }, 400);
     expect(await t.prisma.receiptDraft.count()).toBe(before);
   });

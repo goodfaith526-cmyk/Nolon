@@ -417,19 +417,12 @@ export class CustomersService {
   ): Promise<void> {
     const { profile } = input;
     const channelName = input.channelName?.trim() || null;
-    const existing = await tx.customer.findFirst({
+    const found = await tx.customer.findFirst({
       where: { profileId: profile.id },
       orderBy: PROFILE_ACCOUNT_ORDER,
-      select: {
-        id: true,
-        branchId: true,
-        number: true,
-        name: true,
-        phone: true,
-        isActive: true,
-      },
+      select: { id: true },
     });
-    if (!existing) {
+    if (!found) {
       const name = profile.name?.trim() || channelName;
       if (!name) return;
       await this.botAccountInTx(tx, {
@@ -440,6 +433,14 @@ export class CustomersService {
       });
       return;
     }
+    // F184-7: the row is locked (as a staff edit locks it) and read again, so the changes below
+    // are decided on the customer as it is now: a staff correction or deactivation committed
+    // meanwhile is never overwritten. Lock order as update: the row, then the key lock.
+    await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${found.id}::uuid FOR NO KEY UPDATE`;
+    const existing = await tx.customer.findUniqueOrThrow({
+      where: { id: found.id },
+      select: { id: true, branchId: true, number: true, name: true, phone: true, isActive: true },
+    });
     // An inactive customer is staff's to bring back: the channel never changes it.
     if (!existing.isActive) return;
     const changes: { field: string; before: string | null; after: string | null }[] = [];
@@ -604,9 +605,12 @@ export class CustomersService {
       rows.map((r) => r.input),
       user,
     );
+    // Plan 09d (F184-6): unique company-wide inside the batch too, whatever the rows' branches.
+    const inBatch = batchDuplicates(rows.map((r) => r.input));
     const issues = rows.map(({ input }, i): RuleIssue[] => [
       ...(active.has(input.branchId) ? [] : [inactiveBranch]),
       ...(duplicates[i] ?? []),
+      ...(inBatch[i] ?? []),
     ]);
     if (issues.some((list) => list.length > 0)) return issues;
     const first = await nextSequenceRange(tx, 'CUSTOMER', rows.length);
@@ -1128,6 +1132,31 @@ export class CustomersService {
       return issues;
     };
   }
+}
+
+/** For each row, a phone or tax number an earlier row of the same batch already holds. */
+function batchDuplicates(
+  inputs: readonly { phone?: string | null; taxNumber?: string | null }[],
+): RuleIssue[][] {
+  const seen = new Set<string>();
+  return inputs.map((input) => {
+    const found: RuleIssue[] = [];
+    const keys: [string | null, 'phone' | 'taxNumber', string][] = [
+      [input.phone ? `phone|${input.phone}` : null, 'phone', 'phone'],
+      [
+        input.taxNumber ? `tax|${normalizeTaxNumber(input.taxNumber)}` : null,
+        'taxNumber',
+        'tax number',
+      ],
+    ];
+    for (const [key, field, what] of keys) {
+      if (key === null) continue;
+      if (seen.has(key))
+        found.push({ field, code: 'DUPLICATE_IN_FILE', message: `Another row has this ${what}` });
+      seen.add(key);
+    }
+    return found;
+  });
 }
 
 const inactiveBranch: RuleIssue = {

@@ -407,11 +407,11 @@ export class CustomersImportService implements OnModuleInit {
       rows.push(checked);
     }
     flagDuplicatesInFile(rows, (input) => [
-      { key: `phone|${input.branchId}|${input.phone}`, column: 'phone', what: 'phone' },
+      { key: `phone|${input.phone}`, column: 'phone', what: 'phone' },
       ...(input.taxNumber
         ? [
             {
-              key: `tax|${input.branchId}|${normalizeTaxNumber(input.taxNumber)}`,
+              key: `tax|${normalizeTaxNumber(input.taxNumber)}`,
               column: 'taxNumber' as const,
               what: 'tax number',
             },

@@ -403,7 +403,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const existing = await this.prisma.customerInvoice.findUnique({
       where: { id: input.requestId },
     });
-    if (existing) return this.sameOpeningRequest(user, existing, input);
+    if (existing) return this.sameOpeningRequest(user, existing, input, branchId);
     const amount = dec(input.amount);
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -468,7 +468,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         where: { id: input.requestId },
       });
       if (!raced) throw error;
-      return this.sameOpeningRequest(user, raced, input);
+      return this.sameOpeningRequest(user, raced, input, branchId);
     }
     return this.get(user, input.requestId);
   }
@@ -477,6 +477,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     user: AuthUser,
     existing: CustomerInvoice,
     input: OpeningCustomerItemRequest,
+    branchId: string,
   ): Promise<CustomerInvoiceDto> {
     const entry = existing.journalEntryId
       ? await this.prisma.journalEntry.findUnique({
@@ -495,7 +496,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       fromDbDate(existing.invoiceDate) === input.invoiceDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&
       existing.reference === input.reference &&
-      existing.total.eq(dec(input.amount));
+      existing.total.eq(dec(input.amount)) &&
+      // Plan 09d (F184-8): the retry's work branch is the one the item was recorded in.
+      existing.branchId === branchId;
     if (!same) {
       throw new ConflictException('This request id was already used: send a new id');
     }

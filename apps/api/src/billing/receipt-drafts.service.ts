@@ -183,15 +183,13 @@ export class ReceiptDraftsService {
     user: AuthUser,
     customerId: string,
     currency?: string,
+    given?: string,
   ): Promise<ReceiptCashAccountDto[]> {
     const customer = await this.customers.requireCustomer(user, customerId);
-    // Plan 09d: the cash accounts of the branch that receives.
-    let branchId = customer.branchId;
-    try {
-      branchId = workBranch(user, 'receipts:create', null, customer.branchId);
-    } catch {
-      // Several branches, none the customer's: the customer's branch of registration's.
-    }
+    // Plan 09d: the cash accounts of the branch that receives, one the user writes receipts in
+    // (403 otherwise; BRANCH_REQUIRED when that is not clear). Never the customer's branch of
+    // registration by default.
+    const branchId = workBranch(user, 'receipts:create', given, customer.branchId);
     const accounts = await this.accounts.cashAccountsFor(branchId);
     // With the receipt's currency (the review screen's), only accounts kept in it: a receipt
     // is recorded in its cash account's currency.
@@ -205,8 +203,19 @@ export class ReceiptDraftsService {
     user: AuthUser,
     customerId: string,
     currency: string | undefined,
+    given?: string,
   ): Promise<ReceiptOpenInvoiceDto[]> {
-    return this.invoices.openForCustomer(user, customerId, currency, RECEIPT_OPEN_INVOICES_MAX);
+    // Plan 09d: with a branch, only its invoices (a receipt settles its own branch's); it must
+    // be one the user writes receipts in.
+    const branchId =
+      given === undefined ? undefined : workBranch(user, 'receipts:create', given, null);
+    return this.invoices.openForCustomer(
+      user,
+      customerId,
+      currency,
+      RECEIPT_OPEN_INVOICES_MAX,
+      branchId,
+    );
   }
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
@@ -247,7 +256,7 @@ export class ReceiptDraftsService {
         amount: prepared.amount,
       };
     }
-    const present = await this.receipts.checkPresent(user, values);
+    const present = await this.receipts.checkPresent(user, values, branchId);
     const branch = draftBranch(user, branchId, present.branchId);
     await this.preCheck({ ...values, currency: present.currency ?? values.currency }, branch, user);
     return {

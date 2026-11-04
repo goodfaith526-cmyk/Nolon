@@ -206,13 +206,18 @@ export class QuotationsService {
     branchId?: string,
   ): Promise<QuotationDefaultsDto> {
     const customer = await this.customers.requireActiveCustomer(user, customerId);
-    // Plan 09d: the branch the quotation will be written in; suggestions only, so a user who must
-    // still choose it gets the customer's branch of registration's.
-    let at = customer.branchId;
+    // Plan 09d: the branch the quotation will be written in (a branch given must be one the user
+    // writes in: 403). While the user must still choose it, one of the user's own branches
+    // suggests; never the customer's branch of registration by default.
+    let at: string;
     try {
       at = workBranch(user, 'quotations:create', branchId, customer.branchId);
-    } catch {
-      // No single branch yet: the form asks for it; these stay suggestions.
+    } catch (error) {
+      const own = user.access
+        .branchesWith(['quotations:create'])
+        .filter((id) => user.allowedBranchIds.includes(id));
+      if (!(error instanceof BadRequestException) || own.length === 0) throw error;
+      at = own[0]!;
     }
     const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: at } });
     const today = todayIn(branch.timezone);

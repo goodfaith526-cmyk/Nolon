@@ -187,6 +187,11 @@ export class ReceiptsService {
       existing.cashAccountId === input.cashAccountId &&
       existing.reference === (input.reference ?? null) &&
       existing.notes === (input.notes ?? null) &&
+      // Plan 09d (F184-8): a retry naming a branch names the receipt's; one naming none (an
+      // older client) matches as before.
+      (input.branchId === null ||
+        input.branchId === undefined ||
+        input.branchId === existing.branchId) &&
       sameAllocations(existing.allocations, input.allocations);
     if (!same) throw new ConflictException('This request id was already used: send a new id');
     return this.get(user, existing.id);
@@ -300,6 +305,7 @@ export class ReceiptsService {
       amount?: DecimalString | null;
       allocations: readonly { invoiceId?: string | null; amount?: DecimalString | null }[];
     },
+    givenBranchId: string | null = null,
   ): Promise<{ customerId: string | null; branchId: string | null; currency: string | null }> {
     const customer = input.customerId
       ? await this.customers.requireCustomer(user, input.customerId)
@@ -332,7 +338,10 @@ export class ReceiptsService {
     }
     return {
       customerId: customer?.id ?? null,
-      branchId: customer ? receiptBranch(user, customer.branchId) : null,
+      // Plan 09d: the same work branch as a complete receipt (F184-9).
+      branchId: customer
+        ? workBranch(user, 'receipts:create', givenBranchId, customer.branchId)
+        : null,
       currency: currency?.code ?? null,
     };
   }
@@ -688,17 +697,4 @@ function sameAllocations(
     amounts.size === posted.length &&
     posted.every((a) => amounts.get(a.invoiceId)?.eq(a.amount) === true)
   );
-}
-
-/**
- * Plan 09d: the branch a receipt draft is filed in, before the person chooses: the work branch
- * for the customer, else (several branches, none the customer's) the customer's branch of
- * registration; the receipt itself takes the branch again on approval.
- */
-function receiptBranch(user: AuthUser, homeBranchId: string): string {
-  try {
-    return workBranch(user, 'receipts:create', null, homeBranchId);
-  } catch {
-    return homeBranchId;
-  }
 }

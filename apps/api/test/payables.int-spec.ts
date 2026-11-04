@@ -2026,6 +2026,32 @@ describe('credit notes, payables, expenses and opening balances', () => {
       }).expect(409);
     });
 
+    it('a retry of an opening item in another work branch is refused (plan 09d, F184-8)', async () => {
+      const two = await createUser(t.prisma, ['FINANCE'], ['PTS', 'JED'], LEDGER_PREFIX);
+      const cookie = await signIn(t, two.email);
+      const item = {
+        requestId: randomUUID(),
+        customerId: customer.id,
+        branchId: pts,
+        entryDate: d('01-01'),
+        reference: 'OLD-INV-BR',
+        invoiceDate: d('01-01'),
+        dueDate: d('01-31'),
+        currency: 'SDG',
+        amount: '1000',
+      };
+      const made = (await post('/customer-invoices/opening', cookie, item).expect(201))
+        .body as CustomerInvoiceDto;
+      expect(made.branchId).toBe(pts);
+      await post('/customer-invoices/opening', cookie, { ...item, branchId: jed }).expect(409);
+      // An older client's retry names no branch: the customer's (PTS) is the work branch.
+      const { branchId: _omitted, ...legacy } = item;
+      void _omitted;
+      const again = (await post('/customer-invoices/opening', cookie, legacy).expect(201))
+        .body as CustomerInvoiceDto;
+      expect(again.id).toBe(made.id);
+    });
+
     it('customer and supplier open items post against opening equity and show in aging', async () => {
       const customerItem = {
         requestId: randomUUID(),

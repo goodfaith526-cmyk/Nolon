@@ -500,6 +500,8 @@ describe('accounting: journals, invoices, receipts, periods', () => {
       expect(again).toMatchObject({ id: first.id, number: first.number });
       // Without a rate, the retry matches the rate the first request was posted at.
       await post('/receipts', cookies.financePts, { ...body, fxRate: null }).expect(201);
+      // Naming the receipt's own branch is the same request.
+      await post('/receipts', cookies.financePts, { ...body, branchId: pts }).expect(201);
       // Other content, another user, a user of another branch: refused, nothing posted.
       for (const [cookie, changed] of [
         [cookies.financePts, { amount: '1001' }],
@@ -509,6 +511,8 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         [cookies.financePts, { allocations: [] }],
         [cookies.admin, {}],
         [cookies.financeJed, {}],
+        // Plan 09d (F184-8): another work branch is other content.
+        [cookies.financePts, { branchId: jed }],
       ] as const) {
         await post('/receipts', cookie, { ...body, ...changed }).expect(409);
       }

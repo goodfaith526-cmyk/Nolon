@@ -11,6 +11,7 @@ import {
   LEDGER_PREFIX,
   type TestApp,
 } from './auth-test-app.js';
+import { waitForLockWaiter } from './test-data.js';
 
 /**
  * Plan 09d section 4a (owner, 2026-11-04): the customer is registered in NOLON from the first
@@ -167,5 +168,38 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
     expect(after.map((a) => a.id)).toEqual([inactive.id, active.id]);
     expect(after.find((a) => a.id === active.id)?.name).toBe('Full Given Name');
     expect(after.find((a) => a.id === inactive.id)?.name).toBe('Chat Name');
+  });
+  it('never overwrites a staff correction made while it waited (F184-7)', async () => {
+    const from = sender({ displayName: 'Chat Name Race' });
+    const r = (await post(capture(from)).expect(201)).body as IdentityResult;
+    const [account] = await accountsOf(r.profileId!);
+    const profile = await t.prisma.customerProfile.findUniqueOrThrow({
+      where: { id: r.profileId! },
+    });
+    const { pending } = await t.prisma.$transaction(
+      async (tx) => {
+        // Staff edit the customer and hold its row until they commit.
+        await tx.customer.update({
+          where: { id: account!.id },
+          data: { name: 'Staff Verified Name' },
+        });
+        const sent = t.prisma
+          .$transaction((other) =>
+            t.app.get(CustomersService).channelAccountInTx(other, {
+              profile: { ...profile, name: 'Given Bot Name' },
+              channelName: 'Chat Name Race',
+              branchId: dxb,
+              apiClientId: clientId,
+            }),
+          )
+          .then(() => 'done');
+        await waitForLockWaiter(t.prisma, 1);
+        return { pending: sent };
+      },
+      { timeout: 20_000 },
+    );
+    await pending;
+    const after = await t.prisma.customer.findUniqueOrThrow({ where: { id: account!.id } });
+    expect(after.name).toBe('Staff Verified Name');
   });
 });
