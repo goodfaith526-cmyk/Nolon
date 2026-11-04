@@ -497,6 +497,23 @@ describe('Customer Service booking request approval (R3c2)', () => {
     expect((await detail(cookies.salesPts, made.id)).status).toBe('pending');
   });
 
+  it('books a customer registered in another branch, in the request\u2019s branch (plan 09d)', async () => {
+    const made = await request(ids.served!);
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const done = (
+      await approve(cookies.salesPts, made.id, {
+        version,
+        paymentCurrency: 'USD',
+        pricing: pricing(ids.served!),
+        pricingFingerprint: price.pricingFingerprint,
+        booking: booking(ids.customerJed!),
+      }).expect(201)
+    ).body as CsBookingRequestStaffDto;
+    const row = await t.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
+    expect(row).toMatchObject({ branchId: pts, customerId: ids.customerJed });
+  });
+
   it('refuses an approval that does not fit the request, and makes no booking', async () => {
     const made = await request(ids.served!);
     const { version } = await detail(cookies.salesPts, made.id);
@@ -525,9 +542,6 @@ describe('Customer Service booking request approval (R3c2)', () => {
     ]) {
       await refused(cookies.salesPts, { booking: booking(ids.customerPts!, extra) }, 400);
     }
-    // A customer of another branch: not one of PTS Sales', and not the request's branch.
-    await refused(cookies.salesPts, { booking: booking(ids.customerJed!) }, 404);
-    await refused(cookies.admin, { booking: booking(ids.customerJed!) }, 400, 'BRANCH_MISMATCH');
     // A request of a customer is booked for that customer only.
     const owner = await t.prisma.csBookingRequest.findUniqueOrThrow({ where: { id: made.id } });
     await t.prisma.csBookingRequest.update({

@@ -555,9 +555,14 @@ export interface QuotationInput {
   lines: QuotationLineInput[];
 }
 
-/** POST /quotations: the quotation belongs to the customer's branch. */
+/**
+ * POST /quotations. Plan 09d: a customer is tied to no branch; the quotation is written in
+ * `branchId` (one where the user may create quotations), else the user's only such branch, else
+ * the customer's branch of registration when the user writes there (400 BRANCH_REQUIRED otherwise).
+ */
 export interface CreateQuotationRequest extends QuotationInput {
   customerId: string;
+  branchId?: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -654,8 +659,10 @@ export interface BookingInput {
   items: BookingItemInput[];
 }
 
+/** POST /bookings. Plan 09d: the branch as for CreateQuotationRequest. */
 export interface CreateBookingRequest extends BookingInput {
   customerId: string;
+  branchId?: string | null;
 }
 
 /** POST /quotations/:id/booking: route, cargo and customer come from the approved quotation. */
@@ -822,6 +829,8 @@ export const FORM_REFUSALS = [
   'ALLOCATION_NOT_APPROVED',
   'ALLOCATION_OTHER_CURRENCY',
   'ALLOCATION_EXCEEDS_BALANCE',
+  // Plan 09d: a receipt settles only its own branch's invoices; param `invoice`.
+  'ALLOCATION_OTHER_BRANCH',
   // An entry draft's branch (drafts saved with missing values): a draft with no customer or
   // shipment yet names its branch; one with them belongs to their branch.
   'BRANCH_REQUIRED',

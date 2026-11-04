@@ -142,7 +142,8 @@ describe('party drafts: the assistant proposes', () => {
   it('refuses another branch, a missing permission and bad fields', async () => {
     const customer = await newCustomer();
     const before = await t.prisma.partyDraft.count();
-    await createDraft(partyRequest(customer.id), tokens.salesJed).expect(404);
+    // Plan 09d: the customer is visible; its party drafts stay in its branch of registration.
+    await createDraft(partyRequest(customer.id), tokens.salesJed).expect(403);
     // Operations sees customers but cannot change them.
     await createDraft(partyRequest(customer.id), tokens.ops).expect(403);
     await createDraft(partyRequest(customer.id, { phone: '0912000111' })).expect(400);
@@ -332,7 +333,7 @@ describe('party drafts: replacing a draft', () => {
     await createDraft(
       { ...partyRequest(customer.id), replacesDraftId: other.id },
       tokens.salesJed,
-    ).expect(404);
+    ).expect(403);
   });
 
   /** Waits until `count` requests wait on a lock, or fails after about 5 seconds. */

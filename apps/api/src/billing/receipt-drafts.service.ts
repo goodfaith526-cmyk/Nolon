@@ -19,7 +19,7 @@ import {
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { branchScope, withPermissions } from '../auth/branch-scope.js';
+import { branchScope, withPermissions, workBranch } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { fieldRefusal } from '../common/validation.js';
@@ -185,7 +185,14 @@ export class ReceiptDraftsService {
     currency?: string,
   ): Promise<ReceiptCashAccountDto[]> {
     const customer = await this.customers.requireCustomer(user, customerId);
-    const accounts = await this.accounts.cashAccountsFor(customer.branchId);
+    // Plan 09d: the cash accounts of the branch that receives.
+    let branchId = customer.branchId;
+    try {
+      branchId = workBranch(user, 'receipts:create', null, customer.branchId);
+    } catch {
+      // Several branches, none the customer's: the customer's branch of registration's.
+    }
+    const accounts = await this.accounts.cashAccountsFor(branchId);
     // With the receipt's currency (the review screen's), only accounts kept in it: a receipt
     // is recorded in its cash account's currency.
     return accounts
@@ -229,7 +236,7 @@ export class ReceiptDraftsService {
     branchId: string | null,
   ): Promise<CheckedReceipt> {
     if (receiptMissingFields(values).length === 0) {
-      const request = completeReceipt(values);
+      const request = { ...completeReceipt(values), branchId };
       const prepared = await this.receipts.prepareCreate(user, request);
       const branch = draftBranch(user, branchId, prepared.branchId);
       await this.preCheck(values, branch, user);
@@ -443,7 +450,8 @@ export class ReceiptDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is checked, posted or recorded while the draft misses or holds an invalid value.
     requireApprovable(receiptCompleteness(receiptRequestOf(current)));
-    const request = completeReceipt(receiptRequestOf(current));
+    // Plan 09d: received in the draft's branch, which the approver must write in.
+    const request = { ...completeReceipt(receiptRequestOf(current)), branchId: current.branchId };
     const prepared = await this.receipts.prepareCreate(user, request);
     await this.prisma.$transaction(async (tx) => {
       let receiptId = '';
@@ -581,6 +589,7 @@ export class ReceiptDraftsService {
       where: { id: { in: ids }, customerId, ...branchScope(user) },
       select: {
         id: true,
+        branchId: true,
         number: true,
         status: true,
         currency: true,
@@ -603,6 +612,15 @@ export class ReceiptDraftsService {
         );
       }
       const params = { invoice: invoice.number ?? '', currency: invoice.currency };
+      // Plan 09d: a receipt settles only its own branch's invoices.
+      if (invoice.branchId !== branchId) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_BRANCH',
+          `Invoice ${params.invoice} is in another branch: receive it in that branch`,
+          [`${at}.invoiceId`],
+          params,
+        );
+      }
       if (invoice.status !== 'APPROVED') {
         throw fieldRefusal(
           'ALLOCATION_NOT_APPROVED',

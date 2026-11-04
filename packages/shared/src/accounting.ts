@@ -501,6 +501,11 @@ export interface CreateReceiptRequest {
    */
   requestId?: string;
   customerId: string;
+  /**
+   * Plan 09d: the branch that receives (as CreateQuotationRequest.branchId). A receipt settles
+   * invoices of its own branch only.
+   */
+  branchId?: string | null;
   receiptDate: string;
   currency: CurrencyCode;
   fxRate?: FxRateString | null;
@@ -697,6 +702,8 @@ export interface OpeningAccountsRequest {
 export interface OpeningCustomerItemRequest {
   requestId: string;
   customerId: string;
+  /** Plan 09d: the branch that carries the item (as CreateQuotationRequest.branchId). */
+  branchId?: string | null;
   /** The day the opening balances are entered (the journal date). */
   entryDate: string;
   /** The invoice's own number and dates in the previous system. */

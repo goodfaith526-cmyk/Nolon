@@ -21,7 +21,12 @@ import type {
 } from '@nolon/shared';
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import {
+  assertBranchAccess,
+  branchScope,
+  listBranchScope,
+  workBranch,
+} from '../auth/branch-scope.js';
 import { lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { addDays, fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { followLoadType } from '../common/load-type.js';
@@ -195,11 +200,21 @@ export class QuotationsService {
    * suggestions: the form keeps a currency or date the person chose, and create/update still take
    * whatever is sent. The customer must be active and in the user's branches (404 otherwise).
    */
-  async defaults(user: AuthUser, customerId: string): Promise<QuotationDefaultsDto> {
+  async defaults(
+    user: AuthUser,
+    customerId: string,
+    branchId?: string,
+  ): Promise<QuotationDefaultsDto> {
     const customer = await this.customers.requireActiveCustomer(user, customerId);
-    const branch = await this.prisma.branch.findUniqueOrThrow({
-      where: { id: customer.branchId },
-    });
+    // Plan 09d: the branch the quotation will be written in; suggestions only, so a user who must
+    // still choose it gets the customer's branch of registration's.
+    let at = customer.branchId;
+    try {
+      at = workBranch(user, 'quotations:create', branchId, customer.branchId);
+    } catch {
+      // No single branch yet: the form asks for it; these stay suggestions.
+    }
+    const branch = await this.prisma.branch.findUniqueOrThrow({ where: { id: at } });
     const today = todayIn(branch.timezone);
     const preferred = customer.preferredCurrency;
     const fromCustomer = preferred !== null && (await this.currencies.isActive(preferred));
@@ -227,7 +242,8 @@ export class QuotationsService {
    */
   async prepareCreate(user: AuthUser, input: CreateQuotationRequest) {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
-    const branchId = customer.branchId;
+    // Plan 09d: the branch the work is done in, never the customer's by rule.
+    const branchId = workBranch(user, 'quotations:create', input.branchId, customer.branchId);
     const today = await this.branchToday(branchId);
     const prepared = await this.prepare(branchId, today, input);
     return {
@@ -255,8 +271,11 @@ export class QuotationsService {
     const customer = input.customerId
       ? await this.customers.requireActiveCustomer(user, input.customerId)
       : null;
-    // The customer's branch, or with none yet the branch the draft names (one of the user's).
-    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
+    // Plan 09d: the branch the draft names, or the work branch for the customer; with no
+    // customer yet, the branch the draft names (one of the user's).
+    const branchId = customer
+      ? workBranch(user, 'quotations:create', givenBranchId, customer.branchId)
+      : draftBranch(user, givenBranchId, null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;
     if (from !== null && to !== null) {

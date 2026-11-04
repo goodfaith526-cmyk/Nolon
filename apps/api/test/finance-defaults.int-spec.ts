@@ -316,7 +316,8 @@ describe('finance defaults (functional review C1, C3, C7, C10)', () => {
     });
 
     it('refuses another branch, a missing permission and a bad amount', async () => {
-      await suggest('100', cookies.financeJed).expect(404);
+      // Plan 09d: the customer is central; JED is offered only JED's invoices (none here).
+      await suggest('100', cookies.financeJed).expect(200);
       await suggest('100', cookies.salesPts).expect(403);
       await suggest('0').expect(400);
       await suggest('1.001').expect(400);

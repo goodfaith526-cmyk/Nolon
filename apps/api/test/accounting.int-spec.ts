@@ -671,7 +671,8 @@ describe('accounting: journals, invoices, receipts, periods', () => {
         allocations: [],
       };
       await post('/receipts', cookies.salesPts, body).expect(403);
-      await post('/receipts', cookies.financeJed, body).expect(404);
+      // Plan 09d: JED may receive from the PTS customer, but not into a PTS cash account.
+      await post('/receipts', cookies.financeJed, body).expect(400);
       const receipt = (await post('/receipts', cookies.financePts, body).expect(201))
         .body as ReceiptDto;
       expect(receipt.unallocated).toBe('100');

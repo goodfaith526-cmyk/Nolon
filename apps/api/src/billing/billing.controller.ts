@@ -91,6 +91,7 @@ export const createReceiptBody = z
   .object({
     requestId: z.uuid().optional(),
     customerId: z.uuid(),
+    branchId: z.uuid().optional(),
     receiptDate: dateString,
     currency: currencyCode,
     fxRate: fxRate.nullish(),
@@ -138,6 +139,7 @@ const openingItemBody = z
   .object({
     requestId: z.uuid(),
     customerId: z.uuid(),
+    branchId: z.uuid().optional(),
     entryDate: dateString,
     reference: requiredText(50),
     invoiceDate: dateString,

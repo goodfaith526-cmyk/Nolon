@@ -23,7 +23,7 @@ import type {
 } from '@nolon/shared';
 import { hasSeaLeg } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { branchScope, listBranchScope, workBranch } from '../auth/branch-scope.js';
 import { assertOutletInTx, lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
 import { fromDbDateOrNull, toDbDate } from '../common/dates.js';
 import {
@@ -194,7 +194,6 @@ export class BookingsService {
   ): Promise<BookingFromQuotationPreviewDto> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
-    requireSameBranch(quotation.branchId, customer.branchId);
     const existing = await this.prisma.booking.findFirst({
       where: { quotationId: quotation.id },
       select: { id: true },
@@ -297,11 +296,17 @@ export class BookingsService {
    * active, route, parties, cargo lines). insertInTx then records it, so a caller (an approved
    * assistant draft) can do so inside its own transaction.
    */
-  async prepareCreate(user: AuthUser, input: CreateBookingRequest): Promise<PreparedBooking> {
+  async prepareCreate(
+    user: AuthUser,
+    input: CreateBookingRequest,
+    /** A bot request's approval: its branch, which the approval's own checks cover. */
+    inBranch?: string,
+  ): Promise<PreparedBooking> {
     const customer = await this.customers.requireActiveCustomer(user, input.customerId);
     const prepared = await this.prepare(customer.id, input);
     return {
-      branchId: customer.branchId,
+      // Plan 09d: the branch the work is done in, never the customer's by rule.
+      branchId: inBranch ?? workBranch(user, 'bookings:create', input.branchId, customer.branchId),
       customerId: customer.id,
       quotationId: null,
       ...prepared,
@@ -341,7 +346,6 @@ export class BookingsService {
   ): Promise<PreparedBooking> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
-    requireSameBranch(quotation.branchId, customer.branchId);
     const prepared = await this.prepare(customer.id, {
       originLocationId: quotation.originLocationId,
       destinationLocationId: quotation.destinationLocationId,
@@ -379,8 +383,11 @@ export class BookingsService {
     const customer = input.customerId
       ? await this.customers.requireActiveCustomer(user, input.customerId)
       : null;
-    // The customer's branch, or with none yet the branch the draft names (one of the user's).
-    const branchId = draftBranch(user, givenBranchId, customer?.branchId ?? null);
+    // Plan 09d: the branch the draft names, or the work branch for the customer; with no
+    // customer yet, the branch the draft names (one of the user's).
+    const branchId = customer
+      ? workBranch(user, 'bookings:create', givenBranchId, customer.branchId)
+      : draftBranch(user, givenBranchId, null);
     const from = input.originLocationId ?? null;
     const to = input.destinationLocationId ?? null;
     if (from !== null && to !== null) {
@@ -410,7 +417,6 @@ export class BookingsService {
   ): Promise<{ branchId: string; customerId: string; quotationId: string }> {
     const quotation = await this.quotations.requireApproved(user, quotationId);
     const customer = await this.customers.requireActiveCustomer(user, quotation.customerId);
-    requireSameBranch(quotation.branchId, customer.branchId);
     await this.checkPresentLines(customer.id, input);
     return { branchId: quotation.branchId, customerId: customer.id, quotationId: quotation.id };
   }
@@ -871,17 +877,6 @@ function requireQuotedOutlet(requested: string | null | undefined, quoted: strin
       "A booking made from a quotation keeps the quotation's sales outlet",
       ['salesOutletId'],
     );
-  }
-}
-
-/**
- * A booking made from a quotation is filed in the quotation's branch, which is its customer's: a
- * quotation is priced in its customer's branch and a customer never changes branch. Checked anyway,
- * so a booking can never land in a branch other than its customer's (409).
- */
-function requireSameBranch(quotationBranchId: string, customerBranchId: string): void {
-  if (quotationBranchId !== customerBranchId) {
-    throw new ConflictException("This quotation is not in its customer's branch");
   }
 }
 

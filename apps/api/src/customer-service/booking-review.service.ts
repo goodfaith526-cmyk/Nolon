@@ -639,13 +639,20 @@ export class BookingReviewService {
       });
     if (!initial.profileId && !booking.customerId && !fromRequest)
       throw new BadRequestException('Choose the booking customer');
+    if (initial.branchId === null)
+      throw new ConflictException('Only a pending request with a branch is approved');
     const prepareProfile =
       (initial.profileId || fromRequest) && initial.branchId
         ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
         : null;
     const legacyPrepared =
       !initial.profileId && !fromRequest
-        ? await this.bookings.prepareCreate(user, { ...booking, customerId: booking.customerId! })
+        ? // Plan 09d: the customer may be of any branch; the booking is the request's branch's.
+          await this.bookings.prepareCreate(
+            user,
+            { ...booking, customerId: booking.customerId! },
+            initial.branchId,
+          )
         : null;
     const written = await this.prisma.$transaction(async (tx) => {
       const row = await lockRequest(tx, user, id, input.version);

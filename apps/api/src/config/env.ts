@@ -81,6 +81,20 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  /**
+   * Plan 09d section 4a: a profile's first message makes its one central customer. Off by default.
+   */
+  CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /** The branch code a first-message customer is registered in when the key has several. */
+  CS_CUSTOMER_IDENTITY_HOME_BRANCH: emptyAsUnset(
+    z
+      .string()
+      .regex(/^[A-Z]{2,10}$/)
+      .optional(),
+  ),
   CS_CUSTOMER_IDENTITY_COMPANY_ID: emptyAsUnset(
     // Stable namespace; never inferred from an incoming message.
     z

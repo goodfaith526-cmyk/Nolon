@@ -114,6 +114,7 @@ const approveBody = z
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
     booking: bookingCreateBody
       .omit({
+        branchId: true,
         originLocationId: true,
         destinationLocationId: true,
         mode: true,

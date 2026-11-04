@@ -19,12 +19,12 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, canAccessBranch, listBranchScope } from '../auth/branch-scope.js';
+import { branchScope, canAccessBranch, listBranchScope, workBranch } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { type PageQuery, fieldRefusal } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -275,7 +275,8 @@ export class ReceiptsService {
     const fxRate = await this.fxRates.resolve(currency.code, input.receiptDate, input.fxRate);
     return {
       customerId: customer.id,
-      branchId: customer.branchId,
+      // Plan 09d: the branch that receives, not the customer's by rule.
+      branchId: workBranch(user, 'receipts:create', input.branchId, customer.branchId),
       currency: currency.code,
       decimals,
       amount,
@@ -331,7 +332,7 @@ export class ReceiptsService {
     }
     return {
       customerId: customer?.id ?? null,
-      branchId: customer?.branchId ?? null,
+      branchId: customer ? receiptBranch(user, customer.branchId) : null,
       currency: currency?.code ?? null,
     };
   }
@@ -361,6 +362,16 @@ export class ReceiptsService {
       const invoice = invoices.get(a.invoiceId);
       if (!invoice || invoice.customerId !== customer.id) {
         throw new BadRequestException('An allocation is to an invoice of another customer');
+      }
+      // Plan 09d: a customer's invoices may be in several branches; a receipt settles its own
+      // branch's, so each branch's receivables stay its own.
+      if (invoice.branchId !== branchId) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_BRANCH',
+          `Invoice ${invoice.number ?? ''} is in another branch: receive it in that branch`,
+          ['allocations'],
+          { invoice: invoice.number ?? '' },
+        );
       }
       if (invoice.status !== 'APPROVED') {
         throw new BadRequestException(`Invoice ${invoice.number ?? ''} is not approved`);
@@ -677,4 +688,17 @@ function sameAllocations(
     amounts.size === posted.length &&
     posted.every((a) => amounts.get(a.invoiceId)?.eq(a.amount) === true)
   );
+}
+
+/**
+ * Plan 09d: the branch a receipt draft is filed in, before the person chooses: the work branch
+ * for the customer, else (several branches, none the customer's) the customer's branch of
+ * registration; the receipt itself takes the branch again on approval.
+ */
+function receiptBranch(user: AuthUser, homeBranchId: string): string {
+  try {
+    return workBranch(user, 'receipts:create', null, homeBranchId);
+  } catch {
+    return homeBranchId;
+  }
 }

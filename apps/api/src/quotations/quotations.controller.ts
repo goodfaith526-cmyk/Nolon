@@ -74,12 +74,17 @@ export const quotationFields = {
 /** NOLON screens only (plan 7.2): quotation drafts take no sales outlet. */
 const salesOutletId = z.uuid().nullish();
 export const quotationCreateBody = z
-  .object({ customerId: z.uuid(), ...quotationFields, salesOutletId })
+  .object({
+    customerId: z.uuid(),
+    branchId: z.uuid().optional(),
+    ...quotationFields,
+    salesOutletId,
+  })
   .strict();
 /** A quotation without its customer (an update). */
 export const quotationInputBody = z.object({ ...quotationFields, salesOutletId }).strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
-const defaultsQuery = z.object({ customerId: z.uuid() }).strict();
+const defaultsQuery = z.object({ customerId: z.uuid(), branchId: z.uuid().optional() }).strict();
 const listQuery = pageQuery
   .extend({
     status: z.enum(QUOTATION_STATUSES).optional(),
@@ -106,7 +111,8 @@ export class QuotationsController {
   @Get('defaults')
   @RequirePermission('quotations:create')
   defaults(@CurrentUser() user: AuthUser, @Query() query: unknown): Promise<QuotationDefaultsDto> {
-    return this.quotations.defaults(user, parse(defaultsQuery, query).customerId);
+    const q = parse(defaultsQuery, query);
+    return this.quotations.defaults(user, q.customerId, q.branchId);
   }
 
   @OutletScoped()
