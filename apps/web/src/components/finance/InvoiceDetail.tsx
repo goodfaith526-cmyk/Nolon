@@ -13,6 +13,7 @@ import { StatusBadge } from '../StatusBadge';
 import { CreditNoteFields, creditNoteFields } from './CreditNoteDetail';
 import { CreditNoteNumber } from './CreditNotes';
 import { Money, useRecord } from './common';
+import { useCreditBlock, useCustomerCredit } from './CustomerCredit';
 import { InvoiceKindLabel, InvoiceNumber } from './Invoices';
 import { PricingNotice } from './InvoiceForm';
 import { PrintLink } from '../print/PrintLink';
@@ -37,6 +38,12 @@ export function InvoiceDetail({ id }: { id: string }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const block = useCreditBlock();
+  // Client decision ب6: the position once this draft is approved, as the approval checks it.
+  const credit = useCustomerCredit(
+    invoice?.status === 'DRAFT' && invoice.actions.canApprove ? invoice.customerId : null,
+    id,
+  );
 
   if (!invoice) {
     return loadNotice ? <Notice notice={loadNotice} /> : <p className="muted">{tc('loading')}</p>;
@@ -80,6 +87,7 @@ export function InvoiceDetail({ id }: { id: string }) {
   }
 
   const inv = invoice;
+  const creditBlock = block(credit, inv.customerName);
   const chargeName = (code: string) => {
     const charge = master?.chargeTypes.find((c) => c.code === code);
     return charge ? name(charge) : code;
@@ -126,7 +134,13 @@ export function InvoiceDetail({ id }: { id: string }) {
             </Link>
           )}
           {inv.actions.canApprove && (
-            <button type="button" className="primary" onClick={() => setPanel('approve')}>
+            <button
+              type="button"
+              className="primary"
+              disabled={creditBlock !== null}
+              title={creditBlock ?? undefined}
+              onClick={() => setPanel('approve')}
+            >
               {t('approve')}
             </button>
           )}
@@ -134,6 +148,11 @@ export function InvoiceDetail({ id }: { id: string }) {
       </div>
       <PricingNotice invoice={inv} />
       <Notice notice={notice} />
+      {inv.actions.canApprove && creditBlock && (
+        <p className="error" role="status">
+          {creditBlock}
+        </p>
+      )}
 
       {panel === 'approve' && (
         <div className="card stack">

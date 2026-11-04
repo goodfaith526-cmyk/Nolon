@@ -247,6 +247,7 @@
     "locale_en": "English",
     "paymentTermsDays": "Payment terms (days)",
     "creditLimit": "Credit limit",
+    "openBalance": "Open balance",
     "creditLimitCurrency": "Credit limit currency",
     "notes": "Notes",
     "contactAdded": "Contact added.",
@@ -2868,7 +2869,9 @@
     "STATEMENT_ALREADY_BILLED": "This statement already has a supplier bill.",
     "STATEMENT_BILLED": "This statement has a supplier bill. Cancel the bill first.",
     "BILL_FROM_STATEMENT": "This bill was made from a partner statement. Cancel it and make it again from the statement.",
-    "STATEMENT_BILL_MISMATCH": "This bill no longer matches its statement. Cancel it and make it again from the statement."
+    "STATEMENT_BILL_MISMATCH": "This bill no longer matches its statement. Cancel it and make it again from the statement.",
+    "CREDIT_LIMIT_EXCEEDED": "Customer {customer} has an open balance of {balance} {currency} and a credit limit of {limit} {currency}. Record their payment first, or have a manager raise the limit.",
+    "CREDIT_LIMIT_NO_RATE": "There is no exchange rate for {currency} to check customer {customer}'s credit limit. Add the rate first."
   },
   "Locations": {
     "title": "Ports and cities",

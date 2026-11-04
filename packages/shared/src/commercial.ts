@@ -939,6 +939,9 @@ export const FORM_REFUSALS = [
   'PROFILE_NAME_REQUIRED',
   'PROFILE_REVIEW_REQUIRED',
   'PROFILE_VERSION_CONFLICT',
+  // Client decision ب6 (plan 06): the customer's credit limit on confirm and invoice approval.
+  'CREDIT_LIMIT_EXCEEDED',
+  'CREDIT_LIMIT_NO_RATE',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

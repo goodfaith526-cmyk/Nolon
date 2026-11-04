@@ -11,15 +11,31 @@ type Tx = Prisma.TransactionClient;
  */
 export type BookingConfirmCheck = (tx: Tx, bookingId: string) => Promise<void>;
 
+/**
+ * A check that must be the LAST step of a transaction that confirms a booking, after every write
+ * of that transaction (plan 06 ب6, F147-2: billing's credit limit, under the customer's advisory
+ * lock). BookingsService.finalChecksInTx runs them; every caller of confirmInTx calls it last.
+ */
+export type BookingFinalCheck = (tx: Tx, booking: { customerId: string }) => Promise<void>;
+
 @Injectable()
 export class BookingConfirmChecksRegistry {
   private readonly checks: BookingConfirmCheck[] = [];
+  private readonly finals: BookingFinalCheck[] = [];
 
   register(check: BookingConfirmCheck): void {
     this.checks.push(check);
   }
 
+  registerFinal(check: BookingFinalCheck): void {
+    this.finals.push(check);
+  }
+
   async run(tx: Tx, bookingId: string): Promise<void> {
     for (const check of this.checks) await check(tx, bookingId);
+  }
+
+  async runFinal(tx: Tx, booking: { customerId: string }): Promise<void> {
+    for (const check of this.finals) await check(tx, booking);
   }
 }

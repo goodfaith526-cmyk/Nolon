@@ -19,6 +19,7 @@ import {
   RECEIPT_STATUSES,
   type CreditNoteDto,
   type CreditNoteSummaryDto,
+  type CustomerCreditDto,
   type CustomerInvoiceDto,
   type CustomerInvoiceSummaryDto,
   type CustomerStatementDto,
@@ -43,6 +44,7 @@ import {
   quantity,
   requiredText,
 } from '../common/validation.js';
+import { CreditLimitService } from './credit-limit.service.js';
 import { CustomerStatementService } from './customer-statement.service.js';
 import { CreditNotesService } from './credit-notes.service.js';
 import { InvoicesService } from './invoices.service.js';
@@ -317,6 +319,24 @@ export class ReceiptsController {
     @Body() body: unknown,
   ): Promise<ReceiptDto> {
     return this.applications.reverse(user, id, applicationId, parse(reasonBody, body).reason);
+  }
+}
+
+const creditQuery = z.strictObject({ invoiceId: z.uuid().optional() });
+
+/** Client decision ب6: a customer's credit position for screens (the server decides). */
+@Controller('customer-credit')
+export class CustomerCreditController {
+  constructor(private readonly credit: CreditLimitService) {}
+
+  @Get(':customerId')
+  @RequirePermission('customer_invoices:view')
+  get(
+    @CurrentUser() user: AuthUser,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+    @Query() query: unknown,
+  ): Promise<CustomerCreditDto> {
+    return this.credit.forUser(user, customerId, parse(creditQuery, query).invoiceId);
   }
 }
 

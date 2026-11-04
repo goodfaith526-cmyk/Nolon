@@ -14,6 +14,7 @@ import { PrintLink } from '../print/PrintLink';
 import { PartnerName } from '../partners/PartnerSelect';
 import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 import { useStandalone } from '../standalone/StandaloneShell';
+import { useCreditBlock, useCustomerCredit } from '../finance/CustomerCredit';
 
 export function BookingDetail({ id }: { id: string }) {
   const t = useTranslations('Bookings');
@@ -33,6 +34,13 @@ export function BookingDetail({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [reason, setReason] = useState('');
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const block = useCreditBlock();
+  // Client decision ب6: a draft the server would refuse to confirm (over the credit limit).
+  const credit = useCustomerCredit(
+    booking?.status === 'DRAFT' && can(me, 'bookings:approve') && can(me, 'customer_invoices:view')
+      ? booking.customerId
+      : null,
+  );
 
   const load = useCallback(() => {
     api<BookingDto>(`/bookings/${id}`)
@@ -73,6 +81,7 @@ export function BookingDetail({ id }: { id: string }) {
   const party = (partyId: string | null) =>
     partyId ? (customer?.parties.find((p) => p.id === partyId)?.name ?? '…') : '—';
   const status = booking.status;
+  const creditBlock = block(credit, booking.customerName);
   const categoryName = (code: string | null) => {
     const category = master?.priceCategories.find((c) => c.code === code);
     return category ? name(category) : (code ?? '—');
@@ -119,6 +128,8 @@ export function BookingDetail({ id }: { id: string }) {
             <button
               type="button"
               className="primary"
+              disabled={creditBlock !== null}
+              title={creditBlock ?? undefined}
               onClick={() => void act('confirm', t('confirmedNotice'))}
             >
               {t('confirm')}
@@ -127,6 +138,11 @@ export function BookingDetail({ id }: { id: string }) {
         </div>
       </div>
       <Notice notice={notice} />
+      {status === 'DRAFT' && creditBlock && (
+        <p className="error" role="status">
+          {creditBlock}
+        </p>
+      )}
       {cancelling && (
         <form
           className="card stack"
