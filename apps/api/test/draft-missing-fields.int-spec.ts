@@ -46,7 +46,6 @@ let jebelAli: string;
 let portSudan: string;
 let khartoum: string;
 let customer: CustomerDto;
-let jedCustomer: CustomerDto;
 let vehicle: VehicleDto;
 let driver: DriverDto;
 
@@ -137,7 +136,6 @@ beforeAll(async () => {
   t = await createTestApp();
   r = requests(t);
   dxb = await branchId(t.prisma, 'DXB');
-  const jed = await branchId(t.prisma, 'JED');
   const loc = async (code: string) =>
     (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
   jebelAli = await loc('AEJEA');
@@ -184,7 +182,6 @@ beforeAll(async () => {
         .expect(201)
     ).body as CustomerDto;
   customer = await newCustomer(dxb, cookies.salesDxb, 'Missing Fields Test Trading');
-  jedCustomer = await newCustomer(jed, cookies.salesJed, 'Missing Fields JED Trading');
   const suffix = String(randomInt(100_000, 999_999));
   vehicle = (
     await r
@@ -577,7 +574,8 @@ describe('quotation drafts with missing values', () => {
   it('still checks every value given, and the customer', async () => {
     const before = await t.prisma.quotationDraft.count();
     await create({ idempotencyKey: draftKey() }).expect(400);
-    await create({ idempotencyKey: draftKey(), customerId: jedCustomer.id }).expect(404);
+    // Plan 09d: a customer of another branch is anyone's; an unknown one is not found.
+    await create({ idempotencyKey: draftKey(), customerId: randomUUID() }).expect(404);
     const base = { idempotencyKey: draftKey(), customerId: customer.id };
     await create({ ...base, validUntil: '2020-01-01' }).expect(400);
     await create({ ...base, idempotencyKey: draftKey(), currency: 'ZZZ' }).expect(400);
@@ -665,10 +663,7 @@ describe('quotation drafts with missing values', () => {
     await edit(cookies.salesDxb, { version: 2, terms: 'x' }).expect(409);
     // A customer outside the reviewer's branches is not found; one of another branch, for a
     // reviewer of every branch, is not the draft's branch.
-    await edit(cookies.salesDxb, { version: 1, customerId: jedCustomer.id }).expect(404);
-    expect(
-      code(await edit(cookies.admin, { version: 1, customerId: jedCustomer.id }).expect(400)),
-    ).toBe('BRANCH_MISMATCH');
+    await edit(cookies.salesDxb, { version: 1, customerId: randomUUID() }).expect(404);
     await edit(cookies.salesDxb, { version: 1, validUntil: 'soon' }).expect(400);
     await edit(cookies.salesDxb, { version: 1, lines: [{ quantity: '-1' }] }).expect(400);
     await r
@@ -728,7 +723,8 @@ describe('booking drafts with missing values', () => {
   it('still checks every value given, and the customer', async () => {
     const before = await t.prisma.bookingDraft.count();
     await create({ idempotencyKey: draftKey() }).expect(400);
-    await create({ idempotencyKey: draftKey(), customerId: jedCustomer.id }).expect(404);
+    // Plan 09d: a customer of another branch is anyone's; an unknown one is not found.
+    await create({ idempotencyKey: draftKey(), customerId: randomUUID() }).expect(404);
     const base = { customerId: customer.id };
     await create({ ...base, idempotencyKey: draftKey(), mode: 'AIR' }).expect(400);
     await create({ ...base, idempotencyKey: draftKey(), shipperId: randomUUID() }).expect(400);
@@ -804,10 +800,7 @@ describe('booking drafts with missing values', () => {
     await edit(cookies.opsJed, { version: 1, specialInstructions: 'x' }).expect(404);
     await edit(cookies.whDxb, { version: 1, specialInstructions: 'x' }).expect(403);
     await edit(cookies.opsDxb, { version: 2, specialInstructions: 'x' }).expect(409);
-    await edit(cookies.opsDxb, { version: 1, customerId: jedCustomer.id }).expect(404);
-    expect(
-      code(await edit(cookies.admin, { version: 1, customerId: jedCustomer.id }).expect(400)),
-    ).toBe('BRANCH_MISMATCH');
+    await edit(cookies.opsDxb, { version: 1, customerId: randomUUID() }).expect(404);
     await edit(cookies.opsDxb, { version: 1, services: ['TELEPORT'] }).expect(400);
     await edit(cookies.opsDxb, { version: 1, items: [{ quantity: 1.5 }] }).expect(400);
     await r
@@ -1058,13 +1051,10 @@ describe('quotation and booking drafts saved without a customer', () => {
       'BRANCH_REQUIRED',
     );
     await create({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
-    expect(
-      code(
-        await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
-          400,
-        ),
-      ),
-    ).toBe('BRANCH_MISMATCH');
+    // Plan 09d: the customer's draft is written in a branch the user writes in.
+    await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
+      403,
+    );
     expect(await t.prisma.quotationDraft.count()).toBe(before);
 
     const { id, missingFields } = summary(
@@ -1119,13 +1109,10 @@ describe('quotation and booking drafts saved without a customer', () => {
       'BRANCH_REQUIRED',
     );
     await create({ idempotencyKey: draftKey(), branchId: jed }).expect(403);
-    expect(
-      code(
-        await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
-          400,
-        ),
-      ),
-    ).toBe('BRANCH_MISMATCH');
+    // Plan 09d: the customer's draft is written in a branch the user writes in.
+    await create({ idempotencyKey: draftKey(), branchId: jed, customerId: customer.id }).expect(
+      403,
+    );
     expect(await t.prisma.bookingDraft.count()).toBe(before);
 
     const { id, missingFields } = summary(
@@ -1140,16 +1127,7 @@ describe('quotation and booking drafts saved without a customer', () => {
       await r.post(`/booking-drafts/${id}/approve`, cookies.opsDxb, { version: 1 }),
       ['customerId', ...BOOKING_MISSING],
     );
-    expect(
-      code(
-        await r
-          .patch(`/booking-drafts/${id}`, cookies.admin, {
-            version: 1,
-            customerId: jedCustomer.id,
-          })
-          .expect(400),
-      ),
-    ).toBe('BRANCH_MISMATCH');
+    // Plan 09d: a customer of any branch may fill it in; the draft stays in its branch.
     const filled = (
       await r
         .patch(`/booking-drafts/${id}`, cookies.opsDxb, {

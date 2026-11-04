@@ -201,9 +201,9 @@ describe('commercial defaults (functional review B1, B3, B4, B5)', () => {
       expect(d.today).toBe(todayIn('Asia/Riyadh'));
     });
 
-    it("refuses another branch's customer, a user who cannot create quotations, and no customer", async () => {
+    it("serves another branch's customer (plan 09d), refuses a user who cannot create quotations, and no customer", async () => {
       const c = await customer({ preferredCurrency: 'USD' });
-      await get(`/quotations/defaults?customerId=${c.id}`, cookies.salesJed).expect(404);
+      await get(`/quotations/defaults?customerId=${c.id}`, cookies.salesJed).expect(200);
       await get(`/quotations/defaults?customerId=${c.id}`, cookies.finance).expect(403);
       await get('/quotations/defaults', cookies.sales).expect(400);
       await get('/quotations/defaults?customerId=nope', cookies.sales).expect(400);
@@ -288,10 +288,10 @@ describe('commercial defaults (functional review B1, B3, B4, B5)', () => {
       expect((await suggestion(second.id)).source).toBeNull();
     });
 
-    it("refuses another branch's customer and a user who cannot create bookings", async () => {
+    it("serves another branch's customer (plan 09d) and refuses a user who cannot create bookings", async () => {
       const c = await customer();
       await party(c.id, 'Only');
-      await get(`/bookings/party-suggestion?customerId=${c.id}`, cookies.salesJed).expect(404);
+      await get(`/bookings/party-suggestion?customerId=${c.id}`, cookies.salesJed).expect(200);
       await get(`/bookings/party-suggestion?customerId=${c.id}`, cookies.finance).expect(403);
       await get('/bookings/party-suggestion', cookies.sales).expect(400);
     });

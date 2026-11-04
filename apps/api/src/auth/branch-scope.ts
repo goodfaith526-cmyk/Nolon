@@ -1,3 +1,4 @@
+import { fieldRefusal } from '../common/validation.js';
 import { ForbiddenException } from '@nestjs/common';
 import type { Permission } from '@nolon/shared';
 import type { AuthUser } from './auth-user.js';
@@ -55,4 +56,29 @@ export function listBranchScope(
 export function withPermissions(user: AuthUser, ...permissions: Permission[]): AuthUser {
   const held = new Set(user.access.branchesWith(permissions));
   return { ...user, allowedBranchIds: user.allowedBranchIds.filter((id) => held.has(id)) };
+}
+
+/**
+ * Plan 09d section 2: the branch a new record for a customer is written in, now that a customer
+ * is tied to no branch. The branch asked for (403 unless the user holds `permission` there); else
+ * the user's only branch with it; else the customer's branch of registration when the user holds
+ * it there; else 400 BRANCH_REQUIRED. Callers that send no branch (the assistant's drafts) keep
+ * the branch they had before 09d whenever the user may write there.
+ */
+export function workBranch(
+  user: AuthUser,
+  permission: Permission,
+  given: string | null | undefined,
+  homeBranchId: string | null,
+): string {
+  const writable = user.access
+    .branchesWith([permission])
+    .filter((id) => user.allowedBranchIds.includes(id));
+  if (given) {
+    if (!writable.includes(given)) throw new ForbiddenException('No access to this branch');
+    return given;
+  }
+  if (writable.length === 1) return writable[0]!;
+  if (homeBranchId !== null && writable.includes(homeBranchId)) return homeBranchId;
+  throw fieldRefusal('BRANCH_REQUIRED', 'Choose the branch to write this in', ['branchId']);
 }

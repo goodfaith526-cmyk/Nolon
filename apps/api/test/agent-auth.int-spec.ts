@@ -4,7 +4,6 @@ import type {
   AgentClientCreatedDto,
   AgentTokenResponse,
   AuthMeResponse,
-  CustomerSummaryDto,
   Page,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -360,8 +359,10 @@ describe('acting with a token', () => {
     const me = (await asAgent('/api/v1/auth/me', token.accessToken).expect(200))
       .body as AuthMeResponse;
     expect(me.branches.map((b) => b.code)).toEqual(['DXB']);
-    const list = (await asAgent('/api/v1/customers', token.accessToken).expect(200))
-      .body as Page<CustomerSummaryDto>;
+    // Documents are the user's branches' (customers are central since plan 09d).
+    const list = (await asAgent('/api/v1/quotations', token.accessToken).expect(200)).body as Page<{
+      branchId: string;
+    }>;
     for (const c of list.items) expect(c.branchId).toBe(dxb);
 
     // A branch taken away is gone on the next request, not at the next token.

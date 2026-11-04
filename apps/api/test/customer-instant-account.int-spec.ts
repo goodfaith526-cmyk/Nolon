@@ -343,7 +343,7 @@ describe('Instant branch account from a signed bot booking request', () => {
     expect(await accountsOf(p.profileId)).toHaveLength(1);
   });
 
-  it('reuses the account in the same branch and makes another in another branch (3)', async () => {
+  it('reuses the one account of the profile from any branch (3, plan 09d)', async () => {
     const p = await profile(t);
     const first = await requestOf(await book(t, p, body(p)).expect(201));
     const second = await requestOf(await book(t, p, body(p)).expect(201));
@@ -351,11 +351,15 @@ describe('Instant branch account from a signed bot booking request', () => {
       instantAccount: 'REUSED',
       instantCustomerId: first.instantCustomerId,
     });
+    // A request of another branch uses the same customer: no account per branch.
     const third = await requestOf(await book(t, p, body(p, { originId: originJed })).expect(201));
-    expect(third.instantAccount).toBe('CREATED');
+    expect(third).toMatchObject({
+      instantAccount: 'REUSED',
+      instantCustomerId: first.instantCustomerId,
+    });
     const accounts = await accountsOf(p.profileId);
-    expect(accounts.map((a) => a.branchId).sort()).toEqual([dxb, jed].sort());
-    expect(third.instantCustomerId).toBe(accounts.find((a) => a.branchId === jed)?.id);
+    expect(accounts.map((a) => a.branchId)).toEqual([dxb]);
+    void jed;
 
     // An inactive account is never revived by the bot: staff decide.
     await t.prisma.customer.update({

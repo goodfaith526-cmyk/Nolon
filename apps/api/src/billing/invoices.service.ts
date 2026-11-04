@@ -31,7 +31,7 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, reportBranchIds } from '../auth/branch-scope.js';
+import { branchScope, reportBranchIds, workBranch } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { beforeLocalToday, branchZones, dateRange } from '../common/list-filters.js';
 import { uuidList } from '../common/report-sql.js';
@@ -335,13 +335,12 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     customerId: string,
     currency: string | undefined,
     limit: number,
+    branchId?: string,
   ): Promise<ReceiptOpenInvoiceDto[]> {
     const customer = await this.customers.requireCustomer(user, customerId);
-    const ids = await this.settlementIds(
-      reportBranchIds(user, customer.branchId),
-      'OPEN',
-      customer.id,
-    );
+    // Plan 09d: the customer's open invoices in the user's branches (or the one asked for: a
+    // receipt settles invoices of its own branch only).
+    const ids = await this.settlementIds(reportBranchIds(user, branchId), 'OPEN', customer.id);
     const invoices = await this.prisma.customerInvoice.findMany({
       where: { id: { in: ids }, ...(currency ? { currency } : {}) },
       orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
@@ -393,6 +392,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     input: OpeningCustomerItemRequest,
   ): Promise<CustomerInvoiceDto> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
+    // Plan 09d: the opening item is the branch's that carries it, not the customer's by rule.
+    const branchId = workBranch(user, 'manual_journals:create', input.branchId, customer.branchId);
     if (input.dueDate < input.invoiceDate) {
       throw new BadRequestException('The due date is before the invoice date');
     }
@@ -402,7 +403,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const existing = await this.prisma.customerInvoice.findUnique({
       where: { id: input.requestId },
     });
-    if (existing) return this.sameOpeningRequest(user, existing, input);
+    if (existing) return this.sameOpeningRequest(user, existing, input, branchId);
     const amount = dec(input.amount);
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -426,7 +427,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
             sourceId: input.requestId,
             number,
             reference: input.reference,
-            branchId: customer.branchId,
+            branchId,
             customerId: customer.id,
             entryDate: input.entryDate,
             currency: currency.code,
@@ -440,7 +441,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           data: {
             id: input.requestId,
             number,
-            branchId: customer.branchId,
+            branchId,
             customerId: customer.id,
             isOpening: true,
             reference: input.reference,
@@ -467,7 +468,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         where: { id: input.requestId },
       });
       if (!raced) throw error;
-      return this.sameOpeningRequest(user, raced, input);
+      return this.sameOpeningRequest(user, raced, input, branchId);
     }
     return this.get(user, input.requestId);
   }
@@ -476,6 +477,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     user: AuthUser,
     existing: CustomerInvoice,
     input: OpeningCustomerItemRequest,
+    branchId: string,
   ): Promise<CustomerInvoiceDto> {
     const entry = existing.journalEntryId
       ? await this.prisma.journalEntry.findUnique({
@@ -494,7 +496,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       fromDbDate(existing.invoiceDate) === input.invoiceDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&
       existing.reference === input.reference &&
-      existing.total.eq(dec(input.amount));
+      existing.total.eq(dec(input.amount)) &&
+      // Plan 09d (F184-8): the retry's work branch is the one the item was recorded in.
+      existing.branchId === branchId;
     if (!same) {
       throw new ConflictException('This request id was already used: send a new id');
     }

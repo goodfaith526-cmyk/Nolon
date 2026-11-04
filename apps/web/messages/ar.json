@@ -2796,6 +2796,7 @@
     "ALLOCATION_NOT_APPROVED": "الفاتورة {invoice} غير معتمدة: الدفع يكون على الفواتير المعتمدة فقط.",
     "ALLOCATION_OTHER_CURRENCY": "الفاتورة {invoice} بعملة {currency}: استلمها بتلك العملة.",
     "ALLOCATION_EXCEEDS_BALANCE": "المتبقي على الفاتورة {invoice} هو {balance} {currency}: لا تخصص أكثر من ذلك.",
+    "ALLOCATION_OTHER_BRANCH": "الفاتورة {invoice} في فرع آخر: استلمها في ذلك الفرع.",
     "BRANCH_REQUIRED": "اختر فرع هذه المسودة.",
     "BRANCH_MISMATCH": "هذا الفرع ليس فرع العميل أو الشحنة: المسودة تتبع فرعهما.",
     "CITY_OTHER_COUNTRY": "المدينة {city} في الدولة {country}: يجب أن يكون الموقع في الدولة نفسها.",
@@ -3238,7 +3239,10 @@
     "estimateReplace": "إرسال تقدير جديد",
     "approveAtEstimate": "الموافقة بالتقدير الذي قبله الزبون:",
     "photosTitle": "صور الزبون ({count})",
-    "photoAlt": "صورة من الزبون"
+    "photoAlt": "صورة من الزبون",
+    "newCustomerFromRequest": "عميل جديد من الطلب: {name}",
+    "chooseExistingCustomer": "اختيار عميل موجود",
+    "useRequestCustomer": "عميل جديد من بيانات الطلب"
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

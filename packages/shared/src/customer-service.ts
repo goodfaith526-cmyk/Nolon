@@ -1108,6 +1108,12 @@ export interface CsApproveRequest {
   /** The fingerprint of the price staff saw (one-item shape); null when they saw no price. */
   pricingFingerprint?: string | null;
   booking: CsApproveBooking;
+  /**
+   * A request linked to no customer or profile (e.g. the website chat): the booking's customer is
+   * made in the request's branch from the sender name and contact phone the bot sent, in the
+   * approval's transaction, instead of staff choosing one. Not with `booking.customerId`.
+   */
+  newCustomerFromRequest?: true;
 }
 
 export interface CsRouteRequest {

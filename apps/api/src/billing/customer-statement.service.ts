@@ -116,7 +116,9 @@ export class CustomerStatementService {
     // An entry with no invoice, receipt (or its applied advance), credit note or opening item
     // behind it (a manual entry, or its reversal) is only shown in full to users who may view journal entries: its text and
     // number are theirs.
-    const seesJournals = user.access.has('manual_journals:view', customer.branchId);
+    // Plan 09d: the statement covers the user's branches, not the customer's; journals are shown
+    // in full only to a user who may view them in every branch it covers.
+    const seesJournals = branchIds.every((b) => user.access.has('manual_journals:view', b));
     const sections = buildStatementSections(
       opening,
       movements.map((m) => {

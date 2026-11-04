@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssistantDraftApproveRequest,
   AssistantDraftDto,
@@ -34,6 +29,7 @@ import {
   draftExpiry,
   draftStatus,
   checkDraft,
+  isRefusal,
   withBranch,
   patched,
   preCheck,
@@ -135,9 +131,18 @@ export function quotationMissingFields(values: QuotationDraftValues): string[] {
 }
 
 /** The quotation of a complete draft, in the shape QuotationsService takes. */
-export function completeQuotation(values: QuotationDraftValues): CreateQuotationRequest {
+export function completeQuotation(
+  values: QuotationDraftValues,
+  branchId: string | null = null,
+): CreateQuotationRequest {
   const { customerId, ...quotation } = values;
-  return { ...completeQuotationInput(quotation), customerId: storedValue(customerId, 'customer') };
+  return {
+    ...completeQuotationInput(quotation),
+    customerId: storedValue(customerId, 'customer'),
+    // Plan 09d: the draft's branch is the quotation's work branch (left out when none, so the
+    // request hash of a draft without one stays as it was).
+    ...(branchId === null ? {} : { branchId }),
+  };
 }
 
 /** The quotation part of a complete draft (no customer), in the shape QuotationsService takes. */
@@ -312,7 +317,7 @@ export class QuotationDraftsService {
         await this.quotations.checkPresent(user, values, branchId);
         return { total: null, currency: null, missingFields };
       }
-      const input = completeQuotation(values);
+      const input = completeQuotation(values, branchId);
       const prepared = await this.quotations.prepareCreate(user, input);
       draftBranch(user, branchId, prepared.branchId);
       return {
@@ -351,7 +356,7 @@ export class QuotationDraftsService {
     if (quotationMissingFields(values).length > 0) {
       return this.quotations.checkPresent(user, values, branchId);
     }
-    const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
+    const prepared = await this.quotations.prepareCreate(user, completeQuotation(values, branchId));
     return {
       customerId: prepared.customerId,
       branchId: draftBranch(user, branchId, prepared.branchId),
@@ -549,7 +554,10 @@ export class QuotationDraftsService {
     const values = requestOf(current);
     requireApprovable(quotationCompleteness(values));
     // The request is the one at `version`; the lock below refuses if it changed since.
-    const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
+    const prepared = await this.quotations.prepareCreate(
+      user,
+      completeQuotation(values, current.branchId),
+    );
     // Exactly the prices the person reviewed (rate cards resolved), on the review screen or the
     // chat card; this same `prepared` is what is inserted. Anything else asks for a reload.
     this.drafts.requireResolved(via, resolvedKey(prepared), LABEL, pricingKey);
@@ -672,7 +680,10 @@ export class QuotationDraftsService {
       return { check: present.ok ? null : present, pricing: null, priceSources: null };
     }
     try {
-      const prepared = await this.quotations.prepareCreate(user, completeQuotation(values));
+      const prepared = await this.quotations.prepareCreate(
+        user,
+        completeQuotation(values, draft.branchId),
+      );
       return {
         check: {
           ok: true,
@@ -683,11 +694,8 @@ export class QuotationDraftsService {
         priceSources: sourcesOf(prepared),
       };
     } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException ||
-        error instanceof ConflictException
-      ) {
+      // A 403 too: a viewer who may not create in the draft's branch reads why (plan 09d).
+      if (isRefusal(error)) {
         return {
           check: { ok: false, message: error.message },
           pricing: null,

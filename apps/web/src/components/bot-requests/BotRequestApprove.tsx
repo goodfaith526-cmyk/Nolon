@@ -8,7 +8,7 @@ import type {
   MasterDataDto,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { isPlace, useLocalName } from '@/lib/master-data';
 import { CustomerPicker } from '../commercial/CustomerPicker';
@@ -36,6 +36,11 @@ export function BotRequestApprove({
   const te = useTranslations('Enums');
   const name = useLocalName();
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // Client request 2026-11-04: a request linked to no one (the website chat) books, by default, a
+  // new customer made from the name and phone the bot sent; staff may choose an existing one of
+  // the request's branch instead.
+  const mayUseRequest = !r.profile && !r.customerId;
+  const [fromRequest, setFromRequest] = useState(mayUseRequest);
   // Codex F171-2: a request with an OTHER item books the terms its estimate priced, as set.
   const terms = r.items.some((i) => i.isOther) ? (r.estimate?.terms ?? null) : null;
   // The route, mode and currency are common; one priced line per item (or the one-item shape's).
@@ -75,7 +80,8 @@ export function BotRequestApprove({
   const key = JSON.stringify({ inputs, lines });
   const priced = prices !== null && prices.key === key ? prices.dtos : null;
   const categoryOf = (code: string) => master.priceCategories.find((c) => c.code === code);
-  const customerId = r.customerId ?? customer?.id ?? null;
+  const customerId = r.customerId ?? (fromRequest ? null : (customer?.id ?? null));
+  const newCustomer = mayUseRequest && fromRequest;
   const set = (patch: Partial<typeof inputs>) => setInputs((v) => ({ ...v, ...patch }));
   const setLine = (index: number, patch: Partial<(typeof lines)[number]>) =>
     setLines((all) => all.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -95,9 +101,22 @@ export function BotRequestApprove({
   }
 
   const linesReady = lines.every((l) => categoryOf(l.category) !== undefined && l.quantity !== '');
+  // Client request 2026-11-04: the request arrives complete, so its price is checked as the form
+  // opens; staff check again only after changing an input.
+  const inputsReady =
+    inputs.originId !== '' && inputs.destinationId !== '' && inputs.currency !== '';
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (autoChecked.current || hasOther || !inputsReady || !linesReady) return;
+    autoChecked.current = true;
+    void check();
+    // Once, when the form opens with a complete request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- check() reads the current inputs
+  }, [hasOther, inputsReady, linesReady]);
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const customerOk = (!!customerId || !!r.profile?.name) && !r.profile?.needsReview;
+    const customerOk =
+      (!!customerId || !!r.profile?.name || newCustomer) && !r.profile?.needsReview;
     if (!hasOther && (!priced || !customerOk)) return;
     if (hasOther) {
       if (!estimateAccepted || !customerOk) return;
@@ -105,6 +124,7 @@ export function BotRequestApprove({
         version: r.version,
         ...(r.profile ? { profileVersion: r.profile.version } : {}),
         paymentCurrency,
+        ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
         ...(dropOffId ? { dropOffId } : {}),
         pricing: { ...inputs, ...(terms?.loadType ? { loadType: terms.loadType } : {}) },
         booking: {
@@ -121,6 +141,7 @@ export function BotRequestApprove({
       version: r.version,
       ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
+      ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
       ...(dropOffId ? { dropOffId } : {}),
       // Plan 09 section 4: a request with items is priced per line; the one-item shape as before.
       ...(byItems
@@ -147,7 +168,7 @@ export function BotRequestApprove({
   const ready =
     (hasOther ? estimateAccepted : priced !== null && linesReady) &&
     !r.profile?.needsReview &&
-    (customerId !== null || !!r.profile?.name) &&
+    (customerId !== null || !!r.profile?.name || newCustomer) &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
     inputs.destinationId !== '';
@@ -171,8 +192,25 @@ export function BotRequestApprove({
             </strong>
           ) : r.customerId ? (
             <strong dir="ltr">{r.customerNumber}</strong>
+          ) : newCustomer ? (
+            <div className="row">
+              <strong>
+                {t('newCustomerFromRequest', { name: r.senderName })}
+                {r.contactPhone ? <bdi dir="ltr"> {r.contactPhone}</bdi> : null}
+              </strong>
+              <button type="button" onClick={() => setFromRequest(false)}>
+                {t('chooseExistingCustomer')}
+              </button>
+            </div>
           ) : (
-            <CustomerPicker value={customer} onChange={setCustomer} />
+            <div className="stack">
+              <CustomerPicker value={customer} onChange={setCustomer} />
+              {mayUseRequest ? (
+                <button type="button" onClick={() => setFromRequest(true)}>
+                  {t('useRequestCustomer')}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
         <label className="field">

@@ -19,7 +19,7 @@ import {
   signIn,
 } from './auth-test-app.js';
 import { lockBranchRule } from '../src/common/branch-locks.js';
-import { CUSTOMER_UNIQUE_RULE } from '../src/customers/customers.service.js';
+import { lockCustomerKeys } from '../src/customers/customers.service.js';
 import { lockImportRequest } from '../src/imports/import-commit.js';
 import { RATE_UNIQUE_RULE } from '../src/rates/rates.service.js';
 import { deleteCommercialTestData, waitForLockWaiter } from './test-data.js';
@@ -526,6 +526,21 @@ describe('Excel import of customers and rates', () => {
       }
     });
 
+    it('refuses a phone two rows of different branches share (plan 09d, F184-6)', async () => {
+      const before = await myCustomers();
+      const shared = phone();
+      const file = await xlsx([
+        CUSTOMER_HEADER,
+        customerRow({ phone: shared }),
+        customerRow({ branch: 'JED', phone: shared }),
+      ]);
+      const body = (
+        await commit('/customers/import', cookies.salesDxbJed, file, randomUUID()).expect(422)
+      ).body as ImportRowsInvalidBody;
+      expect(codesOf(body.preview)).toEqual([[3, 'phone', 'DUPLICATE_IN_FILE']]);
+      expect(await myCustomers()).toBe(before);
+    });
+
     it('needs the branch code from a user of several branches', async () => {
       const before = await myCustomers();
       const file = await xlsx([CUSTOMER_HEADER, customerRow({ branch: null })]);
@@ -607,7 +622,7 @@ describe('Excel import of customers and rates', () => {
       const one = await xlsx([CUSTOMER_HEADER, customerRow({ phone: shared })]);
       const two = await xlsx([CUSTOMER_HEADER, customerRow(), customerRow({ phone: shared })]);
       const responses = await whileLocked(
-        (tx) => lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]),
+        (tx) => lockCustomerKeys(tx),
         [
           () => commit('/customers/import', cookies.salesDxb, one, randomUUID()),
           () => commit('/customers/import', cookies.salesDxb, two, randomUUID()),
@@ -904,13 +919,13 @@ describe('Excel import of customers and rates', () => {
         phone: phone(),
         taxNumber: ` tx-${taken.toLowerCase()} `,
       }).expect(409);
-      // Another branch may hold the same phone and tax number.
+      // Plan 09d: unique company-wide, another branch included.
       await post('/customers', cookies.admin, {
         ...body,
         branchId: await branchId(t.prisma, 'JED'),
         phone: taken,
         taxNumber: `TX-${taken}`,
-      }).expect(201);
+      }).expect(409);
       const other = (
         await post('/customers', cookies.salesDxb, { ...body, phone: phone() }).expect(201)
       ).body as { id: string };
@@ -1066,7 +1081,7 @@ describe('Excel import of customers and rates', () => {
             phone: shared,
           });
         const hold = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
-          lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]);
+          lockCustomerKeys(tx);
         if (order === 'import first') {
           const [imported, created] = await oneAfterTheOther(hold, importing, creating);
           expect([imported.status, created.status]).toEqual([201, 409]);
@@ -1091,7 +1106,7 @@ describe('Excel import of customers and rates', () => {
             taxNumber: tax.toLowerCase(),
           });
         const hold = (tx: Parameters<Parameters<typeof t.prisma.$transaction>[0]>[0]) =>
-          lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [dxb]);
+          lockCustomerKeys(tx);
         if (order === 'import first') {
           const [imported, created] = await oneAfterTheOther(hold, importing, creating);
           expect([imported.status, created.status]).toEqual([201, 409]);
@@ -1210,7 +1225,7 @@ describe('Excel import of customers and rates', () => {
         const { pending } = await t.prisma.$transaction(
           async (tx) => {
             // Barrier: the import locks the branch row, then waits on the customer rule lock.
-            await lockBranchRule(tx, CUSTOMER_UNIQUE_RULE, [zzi]);
+            await lockCustomerKeys(tx);
             const sent = commit('/customers/import', cookies.salesZzi, file, randomUUID()).then(
               (res) => res,
             );

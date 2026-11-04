@@ -2796,6 +2796,7 @@
     "ALLOCATION_NOT_APPROVED": "Invoice {invoice} is not approved: only approved invoices take a payment.",
     "ALLOCATION_OTHER_CURRENCY": "Invoice {invoice} is in {currency}: receive it in that currency.",
     "ALLOCATION_EXCEEDS_BALANCE": "Invoice {invoice} has {balance} {currency} left: allocate no more than that.",
+    "ALLOCATION_OTHER_BRANCH": "Invoice {invoice} is in another branch: receive it in that branch.",
     "BRANCH_REQUIRED": "Choose the branch of this draft.",
     "BRANCH_MISMATCH": "This branch is not the branch of the customer or shipment: the draft belongs to theirs.",
     "CITY_OTHER_COUNTRY": "The city {city} is in {country}: the place must be in the same country.",
@@ -3238,7 +3239,10 @@
     "estimateReplace": "Send a new estimate",
     "approveAtEstimate": "Approved at the estimate the customer accepted:",
     "photosTitle": "Customer photos ({count})",
-    "photoAlt": "Photo from the customer"
+    "photoAlt": "Photo from the customer",
+    "newCustomerFromRequest": "New customer from the request: {name}",
+    "chooseExistingCustomer": "Choose an existing customer",
+    "useRequestCustomer": "New customer from the request's details"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

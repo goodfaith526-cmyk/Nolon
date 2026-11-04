@@ -1,6 +1,7 @@
 import { lockActiveBranches } from '../common/branch-locks.js';
 import { randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { Prisma, type CustomerProfile } from '../generated/prisma/client.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -45,6 +46,7 @@ export class CustomerIdentityService {
     private readonly prisma: PrismaService,
     private readonly auth: CustomerIdentityAuth,
     private readonly customers: CustomersService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   get companyId(): string {
@@ -65,6 +67,22 @@ export class CustomerIdentityService {
     if (!client?.isActive || !client.scopes.some((s) => s.scope === 'CUSTOMER_PROFILES_WRITE'))
       identityError(403, 'SCOPE_REQUIRED');
     return client;
+  }
+
+  /**
+   * The branch of registration of a customer made from a first message: the key's only branch,
+   * else CS_CUSTOMER_IDENTITY_HOME_BRANCH (a branch code); none, and no customer is made.
+   */
+  private async homeBranch(
+    tx: Prisma.TransactionClient,
+    branches: readonly { branchId: string }[],
+  ): Promise<string | null> {
+    if (branches.length === 1) return branches[0]!.branchId;
+    const code = this.env.CS_CUSTOMER_IDENTITY_HOME_BRANCH;
+    if (!code) return null;
+    const branch = await tx.branch.findFirst({ where: { code }, select: { id: true } });
+    // Only a branch the key serves: the setting never reaches past the key's branches.
+    return branch && branches.some((b) => b.branchId === branch.id) ? branch.id : null;
   }
 
   async write(
@@ -340,6 +358,25 @@ export class CustomerIdentityService {
           data.needsReview = identityReview;
           if (changed && !created) data.version = { increment: 1 };
           profile = await tx.customerProfile.update({ where: { id: profile.id }, data });
+        }
+        // Plan 09d section 4a (owner, 2026-11-04): a profile ready to use gets its one central
+        // customer from the first message, named from the channel until a name is given. No
+        // booking, invoice or entry; the answer to the bot is unchanged.
+        if (
+          this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED &&
+          profile &&
+          !identity.blocked &&
+          !review &&
+          !profile.needsReview
+        ) {
+          const home = await this.homeBranch(tx, client.branches);
+          if (home)
+            await this.customers.channelAccountInTx(tx, {
+              profile,
+              channelName: identity.displayName ?? identity.username ?? null,
+              branchId: home,
+              apiClientId: clientId,
+            });
         }
         const body: IdentityResult = {
           schemaVersion: IDENTITY_VERSION,

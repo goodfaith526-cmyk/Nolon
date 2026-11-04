@@ -402,7 +402,7 @@ describe('outlet staff: isolation by sales outlet', () => {
       [{ taxNumber: taxed }, 'tax number'],
     ] as const) {
       const refused = await create(cookies.staffB, extra).expect(409);
-      expect(message(refused)).toBe(`Another customer of this branch has this ${field}`);
+      expect(message(refused)).toBe(`Another customer has this ${field}`);
       expect(JSON.stringify(refused.body)).not.toMatch(/CS\d/);
     }
     // Update: the same, on a customer of outlet B.
@@ -414,15 +414,15 @@ describe('outlet staff: isolation by sales outlet', () => {
       { taxNumber: taxed },
     ]) {
       const refused = await patch(`/customers/${theirs.id}`, cookies.staffB, body).expect(409);
-      expect(message(refused)).toMatch(/^Another customer of this branch has this /);
+      expect(message(refused)).toMatch(/^Another customer has this /);
       expect(JSON.stringify(refused.body)).not.toMatch(/CS\d/);
     }
     // Their own outlet's customer, and the branch's staff: named as before.
     expect(message(await create(cookies.staffA, { phone: held.phone }).expect(409))).toBe(
-      `Customer ${held.number} of this branch has this phone`,
+      `Customer ${held.number} has this phone`,
     );
     expect(message(await create(cookies.salesJed, { taxNumber: taxed }).expect(409))).toBe(
-      `Customer ${branchOwn.number} of this branch has this tax number`,
+      `Customer ${branchOwn.number} has this tax number`,
     );
   });
 

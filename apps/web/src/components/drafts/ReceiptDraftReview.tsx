@@ -26,7 +26,7 @@ export function ReceiptDraftReview({ id }: { id: string }) {
   const query = (extra: string | null) =>
     customerId === null
       ? null
-      : `customerId=${encodeURIComponent(customerId)}${extra ? `&currency=${encodeURIComponent(extra)}` : ''}`;
+      : `customerId=${encodeURIComponent(customerId)}${extra ? `&currency=${encodeURIComponent(extra)}` : ''}${draft ? `&branchId=${encodeURIComponent(draft.branchId)}` : ''}`;
   const cashQuery = missing.includes('cashAccountId') ? query(currency) : null;
   const invoiceQuery = missing.some((f) => f.endsWith('.invoiceId')) ? query(currency) : null;
   const accounts = useOptionalRead<{ items: ReceiptCashAccountDto[] }>(
