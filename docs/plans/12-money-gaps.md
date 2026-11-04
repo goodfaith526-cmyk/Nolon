@@ -42,9 +42,17 @@ invoice a draft for staff, never an approved invoice at an old price.**
   quotation. The hash is SHA-256 of a canonical JSON (`agreedTerms/1`) with these fields:
   - origin, destination, mode, load type, cargo type and the sorted services;
   - the quotation id and its `updatedAt`, plus the bot request's `estimateVersion` for an estimate;
-  - every booking line, sorted by line number, with its id, price category, quantity, unit, and the `isOther`
-    description. A line changed, added or dropped changes the hash, even inside a category the quotation
-    already has.
+  - every booking line, sorted by line number, with all its billable fields: id, cargo type, price category,
+    piece quantity, `weightKg`, `volumeCbm`, `lengthCm`, `widthCm`, `heightCm`, `containerTypeCode`, and the
+    `isOther` description. Each is written in a canonical form: decimals normalised, absent written as null;
+  - for each quotation line, the billable quantity and unit actually priced (`PER_PIECE`, `PER_KG`,
+    `PER_CBM`, `PER_CONTAINER`), as `unitQuantity` derives them from the booking lines.
+
+  A line changed, added or dropped changes the hash, even inside a category the quotation already has. So
+  does a change of measure with the same piece count: 1 CBM becoming 2 CBM, 10 kg becoming 20 kg, or a new
+  dimension. The whole-estimate case hashes every line in the same way, so any change to any item, its measures
+  included, invalidates the estimate.
+
 - **At confirmation** the hash is computed again from the booking as it now is (`agreedTermsOf`, a pure
   function with unit tests). If it is equal, the agreed prices are used line by line through `booking_item_id`.
   The estimate line is used whole. If it differs or is missing, there is no agreed price for the automatic
@@ -64,6 +72,8 @@ invoice a draft for staff, never an approved invoice at an old price.**
   int NULL.
 - **Tests:** these regressions are required:
   - one barrel priced, the booking line edited to two barrels: the result is a draft, not one barrel approved;
+  - the same piece count with the CBM changed (1 → 2), the weight changed (10 → 20 kg), or a dimension
+    changed: draft, for card-priced lines and for an estimate;
   - a second line added in the same category: draft;
   - a line dropped: draft;
   - services changed: draft;
@@ -139,9 +149,9 @@ draft.
    - container booking: the container writes;
    - bot approval: the request, the quotation, the outbox rows.
 2. The DRAFT invoice is inserted, under the shipment's lock, as #151 orders it: the shipment, then the invoice.
-3. Plan 06's confirm check runs here: the balance **before** this invoice, which the draft does not count.
-   It happens under `credit:<customer>` only if step 4 is skipped. Otherwise it is folded into step 4's
-   single statement as `balance_before`.
+3. Plan 06's confirm check (the balance **before** this invoice) is never skipped. It is either folded into
+   step 4's final statement, when the approval reaches that statement, or run on its own as step 5's last
+   step.
 4. If the rule of 2.1 allows approval: `SAVEPOINT auto_invoice`. Then, inside it:
    - the period check;
    - numbering (`number_sequences` row);
@@ -150,21 +160,42 @@ draft.
    - the `invoice.issued` outbox row, if its switch is on (section 8).
 
    Then, **last**: `pg_advisory_xact_lock(credit:<customer>)` and plan 06's single statement, which gives
-   `balance_before` and `balance_after`.
-   - `balance_before > limit`: the whole transaction is refused with 409 `CREDIT_LIMIT_EXCEEDED`. This is plan
-     06's confirm rule. Nothing is kept.
-   - `balance_after > limit`, or no FX rate: `ROLLBACK TO SAVEPOINT auto_invoice`. In PostgreSQL this
-     undoes the number, journal, commission and outbox rows of the subtransaction, and releases its locks,
-     the advisory lock included. Then the draft's `auto_note` is set. The confirmation stands.
-   - Otherwise: `RELEASE SAVEPOINT`, and the transaction commits.
-   - A coded refusal inside the savepoint (closed period, missing FX for `totalUsd`) also rolls back to the
-     savepoint, with its note. Any other error propagates and fails the whole transaction (fail closed).
+   `balance_before` and `balance_after`. Here `balance_before` excludes this invoice, which is what the
+   confirm check counts.
+   - `balance_before > limit`, or `balance_before` cannot be computed because a rate is missing: the whole
+     transaction is refused with 409 `CREDIT_LIMIT_EXCEEDED` or `CREDIT_LIMIT_NO_RATE`. This is plan 06's
+     confirm rule. Nothing is kept.
+   - `balance_after > limit`, or only the new invoice's currency has no rate: `ROLLBACK TO SAVEPOINT
+auto_invoice`, then step 5.
+   - Otherwise: `RELEASE SAVEPOINT`. The confirm check has passed inside the same statement, and the
+     transaction commits. Nothing follows.
+   - A coded refusal raised **before** that final statement (a closed period, or a missing FX rate for
+     `totalUsd`) also leads to `ROLLBACK TO SAVEPOINT auto_invoice` and then step 5. Any other error
+     propagates and fails the whole transaction (fail closed).
 
-5. Step 4 is the **last** step of every caller's transaction. Nothing is written after it except the draft
-   note in the fallback case, which takes no new lock. So `confirmInTx` no longer calls billing. Each caller
-   calls `billing.autoInvoiceLastInTx` as its final statement:
+   `ROLLBACK TO SAVEPOINT` undoes the subtransaction's number, journal, commission and outbox rows. In
+   PostgreSQL it also releases the locks taken inside it, the advisory lock included.
+
+5. **The fallback**, always reached after a rollback to the savepoint, or directly when 2.1 does not allow
+   approval:
+   - First, the draft's `auto_note` is set. That is a row the transaction already holds, so it takes no new
+     lock.
+   - Then, as the **last** step, plan 06's own confirm check runs **again from scratch**:
+     `CreditLimitService.requireWithinLimitInTx`. It takes a fresh `credit:<customer>` lock and runs a fresh
+     single statement. The draft does not count, so this is the balance before.
+   - Over the limit means 409 `CREDIT_LIMIT_EXCEEDED`, and a missing rate means 409 `CREDIT_LIMIT_NO_RATE`.
+     Either refuses the whole transaction.
+
+   So an early refusal can never skip the booking's own credit check. For example: a balance of 110, a
+   limit of 100, and a closed period. The auto-approval rolls back, and then the fallback check refuses the
+   confirmation.
+
+6. Steps 4 and 5 are the **last** steps of every caller's transaction, with the credit lock as their final
+   lock. So `confirmInTx` no longer calls billing. Each caller calls `billing.autoInvoiceLastInTx` as its
+   final statement, and it replaces 12-1's `finalChecksInTx` there:
    - `BookingsService.confirm`;
-   - the container booking in `ConsolidationsService`;
+   - the container booking callers (`ConsolidationsService.createBooking`, booking-draft and
+     new-customer-booking-draft approval);
    - the bot `approve` (section 4).
 
    A test per caller asserts the order.
@@ -178,6 +209,9 @@ PR 12-2 includes an integration test proving that Prisma's transaction keeps wor
   - `balance_before` over the limit: nothing kept;
   - missing FX;
   - closed period;
+  - over the limit **together with** a closed period: whole refusal, no confirmed booking;
+  - over the limit **together with** an early missing `totalUsd` rate: whole refusal;
+  - a missing rate for `balance_before` with an otherwise eligible approval: whole refusal;
   - two concurrent confirms for one customer, whose sum is over the limit: one approved and one draft, no
     deadlock;
   - a confirm racing a receipt cancel;
