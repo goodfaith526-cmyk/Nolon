@@ -26,7 +26,6 @@ import type { ApiClientAuth } from './api-client.guard.js';
 interface CustomerRow {
   id: string;
   number: string;
-  branchCode: string;
   kind: CustomerKind;
   name: string;
   company_name: string | null;
@@ -88,8 +87,9 @@ const DONE: readonly ShipmentStatus[] = ['DELIVERED', 'CLOSED'];
 /**
  * The Customer Service API (scope section 17). Every read goes through the customer-safe views
  * (cs_customers, cs_customer_contacts, cs_shipments, cs_shipment_events, cs_invoices; migration
- * customer_service_api) and the public location names, never the tables, and is limited to the
- * key's branches (AGENTS.md rule 2). A record outside them is "not found", as one that does not
+ * customer_service_api) and the public location names, never the tables. Documents are limited
+ * to the key's branches (AGENTS.md rule 2); a customer is of no branch (plan 09f), so any key with
+ * the scope finds it. A document outside them is "not found", as one that does not
  * exist. A shipment counts only in the branch that owns it: sharing it with another branch
  * (shipment_branches) is for staff work and does not open it to that branch's key.
  */
@@ -101,11 +101,9 @@ export class CustomerServiceService {
   async byPhone(client: ApiClientAuth, phone: string): Promise<CsCustomerDto[]> {
     if (client.allowedBranchIds.length === 0) return [];
     const rows = await this.prisma.$queryRaw<CustomerRow[]>`
-      SELECT c.*, b."code" AS "branchCode"
+      SELECT c.*
       FROM "cs_customers" c
-      JOIN "branches" b ON b."id" = c."branch_id"
-      WHERE c."branch_id" IN ${uuidList(client.allowedBranchIds)}
-        AND (c."phone" = ${phone} OR c."whatsapp" = ${phone} OR EXISTS (
+      WHERE (c."phone" = ${phone} OR c."whatsapp" = ${phone} OR EXISTS (
           SELECT 1 FROM "cs_customer_contacts" k
           WHERE k."customer_id" = c."id" AND k."phone" = ${phone} AND k."can_inquire"))
       ORDER BY c."number"
@@ -261,11 +259,9 @@ export class CustomerServiceService {
       client.allowedBranchIds.length === 0
         ? []
         : await this.prisma.$queryRaw<CustomerRow[]>`
-            SELECT c.*, b."code" AS "branchCode"
+            SELECT c.*
             FROM "cs_customers" c
-            JOIN "branches" b ON b."id" = c."branch_id"
-            WHERE c."number" = ${number}
-              AND c."branch_id" IN ${uuidList(client.allowedBranchIds)}`;
+            WHERE c."number" = ${number}`;
     if (!row) throw new NotFoundException('Customer not found');
     return row;
   }
@@ -278,7 +274,6 @@ export class CustomerServiceService {
       ORDER BY k."is_primary" DESC, k."name"`;
     return rows.map((r) => ({
       number: r.number,
-      branchCode: r.branchCode,
       kind: r.kind,
       name: r.name,
       companyName: r.company_name,

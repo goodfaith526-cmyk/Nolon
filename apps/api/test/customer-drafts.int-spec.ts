@@ -199,7 +199,6 @@ describe('customer drafts: a person reviews', () => {
       await r.get(`/customers/${approved.customerId}`, cookies.salesDxb).expect(200)
     ).body as CustomerDto;
     expect(customer).toMatchObject({
-      branchId: dxb,
       name: 'Tarig Ismail',
       phone: body.phone,
       city: 'Suakin',

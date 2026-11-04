@@ -25,6 +25,8 @@ import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { todayString } from '@/lib/money';
 import { icons } from '../Icons';
 import { useMe } from '../StaffShell';
+import { WorkBranchField } from './WorkBranchField';
+import { writableBranches } from '@/lib/branches';
 import { PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { CustomerPicker } from './CustomerPicker';
 import { cargoChoices } from './cargo';
@@ -93,6 +95,9 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
 
   const isEdit = quotation !== undefined;
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // Plan 09f: a new quotation's branch, one the user writes quotations in.
+  const workBranches = writableBranches(me, 'quotations:create');
+  const [workBranchId, setWorkBranchId] = useState(workBranches[0]?.id ?? '');
   const heldOutlet = quotation?.salesOutlet ?? null;
   const [outletId, setOutletId] = useState(heldOutlet?.id ?? '');
   const [originChoice, setOrigin] = useState(quotation?.originLocationId ?? '');
@@ -161,7 +166,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     if (notice && !notice.ok) revealFailure(formRef.current);
   }, [notice, invalid]);
 
-  const branchId = quotation?.branchId ?? customer?.branchId;
+  const branchId = quotation?.branchId ?? (workBranchId || undefined);
   // The quotation's branch's date: the day the API checks a rate card's validity on.
   const today = me.branches.find((b) => b.id === branchId)?.today ?? todayString();
 
@@ -169,7 +174,8 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
   useEffect(() => {
     if (isEdit || !customerId) return;
     let cancelled = false;
-    api<QuotationDefaultsDto>(`/quotations/defaults?customerId=${customerId}`)
+    const atBranch = workBranchId ? `&branchId=${workBranchId}` : '';
+    api<QuotationDefaultsDto>(`/quotations/defaults?customerId=${customerId}${atBranch}`)
       .then((d) => {
         if (cancelled) return;
         setDefaults(d);
@@ -179,7 +185,7 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     return () => {
       cancelled = true;
     };
-  }, [isEdit, customerId]);
+  }, [isEdit, customerId, workBranchId]);
 
   useEffect(() => {
     if (!origin || !destination || !branchId) return;
@@ -264,7 +270,13 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
     setInvalid(new Set());
     setNote(null);
     setRefused(null);
-    const sent = quotation ? body : { ...body, customerId: customer?.id ?? '' };
+    const sent = quotation
+      ? body
+      : {
+          ...body,
+          customerId: customer?.id ?? '',
+          ...(workBranchId ? { branchId: workBranchId } : {}),
+        };
     try {
       const saved = quotation
         ? await api<QuotationDto>(`/quotations/${quotation.id}`, { method: 'PATCH', body: sent })
@@ -338,6 +350,11 @@ export function QuotationForm({ quotation }: { quotation?: QuotationDto }) {
                 setDefaults(null);
               }}
               allowCreate
+            />
+            <WorkBranchField
+              branches={workBranches}
+              value={workBranchId}
+              onChange={setWorkBranchId}
             />
           </div>
         </section>

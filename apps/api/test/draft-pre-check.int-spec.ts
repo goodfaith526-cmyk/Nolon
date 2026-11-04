@@ -227,7 +227,7 @@ describe('a pre-check', () => {
     delete booking.customerId;
     const body = {
       idempotencyKey: draftKey(),
-      branchId: customer.branchId,
+      branchId: await branchId(t.prisma, 'DXB'),
       customer: { kind: 'INDIVIDUAL', name: 'Amna Osman', phone: customer.phone },
       booking,
     };
@@ -306,10 +306,9 @@ describe('the pre-check of a draft whose branch comes from its subject', () => {
       const other = refused(
         await check(path, token, { idempotencyKey: draftKey(), ...subject, branchId: jed }),
       );
-      // Plan 09d: a customer's draft is written in a branch of the user's (a branch not one is
-      // refused as no access); a shipment's draft stays in the shipment's branch.
-      if ('customerId' in subject && path !== '/party-drafts')
-        expect(other.refusals.length, path).toBe(1);
+      // Plans 09d and 09f: a customer's draft is written in a branch of the user's (a branch not
+      // one is refused as no access); a shipment's draft stays in the shipment's branch.
+      if ('customerId' in subject) expect(other.refusals.length, path).toBe(1);
       else
         expect(other.refusals, path).toMatchObject([
           { field: 'branchId', code: 'BRANCH_MISMATCH' },

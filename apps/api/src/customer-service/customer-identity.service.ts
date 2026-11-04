@@ -69,23 +69,6 @@ export class CustomerIdentityService {
     return client;
   }
 
-  /**
-   * The branch of registration of a customer made from a first message. The customer is central
-   * (plan 09d) and this branch is shown only, never a rule, so no one chooses it (owner,
-   * 2026-11-04): the first active branch of the key by code. None active, and no customer is made.
-   */
-  private async homeBranch(
-    tx: Prisma.TransactionClient,
-    branches: readonly { branchId: string }[],
-  ): Promise<string | null> {
-    const branch = await tx.branch.findFirst({
-      where: { id: { in: branches.map((b) => b.branchId) }, isActive: true },
-      orderBy: { code: 'asc' },
-      select: { id: true },
-    });
-    return branch?.id ?? null;
-  }
-
   async write(
     clientId: string,
     envelope: IdentityEnvelope,
@@ -370,14 +353,11 @@ export class CustomerIdentityService {
           !review &&
           !profile.needsReview
         ) {
-          const home = await this.homeBranch(tx, client.branches);
-          if (home)
-            await this.customers.channelAccountInTx(tx, {
-              profile,
-              channelName: identity.displayName ?? identity.username ?? null,
-              branchId: home,
-              apiClientId: clientId,
-            });
+          await this.customers.channelAccountInTx(tx, {
+            profile,
+            channelName: identity.displayName ?? identity.username ?? null,
+            apiClientId: clientId,
+          });
         }
         const body: IdentityResult = {
           schemaVersion: IDENTITY_VERSION,

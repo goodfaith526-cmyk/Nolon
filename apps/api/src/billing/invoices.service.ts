@@ -393,7 +393,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
   ): Promise<CustomerInvoiceDto> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
     // Plan 09d: the opening item is the branch's that carries it, not the customer's by rule.
-    const branchId = workBranch(user, 'manual_journals:create', input.branchId, customer.branchId);
+    const branchId = workBranch(user, 'manual_journals:create', input.branchId);
     if (input.dueDate < input.invoiceDate) {
       throw new BadRequestException('The due date is before the invoice date');
     }

@@ -1,6 +1,7 @@
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
 import { canBookInto } from '../consolidations/consolidation-rules.js';
+import { customerScope } from '../customers/customers.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { shipmentScope } from '../shipments/shipment-scope.js';
 
@@ -61,9 +62,13 @@ export async function referenceNames(
       where: { id },
       select: { id: true, code: true, nameEn: true, nameAr: true },
     }),
-    prisma.customer.findMany({ where: scoped, select: { id: true, number: true, name: true } }),
+    // Customers are central (plan 09f): any customer, outlet staff only their outlets'.
+    prisma.customer.findMany({
+      where: { id, ...customerScope(user) },
+      select: { id: true, number: true, name: true },
+    }),
     prisma.party.findMany({
-      where: { id, customer: branchScope(user) },
+      where: { id, customer: customerScope(user) },
       select: { id: true, name: true, city: true },
     }),
     // Rate cards are read by every branch.

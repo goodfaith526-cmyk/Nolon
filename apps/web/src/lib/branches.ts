@@ -1,4 +1,4 @@
-import type { AuthMeResponse } from '@nolon/shared';
+import type { AuthMeResponse, Permission } from '@nolon/shared';
 
 type MyBranch = AuthMeResponse['branches'][number];
 
@@ -32,4 +32,20 @@ export function branchCurrency(me: Pick<AuthMeResponse, 'branches'>, branchId: s
 export function commonToday(branches: readonly Pick<MyBranch, 'today'>[]): string {
   const days = new Set(branches.map((b) => b.today));
   return days.size === 1 ? (branches[0]?.today ?? '') : '';
+}
+
+/**
+ * Plan 09f: the user's branches where they hold `permission` (from the per-branch lists; all their
+ * branches when the session has none). A new document for a customer is written in one of them,
+ * since a customer is of no branch.
+ */
+export function writableBranches(
+  me: Pick<AuthMeResponse, 'branches' | 'branchPermissions'>,
+  permission: Permission,
+): MyBranch[] {
+  if (!me.branchPermissions) return [...me.branches];
+  const held = new Set(
+    me.branchPermissions.filter((b) => b.permissions.includes(permission)).map((b) => b.branchId),
+  );
+  return me.branches.filter((b) => held.has(b.id));
 }

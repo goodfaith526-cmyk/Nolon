@@ -272,7 +272,6 @@ export interface CurrencyUpdate {
 export interface CustomerSummaryDto {
   id: string;
   number: string;
-  branchId: string;
   kind: CustomerKind;
   name: string;
   companyName: string | null;
@@ -359,8 +358,12 @@ export interface CustomerInput {
 }
 
 /** POST /customers: the branch is chosen once and never changes. */
+/**
+ * A new customer. The customer is of no branch (plan 09f); `branchId` names the branch the user
+ * acts in (the permission and the sales outlet), optional for a user with one such branch.
+ */
 export interface CreateCustomerRequest extends CustomerInput {
-  branchId: string;
+  branchId?: string;
 }
 
 export interface ContactInput {

@@ -34,7 +34,6 @@ const { CustomerPicker } = await import('./CustomerPicker');
 const saved = {
   id: 'c1',
   number: 'CS00009',
-  branchId: 'b1',
   kind: 'INDIVIDUAL',
   name: 'Tariq Ismail',
   companyName: null,
@@ -137,7 +136,6 @@ describe('CustomerPicker', () => {
       body: expect.objectContaining({
         name: 'Tariq Ismail',
         phone: '+249912345678',
-        branchId: 'b1',
       }) as unknown,
     });
     expect(picked).toEqual([saved]);

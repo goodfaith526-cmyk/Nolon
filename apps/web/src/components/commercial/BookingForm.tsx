@@ -25,6 +25,8 @@ import { asciiDigits } from '@/lib/form';
 import { isPlace, useLocalName, useMasterData } from '@/lib/master-data';
 import { icons } from '../Icons';
 import { can, useMe } from '../StaffShell';
+import { WorkBranchField } from './WorkBranchField';
+import { writableBranches } from '@/lib/branches';
 import { cargoChoices } from './cargo';
 import { CustomerPicker } from './CustomerPicker';
 import { ModePicker } from './ModePicker';
@@ -132,6 +134,10 @@ export function BookingForm({
 
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
+  // Plan 09f: a new booking's branch, one the user writes bookings in (a container booking is
+  // the container's branch's).
+  const workBranches = writableBranches(me, 'bookings:create');
+  const [workBranchId, setWorkBranchId] = useState(workBranches[0]?.id ?? '');
   // What the form starts from: the booking edited, or the quotation's preview.
   const initial = booking ?? fromQuotation;
   const [originChoice, setOrigin] = useState(initial?.originLocationId ?? '');
@@ -310,7 +316,11 @@ export function BookingForm({
       ? { ...fields, customerId: customer?.id ?? '' }
       : booking
         ? body
-        : { ...body, customerId: customer?.id ?? '' };
+        : {
+            ...body,
+            customerId: customer?.id ?? '',
+            ...(workBranchId ? { branchId: workBranchId } : {}),
+          };
     try {
       if (consolidation) {
         await api<ConsolidationBookingDto>(`/consolidations/${consolidation.id}/bookings`, {
@@ -342,7 +352,8 @@ export function BookingForm({
 
   if (!master) return <p className="muted">{tc('loading')}</p>;
   const locations = master.locations.filter((l) => l.isActive && isPlace(l));
-  const outletBranchId = booking?.branchId ?? customer?.branchId ?? consolidation?.branchId;
+  const outletBranchId =
+    booking?.branchId ?? consolidation?.branchId ?? (workBranchId || undefined);
   // The categories of a line's cargo type (and one the line holds).
   const categoriesFor = (i: ItemState) =>
     master.priceCategories.filter(
@@ -434,6 +445,13 @@ export function BookingForm({
               }}
               allowCreate
             />
+            {!consolidation && (
+              <WorkBranchField
+                branches={workBranches}
+                value={workBranchId}
+                onChange={setWorkBranchId}
+              />
+            )}
           </div>
         </section>
       )}

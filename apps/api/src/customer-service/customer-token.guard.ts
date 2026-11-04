@@ -57,7 +57,6 @@ const grantInclude = {
     select: {
       id: true,
       number: true,
-      branchId: true,
       isActive: true,
       phone: true,
       whatsapp: true,
@@ -79,7 +78,8 @@ type GrantRow = Prisma.CsCustomerTokenGetPayload<{ include: typeof grantInclude 
 
 /**
  * Whether a token's grant still holds (expiry aside): the key is active, holds
- * cs:customer_tokens:issue and serves the customer's branch; the customer is active; the phone
+ * cs:customer_tokens:issue and still serves a branch; the customer (of no branch, plan 09f) is
+ * active; the phone
  * still matches the same record; and that record has not changed since (grantVersion).
  */
 function grantHolds(row: GrantRow): boolean {
@@ -103,7 +103,7 @@ function grantHolds(row: GrantRow): boolean {
   return (
     key.isActive &&
     scopes.includes('cs:customer_tokens:issue') &&
-    key.branches.some((b) => b.branchId === customer.branchId) &&
+    key.branches.length > 0 &&
     customer.isActive &&
     matched &&
     BigInt(version) === row.grantVersion

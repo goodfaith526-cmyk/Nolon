@@ -27,7 +27,7 @@ import {
   changedFields,
 } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { assertBranchAccess, branchScope, listBranchScope } from '../auth/branch-scope.js';
+import { assertBranchAccess } from '../auth/branch-scope.js';
 import {
   lockRecordOutletInTx,
   customerOutletScope,
@@ -127,30 +127,38 @@ function maskCredit(user: AuthUser, dto: CustomerDto): CustomerDto {
   return seesCredit(user) ? dto : { ...dto, creditLimit: null, creditLimitCurrency: null };
 }
 
-export function customerScope(user: AuthUser): Prisma.CustomerWhereInput {
-  return outletLimited(user) ? { ...branchScope(user), ...customerOutletScope(user) } : {};
+/**
+ * Plan 09f: the branch a customer write acts in, for the permission check and an Outlet Staff
+ * member's outlet only; the customer itself is of no branch, so no one is asked for it (owner,
+ * 2026-11-04). The branch given (one of the user's), else the first of the user's branches that
+ * add customers, else 403.
+ */
+function actingBranch(user: AuthUser, given: string | null | undefined): string {
+  if (given) {
+    assertBranchAccess(user, given);
+    return given;
+  }
+  const first = user.access
+    .branchesWith(['customers:create'])
+    .find((id) => user.allowedBranchIds.includes(id));
+  if (!first) throw new ForbiddenException('You may not add customers');
+  return first;
 }
 
-/** customerScope for a list, narrowed to one branch of registration when asked. */
-function customerListScope(user: AuthUser, branchId?: string): Prisma.CustomerWhereInput {
-  if (outletLimited(user))
-    return { ...listBranchScope(user, branchId), ...customerOutletScope(user) };
-  return branchId ? { branchId } : {};
+export function customerScope(user: AuthUser): Prisma.CustomerWhereInput {
+  return outletLimited(user) ? customerOutletScope(user) : {};
 }
 
 /** How tax numbers compare: case and surrounding spaces do not matter. */
 export const normalizeTaxNumber = (value: string) => value.trim().toUpperCase();
 
 export interface CustomerFilters extends PageQuery {
-  /** One of the user's branches (403 otherwise); else all of them. */
-  branchId?: string;
   kind?: CustomerKind;
   isActive?: boolean;
 }
 
-/** What a customer write would claim in its branch; `excludeId` is the customer being edited. */
+/** What a customer write would claim company-wide; `excludeId` is the customer being edited. */
 export interface CustomerKeys {
-  branchId: string;
   phone?: string | null;
   taxNumber?: string | null;
   excludeId?: string;
@@ -205,7 +213,6 @@ export class CustomersService {
       select: {
         id: true,
         number: true,
-        branchId: true,
         profileId: true,
         name: true,
         phone: true,
@@ -213,7 +220,7 @@ export class CustomersService {
         isActive: true,
       },
     });
-    if (!row || !user.access.has('customers:update', row.branchId))
+    if (!row || !user.access.any('customers:update'))
       throw new NotFoundException('Customer not found');
     if (!row.isActive) throw new ConflictException('Customer is inactive');
     return row;
@@ -231,7 +238,7 @@ export class CustomersService {
       throw new ConflictException('Existing profiles need a separate merge review');
     await tx.customer.update({ where: { id: accountId }, data: { profileId } });
     await this.audit.record(tx, user, {
-      branchId: account.branchId,
+      branchId: null,
       entity: 'CUSTOMER',
       entityId: accountId,
       reference: account.number,
@@ -255,7 +262,7 @@ export class CustomersService {
       orderBy: PROFILE_ACCOUNT_ORDER,
     });
     if (existing) {
-      await this.lockActiveCustomerInTx(tx, branchId, existing.id);
+      await this.lockActiveCustomerInTx(tx, existing.id);
       return existing.id;
     }
     if (!user.access.has('customers:create', branchId))
@@ -335,11 +342,10 @@ export class CustomersService {
         phoneVerified: boolean;
       };
       expectedVersion: number | undefined;
-      branchId: string;
       apiClientId: string;
     },
-  ): Promise<{ outcome: CsInstantAccountOutcome; customerId: string | null } | null> {
-    const { profile, branchId } = input;
+  ): Promise<{ outcome: CsInstantAccountOutcome; customerId: string | null }> {
+    const { profile } = input;
     const skip = (outcome: CsInstantAccountOutcome) => ({ outcome, customerId: null });
     if (input.expectedVersion !== undefined && input.expectedVersion !== profile.version)
       return skip('PROFILE_CHANGED');
@@ -359,8 +365,6 @@ export class CustomersService {
     }
     const name = profile.name?.trim();
     if (!name) return skip('NAME_MISSING');
-    // An inactive branch takes no new account: left to staff, as before the instant account.
-    if (!(await lockActiveBranches(tx, [branchId])).has(branchId)) return null;
     const phone = profile.phoneVerified ? profile.phone : null;
     await lockCustomerKeys(tx);
     if (phone && (await tx.customer.count({ where: { phone } })) > 0) return skip('PHONE_IN_USE');
@@ -368,7 +372,6 @@ export class CustomersService {
     const customer = await tx.customer.create({
       data: {
         number,
-        branchId,
         kind: 'INDIVIDUAL',
         name,
         phone,
@@ -377,7 +380,7 @@ export class CustomersService {
       },
     });
     await this.audit.recordApi(tx, {
-      branchId,
+      branchId: null,
       entity: 'CUSTOMER',
       entityId: customer.id,
       reference: customer.number,
@@ -411,7 +414,6 @@ export class CustomersService {
         phoneVerified: boolean;
       };
       channelName: string | null;
-      branchId: string;
       apiClientId: string;
     },
   ): Promise<void> {
@@ -428,7 +430,6 @@ export class CustomersService {
       await this.botAccountInTx(tx, {
         profile: { ...profile, name },
         expectedVersion: undefined,
-        branchId: input.branchId,
         apiClientId: input.apiClientId,
       });
       return;
@@ -439,7 +440,7 @@ export class CustomersService {
     await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${found.id}::uuid FOR NO KEY UPDATE`;
     const existing = await tx.customer.findUniqueOrThrow({
       where: { id: found.id },
-      select: { id: true, branchId: true, number: true, name: true, phone: true, isActive: true },
+      select: { id: true, number: true, name: true, phone: true, isActive: true },
     });
     // An inactive customer is staff's to bring back: the channel never changes it.
     if (!existing.isActive) return;
@@ -460,7 +461,7 @@ export class CustomersService {
     if (changes.length === 0) return;
     await tx.customer.update({ where: { id: existing.id }, data });
     await this.audit.recordApi(tx, {
-      branchId: existing.branchId,
+      branchId: null,
       entity: 'CUSTOMER',
       entityId: existing.id,
       reference: existing.number,
@@ -476,7 +477,7 @@ export class CustomersService {
 
   async list(user: AuthUser, query: CustomerFilters): Promise<Page<CustomerSummaryDto>> {
     const where: Prisma.CustomerWhereInput = {
-      ...customerListScope(user, query.branchId),
+      ...customerScope(user),
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
     };
@@ -506,7 +507,7 @@ export class CustomersService {
   }
 
   /**
-   * A phone, and a tax number when given, is unique per branch: the check runs under the branch's
+   * A phone, and a tax number when given, is unique in the company: the check runs under the
    * customer lock (shared with update and the Excel import), so two writers cannot both pass it.
    * A duplicate is a 409.
    */
@@ -529,7 +530,7 @@ export class CustomersService {
     user: AuthUser,
     input: Pick<CreateCustomerRequest, 'branchId'> & Partial<CustomerInput>,
   ): Promise<void> {
-    assertBranchAccess(user, input.branchId);
+    actingBranch(user, input.branchId);
     creditInput(user, input, null);
     await this.checkReferences(input);
     await this.checkSegment(input.segmentCode, null);
@@ -539,11 +540,11 @@ export class CustomersService {
   async createInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
-    input: CustomerWriteFields & { branchId: string },
+    input: CustomerWriteFields & { branchId?: string | null },
   ): Promise<CustomerWithDetails> {
-    assertBranchAccess(user, input.branchId);
+    const { branchId: given, acquiredViaOutletId: requested, ...fields } = input;
+    const branchId = actingBranch(user, given);
     creditInput(user, input, null);
-    const { branchId, acquiredViaOutletId: requested, ...fields } = input;
     // Outlet Staff (plan 4.2): the customer is theirs. Checked first, before any other lock of
     // the write.
     const ownOutletId = await outletForWriteInTx(tx, user, branchId);
@@ -564,7 +565,6 @@ export class CustomersService {
       data: {
         ...toData(fields),
         number,
-        branchId,
         acquiredViaOutletId: outletId,
         createdById: user.id,
       },
@@ -590,15 +590,10 @@ export class CustomersService {
   async createImported(
     tx: Prisma.TransactionClient,
     user: AuthUser,
-    rows: readonly { id: string; input: CreateCustomerRequest }[],
+    rows: readonly { id: string; input: CustomerInput }[],
   ): Promise<RuleIssue[][]> {
-    for (const { input } of rows) {
-      assertBranchAccess(user, input.branchId);
-      creditInput(user, input, null);
-    }
+    for (const { input } of rows) creditInput(user, input, null);
     if (rows.length === 0) return [];
-    const branchIds = rows.map((r) => r.input.branchId);
-    const active = await lockActiveBranches(tx, branchIds);
     await lockCustomerKeys(tx);
     const duplicates = await this.duplicateIssues(
       tx,
@@ -607,20 +602,17 @@ export class CustomersService {
     );
     // Plan 09d (F184-6): unique company-wide inside the batch too, whatever the rows' branches.
     const inBatch = batchDuplicates(rows.map((r) => r.input));
-    const issues = rows.map(({ input }, i): RuleIssue[] => [
-      ...(active.has(input.branchId) ? [] : [inactiveBranch]),
+    const issues = rows.map((_, i): RuleIssue[] => [
       ...(duplicates[i] ?? []),
       ...(inBatch[i] ?? []),
     ]);
     if (issues.some((list) => list.length > 0)) return issues;
     const first = await nextSequenceRange(tx, 'CUSTOMER', rows.length);
     const data = rows.map(({ id, input }, i) => {
-      const { branchId, ...fields } = input;
       return {
-        ...toData(fields),
+        ...toData(input),
         id,
         number: formatShortNumber('CS', first + BigInt(i)),
-        branchId,
         createdById: user.id,
       };
     });
@@ -674,7 +666,6 @@ export class CustomersService {
       },
       select: {
         id: true,
-        branchId: true,
         number: true,
         phone: true,
         taxNumber: true,
@@ -757,7 +748,6 @@ export class CustomersService {
       // A phone or tax number the customer does not hold now must be free in the branch (409),
       // checked under the lock.
       const keys: CustomerKeys = {
-        branchId: current.branchId,
         excludeId: current.id,
         ...(input.phone !== undefined && input.phone !== current.phone
           ? { phone: input.phone }
@@ -774,7 +764,7 @@ export class CustomersService {
         kind: 'SALES_OUTLET',
         requested,
         held: current.acquiredViaOutletId,
-        branchIds: [current.branchId],
+        branchIds: user.allowedBranchIds,
         field: 'acquiredViaOutletId',
       });
       const changed = await tx.customer.update({
@@ -922,9 +912,8 @@ export class CustomersService {
   }
 
   /** For a party draft: the checks of addParty that need no lock (the customer in the user's branches). */
-  async prepareAddParty(user: AuthUser, customerId: string): Promise<{ branchId: string }> {
-    const customer = await this.findScoped(user, customerId);
-    return { branchId: customer.branchId };
+  async prepareAddParty(user: AuthUser, customerId: string): Promise<void> {
+    await this.findScoped(user, customerId);
   }
 
   /** Locks the customer row, as every party change does: the lock an approval takes first. */
@@ -1016,7 +1005,7 @@ export class CustomersService {
     customerId: string,
   ): Promise<string | null> {
     const outletId = await outletForWriteInTx(tx, user, branchId);
-    await this.lockActiveCustomerInTx(tx, branchId, customerId, outletId);
+    await this.lockActiveCustomerInTx(tx, customerId, outletId);
     return outletId;
   }
 
@@ -1028,15 +1017,11 @@ export class CustomersService {
    */
   async lockActiveCustomerInTx(
     tx: Prisma.TransactionClient,
-    branchId: string,
     customerId: string,
     outletId: string | null = null,
   ): Promise<void> {
-    const rows = await tx.$queryRaw<
-      { branchId: string; isActive: boolean; acquiredViaOutletId: string | null }[]
-    >`
-      SELECT "branch_id" AS "branchId", "is_active" AS "isActive",
-             "acquired_via_outlet_id" AS "acquiredViaOutletId"
+    const rows = await tx.$queryRaw<{ isActive: boolean; acquiredViaOutletId: string | null }[]>`
+      SELECT "is_active" AS "isActive", "acquired_via_outlet_id" AS "acquiredViaOutletId"
       FROM "customers" WHERE "id" = ${customerId}::uuid FOR SHARE`;
     const customer = rows[0];
     if (!customer || (outletId !== null && customer.acquiredViaOutletId !== outletId)) {
@@ -1159,12 +1144,6 @@ function batchDuplicates(
   });
 }
 
-const inactiveBranch: RuleIssue = {
-  field: 'branchId',
-  code: 'BRANCH_NOT_ALLOWED',
-  message: 'Not one of your active branches',
-};
-
 const details = {
   contacts: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
   parties: { orderBy: { createdAt: 'asc' } },
@@ -1183,7 +1162,6 @@ function toSummary(c: Customer): CustomerSummaryDto {
   return {
     id: c.id,
     number: c.number,
-    branchId: c.branchId,
     kind: c.kind,
     name: c.name,
     companyName: c.companyName,
@@ -1306,12 +1284,13 @@ function auditFields(c: Customer): Pick<Customer, (typeof AUDIT_FIELDS)[number]>
 
 /** A customer change for the audit log, named by number and name. */
 function auditRecord(
-  c: { id: string; branchId: string; number: string; name: string },
+  c: { id: string; number: string; name: string },
   action: 'CREATED' | 'UPDATED',
   changes: AuditChangeDto[],
 ): AuditRecord {
   return {
-    branchId: c.branchId,
+    // Plan 09f: a customer is of no branch, and so are the records of its changes.
+    branchId: null,
     entity: 'CUSTOMER',
     entityId: c.id,
     reference: `${c.number} ${c.name}`,

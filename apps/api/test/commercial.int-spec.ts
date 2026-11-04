@@ -212,7 +212,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       const b = await createCustomer(cookies.salesDxb, dxb);
       expect(a.number).toMatch(/^CS\d{5,}$/);
       expect(b.number).not.toBe(a.number);
-      expect(a.branchId).toBe(dxb);
+      expect(a).not.toHaveProperty('branchId');
       expect(a.preferredCurrency).toBe('USD');
     });
 
@@ -223,7 +223,8 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       const edited = (
         await patch(`/customers/${jedCustomer.id}`, cookies.salesDxb, { name: 'x' }).expect(200)
       ).body as CustomerDto;
-      expect(edited).toMatchObject({ name: 'x', branchId: jed });
+      expect(edited).toMatchObject({ name: 'x' });
+      expect(edited).not.toHaveProperty('branchId');
       const list = (
         await get(`/customers?pageSize=100&q=${jedCustomer.number}`, cookies.salesDxb).expect(200)
       ).body as Page<CustomerDto>;
@@ -438,7 +439,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       });
     });
 
-    it('records a customer’s edits and deactivation, in the customer’s branch only', async () => {
+    it('records a customer’s edits and deactivation, with no branch (plan 09f)', async () => {
       const sales = await createUser(t.prisma, ['SALES'], ['DXB']);
       const cookie = await signIn(t, sales.email);
       const c = await createCustomer(cookie, dxb);
@@ -462,10 +463,15 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       );
       expect(deactivated?.changes).toEqual([{ field: 'isActive', before: 'true', after: 'false' }]);
 
-      // Another branch's manager and a role without audit_log:view see nothing of it.
+      // The customer is central: another branch's manager reads its changes too, and a report
+      // asked for one branch leaves them out. A role without audit_log:view sees nothing.
       const managerJed = await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED']);
       const jedCookie = await signIn(t, managerJed.email);
-      expect(await entries(jedCookie, `userId=${sales.id}`)).toEqual([]);
+      expect((await entries(jedCookie, `userId=${sales.id}`)).map((e) => e.action)).toEqual([
+        'UPDATED',
+        'CREATED',
+      ]);
+      expect(await entries(cookies.managerDxb, `userId=${sales.id}&branchId=${dxb}`)).toEqual([]);
       await get(`/reports/audit-log?${around()}`, cookie).expect(403);
     });
 

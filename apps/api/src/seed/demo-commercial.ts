@@ -213,7 +213,6 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
         const created = await tx.customer.create({
           data: {
             number,
-            branchId: branchId(c.branch),
             kind: c.kind,
             name: c.name,
             companyName: c.companyName ?? null,
@@ -252,7 +251,7 @@ export async function seedDemoCommercial(prisma: PrismaClient): Promise<void> {
         });
         customers.set(c.key, {
           id: created.id,
-          branchId: created.branchId,
+          branchId: branchId(c.branch),
           consigneeId: created.parties[0]?.id ?? null,
         });
       }

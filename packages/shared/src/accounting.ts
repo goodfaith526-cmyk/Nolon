@@ -626,7 +626,6 @@ export interface CustomerStatementDto {
   customerId: string;
   customerNumber: string;
   customerName: string;
-  customerBranchId: string;
   branchId: string | null;
   from: DateString;
   to: DateString;

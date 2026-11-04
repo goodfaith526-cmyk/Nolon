@@ -12,11 +12,12 @@ import { useTranslations } from 'next-intl';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
-import { branchToday } from '@/lib/branches';
+import { branchToday, writableBranches } from '@/lib/branches';
 import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { AMOUNT_PATTERN, FX_RATE_PATTERN } from '@/lib/money';
 import { CustomerPicker } from '../commercial/CustomerPicker';
+import { WorkBranchField } from '../commercial/WorkBranchField';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
 import { InvoiceNumber } from './Invoices';
@@ -51,7 +52,15 @@ export function ReceiptForm() {
   // The currency the person picked (null until then), which is kept; see `currency` below.
   const [currencyChoice, setCurrency] = useState<string | null>(null);
   const [cashAccountId, setCashAccountId] = useState('');
-  const [openInvoices, setOpenInvoices] = useState<CustomerInvoiceSummaryDto[] | null>(null);
+  const [loadedInvoices, setOpenInvoices] = useState<CustomerInvoiceSummaryDto[] | null>(null);
+  // Plan 09f: the branch that receives, one the user writes receipts in. A receipt settles
+  // invoices of its own branch only, so only those are listed.
+  const workBranches = writableBranches(me, 'receipts:create');
+  const [workBranchId, setWorkBranchId] = useState(workBranches[0]?.id ?? '');
+  const openInvoices =
+    loadedInvoices === null
+      ? null
+      : loadedInvoices.filter((i) => !workBranchId || i.branchId === workBranchId);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [amount, setAmount] = useState('');
   // The date the person typed (null until then), which is kept; see `receiptDate` below.
@@ -88,8 +97,8 @@ export function ReceiptForm() {
   const invoiceCurrencies = new Set((openInvoices ?? []).map((i) => i.currency));
   const inferredCurrency = invoiceCurrencies.size === 1 ? (openInvoices?.[0]?.currency ?? '') : '';
   const currency = currencyChoice ?? inferredCurrency;
-  // Dated today in the customer's branch, the receipt's branch (C9); a typed date is kept.
-  const receiptDate = dateChoice ?? (customer ? branchToday(me, customer.branchId) : '');
+  // Dated today in the receipt's branch (C9); a typed date is kept.
+  const receiptDate = dateChoice ?? (customer ? branchToday(me, workBranchId) : '');
 
   // Dropdown narrowing only: the API checks the account again (cash, branch, currency).
   const cashAccounts = (accounts ?? []).filter(
@@ -98,7 +107,7 @@ export function ReceiptForm() {
       a.isActive &&
       a.isPostable &&
       a.currency === currency &&
-      (a.branchId === null || a.branchId === customer?.branchId),
+      (a.branchId === null || a.branchId === workBranchId),
   );
   // The only matching account is taken; another customer branch or currency drops one that no
   // longer matches (C3, C4).
@@ -124,6 +133,7 @@ export function ReceiptForm() {
         customerId: customer.id,
         currency,
         amount: amount.trim(),
+        ...(workBranchId ? { branchId: workBranchId } : {}),
       });
       const split = await api<ReceiptAllocationSuggestionDto>(
         `/receipts/allocation-suggestion?${query.toString()}`,
@@ -152,6 +162,7 @@ export function ReceiptForm() {
     const body: CreateReceiptRequest = {
       requestId,
       customerId: customer.id,
+      ...(workBranchId ? { branchId: workBranchId } : {}),
       receiptDate,
       currency,
       fxRate: currency === 'USD' || fxRate === '' ? null : fxRate,
@@ -187,6 +198,15 @@ export function ReceiptForm() {
         </header>
         <div className="form-section-body">
           <CustomerPicker value={customer} onChange={pickCustomer} />
+          <WorkBranchField
+            branches={workBranches}
+            value={workBranchId}
+            onChange={(id) => {
+              setWorkBranchId(id);
+              setAllocations({});
+              setRest(null);
+            }}
+          />
         </div>
       </section>
       <section className="form-section">

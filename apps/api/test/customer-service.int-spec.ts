@@ -26,7 +26,6 @@ import { uniquePhone } from './test-data.js';
 
 /** Every field the Customer Service API may return (scenario 23): Public or Customer-visible. */
 const CUSTOMER_FIELDS = [
-  'branchCode',
   'companyName',
   'contacts',
   'email',
@@ -245,7 +244,7 @@ describe('Customer Service API', () => {
     const [c] = found;
     if (!c) throw new Error('No customer');
     expect(keysOf(c)).toEqual(CUSTOMER_FIELDS);
-    expect(c).toMatchObject({ branchCode: 'PTS', name: customer.name, phone: customer.phone });
+    expect(c).toMatchObject({ name: customer.name, phone: customer.phone });
     expect(c.contacts.map(keysOf)).toEqual([CONTACT_FIELDS]);
     expect(c.contacts[0]).toMatchObject({ name: 'Amna Contact', canInquire: true });
     expectNoSecrets(found);
@@ -304,14 +303,19 @@ describe('Customer Service API', () => {
     expectNoSecrets(invoices);
   });
 
-  it('reads only the branches of its key, and only with a valid key', async () => {
-    await cs(`/customers/${customer.number}`, jedKey.key).expect(404);
+  it("reads documents of its key's branches only (customers are central), and only with a valid key", async () => {
+    // Plan 09f: any key finds the customer, never another branch's documents.
+    await cs(`/customers/${customer.number}`, jedKey.key).expect(200);
     await cs(`/shipments/${shipment.number}`, jedKey.key).expect(404);
-    await cs(`/customers/${customer.number}/invoices`, jedKey.key).expect(404);
     expect(
-      (await cs(`/customers?phone=${encodeURIComponent(contactPhone)}`, jedKey.key).expect(200))
-        .body,
+      (await cs(`/customers/${customer.number}/invoices`, jedKey.key).expect(200)).body,
     ).toEqual([]);
+    expect(
+      (
+        (await cs(`/customers?phone=${encodeURIComponent(contactPhone)}`, jedKey.key).expect(200))
+          .body as CsCustomerDto[]
+      ).map((c) => c.number),
+    ).toEqual([customer.number]);
 
     const path = `/customers/${customer.number}`;
     await t.http().get(`/api/v1/cs${path}`).expect(401);
@@ -344,7 +348,10 @@ describe('Customer Service API', () => {
     try {
       // Owned by PTS, shared with JED: the JED key still does not find it.
       await cs(`/shipments/${shipment.number}`, jedKey.key).expect(404);
-      await cs(`/customers/${customer.number}/shipments?state=all`, jedKey.key).expect(404);
+      expect(
+        (await cs(`/customers/${customer.number}/shipments?state=all`, jedKey.key).expect(200))
+          .body,
+      ).toEqual([]);
       // The owner's key is unchanged.
       await cs(`/shipments/${shipment.number}`, ptsKey.key).expect(200);
     } finally {

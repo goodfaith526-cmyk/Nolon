@@ -40,7 +40,6 @@ export function CustomerDetail({ id }: { id: string }) {
     return notice ? <Notice notice={notice} /> : <p className="muted">{tc('loading')}</p>;
   }
   const canEdit = can(me, 'customers:update');
-  const branch = me.branches.find((b) => b.id === customer.branchId);
   const segmentName = (code: string | null) => {
     const segment = master?.customerSegments.find((s) => s.code === code);
     return segment ? name(segment) : (code ?? '—');
@@ -132,8 +131,6 @@ export function CustomerDetail({ id }: { id: string }) {
         />
       ) : (
         <dl className="details">
-          <dt>{t('branch')}</dt>
-          <dd>{branch ? name(branch) : ''}</dd>
           <dt>{t('kind')}</dt>
           <dd>{t(`kind_${customer.kind}`)}</dd>
           <dt>{t('companyName')}</dt>

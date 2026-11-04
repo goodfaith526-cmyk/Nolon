@@ -620,7 +620,11 @@ export class NewCustomerBookingDraftsService {
     await this.requireContainer(user, { ...request, consolidationId });
     const ready =
       plan.kind === 'READY'
-        ? await this.bookings.prepareCreate(user, { ...request, customerId: plan.customerId })
+        ? await this.bookings.prepareCreate(user, {
+            ...request,
+            customerId: plan.customerId,
+            branchId: current.branchId,
+          })
         : null;
     await this.prisma.$transaction(async (tx) => {
       let bookingId = '';
@@ -751,7 +755,11 @@ export class NewCustomerBookingDraftsService {
       const { consolidationId, ...booking } = completeBookingRequest(request);
       await this.requireContainer(user, { ...booking, consolidationId });
       if (customer.customerId !== null) {
-        await this.bookings.prepareCreate(user, { ...booking, customerId: customer.customerId });
+        await this.bookings.prepareCreate(user, {
+          ...booking,
+          customerId: customer.customerId,
+          branchId: draft.branchId,
+        });
       } else {
         await this.bookings.prepareWithoutCustomer(booking);
       }

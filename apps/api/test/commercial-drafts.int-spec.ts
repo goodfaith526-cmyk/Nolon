@@ -231,8 +231,7 @@ describe('quotation drafts: the assistant proposes', () => {
       .expect(404);
   });
 
-  it('drafts for a customer of another branch in the branch the user writes in (plan 09d)', async () => {
-    const dxb = await branchId(t.prisma, 'DXB');
+  it('drafts in the branch the user writes in; a customer has no branch (plan 09f)', async () => {
     const jed = await branchId(t.prisma, 'JED');
     const pts = await branchId(t.prisma, 'PTS');
     const branchOf = async (res: { body: unknown }) =>
@@ -245,16 +244,14 @@ describe('quotation drafts: the assistant proposes', () => {
     expect(
       await branchOf(await createQuotationDraft(quotationRequest(), tokens.salesJed).expect(201)),
     ).toBe(jed);
-    // Several: the customer's own branch when the user writes in it.
-    expect(
-      await branchOf(await createQuotationDraft(quotationRequest(), tokens.salesTwo).expect(201)),
-    ).toBe(dxb);
-    // Several, none the customer's: the branch must be named (a field refusal), then it is used.
-    const ask = await createQuotationDraft(
-      quotationRequest({ customerId: jedCustomer.id }),
-      tokens.salesTwo,
-    ).expect(400);
-    expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED', fields: ['branchId'] });
+    // Several: the branch must be named (a field refusal), whatever the customer; then it is used.
+    for (const customerId of [undefined, jedCustomer.id]) {
+      const ask = await createQuotationDraft(
+        quotationRequest(customerId ? { customerId } : {}),
+        tokens.salesTwo,
+      ).expect(400);
+      expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED', fields: ['branchId'] });
+    }
     expect(
       await branchOf(
         await createQuotationDraft(

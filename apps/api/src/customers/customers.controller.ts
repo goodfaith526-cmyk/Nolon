@@ -26,7 +26,6 @@ import { createCustomerBody, email, partyBody, updateCustomerBody } from './cust
 import { CustomersService } from './customers.service.js';
 
 const listQuery = pageQuery.extend({
-  branchId: z.uuid().optional(),
   kind: z.enum(CUSTOMER_KINDS).optional(),
   isActive: optionalFlag,
 });

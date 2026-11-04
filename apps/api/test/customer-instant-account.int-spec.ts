@@ -243,7 +243,6 @@ describe('Instant branch account from a signed bot booking request', () => {
     const account = accounts[0]!;
     expect(row).toMatchObject({ instantAccount: 'CREATED', instantCustomerId: account.id });
     expect(account).toMatchObject({
-      branchId: dxb,
       kind: 'INDIVIDUAL',
       name: 'Instant sender',
       phone: null, // 10: an unverified phone is never copied.
@@ -358,7 +357,7 @@ describe('Instant branch account from a signed bot booking request', () => {
       instantCustomerId: first.instantCustomerId,
     });
     const accounts = await accountsOf(p.profileId);
-    expect(accounts.map((a) => a.branchId)).toEqual([dxb]);
+    expect(accounts).toHaveLength(1);
     void jed;
 
     // An inactive account is never revived by the bot: staff decide.

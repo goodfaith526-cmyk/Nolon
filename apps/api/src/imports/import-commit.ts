@@ -14,7 +14,8 @@ import { type ImportRequest, importRecordIds, importRequestRange } from './reque
  */
 
 /**
- * Lists the ids (and branches) of the records an import of one kind wrote in a primary-key range.
+ * Lists the ids (and branches; null for a record of no branch, a customer) of the records an
+ * import of one kind wrote in a primary-key range.
  * Each module that owns an import provides its own, so this helper never reads another module's
  * tables: it only reads which ids an import created, never the records' content.
  */
@@ -22,7 +23,7 @@ export type ImportedRecordsInRange = (
   client: Prisma.TransactionClient,
   range: { from: string; to: string },
   take?: number,
-) => Promise<{ id: string; branchId: string }[]>;
+) => Promise<{ id: string; branchId: string | null }[]>;
 
 /** The record lookup of every kind of import, keyed by kind. */
 export type ImportedRecordLookups = Record<ImportKind, ImportedRecordsInRange>;
@@ -46,7 +47,8 @@ export async function previousImport(
     const ids = importRecordIds(request, found.length);
     const present = new Set(found.map((r) => r.id));
     const same = ids.every((id) => present.has(id));
-    if (!same || found.some((r) => !canAccessBranch(user, r.branchId))) throw reused();
+    if (!same || found.some((r) => r.branchId !== null && !canAccessBranch(user, r.branchId)))
+      throw reused();
     const { kind, requestId } = request;
     return { kind, requestId, created: ids.length, replayed: true, ids };
   }

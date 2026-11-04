@@ -570,10 +570,8 @@ export class BookingRequestsService {
       const account = await this.customers.botAccountInTx(tx, {
         profile,
         expectedVersion: binding?.profileVersion,
-        branchId: row.branchId,
         apiClientId,
       });
-      if (!account) return { created: true, row };
       return {
         created: true,
         row: await tx.csBookingRequest.update({

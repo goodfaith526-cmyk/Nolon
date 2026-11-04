@@ -709,7 +709,6 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       expect(accounts).toHaveLength(1);
       expect(accounts[0]).toMatchObject({
         phone: null,
-        branchId: dxb,
         name: 'Explicit booking sender',
       });
       const approvedRequest = await t.prisma.csBookingRequest.findUniqueOrThrow({
@@ -782,7 +781,6 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     const old = await t.prisma.customer.create({
       data: {
         number: `OLD${randomUUID().slice(0, 12)}`,
-        branchId: dxb,
         name: 'Existing customer',
         phone,
         kind: 'INDIVIDUAL',
@@ -823,7 +821,6 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     await t.prisma.customer.create({
       data: {
         number: `OLD${randomUUID().slice(0, 12)}`,
-        branchId: jed,
         name: 'Other legacy branch account',
         phone,
         kind: 'INDIVIDUAL',
@@ -844,7 +841,7 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
   it('backfill is explicit, resumable, preserves account ids/numbers, and never links a channel by name or phone', async () => {
     const before = await t.prisma.customer.findMany({
       where: { profileId: null },
-      select: { id: true, number: true, branchId: true },
+      select: { id: true, number: true },
     });
     const dry = await backfillCustomerProfiles(t.prisma, companyId, false);
     expect(dry.linked).toBe(0);

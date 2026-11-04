@@ -145,7 +145,6 @@ export class CustomerStatementService {
       customerId: customer.id,
       customerNumber: customer.number,
       customerName: customer.name,
-      customerBranchId: customer.branchId,
       branchId: q.branchId ?? null,
       from: q.from,
       to: q.to,

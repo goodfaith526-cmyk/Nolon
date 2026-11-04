@@ -262,7 +262,6 @@ describe('Customer Service estimates and photos (plan 09 section 12)', () => {
       await t.prisma.customer.create({
         data: {
           number: `${tag}-1`,
-          branchId: dxb,
           name: `${tag} customer`,
           phone: uniquePhone(),
           kind: 'COMPANY',

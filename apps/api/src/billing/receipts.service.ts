@@ -19,7 +19,13 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, canAccessBranch, listBranchScope, workBranch } from '../auth/branch-scope.js';
+import {
+  assertBranchAccess,
+  branchScope,
+  canAccessBranch,
+  listBranchScope,
+  workBranch,
+} from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
@@ -208,9 +214,10 @@ export class ReceiptsService {
    */
   async suggestAllocations(
     user: AuthUser,
-    input: { customerId: string; currency: string; amount: DecimalString },
+    input: { customerId: string; currency: string; amount: DecimalString; branchId?: string },
   ): Promise<ReceiptAllocationSuggestionDto> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
+    if (input.branchId) assertBranchAccess(user, input.branchId);
     const currency = await this.currencies.requireActive(input.currency);
     const amount = dec(input.amount);
     if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
@@ -221,6 +228,7 @@ export class ReceiptsService {
     const invoices = await this.prisma.customerInvoice.findMany({
       where: {
         ...branchScope(user),
+        ...(input.branchId ? { branchId: input.branchId } : {}),
         customerId: customer.id,
         currency: currency.code,
         status: 'APPROVED',
@@ -281,7 +289,7 @@ export class ReceiptsService {
     return {
       customerId: customer.id,
       // Plan 09d: the branch that receives, not the customer's by rule.
-      branchId: workBranch(user, 'receipts:create', input.branchId, customer.branchId),
+      branchId: workBranch(user, 'receipts:create', input.branchId),
       currency: currency.code,
       decimals,
       amount,
@@ -339,9 +347,7 @@ export class ReceiptsService {
     return {
       customerId: customer?.id ?? null,
       // Plan 09d: the same work branch as a complete receipt (F184-9).
-      branchId: customer
-        ? workBranch(user, 'receipts:create', givenBranchId, customer.branchId)
-        : null,
+      branchId: customer ? workBranch(user, 'receipts:create', givenBranchId) : null,
       currency: currency?.code ?? null,
     };
   }
