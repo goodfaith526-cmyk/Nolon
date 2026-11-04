@@ -23,94 +23,241 @@ This is the plan. The build comes in the PRs listed in section 9, each one after
 | G9  | A booking or shipment that has been paid cannot be cancelled (#113), and there is no refund or advance path.                                                                                                                                                                                                                | plan Q, #113                                                                                 |
 | G10 | No alert for a draft bot booking, a confirmed shipment with no approved invoice, or a delivered shipment that is not closed.                                                                                                                                                                                                | `packages/shared/src/alerts.ts:10-17`                                                        |
 
-## 1. The agreed price lives on the booking (G2)
+## 1. The agreed terms are pinned on the booking (G2; Codex F190-2)
 
-**⭐ An approved bot request becomes an APPROVED quotation linked to its booking.** Billing already reads
-agreed prices from a booking's quotation (`agreedPrices`, `quotationDrift`, the currency rule in
-`invoiceCurrency`), so the bot path reuses that machinery instead of adding a second price source.
+**⭐ When a price is agreed, the booking keeps a fingerprint of exactly what was priced. The automatic path
+(section 2) uses the agreed price only while the booking still matches that fingerprint. Any change makes the
+invoice a draft for staff, never an approved invoice at an old price.**
 
-- In `approve`, in the same transaction, after `insertInTx`: `QuotationsService.insertApprovedInTx(tx, user, ...)`.
-  It makes a quotation with status `APPROVED`, `source = 'BOT_REQUEST'` and `cs_request_id`, in the approved
-  currency (`input.pricing.currency`, or `estimateCurrency` for an estimate). It has one FREIGHT line per
-  priced item: price category, quantity, the card's unit price and minimum, and a line total equal to that
-  item's `approvedTotal`. An estimated request gets one line, quantity 1, the estimate amount. The booking's
-  `quotation_id` is set to it.
-- Several FREIGHT lines on one quotation are new. `systemPrice` refuses `QUOTED_PRICE_SEVERAL` today. The
-  quotation path of `deriveForShipment` copies quotation lines one by one, so it already handles them.
-  `systemPrice` matches a staff line to its quotation line by `(chargeTypeCode, priceCategoryCode)` when the
-  charge has several lines, and refuses only when that pair is still ambiguous.
-- The quotation is not shown as a sales quotation to edit: it is born APPROVED, and the routes that edit or
-  send a quotation refuse `source = 'BOT_REQUEST'` with 409 `QUOTATION_FROM_REQUEST`. It prints like any quotation.
-- **A staff booking with no quotation:** no snapshot is needed. Section 2 makes its invoice at confirmation,
-  so the rate card used is the one valid on the confirmation day, the day the booking was agreed.
-- **Migration (additive):** `quotations.source` enum `quotation_source` (`STAFF`, `BOT_REQUEST`) NOT NULL DEFAULT
-  `'STAFF'`, and `quotations.cs_request_id` uuid NULL with a foreign key to `cs_booking_requests`, plus a unique index.
+- **Bot request → APPROVED quotation.** In `approve`, in the same transaction, after `insertInTx`,
+  `QuotationsService.insertApprovedInTx` makes a quotation with status `APPROVED`, `source = 'BOT_REQUEST'` and
+  `cs_request_id`. Its currency is the approved one (`input.pricing.currency`, or `estimateCurrency` for an
+  estimate). It has one FREIGHT line per priced request item: the item's approved category, approved quantity,
+  the card's unit, unit price and minimum, and a line total equal to that item's `approvedTotal`. Each line
+  carries `booking_item_id`, the booking line made from that item (the `lineOf` map already built in
+  `approve`). An estimated request gets one line, quantity 1, total = the accepted `estimateAmount`. That line
+  has `booking_item_id` null and `covers_all_items = true`. The booking's `quotation_id` is set to it.
+- **The fingerprint.** `bookings.agreed_terms_hash` (char 64) and `bookings.agreed_terms_version` (int) are
+  written in the same transaction as the agreement. That is bot approval, or `createFromQuotation` for a staff
+  quotation. The hash is SHA-256 of a canonical JSON (`agreedTerms/1`) with these fields:
+  - origin, destination, mode, load type, cargo type and the sorted services;
+  - the quotation id and its `updatedAt`, plus the bot request's `estimateVersion` for an estimate;
+  - every booking line, sorted by line number, with its id, price category, quantity, unit, and the `isOther`
+    description. A line changed, added or dropped changes the hash, even inside a category the quotation
+    already has.
+- **At confirmation** the hash is computed again from the booking as it now is (`agreedTermsOf`, a pure
+  function with unit tests). If it is equal, the agreed prices are used line by line through `booking_item_id`.
+  The estimate line is used whole. If it differs or is missing, there is no agreed price for the automatic
+  path. The auto-invoice is then a DRAFT priced by today's derivation, with `auto_note =
+'AGREED_TERMS_CHANGED'` (section 2). Staff reprice it, or the customer accepts a new estimate.
+- The manual suggestion (`/invoice-drafts/suggest`) keeps today's `quotationDrift` behaviour, because a human
+  reviews it. The fingerprint governs only automatic approval.
+- Several FREIGHT lines on one quotation are new. `systemPrice` (a staff-entered line checked against the
+  quotation) matches by `booking_item_id` when the quotation has bound lines, and otherwise refuses
+  `QUOTED_PRICE_SEVERAL` as today.
+- A bot quotation is never edited or sent: those routes refuse `source = 'BOT_REQUEST'` with 409
+  `QUOTATION_FROM_REQUEST`. It prints like any quotation.
+- **Migration (additive, no accounting table):** enum `quotation_source` (`STAFF`, `BOT_REQUEST`).
+  `quotations.source` NOT NULL DEFAULT `'STAFF'`. `quotations.cs_request_id` uuid NULL with a foreign key and a
+  unique index. `quotation_lines.booking_item_id` uuid NULL with a foreign key. `quotation_lines.covers_all_items`
+  boolean NOT NULL DEFAULT false. `bookings.agreed_terms_hash` char(64) NULL. `bookings.agreed_terms_version`
+  int NULL.
+- **Tests:** these regressions are required:
+  - one barrel priced, the booking line edited to two barrels: the result is a draft, not one barrel approved;
+  - a second line added in the same category: draft;
+  - a line dropped: draft;
+  - services changed: draft;
+  - an estimate whose items changed after acceptance: draft;
+  - an estimate unchanged: approved at exactly the estimate;
+  - several items unchanged: each line exactly equals its `approvedTotal`, in the approved currency.
 - **Agent:** none. The agent reads the request, not the quotation.
 
-## 2. The invoice is made when the booking is confirmed (G1)
+## 2. The invoice is made when the booking is confirmed (G1; Codex F190-1, F190-3)
 
-**⭐ When a booking is confirmed and its price is complete, the invoice is made and approved in the same
-transaction. If the price is not complete, a draft invoice is made with whatever can be priced, and finance
-gets an alert.**
+**⭐ On confirmation, NOLON always makes the shipment's MAIN invoice as a DRAFT. It approves it in the same
+transaction only through a narrow, server-only rule. If anything blocks approval, the draft stays, finance
+gets an alert, and nothing is posted.**
 
-- `confirmInTx` calls `InvoicesService.autoInvoiceInTx(tx, user, shipmentId)` after `createForBooking`. It
-  runs on every confirm path: `POST /bookings/:id/confirm`, a container booking, and the bot approval of
-  section 4.
-- `autoInvoiceInTx` runs `deriveForShipmentInTx`, the same derivation as the suggestion, read in the
-  transaction. The invoice date is today in the branch's time zone, and the kind is MAIN (#151).
-  - **Complete:** no `unresolved`, every line `FILL`, total > 0. The invoice is inserted and approved through
-    the existing approve body (numbering, `autoJournal.customerInvoiceApproved`, commissions), extracted to
-    `approveInTx`. The posting comes only from the auto-journal rules service.
-  - **Not complete:** if at least one line is priced, a DRAFT invoice is made with the priced lines plus an
-    `auto_note` that says why it is incomplete. If nothing can be priced, no invoice is made. Either way the
-    alert `SHIPMENT_NOT_INVOICED` (section 7) shows it to finance.
-  - **The date is in a closed period**, or **the credit limit (section 3) would be passed by this invoice:**
-    a DRAFT is made with the reason. The confirmation itself is never rolled back by the invoice step. The
-    shipment exists either way, and money is never posted past a rule.
-- **Who approves.** The prices come only from an approved quotation or an approved rate card. The person who
-  confirms enters no amount, so no human judgement goes into the posting. ⭐ The invoice is approved as
-  `approvedById = the confirming user` with `approval_source = 'AUTO_ON_CONFIRM'`, and the audit log shows it,
-  even when that user does not hold `customer_invoices:approve`. Editing an amount afterwards still needs the
-  usual rights, through a credit note. (The alternative was approving only for users who hold the
-  permission. That would leave most bookings unbilled, which is the gap itself.)
-- **Switch:** `BILLING_AUTO_INVOICE_ENABLED`, default `true`, validated in `env.ts`. It is an emergency off
-  for staff-side billing. It is not a customer notice.
-- **Migration (additive):** `customer_invoices.approval_source` enum `invoice_approval_source` (`MANUAL`,
-  `AUTO_ON_CONFIRM`) NOT NULL DEFAULT `'MANUAL'`, and `customer_invoices.auto_note` text NULL. Rule 4
-  flags them because `customer_invoices` is an accounting table, so they need the owner's label, as #151 did.
-  They are constant-default and nullable columns only.
-- **Statement:** unchanged. It still shows posted entries, which now exist from confirmation.
-- **Agent:** the response of confirming a container-booking draft from the assistant is the same. No new field.
+### 2.1 Authorization (F190-1)
 
-## 3. Credit limit (G3), then payment before handover (G4)
+The owner asked for this in their own words on 2026-11-04 04:39: «الفاتورة مفروض تتعمل تلقائيا اول ما الحجز
+يتأكد.. وتظهر في الاستيتمنت». On 04:53 they approved this plan's direction. That is the authorization for one
+exception: an invoice approved by a system rule, not by a person holding `customer_invoices:approve`. The
+exception is limited as follows.
 
-- **ب6 is built exactly as plan 06 wrote it.** The open balance is computed in one statement under the
-  advisory lock `credit:<customer>`. It is checked on confirm (the balance before) and on approve (the
-  balance after). The codes are 409 `CREDIT_LIMIT_EXCEEDED` and `CREDIT_LIMIT_NO_RATE`. Accepting a draft
-  is never refused. The auto-invoice of section 2 uses the same check. If the invoice would pass the limit,
-  it stays a draft, as section 2 says.
-- **Handover gate (new).** It applies to a goods release from a warehouse whose `location_id` is the
-  shipment's destination, to a POD, and to a hand-set PARTIALLY_DELIVERED or DELIVERED. These are refused
-  when either of the following holds, unless the user overrides:
-  - (a) the shipment has no approved invoice and no no-charge reason. Code: 409 `HANDOVER_NOT_INVOICED`.
-  - (b) the customer has **no credit limit** (a cash customer), and the shipment's approved invoices still
-    have a balance. Code: 409 `HANDOVER_UNPAID` {shipment, balance, currency}.
+- **Only these sources may be auto-approved:**
+  - (i) Every line comes from an agreed price whose fingerprint still matches (section 1). That is a bot
+    quotation, or a staff quotation with status APPROVED that its approver signed.
+  - (ii) Every line comes from approved rate cards, **and** the confirming user holds
+    `customer_invoices:approve` in the booking's branch. In this case quantities typed by staff decide the
+    amount, so the person's own right is needed.
+  - Anything else is a DRAFT.
+- **Server-only.** `autoApproveOnConfirmInTx(tx, initiator, derivation)` is not exported to any controller.
+  It approves only the invoice that the same call inserted in the same transaction, from the derivation it
+  holds. It never takes an invoice id, so it cannot approve a manual or older draft. No request body can set
+  `approval_source`. A unit test pins that no route reaches it except the three confirm callers (2.3).
+- **Audit.** These fields are recorded:
+  - `approval_source = 'AUTO_ON_CONFIRM'`;
+  - `auto_rule = 'AGREED_PRICE' | 'RATE_CARD_WITH_RIGHT'`;
+  - `approvedById` = NULL for rule (i), or the confirming user for rule (ii);
+  - `auto_initiated_by_id` = the confirming user, always.
 
-  A customer with a limit passes (b), because ب6 already capped their debt.
+  The audit log gets `INVOICE_AUTO_APPROVED` with both ids and the agreed-terms hash. A database check
+  requires this: an approved invoice has `approvedById` set, or `approval_source = 'AUTO_ON_CONFIRM'` with
+  `auto_initiated_by_id` set. The invoice page shows «اعتُمدت تلقائياً عند تأكيد الحجز بواسطة …».
 
-- **Override:** the new permission `handover:override_payment`, with a reason of 10 or more characters. It is
-  recorded on the movement or POD (`payment_override_reason`, `payment_override_by_id`) and in the audit log.
-  No role gets it by seed. The Administrator grants it on the permissions screen, so there is no seed migration.
-- **Releases at the origin and loading moves** are not gated: (a) and (b) apply only at the destination.
-- **Migration (additive):** two nullable columns on `warehouse_movements` and on `proofs_of_delivery`.
+- **Switch:** `BILLING_AUTO_APPROVE_ENABLED`, **default `false`**, validated in `env.ts`. While it is off,
+  confirmation still makes the DRAFT and raises the alert, so the gap is visible from day one. The owner turns
+  it on in `switches.env` after the negative permission tests are green. Creating the draft has no switch: it
+  posts nothing.
+- **Negative tests:**
+  - a confirmer without `customer_invoices:approve`, with a rate-card price: DRAFT;
+  - the same confirmer with a matching agreed price: approved, with `approvedById` NULL and the initiator
+    recorded;
+  - a confirmer with the right in another branch only: DRAFT;
+  - the switch off: DRAFT;
+  - a manual draft that already exists for the shipment is never approved by confirmation;
+  - no route body can set `approval_source` (strict schema 400).
+
+### 2.2 What is made
+
+- `deriveForShipmentInTx` runs the same derivation as the suggestion, read in the transaction, with the
+  section 1 fingerprint rule. The invoice date is today in the branch's time zone, and the kind is MAIN (#151).
+- If no line can be priced, no invoice is made. Otherwise a DRAFT is made with the priced lines and an
+  `auto_note` naming what blocks approval: `PRICE_INCOMPLETE`, `AGREED_TERMS_CHANGED`, `NO_APPROVE_RIGHT`,
+  `PERIOD_CLOSED`, `CREDIT_LIMIT_EXCEEDED`, `CREDIT_LIMIT_NO_RATE`, `NO_FX_RATE` or `SWITCH_OFF`. The alert
+  `SHIPMENT_NOT_INVOICED` (section 7) lists it.
+
+### 2.3 Transaction boundary and lock order (F190-3)
+
+Plan 06 puts the customer's credit advisory lock last in the transaction. That stays. The automatic approval
+is wrapped in a PostgreSQL savepoint, so a refusal removes every posted effect and keeps the booking and the
+draft.
+
+1. The caller does its own writes:
+   - confirm: the booking row lock, booking CONFIRMED, shipment;
+   - container booking: the container writes;
+   - bot approval: the request, the quotation, the outbox rows.
+2. The DRAFT invoice is inserted, under the shipment's lock, as #151 orders it: the shipment, then the invoice.
+3. Plan 06's confirm check runs here: the balance **before** this invoice, which the draft does not count.
+   It happens under `credit:<customer>` only if step 4 is skipped. Otherwise it is folded into step 4's
+   single statement as `balance_before`.
+4. If the rule of 2.1 allows approval: `SAVEPOINT auto_invoice`. Then, inside it:
+   - the period check;
+   - numbering (`number_sequences` row);
+   - the journal through `autoJournal.customerInvoiceApproved`;
+   - commissions;
+   - the `invoice.issued` outbox row, if its switch is on (section 8).
+
+   Then, **last**: `pg_advisory_xact_lock(credit:<customer>)` and plan 06's single statement, which gives
+   `balance_before` and `balance_after`.
+   - `balance_before > limit`: the whole transaction is refused with 409 `CREDIT_LIMIT_EXCEEDED`. This is plan
+     06's confirm rule. Nothing is kept.
+   - `balance_after > limit`, or no FX rate: `ROLLBACK TO SAVEPOINT auto_invoice`. In PostgreSQL this
+     undoes the number, journal, commission and outbox rows of the subtransaction, and releases its locks,
+     the advisory lock included. Then the draft's `auto_note` is set. The confirmation stands.
+   - Otherwise: `RELEASE SAVEPOINT`, and the transaction commits.
+   - A coded refusal inside the savepoint (closed period, missing FX for `totalUsd`) also rolls back to the
+     savepoint, with its note. Any other error propagates and fails the whole transaction (fail closed).
+
+5. Step 4 is the **last** step of every caller's transaction. Nothing is written after it except the draft
+   note in the fallback case, which takes no new lock. So `confirmInTx` no longer calls billing. Each caller
+   calls `billing.autoInvoiceLastInTx` as its final statement:
+   - `BookingsService.confirm`;
+   - the container booking in `ConsolidationsService`;
+   - the bot `approve` (section 4).
+
+   A test per caller asserts the order.
+
+- The savepoint runs as raw SQL through the interactive transaction (`tx.$executeRaw\`SAVEPOINT ...\``).
+PR 12-2 includes an integration test proving that Prisma's transaction keeps working after `ROLLBACK TO
+  SAVEPOINT`.
+- **Integration tests:**
+  - failure after posting (`balance_after` over the limit): no journal, no number used, no commission, no
+    outbox row; the booking is CONFIRMED and the draft is noted;
+  - `balance_before` over the limit: nothing kept;
+  - missing FX;
+  - closed period;
+  - two concurrent confirms for one customer, whose sum is over the limit: one approved and one draft, no
+    deadlock;
+  - a confirm racing a receipt cancel;
+  - the container caller and the bot caller.
+
+### 2.4 Other points
+
+- **Order:** 12-2 is built only after 12-1 (ب6), so the credit check exists before anything is auto-approved.
+- **Migration:** these columns are added to `customer_invoices`:
+  - `approval_source`, enum `invoice_approval_source` (`MANUAL`, `AUTO_ON_CONFIRM`), NOT NULL DEFAULT
+    `'MANUAL'`;
+  - `auto_rule`, an enum, NULL;
+  - `auto_note`, varchar(40), NULL;
+  - `auto_initiated_by_id`, uuid NULL, with a foreign key;
+  - the check constraint above.
+
+  `approved_by_id` is already nullable, so it does not change. `customer_invoices` is an accounting table, so
+  this needs the owner's label (rule 4).
+
+- **Statement:** unchanged. It shows posted entries, which now exist from confirmation once the switch is on.
+- **Agent:** confirming a container-booking draft from the assistant returns the same shape. No new field.
+
+## 3. Credit limit (G3), then payment before handover (G4; Codex F190-4, F190-5)
+
+- **ب6 is built exactly as plan 06 wrote it (PR 12-1).** Plan 06 gives a null limit no check, and that
+  stays for confirm and approve.
+- **Handover gate (new, PR 12-3).** It covers:
+  - a goods release from a warehouse whose `location_id` is the shipment's destination;
+  - a POD;
+  - a hand-set PARTIALLY_DELIVERED or DELIVERED.
+
+  Releases at the origin and loading moves are not gated. The check runs **at the handover's own transaction
+  boundary, as its last step**: after the movement or POD rows, under `credit:<customer>`, in one statement in
+  plan 06's style. It reads the current state, never an earlier approval.
+  - **(a) Billed:** the shipment has a **live MAIN** invoice that is APPROVED. Live means not cancelled and
+    not fully credited. A draft MAIN (an auto draft included), a cancelled one, or a fully credited one does
+    not count. An ADDITIONAL invoice never counts, paid or not. Otherwise: 409 `HANDOVER_NOT_INVOICED`.
+  - **(b) Paid or within credit:** it depends on the customer's limit as it is at that moment.
+    - **No limit (null) or limit 0 (cash):** the sum left to pay on all the shipment's live approved
+      invoices (MAIN and ADDITIONAL), after credits, must be 0. Otherwise: 409 `HANDOVER_UNPAID` {shipment,
+      balance, currency}. An unapplied advance does not count until it is applied to the invoice.
+    - **Positive limit:** the customer's current open balance, computed by plan 06's single statement, must
+      be ≤ the limit. Otherwise: 409 `HANDOVER_OVER_LIMIT` {customer, balance, limit, currency}. Missing FX:
+      409 `CREDIT_LIMIT_NO_RATE`.
+
+  So a receipt cancelled after approval, a reversed application, or a limit lowered later all block the
+  handover, because the check is current.
+
+- **Override:** the permission `handover:override_payment`, and a reason of at least 10 characters. It
+  overrides (a) and (b), and also covers a shipment carried free (no MAIN on purpose). It is recorded on the
+  movement or POD (`payment_override_reason`, `payment_override_by_id`) and in the audit log. No role gets it
+  by seed. The Administrator grants it on the permissions screen.
+- **Locks:** the shipment lock first (as releases and PODs take it today), then the credit advisory lock last.
+  Receipts, applications and credit notes take no credit lock (plan 06), and the single statement reads one
+  snapshot.
+- **Migration (additive):** `payment_override_reason` text NULL and `payment_override_by_id` uuid NULL, on
+  `warehouse_movements` and `proofs_of_delivery`.
+- **Tests:**
+  - a paid ADDITIONAL with a draft MAIN: 409;
+  - a paid ADDITIONAL with a cancelled or fully credited MAIN: 409;
+  - limit 0, unpaid: 409;
+  - limit 0, an advance applied and then the receipt cancelled: 409;
+  - a positive limit lowered under the balance: 409;
+  - missing FX: 409;
+  - fully paid: 200;
+  - override without the permission: 403;
+  - override without a reason: 400;
+  - override: 200, audited;
+  - an origin release: never gated;
+  - a handover racing a receipt cancel.
 - **Agent:** none. The agent writes no release and no POD.
 
 ## 4. Approving a bot request confirms its booking (G6)
 
-**⭐ One staff decision, one result.** `approve` calls `bookings.confirmInTx` right after `insertInTx`, in the
-same transaction. So approval makes the booking CONFIRMED, its shipment and its invoice (section 2). Every
-confirm check runs: cargo completeness, and ب6 on the balance before. A refusal rolls the approval back,
-with the confirm code, and the request stays PENDING.
+**⭐ One staff decision, one result.** `approve` calls `bookings.confirmInTx` right after `insertInTx` and
+the quotation of section 1, in the same transaction. It then writes the request rows and the outbox
+(`request.approved`). As its **last** step it calls `billing.autoInvoiceLastInTx` (section 2.3). So approval
+makes the booking CONFIRMED, its shipment, and its invoice: approved if section 2.1 allows it, else a draft.
+Every confirm check runs: cargo completeness, and ب6 on the balance before. A refusal rolls the whole approval
+back with the confirm code, and the request stays PENDING. A refused auto-approval only leaves the draft.
 
 - The request's stage stays `BOOKED`, which is now true.
 - The receiver customer step of plan 09e (another thread) runs in this same transaction. Whichever PR lands
@@ -184,15 +331,16 @@ route returns 404.
 
 ## 9. Order of PRs (each is one push when complete, Codex reviews, all checks green)
 
-| PR      | Content                                                                                                                                   | Depends on                        | Migration                                                                       |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------- |
-| 12-1    | Section 1 (bot price → quotation) + section 2 (auto-invoice) + `SHIPMENT_NOT_INVOICED`                                                    | #189, #151 merged                 | quotations: additive. customer_invoices columns: owner label (accounting table) |
-| 12-2    | ب6 credit limit (plan 06) + section 3 handover gate                                                                                       | 12-1                              | additive (override columns)                                                     |
-| 12-3    | Section 4 approve = confirm, behind its switch + `BOOKING_DRAFT_FROM_REQUEST`                                                             | 12-1, and ordered with 09e        | none                                                                            |
-| 12-4    | Section 5 customs fees on the additional invoice + section 6 + `DELIVERED_NOT_CLOSED`                                                     | #151                              | additive                                                                        |
-| 12-5    | Section 8 notices and 8a payment proofs, all switches off                                                                                 | erp-agents compat PR merges first | additive (new table `cs_payment_proofs`)                                        |
-| 12-6    | Section 5 storage charges                                                                                                                 | the owner sees the rule first     | additive                                                                        |
-| (later) | G9: cancelling after payment means a full credit note, and the paid amount stays as the customer's advance (no cash refund by the system) | own plan                          | -                                                                               |
+| PR      | Content                                                                                                     | Depends on                        | Migration                                                     |
+| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------- |
+| 12-1    | ب6 credit limit, exactly as plan 06                                                                         | #189 merged                       | none                                                          |
+| 12-2    | Section 1 (agreed terms) + section 2 (auto draft, auto-approve behind its switch) + `SHIPMENT_NOT_INVOICED` | 12-1, #151 merged                 | quotations/bookings: additive. customer_invoices: owner label |
+| 12-3    | Section 3 handover gate                                                                                     | 12-1, #151                        | additive (override columns)                                   |
+| 12-4    | Section 4 approve = confirm, behind its switch + `BOOKING_DRAFT_FROM_REQUEST`                               | 12-2, and ordered with 09e        | none                                                          |
+| 12-5    | Section 5 customs fees on the additional invoice + section 6 + `DELIVERED_NOT_CLOSED`                       | #151                              | additive                                                      |
+| 12-6    | Section 8 notices and 8a payment proofs, all switches off                                                   | erp-agents compat PR merges first | additive (new table `cs_payment_proofs`)                      |
+| 12-7    | Section 5 storage charges                                                                                   | the owner sees the rule first     | additive                                                      |
+| (later) | G9: cancelling after payment = full credit note, the paid amount stays as the customer's advance            | own plan                          | -                                                             |
 
 ## 10. Tests (rule 7)
 
@@ -201,9 +349,8 @@ Each PR carries:
 - unit tests for its rules;
 - integration tests against PostgreSQL, including the negative cases:
   - wrong branch, missing permission;
-  - a confirm whose price is incomplete (gives a draft, not an approval), a closed period, a confirm over the
-    credit limit;
-  - auto-invoice turned off by its switch;
+  - the per-section negative cases listed in sections 1, 2.1, 2.3 and 3;
+  - auto-approval turned off by its switch (a draft is still made);
   - a bot request with several items and with an estimate, whose invoice equals the approved total and
     currency;
   - a handover with no invoice, unpaid, a customer with a limit, an override without a reason, an override
