@@ -16,6 +16,8 @@ export function alertHref(alert: AlertDto): string {
       return `/invoices/${alert.refId}`;
     case 'TRIP_LATE':
       return `/trips/${alert.refId}`;
+    case 'BOOKING_DRAFT_FROM_REQUEST':
+      return `/bookings/${alert.refId}`;
     default:
       return `/shipments/${alert.refId}`;
   }

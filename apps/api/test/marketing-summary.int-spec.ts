@@ -102,6 +102,9 @@ describe('Marketing summary', () => {
         handover: 'BRANCH_DROP',
         language: 'ar',
         expiresAt: new Date(Date.now() + 86_400_000),
+        // Noon UTC of the PTS day asked for: the same day in UTC (a request awaiting routing
+        // counts in UTC) and in every branch, whatever the hour the test runs at.
+        createdAt: new Date(`${today}T12:00:00Z`),
       },
     });
   }

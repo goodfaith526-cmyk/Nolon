@@ -32,18 +32,21 @@ describe('which alerts concern a user', () => {
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
       'SHIPMENT_NOT_INVOICED',
+      'BOOKING_DRAFT_FROM_REQUEST',
     ]);
     expect(kindsOf(['WAREHOUSE'])).toEqual([
       'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
+      'BOOKING_DRAFT_FROM_REQUEST',
     ]);
     expect(kindsOf(['CUSTOMS'])).toEqual([
       'SHIPMENT_ARRIVING_SOON',
       'SHIPMENT_PAST_ETA',
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
+      'BOOKING_DRAFT_FROM_REQUEST',
     ]);
   });
 
@@ -54,6 +57,7 @@ describe('which alerts concern a user', () => {
       'SHIPMENT_PAST_ETA',
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
+      'BOOKING_DRAFT_FROM_REQUEST',
     ]);
   });
 });
