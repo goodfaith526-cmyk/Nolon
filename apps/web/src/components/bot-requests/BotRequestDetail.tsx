@@ -546,6 +546,7 @@ export function BotRequestDetail({ id }: { id: string }) {
           master={master}
           busy={busy}
           onApprove={(body) => void post('approve', body)}
+          defaultCurrency={me.branches.find((b) => b.id === r.branchId)?.defaultCurrency}
         />
       )}
     </section>

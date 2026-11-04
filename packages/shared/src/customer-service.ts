@@ -994,6 +994,7 @@ export const CS_RECEIVER_ACCOUNT_OUTCOMES = [
   'PHONE_LOCAL',
   'SAME_AS_SENDER',
   'CUSTOMER_INACTIVE',
+  'PHONE_AMBIGUOUS',
 ] as const;
 export type CsReceiverAccountOutcome = (typeof CS_RECEIVER_ACCOUNT_OUTCOMES)[number];
 

@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "cs_receiver_account" AS ENUM ('CREATED', 'LINKED', 'PHONE_LOCAL', 'SAME_AS_SENDER', 'CUSTOMER_INACTIVE');
+CREATE TYPE "cs_receiver_account" AS ENUM ('CREATED', 'LINKED', 'PHONE_LOCAL', 'SAME_AS_SENDER', 'CUSTOMER_INACTIVE', 'PHONE_AMBIGUOUS');
 
 -- AlterTable
 ALTER TABLE "cs_booking_requests" ADD COLUMN     "other_sender_customer_id" UUID,

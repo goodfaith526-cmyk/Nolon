@@ -15,7 +15,8 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
-import { uniquePhone } from './test-data.js';
+import { lockCustomerKeys } from '../src/customers/customers.service.js';
+import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /**
  * Plan 09e sections 2 and 3 (owner, 2026-11-04). An explicit other sender gets a customer of their
@@ -29,6 +30,7 @@ describe('Other sender and receiver customers (plan 09e)', () => {
   let off: TestApp;
   let pts = '';
   let bot: ApiClientCreatedDto;
+  let tokenKey: ApiClientCreatedDto;
   let cookie = '';
   let createdById = '';
   const ids: Record<string, string> = {};
@@ -40,6 +42,8 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       app.http().get(`/api/v1${path}`).query(query).set('Cookie', cookie),
     post: (path: string, body: object) =>
       app.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
+    patch: (path: string, body: object) =>
+      app.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
   });
 
   /** A bot request from a WhatsApp sender whose number is `owner`. */
@@ -124,6 +128,15 @@ describe('Other sender and receiver customers (plan 09e)', () => {
         .send({ name: 'Sender receiver', branchIds: [pts], scopes: ['cs:booking_requests:create'] })
         .expect(201)
     ).body as ApiClientCreatedDto;
+    tokenKey = (
+      await on
+        .http()
+        .post('/api/v1/api-clients')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', adminCookie)
+        .send({ name: 'Sender tokens', branchIds: [pts], scopes: ['cs:customer_tokens:issue'] })
+        .expect(201)
+    ).body as ApiClientCreatedDto;
     category = `${tag}C`;
     await on.prisma.priceCategory.create({
       data: {
@@ -183,7 +196,7 @@ describe('Other sender and receiver customers (plan 09e)', () => {
     await off?.close();
   });
 
-  it('opens a file for a new other sender and books it; the chat owner gets none', async () => {
+  it('opens a file for a new other sender and books it; the chat owner keeps their own', async () => {
     const owner = uniquePhone();
     const phone = uniquePhone();
     const id = await request(on, { otherSender: { name: 'Huda Other', phone } }, owner);
@@ -199,7 +212,10 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       phoneUnverified: true,
       isActive: true,
     });
-    expect(await on.prisma.customer.count({ where: { phone: owner } })).toBe(0);
+    // The chat owner has their own file (registered on arrival), not the other sender's details.
+    const ownFile = await on.prisma.customer.findFirstOrThrow({ where: { phone: owner } });
+    expect(ownFile.name).toBe('Chat owner');
+    expect(saved.instantCustomerId).toBe(ownFile.id);
 
     const done = (await approve(on, id)).body as CsBookingRequestStaffDto;
     expect(done.otherSender).toEqual({ name: 'Huda Other', phone, customerId: made.id });
@@ -224,7 +240,8 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       otherSenderPhone: null,
       otherSenderCustomerId: null,
     });
-    expect(await on.prisma.customer.count({ where: { phone: owner } })).toBe(0);
+    // One file for the owner, never a second one for the same phone.
+    expect(await on.prisma.customer.count({ where: { phone: owner } })).toBe(1);
   });
 
   it('switched off when saved, the other sender is linked on approval', async () => {
@@ -313,5 +330,131 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       ((await approve(on, inactive)).body as CsBookingRequestStaffDto).receiverAccount,
     ).toEqual({ outcome: 'CUSTOMER_INACTIVE', customerId: null });
     await approve(on, await request(on), { receiverPhone: '0912' }, 400);
+  });
+
+  const tokenFor = async (phone: string) =>
+    (
+      (
+        await on
+          .http()
+          .post('/api/v1/cs/customer-tokens')
+          .set('Authorization', `Bearer ${tokenKey.key}`)
+          .send({ phone })
+          .expect(200)
+      ).body as { kind: string }
+    ).kind;
+
+  it('grants no customer token on an unverified phone until staff confirm it (F191-1)', async () => {
+    const senderPhone = uniquePhone();
+    const receiverPhone = uniquePhone();
+    const id = await request(on, {
+      otherSender: { name: 'Token Sender', phone: senderPhone },
+      consigneePhone: receiverPhone,
+    });
+    await approve(on, id);
+    const sender = await on.prisma.customer.findFirstOrThrow({ where: { phone: senderPhone } });
+    const receiver = await on.prisma.customer.findFirstOrThrow({ where: { phone: receiverPhone } });
+    expect([sender.phoneUnverified, receiver.phoneUnverified]).toEqual([true, true]);
+    expect(await tokenFor(senderPhone)).toBe('none');
+    expect(await tokenFor(receiverPhone)).toBe('none');
+
+    // Staff confirm the sender's phone: now it grants a token; the receiver's still does not.
+    const confirmed = (
+      await staff(on).patch(`/customers/${sender.id}`, { phoneVerified: true }).expect(200)
+    ).body as { phoneUnverified: boolean };
+    expect(confirmed.phoneUnverified).toBe(false);
+    expect(await tokenFor(senderPhone)).toBe('token');
+    expect(await tokenFor(receiverPhone)).toBe('none');
+  });
+
+  it('links no one when several customers hold the phone (F191-2)', async () => {
+    const shared = uniquePhone();
+    await customer(shared);
+    await customer(shared);
+    const id = await request(on, { otherSender: { name: 'Twice', phone: shared } });
+    expect((await row(id)).otherSenderCustomerId).toBeNull();
+    const refused = await approve(on, id, {}, 409);
+    expect((refused.body as { code?: string }).code).toBe('OTHER_SENDER_AMBIGUOUS');
+    expect(await row(id)).toMatchObject({ status: 'PENDING', bookingId: null });
+
+    // Active and inactive together are ambiguous too, for the sender and for the receiver.
+    const mixed = uniquePhone();
+    await customer(mixed);
+    await customer(mixed, false);
+    const late = await request(off, { otherSender: { name: 'Mixed', phone: mixed } });
+    expect(((await approve(on, late, {}, 409)).body as { code?: string }).code).toBe(
+      'OTHER_SENDER_AMBIGUOUS',
+    );
+    const receiving = await request(on, {
+      otherSender: { name: 'Sender F', phone: uniquePhone() },
+      consigneePhone: mixed,
+    });
+    expect(
+      ((await approve(on, receiving)).body as CsBookingRequestStaffDto).receiverAccount,
+    ).toEqual({ outcome: 'PHONE_AMBIGUOUS', customerId: null });
+  });
+
+  it('links the sender while a customer edit holds its row, without a deadlock (F191-3)', async () => {
+    const phone = uniquePhone();
+    const existing = await customer(phone);
+    // Saved with the identity switch off: approval links the sender late.
+    const id = await request(off, { otherSender: { name: 'Edited', phone } });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    // A customer edit's order: the row (FOR NO KEY UPDATE), then the customer-key lock.
+    const editing = on.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${existing.id}::uuid FOR NO KEY UPDATE`;
+      await held;
+      await lockCustomerKeys(tx);
+      await tx.customer.update({ where: { id: existing.id }, data: { city: 'Edited' } });
+    });
+    const approving = Promise.resolve(approve(on, id));
+    await waitForLockWaiter(on.prisma);
+    release();
+    await editing;
+    const done = (await approving).body as CsBookingRequestStaffDto;
+    expect(done.otherSender?.customerId).toBe(existing.id);
+  });
+
+  it('registers a sender with no profile when the request arrives, once (owner 2026-11-04)', async () => {
+    const owner = uniquePhone();
+    const first = await request(on, {}, owner);
+    const saved = await row(first);
+    const made = await on.prisma.customer.findUniqueOrThrow({
+      where: { id: saved.instantCustomerId! },
+    });
+    expect(saved.instantAccount).toBe('CREATED');
+    expect(made).toMatchObject({
+      name: 'Chat owner',
+      phone: owner,
+      kind: 'INDIVIDUAL',
+      phoneUnverified: true,
+    });
+    // The same sender again: the same customer, no second file.
+    const second = await request(on, {}, owner);
+    expect(await row(second)).toMatchObject({
+      instantAccount: 'REUSED',
+      instantCustomerId: made.id,
+    });
+    expect(await on.prisma.customer.count({ where: { phone: owner } })).toBe(1);
+    // Approval books that customer without staff choosing one, and makes no other.
+    const done = (await approve(on, second)).body as CsBookingRequestStaffDto;
+    const booking = await on.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
+    expect(booking.customerId).toBe(made.id);
+    await approve(on, first, { newCustomerFromRequest: true }, 400);
+
+    // No international phone: a file with the name and no phone; the switch off: none.
+    const named = await request(on, {
+      sender: { channel: 'telegram', id: String(randomInt(100_000_000, 999_999_999)) },
+      contactPhone: undefined,
+      senderName: 'Local Sender',
+    });
+    const localRow = await row(named);
+    expect(localRow.instantAccount).toBe('CREATED');
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: localRow.instantCustomerId! } }),
+    ).toMatchObject({ name: 'Local Sender', phone: null, phoneUnverified: false });
+    const quiet = await request(off, {});
+    expect(await row(quiet)).toMatchObject({ instantAccount: null, instantCustomerId: null });
   });
 });

@@ -401,25 +401,48 @@ export class CustomersService {
   }
 
   /**
-   * Plan 09e (owner, 2026-11-04): the customer of a person someone else named with an international
-   * phone (another sender in the chat, a booking's receiver). The phone is the key against
-   * duplicates: an existing customer with it is linked and never changed (one inactive is reported,
-   * not linked); else a new individual, its phone marked unverified. Written by the API client
-   * (`apiClientId`) or by the staff member approving (`user`), under the customer keys' lock.
+   * Plan 09e: the customer holding `phone`, row share-locked. Codex F191-2: two or more
+   * customers with it (rows from before phones were unique) are AMBIGUOUS, and none is chosen.
+   * Codex F191-3: the row is locked before any customer-key lock, the order `update` takes
+   * (row, then keys), and read again under the lock; a phone changed meanwhile is a 409 to retry.
    */
-  async phoneAccountInTx(
+  async phoneMatchInTx(
     tx: Prisma.TransactionClient,
-    input: { name: string; phone: string } & (
+    phone: string,
+  ): Promise<
+    | { kind: 'NONE' }
+    | { kind: 'AMBIGUOUS' }
+    | { kind: 'ONE'; customerId: string; isActive: boolean }
+  > {
+    const found = await tx.customer.findMany({
+      where: { phone },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: 2,
+    });
+    if (found.length === 0) return { kind: 'NONE' };
+    if (found.length > 1) return { kind: 'AMBIGUOUS' };
+    const id = found[0]!.id;
+    const [row] = await tx.$queryRaw<{ phone: string | null; isActive: boolean }[]>`
+      SELECT "phone", "is_active" AS "isActive" FROM "customers" WHERE "id" = ${id}::uuid FOR SHARE`;
+    if (row?.phone !== phone) throw phoneChanged();
+    return { kind: 'ONE', customerId: id, isActive: row.isActive };
+  }
+
+  /**
+   * Plan 09e: a new individual for a person someone else named, its phone marked unverified (it
+   * grants no customer token until staff confirm it, F191-1). Under the customer-key lock, taken
+   * last: a customer saved with the phone meanwhile is a 409 to retry, never a lock taken on it.
+   */
+  async phoneCustomerCreateInTx(
+    tx: Prisma.TransactionClient,
+    input: { name: string; phone: string | null } & (
       { apiClientId: string; user?: undefined } | { user: AuthUser; apiClientId?: undefined }
     ),
-  ): Promise<{ outcome: 'CREATED' | 'LINKED' | 'INACTIVE'; customerId: string }> {
+  ): Promise<string> {
     await lockCustomerKeys(tx);
-    const found = await tx.customer.findFirst({
-      where: { phone: input.phone },
-      orderBy: PROFILE_ACCOUNT_ORDER,
-      select: { id: true, isActive: true },
-    });
-    if (found) return { outcome: found.isActive ? 'LINKED' : 'INACTIVE', customerId: found.id };
+    if (input.phone !== null && (await tx.customer.count({ where: { phone: input.phone } })) > 0)
+      throw phoneChanged();
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
       data: {
@@ -427,7 +450,7 @@ export class CustomersService {
         kind: 'INDIVIDUAL',
         name: input.name.trim().slice(0, 200),
         phone: input.phone,
-        phoneUnverified: true,
+        phoneUnverified: input.phone !== null,
         ...(input.user
           ? { createdById: input.user.id }
           : { createdViaApiClientId: input.apiClientId }),
@@ -441,12 +464,34 @@ export class CustomersService {
       action: 'CREATED' as const,
       changes: [
         { field: 'kind', before: null, after: 'INDIVIDUAL' },
-        { field: 'phoneUnverified', before: null, after: 'true' },
+        { field: 'phoneUnverified', before: null, after: String(input.phone !== null) },
       ],
     };
     if (input.user) await this.audit.record(tx, input.user, record);
     else await this.audit.recordApi(tx, record);
-    return { outcome: 'CREATED', customerId: customer.id };
+    return customer.id;
+  }
+
+  /**
+   * Plan 09e (owner, 2026-11-04): the customer of a person someone else named with an international
+   * phone (another sender in the chat). The phone is the key against duplicates: the one customer
+   * with it is linked and never changed (one inactive is reported, not linked); several are
+   * AMBIGUOUS for staff; none makes a new individual (phoneCustomerCreateInTx).
+   */
+  async phoneAccountInTx(
+    tx: Prisma.TransactionClient,
+    input: { name: string; phone: string } & (
+      { apiClientId: string; user?: undefined } | { user: AuthUser; apiClientId?: undefined }
+    ),
+  ): Promise<{
+    outcome: 'CREATED' | 'LINKED' | 'INACTIVE' | 'AMBIGUOUS';
+    customerId: string | null;
+  }> {
+    const match = await this.phoneMatchInTx(tx, input.phone);
+    if (match.kind === 'AMBIGUOUS') return { outcome: 'AMBIGUOUS', customerId: null };
+    if (match.kind === 'ONE')
+      return { outcome: match.isActive ? 'LINKED' : 'INACTIVE', customerId: match.customerId };
+    return { outcome: 'CREATED', customerId: await this.phoneCustomerCreateInTx(tx, input) };
   }
 
   /**
@@ -771,7 +816,12 @@ export class CustomersService {
    * and import take the rule lock and only insert new rows, so no path takes the rule lock and
    * then this row: the two orders cannot deadlock.
    */
-  async update(user: AuthUser, id: string, given: Partial<CustomerInput>): Promise<CustomerDto> {
+  async update(
+    user: AuthUser,
+    id: string,
+    body: Partial<CustomerInput> & { phoneVerified?: true },
+  ): Promise<CustomerDto> {
+    const { phoneVerified, ...given } = body;
     const read = await this.findScoped(user, id);
     const input = creditInput(user, given, read);
     const withLimit = (c: Customer) => ({
@@ -823,9 +873,16 @@ export class CustomersService {
         branchIds: user.allowedBranchIds,
         field: 'acquiredViaOutletId',
       });
+      // Plan 09e (F191-1): a phone staff confirm, or type in place of the old one, is verified.
+      const verified =
+        phoneVerified === true || (input.phone !== undefined && input.phone !== current.phone);
       const changed = await tx.customer.update({
         where: { id: current.id },
-        data: { ...toData(fields), acquiredViaOutletId },
+        data: {
+          ...toData(fields),
+          acquiredViaOutletId,
+          ...(verified ? { phoneUnverified: false } : {}),
+        },
         include: details,
       });
       await this.audit.record(
@@ -1276,6 +1333,7 @@ const AUDIT_FIELDS = [
   'segmentCode',
   'acquiredViaOutletId',
   'isActive',
+  'phoneUnverified',
 ] as const;
 
 const CONTACT_AUDIT_FIELDS = [
@@ -1377,4 +1435,12 @@ function toDto(c: CustomerWithDetails): CustomerDto {
     contacts: c.contacts.map(toContactDto),
     parties: c.parties.map(toPartyDto),
   };
+}
+
+/** Plan 09e: a customer took or gave up the phone while this request ran; trying again is safe. */
+function phoneChanged(): ConflictException {
+  return new ConflictException({
+    code: 'CUSTOMER_PHONE_CHANGED',
+    message: 'A customer with this phone changed meanwhile: try again',
+  });
 }

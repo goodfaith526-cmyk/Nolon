@@ -3722,6 +3722,8 @@ enum CsReceiverAccount {
   PHONE_LOCAL
   SAME_AS_SENDER
   CUSTOMER_INACTIVE
+  /// Codex F191-2: several customers hold the phone; none is chosen.
+  PHONE_AMBIGUOUS
 
   @@map("cs_receiver_account")
 }

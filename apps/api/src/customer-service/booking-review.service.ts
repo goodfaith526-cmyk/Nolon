@@ -641,21 +641,28 @@ export class BookingReviewService {
         code: 'OTHER_SENDER_CUSTOMER',
         message: 'A request for another sender books that sender',
       });
-    if (fromRequest && (initial.profileId || initial.customerId || booking.customerId))
+    // Owner, 2026-11-04: a request with no profile whose sender was registered when it arrived
+    // (the website chat) books that customer, unless staff choose another.
+    const senderAccount =
+      !initial.profileId && !otherSender && !booking.customerId ? initial.instantCustomerId : null;
+    if (
+      fromRequest &&
+      (initial.profileId || initial.customerId || booking.customerId || senderAccount)
+    )
       throw new BadRequestException({
         code: 'NEW_CUSTOMER_NOT_ALLOWED',
         message: 'A new customer is made only for a request linked to no customer',
       });
-    if (!initial.profileId && !booking.customerId && !fromRequest && !otherSender)
+    if (!initial.profileId && !booking.customerId && !fromRequest && !otherSender && !senderAccount)
       throw new BadRequestException('Choose the booking customer');
     if (initial.branchId === null)
       throw new ConflictException('Only a pending request with a branch is approved');
     const prepareProfile =
-      (initial.profileId || fromRequest || otherSender) && initial.branchId
+      (initial.profileId || fromRequest || otherSender || senderAccount) && initial.branchId
         ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
         : null;
     const legacyPrepared =
-      !initial.profileId && !fromRequest && !otherSender
+      !initial.profileId && !fromRequest && !otherSender && !senderAccount
         ? // Plan 09d: the customer may be of any branch; the booking is the request's branch's.
           await this.bookings.prepareCreate(
             user,
@@ -679,6 +686,13 @@ export class BookingReviewService {
       if (!sameItems(lockedItems, initial.items))
         throw new ConflictException('The request changed: reopen it');
       await requireKeyServes(tx, row.apiClientId, row.branchId);
+      // Plan 09e section 3: the receiver's customer found (and row-locked) before anything below
+      // can take the customer-key lock, the order customer edits take (Codex F191-3).
+      const receiverPhone = this.env.CS_RECEIVER_CUSTOMER_ENABLED
+        ? (internationalPhone(row.consigneePhone) ?? internationalPhone(input.receiverPhone))
+        : null;
+      const receiverMatch =
+        receiverPhone === null ? null : await this.customers.phoneMatchInTx(tx, receiverPhone);
       let prepared = legacyPrepared;
       let otherSenderCustomerId: string | null = null;
       if (row.otherSenderPhone !== null || otherSender) {
@@ -704,6 +718,18 @@ export class BookingReviewService {
         if (booking.customerId && booking.customerId !== accountId)
           throw new BadRequestException('A linked request uses its own customer');
         prepared = prepareProfile(accountId);
+      } else if (senderAccount) {
+        if (row.instantCustomerId !== senderAccount || row.customerId !== null || !prepareProfile)
+          throw new ConflictException('The request changed: reopen it');
+        const [locked] = await tx.$queryRaw<{ isActive: boolean }[]>`
+          SELECT "is_active" AS "isActive" FROM "customers"
+          WHERE "id" = ${senderAccount}::uuid FOR SHARE`;
+        if (!locked?.isActive)
+          throw new ConflictException({
+            code: 'REQUEST_CUSTOMER_INACTIVE',
+            message: "The sender's customer is inactive: reactivate it or choose another",
+          });
+        prepared = prepareProfile(senderAccount);
       } else if (fromRequest) {
         if (row.customerId !== null || !prepareProfile)
           throw new ConflictException('The request changed: reopen it');
@@ -796,7 +822,14 @@ export class BookingReviewService {
         });
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
       const receiver = this.env.CS_RECEIVER_CUSTOMER_ENABLED
-        ? await this.receiverAccountInTx(tx, user, row, input.receiverPhone, prepared.customerId)
+        ? await this.receiverAccountInTx(
+            tx,
+            user,
+            row,
+            receiverPhone,
+            receiverMatch,
+            prepared.customerId,
+          )
         : null;
       // The request's total: the lines' sum when every line is priced, else none.
       const priced = totals.filter((t): t is Prisma.Decimal => t !== null);
@@ -837,8 +870,10 @@ export class BookingReviewService {
 
   /**
    * Plan 09e section 2: the other sender's customer, linked when the request was saved or, with
-   * the identity switch off then, linked or made now by phone (as when saved). One inactive is 409
-   * OTHER_SENDER_INACTIVE: staff reactivate it or reject the request.
+   * the identity switch off then, linked or made now by phone (as when saved). Its row is
+   * share-locked and read again before any customer-key lock (Codex F191-3). One inactive is 409
+   * OTHER_SENDER_INACTIVE (staff reactivate it or reject the request); a phone several customers
+   * hold is 409 OTHER_SENDER_AMBIGUOUS, none chosen (Codex F191-2).
    */
   private async otherSenderAccountInTx(
     tx: Tx,
@@ -849,20 +884,28 @@ export class BookingReviewService {
       otherSenderCustomerId: string | null;
     },
   ): Promise<string> {
-    const customerId =
-      row.otherSenderCustomerId ??
-      (
-        await this.customers.phoneAccountInTx(tx, {
-          name: row.otherSenderName ?? row.otherSenderPhone!,
-          phone: row.otherSenderPhone!,
-          user,
-        })
-      ).customerId;
-    const found = await tx.customer.findUnique({
-      where: { id: customerId },
-      select: { isActive: true },
-    });
-    if (!found?.isActive)
+    let customerId = row.otherSenderCustomerId;
+    let isActive: boolean;
+    if (customerId !== null) {
+      const [locked] = await tx.$queryRaw<{ isActive: boolean }[]>`
+        SELECT "is_active" AS "isActive" FROM "customers"
+        WHERE "id" = ${customerId}::uuid FOR SHARE`;
+      isActive = locked?.isActive ?? false;
+    } else {
+      const account = await this.customers.phoneAccountInTx(tx, {
+        name: row.otherSenderName ?? row.otherSenderPhone!,
+        phone: row.otherSenderPhone!,
+        user,
+      });
+      if (account.outcome === 'AMBIGUOUS' || account.customerId === null)
+        throw new ConflictException({
+          code: 'OTHER_SENDER_AMBIGUOUS',
+          message: "Several customers hold the sender's phone: resolve the duplicates first",
+        });
+      customerId = account.customerId;
+      isActive = account.outcome !== 'INACTIVE';
+    }
+    if (!isActive)
       throw new ConflictException({
         code: 'OTHER_SENDER_INACTIVE',
         message: "The sender's customer is inactive: reactivate it or reject the request",
@@ -874,32 +917,39 @@ export class BookingReviewService {
    * Plan 09e section 3 (owner, 2026-11-04): the receiver's own customer, only now that the booking
    * is approved. The phone is the request's when written internationally, else the one staff typed;
    * none is PHONE_LOCAL and the booking customer's own is SAME_AS_SENDER, both with no customer.
-   * An existing customer with it is linked unchanged (one inactive is CUSTOMER_INACTIVE, not
-   * linked); else a new individual, its phone unverified. Never written into the sender's file.
+   * The one customer with it (found and row-locked first, `match`) is linked unchanged (inactive:
+   * CUSTOMER_INACTIVE, not linked); several are PHONE_AMBIGUOUS, none chosen; none makes a new
+   * individual, its phone unverified, under the customer-key lock taken last. Never written into
+   * the sender's file.
    */
   private async receiverAccountInTx(
     tx: Tx,
     user: AuthUser,
-    row: { consigneeName: string; consigneePhone: string },
-    typed: string | undefined,
+    row: { consigneeName: string },
+    phone: string | null,
+    match: Awaited<ReturnType<CustomersService['phoneMatchInTx']>> | null,
     senderCustomerId: string,
   ): Promise<{ receiverAccount: CsReceiverAccount; receiverCustomerId: string | null }> {
-    const phone = internationalPhone(row.consigneePhone) ?? internationalPhone(typed);
-    if (phone === null) return { receiverAccount: 'PHONE_LOCAL', receiverCustomerId: null };
+    if (phone === null || match === null)
+      return { receiverAccount: 'PHONE_LOCAL', receiverCustomerId: null };
     const sender = await tx.customer.findUnique({
       where: { id: senderCustomerId },
       select: { phone: true },
     });
     if (samePhone(phone, sender?.phone))
       return { receiverAccount: 'SAME_AS_SENDER', receiverCustomerId: null };
-    const account = await this.customers.phoneAccountInTx(tx, {
+    if (match.kind === 'AMBIGUOUS')
+      return { receiverAccount: 'PHONE_AMBIGUOUS', receiverCustomerId: null };
+    if (match.kind === 'ONE')
+      return match.isActive
+        ? { receiverAccount: 'LINKED', receiverCustomerId: match.customerId }
+        : { receiverAccount: 'CUSTOMER_INACTIVE', receiverCustomerId: null };
+    const customerId = await this.customers.phoneCustomerCreateInTx(tx, {
       name: row.consigneeName,
       phone,
       user,
     });
-    return account.outcome === 'INACTIVE'
-      ? { receiverAccount: 'CUSTOMER_INACTIVE', receiverCustomerId: null }
-      : { receiverAccount: account.outcome, receiverCustomerId: account.customerId };
+    return { receiverAccount: 'CREATED', receiverCustomerId: customerId };
   }
 
   /**
