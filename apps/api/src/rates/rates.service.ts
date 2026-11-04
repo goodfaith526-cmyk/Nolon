@@ -18,7 +18,7 @@ import type {
   RouteMatch,
   ShippingMode,
 } from '@nolon/shared';
-import { hasSeaLeg } from '@nolon/shared';
+import { hasSeaLeg, type MarketingPriceDto } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope } from '../auth/branch-scope.js';
@@ -756,6 +756,64 @@ export class RatesService {
       origins: [...new Set(rates.map((r) => r.originLocationId))],
       destinations: [...new Set(rates.map((r) => r.destinationLocationId))],
     };
+  }
+
+  /**
+   * The marketing summary's prices (docs/plans/11): the freight cards of every branch a bot quote
+   * can use on `onDate`, one per offer. As systemScopedRates: APPROVED and valid that day, and of
+   * the cards that differ only by their start date, the latest started (Codex F186-1). As the
+   * quote's checks: a shipment type, currency and both places still active (F186-2). Each card is
+   * the price of its own route scope (a place, a city or a country). Selling price only: no cost,
+   * margin, branch or staff name. Read-only.
+   */
+  async marketingPrices(onDate: string): Promise<MarketingPriceDto[]> {
+    const day = toDbDate(onDate);
+    const rates = await this.prisma.rateCard.findMany({
+      where: {
+        status: 'APPROVED',
+        chargeTypeCode: 'FREIGHT',
+        priceCategoryCode: { not: null },
+        priceCategory: { isActive: true },
+        currencyRef: { isActive: true },
+        origin: { isActive: true },
+        destination: { isActive: true },
+        validFrom: { lte: day },
+        OR: [{ validTo: null }, { validTo: { gte: day } }],
+      },
+      // Latest started first, as scopedRates: the first of an offer is the one quoted.
+      orderBy: [{ validFrom: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+    });
+    const offers = new Map<string, RateCard>();
+    for (const r of rates) {
+      const offer = rateKey({ ...fromRow(r), branchId: r.branchId, validFrom: '' });
+      if (!offers.has(offer)) offers.set(offer, r);
+    }
+    const order = (p: MarketingPriceDto) =>
+      [p.originId, p.destinationId, p.mode, p.category, p.loadType ?? '', p.unit, p.currency].join(
+        '|',
+      );
+    return [...offers.values()]
+      .flatMap((r) =>
+        r.priceCategoryCode === null
+          ? []
+          : [
+              {
+                originId: r.originLocationId,
+                destinationId: r.destinationLocationId,
+                mode: r.mode,
+                loadType: r.loadType,
+                category: r.priceCategoryCode,
+                unit: r.unit,
+                price: toDecimalString(r.price),
+                minimumCharge: toDecimalString(r.minimumCharge),
+                currency: r.currency,
+                validFrom: fromDbDate(r.validFrom),
+                validTo: fromDbDateOrNull(r.validTo),
+                transitDays: r.transitDays,
+              },
+            ],
+      )
+      .sort((a, b) => order(a).localeCompare(order(b)));
   }
 
   /**

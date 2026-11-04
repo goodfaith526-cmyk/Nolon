@@ -3551,6 +3551,10 @@ enum ApiScope {
   BOOKING_REQUESTS_CREATE
   TRACKING_LOOKUP
   CUSTOMER_PROFILES_WRITE
+  /// The marketing summary (docs/plans/11): aggregates only, read only.
+  MARKETING_READ
+  /// With MARKETING_READ: the summary's revenue too.
+  MARKETING_REVENUE_READ
 
   @@map("api_scope")
 }

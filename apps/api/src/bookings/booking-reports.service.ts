@@ -56,4 +56,44 @@ export class BookingReportsService {
     }
     return booked;
   }
+
+  /**
+   * The marketing summary's bookings (docs/plans/11) in `branchIds`, made between `from` and `to`
+   * (days in their branch): counts by month, route, shipment type, whether a bot request made it,
+   * and status now. A booking with several types counts once under each; none is a null type.
+   * Counts only: no customer, number or amount.
+   */
+  async marketingMonthly(
+    branchIds: readonly string[],
+    from: string,
+    to: string,
+  ): Promise<
+    {
+      month: string;
+      originId: string;
+      destinationId: string;
+      category: string | null;
+      fromRequest: boolean;
+      status: BookingStatus;
+      count: number;
+    }[]
+  > {
+    if (branchIds.length === 0) return [];
+    return this.prisma.$queryRaw`
+      SELECT to_char((k."created_at" AT TIME ZONE b."timezone")::date, 'YYYY-MM') AS "month",
+             k."origin_location_id"::text AS "originId",
+             k."destination_location_id"::text AS "destinationId",
+             c."category" AS "category",
+             EXISTS (SELECT 1 FROM "cs_booking_requests" r WHERE r."booking_id" = k."id") AS "fromRequest",
+             k."status"::text AS "status", count(*)::int AS "count"
+      FROM "bookings" k
+      JOIN "branches" b ON b."id" = k."branch_id"
+      LEFT JOIN LATERAL (
+        SELECT DISTINCT i."price_category_code" AS "category"
+        FROM "booking_items" i WHERE i."booking_id" = k."id"
+      ) c ON true
+      WHERE k."branch_id" IN ${uuidList(branchIds)}
+        AND (k."created_at" AT TIME ZONE b."timezone")::date BETWEEN ${sqlDate(from)} AND ${sqlDate(to)}
+      GROUP BY 1, 2, 3, 4, 5, 6`;
+  }
 }
