@@ -150,6 +150,8 @@ const sender = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('web'), id: webVisitorId }).strict(),
 ]);
 const name200 = requiredText(200);
+/** Plan 09e section 2: an explicit other sender, with an international phone. */
+const otherSender = z.object({ name: name200, phone }).strict();
 const digitsPhone = z
   .string()
   .trim()
@@ -249,6 +251,7 @@ const requestBody = z
       .array(z.enum(CS_REQUEST_SERVICES))
       .max(CS_REQUEST_SERVICES.length)
       .refine((s) => new Set(s).size === s.length, 'Each service once'),
+    otherSender: otherSender.optional(),
     senderName: name200,
     consigneeName: name200,
     // The receiver's number as the customer gave it (local or international): contact only, never
@@ -287,6 +290,7 @@ const namesBody = z
     kind: botName.optional(),
     quantity: bodyQuantity.optional(),
     items: itemsField(namesItem),
+    otherSender: otherSender.optional(),
     senderName: name200,
     senderPhone: digitsPhone.optional(),
     receiverName: name200,

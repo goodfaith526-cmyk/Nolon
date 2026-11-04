@@ -136,7 +136,12 @@ export function CustomerDetail({ id }: { id: string }) {
           <dt>{t('companyName')}</dt>
           <dd>{customer.companyName ?? '—'}</dd>
           <dt>{t('phone')}</dt>
-          <dd dir="ltr">{customer.phone}</dd>
+          <dd>
+            <bdi dir="ltr">{customer.phone}</bdi>
+            {customer.phoneUnverified ? (
+              <span className="muted"> ({t('phoneUnverified')})</span>
+            ) : null}
+          </dd>
           <dt>{t('whatsapp')}</dt>
           <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
           <dt>{t('email')}</dt>

@@ -35,6 +35,7 @@ import {
   type CsRequestPhotoType,
   type CsItemMeasures,
   type CsNamesItemInput,
+  type CsOtherSender,
   type CsRequestItemInput,
   type CsRequestService,
   type CsSenderChannel,
@@ -42,6 +43,7 @@ import {
 import { todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { nextSequenceValue } from '../common/numbering.js';
+import { samePhone } from '../common/phones.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -253,7 +255,7 @@ export class BookingRequestsService {
     input: CsBookingRequestCreate,
     binding?: ProfileBookingBinding,
   ): Promise<{ created: boolean; body: CsBookingRequestCreated }> {
-    if (caller.kind === 'customer' && input.sender) {
+    if (caller.kind === 'customer' && (input.sender || input.otherSender)) {
       throw coded(HttpStatus.BAD_REQUEST, 'SENDER_WITH_TOKEN', 'A customer token names the owner');
     }
     if (binding && !input.sender)
@@ -330,6 +332,7 @@ export class BookingRequestsService {
         widthCm: input.widthCm === undefined ? null : dec(input.widthCm),
         heightCm: input.heightCm === undefined ? null : dec(input.heightCm),
         services: input.services,
+        ...otherSenderData(input.otherSender),
         senderName: input.senderName,
         consigneeName: input.consigneeName,
         consigneePhone: input.consigneePhone,
@@ -442,6 +445,7 @@ export class BookingRequestsService {
         quantity: root.quantity,
         ...(items.length > 0 ? { items: { create: items } } : {}),
         services: [],
+        ...otherSenderData(input.otherSender),
         senderName: input.senderName,
         consigneeName: input.receiverName,
         consigneePhone: input.receiverPhone,
@@ -543,10 +547,12 @@ export class BookingRequestsService {
           `At most ${CS_DAILY_REQUESTS} new requests a day`,
         );
       }
+      const otherSender = await this.otherSenderInTx(tx, data, profile?.phone ?? null, apiClientId);
       const number = await nextSequenceValue(tx, 'CS_BOOKING_REQUEST');
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
+          ...otherSender,
           ...(binding
             ? { profileId: binding.profileId, conversationId: binding.conversationId }
             : {}),
@@ -580,6 +586,41 @@ export class BookingRequestsService {
         }),
       };
     });
+  }
+
+  /**
+   * Plan 09e section 2: an explicit other sender. One whose phone is the chat owner's (the shared
+   * contact phone or the profile's) is the owner: nothing is kept. Else, with the identity switch
+   * on, the customer with that phone is linked unchanged, or a new individual made with it marked
+   * unverified; off, approval does the same. The chat owner's own customer is never touched.
+   */
+  private async otherSenderInTx(
+    tx: Prisma.TransactionClient,
+    data: {
+      otherSenderName?: string | null;
+      otherSenderPhone?: string | null;
+      contactPhone?: string | null;
+    },
+    profilePhone: string | null,
+    apiClientId: string,
+  ): Promise<{
+    otherSenderName: string | null;
+    otherSenderPhone: string | null;
+    otherSenderCustomerId: string | null;
+  }> {
+    const none = { otherSenderName: null, otherSenderPhone: null, otherSenderCustomerId: null };
+    const name = data.otherSenderName ?? null;
+    const phone = data.otherSenderPhone ?? null;
+    if (name === null || phone === null) return none;
+    if (samePhone(phone, data.contactPhone ?? null) || samePhone(phone, profilePhone)) return none;
+    if (!this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED)
+      return { otherSenderName: name, otherSenderPhone: phone, otherSenderCustomerId: null };
+    const account = await this.customers.phoneAccountInTx(tx, { name, phone, apiClientId });
+    return {
+      otherSenderName: name,
+      otherSenderPhone: phone,
+      otherSenderCustomerId: account.customerId,
+    };
   }
 
   /**
@@ -1240,4 +1281,12 @@ function cancelRequestOf(row: CsBookingRequest): CsCancelRequestDto | null {
 
 function createdBody(row: CsBookingRequest): CsBookingRequestCreated {
   return { requestId: row.id, status: stateOf(row), reference: row.reference };
+}
+
+/** Plan 09e section 2: the other sender's columns, from the bot's explicit marker. */
+function otherSenderData(other: CsOtherSender | undefined): {
+  otherSenderName: string | null;
+  otherSenderPhone: string | null;
+} {
+  return { otherSenderName: other?.name.trim() ?? null, otherSenderPhone: other?.phone ?? null };
 }

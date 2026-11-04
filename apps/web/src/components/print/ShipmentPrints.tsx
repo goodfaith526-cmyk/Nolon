@@ -274,6 +274,11 @@ export function MovementPrint({ id, movementId }: { id: string; movementId: stri
               [tw('weightKg'), m.weightKg && <span dir="ltr">{m.weightKg}</span>],
               [tw('condition'), m.condition && te(`condition_${m.condition}`)],
               [receipt ? tw('deliveredBy') : tw('collectedBy'), m.partyName],
+              [
+                tw('partyId'),
+                (m.partyIdType || m.partyIdNumber) &&
+                  [m.partyIdType, m.partyIdNumber].filter(Boolean).join(' '),
+              ],
               [tw('note'), m.note && <span className="pre">{m.note}</span>],
               [tp('recordedBy'), m.createdByName],
             ]}

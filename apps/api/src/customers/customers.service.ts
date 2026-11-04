@@ -401,6 +401,55 @@ export class CustomersService {
   }
 
   /**
+   * Plan 09e (owner, 2026-11-04): the customer of a person someone else named with an international
+   * phone (another sender in the chat, a booking's receiver). The phone is the key against
+   * duplicates: an existing customer with it is linked and never changed (one inactive is reported,
+   * not linked); else a new individual, its phone marked unverified. Written by the API client
+   * (`apiClientId`) or by the staff member approving (`user`), under the customer keys' lock.
+   */
+  async phoneAccountInTx(
+    tx: Prisma.TransactionClient,
+    input: { name: string; phone: string } & (
+      { apiClientId: string; user?: undefined } | { user: AuthUser; apiClientId?: undefined }
+    ),
+  ): Promise<{ outcome: 'CREATED' | 'LINKED' | 'INACTIVE'; customerId: string }> {
+    await lockCustomerKeys(tx);
+    const found = await tx.customer.findFirst({
+      where: { phone: input.phone },
+      orderBy: PROFILE_ACCOUNT_ORDER,
+      select: { id: true, isActive: true },
+    });
+    if (found) return { outcome: found.isActive ? 'LINKED' : 'INACTIVE', customerId: found.id };
+    const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
+    const customer = await tx.customer.create({
+      data: {
+        number,
+        kind: 'INDIVIDUAL',
+        name: input.name.trim().slice(0, 200),
+        phone: input.phone,
+        phoneUnverified: true,
+        ...(input.user
+          ? { createdById: input.user.id }
+          : { createdViaApiClientId: input.apiClientId }),
+      },
+    });
+    const record = {
+      branchId: null,
+      entity: 'CUSTOMER' as const,
+      entityId: customer.id,
+      reference: customer.number,
+      action: 'CREATED' as const,
+      changes: [
+        { field: 'kind', before: null, after: 'INDIVIDUAL' },
+        { field: 'phoneUnverified', before: null, after: 'true' },
+      ],
+    };
+    if (input.user) await this.audit.record(tx, input.user, record);
+    else await this.audit.recordApi(tx, record);
+    return { outcome: 'CREATED', customerId: customer.id };
+  }
+
+  /**
    * Plan 09d section 4a (owner, 2026-11-04): the one central customer of a profile, made from its
    * first message (as botAccountInTx, named from the channel until a name is given), or, when it
    * exists, brought up to date: a name given since replaces the channel name it was made with, and
@@ -1309,6 +1358,7 @@ function auditRecord(
 function toDto(c: CustomerWithDetails): CustomerDto {
   return {
     ...toSummary(c),
+    phoneUnverified: c.phoneUnverified,
     whatsapp: c.whatsapp,
     email: c.email,
     countryCode: c.countryCode,

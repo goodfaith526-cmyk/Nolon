@@ -152,7 +152,8 @@ export function createRequestOf(
   return {
     branchId,
     ...input,
-    kind: storedValue(input.kind, 'kind'),
+    // Plan 09e section 1: no kind given is an individual.
+    kind: input.kind ?? 'INDIVIDUAL',
     name: storedValue(input.name, 'name'),
     phone: storedValue(input.phone, 'phone'),
   };

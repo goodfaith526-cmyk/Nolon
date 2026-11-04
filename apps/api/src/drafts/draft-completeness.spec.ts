@@ -216,8 +216,8 @@ describe('goods release', () => {
 });
 
 describe('customer', () => {
-  it('names the kind, the name and the phone; blanks are missing', () => {
-    expect(customerCompleteness({}).missing).toEqual(['kind', 'name', 'phone']);
+  it('names the name and the phone (the kind is optional); blanks are missing', () => {
+    expect(customerCompleteness({}).missing).toEqual(['name', 'phone']);
     expect(customerCompleteness({ kind: 'COMPANY', name: '  ', phone: '+971501234567' })).toEqual({
       missing: ['name'],
       invalid: [],
@@ -378,7 +378,6 @@ describe('drafts for a new customer', () => {
   it('gates a booking on its customer part and its booking part', () => {
     expect(newCustomerBookingCompleteness({ customer: {}, booking: {} })).toEqual({
       missing: [
-        'customer.kind',
         'customer.name',
         'customer.phone',
         'booking.originLocationId',

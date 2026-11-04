@@ -54,8 +54,10 @@ import {
   type CsBookingRequestItem,
   type CsBookingRequestStatus,
   type CsQuote,
+  type CsReceiverAccount,
   Prisma,
 } from '../generated/prisma/client.js';
+import { internationalPhone, samePhone } from '../common/phones.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { stateOf } from './booking-requests.service.js';
@@ -632,21 +634,28 @@ export class BookingReviewService {
     // A request linked to no one (the website chat) may book a customer made from what the bot
     // sent (client request 2026-11-04): never together with a chosen customer.
     const fromRequest = input.newCustomerFromRequest === true;
+    // Plan 09e section 2: a request the bot marked for another sender books that person.
+    const otherSender = initial.otherSenderPhone !== null;
+    if (otherSender && (fromRequest || booking.customerId))
+      throw new BadRequestException({
+        code: 'OTHER_SENDER_CUSTOMER',
+        message: 'A request for another sender books that sender',
+      });
     if (fromRequest && (initial.profileId || initial.customerId || booking.customerId))
       throw new BadRequestException({
         code: 'NEW_CUSTOMER_NOT_ALLOWED',
         message: 'A new customer is made only for a request linked to no customer',
       });
-    if (!initial.profileId && !booking.customerId && !fromRequest)
+    if (!initial.profileId && !booking.customerId && !fromRequest && !otherSender)
       throw new BadRequestException('Choose the booking customer');
     if (initial.branchId === null)
       throw new ConflictException('Only a pending request with a branch is approved');
     const prepareProfile =
-      (initial.profileId || fromRequest) && initial.branchId
+      (initial.profileId || fromRequest || otherSender) && initial.branchId
         ? await this.bookings.prepareForNewCustomer(booking, initial.branchId)
         : null;
     const legacyPrepared =
-      !initial.profileId && !fromRequest
+      !initial.profileId && !fromRequest && !otherSender
         ? // Plan 09d: the customer may be of any branch; the booking is the request's branch's.
           await this.bookings.prepareCreate(
             user,
@@ -671,7 +680,13 @@ export class BookingReviewService {
         throw new ConflictException('The request changed: reopen it');
       await requireKeyServes(tx, row.apiClientId, row.branchId);
       let prepared = legacyPrepared;
-      if (row.profileId) {
+      let otherSenderCustomerId: string | null = null;
+      if (row.otherSenderPhone !== null || otherSender) {
+        if (row.otherSenderPhone === null || row.customerId !== null || !prepareProfile)
+          throw new ConflictException('The request changed: reopen it');
+        otherSenderCustomerId = await this.otherSenderAccountInTx(tx, user, row);
+        prepared = prepareProfile(otherSenderCustomerId);
+      } else if (row.profileId) {
         this.identities.requireBookingEnabled();
         const profile = await this.identities.lockProfile(tx, row.profileId);
         if (profile.version !== input.profileVersion)
@@ -763,7 +778,7 @@ export class BookingReviewService {
           });
         }
       }
-      if (row.profileId)
+      if (row.profileId && otherSenderCustomerId === null)
         await tx.customerProfileReview.create({
           data: {
             companyId: this.identities.companyId,
@@ -780,6 +795,9 @@ export class BookingReviewService {
           },
         });
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
+      const receiver = this.env.CS_RECEIVER_CUSTOMER_ENABLED
+        ? await this.receiverAccountInTx(tx, user, row, input.receiverPhone, prepared.customerId)
+        : null;
       // The request's total: the lines' sum when every line is priced, else none.
       const priced = totals.filter((t): t is Prisma.Decimal => t !== null);
       // Plan 09 section 12: an estimated request's total is the accepted estimate, in its currency.
@@ -802,6 +820,8 @@ export class BookingReviewService {
           approvedCurrency: estimated ? row.estimateCurrency : input.pricing.currency,
           approvedTotal: total,
           dropOffWarehouseId: dropOffId,
+          ...(otherSenderCustomerId === null ? {} : { otherSenderCustomerId }),
+          ...(receiver ?? {}),
           decidedById: user.id,
           decidedAt: new Date(),
           version: { increment: 1 },
@@ -813,6 +833,73 @@ export class BookingReviewService {
     });
     // As route and reject (F131-3): the row this transaction wrote.
     return this.format(user, written);
+  }
+
+  /**
+   * Plan 09e section 2: the other sender's customer, linked when the request was saved or, with
+   * the identity switch off then, linked or made now by phone (as when saved). One inactive is 409
+   * OTHER_SENDER_INACTIVE: staff reactivate it or reject the request.
+   */
+  private async otherSenderAccountInTx(
+    tx: Tx,
+    user: AuthUser,
+    row: {
+      otherSenderName: string | null;
+      otherSenderPhone: string | null;
+      otherSenderCustomerId: string | null;
+    },
+  ): Promise<string> {
+    const customerId =
+      row.otherSenderCustomerId ??
+      (
+        await this.customers.phoneAccountInTx(tx, {
+          name: row.otherSenderName ?? row.otherSenderPhone!,
+          phone: row.otherSenderPhone!,
+          user,
+        })
+      ).customerId;
+    const found = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { isActive: true },
+    });
+    if (!found?.isActive)
+      throw new ConflictException({
+        code: 'OTHER_SENDER_INACTIVE',
+        message: "The sender's customer is inactive: reactivate it or reject the request",
+      });
+    return customerId;
+  }
+
+  /**
+   * Plan 09e section 3 (owner, 2026-11-04): the receiver's own customer, only now that the booking
+   * is approved. The phone is the request's when written internationally, else the one staff typed;
+   * none is PHONE_LOCAL and the booking customer's own is SAME_AS_SENDER, both with no customer.
+   * An existing customer with it is linked unchanged (one inactive is CUSTOMER_INACTIVE, not
+   * linked); else a new individual, its phone unverified. Never written into the sender's file.
+   */
+  private async receiverAccountInTx(
+    tx: Tx,
+    user: AuthUser,
+    row: { consigneeName: string; consigneePhone: string },
+    typed: string | undefined,
+    senderCustomerId: string,
+  ): Promise<{ receiverAccount: CsReceiverAccount; receiverCustomerId: string | null }> {
+    const phone = internationalPhone(row.consigneePhone) ?? internationalPhone(typed);
+    if (phone === null) return { receiverAccount: 'PHONE_LOCAL', receiverCustomerId: null };
+    const sender = await tx.customer.findUnique({
+      where: { id: senderCustomerId },
+      select: { phone: true },
+    });
+    if (samePhone(phone, sender?.phone))
+      return { receiverAccount: 'SAME_AS_SENDER', receiverCustomerId: null };
+    const account = await this.customers.phoneAccountInTx(tx, {
+      name: row.consigneeName,
+      phone,
+      user,
+    });
+    return account.outcome === 'INACTIVE'
+      ? { receiverAccount: 'CUSTOMER_INACTIVE', receiverCustomerId: null }
+      : { receiverAccount: account.outcome, receiverCustomerId: account.customerId };
   }
 
   /**
@@ -1503,6 +1590,18 @@ function staffDto(
       r.instantAccount === null
         ? null
         : { outcome: r.instantAccount, customerId: r.instantCustomerId },
+    otherSender:
+      r.otherSenderName === null || r.otherSenderPhone === null
+        ? null
+        : {
+            name: r.otherSenderName,
+            phone: r.otherSenderPhone,
+            customerId: r.otherSenderCustomerId,
+          },
+    receiverAccount:
+      r.receiverAccount === null
+        ? null
+        : { outcome: r.receiverAccount, customerId: r.receiverCustomerId },
     dropOffId: r.dropOffWarehouseId,
     dropOffPoint: r.dropOff,
     dropOffChoices: [],

@@ -720,7 +720,7 @@ describe("bookings for a new customer: replacing a pair at the person's request"
 // the customer on its own customer draft, and approving is refused (422) while anything is
 // missing, creating no customer and no booking.
 describe('bookings for a new customer saved with missing values', () => {
-  const CUSTOMER_MISSING = ['customer.kind', 'customer.name', 'customer.phone'];
+  const CUSTOMER_MISSING = ['customer.name', 'customer.phone'];
   const BOOKING_MISSING = [
     'booking.originLocationId',
     'booking.destinationLocationId',
@@ -753,7 +753,6 @@ describe('bookings for a new customer saved with missing values', () => {
       booking: { mode: 'SEA', items: [{ weightKg: '100' }] },
     });
     expect(partial.missingFields).toEqual([
-      'customer.kind',
       'customer.phone',
       'booking.originLocationId',
       'booking.destinationLocationId',

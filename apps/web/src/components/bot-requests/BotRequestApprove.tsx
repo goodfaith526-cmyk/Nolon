@@ -39,7 +39,10 @@ export function BotRequestApprove({
   // Client request 2026-11-04: a request linked to no one (the website chat) books, by default, a
   // new customer made from the name and phone the bot sent; staff may choose an existing one of
   // the request's branch instead.
-  const mayUseRequest = !r.profile && !r.customerId;
+  const mayUseRequest = !r.profile && !r.customerId && !r.otherSender;
+  // Plan 09e section 3: the receiver's international phone, when the request has a local one.
+  const receiverLocal = !/^(\+|00)/.test(r.consigneePhone.trim());
+  const [receiverPhone, setReceiverPhone] = useState('');
   const [fromRequest, setFromRequest] = useState(mayUseRequest);
   // Codex F171-2: a request with an OTHER item books the terms its estimate priced, as set.
   const terms = r.items.some((i) => i.isOther) ? (r.estimate?.terms ?? null) : null;
@@ -80,7 +83,8 @@ export function BotRequestApprove({
   const key = JSON.stringify({ inputs, lines });
   const priced = prices !== null && prices.key === key ? prices.dtos : null;
   const categoryOf = (code: string) => master.priceCategories.find((c) => c.code === code);
-  const customerId = r.customerId ?? (fromRequest ? null : (customer?.id ?? null));
+  // Plan 09e section 2: a request for another sender books that sender; the API links them.
+  const customerId = r.customerId ?? (fromRequest || r.otherSender ? null : (customer?.id ?? null));
   const newCustomer = mayUseRequest && fromRequest;
   const set = (patch: Partial<typeof inputs>) => setInputs((v) => ({ ...v, ...patch }));
   const setLine = (index: number, patch: Partial<(typeof lines)[number]>) =>
@@ -116,7 +120,8 @@ export function BotRequestApprove({
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const customerOk =
-      (!!customerId || !!r.profile?.name || newCustomer) && !r.profile?.needsReview;
+      (!!customerId || !!r.otherSender || !!r.profile?.name || newCustomer) &&
+      (!!r.otherSender || !r.profile?.needsReview);
     if (!hasOther && (!priced || !customerOk)) return;
     if (hasOther) {
       if (!estimateAccepted || !customerOk) return;
@@ -125,6 +130,7 @@ export function BotRequestApprove({
         ...(r.profile ? { profileVersion: r.profile.version } : {}),
         paymentCurrency,
         ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
+        ...(receiverPhone.trim() ? { receiverPhone: receiverPhone.trim() } : {}),
         ...(dropOffId ? { dropOffId } : {}),
         pricing: { ...inputs, ...(terms?.loadType ? { loadType: terms.loadType } : {}) },
         booking: {
@@ -142,6 +148,7 @@ export function BotRequestApprove({
       ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
       ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
+      ...(receiverPhone.trim() ? { receiverPhone: receiverPhone.trim() } : {}),
       ...(dropOffId ? { dropOffId } : {}),
       // Plan 09 section 4: a request with items is priced per line; the one-item shape as before.
       ...(byItems
@@ -167,8 +174,8 @@ export function BotRequestApprove({
 
   const ready =
     (hasOther ? estimateAccepted : priced !== null && linesReady) &&
-    !r.profile?.needsReview &&
-    (customerId !== null || !!r.profile?.name || newCustomer) &&
+    (!!r.otherSender || !r.profile?.needsReview) &&
+    (customerId !== null || !!r.otherSender || !!r.profile?.name || newCustomer) &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
     inputs.destinationId !== '';
@@ -179,7 +186,12 @@ export function BotRequestApprove({
       <div className="form-grid">
         <div className="field">
           {t('customer')}
-          {r.profile ? (
+          {r.otherSender ? (
+            <strong>
+              {r.otherSender.name} <bdi dir="ltr">{r.otherSender.phone}</bdi>{' '}
+              <span className="muted">({t('otherSender')})</span>
+            </strong>
+          ) : r.profile ? (
             <strong>
               {r.profile.name ?? t('profileNameRequired')}
               {r.profile.needsReview ? (
@@ -213,6 +225,19 @@ export function BotRequestApprove({
             </div>
           )}
         </div>
+        {receiverLocal ? (
+          <label className="field">
+            {t('receiverPhone')}
+            <input
+              dir="ltr"
+              type="tel"
+              placeholder="+249…"
+              pattern="\+[1-9][0-9]{6,14}"
+              value={receiverPhone}
+              onChange={(e) => setReceiverPhone(e.target.value)}
+            />
+          </label>
+        ) : null}
         <label className="field">
           {t('origin')}
           <select
