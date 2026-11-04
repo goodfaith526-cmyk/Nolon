@@ -60,7 +60,7 @@ import {
 import { internationalPhone, samePhone } from '../common/phones.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { stateOf } from './booking-requests.service.js';
+import { reservedBookingNumber, stateOf } from './booking-requests.service.js';
 import { type EstimateTerms, estimateOf, storedTerms } from './estimates.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
@@ -787,7 +787,13 @@ export class BookingReviewService {
           prices.push(now.dto);
         }
       }
-      const bookingId = await this.bookings.insertInTx(tx, user, prepared);
+      // Owner, 2026-11-04: the booking keeps the BK number the request took when it arrived.
+      const bookingId = await this.bookings.insertInTx(
+        tx,
+        user,
+        prepared,
+        reservedBookingNumber(row.reference),
+      );
       let lineOf = new Map<string, string | null>();
       if (lines.some((l) => l.item !== null)) {
         // The booking's lines in order, as made from `made`: each item linked to its line.

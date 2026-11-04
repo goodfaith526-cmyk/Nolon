@@ -217,7 +217,7 @@ describe('Customer Service booking requests (R3)', () => {
     const made = await create(bot.key, first).expect(201);
     const created = made.body as CsBookingRequestCreated;
     expect(created).toMatchObject({ status: 'pending' });
-    expect(created.reference).toMatch(/^BR-\d{6,}$/);
+    expect(created.reference).toMatch(/^BK\d{5,}$/);
     // The same content in another order is the same request.
     const again = await create(bot.key, { ...first, services: ['PICKUP'] }).expect(200);
     expect(again.body).toEqual(created);

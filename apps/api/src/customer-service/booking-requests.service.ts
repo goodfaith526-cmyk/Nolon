@@ -42,7 +42,7 @@ import {
 } from '@nolon/shared';
 import { todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
-import { nextSequenceValue } from '../common/numbering.js';
+import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { internationalPhone, samePhone } from '../common/phones.js';
 import { type CsBookingRequest, Prisma } from '../generated/prisma/client.js';
 import { CustomersService } from '../customers/customers.service.js';
@@ -71,9 +71,13 @@ const placeSelect = {
   city: { select: { nameAr: true, nameEn: true } },
 } as const;
 
-/** BR-000001: the request's number for staff and the customer. */
-export function requestReference(value: bigint): string {
-  return `BR-${value.toString().padStart(6, '0')}`;
+/**
+ * A request's number as its booking keeps it. Since 2026-11-04 a request takes the next BK number
+ * when it arrives (owner: one number from request to shipment); an older request's BR-000001 is
+ * not a booking number, so its booking takes a new BK number.
+ */
+export function reservedBookingNumber(reference: string): string | undefined {
+  return /^BK\d{5,}$/.test(reference) ? reference : undefined;
 }
 
 /** The owner of a request: the customer and the reason of its match, or a channel identity. */
@@ -555,68 +559,61 @@ export class BookingRequestsService {
         caller.kind === 'key' && !profile && this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED
           ? await this.requestSenderInTx(tx, apiClientId, owner, data)
           : null;
-      const number = await nextSequenceValue(tx, 'CS_BOOKING_REQUEST');
+      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
+      // reuses the profile's branch account in this transaction, or says why staff will.
+      const account =
+        this.env.CS_INSTANT_CUSTOMER_ENABLED &&
+        profile &&
+        data.status === 'PENDING' &&
+        typeof data.branchId === 'string'
+          ? await this.customers.botAccountInTx(tx, {
+              profile,
+              expectedVersion: binding?.profileVersion,
+              apiClientId,
+            })
+          : null;
+      const senderCustomerId = sender?.create
+        ? await this.customers.phoneCustomerCreateInTx(tx, {
+            name: sender.name,
+            phone: sender.phone,
+            apiClientId,
+          })
+        : (sender?.customerId ?? null);
+      const otherCustomerId = other?.create
+        ? await this.customers.phoneCustomerCreateInTx(tx, {
+            name: other.name,
+            phone: other.phone,
+            apiClientId,
+          })
+        : (other?.customerId ?? null);
+      // Owner, 2026-11-04: the request's number is its booking's (BK), from the start. A request
+      // that is rejected or expires leaves its number unused. Taken after every customer-key lock
+      // above, the order staff booking for a new customer takes them in (Codex F195-1).
+      const number = formatShortNumber('BK', await nextSequenceValue(tx, 'BOOKING'));
       const row = await tx.csBookingRequest.create({
         data: {
           ...data,
           otherSenderName: other?.name ?? null,
           otherSenderPhone: other?.phone ?? null,
-          otherSenderCustomerId: other?.customerId ?? null,
+          otherSenderCustomerId: otherCustomerId,
           ...(binding
             ? { profileId: binding.profileId, conversationId: binding.conversationId }
             : {}),
+          ...(account
+            ? { instantAccount: account.outcome, instantCustomerId: account.customerId }
+            : {}),
+          ...(sender
+            ? { instantAccount: sender.outcome, instantCustomerId: senderCustomerId }
+            : {}),
           allowedBranchIds: still,
-          reference: requestReference(number),
+          reference: number,
           apiClientId,
           ownerRef: owner,
           idempotencyKey,
           expiresAt: new Date(now.getTime() + CS_REQUEST_TTL_DAYS * DAY_MS),
         },
       });
-      // The owner's instant account (2026-11-03): a signed request for a known branch makes or
-      // reuses the profile's branch account in this transaction, or says why staff will.
-      let saved = row;
-      if (
-        this.env.CS_INSTANT_CUSTOMER_ENABLED &&
-        profile &&
-        row.status === 'PENDING' &&
-        row.branchId !== null
-      ) {
-        const account = await this.customers.botAccountInTx(tx, {
-          profile,
-          expectedVersion: binding?.profileVersion,
-          apiClientId,
-        });
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { instantAccount: account.outcome, instantCustomerId: account.customerId },
-        });
-      }
-      if (sender) {
-        const customerId = sender.create
-          ? await this.customers.phoneCustomerCreateInTx(tx, {
-              name: sender.name,
-              phone: sender.phone,
-              apiClientId,
-            })
-          : sender.customerId;
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { instantAccount: sender.outcome, instantCustomerId: customerId },
-        });
-      }
-      if (other?.create) {
-        const customerId = await this.customers.phoneCustomerCreateInTx(tx, {
-          name: other.name,
-          phone: other.phone,
-          apiClientId,
-        });
-        saved = await tx.csBookingRequest.update({
-          where: { id: row.id },
-          data: { otherSenderCustomerId: customerId },
-        });
-      }
-      return { created: true, row: saved };
+      return { created: true, row };
     });
   }
 

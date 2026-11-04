@@ -615,8 +615,8 @@ export class ShipmentsService {
   /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
    * customer, parties, route, services, cargo lines and sales outlet are copied from the booking,
-   * and so is its number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among
-   * shipments).
+   * and so is its number (BK00001; DXB-KRT-0001 for an LCL booking made before 2026-11-04; one
+   * shipment per booking, so it is unique among shipments).
    */
   async createForBooking(tx: Tx, user: AuthUser, bookingId: string): Promise<{ id: string }> {
     const booking = await tx.booking.findUniqueOrThrow({

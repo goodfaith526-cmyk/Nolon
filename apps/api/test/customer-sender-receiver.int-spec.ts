@@ -15,6 +15,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { nextSequenceValue } from '../src/common/numbering.js';
 import { lockCustomerKeys } from '../src/customers/customers.service.js';
 import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
@@ -414,6 +415,32 @@ describe('Other sender and receiver customers (plan 09e)', () => {
     await editing;
     const done = (await approving).body as CsBookingRequestStaffDto;
     expect(done.otherSender?.customerId).toBe(existing.id);
+  });
+
+  it('takes its BK number after the customer-key lock, as staff booking does (F195-1)', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let holding: () => void = () => undefined;
+    const holdingNow = new Promise<void>((resolve) => (holding = resolve));
+    // Staff booking for a new customer: the customer-key lock, then the BOOKING counter.
+    const staffSide = on.prisma.$transaction(
+      async (tx) => {
+        await lockCustomerKeys(tx);
+        holding();
+        await held;
+        await nextSequenceValue(tx, 'BOOKING');
+      },
+      { timeout: 20_000 },
+    );
+    await holdingNow;
+    // A new sender: the request waits for the customer-key lock holding no BOOKING counter.
+    const arriving = request(on, {}, uniquePhone());
+    await waitForLockWaiter(on.prisma);
+    release();
+    await staffSide;
+    const saved = await row(await arriving);
+    expect(saved.instantAccount).toBe('CREATED');
+    expect(saved.reference).toMatch(/^BK\d{5,}$/);
   });
 
   it('registers a sender with no profile when the request arrives, once (owner 2026-11-04)', async () => {

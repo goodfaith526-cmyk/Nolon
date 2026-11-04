@@ -645,8 +645,8 @@ describe('consolidated LCL containers', () => {
 
     const made = (await post(path, cookies.opsJed, body).expect(201))
       .body as ConsolidationBookingDto;
-    // An LCL booking is numbered by its route; its shipment keeps the number.
-    expect(made.bookingNumber).toMatch(/^JED-PTS-\d{4,}$/);
+    // Every booking is BK (owner, 2026-11-04); its shipment keeps the number.
+    expect(made.bookingNumber).toMatch(/^BK\d{5,}$/);
     expect(made.shipmentNumber).toBe(made.bookingNumber);
     const booking = (await get(`/bookings/${made.bookingId}`, cookies.opsJed).expect(200))
       .body as BookingDto;
