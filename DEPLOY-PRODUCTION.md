@@ -21,17 +21,25 @@ Differences from staging:
   the per-IP sign-in limit on (docs/plans/01-auth-and-permissions.md, S1).
 - **The staff AI assistant is off.** No assistant button, whatever staging's settings are.
 - **Nothing is built for production.** It runs the exact images a commit already ran on staging.
-- **Manual and approved.** Only by hand, and the deploy job waits for a reviewer's approval.
+- **Same code as staging.** With `PRODUCTION_AUTO_DEPLOY=true`, every successful staging deploy of
+  `main` is followed by a production deploy of the same commit. Staging goes first, so a broken
+  build, migration or health check stops there and never reaches production.
 
 ## How a deploy runs
 
-Actions > **Deploy production** > Run workflow (branch `main`). Optionally give a full commit SHA of
-`main`; empty means the latest commit of `main`.
+Automatically after each successful **Deploy staging** of `main`, once the repository variable
+`PRODUCTION_AUTO_DEPLOY` is `true` (set it after the first deploy works; until then nothing runs
+automatically). By hand: Actions > **Deploy production** > Run workflow (branch `main`), optionally
+with a full commit SHA of `main`; empty means the latest commit of `main`.
 
-1. **Check** (no secrets): the commit is on `main`, CI passed on it, **Deploy staging** succeeded
-   on it, and its three images exist in GHCR. Any failure stops here.
-2. **Approval**: the deploy job waits in the `production` environment until a required reviewer
-   approves it. Its secrets are released only then.
+1. **Check** (no secrets): the commit is on `main`, CI passed on it, a successful **Deploy
+   staging** run deployed it, and its three images exist in GHCR. Any failure stops here. What
+   staging deployed is read from the `staging-deployed-<sha>` artifact its last step uploads, never
+   from the run's own commit: a staging run started by CI can be listed under a later commit of
+   `main` than the one it deployed (`deploy/production/staging-deployed.sh`). The automatic deploy
+   takes the commit from the artifact of the staging run that triggered it.
+2. **Approval** (only if the `production` environment has required reviewers): the deploy job
+   waits until one approves it. Its secrets are released only then.
 3. **Deploy**: writes the server `.env`, copies `deploy/production/` to `~/nolon-production`, and
    runs `deploy.sh` there: pull images, start PostgreSQL, take a backup (`backup.sh pre-migrate`),
    `prisma migrate deploy`, base seed, start api/web/caddy and wait until their health checks pass.
@@ -39,7 +47,8 @@ Actions > **Deploy production** > Run workflow (branch `main`). Optionally give 
 
 ### Going back to an earlier version
 
-Run the workflow again with the earlier commit's SHA. That is safe only when no migration was added
+Run the workflow again with the earlier commit's SHA (staging must have deployed it within the
+last 90 days, which its artifact proves). That is safe only when no migration was added
 in between: migrations only go forward, and older code may not run on a newer schema. When a
 migration was added, fix forward with a new commit, or restore the backup taken right before it
 (Backups, Restore).
@@ -64,7 +73,8 @@ else. A separate key means production's access can be revoked without touching s
 
 Settings > Environments > New environment > `production`:
 
-- **Required reviewers**: yourself. Every production deploy then waits for your approval.
+- **Required reviewers**: optional. With yourself as reviewer, every production deploy (the
+  automatic ones too) waits for your approval; without, production follows staging on its own.
 - **Deployment branches and tags**: Selected branches > `main`.
 
 ### 3. Secrets and variables of that environment
@@ -142,6 +152,15 @@ docker compose -f docker-compose.production.yml logs -f api
 ./deploy.sh        # re-run the last deploy (needs `docker login ghcr.io` if images were pruned)
 ```
 
+### Feature switches (`switches.env`)
+
+Switches such as `CS_BOOKING_CANCEL_ENABLED` or `CS_CUSTOMER_IDENTITY_CLIENTS` are set by hand in
+`~/nolon-production/switches.env` (mode 600), never in `.env`: the deploy job rewrites `.env` on every deploy,
+and a line added there is gone after the next merge. `deploy.sh` reads `switches.env` after `.env`
+and refuses the deploy if the file holds anything other than `CS_*` settings and comments. After a
+change, run `./deploy.sh`. Start the stack only through `deploy.sh`: a plain `docker compose up`
+does not read `switches.env`, and every switch falls back to off.
+
 ## Backups
 
 Daily at 01:17 UTC, and before every migration, `backup.sh` dumps the database, encrypts the dump
@@ -159,8 +178,9 @@ host.
   its settings from the environment, with no config file. The endpoint must be `https://`.
 - **No migration without a backup right before it.** `deploy.sh` runs `backup.sh pre-migrate`
   first: a backup that must succeed, or the deploy stops before anything changes. Without backup
-  settings, only the first deploy onto an empty database goes through; every later deploy fails
-  until backups are set up (step 3 below). Tested in `test-backup.sh`.
+  settings (trial data only, owner decision 2026-11-03), the deploy migrates without a backup and
+  warns, so production keeps the same code as staging; set backups up (step 3 below) before
+  go-live. Tested in `test-backup.sh`.
 - **Restore is tested on every CI run** (`deploy/production/test-backup.sh`) against a local S3
   server with Object Lock: encryption, lock, a key that cannot delete, a wrong key, `restore-test`
   and `restore --replace`.

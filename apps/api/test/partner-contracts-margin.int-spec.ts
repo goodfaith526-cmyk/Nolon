@@ -36,7 +36,7 @@ describe('partner contracts, rate card costs and the expected margin', () => {
   let jeddahPort: string;
   let portSudan: string;
   // A currency of this test only: no exchange rate until the test adds one.
-  const testCurrency = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+  const testCurrency = `QC${String.fromCharCode(65 + randomInt(26))}`;
   const cookies = {
     admin: '',
     pricingJed: '',
@@ -216,6 +216,31 @@ describe('partner contracts, rate card costs and the expected margin', () => {
       // Settings only: nothing posted or billed.
       expect(await t.prisma.journalEntry.count()).toBe(entries);
       expect(await t.prisma.supplierBill.count()).toBe(bills);
+    });
+
+    it('accrue on the partner kind’s default event unless one is chosen (plan 07)', async () => {
+      const url = (p: PartnerDto) => `/partners/${p.id}/contracts`;
+      const outlet = await partner(jed, cookies.managerJed);
+      const distributor = await partner(jed, cookies.managerJed, 'DISTRIBUTOR');
+      const consolidator = await partner(jed, cookies.managerJed, 'ORIGIN_CONSOLIDATOR');
+      const made = async (p: PartnerDto, extra: object = {}) =>
+        (await r.post(url(p), cookies.pricingJed, percent('5', extra)).expect(201))
+          .body as PartnerContractDto;
+      expect((await made(outlet)).accrualEvent).toBe('INVOICED');
+      expect((await made(consolidator)).accrualEvent).toBe('DEPARTED');
+      const chosen = await made(distributor, { accrualEvent: 'INVOICED' });
+      expect(chosen.accrualEvent).toBe('INVOICED');
+      expect((await made(distributor)).accrualEvent).toBe('DELIVERED');
+      // An edit that does not send the event keeps the draft's.
+      const edited = (
+        await r
+          .patch(`/partner-contracts/${chosen.id}`, cookies.pricingJed, percent('6'))
+          .expect(200)
+      ).body as PartnerContractDto;
+      expect(edited).toMatchObject({ value: '6', accrualEvent: 'INVOICED' });
+      await r
+        .post(url(outlet), cookies.pricingJed, percent('5', { accrualEvent: 'PAID' }))
+        .expect(400);
     });
 
     it('cannot be approved for a partner no longer active', async () => {

@@ -116,6 +116,7 @@ describe('sign-in, sessions and permissions', () => {
       expect(me.branches.map((b) => b.code)).toEqual(['DXB', 'JED']);
       expect(me.assistantUrl).toBeNull();
       expect(me.assistantPanel).toBe(false);
+      expect(me.agentAdminUrl).toBeNull();
       expect(me.outletStaffAssignable).toBe(false);
     });
 
@@ -204,6 +205,50 @@ describe('sign-in, sessions and permissions', () => {
           await app.close();
         }
       }
+    });
+
+    it('gives the agent admin panel only to who holds agent_admin:view, and only when configured', async () => {
+      const url = 'https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp';
+      const app = await createTestApp({ AGENT_ADMIN_URL: url });
+      try {
+        const meOf = async (email: string) => {
+          const cookie = await signIn(app, email);
+          const res = await app.http().get('/api/v1/auth/me').set('Cookie', cookie).expect(200);
+          return (res.body as AuthMeResponse).agentAdminUrl;
+        };
+        // The Administrator holds it through the role.
+        const admin = await createUser(app.prisma, ['ADMINISTRATOR']);
+        expect(await meOf(admin.email)).toBe(url);
+        // Anyone else: not by default (a Branch Manager, who holds most else in the branch).
+        const manager = await createUser(app.prisma, ['BRANCH_MANAGER'], ['DXB']);
+        expect(await meOf(manager.email)).toBeNull();
+        // Given on the permissions screen in one branch: held (a global module).
+        const dxb = await app.prisma.branch.findUniqueOrThrow({ where: { code: 'DXB' } });
+        await app.prisma.userBranchPermission.create({
+          data: {
+            userId: manager.id,
+            branchId: dxb.id,
+            permission: 'agent_admin:view',
+            effect: 'ALLOW',
+            sourceKey: '00000000-0000-0000-0000-000000000000',
+            createdById: admin.id,
+          },
+        });
+        await app.prisma.accessState.update({
+          where: { id: 1 },
+          data: { version: { increment: 1 } },
+        });
+        expect(await meOf(manager.email)).toBe(url);
+        // The grant names the Administrator as its maker: removed first so the users can go.
+        await app.prisma.userBranchPermission.deleteMany({ where: { userId: manager.id } });
+      } finally {
+        await app.close();
+      }
+      // Not configured: no item, even for the Administrator.
+      const { email } = await createUser(t.prisma, ['ADMINISTRATOR']);
+      const cookie = await signIn(t, email);
+      const res = await t.http().get('/api/v1/auth/me').set('Cookie', cookie).expect(200);
+      expect((res.body as AuthMeResponse).agentAdminUrl).toBeNull();
     });
 
     it('gives Administrator every branch through the role', async () => {

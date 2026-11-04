@@ -9,8 +9,8 @@
 #                              public key goes into the PRODUCTION_BACKUP_AGE_RECIPIENT variable.
 #   ./backup.sh                a backup now
 #   ./backup.sh pre-migrate    what deploy.sh runs before migrations: a backup, which must succeed.
-#                              Without backups set up it passes only on an empty database (the
-#                              first deploy); anything else is refused.
+#                              Without backups set up it passes with a warning and no backup
+#                              (trial data, owner decision 2026-11-03); set them up before go-live.
 #   ./backup.sh list           the backups in object storage
 #   ./backup.sh restore-test [NAME]
 #                              restores a backup (default: the newest) into a throwaway database,
@@ -61,9 +61,12 @@ case "${1:-}" in
       exit 0
     fi
     if ! grep -Eq "^BACKUP_S3_BUCKET='?[a-z0-9]" .env; then
-      echo "Refusing to migrate: the database holds data and backups are not set up" \
-        "(DEPLOY-PRODUCTION.md or DEPLOY.md, Backups)." >&2
-      exit 1
+      # Owner decision 2026-11-03 («تجاوز»): while all data is trial data and backups are not set
+      # up yet, a deploy migrates without a backup (with this warning) so production keeps the
+      # same code as staging. Once backups are set up, a backup must succeed before every migration.
+      echo "WARNING: backups are not set up: migrating WITHOUT a backup (trial data only;" \
+        "set up backups before go-live, DEPLOY-PRODUCTION.md or DEPLOY.md, Backups)." >&2
+      exit 0
     fi
     compose run --rm -T backup < /dev/null
     exit 0

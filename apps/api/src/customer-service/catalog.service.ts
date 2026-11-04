@@ -3,8 +3,10 @@ import { Injectable } from '@nestjs/common';
 import {
   CS_CATALOG_SERVICES,
   type CsCatalogDto,
+  type CsRequestService,
   type CsCatalogPlaceDto,
   type LocationDto,
+  pricingModeOf,
 } from '@nolon/shared';
 import { todayIn } from '../common/dates.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
@@ -16,7 +18,8 @@ import { RatesService } from '../rates/rates.service.js';
  * price, cost or staff name. A place is listed when an APPROVED rate card valid today (UTC) covers
  * it: one on the place itself, on its city, or on its country (the pricing scopes of plan 5.3).
  * An origin is listed too when a routing rule covers it the same way (a branch serves it).
- * Countries themselves are not listed: a quote and a booking go between places.
+ * Countries themselves are not listed: a quote and a booking go between places. The services are
+ * the ones the asking key offers (a soft launch may offer neither pickup nor door delivery).
  */
 @Injectable()
 export class CatalogService {
@@ -25,12 +28,16 @@ export class CatalogService {
     private readonly rates: RatesService,
   ) {}
 
-  async catalog(): Promise<CsCatalogDto> {
-    const [all, aliases, ends, routing] = await Promise.all([
+  async catalog(
+    offered: readonly CsRequestService[],
+    branchIds: readonly string[],
+  ): Promise<CsCatalogDto> {
+    const [all, aliases, ends, routing, phones] = await Promise.all([
       this.masterData.all(),
       this.masterData.locationAliases(),
       this.rates.approvedRouteEnds(todayIn('UTC')),
       this.masterData.routingBranches(),
+      this.masterData.supportPhones(),
     ]);
     // Places only: a country is a pricing scope, never a quote's or a booking's end.
     const active = all.locations.filter((l) => l.isActive && l.kind !== 'COUNTRY');
@@ -54,10 +61,31 @@ export class CatalogService {
       // A place a branch serves (section 6) is an origin too, priced or not.
       origins: covered([...ends.origins, ...Object.keys(routing)]),
       destinations: covered(ends.destinations),
+      // The unit says what the bot must collect: pieces, or pieces and dimensions for a volume unit.
       categories: all.priceCategories
         .filter((c) => c.isActive)
-        .map((c) => ({ code: c.code, nameAr: c.nameAr, nameEn: c.nameEn, unit: c.defaultUnit })),
-      services: CS_CATALOG_SERVICES.map((s) => ({ ...s })),
+        .map((c) => ({
+          code: c.code,
+          nameAr: c.nameAr,
+          nameEn: c.nameEn,
+          unit: c.defaultUnit,
+          pricingMode: pricingModeOf(c.defaultUnit),
+        })),
+      services: CS_CATALOG_SERVICES.filter((s) => offered.includes(s.code)).map((s) => ({ ...s })),
+      // Plan 09 amendment 4: the key's branches' customer service numbers.
+      support: phones.flatMap((p) =>
+        p.phone !== null && branchIds.includes(p.branchId)
+          ? [
+              {
+                branchId: p.branchId,
+                code: p.code,
+                nameAr: p.nameAr,
+                nameEn: p.nameEn,
+                phone: p.phone,
+              },
+            ]
+          : [],
+      ),
     };
     const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
     return { version, ...body };

@@ -39,6 +39,10 @@
 - POST `/api-clients` · `ApiClientsController.create` · `customer-service/customer-service.controller.ts` · users:create
 - POST `/api-clients/:id/revoke` · `ApiClientsController.revoke` · `customer-service/customer-service.controller.ts` · users:update
 - PUT `/api-clients/:id/scopes` · `ApiClientsController.setScopes` · `customer-service/customer-service.controller.ts` · users:update
+- PUT `/api-clients/:id/services` · `ApiClientsController.setServices` · `customer-service/customer-service.controller.ts` · users:update
+- POST `/api-clients/:id/webhooks` · `ApiClientsController.addWebhook` · `customer-service/customer-service.controller.ts` · users:create
+- POST `/api-clients/:id/webhooks/:endpointId/approve` · `ApiClientsController.approveWebhook` · `customer-service/customer-service.controller.ts` · users:update
+- POST `/api-clients/:id/webhooks/:endpointId/retire` · `ApiClientsController.retireWebhook` · `customer-service/customer-service.controller.ts` · users:update
 - POST `/assistant-drafts/settle` · `MyDraftsController.settle` · `my-drafts/my-drafts.controller.ts` · —
 - POST `/assistant-drafts/settle/ack` · `MyDraftsController.acknowledge` · `my-drafts/my-drafts.controller.ts` · —
 - POST `/assistant-form-reviews` · `AssistantFormReviewsController.create` · `assistant-form-reviews/assistant-form-reviews.controller.ts` · —
@@ -72,11 +76,22 @@
 - POST `/credit-notes/:id/approve` · `CreditNotesController.approve` · `billing/billing.controller.ts` · credit_notes:approve
 - POST `/credit-notes/:id/cancel` · `CreditNotesController.cancel` · `billing/billing.controller.ts` · credit_notes:cancel
 - POST `/cs-booking-requests/:id/approve` · `BookingReviewController.approve` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve, bookings:create
+- POST `/cs-booking-requests/:id/cancel-request/close` · `BookingReviewController.closeCancelRequest` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
+- POST `/cs-booking-requests/:id/drop-off` · `BookingReviewController.setDropOff` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
+- POST `/cs-booking-requests/:id/estimate` · `BookingReviewController.estimate` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
+- POST `/cs-booking-requests/:id/items/:itemId/resolve` · `BookingReviewController.resolveItem` · `customer-service/booking-review.controller.ts` · bookings:update
 - POST `/cs-booking-requests/:id/reject` · `BookingReviewController.reject` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
 - PUT `/cs-reject-reasons/:code` · `RejectReasonsController.set` · `customer-service/booking-review.controller.ts` · master_data:update
 - POST `/cs/booking-requests` · `BookingRequestsController.create` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/booking-requests/:id/accept-estimate` · `BookingRequestsController.acceptEstimate` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/booking-requests/:id/cancel` · `BookingRequestsController.cancel` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/booking-requests/:id/photos` · `BookingRequestsController.addPhoto` · `customer-service/customer-service.controller.ts` · —
+- PATCH `/cs/customer-profiles/:id` · `CustomerIdentityController.update` · `customer-service/customer-identity.controller.ts` · —
+- POST `/cs/customer-profiles/:id/follow-up` · `CustomerIdentityController.followUp` · `customer-service/customer-identity.controller.ts` · —
+- POST `/cs/customer-profiles/capture` · `CustomerIdentityController.capture` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-tokens` · `CustomerTokensController.issue` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/quotes` · `QuotesController.quote` · `customer-service/customer-service.controller.ts` · —
 - POST `/customer-drafts` · `CustomerDraftsController.create` · `customers/customer-drafts.controller.ts` · customers:create
 - PATCH `/customer-drafts/:id` · `CustomerDraftsController.update` · `customers/customer-drafts.controller.ts` · customers:create
 - POST `/customer-drafts/:id/approve` · `CustomerDraftsController.approve` · `customers/customer-drafts.controller.ts` · customers:create
@@ -87,6 +102,11 @@
 - POST `/customer-invoices/:id/approve` · `InvoicesController.approve` · `billing/billing.controller.ts` · customer_invoices:approve
 - POST `/customer-invoices/:id/cancel` · `InvoicesController.cancel` · `billing/billing.controller.ts` · customer_invoices:cancel
 - POST `/customer-invoices/opening` · `InvoicesController.createOpeningItem` · `billing/billing.controller.ts` · customer_invoices:view, manual_journals:create, manual_journals:approve
+- POST `/customer-profiles/:id/reject-proposals` · `CustomerProfileReviewController.keepCurrent` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
+- PUT `/customer-profiles/follow-up-rules/:id` · `CustomerProfileReviewController.rule` · `customer-service/customer-profile-review.controller.ts` · customer_profile_followup:update
+- POST `/customer-profiles/intake/:id/resolve` · `CustomerProfileReviewController.resolve` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
+- PUT `/customer-stages/:code` · `CustomerStagesController.setStage` · `customer-service/customer-stages.controller.ts` · master_data:update
+- PUT `/customer-stages/mapping/:status` · `CustomerStagesController.setMapping` · `customer-service/customer-stages.controller.ts` · master_data:update
 - POST `/customers` · `CustomersController.create` · `customers/customers.controller.ts` · customers:create
 - PATCH `/customers/:id` · `CustomersController.update` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/:id/activate` · `CustomersController.activate` · `customers/customers.controller.ts` · customers:update
@@ -109,6 +129,7 @@
 - POST `/invoice-drafts/:id/reject` · `InvoiceDraftsController.reject` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
 - POST `/invoice-drafts/check` · `InvoiceDraftsController.check` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
 - POST `/invoice-drafts/suggest` · `InvoiceDraftsController.suggest` · `billing/invoice-drafts.controller.ts` · customer_invoices:create
+- PUT `/master-data/branches/:id/support-phone` · `MasterDataController.setSupportPhone` · `master-data/master-data.controller.ts` · master_data:update
 - POST `/master-data/charge-types` · `MasterDataController.createChargeType` · `master-data/master-data.controller.ts` · master_data:create
 - PATCH `/master-data/charge-types/:code` · `MasterDataController.updateChargeType` · `master-data/master-data.controller.ts` · master_data:update
 - POST `/master-data/charge-types/:code/deactivate` · `MasterDataController.deactivateChargeType` · `master-data/master-data.controller.ts` · master_data:update
@@ -151,9 +172,13 @@
 - PATCH `/partner-contracts/:id` · `PartnerContractsController.update` · `partners/partner-contracts.controller.ts` · partner_contracts:update
 - POST `/partner-contracts/:id/approve` · `PartnerContractsController.approve` · `partners/partner-contracts.controller.ts` · partner_contracts:approve
 - POST `/partner-contracts/:id/cancel` · `PartnerContractsController.cancel` · `partners/partner-contracts.controller.ts` · partner_contracts:cancel
+- POST `/partner-statements/:id/bill` · `CommissionsController.billStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
+- POST `/partner-statements/:id/cancel` · `CommissionsController.cancelStatement` · `commissions/commissions.controller.ts` · partner_commissions:update
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create
+- POST `/partners/:partnerId/statements` · `CommissionsController.createStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
 - POST `/party-drafts` · `PartyDraftsController.create` · `customers/party-drafts.controller.ts` · customers:update
 - PATCH `/party-drafts/:id` · `PartyDraftsController.update` · `customers/party-drafts.controller.ts` · customers:update
 - POST `/party-drafts/:id/approve` · `PartyDraftsController.approve` · `customers/party-drafts.controller.ts` · customers:update
@@ -222,6 +247,7 @@
 - POST `/shipments/:id/resume` · `ShipmentsController.resume` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/revert` · `ShipmentsController.revert` · `shipments/shipments.controller.ts` · shipments:approve
 - POST `/shipments/:id/status` · `ShipmentsController.changeStatus` · `shipments/shipments.controller.ts` · shipments:view
+- POST `/shipments/:shipmentId/commissions/recompute` · `CommissionsController.recompute` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - PUT `/shipments/:shipmentId/customs` · `CustomsController.save` · `customs/customs.controller.ts` · customs:update
 - POST `/shipments/:shipmentId/customs/fees` · `CustomsController.addFee` · `customs/customs.controller.ts` · customs:create
 - DELETE `/shipments/:shipmentId/customs/fees/:feeId` · `CustomsController.removeFee` · `customs/customs.controller.ts` · customs:cancel

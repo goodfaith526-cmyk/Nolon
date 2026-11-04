@@ -23,6 +23,8 @@ export const POSTING_ROLES = [
   'REIMBURSABLE',
   'CONSOLIDATION_CLEARING',
   'ACCRUED_TRANSPORT',
+  'COMMISSION_COST',
+  'ACCRUED_COMMISSIONS',
   'FX_GAIN',
   'FX_LOSS',
   'ROUNDING',
@@ -45,6 +47,8 @@ export const ROLE_ACCOUNT_TYPES: Readonly<Record<PostingRole, AccountType>> = {
   REIMBURSABLE: 'ASSET',
   CONSOLIDATION_CLEARING: 'ASSET',
   ACCRUED_TRANSPORT: 'LIABILITY',
+  COMMISSION_COST: 'EXPENSE',
+  ACCRUED_COMMISSIONS: 'LIABILITY',
   FX_GAIN: 'REVENUE',
   FX_LOSS: 'EXPENSE',
   ROUNDING: 'EXPENSE',
@@ -74,6 +78,7 @@ export const JOURNAL_SOURCES = [
   'OPENING_BALANCE',
   'CONSOLIDATION_ALLOCATION',
   'RECEIPT_APPLICATION',
+  'COMMISSION_ACCRUAL',
 ] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
@@ -510,6 +515,11 @@ export interface CreateReceiptRequest {
    */
   requestId?: string;
   customerId: string;
+  /**
+   * Plan 09d: the branch that receives (as CreateQuotationRequest.branchId). A receipt settles
+   * invoices of its own branch only.
+   */
+  branchId?: string | null;
   receiptDate: string;
   currency: CurrencyCode;
   fxRate?: FxRateString | null;
@@ -630,7 +640,6 @@ export interface CustomerStatementDto {
   customerId: string;
   customerNumber: string;
   customerName: string;
-  customerBranchId: string;
   branchId: string | null;
   from: DateString;
   to: DateString;
@@ -706,6 +715,8 @@ export interface OpeningAccountsRequest {
 export interface OpeningCustomerItemRequest {
   requestId: string;
   customerId: string;
+  /** Plan 09d: the branch that carries the item (as CreateQuotationRequest.branchId). */
+  branchId?: string | null;
   /** The day the opening balances are entered (the journal date). */
   entryDate: string;
   /** The invoice's own number and dates in the previous system. */

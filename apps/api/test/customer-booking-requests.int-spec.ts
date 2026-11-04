@@ -1,7 +1,10 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
   ApiClientCreatedDto,
+  ApiClientDto,
+  CsBookingRequestCreate,
   CsBookingRequestCreated,
+  CsCatalogDto,
   CsBookingRequestDto,
   CsCustomerTokenAnswer,
   CsQuoteDto,
@@ -18,6 +21,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { BookingRequestsService } from '../src/customer-service/booking-requests.service.js';
 import { uniquePhone } from './test-data.js';
 
 /**
@@ -317,6 +321,36 @@ describe('Customer Service booking requests (R3)', () => {
     await create(narrow.key, mineBody).expect(404);
   });
 
+  it("takes the website chat's visitor as a sender, read back by that visitor only", async () => {
+    // erp-agents docs/web-chat.md: a web visitor is 16 random hex digits, like a Telegram id, never a phone.
+    const visitor = randomUUID().replace(/-/g, '').slice(0, 16);
+    const sender = { channel: 'web', id: visitor };
+    const made = (await create(bot.key, body({ sender })).expect(201))
+      .body as CsBookingRequestCreated;
+    expect(made.status).toBe('pending');
+    const saved = await t.prisma.csBookingRequest.findUniqueOrThrow({
+      where: { id: made.requestId },
+    });
+    expect(saved).toMatchObject({ senderChannel: 'web', senderId: visitor });
+    expect(
+      (
+        (await read(bot.key, made.requestId, `web:${visitor}`).expect(200))
+          .body as CsBookingRequestDto
+      ).requestId,
+    ).toBe(made.requestId);
+    // Another visitor, another channel with the same id, or the id alone: as if it did not exist.
+    const other = randomUUID().replace(/-/g, '').slice(0, 16);
+    await read(bot.key, made.requestId, `web:${other}`).expect(404);
+    await read(bot.key, made.requestId, `telegram:${visitor}`).expect(404);
+    await read(bot.key, made.requestId, visitor).expect(404);
+    await read(otherBot.key, made.requestId, `web:${visitor}`).expect(404);
+    // Only 16 lowercase hex digits.
+    for (const id of [visitor.toUpperCase(), visitor.slice(1), `${visitor}0`, '+249912345678']) {
+      await create(bot.key, body({ sender: { channel: 'web', id } })).expect(400);
+      await read(bot.key, made.requestId, `web:${id}`).expect(404);
+    }
+  });
+
   it('leaves no request when the key or the grant changes while it is being saved (F126-1)', async () => {
     /**
      * Holds a row lock as a revocation (or a customer change) does, sends the request while it is
@@ -482,5 +516,87 @@ describe('Customer Service booking requests (R3)', () => {
     expect(saved.consigneePhone).toBe('0912345678');
     await create(bot.key, body({ sender, quantity: 1.23456 })).expect(400);
     await create(bot.key, body({ sender, consigneePhone: 'call me' })).expect(400);
+  });
+
+  it('offers only the services its key offers: the catalog lists them, requests ask for no others', async () => {
+    const key = await makeKey([pts], ['cs:catalog:read', 'cs:booking_requests:create']);
+    expect(key.client.services).toEqual(['PICKUP', 'LAST_MILE']);
+    const catalog = async () =>
+      (
+        await t
+          .http()
+          .get('/api/v1/cs/catalog')
+          .set('Authorization', `Bearer ${key.key}`)
+          .expect(200)
+      ).body as CsCatalogDto;
+    expect((await catalog()).services.map((s) => s.code)).toEqual(['PICKUP', 'LAST_MILE']);
+    const setServices = (cookie: string, id: string, services: unknown) =>
+      t
+        .http()
+        .put(`/api/v1/api-clients/${id}/services`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send({ services });
+
+    // Only who manages keys changes them; an unknown service is refused.
+    await setServices(cookies.sales, key.client.id, []).expect(403);
+    await setServices(cookies.admin, key.client.id, ['WAREHOUSE']).expect(400);
+    const off = (await setServices(cookies.admin, key.client.id, []).expect(200))
+      .body as ApiClientDto;
+    expect(off.services).toEqual([]);
+    const audit = await t.prisma.auditEvent.findFirstOrThrow({
+      where: { entity: 'API_CLIENT', entityId: key.client.id, action: 'UPDATED' },
+      orderBy: { id: 'desc' },
+    });
+    expect(audit.changes).toEqual([{ field: 'services', before: 'LAST_MILE, PICKUP', after: '' }]);
+    expect((await catalog()).services).toEqual([]);
+
+    const sender = newSender();
+    const refused = async (extra: object) => {
+      const res = await create(key.key, body({ sender, ...extra })).expect(422);
+      expect((res.body as { code: string }).code).toBe('SERVICE_NOT_OFFERED');
+    };
+    await refused({ services: ['LAST_MILE'], handover: 'BRANCH_DROP' });
+    await refused({ services: [] });
+    await create(key.key, body({ sender, services: [], handover: 'BRANCH_DROP' })).expect(201);
+
+    // Delivery back on: a request may ask for it again, still without pickup.
+    await setServices(cookies.admin, key.client.id, ['LAST_MILE']).expect(200);
+    await create(
+      key.key,
+      body({ sender, services: ['LAST_MILE'], handover: 'BRANCH_DROP' }),
+    ).expect(201);
+    await refused({ services: ['PICKUP'], handover: 'BRANCH_DROP' });
+
+    // Turned off after the guard read the key: the write reads it again under its lock.
+    await setServices(cookies.admin, key.client.id, []).expect(200);
+    const stale = {
+      kind: 'key' as const,
+      client: {
+        id: key.client.id,
+        name: key.client.name,
+        allowedBranchIds: [pts],
+        scopes: ['cs:booking_requests:create' as const],
+        services: ['PICKUP' as const, 'LAST_MILE' as const],
+      },
+    };
+    const rows = () => t.prisma.csBookingRequest.count({ where: { apiClientId: key.client.id } });
+    const was = await rows();
+    const requests = t.app.get(BookingRequestsService);
+    await expect(
+      requests.create(
+        stale,
+        body({
+          sender,
+          services: ['LAST_MILE'],
+          handover: 'BRANCH_DROP',
+        }) as CsBookingRequestCreate,
+      ),
+    ).rejects.toMatchObject({ response: { code: 'SERVICE_NOT_OFFERED' } });
+    expect(await rows()).toBe(was);
+
+    // A revoked key keeps what it had.
+    await post(`/api-clients/${key.client.id}/revoke`, cookies.admin).expect(200);
+    await setServices(cookies.admin, key.client.id, []).expect(409);
   });
 });

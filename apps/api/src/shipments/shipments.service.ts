@@ -38,6 +38,10 @@ import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { assertBranchAccess, branchScope, canAccessBranch } from '../auth/branch-scope.js';
 import { lockActiveBranches } from '../common/branch-locks.js';
+import {
+  CommissionTriggers,
+  type ShipmentCommissionFacts,
+} from './commission-triggers.registry.js';
 import { ShipmentContainerRegistry } from './shipment-container.registry.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { currentLocationOf } from './location-timeline.js';
@@ -46,6 +50,7 @@ import {
   ShipmentLinksRegistry,
   type ShipmentLinkBlocker,
 } from './shipment-links.registry.js';
+import { ShipmentStatusListenersRegistry } from './shipment-status-listeners.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { shipmentScope, holdsOnShipment } from './shipment-scope.js';
 import { limitedToOwnTrips } from '../auth/own-trips.js';
@@ -207,6 +212,8 @@ export class ShipmentsService {
     private readonly stock: ShipmentStockRegistry,
     private readonly links: ShipmentLinksRegistry,
     private readonly containers: ShipmentContainerRegistry,
+    private readonly commissions: CommissionTriggers,
+    private readonly statusListeners: ShipmentStatusListenersRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -340,7 +347,7 @@ export class ShipmentsService {
     const shipment = await this.findScoped(user, id);
     const dto = this.toDto(user, shipment);
     if (dto.actions.transitions.includes('CLOSED')) {
-      dto.actions.closeCheck = await this.closeCheck(this.prisma, shipment.id);
+      dto.actions.closeCheck = await this.closeCheck(this.prisma, shipment);
     }
     if (dto.actions.canShareBranches) {
       dto.shareableBranches = await this.prisma.branch.findMany({
@@ -532,6 +539,57 @@ export class ShipmentsService {
   }
 
   /**
+   * What a partner's commission on the shipment depends on (plan 07, 4.2 and 4.3), in the caller's
+   * transaction: its partners, its cargo lines (as corrected), the price categories of its booking's
+   * lines, and when it first departed on the path it still stands on (a revert takes it back).
+   */
+  async commissionFactsInTx(tx: Tx, id: string): Promise<ShipmentCommissionFacts> {
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id },
+      select: {
+        number: true,
+        branchId: true,
+        status: true,
+        cargoType: true,
+        salesOutletId: true,
+        originConsolidatorId: true,
+        distributorId: true,
+        branch: { select: { timezone: true } },
+        items: {
+          orderBy: { lineNo: 'asc' },
+          select: {
+            cargoType: true,
+            containerTypeCode: true,
+            quantity: true,
+            weightKg: true,
+            volumeCbm: true,
+          },
+        },
+        booking: { select: { items: { select: { priceCategoryCode: true } } } },
+        events: { orderBy: { id: 'asc' } },
+      },
+    });
+    const departed = replayHistory(shipment.events).find(
+      (e) => e.status === 'DEPARTED' || e.status === 'ROAD_DEPARTED',
+    );
+    return {
+      number: shipment.number,
+      branchId: shipment.branchId,
+      timezone: shipment.branch.timezone,
+      status: shipment.status,
+      cargoType: shipment.cargoType,
+      partners: {
+        SALES_OUTLET: shipment.salesOutletId,
+        ORIGIN_CONSOLIDATOR: shipment.originConsolidatorId,
+        DISTRIBUTOR: shipment.distributorId,
+      },
+      items: shipment.items,
+      categories: shipment.booking.items.map((i) => i.priceCategoryCode),
+      departedAt: departed?.occurredAt ?? null,
+    };
+  }
+
+  /**
    * Creates the shipment of a booking being confirmed, inside the confirmation's transaction:
    * customer, parties, route, services, cargo lines and sales outlet are copied from the booking,
    * and so is its number (BK00001 or DXB-KRT-0001; one shipment per booking, so it is unique among
@@ -543,7 +601,7 @@ export class ShipmentsService {
       include: { items: { orderBy: { lineNo: 'asc' } } },
     });
     const now = new Date();
-    return tx.shipment.create({
+    const created = await tx.shipment.create({
       data: {
         number: booking.number,
         branchId: booking.branchId,
@@ -592,6 +650,13 @@ export class ShipmentsService {
       },
       select: { id: true },
     });
+    await this.statusListeners.notifyInTx(tx, {
+      shipmentId: created.id,
+      bookingId: booking.id,
+      status: 'CREATED',
+      occurredAt: now,
+    });
+    return created;
   }
 
   async update(user: AuthUser, id: string, input: ShipmentUpdateRequest): Promise<ShipmentDto> {
@@ -685,6 +750,12 @@ export class ShipmentsService {
       };
       await tx.shipment.update({ where: { id }, data: { ...data, ...partners } });
       if (sharedBranchIds) await this.replaceSharedBranchesInTx(tx, id, sharedBranchIds);
+      if (
+        partners.originConsolidatorId !== current.originConsolidatorId ||
+        partners.distributorId !== current.distributorId
+      ) {
+        await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_PARTNERS');
+      }
     });
     return this.get(user, id);
   }
@@ -845,6 +916,7 @@ export class ShipmentsService {
           correctedById: user.id,
         },
       });
+      await this.commissions.shipmentChangedInTx(tx, user, id, 'CARGO_CORRECTED');
     });
     return this.get(user, id);
   }
@@ -1742,17 +1814,34 @@ export class ShipmentsService {
     );
   }
 
-  /** What closing the shipment needs now (B1-5): its goods on hand, and whether it is invoiced. */
-  private async closeCheck(tx: Tx, shipmentId: string): Promise<ShipmentCloseCheckDto> {
-    const [goodsOnHand, { approved }] = await Promise.all([
-      this.stock.get().goodsOnHandInTx(tx, shipmentId),
-      this.invoices.get().liveInvoicesInTx(tx, shipmentId),
+  /**
+   * What closing the shipment needs now (B1-5): its goods on hand, whether it is invoiced, and
+   * for a shipment with a distributor whether its proof of delivery is missing (plan 07, 6).
+   */
+  private async closeCheck(
+    tx: Tx,
+    shipment: { id: string; distributorId: string | null },
+  ): Promise<ShipmentCloseCheckDto> {
+    const [goodsOnHand, { approved }, podMissing] = await Promise.all([
+      this.stock.get().goodsOnHandInTx(tx, shipment.id),
+      this.invoices.get().liveInvoicesInTx(tx, shipment.id),
+      this.podMissingInTx(tx, shipment),
     ]);
-    return { goodsOnHand, invoiced: approved.length > 0 };
+    return { goodsOnHand, invoiced: approved.length > 0, podMissing };
+  }
+
+  /** A shipment with a distributor and no live full proof of delivery (plan 07, 6). */
+  private async podMissingInTx(
+    tx: Tx,
+    shipment: { id: string; distributorId: string | null },
+  ): Promise<boolean> {
+    if (shipment.distributorId === null) return false;
+    return (await this.links.fullDeliveryAtInTx(tx, shipment.id)) === null;
   }
 
   /**
-   * Owner decision Q1: a shipment closes with none of its goods in any warehouse, and with an
+   * Owner decision Q1: a shipment closes with none of its goods in any warehouse, its full proof
+   * of delivery when it has a distributor (plan 07, 6), and with an
    * approved invoice billing it or a reason it is closed without charges (recorded on the closing
    * event). The caller holds the shipment's row lock exclusively; warehouse movements and invoice
    * approvals lock it before they write, so neither changes between this check and the commit.
@@ -1762,6 +1851,16 @@ export class ShipmentsService {
     shipment: LockedShipment,
     noChargeReason: string | null,
   ): Promise<void> {
+    // Plan 07, 6 (d4): the distributor's delivery is proven before the shipment closes; a
+    // no-charge reason does not stand in for it. Proofs of delivery lock the shipment first.
+    if (await this.podMissingInTx(tx, shipment)) {
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_CLOSE_NO_POD',
+        `Shipment ${shipment.number} has a distributor: record its full proof of delivery before closing it`,
+        { shipment: shipment.number },
+      );
+    }
     const goods = await this.stock.get().goodsOnHandInTx(tx, shipment.id);
     if (goods.length > 0) {
       const warehouses = goods.map((g) => `${g.warehouseCode} (${g.packages})`).join(', ');
@@ -1842,6 +1941,14 @@ export class ShipmentsService {
       },
     });
     if (event.after) await event.after(tx);
+    // Dated on the event, which can be entered after it happened (F153-2).
+    await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_EVENT', occurredAt);
+    await this.statusListeners.notifyInTx(tx, {
+      shipmentId: id,
+      bookingId: shipment.bookingId,
+      status: event.status,
+      occurredAt,
+    });
     return true;
   }
 

@@ -301,7 +301,7 @@ export class BookingDraftsService {
     branchId: string | null,
   ): Promise<CheckedBooking> {
     if (bookingMissingFields(input).length === 0) {
-      const prepared = await this.prepare(user, completeBooking(input));
+      const prepared = await this.prepare(user, completeBooking(input), branchId);
       return {
         branchId: draftBranch(user, branchId, prepared.branchId),
         customerId: prepared.customerId,
@@ -542,7 +542,7 @@ export class BookingDraftsService {
     // Nothing is recorded while the draft misses a value (422, naming each one).
     const values = serviceRequest(requestOf(current));
     requireApprovable(bookingCompleteness(values));
-    const prepared = await this.prepare(user, completeBooking(values));
+    const prepared = await this.prepare(user, completeBooking(values), current.branchId);
     const containerId = current.consolidationId;
     await this.prisma.$transaction(async (tx) => {
       const locked = await lockDraftRow(tx, 'booking_drafts', id);
@@ -646,6 +646,7 @@ export class BookingDraftsService {
   private async prepare(
     user: AuthUser,
     input: DirectRequest | FromQuotationRequest,
+    branchId: string | null,
   ): Promise<PreparedBooking> {
     if (isFromQuotation(input)) {
       const { quotationId, ...rest } = input;
@@ -655,7 +656,8 @@ export class BookingDraftsService {
     if (consolidationId) {
       await this.containers.get().requireBookable(user, consolidationId, booking);
     }
-    return this.bookings.prepareCreate(user, booking);
+    // Plan 09d: a direct draft's branch is the booking's work branch.
+    return this.bookings.prepareCreate(user, { ...booking, branchId });
   }
 
   /**
@@ -666,7 +668,7 @@ export class BookingDraftsService {
     const values = serviceRequest(requestOf(draft));
     const complete = bookingMissingFields(values).length === 0;
     const result = await checkDraft(async () => {
-      if (complete) await this.prepare(user, completeBooking(values));
+      if (complete) await this.prepare(user, completeBooking(values), draft.branchId);
       else await this.validate(user, values, draft.branchId);
       return { total: null, currency: null };
     });

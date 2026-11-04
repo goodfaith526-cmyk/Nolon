@@ -19,7 +19,7 @@ import {
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { requireBranchMemberInTx } from '../auth/branch-access.js';
-import { branchScope, withPermissions } from '../auth/branch-scope.js';
+import { branchScope, withPermissions, workBranch } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { type Decimal, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { fieldRefusal } from '../common/validation.js';
@@ -183,9 +183,14 @@ export class ReceiptDraftsService {
     user: AuthUser,
     customerId: string,
     currency?: string,
+    given?: string,
   ): Promise<ReceiptCashAccountDto[]> {
-    const customer = await this.customers.requireCustomer(user, customerId);
-    const accounts = await this.accounts.cashAccountsFor(customer.branchId);
+    await this.customers.requireCustomer(user, customerId);
+    // Plan 09d: the cash accounts of the branch that receives, one the user writes receipts in
+    // (403 otherwise; BRANCH_REQUIRED when that is not clear). Never the customer's branch of
+    // registration by default.
+    const branchId = workBranch(user, 'receipts:create', given);
+    const accounts = await this.accounts.cashAccountsFor(branchId);
     // With the receipt's currency (the review screen's), only accounts kept in it: a receipt
     // is recorded in its cash account's currency.
     return accounts
@@ -198,8 +203,18 @@ export class ReceiptDraftsService {
     user: AuthUser,
     customerId: string,
     currency: string | undefined,
+    given?: string,
   ): Promise<ReceiptOpenInvoiceDto[]> {
-    return this.invoices.openForCustomer(user, customerId, currency, RECEIPT_OPEN_INVOICES_MAX);
+    // Plan 09d: with a branch, only its invoices (a receipt settles its own branch's); it must
+    // be one the user writes receipts in.
+    const branchId = given === undefined ? undefined : workBranch(user, 'receipts:create', given);
+    return this.invoices.openForCustomer(
+      user,
+      customerId,
+      currency,
+      RECEIPT_OPEN_INVOICES_MAX,
+      branchId,
+    );
   }
 
   /** The pre-check: what `create` checks for these values, for this user now; nothing is written. */
@@ -229,7 +244,7 @@ export class ReceiptDraftsService {
     branchId: string | null,
   ): Promise<CheckedReceipt> {
     if (receiptMissingFields(values).length === 0) {
-      const request = completeReceipt(values);
+      const request = { ...completeReceipt(values), branchId };
       const prepared = await this.receipts.prepareCreate(user, request);
       const branch = draftBranch(user, branchId, prepared.branchId);
       await this.preCheck(values, branch, user);
@@ -240,7 +255,7 @@ export class ReceiptDraftsService {
         amount: prepared.amount,
       };
     }
-    const present = await this.receipts.checkPresent(user, values);
+    const present = await this.receipts.checkPresent(user, values, branchId);
     const branch = draftBranch(user, branchId, present.branchId);
     await this.preCheck({ ...values, currency: present.currency ?? values.currency }, branch, user);
     return {
@@ -443,7 +458,8 @@ export class ReceiptDraftsService {
     requireOpen(current, version, LABEL);
     // Nothing is checked, posted or recorded while the draft misses or holds an invalid value.
     requireApprovable(receiptCompleteness(receiptRequestOf(current)));
-    const request = completeReceipt(receiptRequestOf(current));
+    // Plan 09d: received in the draft's branch, which the approver must write in.
+    const request = { ...completeReceipt(receiptRequestOf(current)), branchId: current.branchId };
     const prepared = await this.receipts.prepareCreate(user, request);
     await this.prisma.$transaction(async (tx) => {
       let receiptId = '';
@@ -581,6 +597,7 @@ export class ReceiptDraftsService {
       where: { id: { in: ids }, customerId, ...branchScope(user) },
       select: {
         id: true,
+        branchId: true,
         number: true,
         status: true,
         currency: true,
@@ -603,6 +620,15 @@ export class ReceiptDraftsService {
         );
       }
       const params = { invoice: invoice.number ?? '', currency: invoice.currency };
+      // Plan 09d: a receipt settles only its own branch's invoices.
+      if (invoice.branchId !== branchId) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_BRANCH',
+          `Invoice ${params.invoice} is in another branch: receive it in that branch`,
+          [`${at}.invoiceId`],
+          params,
+        );
+      }
       if (invoice.status !== 'APPROVED') {
         throw fieldRefusal(
           'ALLOCATION_NOT_APPROVED',

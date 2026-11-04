@@ -44,6 +44,13 @@ import { TripReportsService } from './trip-reports.service.js';
     PodService,
     TripDraftsService,
   ],
-  exports: [TripReportsService, TripsService, TripCostsService, FleetService, TripDraftsService],
+  exports: [
+    PodService,
+    TripReportsService,
+    TripsService,
+    TripCostsService,
+    FleetService,
+    TripDraftsService,
+  ],
 })
 export class TransportModule {}

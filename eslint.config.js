@@ -14,6 +14,8 @@ export default tseslint.config(
       '**/coverage/**',
       '**/next-env.d.ts',
       'apps/api/src/generated/**',
+      // Static public site (nolon.dev): plain browser script served by nginx, not part of the TS apps.
+      'deploy/public-site/**',
     ],
   },
   js.configs.recommended,

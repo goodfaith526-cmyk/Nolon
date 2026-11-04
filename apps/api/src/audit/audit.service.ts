@@ -22,6 +22,7 @@ export const AUDITED_MASTER_DATA = [
   'CUSTOMER_SEGMENT',
   'LOCATION',
   'CS_REJECT_REASON',
+  'CUSTOMER_STAGE',
 ] as const satisfies readonly AuditEntity[];
 export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 
@@ -29,7 +30,15 @@ export type AuditedMasterData = (typeof AUDITED_MASTER_DATA)[number];
 export type AuditedEntity =
   | Extract<
       AuditEntity,
-      'RATE' | 'CUSTOMER' | 'USER' | 'PARTNER' | 'API_CLIENT' | 'PAYMENT_INSTRUCTION'
+      | 'RATE'
+      | 'CUSTOMER'
+      | 'USER'
+      | 'PARTNER'
+      | 'API_CLIENT'
+      | 'PAYMENT_INSTRUCTION'
+      | 'CS_BOOKING_REQUEST'
+      | 'WAREHOUSE'
+      | 'BRANCH'
     >
   | AuditedMasterData
   | AuditedAccess;
@@ -125,12 +134,29 @@ export class AuditService {
 
   /** Several changes at once (an Excel import), in chunks of one INSERT each. */
   async recordMany(tx: Tx, user: { id: string }, records: readonly AuditRecord[]): Promise<void> {
+    await this.write(tx, user.id, 'USER', records);
+  }
+
+  /**
+   * A change made by a Customer Service API client for its customer (source API, no staff user):
+   * the client and the owner go in the changes.
+   */
+  async recordApi(tx: Tx, record: AuditRecord): Promise<void> {
+    await this.write(tx, null, 'API', [record]);
+  }
+
+  private async write(
+    tx: Tx,
+    userId: string | null,
+    source: 'USER' | 'API',
+    records: readonly AuditRecord[],
+  ): Promise<void> {
     const data = records
       .filter((r) => r.action !== 'UPDATED' || r.changes.length > 0)
       .map((r) => ({
         branchId: r.branchId,
-        userId: user.id,
-        source: 'USER' as const,
+        userId,
+        source,
         entity: r.entity,
         entityId: r.entityId,
         reference: r.reference.slice(0, 300),
@@ -185,7 +211,8 @@ export class AuditService {
    * For the audit log report: the changes recorded in the period, newest first, in the report's
    * branches. Records of no branch are listed only when no single branch is asked for: changes to
    * user accounts and API keys for those who manage users (users:view), changes to master data for those who
-   * read it (master_data:view, every role).
+   * read it (master_data:view, every role), and changes to customers, which have no branch (plan
+   * 09f), for those who read customers (customers:view).
    */
   async auditEntries(user: AuthUser, q: AuditQuery): Promise<AuditLogEntryDto[]> {
     const branchIds = reportBranchIds(user, q.branchId);
@@ -194,6 +221,7 @@ export class AuditService {
       if (user.access.any('users:view')) unbranched.push('USER', 'API_CLIENT');
       if (user.access.any('master_data:view')) unbranched.push(...AUDITED_MASTER_DATA);
       if (user.access.any('access_control:view')) unbranched.push(...AUDITED_ACCESS);
+      if (user.access.any('customers:view')) unbranched.push('CUSTOMER');
     }
     if (branchIds.length === 0 && unbranched.length === 0) return [];
     const inBranches =
@@ -230,6 +258,9 @@ export class AuditService {
         ${andIf(q.entity, (e) => Prisma.sql`x."entity" = ${e}`)}
       ORDER BY x."occurred_at" DESC, x."id" DESC
       LIMIT ${q.limit + 1}`;
+    // A customer's credit limit is shown only to whoever may read it on the customer (holders of
+    // customer_invoices:view, as the customer screen masks it); the stored record is unchanged.
+    const hideCredit = !user.access.any('customer_invoices:view');
     return rows.map((r) => ({
       at: r.at.toISOString(),
       branchCode: r.branchCode ?? '—',
@@ -240,8 +271,14 @@ export class AuditService {
       reference: r.reference,
       status: null,
       detail: null,
-      changes: r.changes,
+      changes:
+        hideCredit && r.entity === 'CUSTOMER'
+          ? r.changes.filter((c) => !CUSTOMER_CREDIT_FIELDS.has(c.field))
+          : r.changes,
       source: r.source,
     }));
   }
 }
+
+/** The customer fields that only holders of customer_invoices:view read (plan 09d). */
+const CUSTOMER_CREDIT_FIELDS = new Set(['creditLimit', 'creditLimitCurrency']);

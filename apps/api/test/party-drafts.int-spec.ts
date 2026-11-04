@@ -142,13 +142,18 @@ describe('party drafts: the assistant proposes', () => {
   it('refuses another branch, a missing permission and bad fields', async () => {
     const customer = await newCustomer();
     const before = await t.prisma.partyDraft.count();
-    await createDraft(partyRequest(customer.id), tokens.salesJed).expect(404);
+    // Plan 09f: the customer is central; a JED user drafts its party in JED.
+    const jedDraft = (await createDraft(partyRequest(customer.id), tokens.salesJed).expect(201))
+      .body as EntryDraftSummaryDto;
+    expect(
+      (await t.prisma.partyDraft.findUniqueOrThrow({ where: { id: jedDraft.id } })).branchId,
+    ).toBe(await branchId(t.prisma, 'JED'));
     // Operations sees customers but cannot change them.
     await createDraft(partyRequest(customer.id), tokens.ops).expect(403);
     await createDraft(partyRequest(customer.id, { phone: '0912000111' })).expect(400);
     await createDraft(partyRequest(customer.id, { name: '' })).expect(400);
     await createDraft(partyRequest(customer.id, { role: 'SHIPPER' })).expect(400);
-    expect(await t.prisma.partyDraft.count()).toBe(before);
+    expect(await t.prisma.partyDraft.count()).toBe(before + 1);
   });
 
   it('cannot read or decide drafts, nor add a party itself; a person cannot create one', async () => {
@@ -329,6 +334,7 @@ describe('party drafts: replacing a draft', () => {
       .body as PartyDraftDto;
     expect(newer).toMatchObject({ replacesDraftId: old.id, request: { city: 'Omdurman' } });
     const other = await partyDraft(partyRequest(customer.id));
+    // Another branch's draft is not found from JED.
     await createDraft(
       { ...partyRequest(customer.id), replacesDraftId: other.id },
       tokens.salesJed,
@@ -477,7 +483,7 @@ describe('party drafts saved with missing values', () => {
     expect(partial.missingFields).toEqual(['name']);
   });
 
-  it('refuses a draft without a branch, of another branch, or naming a branch not its customer’s', async () => {
+  it('needs a branch without a customer, drafts a customer’s in its user’s one branch, refuses another', async () => {
     const customer = await newCustomer();
     const jed = await branchId(t.prisma, 'JED');
     const before = await t.prisma.partyDraft.count();
@@ -485,13 +491,16 @@ describe('party drafts saved with missing values', () => {
       (await createDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
         code?: string;
       };
-    expect((await refused({ name: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
     await refused({ branchId: jed }, 403);
-    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
-      'BRANCH_MISMATCH',
-    );
+    await refused({ customerId: customer.id, branchId: jed }, 403);
     await refused({ branchId: dxb, email: 'not an email' }, 400);
     expect(await t.prisma.partyDraft.count()).toBe(before);
+    expect((await refused({ name: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
+    // Plan 09f: for a customer with no branch named, a user of one branch drafts in it.
+    const { id } = (
+      await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }).expect(201)
+    ).body as EntryDraftSummaryDto;
+    expect((await t.prisma.partyDraft.findUniqueOrThrow({ where: { id } })).branchId).toBe(dxb);
   });
 
   it('refuses the approval while values are missing, then approves once filled in', async () => {
@@ -576,7 +585,7 @@ describe('party drafts when the customer branch is revoked before the write', ()
   });
 });
 
-// The customer's branch is checked against an every-branch role read again inside the write's
+// The draft's branch is checked against an every-branch role read again inside the write's
 // transaction (Codex P88-1): once the role is removed, a user holding no membership of the branch
 // is refused the save and the edit (403), and nothing is written.
 describe('party drafts when an every-branch role is revoked before the write', () => {
@@ -593,16 +602,21 @@ describe('party drafts when an every-branch role is revoked before the write', (
         t,
         '/party-drafts.service',
         { userId: agent.id, role },
-        () => createDraft({ idempotencyKey: key, customerId: customer.id, name: 'Gone' }, token),
+        () =>
+          createDraft(
+            { idempotencyKey: key, customerId: customer.id, branchId: dxb, name: 'Gone' },
+            token,
+          ),
       );
       expect(save.revoked).toBe(true);
       expect(save.result.status).toBe(403);
       expect(await t.prisma.partyDraft.count({ where: { idempotencyKey: key } })).toBe(0);
 
       const { id } = (
-        await createDraft({ idempotencyKey: draftKey(), customerId: customer.id }, token).expect(
-          201,
-        )
+        await createDraft(
+          { idempotencyKey: draftKey(), customerId: customer.id, branchId: dxb },
+          token,
+        ).expect(201)
       ).body as EntryDraftSummaryDto;
       const edit = await roleRevokedBeforeTransaction(
         t,

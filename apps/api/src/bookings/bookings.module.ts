@@ -9,6 +9,7 @@ import { BookingDraftsController } from './booking-drafts.controller.js';
 import { BookingDraftsService } from './booking-drafts.service.js';
 import { BookingsController } from './bookings.controller.js';
 import { BookingsService } from './bookings.service.js';
+import { BookingConfirmChecksRegistry } from './booking-confirm-checks.registry.js';
 import { ContainerBookingsRegistry } from './container-bookings.registry.js';
 import { BookingReportsService } from './booking-reports.service.js';
 import { NewCustomerBookingDraftsController } from './new-customer-booking-drafts.controller.js';
@@ -28,12 +29,14 @@ import { NewCustomerBookingDraftsService } from './new-customer-booking-drafts.s
     BookingReportsService,
     BookingsService,
     BookingDraftsService,
+    BookingConfirmChecksRegistry,
     ContainerBookingsRegistry,
     NewCustomerBookingDraftsService,
   ],
   exports: [
     BookingReportsService,
     BookingsService,
+    BookingConfirmChecksRegistry,
     ContainerBookingsRegistry,
     BookingDraftsService,
     NewCustomerBookingDraftsService,

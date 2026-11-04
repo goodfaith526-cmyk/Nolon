@@ -489,8 +489,16 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     const services: BookingService[] = input.services.includes('MAIN_FREIGHT')
       ? input.services
       : ['MAIN_FREIGHT', ...input.services];
+    // The branch the booking is written in: the one sent, else the container's own when the user
+    // books there (customers have no branch, plan 09f), else the usual work-branch rule.
+    const containerBranch =
+      user.access.has('bookings:create', existing.branchId) &&
+      user.allowedBranchIds.includes(existing.branchId)
+        ? existing.branchId
+        : undefined;
     const prepared = await this.bookings.prepareCreate(user, {
       ...input,
+      branchId: input.branchId ?? containerBranch,
       services,
       mode: 'SEA',
       loadType: 'LCL',

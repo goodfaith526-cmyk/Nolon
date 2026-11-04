@@ -94,6 +94,7 @@ export const createReceiptBody = z
   .object({
     requestId: z.uuid().optional(),
     customerId: z.uuid(),
+    branchId: z.uuid().optional(),
     receiptDate: dateString,
     currency: currencyCode,
     fxRate: fxRate.nullish(),
@@ -108,6 +109,8 @@ const allocationSuggestionQuery = z.strictObject({
   customerId: z.uuid(),
   currency: currencyCode,
   amount,
+  // Plan 09f: the receiving branch; a receipt settles invoices of its own branch only.
+  branchId: z.uuid().optional(),
 });
 const applyReceiptBody = z
   .object({
@@ -141,6 +144,7 @@ const openingItemBody = z
   .object({
     requestId: z.uuid(),
     customerId: z.uuid(),
+    branchId: z.uuid().optional(),
     entryDate: dateString,
     reference: requiredText(50),
     invoiceDate: dateString,

@@ -1083,7 +1083,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const invoice = await approvedInvoice();
       const shipmentId = invoice.shipmentId ?? '';
       await deliver(shipmentId);
-      expect(await closeCheck(shipmentId)).toEqual({ goodsOnHand: [], invoiced: true });
+      expect(await closeCheck(shipmentId)).toEqual({
+        goodsOnHand: [],
+        invoiced: true,
+        podMissing: false,
+      });
       await close(shipmentId, 'No charges').expect(400);
       await close(shipmentId).expect(200);
       const event = await t.prisma.shipmentEvent.findFirstOrThrow({
@@ -1096,7 +1100,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const draftOnly = await shipment();
       await post('/customer-invoices', cookies.financePts, { shipmentId: draftOnly }).expect(201);
       await deliver(draftOnly);
-      expect(await closeCheck(draftOnly)).toEqual({ goodsOnHand: [], invoiced: false });
+      expect(await closeCheck(draftOnly)).toEqual({
+        goodsOnHand: [],
+        invoiced: false,
+        podMissing: false,
+      });
       const refused = await close(draftOnly).expect(409);
       expect(refused.body).toMatchObject({
         code: 'SHIPMENT_CLOSE_NOT_INVOICED',
@@ -1108,7 +1116,11 @@ describe('credit notes, payables, expenses and opening balances', () => {
       const note = await creditNoteDraft(invoice.id, '1000000.5');
       await post(`/credit-notes/${note.id}/approve`, cookies.managerPts).expect(200);
       await deliver(credited);
-      expect(await closeCheck(credited)).toEqual({ goodsOnHand: [], invoiced: false });
+      expect(await closeCheck(credited)).toEqual({
+        goodsOnHand: [],
+        invoiced: false,
+        podMissing: false,
+      });
       await close(credited).expect(409);
       await close(credited, 'Credited in full').expect(200);
     });
@@ -1330,6 +1342,43 @@ describe('credit notes, payables, expenses and opening balances', () => {
       ).body as SupplierBillDto;
       expect(cancelled).toMatchObject({ status: 'CANCELLED', cancelJournalEntryId: null });
     });
+
+    it('a commission line is never entered on a bill, created or edited (F152-1)', async () => {
+      const body = {
+        requestId: randomUUID(),
+        supplierId: supplier.id,
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '100' }],
+      };
+      const commission = [{ kind: 'COMMISSION', expenseCategoryCode: 'RENT', amount: '100' }];
+      const bills = () => t.prisma.supplierBill.count({ where: { supplierId: supplier.id } });
+      const before = await bills();
+      await post('/supplier-bills', cookies.financePts, { ...body, lines: commission }).expect(400);
+      expect(await bills()).toBe(before);
+      const draft = (await post('/supplier-bills', cookies.financePts, body).expect(201))
+        .body as SupplierBillDto;
+      await patch(`/supplier-bills/${draft.id}`, cookies.financePts, {
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: commission,
+      }).expect(400);
+      // The same edit with an expense line is accepted: the refusal is the commission line's.
+      await patch(`/supplier-bills/${draft.id}`, cookies.financePts, {
+        branchId: pts,
+        currency: 'SDG',
+        billDate: d('04-10'),
+        dueDate: d('05-10'),
+        lines: [{ kind: 'EXPENSE', expenseCategoryCode: 'RENT', amount: '100' }],
+      }).expect(200);
+      const lines = await t.prisma.supplierBillLine.findMany({ where: { billId: draft.id } });
+      expect(lines.map((l) => [l.kind, l.amount.toFixed()])).toEqual([['EXPENSE', '100']]);
+    });
+
     it('shipment costs and trips are of the bill branch; a cancelled shipment is refused', async () => {
       const ptsShipment = await shipment();
       const jedBill = {
@@ -2172,6 +2221,34 @@ describe('credit notes, payables, expenses and opening balances', () => {
         ...request,
         entryDate: d('01-02'),
       }).expect(409);
+    });
+
+    it('a retry of an opening item in another work branch is refused (plan 09d, F184-8)', async () => {
+      const two = await createUser(t.prisma, ['FINANCE'], ['PTS', 'JED'], LEDGER_PREFIX);
+      const cookie = await signIn(t, two.email);
+      const item = {
+        requestId: randomUUID(),
+        customerId: customer.id,
+        branchId: pts,
+        entryDate: d('01-01'),
+        reference: 'OLD-INV-BR',
+        invoiceDate: d('01-01'),
+        dueDate: d('01-31'),
+        currency: 'SDG',
+        amount: '1000',
+      };
+      const made = (await post('/customer-invoices/opening', cookie, item).expect(201))
+        .body as CustomerInvoiceDto;
+      expect(made.branchId).toBe(pts);
+      await post('/customer-invoices/opening', cookie, { ...item, branchId: jed }).expect(409);
+      // Plan 09f: a customer has no branch, so a user of two branches must name one.
+      const { branchId: _omitted, ...legacy } = item;
+      void _omitted;
+      const ask = await post('/customer-invoices/opening', cookie, legacy).expect(400);
+      expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED' });
+      const again = (await post('/customer-invoices/opening', cookie, item).expect(201))
+        .body as CustomerInvoiceDto;
+      expect(again.id).toBe(made.id);
     });
 
     it('customer and supplier open items post against opening equity and show in aging', async () => {

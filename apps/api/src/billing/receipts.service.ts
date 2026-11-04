@@ -19,12 +19,18 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { USD_DECIMALS } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, canAccessBranch, listBranchScope } from '../auth/branch-scope.js';
+import {
+  assertBranchAccess,
+  branchScope,
+  canAccessBranch,
+  listBranchScope,
+  workBranch,
+} from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { dateRange } from '../common/list-filters.js';
 import { ZERO, dec, roundMoney } from '../common/money.js';
 import { formatDocumentNumber, nextSequenceValue } from '../common/numbering.js';
-import type { PageQuery } from '../common/validation.js';
+import { type PageQuery, fieldRefusal } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -187,6 +193,11 @@ export class ReceiptsService {
       existing.cashAccountId === input.cashAccountId &&
       existing.reference === (input.reference ?? null) &&
       existing.notes === (input.notes ?? null) &&
+      // Plan 09d (F184-8): a retry naming a branch names the receipt's; one naming none (an
+      // older client) matches as before.
+      (input.branchId === null ||
+        input.branchId === undefined ||
+        input.branchId === existing.branchId) &&
       sameAllocations(existing.allocations, input.allocations);
     if (!same) throw new ConflictException('This request id was already used: send a new id');
     return this.get(user, existing.id);
@@ -203,9 +214,10 @@ export class ReceiptsService {
    */
   async suggestAllocations(
     user: AuthUser,
-    input: { customerId: string; currency: string; amount: DecimalString },
+    input: { customerId: string; currency: string; amount: DecimalString; branchId?: string },
   ): Promise<ReceiptAllocationSuggestionDto> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
+    if (input.branchId) assertBranchAccess(user, input.branchId);
     const currency = await this.currencies.requireActive(input.currency);
     const amount = dec(input.amount);
     if (!amount.gt(0) || !roundMoney(amount, currency.decimalPlaces).eq(amount)) {
@@ -216,6 +228,7 @@ export class ReceiptsService {
     const invoices = await this.prisma.customerInvoice.findMany({
       where: {
         ...branchScope(user),
+        ...(input.branchId ? { branchId: input.branchId } : {}),
         customerId: customer.id,
         currency: currency.code,
         status: 'APPROVED',
@@ -275,7 +288,8 @@ export class ReceiptsService {
     const fxRate = await this.fxRates.resolve(currency.code, input.receiptDate, input.fxRate);
     return {
       customerId: customer.id,
-      branchId: customer.branchId,
+      // Plan 09d: the branch that receives, not the customer's by rule.
+      branchId: workBranch(user, 'receipts:create', input.branchId),
       currency: currency.code,
       decimals,
       amount,
@@ -299,6 +313,7 @@ export class ReceiptsService {
       amount?: DecimalString | null;
       allocations: readonly { invoiceId?: string | null; amount?: DecimalString | null }[];
     },
+    givenBranchId: string | null = null,
   ): Promise<{ customerId: string | null; branchId: string | null; currency: string | null }> {
     const customer = input.customerId
       ? await this.customers.requireCustomer(user, input.customerId)
@@ -331,7 +346,8 @@ export class ReceiptsService {
     }
     return {
       customerId: customer?.id ?? null,
-      branchId: customer?.branchId ?? null,
+      // Plan 09d: the same work branch as a complete receipt (F184-9).
+      branchId: customer ? workBranch(user, 'receipts:create', givenBranchId) : null,
       currency: currency?.code ?? null,
     };
   }
@@ -361,6 +377,16 @@ export class ReceiptsService {
       const invoice = invoices.get(a.invoiceId);
       if (!invoice || invoice.customerId !== customer.id) {
         throw new BadRequestException('An allocation is to an invoice of another customer');
+      }
+      // Plan 09d: a customer's invoices may be in several branches; a receipt settles its own
+      // branch's, so each branch's receivables stay its own.
+      if (invoice.branchId !== branchId) {
+        throw fieldRefusal(
+          'ALLOCATION_OTHER_BRANCH',
+          `Invoice ${invoice.number ?? ''} is in another branch: receive it in that branch`,
+          ['allocations'],
+          { invoice: invoice.number ?? '' },
+        );
       }
       if (invoice.status !== 'APPROVED') {
         throw new BadRequestException(`Invoice ${invoice.number ?? ''} is not approved`);

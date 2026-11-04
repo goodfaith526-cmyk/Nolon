@@ -1,8 +1,9 @@
 import { ConflictException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
-import type {
-  PartnerContractDto,
-  PartnerContractInput,
-  PartnerContractStatus,
+import {
+  DEFAULT_COMMISSION_EVENT,
+  type PartnerContractDto,
+  type PartnerContractInput,
+  type PartnerContractStatus,
 } from '@nolon/shared';
 import { AuditService, changedFields } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -28,15 +29,16 @@ const AUDITED_FIELDS = [
   'currency',
   'validFrom',
   'validTo',
+  'accrualEvent',
   'notes',
   'status',
 ] as const;
 
 /**
- * Partners' commission contracts (business model plan 3.4): settings only in batch 1. A contract
- * belongs to its partner's branch (AGENTS.md rule 2); drafts are edited, an approved contract is
- * only cancelled, never edited. Nothing here accrues, posts or settles: the only reader is the
- * expected commission of a rate card's expected margin (commissionFor).
+ * Partners' commission contracts (business model plan 3.4). A contract belongs to its partner's
+ * branch (AGENTS.md rule 2); drafts are edited, an approved contract is only cancelled, never
+ * edited. Nothing here accrues, posts or settles: it is read for the expected commission of a rate
+ * card's expected margin (commissionFor), and (plan 07) for the event its commission accrues on.
  */
 @Injectable()
 export class PartnerContractsService {
@@ -70,7 +72,7 @@ export class PartnerContractsService {
       await requireBranchMemberInTx(tx, user, partner.branchId);
       await this.checkReferences(tx, input, null);
       const contract = await tx.partnerContract.create({
-        data: { ...fields(input), partnerId, createdById: user.id },
+        data: { ...fields(input, partner, null), partnerId, createdById: user.id },
       });
       await this.log(tx, user, partner, 'CREATED', null, contract);
       return contract;
@@ -90,7 +92,10 @@ export class PartnerContractsService {
         throw new ConflictException('Only a draft contract can be edited');
       }
       await this.checkReferences(tx, input, contract);
-      const after = await tx.partnerContract.update({ where: { id }, data: fields(input) });
+      const after = await tx.partnerContract.update({
+        where: { id },
+        data: fields(input, partner, contract),
+      });
       await this.log(tx, user, partner, 'UPDATED', contract, after);
     });
     return this.get(user, id);
@@ -197,6 +202,51 @@ export class PartnerContractsService {
         currency: contract.currency,
       },
     };
+  }
+
+  /**
+   * For a partner's commission on a shipment (plan 07, 4.2), in the caller's transaction: the
+   * partner's approved contract valid on `date` for `priceCategoryCode` (the category's own, else
+   * the one for every category); with no category (lines of several), only the one for every
+   * category. `anyOnDay`: whether any approved contract of the partner is valid that day.
+   */
+  async commissionContractInTx(
+    tx: Tx,
+    partnerId: string,
+    priceCategoryCode: string | null,
+    date: string,
+  ): Promise<{ contract: PartnerContract | null; anyOnDay: boolean }> {
+    const day = toDbDate(date);
+    const valid = {
+      partnerId,
+      status: 'APPROVED',
+      validFrom: { lte: day },
+      OR: [{ validTo: null }, { validTo: { gte: day } }],
+    } satisfies Prisma.PartnerContractWhereInput;
+    // Approval keeps one approved contract per category and day, so each lookup finds at most one.
+    const contract =
+      (priceCategoryCode
+        ? await tx.partnerContract.findFirst({ where: { ...valid, priceCategoryCode } })
+        : null) ??
+      (await tx.partnerContract.findFirst({ where: { ...valid, priceCategoryCode: null } }));
+    const anyOnDay = contract !== null || (await tx.partnerContract.count({ where: valid })) > 0;
+    return { contract, anyOnDay };
+  }
+
+  /** The contract a slot keeps once accrued (plan 07, 3.2), whatever its status now. */
+  async contractInTx(tx: Tx, id: string): Promise<PartnerContract> {
+    return tx.partnerContract.findUniqueOrThrow({ where: { id } });
+  }
+
+  /** The partner a commission is posted for: its number, name and supplier. */
+  async partnerInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<Pick<Partner, 'id' | 'number' | 'name' | 'supplierId' | 'branchId'>> {
+    return tx.partner.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, number: true, name: true, supplierId: true, branchId: true },
+    });
   }
 
   private async get(user: AuthUser, id: string): Promise<PartnerContractDto> {
@@ -308,7 +358,8 @@ async function lockPartner(tx: Tx, user: AuthUser, id: string): Promise<Partner>
   return partner;
 }
 
-function fields(input: PartnerContractInput) {
+/** A draft's fields; an event not sent keeps the draft's, or takes the partner kind's default. */
+function fields(input: PartnerContractInput, partner: Partner, held: PartnerContract | null) {
   const fixed = input.basis === 'FIXED_PER_UNIT';
   return {
     priceCategoryCode: input.priceCategoryCode ?? null,
@@ -318,6 +369,8 @@ function fields(input: PartnerContractInput) {
     currency: fixed ? (input.currency ?? null) : null,
     validFrom: toDbDate(input.validFrom),
     validTo: input.validTo ? toDbDate(input.validTo) : null,
+    accrualEvent:
+      input.accrualEvent ?? held?.accrualEvent ?? DEFAULT_COMMISSION_EVENT[partner.kind],
     notes: input.notes ?? null,
   };
 }
@@ -334,6 +387,7 @@ function toDto(c: PartnerContract, branchId: string, user: AuthUser): PartnerCon
     currency: c.currency,
     validFrom: fromDbDate(c.validFrom),
     validTo: fromDbDateOrNull(c.validTo),
+    accrualEvent: c.accrualEvent,
     notes: c.notes,
     status: c.status,
     approvedAt: c.approvedAt?.toISOString() ?? null,

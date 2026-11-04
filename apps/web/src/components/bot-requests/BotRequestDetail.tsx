@@ -11,6 +11,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { useRecord } from '../finance/common';
 import { useMe } from '../StaffShell';
 import { BotRequestApprove } from './BotRequestApprove';
+import { BotRequestEstimate } from './BotRequestEstimate';
 
 /**
  * One bot booking request for staff (plan 04a): what the customer asked, in NOLON's terms and, for
@@ -213,6 +214,20 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {(r.dropOffPoint || r.actions.canSetDropOff) && (
+          <>
+            <dt>{t('dropOff')}</dt>
+            <dd>
+              {r.dropOffPoint ? (
+                <>
+                  {localName(r.dropOffPoint)} <span dir="ltr">({r.dropOffPoint.code})</span>
+                </>
+              ) : (
+                <span className="muted">{t('dropOffNone')}</span>
+              )}
+            </dd>
+          </>
+        )}
         {r.approvedPricing && (
           <>
             <dt>{t('approvedPricing')}</dt>
@@ -223,6 +238,45 @@ export function BotRequestDetail({ id }: { id: string }) {
             </dd>
           </>
         )}
+        {r.cancelledAt && (
+          <>
+            <dt>{t('cancelledByCustomer')}</dt>
+            <dd>
+              <span dir="ltr">{r.cancelledAt.slice(0, 16).replace('T', ' ')}</span>
+              {r.cancelReason && <span className="pre"> — {r.cancelReason}</span>}
+            </dd>
+          </>
+        )}
+        {r.cancelRequest && (
+          <>
+            <dt>{t('cancelRequest')}</dt>
+            <dd>
+              <span dir="ltr">{r.cancelRequest.requestedAt.slice(0, 16).replace('T', ' ')}</span>
+              {r.cancelRequest.reason && (
+                <span className="pre"> — {r.cancelRequest.reason}</span>
+              )}{' '}
+              <span className="muted">
+                {r.cancelRequest.closedAt ? t('cancelRequestClosed') : t('cancelRequestOpen')}
+              </span>
+            </dd>
+          </>
+        )}
+        {r.instantAccount && (
+          <>
+            <dt>{t('instantAccount')}</dt>
+            <dd>
+              {r.instantAccount.customerId ? (
+                <Link href={`/customers/${r.instantAccount.customerId}`}>
+                  {t('instantAccountMade')}
+                </Link>
+              ) : (
+                t('instantAccountWaits', {
+                  reason: t(`instantAccount_${r.instantAccount.outcome}`),
+                })
+              )}
+            </dd>
+          </>
+        )}
         {r.internalNote && (
           <>
             <dt>{t('internalNote')}</dt>
@@ -230,6 +284,182 @@ export function BotRequestDetail({ id }: { id: string }) {
           </>
         )}
       </dl>
+
+      {r.items.length > 0 && (
+        <div className="card stack">
+          <h2>{t('itemsTitle')}</h2>
+          {r.bookingId && r.items.some((i) => i.bookingItemId === null) && (
+            <p className="error">{t('itemsIncomplete')}</p>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{t('category')}</th>
+                  <th>{t('quantity')}</th>
+                  <th>{t('pieces')}</th>
+                  <th>{t('dimensions')}</th>
+                  <th>{t('weightKg')}</th>
+                  <th>{t('approvedTotal')}</th>
+                  {r.bookingId && <th>{t('bookingLine')}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {r.items.map((item) => {
+                  const linked = r.bookingLines.find((l) => l.id === item.bookingItemId);
+                  const free = r.bookingLines.filter(
+                    (l) => !r.items.some((i) => i.bookingItemId === l.id),
+                  );
+                  return (
+                    <tr key={item.id}>
+                      <td dir="ltr">{item.lineNo}</td>
+                      <td>
+                        {item.isOther ? (
+                          <span>
+                            {t('otherItem')}: «{item.description}»
+                          </span>
+                        ) : (
+                          <span dir="ltr">
+                            {item.category ??
+                              `${t('unmatched')}: «${named(item.botKind ?? undefined)}»`}
+                          </span>
+                        )}
+                      </td>
+                      <td dir="ltr">{item.quantity ?? '—'}</td>
+                      <td dir="ltr">{item.pieces ?? '—'}</td>
+                      <td dir="ltr">
+                        {item.dimensions
+                          ? `${item.dimensions.lengthCm}×${item.dimensions.widthCm}×${item.dimensions.heightCm}`
+                          : '—'}
+                      </td>
+                      <td dir="ltr">{item.weightKg ?? '—'}</td>
+                      <td dir="ltr">{item.approvedTotal ?? '—'}</td>
+                      {r.bookingId && (
+                        <td>
+                          {linked ? (
+                            <span dir="ltr">{linked.lineNo}</span>
+                          ) : free.length > 0 ? (
+                            <form
+                              className="row"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void post(`items/${item.id}/resolve`, {
+                                  bookingItemId: field(new FormData(e.currentTarget), 'line'),
+                                });
+                              }}
+                            >
+                              <select
+                                name="line"
+                                required
+                                defaultValue=""
+                                aria-label={t('bookingLine')}
+                              >
+                                <option value="" disabled>
+                                  —
+                                </option>
+                                {free.map((l) => (
+                                  <option key={l.id} value={l.id}>
+                                    {l.lineNo} · {l.quantity} {l.description ?? ''}
+                                  </option>
+                                ))}
+                              </select>
+                              <button type="submit" disabled={busy}>
+                                {t('resolveItem')}
+                              </button>
+                            </form>
+                          ) : (
+                            <span className="muted">{t('addBookingLine')}</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {r.photos.length > 0 && (
+        <div className="card stack">
+          <h2>{t('photosTitle', { count: r.photos.length })}</h2>
+          <div className="row">
+            {r.photos.map((p) => {
+              const src = `/api/v1/cs-booking-requests/${r.id}/photos/${p.id}`;
+              return (
+                <a key={p.id} href={src} target="_blank" rel="noopener noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- an API-served photo behind the session, not a static asset */}
+                  <img
+                    src={src}
+                    alt={t('photoAlt')}
+                    loading="lazy"
+                    style={{ inlineSize: '8rem', blockSize: '8rem', objectFit: 'cover' }}
+                  />
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <BotRequestEstimate
+        request={r}
+        master={master}
+        busy={busy}
+        onEstimate={(body) => void post('estimate', body)}
+      />
+
+      {r.actions.canSetDropOff && (
+        <form
+          className="card stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const dropOffId = field(new FormData(e.currentTarget), 'dropOffId');
+            if (dropOffId) void post('drop-off', { version: r.version, dropOffId });
+          }}
+        >
+          <h2>{t('dropOffTitle')}</h2>
+          <p className="muted">{t('dropOffHint')}</p>
+          <label className="field">
+            {t('dropOff')}
+            <select name="dropOffId" required defaultValue={r.dropOffId ?? ''}>
+              <option value="" disabled>
+                —
+              </option>
+              {r.dropOffChoices
+                .filter((d) => d.branchId === r.branchId)
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {localName(d)} ({d.code})
+                  </option>
+                ))}
+            </select>
+          </label>
+          <div className="actions">
+            <button type="submit" disabled={busy}>
+              {t('dropOffAction')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {r.actions.canCloseCancelRequest && (
+        <div className="card stack">
+          <h2>{t('cancelRequestTitle')}</h2>
+          <p className="muted">{t('cancelRequestHint')}</p>
+          <div className="actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void post('cancel-request/close', { version: r.version })}
+            >
+              {t('cancelRequestCloseAction')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {r.actions.canRoute && (
         <form className="card stack" onSubmit={route}>

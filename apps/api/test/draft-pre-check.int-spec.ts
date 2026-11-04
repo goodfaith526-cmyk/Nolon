@@ -186,12 +186,14 @@ describe('a pre-check', () => {
     ]);
   });
 
-  it("refuses a customer outside the user's branches as a refusal, not a create", async () => {
+  it("passes a customer of another branch (plan 09d), in the user's branch, and creates nothing", async () => {
     const before = await t.prisma.bookingDraft.count();
-    const result = refused(
-      await check('/booking-drafts', tokens.ops, bookingRequest({ customerId: jedCustomer.id })),
+    const result = await check(
+      '/booking-drafts',
+      tokens.ops,
+      bookingRequest({ customerId: jedCustomer.id }),
     );
-    expect(result.refusals.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(true);
     expect(await t.prisma.bookingDraft.count()).toBe(before);
   });
 
@@ -225,7 +227,7 @@ describe('a pre-check', () => {
     delete booking.customerId;
     const body = {
       idempotencyKey: draftKey(),
-      branchId: customer.branchId,
+      branchId: await branchId(t.prisma, 'DXB'),
       customer: { kind: 'INDIVIDUAL', name: 'Amna Osman', phone: customer.phone },
       booking,
     };
@@ -304,7 +306,13 @@ describe('the pre-check of a draft whose branch comes from its subject', () => {
       const other = refused(
         await check(path, token, { idempotencyKey: draftKey(), ...subject, branchId: jed }),
       );
-      expect(other.refusals, path).toMatchObject([{ field: 'branchId', code: 'BRANCH_MISMATCH' }]);
+      // Plans 09d and 09f: a customer's draft is written in a branch of the user's (a branch not
+      // one is refused as no access); a shipment's draft stays in the shipment's branch.
+      if ('customerId' in subject) expect(other.refusals.length, path).toBe(1);
+      else
+        expect(other.refusals, path).toMatchObject([
+          { field: 'branchId', code: 'BRANCH_MISMATCH' },
+        ]);
       const notHeld = refused(
         await check(path, token, { idempotencyKey: draftKey(), branchId: jed }),
       );

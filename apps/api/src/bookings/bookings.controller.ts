@@ -101,7 +101,12 @@ const screenItems = z
 const screenFields = { salesOutletId: z.uuid().nullish(), items: screenItems };
 
 export const bookingCreateBody = z
-  .object({ customerId: z.uuid(), ...bookingFields, ...screenFields })
+  .object({
+    customerId: z.uuid(),
+    branchId: z.uuid().optional(),
+    ...bookingFields,
+    ...screenFields,
+  })
   .strict();
 const updateBody = z.object({ ...bookingFields, ...screenFields }).strict();
 export const bookingFromQuotationBody = z

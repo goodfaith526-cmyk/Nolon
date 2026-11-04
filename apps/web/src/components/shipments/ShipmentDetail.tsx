@@ -41,6 +41,8 @@ import { ShipmentDocuments } from './ShipmentDocuments';
 import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
 import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
+import { useStandalone } from '../standalone/StandaloneShell';
+import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -63,6 +65,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   const tp = useTranslations('Print');
   const locale = useLocale();
   const me = useMe();
+  const standalone = useStandalone();
   const master = useMasterData();
   const locationName = useLocationName(master);
   const localName = useLocalName();
@@ -96,6 +99,12 @@ export function ShipmentDetail({ id }: { id: string }) {
   }, [id, failure, me]);
 
   useEffect(load, [load]);
+
+  // A standalone window is named after its shipment (its title bar is all it shows of the URL).
+  const windowTitle = standalone && shipment ? shipment.number : null;
+  useEffect(() => {
+    if (windowTitle) document.title = windowTitle;
+  }, [windowTitle]);
 
   if (!shipment) {
     return notice ? <Notice notice={notice} /> : <p className="muted">{tc('loading')}</p>;
@@ -248,7 +257,9 @@ export function ShipmentDetail({ id }: { id: string }) {
   // Closing (B1-5): goods left in a warehouse block it; no approved invoice needs a reason.
   const closing = chosenStatus === 'CLOSED';
   const closeCheck = actions.closeCheck;
-  const goodsBlockClose = closing && (closeCheck?.goodsOnHand.length ?? 0) > 0;
+  // Plan 07, 6: a shipment with a distributor closes only after its proof of delivery.
+  const goodsBlockClose =
+    closing && ((closeCheck?.goodsOnHand.length ?? 0) > 0 || closeCheck?.podMissing === true);
   const suggested = chosenStatus ? actions.suggestedLocations[chosenStatus] : undefined;
   const chosenLocation = pickedLocation ?? suggested ?? '';
   // A warehouse status: recorded as a goods receipt when possible (the warehouse's place is then
@@ -286,7 +297,10 @@ export function ShipmentDetail({ id }: { id: string }) {
         <div>
           <div className="title-row">
             <h1>
-              {t('shipment')} <span dir="ltr">{s.number}</span>
+              <span className="record-kind">{t('shipment')}</span>{' '}
+              <span dir="ltr" className="record-number">
+                {s.number}
+              </span>
             </h1>
             <StatusBadge kind="shipment" status={s.status} />
           </div>
@@ -299,8 +313,10 @@ export function ShipmentDetail({ id }: { id: string }) {
           </p>
         </div>
         <div className="actions">
+          {!standalone && <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} />}
           <MoreMenu>
-            <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>
+            {!standalone && <Link href={`/bookings/${s.bookingId}`}>{t('openBooking')}</Link>}
+            {!standalone && <StandaloneWindowButton record={{ kind: 'shipment', id: s.id }} />}
             <PrintLink href={`/shipments/${s.id}/labels`} label={tp('printLabels')} />
             {(actions.canHold || canRevert || actions.canCancel) && <hr />}
             {actions.canHold && (
@@ -421,6 +437,7 @@ export function ShipmentDetail({ id }: { id: string }) {
               })}
             </p>
           )}
+          {closing && closeCheck?.podMissing && <p className="warning">{t('closeNoPod')}</p>}
           {closing && closeCheck && !closeCheck.invoiced && (
             <>
               <p className="warning">{t('closeNotInvoiced')}</p>

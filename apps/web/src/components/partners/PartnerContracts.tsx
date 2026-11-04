@@ -2,8 +2,11 @@
 
 import {
   COMMISSION_BASES,
+  COMMISSION_EVENTS,
+  DEFAULT_COMMISSION_EVENT,
   RATE_UNITS,
   type CommissionBasis,
+  type CommissionEvent,
   type PartnerContractDto,
   type PartnerContractInput,
   type PartnerDto,
@@ -19,9 +22,9 @@ import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 
 /**
- * A partner's commission contracts (business model plan 3.4): settings only. They show the
- * expected commission inside a rate card's expected margin; nothing accrues, posts or settles.
- * The API decides who may see, add, approve or cancel them.
+ * A partner's commission contracts (business model plan 3.4): the expected commission inside a
+ * rate card's expected margin, and (plan 07) when the commission on a shipment is accrued. The API
+ * decides who may see, add, approve or cancel them.
  */
 export function PartnerContracts({ partner }: { partner: PartnerDto }) {
   const t = useTranslations('PartnerContracts');
@@ -78,6 +81,7 @@ export function PartnerContracts({ partner }: { partner: PartnerDto }) {
       currency: fixed ? field(form, 'currency') : null,
       validFrom: field(form, 'validFrom'),
       validTo: field(form, 'validTo') || null,
+      accrualEvent: field(form, 'accrualEvent') as CommissionEvent,
       notes: field(form, 'notes') || null,
     };
     void run(`/partners/${partner.id}/contracts`, body, t('created'));
@@ -166,6 +170,16 @@ export function PartnerContracts({ partner }: { partner: PartnerDto }) {
               {t('validTo')}
               <input name="validTo" type="date" />
             </label>
+            <label className="field">
+              {t('accrualEvent')}
+              <select name="accrualEvent" defaultValue={DEFAULT_COMMISSION_EVENT[partner.kind]}>
+                {COMMISSION_EVENTS.map((ev) => (
+                  <option key={ev} value={ev}>
+                    {t(`event_${ev}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <label className="field">
             {tc('notes')}
@@ -193,6 +207,7 @@ export function PartnerContracts({ partner }: { partner: PartnerDto }) {
                 <th>{t('category')}</th>
                 <th>{t('commission')}</th>
                 <th>{t('validity')}</th>
+                <th>{t('accrualEvent')}</th>
                 <th>{tc('status')}</th>
                 <th />
               </tr>
@@ -214,6 +229,7 @@ export function PartnerContracts({ partner }: { partner: PartnerDto }) {
                   <td dir="ltr">
                     {c.validFrom} → {c.validTo ?? '∞'}
                   </td>
+                  <td>{t(`event_${c.accrualEvent}`)}</td>
                   <td>
                     <StatusBadge kind="rate" status={c.status} />
                   </td>

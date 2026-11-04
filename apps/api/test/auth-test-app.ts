@@ -73,7 +73,7 @@ export async function createTestApp(overrides: Partial<AppEnv> = {}): Promise<Te
     .overrideProvider(APP_ENV)
     .useValue(env)
     .compile();
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
+  const app = moduleRef.createNestApplication<INestApplication<App>>({ rawBody: true });
   configureApp(app, env);
   await app.init();
   const prisma = app.get(PrismaService);
@@ -137,6 +137,10 @@ export async function actorAt(
 export const LEDGER_PREFIX = 'ledger-it-';
 
 export async function deleteTestUsers(prisma: PrismaService): Promise<void> {
+  // Branch permissions a test user granted would block deleting them (created_by RESTRICT).
+  await prisma.userBranchPermission.deleteMany({
+    where: { createdBy: { email: { startsWith: 'it-' } } },
+  });
   await prisma.user.deleteMany({ where: { email: { startsWith: 'it-' } } });
 }
 

@@ -57,15 +57,12 @@ describe('dashboard', () => {
   });
 
   it('counts only the records of the user’s own branches', async () => {
-    const atb = await branchId(t.prisma, 'ATB');
     const krtView = await dashboard(salesKrt);
     const atbView = await dashboard(salesAtb);
-    expect(krtView.customers?.total).toBe(
-      await t.prisma.customer.count({ where: { branchId: krt } }),
-    );
-    expect(atbView.customers?.total).toBe(
-      await t.prisma.customer.count({ where: { branchId: atb } }),
-    );
+    // Plan 09d: customers are central, counted company-wide; documents stay per branch.
+    const all = await t.prisma.customer.count();
+    expect(krtView.customers?.total).toBe(all);
+    expect(atbView.customers?.total).toBe(all);
     expect(krtView.customers?.total).toBeGreaterThan(0);
     expect(krtView.quotations?.recent.every((q) => q.branchId === krt)).toBe(true);
     expect(krtView.bookings?.recent.every((b) => b.branchId === krt)).toBe(true);

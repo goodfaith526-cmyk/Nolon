@@ -71,7 +71,6 @@ describe('list filters', () => {
         await prisma.customer.create({
           data: {
             number: num(),
-            branchId: branch,
             name: `${tag} ${key}`,
             phone: uniquePhone(),
             createdById,
@@ -871,22 +870,20 @@ describe('list filters', () => {
   describe('customers', () => {
     const base = `/customers?pageSize=100&q=`;
 
-    it('branchId, kind and isActive', async () => {
+    it('kind and isActive; no branch filter (plan 09f)', async () => {
       const q = `${base}${tag}`;
       expect(await listIds(q, managerBoth)).toEqual(
         sorted('custDxbCompany', 'custDxbInactive', 'custJed'),
-      );
-      expect(await listIds(`${q}&branchId=${dxb}`, managerBoth)).toEqual(
-        sorted('custDxbCompany', 'custDxbInactive'),
       );
       expect(await listIds(`${q}&kind=COMPANY`, managerBoth)).toEqual(
         sorted('custDxbCompany', 'custJed'),
       );
       expect(await listIds(`${q}&isActive=false`, managerBoth)).toEqual(sorted('custDxbInactive'));
+      // Customers are central and have no branch: every branch lists them, with no branch filter.
       expect(await listIds(`${q}&isActive=true&kind=COMPANY`, managerDxb)).toEqual(
-        sorted('custDxbCompany'),
+        sorted('custDxbCompany', 'custJed'),
       );
-      await get(`${q}&branchId=${jed}`, managerDxb).expect(403);
+      await get(`${q}&branchId=${jed}`, managerDxb).expect(400);
       await get(`${q}&kind=PERSON`, managerBoth).expect(400);
       await get(`${q}&isActive=1`, managerBoth).expect(400);
     });

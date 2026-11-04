@@ -269,7 +269,10 @@ describe("a shipment's expected and actual profit (plan 6.2)", () => {
       gaps: [{ chargeTypeCode: freight, reason: 'COSTS_HIDDEN' }],
       expectedMargin: null,
     });
-    expect(JSON.stringify(hidden)).not.toContain('987');
+    // Ids and times are left out first: a random uuid or a timestamp can hold the digits 987.
+    const noise =
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d\d-\d\dT[\d:.]+Z/g;
+    expect(JSON.stringify(hidden).replace(noise, '')).not.toContain('987');
     // Someone who may see JED's costs sees the card and its margin: 300 - 987 - 70.
     const shown = await view(id, cookies.admin);
     expect(shown.expected?.cards.map((c) => c.rateCardId)).toEqual([jedCard]);

@@ -7,9 +7,11 @@ import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { PublicTrackingController } from './public-tracking.controller.js';
 import { PublicTrackingService } from './public-tracking.service.js';
 import { ShipmentsController } from './shipments.controller.js';
+import { CommissionTriggers } from './commission-triggers.registry.js';
 import { ShipmentContainerRegistry } from './shipment-container.registry.js';
 import { ShipmentInvoicesRegistry } from './shipment-invoices.registry.js';
 import { ShipmentLinksRegistry } from './shipment-links.registry.js';
+import { ShipmentStatusListenersRegistry } from './shipment-status-listeners.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { ShipmentsService } from './shipments.service.js';
 import { ShipmentReportsService } from './shipment-reports.service.js';
@@ -26,9 +28,11 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
   ],
   controllers: [ShipmentsController, PublicTrackingController, ShipmentStatusDraftsController],
   providers: [
+    CommissionTriggers,
     ShipmentContainerRegistry,
     ShipmentInvoicesRegistry,
     ShipmentLinksRegistry,
+    ShipmentStatusListenersRegistry,
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,
@@ -36,9 +40,11 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
     ShipmentStatusDraftsService,
   ],
   exports: [
+    CommissionTriggers,
     ShipmentContainerRegistry,
     ShipmentInvoicesRegistry,
     ShipmentLinksRegistry,
+    ShipmentStatusListenersRegistry,
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,

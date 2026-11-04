@@ -85,37 +85,41 @@ describe('CustomersService.duplicateIssues', () => {
     customer: { findMany: vi.fn(() => Promise.resolve(held)) },
   } as unknown as Prisma.TransactionClient;
 
-  it('reports a phone or tax number (any case and spacing) another customer of the branch holds', async () => {
+  it('reports a phone or tax number (any case and spacing) another customer holds', async () => {
     const issues = await service().customers.duplicateIssues(
       client,
       [
-        { branchId: 'b1', phone: '+249900000001' },
-        { branchId: 'b1', phone: '+249900000002', taxNumber: ' tx-1 ' },
-        { branchId: 'b2', phone: '+249900000001', taxNumber: 'TX-1' },
-        { branchId: 'b1', phone: '+249900000001', taxNumber: 'TX-1', excludeId: 'c1' },
+        { phone: '+249900000001' },
+        { phone: '+249900000002', taxNumber: ' tx-1 ' },
+        { phone: '+249900000001', taxNumber: 'TX-1' },
+        { phone: '+249900000001', taxNumber: 'TX-1', excludeId: 'c1' },
       ],
       staff(),
     );
     expect(issues.map((list) => list.map((i) => [i.field, i.code]))).toEqual([
       [['phone', 'DUPLICATE_IN_DB']],
       [['taxNumber', 'DUPLICATE_IN_DB']],
-      [],
+      // Plan 09d: unique company-wide, another branch included.
+      [
+        ['phone', 'DUPLICATE_IN_DB'],
+        ['taxNumber', 'DUPLICATE_IN_DB'],
+      ],
       [],
     ]);
     expect(issues[0]?.[0]?.message).toContain('CS00001');
   });
 
   it('names the holder to Outlet Staff of its outlet only; to others it is "another customer"', async () => {
-    const keys = [{ branchId: 'b1', phone: '+249900000001', taxNumber: 'TX-1' }];
+    const keys = [{ phone: '+249900000001', taxNumber: 'TX-1' }];
     const own = await service().customers.duplicateIssues(client, keys, staff(['o1']));
     expect(own[0]?.map((i) => i.message)).toEqual([
-      'Customer CS00001 of this branch has this phone',
-      'Customer CS00001 of this branch has this tax number',
+      'Customer CS00001 has this phone',
+      'Customer CS00001 has this tax number',
     ]);
     const other = await service().customers.duplicateIssues(client, keys, staff(['o2']));
     expect(other[0]?.map((i) => [i.field, i.code, i.message])).toEqual([
-      ['phone', 'DUPLICATE_IN_DB', 'Another customer of this branch has this phone'],
-      ['taxNumber', 'DUPLICATE_IN_DB', 'Another customer of this branch has this tax number'],
+      ['phone', 'DUPLICATE_IN_DB', 'Another customer has this phone'],
+      ['taxNumber', 'DUPLICATE_IN_DB', 'Another customer has this tax number'],
     ]);
     expect(JSON.stringify(other)).not.toContain('CS00001');
   });

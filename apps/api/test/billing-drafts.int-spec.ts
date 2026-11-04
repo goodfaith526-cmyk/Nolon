@@ -46,8 +46,10 @@ let t: TestApp;
 let r: ReturnType<typeof requests>;
 let client: AgentClientCreatedDto;
 let pts: string;
+let jed: string;
 let customer: CustomerDto;
 let other: CustomerDto;
+let cashJed: AccountDto;
 let cashUsd: AccountDto;
 let cashSdg: AccountDto;
 
@@ -55,8 +57,8 @@ const year = String(randomInt(300, 600)).padStart(4, '0');
 const d = (monthDay: string) => `${year}-${monthDay}`;
 
 const cookies = { admin: '', financePts: '', financeJed: '', salesPts: '', opsPts: '' };
-const agentCookies = { financeAgent: '', salesAgent: '', financeJedAgent: '' };
-const tokens = { finance: '', sales: '', financeJed: '' };
+const agentCookies = { financeAgent: '', salesAgent: '', financeJedAgent: '', financeTwoAgent: '' };
+const tokens = { finance: '', sales: '', financeJed: '', financeTwo: '' };
 const agentIds = { financeAgent: '' };
 
 async function shipment(customerId = customer.id): Promise<string> {
@@ -154,6 +156,7 @@ beforeAll(async () => {
   t = await createTestApp();
   r = requests(t);
   pts = await branchId(t.prisma, 'PTS');
+  jed = await branchId(t.prisma, 'JED');
   const people = {
     admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], AGENT_PREFIX),
     financePts: await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX),
@@ -168,6 +171,7 @@ beforeAll(async () => {
     financeAgent: await createUser(t.prisma, ['FINANCE'], ['PTS'], AGENT_PREFIX),
     salesAgent: await createUser(t.prisma, ['SALES'], ['PTS'], AGENT_PREFIX),
     financeJedAgent: await createUser(t.prisma, ['FINANCE'], ['JED'], AGENT_PREFIX),
+    financeTwoAgent: await createUser(t.prisma, ['FINANCE'], ['PTS', 'JED'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
@@ -177,6 +181,7 @@ beforeAll(async () => {
   tokens.finance = await tokenFor(t, agentCookies.financeAgent, client);
   tokens.sales = await tokenFor(t, agentCookies.salesAgent, client);
   tokens.financeJed = await tokenFor(t, agentCookies.financeJedAgent, client);
+  tokens.financeTwo = await tokenFor(t, agentCookies.financeTwoAgent, client);
 
   const newCustomer = async (name: string) =>
     (
@@ -193,7 +198,7 @@ beforeAll(async () => {
   customer = await newCustomer('Billing Draft');
   other = await newCustomer('Billing Draft Other');
   const suffix = randomUUID().slice(0, 6).toUpperCase();
-  const cash = async (code: string, currency: string) =>
+  const cash = async (code: string, currency: string, branch = pts) =>
     (
       await r
         .post('/accounting/accounts', cookies.admin, {
@@ -204,11 +209,12 @@ beforeAll(async () => {
           isPostable: true,
           isCash: true,
           currency,
-          branchId: pts,
+          branchId: branch,
         })
         .expect(201)
     ).body as AccountDto;
   cashUsd = await cash(`D${suffix}U`, 'USD');
+  cashJed = await cash(`D${suffix}J`, 'USD', await branchId(t.prisma, 'JED'));
   cashSdg = await cash(`D${suffix}S`, 'SDG');
 });
 
@@ -645,7 +651,25 @@ describe('receipt drafts', () => {
     const invoice = await approvedInvoice('500');
     const otherInvoice = await approvedInvoice('500', other.id);
     const before = await t.prisma.receiptDraft.count();
-    await createReceiptDraft(receiptRequest(invoice.id), tokens.financeJed).expect(404);
+    // Plan 09d: JED finance may receive from the PTS customer, in JED; never against a PTS invoice.
+    const jedRefused = await createReceiptDraft(
+      receiptRequest(invoice.id, { cashAccountId: cashJed.id }),
+      tokens.financeJed,
+    ).expect(400);
+    // A PTS invoice is not JED's to see: refused as not the customer's.
+    expect(jedRefused.body).toMatchObject({
+      code: 'ALLOCATION_OTHER_CUSTOMER',
+      fields: ['allocations.0.invoiceId'],
+    });
+    // A user of both branches receiving in JED is told the invoice is another branch's.
+    const twoRefused = await createReceiptDraft(
+      receiptRequest(invoice.id, { cashAccountId: cashJed.id, branchId: jed }),
+      tokens.financeTwo,
+    ).expect(400);
+    expect(twoRefused.body).toMatchObject({
+      code: 'ALLOCATION_OTHER_BRANCH',
+      fields: ['allocations.0.invoiceId'],
+    });
     await createReceiptDraft(receiptRequest(invoice.id), tokens.sales).expect(403);
     // An invoice of another customer, a cash account in another currency, more than received.
     await createReceiptDraft(receiptRequest(otherInvoice.id)).expect(400);
@@ -821,12 +845,55 @@ describe('receipt drafts on the live card: pick lists and field refusals', () =>
     );
   });
 
-  it('is refused for a customer of another branch, without the create permission, or malformed', async () => {
+  it('lists the cash accounts of the receiving branch only, never the customer\u2019s by default (F184-5)', async () => {
+    const dxb = await branchId(t.prisma, 'DXB');
+    const dxbCustomer = (
+      await r
+        .post('/customers', cookies.admin, {
+          branchId: dxb,
+          kind: 'COMPANY',
+          name: 'Receipt pick DXB',
+          phone: uniquePhone(),
+        })
+        .expect(201)
+    ).body as { id: string };
+    const q = `customerId=${dxbCustomer.id}`;
+    // PTS and JED, none the customer's: the branch must be named.
+    const ask = await pick('cash-accounts', q, tokens.financeTwo).expect(400);
+    expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED', fields: ['branchId'] });
+    await pick('cash-accounts', `${q}&branchId=${dxb}`, tokens.financeTwo).expect(403);
+    await pick('open-invoices', `${q}&branchId=${dxb}`, tokens.financeTwo).expect(403);
+    const listed = (
+      (await pick('cash-accounts', `${q}&branchId=${jed}`, tokens.financeTwo).expect(200)).body as {
+        items: ReceiptCashAccountDto[];
+      }
+    ).items.map((a) => a.id);
+    expect(listed).toContain(cashJed.id);
+    expect(listed).not.toContain(cashUsd.id);
+  });
+
+  it('pre-checks an incomplete receipt draft in the branch it names (F184-9)', async () => {
+    const result = (
+      await r
+        .agentPost('/receipt-drafts/check', tokens.financeTwo, {
+          idempotencyKey: draftKey(),
+          customerId: customer.id,
+          branchId: jed,
+          currency: 'USD',
+          allocations: [],
+        })
+        .expect(200)
+    ).body as { ok: boolean };
+    expect(result.ok).toBe(true);
+  });
+
+  it('serves a customer of another branch (plan 09d), and is refused without the create permission, or malformed', async () => {
     for (const path of ['cash-accounts', 'open-invoices']) {
-      await pick(path, `customerId=${customer.id}`, tokens.financeJed).expect(404);
+      // Plan 09d: the customer is central; JED's lists are JED's own.
+      await pick(path, `customerId=${customer.id}`, tokens.financeJed).expect(200);
       await pick(path, `customerId=${customer.id}`, tokens.sales).expect(403);
       await pick(path, 'customerId=nope').expect(400);
-      await pick(path, `customerId=${customer.id}&branchId=${pts}`).expect(400);
+      await pick(path, `customerId=${customer.id}&branchId=nope`).expect(400);
     }
     await pick('open-invoices', `customerId=${customer.id}&currency=usd`).expect(400);
     // A currency (the review screen's filter, functional review هـ6) must be a code too.
@@ -912,7 +979,6 @@ describe('invoice drafts saved with missing values', () => {
   });
 
   it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
-    const jed = await branchId(t.prisma, 'JED');
     const shipmentId = await shipment();
     const before = await t.prisma.invoiceDraft.count();
     const refused = async (body: object, status: number) =>
@@ -1014,7 +1080,6 @@ describe('receipt drafts saved with missing values', () => {
   });
 
   it('refuses a draft without a branch, of another branch, or with a malformed value', async () => {
-    const jed = await branchId(t.prisma, 'JED');
     const before = await t.prisma.receiptDraft.count();
     const refused = async (body: object, status: number) =>
       (await createReceiptDraft({ idempotencyKey: draftKey(), ...body }).expect(status)).body as {
@@ -1022,9 +1087,8 @@ describe('receipt drafts saved with missing values', () => {
       };
     expect((await refused({ notes: 'No branch' }, 400)).code).toBe('BRANCH_REQUIRED');
     await refused({ branchId: jed }, 403);
-    expect((await refused({ customerId: customer.id, branchId: jed }, 400)).code).toBe(
-      'BRANCH_MISMATCH',
-    );
+    // Plan 09d: the customer's receipt is written in a branch the user writes in.
+    await refused({ customerId: customer.id, branchId: jed }, 403);
     await refused({ branchId: pts, amount: 'lots' }, 400);
     expect(await t.prisma.receiptDraft.count()).toBe(before);
   });

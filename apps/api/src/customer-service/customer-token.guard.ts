@@ -12,7 +12,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import { hashApiKey } from './api-key.js';
-import { keyScopes } from './api-scopes.js';
+import { keyScopes, keyServices } from './api-scopes.js';
 import {
   CustomerTokensService,
   grantId,
@@ -57,7 +57,6 @@ const grantInclude = {
     select: {
       id: true,
       number: true,
-      branchId: true,
       isActive: true,
       phone: true,
       whatsapp: true,
@@ -79,7 +78,8 @@ type GrantRow = Prisma.CsCustomerTokenGetPayload<{ include: typeof grantInclude 
 
 /**
  * Whether a token's grant still holds (expiry aside): the key is active, holds
- * cs:customer_tokens:issue and serves the customer's branch; the customer is active; the phone
+ * cs:customer_tokens:issue and still serves a branch; the customer (of no branch, plan 09f) is
+ * active; the phone
  * still matches the same record; and that record has not changed since (grantVersion).
  */
 function grantHolds(row: GrantRow): boolean {
@@ -88,7 +88,7 @@ function grantHolds(row: GrantRow): boolean {
   const { customer, contact } = row;
   const matched =
     row.grantKind === 'CUSTOMER_PHONE'
-      ? sha256(customer.phone) === row.phoneHash
+      ? customer.phone !== null && sha256(customer.phone) === row.phoneHash
       : row.grantKind === 'CUSTOMER_WHATSAPP'
         ? customer.whatsapp !== null && sha256(customer.whatsapp) === row.phoneHash
         : contact !== null &&
@@ -103,7 +103,7 @@ function grantHolds(row: GrantRow): boolean {
   return (
     key.isActive &&
     scopes.includes('cs:customer_tokens:issue') &&
-    key.branches.some((b) => b.branchId === customer.branchId) &&
+    key.branches.length > 0 &&
     customer.isActive &&
     matched &&
     BigInt(version) === row.grantVersion
@@ -184,7 +184,13 @@ export class CustomerTokenGuard implements CanActivate {
     const { customer } = row;
     request.customerToken = {
       tokenId: row.id,
-      client: { id: key.id, name: key.name, allowedBranchIds: branchIds, scopes },
+      client: {
+        id: key.id,
+        name: key.name,
+        allowedBranchIds: branchIds,
+        scopes,
+        services: keyServices(key),
+      },
       customerId: customer.id,
       customerNumber: customer.number,
       grantId: grantId(customer.id, { kind: row.grantKind, contactId: row.contactId }),

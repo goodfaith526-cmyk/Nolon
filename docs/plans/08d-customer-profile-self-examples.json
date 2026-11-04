@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "nolon.customer-identity/1",
+  "status": "IMPLEMENTATION_CANDIDATE_NOT_DEPLOYED",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/cs/customer-profiles/self?conversationId=conversation-1001",
+    "body": null,
+    "context": {
+      "channel": "TELEGRAM",
+      "subjectId": "123456789",
+      "channelAccountId": "nolon-booking",
+      "eventId": "update-1001",
+      "observedAt": "2026-10-29T12:00:00Z"
+    },
+    "headers": {
+      "Authorization": "Bearer <service-key-from-secret-store>",
+      "X-Nolon-Channel-Context": "base64url(UTF8(JSON.stringify(context)))",
+      "X-Nolon-Channel-Assertion": "v1:<current-unix-seconds>:<base64url-HMAC-SHA256>"
+    },
+    "canonicalLines": [
+      "v1",
+      "clientId",
+      "GET",
+      "/api/v1/cs/customer-profiles/self?conversationId=conversation-1001",
+      "",
+      "current-unix-seconds",
+      "sha256(rawContextBytes)",
+      "sha256(emptyBytes)"
+    ],
+    "precondition": "This scoped key already bound conversation-1001 to this exact signed sender through capture. No profile or customer selector is accepted."
+  },
+  "emptyProfile": {
+    "schemaVersion": "nolon.customer-identity/1",
+    "profileId": "11111111-1111-4111-8111-111111111111",
+    "profileVersion": 1,
+    "fields": {
+      "name": { "value": null, "source": null, "verification": "MISSING", "observedAt": null },
+      "phone": { "value": null, "source": null, "verification": "MISSING", "observedAt": null },
+      "residenceCityId": {
+        "value": null,
+        "source": null,
+        "verification": "MISSING",
+        "observedAt": null
+      },
+      "address": { "value": null, "source": null, "verification": "MISSING", "observedAt": null }
+    },
+    "missing": ["name", "phone", "residenceCityId", "address"],
+    "needsReview": false,
+    "followUp": { "status": "UNASSIGNED", "branchId": null, "reason": "NO_RESIDENCE" }
+  },
+  "fieldExamples": [
+    {
+      "value": "اسم صرّح به الزبون",
+      "source": "CUSTOMER_STATEMENT",
+      "verification": "UNVERIFIED",
+      "observedAt": "2026-10-29T12:00:00.000Z"
+    },
+    {
+      "value": "+249900000001",
+      "source": "WHATSAPP_SENDER",
+      "verification": "CHANNEL_VERIFIED",
+      "observedAt": "2026-10-29T12:00:00.000Z"
+    },
+    {
+      "value": "Current value with no matching field evidence",
+      "source": "UNRECORDED",
+      "verification": "UNKNOWN",
+      "observedAt": null
+    }
+  ],
+  "ambiguousIdentity": {
+    "status": 409,
+    "body": {
+      "statusCode": 409,
+      "code": "IDENTITY_REVIEW_REQUIRED",
+      "message": "IDENTITY_REVIEW_REQUIRED"
+    }
+  },
+  "notes": "Responses have Cache-Control: no-store. No operation/result/profile/account is created by GET; it returns live accepted values, not an idempotency replay. UNVERIFIED is not guessed data: it means the stored explicit statement has no independent verification. Missing is descriptive, not a list of booking-required fields. No shipment/invoice permission is granted."
+}

@@ -59,7 +59,7 @@ describe('Payment instructions (R3c3)', () => {
     });
 
   const newCurrency = async () => {
-    const c = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    const c = `QE${String.fromCharCode(65 + randomInt(26))}`;
     await t.prisma.currency.upsert({
       where: { code: c },
       create: { code: c, nameEn: `Test ${c}`, nameAr: `تجربة ${c}`, decimalPlaces: 2 },
@@ -395,7 +395,13 @@ describe('Payment instructions (R3c3)', () => {
       textEn: current!.textEn,
     });
     // Another currency with no approved text of its own in JED: none, never a "nearest" one.
-    const lone = await newCurrency();
+    // A random code can repeat one that already has an approved JED text: draw until it has none.
+    const hasText = async (c: string) =>
+      (await t.prisma.paymentInstruction.count({
+        where: { branchId: jed, currency: c, status: 'APPROVED' },
+      })) > 0;
+    let lone = await newCurrency();
+    while (await hasText(lone)) lone = await newCurrency();
     await t.prisma.csBookingRequest.update({
       where: { id: made.requestId },
       data: { paymentCurrency: lone },

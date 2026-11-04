@@ -1,5 +1,10 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import type { ApiClientCreatedDto, CsCatalogDto, LocationDto } from '@nolon/shared';
+import {
+  type ApiClientCreatedDto,
+  type CsCatalogDto,
+  type LocationDto,
+  pricingModeOf,
+} from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   APP_ORIGIN,
@@ -149,7 +154,15 @@ describe('Customer Service catalog (R1)', () => {
     expect(city).toMatchObject({ kind: 'CITY', nameAr: 'مكان اختبار الكتالوج', aliases: [] });
     expect(body.services.map((s) => s.code)).toEqual(['PICKUP', 'LAST_MILE']);
     expect(body.categories.length).toBeGreaterThan(0);
-    for (const c of body.categories) expect(c.unit).toBeTruthy();
+    for (const c of body.categories) {
+      expect(c.unit).toBeTruthy();
+      expect(c.pricingMode).toBe(pricingModeOf(c.unit));
+    }
+    // The seeded categories: barrels counted, cartons and pallets measured (owner, 2026-11-01).
+    const mode = (code: string) => body.categories.find((c) => c.code === code)?.pricingMode;
+    expect(mode('BARREL')).toBe('counted');
+    expect(mode('CARTON')).toBe('volume');
+    expect(mode('PALLET')).toBe('volume');
     expect(body.version).toMatch(/^[0-9a-f]{16}$/);
     // No price, cost or staff in it.
     const text = JSON.stringify(body);

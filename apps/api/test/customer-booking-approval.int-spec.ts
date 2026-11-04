@@ -48,7 +48,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
       t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
   });
 
-  async function request(origin: string) {
+  async function request(origin: string, extra: object = {}) {
     const from = { channel: 'whatsapp', id: uniquePhone() };
     const made = (
       await t
@@ -68,6 +68,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
           handover: 'PICKUP',
           language: 'ar',
           idempotencyKey: `approve-${randomUUID()}`,
+          ...extra,
         })
         .expect(201)
     ).body as CsBookingRequestCreated;
@@ -97,12 +98,11 @@ describe('Customer Service booking request approval (R3c2)', () => {
   const approve = (cookie: string, id: string, body: object) =>
     staff(cookie).post(`/cs-booking-requests/${id}/approve`, body);
   const bookingsOf = (customerId: string) => t.prisma.booking.count({ where: { customerId } });
-  const customer = async (branch: string) =>
+  const customer = async () =>
     (
       await t.prisma.customer.create({
         data: {
           number: `${tag}-${++n}`,
-          branchId: branch,
           name: `${tag} customer ${n}`,
           phone: uniquePhone(),
           kind: 'COMPANY',
@@ -194,8 +194,8 @@ describe('Customer Service booking request approval (R3c2)', () => {
         },
       })
     ).id;
-    ids.customerPts = await customer(pts);
-    ids.customerJed = await customer(jed);
+    ids.customerPts = await customer();
+    ids.customerJed = await customer();
   });
 
   afterAll(async () => {
@@ -313,6 +313,205 @@ describe('Customer Service booking request approval (R3c2)', () => {
     });
   });
 
+  it('reads the customer stage from the real booking and shipment (plan 09 section 3)', async () => {
+    const read = async (made: { id: string; header: string }) =>
+      (
+        await t
+          .http()
+          .get(`/api/v1/cs/booking-requests/${made.id}`)
+          .set('Authorization', `Bearer ${bot.key}`)
+          .set('X-Cs-Sender', made.header)
+          .expect(200)
+      ).body as CsBookingRequestDto;
+    const approveNew = async () => {
+      const made = await request(ids.served!);
+      expect(await read(made)).toMatchObject({
+        stage: { code: 'BOOKED', order: 1 },
+        attention: null,
+        shipment: null,
+      });
+      const { version } = await detail(cookies.salesPts, made.id);
+      const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+      const done = (
+        await approve(cookies.salesPts, made.id, {
+          version,
+          paymentCurrency: 'USD',
+          pricing: pricing(ids.served!),
+          pricingFingerprint: price.pricingFingerprint,
+          booking: booking(ids.customerPts!),
+        }).expect(201)
+      ).body as CsBookingRequestStaffDto;
+      return { made, bookingId: done.bookingId! };
+    };
+
+    // Approved but not confirmed: still a preliminary booking, never "confirmed" (F161-2).
+    const first = await approveNew();
+    expect(await read(first.made)).toMatchObject({
+      status: 'approved',
+      stage: { code: 'BOOKED' },
+      shipment: null,
+    });
+    await t.prisma.bookingItem.create({
+      data: { bookingId: first.bookingId, lineNo: 1, cargoType: 'GENERAL', quantity: 2 },
+    });
+    await staff(cookies.salesPts).post(`/bookings/${first.bookingId}/confirm`, {}).expect(200);
+    const confirmed = await read(first.made);
+    expect(confirmed).toMatchObject({
+      stage: { code: 'CONFIRMED', order: 2 },
+      attention: null,
+      shipment: { stage: { code: 'CONFIRMED' } },
+    });
+    // The stage and shipment carry no price or cost; the approved total is its own field
+    // (plan 09 amendment 4), the price the customer was approved at.
+    const { approvedPrice, ...rest } = confirmed;
+    expect(approvedPrice).toEqual({ amount: '80', currency: 'USD' });
+    expect(JSON.stringify(rest)).not.toMatch(/price|cost|internalNote/i);
+
+    const shipment = await t.prisma.shipment.findUniqueOrThrow({
+      where: { bookingId: first.bookingId },
+      include: { destination: true },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ROAD_DEPARTED' },
+    });
+    expect((await read(first.made)).shipment).toMatchObject({
+      number: shipment.number,
+      stage: { code: 'ON_ROAD' },
+      city: { en: shipment.destination.nameEn },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ON_HOLD', statusBeforeHold: 'ROAD_DEPARTED', holdReason: 'test' },
+    });
+    expect(await read(first.made)).toMatchObject({
+      stage: null,
+      attention: 'staff',
+      shipment: { number: shipment.number, stage: null },
+    });
+
+    // A draft cancelled after approval is not reported as confirmed.
+    const second = await approveNew();
+    await t.prisma.booking.update({
+      where: { id: second.bookingId },
+      data: { status: 'CANCELLED' },
+    });
+    expect(await read(second.made)).toMatchObject({
+      stage: null,
+      attention: 'staff',
+      shipment: null,
+    });
+
+    // Staff edit the mapping without code: the bot reads the new stage.
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'DEPARTED', statusBeforeHold: null, holdReason: null },
+    });
+    const put = (path: string, body: object) =>
+      t
+        .http()
+        .put(`/api/v1/customer-stages/${path}`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.admin)
+        .send(body);
+    await put('mapping/DEPARTED', { stageCode: 'AT_ORIGIN_HUB' }).expect(200);
+    try {
+      expect((await read(first.made)).stage?.code).toBe('AT_ORIGIN_HUB');
+      await put('mapping/DEPARTED', { stageCode: 'NO_SUCH' }).expect(404);
+      // F164-1: a held shipment can never be mapped to a success stage.
+      await put('mapping/ON_HOLD', { stageCode: 'DELIVERED' }).expect(400);
+      await t
+        .http()
+        .put('/api/v1/customer-stages/mapping/DEPARTED')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookies.salesPts)
+        .send({ stageCode: null })
+        .expect(403);
+    } finally {
+      await put('mapping/DEPARTED', { stageCode: 'AT_SEA' }).expect(200);
+    }
+  });
+
+  it('books a new customer made from an unlinked request, in its branch (client request 2026-11-04)', async () => {
+    const phone = uniquePhone();
+    const made = await request(ids.served!, {
+      senderName: `${tag} Web Sender`,
+      contactPhone: phone,
+    });
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const body = {
+      version,
+      paymentCurrency: 'USD',
+      pricing: pricing(ids.served!),
+      pricingFingerprint: price.pricingFingerprint,
+      newCustomerFromRequest: true,
+      booking: { services: [] },
+    };
+    const customers = () => t.prisma.customer.count({ where: { phone } });
+
+    // Not with a chosen customer; not for another branch's staff; nothing is made.
+    await approve(cookies.salesPts, made.id, {
+      ...body,
+      booking: booking(ids.customerPts!),
+    }).expect(400);
+    await approve(cookies.salesJed, made.id, body).expect(404);
+    await approve(cookies.ops, made.id, body).expect(403);
+    expect(await customers()).toBe(0);
+
+    const done = (await approve(cookies.salesPts, made.id, body).expect(201))
+      .body as CsBookingRequestStaffDto;
+    expect(done.status).toBe('approved');
+    const made1 = await t.prisma.booking.findUniqueOrThrow({
+      where: { id: done.bookingId! },
+      include: { customer: true },
+    });
+    expect(made1.branchId).toBe(pts);
+    expect(made1.customer).toMatchObject({
+      kind: 'INDIVIDUAL',
+      name: `${tag} Web Sender`,
+      phone,
+      createdById,
+      createdViaApiClientId: bot.client.id,
+    });
+    expect(await customers()).toBe(1);
+  });
+
+  it('never matches an unlinked request to a customer by phone: staff choose that customer', async () => {
+    const taken = await t.prisma.customer.findUniqueOrThrow({ where: { id: ids.customerPts! } });
+    const made = await request(ids.served!, { contactPhone: taken.phone });
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const before = await bookingsOf(ids.customerPts!);
+    await approve(cookies.salesPts, made.id, {
+      version,
+      paymentCurrency: 'USD',
+      pricing: pricing(ids.served!),
+      pricingFingerprint: price.pricingFingerprint,
+      newCustomerFromRequest: true,
+      booking: { services: [] },
+    }).expect(409);
+    expect(await bookingsOf(ids.customerPts!)).toBe(before);
+    expect((await detail(cookies.salesPts, made.id)).status).toBe('pending');
+  });
+
+  it('books a customer registered in another branch, in the request\u2019s branch (plan 09d)', async () => {
+    const made = await request(ids.served!);
+    const { version } = await detail(cookies.salesPts, made.id);
+    const price = await priceOf(cookies.salesPts, made.id, pricing(ids.served!));
+    const done = (
+      await approve(cookies.salesPts, made.id, {
+        version,
+        paymentCurrency: 'USD',
+        pricing: pricing(ids.served!),
+        pricingFingerprint: price.pricingFingerprint,
+        booking: booking(ids.customerJed!),
+      }).expect(201)
+    ).body as CsBookingRequestStaffDto;
+    const row = await t.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
+    expect(row).toMatchObject({ branchId: pts, customerId: ids.customerJed });
+  });
+
   it('refuses an approval that does not fit the request, and makes no booking', async () => {
     const made = await request(ids.served!);
     const { version } = await detail(cookies.salesPts, made.id);
@@ -341,15 +540,12 @@ describe('Customer Service booking request approval (R3c2)', () => {
     ]) {
       await refused(cookies.salesPts, { booking: booking(ids.customerPts!, extra) }, 400);
     }
-    // A customer of another branch: not one of PTS Sales', and not the request's branch.
-    await refused(cookies.salesPts, { booking: booking(ids.customerJed!) }, 404);
-    await refused(cookies.admin, { booking: booking(ids.customerJed!) }, 400, 'BRANCH_MISMATCH');
     // A request of a customer is booked for that customer only.
     const owner = await t.prisma.csBookingRequest.findUniqueOrThrow({ where: { id: made.id } });
     await t.prisma.csBookingRequest.update({
       where: { id: made.id },
       data: {
-        customerId: await customer(pts),
+        customerId: await customer(),
         grantId: 'g_test',
         senderChannel: null,
         senderId: null,
@@ -449,7 +645,7 @@ describe('Customer Service booking request approval (R3c2)', () => {
   });
 
   it('refuses a pricing currency withdrawn after staff saw the price, also while approval waits on it (F137-2)', async () => {
-    const code = `Q${String.fromCharCode(65 + randomInt(26))}${String.fromCharCode(65 + randomInt(26))}`;
+    const code = `QB${String.fromCharCode(65 + randomInt(26))}`;
     await t.prisma.currency.upsert({
       where: { code },
       create: { code, nameEn: `Test ${code}`, nameAr: `تجربة ${code}`, decimalPlaces: 2 },

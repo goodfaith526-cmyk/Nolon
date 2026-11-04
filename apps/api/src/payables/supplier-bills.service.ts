@@ -16,6 +16,7 @@ import type {
   SupplierBillDueDateDto,
   SupplierBillInput,
   SupplierBillLineInput,
+  SupplierBillLineKind,
   SupplierBillRefDto,
   SupplierBillStatus,
   SupplierBillSummaryDto,
@@ -49,6 +50,7 @@ import { shipmentBranches } from '../shipments/shipment-scope.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
 import { TripCostsService } from '../transport/trip-costs.service.js';
 import { ContainerCostsService } from './container-costs.service.js';
+import { StatementBills } from './statement-bills.registry.js';
 import { SuppliersService } from './suppliers.service.js';
 
 export interface SupplierBillFilters extends PageQuery {
@@ -145,6 +147,7 @@ export class SupplierBillsService {
     private readonly suppliers: SuppliersService,
     private readonly consolidations: ConsolidationsService,
     private readonly containerCosts: ContainerCostsService,
+    private readonly statementBills: StatementBills,
   ) {}
 
   async list(user: AuthUser, filters: SupplierBillFilters): Promise<Page<SupplierBillSummaryDto>> {
@@ -345,6 +348,69 @@ export class SupplierBillsService {
     return this.get(user, input.requestId);
   }
 
+  /**
+   * Plan 07, 5.2: the draft bill a partner statement makes, inside the statement's transaction
+   * and under its lock: the partner's supplier, the statement's branch and currency, and one
+   * COMMISSION line of its total. `requestId` becomes the bill's id; the statement keeps it, so a
+   * retry finds it there. The rate is the table's on the bill date.
+   */
+  async createFromStatementInTx(
+    tx: Tx,
+    user: AuthUser,
+    statement: {
+      id: string;
+      number: string;
+      branchId: string;
+      supplierId: string;
+      currency: string;
+      total: Decimal;
+    },
+    input: { requestId: string; billDate: string; dueDate?: string; supplierReference?: string },
+  ): Promise<string> {
+    const supplier = await this.suppliers.requireActiveInTx(tx, statement.supplierId);
+    const currency = await this.currencies.requireActiveInTx(tx, statement.currency);
+    const dueDate = billDueDate(input, supplier.paymentTermsDays);
+    if (dueDate < input.billDate) {
+      throw new BadRequestException('The due date is before the bill date');
+    }
+    checkAmount(statement.total, currency.decimalPlaces);
+    const fxRate = await this.fxRates.resolve(currency.code, input.billDate, undefined);
+    if (
+      await tx.supplierBill.findUnique({ where: { id: input.requestId }, select: { id: true } })
+    ) {
+      throw new ConflictException('This request id was already used: send a new id');
+    }
+    await tx.supplierBill.create({
+      data: {
+        id: input.requestId,
+        supplierId: statement.supplierId,
+        branchId: statement.branchId,
+        supplierReference: input.supplierReference ?? null,
+        currency: currency.code,
+        fxRate,
+        requestedFxRate: null,
+        billDate: toDbDate(input.billDate),
+        dueDate: toDbDate(dueDate),
+        notes: null,
+        total: statement.total,
+        totalUsd: toUsd(statement.total, fxRate, currency.code),
+        createdById: user.id,
+        lines: {
+          create: [
+            {
+              lineNo: 1,
+              kind: 'COMMISSION',
+              statementId: statement.id,
+              description: statement.number,
+              amount: statement.total,
+            },
+          ],
+        },
+      },
+    });
+    return input.requestId;
+  }
+
   /** An exact retry returns the bill the request created; any other reuse is a 409. */
   private retry(
     user: AuthUser,
@@ -404,6 +470,7 @@ export class SupplierBillsService {
   async update(user: AuthUser, id: string, input: SupplierBillInput): Promise<SupplierBillDto> {
     const existing = await this.findScoped(user, id);
     if (existing.status !== 'DRAFT') throw new ConflictException('Only a draft bill is edited');
+    refuseStatementBill(existing.lines);
     const supplier = await this.suppliers.requireSupplier(existing.supplierId);
     const draft = await this.checkDraft(user, input, supplier.paymentTermsDays);
     await this.prisma.$transaction(async (tx) => {
@@ -462,10 +529,17 @@ export class SupplierBillsService {
       );
       const lines: (BillLineForPosting & { description: string | null })[] = [];
       for (const line of bill.lines) {
-        lines.push({
-          ...(await this.postingLine(tx, line, trips, bill.branchId)),
-          description: line.description,
-        });
+        // Rule 16a: a statement's line is checked against the statement, under its lock.
+        const posting = line.statementId
+          ? await this.statementBills.registered.approvalLineInTx(tx, {
+              id,
+              branchId: bill.branchId,
+              supplierId: bill.supplierId,
+              currency: bill.currency,
+              line: { statementId: line.statementId, amount: line.amount },
+            })
+          : await this.postingLine(tx, line, trips, bill.branchId);
+        lines.push({ ...posting, description: line.description });
       }
       const billDate = fromDbDate(bill.billDate);
       const year = billDate.slice(0, 4);
@@ -503,6 +577,10 @@ export class SupplierBillsService {
           approvedById: user.id,
         },
       });
+      for (const line of bill.lines) {
+        if (line.statementId)
+          await this.statementBills.registered.settledInTx(tx, line.statementId, id);
+      }
       // Rule 13 at once for a container already closed; the others are shared at their close.
       for (const line of bill.lines) {
         const container = line.consolidationId ? containers.get(line.consolidationId) : undefined;
@@ -582,6 +660,12 @@ export class SupplierBillsService {
         );
         await this.tripCosts.releaseCarrierBill(tx, id);
         cancelJournalEntryId = reversal.id;
+      }
+      // Plan 07, 5.2: the statement this bill was made from can be billed again.
+      for (const line of bill.lines) {
+        if (line.statementId) {
+          await this.statementBills.registered.billCancelledInTx(tx, line.statementId, id);
+        }
       }
       await tx.supplierBill.update({
         where: { id },
@@ -711,7 +795,7 @@ export class SupplierBillsService {
   private async postingLine(
     tx: Tx,
     line: {
-      kind: SupplierBillLineInput['kind'];
+      kind: SupplierBillLineKind;
       chargeTypeCode: string | null;
       shipmentId: string | null;
       tripId: string | null;
@@ -833,12 +917,16 @@ export class SupplierBillsService {
           throw new BadRequestException(`${label}: trip ${trip.number} is of another branch`);
         }
         lines.push({ ...base, tripId: trip.id });
-      } else {
+      } else if (line.kind === 'EXPENSE') {
         const code = line.expenseCategoryCode ?? '';
         if (!categories.get(code)) {
           throw new BadRequestException(`${label}: unknown or inactive expense category`);
         }
         lines.push({ ...base, expenseCategoryCode: code });
+      } else {
+        // F152-1: a commission line comes only from a partner statement (plan 07, 5.2), never
+        // from a bill entered by hand, whatever the caller sent past the route's schema.
+        throw new BadRequestException(`${label}: this kind of line is not entered on a bill`);
       }
     }
     const total = lines.reduce((sum, l) => sum.plus(l.amount), ZERO);
@@ -880,6 +968,20 @@ function billDueDate(
   paymentTermsDays: number,
 ): string {
   return input.dueDate ?? addDays(input.billDate, paymentTermsDays);
+}
+
+/**
+ * Plan 07, 5.2 (F149-3): a bill made from a partner statement keeps its supplier, branch, currency
+ * and line as made; it is approved or cancelled, and a new one is made from the statement.
+ */
+function refuseStatementBill(lines: readonly { statementId: string | null }[]): void {
+  if (lines.some((l) => l.statementId !== null)) {
+    throw codedRefusal(
+      HttpStatus.CONFLICT,
+      'BILL_FROM_STATEMENT',
+      'This bill was made from a partner statement: cancel it and make it again from the statement',
+    );
+  }
 }
 
 function checkAmount(amount: Decimal, decimals: number, label = 'Amount'): void {
@@ -934,6 +1036,7 @@ function toDto(
   const isDraft = b.status === 'DRAFT';
   const can = (p: 'update' | 'approve' | 'cancel') => user.access.has(`suppliers:${p}`, b.branchId);
   const cancellable = isDraft || (b.status === 'APPROVED' && !b.isOpening && b.paidAmount.isZero());
+  const fromStatement = b.lines.some((l) => l.statementId !== null);
   return {
     ...toSummary(b),
     fxRate: b.fxRate.toFixed(),
@@ -953,6 +1056,7 @@ function toDto(
       consolidationNumber: l.consolidation?.number ?? null,
       description: l.description,
       amount: l.amount.toFixed(),
+      statementId: l.statementId,
     })),
     payments: b.allocations.map((a) => ({
       paymentId: a.payment.id,
@@ -969,7 +1073,7 @@ function toDto(
     cancelReason: b.cancelReason,
     duplicateBills,
     actions: {
-      canEdit: isDraft && can('update'),
+      canEdit: isDraft && !fromStatement && can('update'),
       canApprove: isDraft && can('approve'),
       canCancel: cancellable && can('cancel'),
     },

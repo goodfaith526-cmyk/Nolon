@@ -300,7 +300,7 @@ export function StatementPrint({
         title={t('statementTitle')}
         number={null}
         date={t('period', { from: shown.from, to: shown.to })}
-        branchId={shown.customerBranchId}
+        branchId={shown.branchId ?? ''}
       >
         <CustomerBlock name={shown.customerName} customer={customer} />
         {shown.sections.length === 0 && <p className="muted">{t('statementEmpty')}</p>}

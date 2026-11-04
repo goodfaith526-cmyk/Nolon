@@ -39,6 +39,8 @@ let jedCustomer: CustomerDto;
 let jebelAli: string;
 let portSudan: string;
 let jed: string;
+/** The branch each test customer's drafts are written in (customers have no branch, plan 09f). */
+const draftBranchOf = new Map<string, string>();
 let agentUser: { id: string; email: string };
 
 const cookies = { admin: '', salesDxb: '', salesJed: '', agent: '', other: '' };
@@ -51,6 +53,7 @@ function quotationRequest(customerId: string) {
   return {
     idempotencyKey: draftKey(),
     customerId,
+    branchId: draftBranchOf.get(customerId),
     originLocationId: jebelAli,
     destinationLocationId: portSudan,
     mode: 'SEA',
@@ -120,6 +123,8 @@ beforeAll(async () => {
     ).body as CustomerDto;
   dxbCustomer = await newCustomer(dxb, cookies.salesDxb, 'My Drafts DXB Trading');
   jedCustomer = await newCustomer(jed, cookies.salesJed, 'My Drafts JED Trading');
+  draftBranchOf.set(dxbCustomer.id, dxb);
+  draftBranchOf.set(jedCustomer.id, jed);
 });
 
 afterAll(async () => {
@@ -139,7 +144,7 @@ describe('my drafts', () => {
       id: first.id,
       status: 'DRAFT',
       subject: dxbCustomer.name,
-      branchId: dxbCustomer.branchId,
+      branchId: await branchId(t.prisma, 'DXB'),
       branchCode: 'DXB',
       createdAt: first.createdAt,
       expiresAt: first.expiresAt,
@@ -318,7 +323,7 @@ describe("the reviewers' list", () => {
       kind: 'quotation',
       id: dxbDraft.id,
       subject: dxbCustomer.name,
-      branchId: dxbCustomer.branchId,
+      branchId: await branchId(t.prisma, 'DXB'),
       branchCode: 'DXB',
       createdAt: dxbDraft.createdAt,
       expiresAt: dxbDraft.expiresAt,

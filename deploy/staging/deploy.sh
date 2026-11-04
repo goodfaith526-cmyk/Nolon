@@ -4,7 +4,46 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-compose() { docker compose -f docker-compose.staging.yml "$@"; }
+# --- deploy lock (identical in deploy/staging/deploy.sh and deploy/production/deploy.sh;
+# deploy/test-deploy-lock.sh checks both) ---
+# One NOLON deploy at a time on this server (staging and production share it, and their images):
+# staging's image clean-up must never run while a production deploy is between pulling an image
+# and using it. Both stacks deploy as the same user, so they share this lock file. It is held
+# until this script exits; a second deploy waits for it (up to 30 minutes).
+exec 9> "$HOME/.nolon-deploy.lock"
+if ! flock -w 1800 9; then
+  echo "Another NOLON deploy has held the server for 30 minutes; try again later." >&2
+  exit 1
+fi
+# The registry login shares the deploy user's Docker config, so it lives inside the lock too:
+# `--registry-login USER` (token on stdin, from the deploy job) logs in here and out when this
+# script exits, so one deploy's logout can never remove a waiting deploy's login (Codex F183-1).
+# Run by hand without it, the existing login is used.
+if [ "${1:-}" = --registry-login ]; then
+  [ -n "${2:-}" ] || { echo "usage: deploy.sh --registry-login USER < token" >&2; exit 1; }
+  trap 'docker logout ghcr.io > /dev/null 2>&1 || true' EXIT
+  docker login ghcr.io -u "$2" --password-stdin
+fi
+# --- end deploy lock ---
+
+# Feature switches set by hand on the server live in switches.env, next to .env. The deploy job
+# rewrites .env on every deploy and never touches switches.env, so a switch stays as set until it
+# is changed there. Only CS_* settings and comments are accepted: it cannot override an image, a
+# password or anything else the deploy job writes.
+env_files=(--env-file .env)
+if [ -f switches.env ]; then
+  # grep reads the file itself (no pipe, so no SIGPIPE): 1 means no other line; 0 (a line that
+  # is not allowed) or 2 (unreadable) stops the deploy.
+  status=0
+  grep -Evxq '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*' switches.env || status=$?
+  if [ "$status" -ne 1 ]; then
+    echo "switches.env must be readable and hold only CS_* settings and comments" >&2
+    exit 1
+  fi
+  env_files+=(--env-file switches.env)
+fi
+
+compose() { docker compose "${env_files[@]}" -f docker-compose.staging.yml "$@"; }
 
 # Staging is private unless .env says otherwise on purpose; refuse a missing or unknown mode.
 if ! grep -Eqx "BASIC_AUTH=(on|off)" .env; then

@@ -1,5 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
-import type { CsScope } from '@nolon/shared';
+import { CS_REQUEST_SERVICES, type CsRequestService, type CsScope } from '@nolon/shared';
 import type { ApiScope } from '../generated/prisma/client.js';
 
 export const API_SCOPE_KEY = 'nolon:apiScope';
@@ -17,6 +17,9 @@ export const SCOPE_ROWS = {
   'cs:quote:read': 'QUOTE_READ',
   'cs:booking_requests:create': 'BOOKING_REQUESTS_CREATE',
   'cs:tracking:lookup': 'TRACKING_LOOKUP',
+  'cs:customer_profiles:write': 'CUSTOMER_PROFILES_WRITE',
+  'cs:marketing:read': 'MARKETING_READ',
+  'cs:marketing:revenue:read': 'MARKETING_REVENUE_READ',
 } as const satisfies Record<Exclude<CsScope, 'cs:customers:read'>, ApiScope>;
 
 const SCOPE_OF_ROW = new Map<ApiScope, CsScope>(
@@ -37,4 +40,13 @@ export function keyScopes(
 /** The rows for `scopes` (all but `cs:customers:read`). */
 export function scopeRows(scopes: readonly CsScope[]): ApiScope[] {
   return scopes.flatMap((s) => (s === 'cs:customers:read' ? [] : [SCOPE_ROWS[s]]));
+}
+/** A key's services, from its columns, in CS_REQUEST_SERVICES order. */
+export function keyServices(row: {
+  offersPickup: boolean;
+  offersLastMile: boolean;
+}): CsRequestService[] {
+  return CS_REQUEST_SERVICES.filter((s) =>
+    s === 'PICKUP' ? row.offersPickup : row.offersLastMile,
+  );
 }

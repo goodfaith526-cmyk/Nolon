@@ -5,6 +5,25 @@ function emptyAsUnset<T extends z.ZodType>(schema: T) {
   return z.preprocess((value) => (value === '' ? undefined : value), schema);
 }
 
+/** An https URL (http only for localhost, for development). */
+function httpsUrl() {
+  return z
+    .string()
+    .url()
+    .refine(
+      (value) => {
+        // Runs even when .url() already failed: a value that is not a URL is just rejected.
+        if (!URL.canParse(value)) return false;
+        const url = new URL(value);
+        return (
+          url.protocol === 'https:' ||
+          (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+        );
+      },
+      { message: 'must be an https URL (http only for localhost)' },
+    );
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -28,24 +47,13 @@ const envSchema = z.object({
    * https://pilot.example.com/?tenant=nolon). Empty: no assistant button. HTTPS only, except
    * localhost for development.
    */
-  AGENT_ASSISTANT_URL: emptyAsUnset(
-    z
-      .string()
-      .url()
-      .refine(
-        (value) => {
-          // Runs even when .url() already failed: a value that is not a URL is just rejected.
-          if (!URL.canParse(value)) return false;
-          const url = new URL(value);
-          return (
-            url.protocol === 'https:' ||
-            (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
-          );
-        },
-        { message: 'must be an https URL (http only for localhost)' },
-      )
-      .optional(),
-  ),
+  AGENT_ASSISTANT_URL: emptyAsUnset(httpsUrl().optional()),
+  /**
+   * The bookings agent's admin panel, exactly as the agent gives it (e.g.
+   * https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp). Empty: no menu item.
+   * Shown only to holders of agent_admin:view. HTTPS only, except localhost for development.
+   */
+  AGENT_ADMIN_URL: emptyAsUnset(httpsUrl().optional()),
   /**
    * `true`: the assistant opens as a panel inside NOLON's pages (a frame of AGENT_ASSISTANT_URL)
    * instead of a new tab. Only once the assistant allows this NOLON address to frame it (its
@@ -68,6 +76,88 @@ const envSchema = z.object({
       .default('false')
       .transform((value) => value === 'true'),
   ),
+  /** Plan 08: opt-in unified profile capture. Never enabled by a deployment default. */
+  CS_CUSTOMER_IDENTITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 09d section 4a: a profile's first message makes its one central customer. Off by default.
+   */
+  CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CS_CUSTOMER_IDENTITY_COMPANY_ID: emptyAsUnset(
+    // Stable namespace; never inferred from an incoming message.
+    z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{1,100}$/)
+      .optional(),
+  ),
+  /** Secret JSON map keyed by API client UUID: { secret, accounts: [{channel, channelAccountId}] }. */
+  CS_CUSTOMER_IDENTITY_CLIENTS: emptyAsUnset(z.string().default('{}')),
+  CS_CUSTOMER_FOLLOWUP_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 2: a customer cancels a bot's booking request. Off until the bot's connector
+   * accepts the cancelled state (consumer first, plan 09 section 9).
+   */
+  CS_BOOKING_CANCEL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 12: staff estimates for items outside the standard categories, and the
+   * customer's acceptance. Off (default) until the bot accepts the estimated state (consumer
+   * first, plan 09 section 9); photo upload works either way.
+   */
+  CS_ESTIMATES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * The owner's instant account (2026-11-03): a signed bot request for a known branch makes or
+   * reuses the profile's branch account when it is saved. Off: the account waits for approval, as
+   * before.
+   */
+  CS_INSTANT_CUSTOMER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 09 section 5 (N-C5): the HMAC secret notices are signed with (the receiver's
+   * CS_WEBHOOK_SECRET). Unset: no endpoint can be approved and nothing is sent.
+   */
+  CS_WEBHOOK_SECRET: emptyAsUnset(z.string().min(32).max(256).optional()),
+  /** Comma-separated host names an endpoint may use (https, port 443). Empty: none. */
+  CS_WEBHOOK_ALLOWED_HOSTS: emptyAsUnset(
+    z
+      .string()
+      .default('')
+      .transform((v) =>
+        v
+          .split(',')
+          .map((h) => h.trim().toLowerCase())
+          .filter((h) => h !== ''),
+      )
+      .pipe(
+        z.array(
+          z.string().regex(/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/),
+        ),
+      ),
+  ),
+  /** `true`: this process sends the outbox. Off (default): notices wait in the outbox. */
+  CS_WEBHOOK_WORKER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Absolute lifetime of a sign-in session. */
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
   /** Lifetime of a delegated token of the staff AI assistant (agent-auth). */

@@ -173,6 +173,18 @@ export interface BranchNameDto {
 }
 
 /** GET /master-data: everything the commercial and shipment screens need for their dropdowns. */
+/**
+ * Plan 09 amendment 4: a branch's customer service number, the one the bot shows its customers
+ * (E.164); null when not set. Master data the Administrator keeps.
+ */
+export interface BranchSupportPhoneDto {
+  branchId: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  phone: string | null;
+}
+
 export interface MasterDataDto {
   /** Every branch, by name only. */
   branches: BranchNameDto[];
@@ -260,11 +272,10 @@ export interface CurrencyUpdate {
 export interface CustomerSummaryDto {
   id: string;
   number: string;
-  branchId: string;
   kind: CustomerKind;
   name: string;
   companyName: string | null;
-  phone: string;
+  phone: string | null;
   isActive: boolean;
 }
 
@@ -347,8 +358,12 @@ export interface CustomerInput {
 }
 
 /** POST /customers: the branch is chosen once and never changes. */
+/**
+ * A new customer. The customer is of no branch (plan 09f); `branchId` names the branch the user
+ * acts in (the permission and the sales outlet), optional for a user with one such branch.
+ */
 export interface CreateCustomerRequest extends CustomerInput {
-  branchId: string;
+  branchId?: string;
 }
 
 export interface ContactInput {
@@ -543,9 +558,14 @@ export interface QuotationInput {
   lines: QuotationLineInput[];
 }
 
-/** POST /quotations: the quotation belongs to the customer's branch. */
+/**
+ * POST /quotations. Plan 09d: a customer is tied to no branch; the quotation is written in
+ * `branchId` (one where the user may create quotations), else the user's only such branch, else
+ * the customer's branch of registration when the user writes there (400 BRANCH_REQUIRED otherwise).
+ */
 export interface CreateQuotationRequest extends QuotationInput {
   customerId: string;
+  branchId?: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -642,8 +662,10 @@ export interface BookingInput {
   items: BookingItemInput[];
 }
 
+/** POST /bookings. Plan 09d: the branch as for CreateQuotationRequest. */
 export interface CreateBookingRequest extends BookingInput {
   customerId: string;
+  branchId?: string | null;
 }
 
 /** POST /quotations/:id/booking: route, cargo and customer come from the approved quotation. */
@@ -793,6 +815,8 @@ export const FORM_REFUSALS = [
   // reason to close it without charges was given: params `shipment` and `drafts` (a count).
   'SHIPMENT_CLOSE_GOODS_ON_HAND',
   'SHIPMENT_CLOSE_NOT_INVOICED',
+  // A shipment with a distributor and no live full proof of delivery (plan 07, 6): `shipment`.
+  'SHIPMENT_CLOSE_NO_POD',
   // A booking that names an open container (booking drafts): it must fit the container.
   'CONTAINER_BOOKING_NOT_LCL_SEA',
   'CONTAINER_BOOKING_OTHER_PORT',
@@ -810,6 +834,8 @@ export const FORM_REFUSALS = [
   'ALLOCATION_NOT_APPROVED',
   'ALLOCATION_OTHER_CURRENCY',
   'ALLOCATION_EXCEEDS_BALANCE',
+  // Plan 09d: a receipt settles only its own branch's invoices; param `invoice`.
+  'ALLOCATION_OTHER_BRANCH',
   // An entry draft's branch (drafts saved with missing values): a draft with no customer or
   // shipment yet names its branch; one with them belongs to their branch.
   'BRANCH_REQUIRED',
@@ -897,6 +923,22 @@ export const FORM_REFUSALS = [
   'TRIP_UNDO_LATER_TRIP',
   'CONTAINER_REOPEN_HAS_COSTS',
   'CONTAINER_REOPEN_SHIPMENT_MOVED',
+  // A partner's manual commission adjustment (plan 07, 4.6): the amount is zero, has too many
+  // decimals or rounds to 0.00 USD; the partner is not on the shipment in that role; no exchange
+  // rate today for the currency.
+  'COMMISSION_AMOUNT_INVALID',
+  'COMMISSION_NOT_PARTNER',
+  'COMMISSION_NO_FX_RATE',
+  // Plan 07, 5: partner statements and the supplier bill made from one.
+  'STATEMENT_NOT_POSITIVE',
+  'PARTNER_NO_SUPPLIER',
+  'STATEMENT_ALREADY_BILLED',
+  'STATEMENT_BILLED',
+  'BILL_FROM_STATEMENT',
+  'STATEMENT_BILL_MISMATCH',
+  'PROFILE_NAME_REQUIRED',
+  'PROFILE_REVIEW_REQUIRED',
+  'PROFILE_VERSION_CONFLICT',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

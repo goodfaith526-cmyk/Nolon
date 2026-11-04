@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module.js';
 import { DocumentsModule } from '../documents/documents.module.js';
 import { DraftsModule } from '../drafts/drafts.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
@@ -13,7 +14,7 @@ import { WarehousesService } from './warehouses.service.js';
 import { WarehouseReportsService } from './warehouse-reports.service.js';
 
 @Module({
-  imports: [ShipmentsModule, DocumentsModule, DraftsModule, MasterDataModule],
+  imports: [ShipmentsModule, DocumentsModule, DraftsModule, MasterDataModule, AuditModule],
   controllers: [
     WarehousesController,
     ShipmentWarehouseController,

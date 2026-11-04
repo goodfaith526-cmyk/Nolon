@@ -37,6 +37,9 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 
 export const PERMISSION_MODULES = [
   'customers',
+  'customer_profiles',
+  'customer_profile_intake',
+  'customer_profile_followup',
   'rates',
   'rate_costs',
   'quotations',
@@ -56,6 +59,10 @@ export const PERMISSION_MODULES = [
   'suppliers',
   'partners',
   'partner_contracts',
+  // Plan 07 section 8: partner commissions (rule 16) and statements (rule 16a). view: rows,
+  // holds and statements; create: making a statement; update: cancelling a draft statement;
+  // approve: a manual adjustment (apart from making statements on purpose).
+  'partner_commissions',
   'supplier_payments',
   'expenses',
   'manual_journals',
@@ -77,6 +84,9 @@ export const PERMISSION_MODULES = [
   // Plan 04 section 4.1: how a customer pays, per branch and currency. create/update: drafts;
   // approve: by another person than its maker; cancel: retiring one.
   'payment_instructions',
+  // The bookings agent's admin panel (docs/plans/10-agent-admin-button.md): view shows the menu
+  // item that opens it. The panel itself decides who enters (its own list of admins).
+  'agent_admin',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -111,6 +121,9 @@ const LEVEL_ACTIONS: Record<Level, readonly PermissionAction[]> = {
  * own-trips filter (DRIVER_OWN_TRIPS_ONLY) narrow the rows.
  */
 export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
+  customer_profiles: 'NNNNNNNNNNN',
+  customer_profile_intake: 'NNNNNNNNNNN',
+  customer_profile_followup: 'NNNNNNNNNNN',
   customers: 'FVFFVVVVNFE',
   // Owner, 2026-10-19: only the Sales & Marketing Manager (and the Administrator) make, edit,
   // approve and cancel rate cards; every other role reads them, for every branch.
@@ -142,6 +155,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   partners: 'FVFVVVNNNFV',
   // Business model plan 3.4 and 4.1: a partner's commission contracts (settings only in batch 1).
   partner_contracts: 'FVVNNVNNNFN',
+  // Plan 07 section 8: Finance makes and cancels statements, the Branch Manager adjusts, and
+  // Management and the Sales & Marketing Manager read.
+  partner_commissions: 'FVANNENNNVN',
   supplier_payments: 'FVANNFNNNNN',
   expenses: 'FVANEFEEENN',
   manual_journals: 'FVNNNFNNNNN',
@@ -163,6 +179,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Plan 04 section 4.1 (⭐ proposed, in the owner's decisions file): Finance writes the drafts,
   // the Branch Manager approves and retires them (and Management approves), Sales reads them.
   payment_instructions: 'FAFVNENNNNN',
+  // The agent's request (2026-11-03): the owner and Shaker only. The Administrator sees the item;
+  // the owner gives agent_admin:view to anyone else on the permissions screen.
+  agent_admin: 'VNNNNNNNNNN',
 };
 
 /**
@@ -201,11 +220,15 @@ export function permissionModule(permission: Permission): PermissionModule {
  * any of their branches.
  */
 export const GLOBAL_MODULES: readonly PermissionModule[] = [
+  'customer_profiles',
+  'customer_profile_intake',
+  'customer_profile_followup',
   'master_data',
   'fx_rates',
   'alert_settings',
   'users',
   'access_control',
+  'agent_admin',
 ];
 
 /**
@@ -360,6 +383,11 @@ export interface AuthMeResponse {
    * true when the assistant allows NOLON's address to frame it; false: the button opens a new tab.
    */
   assistantPanel: boolean;
+  /**
+   * The bookings agent's admin panel (AGENT_ADMIN_URL), for a person who holds agent_admin:view;
+   * null otherwise or when none is configured. Opens in a new tab.
+   */
+  agentAdminUrl: string | null;
   /** Whether the users screen offers the Outlet Staff role (OUTLET_STAFF_ASSIGNABLE). */
   outletStaffAssignable: boolean;
 }

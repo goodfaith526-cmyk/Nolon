@@ -204,7 +204,7 @@ export class CustomerDraftsService {
       throwFirstConflict(
         await this.customers.duplicateIssues(
           this.prisma,
-          [{ branchId, phone: input.phone ?? undefined }],
+          [{ phone: input.phone ?? undefined }],
           user,
         ),
       );
@@ -282,9 +282,7 @@ export class CustomerDraftsService {
     phone: string,
     field: string,
   ): Promise<void> {
-    const [issue] = (
-      await this.customers.duplicateIssues(this.prisma, [{ branchId, phone }], user)
-    ).flat();
+    const [issue] = (await this.customers.duplicateIssues(this.prisma, [{ phone }], user)).flat();
     if (issue) {
       throw new ConflictException({
         message: issue.message,
@@ -463,11 +461,7 @@ export class CustomerDraftsService {
     // instead of proposing a duplicate; it is checked again under the lock on approval. A
     // replay is answered before this, even after its own approval took the phone.
     throwFirstConflict(
-      await this.customers.duplicateIssues(
-        tx,
-        [{ branchId, phone: input.phone ?? undefined }],
-        spec.user,
-      ),
+      await this.customers.duplicateIssues(tx, [{ phone: input.phone ?? undefined }], spec.user),
     );
     if (replaced) await replaceInTx(tx, replaced);
     const draft = await tx.customerDraft.create({
@@ -510,11 +504,7 @@ export class CustomerDraftsService {
       await requireBranchMemberInTx(tx, user, current.branchId);
       if (patch.phone) {
         throwFirstConflict(
-          await this.customers.duplicateIssues(
-            tx,
-            [{ branchId: current.branchId, phone: patch.phone }],
-            user,
-          ),
+          await this.customers.duplicateIssues(tx, [{ phone: patch.phone }], user),
         );
       }
       await tx.customerDraft.update({
@@ -700,7 +690,7 @@ export class CustomerDraftsService {
       throwFirstConflict(
         await this.customers.duplicateIssues(
           this.prisma,
-          [{ branchId: draft.branchId, phone: draft.phone ?? undefined }],
+          [{ phone: draft.phone ?? undefined }],
           user,
         ),
       );

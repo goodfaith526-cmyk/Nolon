@@ -225,7 +225,6 @@ describe('customer statement', () => {
       customerId: customer.id,
       customerNumber: customer.number,
       customerName: customer.name,
-      customerBranchId: pts,
       branchId: null,
       from: d('02-01'),
       to: later,
@@ -316,9 +315,13 @@ describe('customer statement', () => {
     expect(lines.every((l) => !l.detailsHidden && l.entryNumber !== null)).toBe(true);
   });
 
-  it('hides another branch’s customer (404) and refuses another branch (403)', async () => {
+  it('shows another branch’s customer with only the user’s own lines, and refuses another branch (403)', async () => {
     const query = `from=${d('01-01')}&to=${later}`;
-    await get(`/customer-statements/${customer.id}?${query}`, cookies.financeJed).expect(404);
+    // Plan 09d: the customer is central, the documents stay in their branch.
+    const jedView = (
+      await get(`/customer-statements/${customer.id}?${query}`, cookies.financeJed).expect(200)
+    ).body as CustomerStatementDto;
+    expect(jedView.sections).toEqual([]);
     await get(
       `/customer-statements/${customer.id}?${query}&branchId=${jed}`,
       cookies.financePts,

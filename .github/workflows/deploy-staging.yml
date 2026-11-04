@@ -46,6 +46,10 @@ jobs:
       ASSISTANT_URL: ${{ vars.STAGING_AGENT_ASSISTANT_URL }}
       # `true`: the assistant opens as a panel inside NOLON's pages. Empty: a new tab. Not secret.
       ASSISTANT_PANEL: ${{ vars.STAGING_AGENT_ASSISTANT_PANEL }}
+      # The bookings agent's admin panel, exactly as the agent gives it (e.g.
+      # https://assistant.example.com/agent-admin.html?tenant=nolon&signin=erp). Empty: no menu
+      # item. Shown only to holders of agent_admin:view. Not secret.
+      AGENT_ADMIN_URL: ${{ vars.STAGING_AGENT_ADMIN_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -270,6 +274,10 @@ jobs:
               *) echo "::error::STAGING_AGENT_ASSISTANT_PANEL must be true, false or empty"; exit 1 ;;
             esac
             echo "AGENT_ASSISTANT_PANEL='$ASSISTANT_PANEL'"
+            case "$AGENT_ADMIN_URL" in
+              *"'"*) echo "::error::STAGING_AGENT_ADMIN_URL must not contain a single quote"; exit 1 ;;
+            esac
+            echo "AGENT_ADMIN_URL='$AGENT_ADMIN_URL'"
             # The first Administrator (checked above). The seed creates it only if missing.
             echo "SEED_ADMIN_EMAIL='$SEED_ADMIN_EMAIL'"
             echo "SEED_ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD'"
@@ -302,11 +310,8 @@ jobs:
           # The backup tools are production's, shared (DEPLOY.md, Backups).
           (cd deploy/production && scp backup.sh backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
-          printf '%s' "$GHCR_TOKEN" | remote "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
-          status=0
-          remote "bash $dir/deploy.sh" || status=$?
-          remote "docker logout ghcr.io" || true
-          exit "$status"
+          # deploy.sh logs in and out inside its server-wide lock (Codex F183-1).
+          printf '%s' "$GHCR_TOKEN" | remote "bash $dir/deploy.sh --registry-login '${{ github.actor }}'"
 
       - name: Health check
         run: |
@@ -323,6 +328,23 @@ jobs:
             echo "::error::https://$SITE_DOMAIN/ar answered $code, expected $expected"
             exit 1
           fi
+
+      # What this run deployed, for Deploy production to take (deploy/production/staging-deployed.sh):
+      # with workflow_run, the run's own commit can be a later one than the commit checked out here.
+      # Last, so it exists only when the deploy and the health check passed.
+      - name: Record the deployed commit
+        id: deployed
+        run: |
+          mkdir -p "$RUNNER_TEMP/deployed"
+          git rev-parse HEAD > "$RUNNER_TEMP/deployed/sha"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staging-deployed-${{ steps.deployed.outputs.sha }}
+          path: ${{ runner.temp }}/deployed/sha
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Show container logs on failure
         # Only when SSH works; otherwise it would just repeat the SSH error.

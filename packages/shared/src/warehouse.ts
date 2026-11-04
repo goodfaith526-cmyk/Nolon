@@ -1,3 +1,4 @@
+import type { PartnerRefDto } from './partners.js';
 import type { DecimalString } from './currencies.js';
 import type { WarehouseOnHandRowDto } from './operational-reports.js';
 import type { ShipmentStatus } from './shipments.js';
@@ -20,6 +21,19 @@ export const WAREHOUSE_RECEIPT_STATUSES = [
 ] as const satisfies readonly ShipmentStatus[];
 export type WarehouseReceiptStatus = (typeof WAREHOUSE_RECEIPT_STATUSES)[number];
 
+/**
+ * What a warehouse does in the network (empty: an ordinary warehouse): a collection centre at an
+ * origin, the central distribution hub, a delivery centre in a destination city, or a small
+ * window where customers hand over goods (origins) or receivers collect them (Sudan).
+ */
+export const WAREHOUSE_KINDS = [
+  'COLLECTION_CENTER',
+  'DISTRIBUTION_HUB',
+  'DELIVERY_CENTER',
+  'DROP_OFF_POINT',
+] as const;
+export type WarehouseKind = (typeof WAREHOUSE_KINDS)[number];
+
 export interface StorageLocationDto {
   id: string;
   code: string;
@@ -36,6 +50,24 @@ export interface WarehouseDto {
   address: string | null;
   /** The place the warehouse is at (a port, city or yard of the locations master), if set. */
   locationId: string | null;
+  kind: WarehouseKind | null;
+  /** E.164, the number customers call. */
+  phone: string | null;
+  /** Map position in WGS 84 degrees, both set or both null. */
+  latitude: DecimalString | null;
+  longitude: DecimalString | null;
+  /** Plan 09 section 11: the English address (`address` is the Arabic one). */
+  addressEn: string | null;
+  /** Customers bring their shipments here (a drop-off point the bot may name). */
+  acceptsDropOff: boolean;
+  /** The sales outlet a drop-off window belongs to, if any. */
+  partnerId: string | null;
+  partner: PartnerRefDto | null;
+  /** https only; when null the bot gets a link built from the map position. */
+  mapUrl: string | null;
+  /** Opening hours as customers read them. */
+  hoursAr: string | null;
+  hoursEn: string | null;
   isActive: boolean;
   storageLocations: StorageLocationDto[];
 }
@@ -57,6 +89,16 @@ export interface WarehouseUpdateRequest {
   address?: string | null;
   locationId?: string | null;
   isActive?: boolean;
+  /** Plan 09 section 11: the drop-off details (latitude and longitude both set or both null). */
+  addressEn?: string | null;
+  acceptsDropOff?: boolean;
+  partnerId?: string | null;
+  mapUrl?: string | null;
+  hoursAr?: string | null;
+  hoursEn?: string | null;
+  phone?: string | null;
+  latitude?: DecimalString | null;
+  longitude?: DecimalString | null;
 }
 
 export interface StorageLocationInput {

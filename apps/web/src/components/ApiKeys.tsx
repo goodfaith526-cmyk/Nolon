@@ -3,12 +3,15 @@
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
+  CS_REQUEST_SERVICES,
   CS_SCOPES,
+  type CsRequestService,
   type CsScope,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
+import { ApiKeyWebhooks } from './ApiKeyWebhooks';
 import { field } from '@/lib/form';
 import { useLocalName } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from './commercial/Notice';
@@ -26,9 +29,14 @@ function checkedScopes(f: FormData): CsScope[] {
   return CS_SCOPES.filter((s) => given.has(s));
 }
 
+function checkedServices(f: FormData): CsRequestService[] {
+  const given = new Set(f.getAll('services'));
+  return CS_REQUEST_SERVICES.filter((s) => given.has(s));
+}
+
 /**
  * Customer Service API keys (the /cs/* routes, a key per client): made, listed, given scopes and
- * revoked here. A key holds no scope until one is ticked.
+ * revoked here. A key holds no scope until one is ticked; its bot offers the ticked services only.
  */
 export function ApiKeys() {
   const t = useTranslations('ApiKeys');
@@ -46,6 +54,7 @@ export function ApiKeys() {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [notices, setNotices] = useState<string | null>(null);
 
   if (!can(me, 'users:view')) return <p className="error">{tc('noAccess')}</p>;
   if (!clients) {
@@ -62,7 +71,12 @@ export function ApiKeys() {
     try {
       const made = await api<ApiClientCreatedDto>('/api-clients', {
         method: 'POST',
-        body: { name: field(f, 'name').trim(), branchIds, scopes: checkedScopes(f) },
+        body: {
+          name: field(f, 'name').trim(),
+          branchIds,
+          scopes: checkedScopes(f),
+          services: checkedServices(f),
+        },
       });
       setCreated(made);
       setRecord([made.client, ...(clients ?? [])]);
@@ -80,9 +94,13 @@ export function ApiKeys() {
     setBusy(true);
     setNotice(null);
     try {
-      const done = await api<ApiClientDto>(`/api-clients/${id}/scopes`, {
+      await api<ApiClientDto>(`/api-clients/${id}/scopes`, {
         method: 'PUT',
         body: { scopes: checkedScopes(f) },
+      });
+      const done = await api<ApiClientDto>(`/api-clients/${id}/services`, {
+        method: 'PUT',
+        body: { services: checkedServices(f) },
       });
       setRecord((clients ?? []).map((c) => (c.id === id ? done : c)));
       setEditing(null);
@@ -104,6 +122,23 @@ export function ApiKeys() {
             <label key={s}>
               <input type="checkbox" name="scopes" value={s} defaultChecked={held.includes(s)} />
               {t(scopeKey(s))}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    );
+  }
+
+  function serviceChecks(held: readonly CsRequestService[]) {
+    return (
+      <fieldset>
+        <legend>{t('services')}</legend>
+        <p className="muted">{t('servicesHint')}</p>
+        <div className="checks">
+          {CS_REQUEST_SERVICES.map((s) => (
+            <label key={s}>
+              <input type="checkbox" name="services" value={s} defaultChecked={held.includes(s)} />
+              {t(`service_${s}`)}
             </label>
           ))}
         </div>
@@ -170,6 +205,7 @@ export function ApiKeys() {
             </div>
           </fieldset>
           {scopeChecks([])}
+          {serviceChecks(CS_REQUEST_SERVICES)}
           <div className="actions">
             <button type="submit" className="primary" disabled={busy}>
               {t('create')}
@@ -208,6 +244,7 @@ export function ApiKeys() {
                     {editing === c.id ? (
                       <form className="stack" onSubmit={(e) => void onScopes(e, c.id)}>
                         {scopeChecks(c.scopes)}
+                        {serviceChecks(c.services)}
                         <div className="actions">
                           <button type="submit" className="button small primary" disabled={busy}>
                             {t('saveScopes')}
@@ -226,6 +263,12 @@ export function ApiKeys() {
                         {c.scopes.map((s) => (
                           <li key={s}>{t(scopeKey(s))}</li>
                         ))}
+                        {c.services.map((s) => (
+                          <li key={s} className="muted">
+                            {t(`service_${s}`)}
+                          </li>
+                        ))}
+                        {c.services.length === 0 && <li className="muted">{t('noServices')}</li>}
                       </ul>
                     )}
                   </td>
@@ -244,6 +287,13 @@ export function ApiKeys() {
                         {t('editScopes')}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="button small"
+                      onClick={() => setNotices(notices === c.id ? null : c.id)}
+                    >
+                      {t('webhooks')}
+                    </button>
                     {c.isActive && can(me, 'users:update') && (
                       <button
                         type="button"
@@ -261,6 +311,12 @@ export function ApiKeys() {
           </table>
         </div>
       )}
+      {(() => {
+        const shown = clients.find((c) => c.id === notices);
+        return shown ? (
+          <ApiKeyWebhooks key={shown.id} client={shown} onClose={() => setNotices(null)} />
+        ) : null;
+      })()}
     </section>
   );
 }

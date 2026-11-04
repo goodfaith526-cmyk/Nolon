@@ -23,6 +23,11 @@ vi.mock('@/lib/api', async (actual) => ({
   api: (...args: unknown[]) => api(...args) as unknown,
 }));
 vi.mock('../StaffShell', () => ({ useMe: () => ME, can: () => true }));
+vi.mock('../partners/PartnerSelect', () => ({
+  PartnerSelect: () => null,
+  partnerChange: (held: { id: string } | null, value: string) =>
+    value === (held?.id ?? '') ? undefined : value || null,
+}));
 vi.mock('../StatusBadge', () => ({ StatusBadge: ({ status }: { status: string }) => status }));
 vi.mock('../commercial/Notice', async (actual) => ({
   ...(await actual<typeof import('../commercial/Notice')>()),
@@ -38,18 +43,33 @@ async function flush() {
   });
 }
 
-const warehouse = (id: string, code: string) =>
-  ({
-    id,
-    branchId: 'b1',
-    code,
-    nameEn: code,
-    nameAr: code,
-    address: null,
-    locationId: null,
-    isActive: true,
-    storageLocations: [],
-  }) as WarehouseDto;
+const warehouse = (
+  id: string,
+  code: string,
+  details: Partial<WarehouseDto> = {},
+): WarehouseDto => ({
+  id,
+  branchId: 'b1',
+  code,
+  nameEn: code,
+  nameAr: code,
+  address: null,
+  locationId: null,
+  kind: null,
+  phone: null,
+  latitude: null,
+  longitude: null,
+  addressEn: null,
+  acceptsDropOff: false,
+  partnerId: null,
+  partner: null,
+  mapUrl: null,
+  hoursAr: null,
+  hoursEn: null,
+  isActive: true,
+  storageLocations: [],
+  ...details,
+});
 
 const stock: WarehouseStockDto = {
   asOf: '2026-10-28',
@@ -92,7 +112,15 @@ describe('Warehouses: the shipments in each warehouse now', () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(
         path === '/warehouses'
-          ? [warehouse('w1', 'DXB-1'), warehouse('w2', 'DXB-2')]
+          ? [
+              warehouse('w1', 'DXB-1'),
+              warehouse('w2', 'DXB-2', {
+                kind: 'DROP_OFF_POINT',
+                phone: '+971500000203',
+                latitude: '25.271',
+                longitude: '55.308',
+              }),
+            ]
           : path === '/warehouses/stock'
             ? stock
             : { locations: [] },
@@ -115,6 +143,74 @@ describe('Warehouses: the shipments in each warehouse now', () => {
     expect(w2?.textContent).toContain('stockTitle {"shipments":0,"packages":0}');
     expect(w2?.textContent).toContain('stockNone');
     expect(w2?.textContent).not.toContain('NOL-SHP-1');
+    act(() => root.unmount());
+  });
+
+  it('shows a facility its kind, phone and map link, and an ordinary warehouse none', async () => {
+    const root = createRoot(el);
+    act(() => root.render(<Warehouses />));
+    await flush();
+    const [w1, w2] = [...el.querySelectorAll('.panel')].slice(1);
+    expect(w1?.textContent).not.toContain('kind.');
+    expect(w1?.querySelector('a[href^="tel:"]')).toBeNull();
+    expect(w2?.textContent).toContain('kind.DROP_OFF_POINT');
+    expect(w2?.querySelector('a[href="tel:+971500000203"]')?.textContent).toBe('+971500000203');
+    const map = w2?.querySelector('a[target="_blank"]');
+    expect(map?.getAttribute('href')).toBe(
+      'https://www.google.com/maps/search/?api=1&query=25.271,55.308',
+    );
+    expect(map?.getAttribute('rel')).toBe('noopener noreferrer');
+    act(() => root.unmount());
+  });
+
+  it('shows a drop-off point its hours and own map link, and saves its details (plan 09 section 11)', async () => {
+    api.mockImplementation((path: string, init?: { method?: string }) =>
+      Promise.resolve(
+        init?.method === 'PATCH'
+          ? {}
+          : path === '/warehouses'
+            ? [
+                warehouse('w3', 'DXB-3', {
+                  acceptsDropOff: true,
+                  hoursEn: 'Sat to Thu, 9 to 9',
+                  latitude: '25.271',
+                  longitude: '55.308',
+                  mapUrl: 'https://maps.example/p',
+                }),
+              ]
+            : path === '/warehouses/stock'
+              ? stock
+              : { locations: [] },
+      ),
+    );
+    const root = createRoot(el);
+    act(() => root.render(<Warehouses />));
+    await flush();
+    const panel = [...el.querySelectorAll('.panel')].at(-1);
+    expect(panel?.textContent).toContain('acceptsDropOff');
+    expect(panel?.textContent).toContain('Sat to Thu, 9 to 9');
+    expect(panel?.querySelector('a[target="_blank"]')?.getAttribute('href')).toBe(
+      'https://maps.example/p',
+    );
+    const form = panel?.querySelector('details form') as HTMLFormElement;
+    (form.querySelector('input[name="hoursAr"]') as HTMLInputElement).value = '  من 9 إلى 9 ';
+    act(() => form.requestSubmit());
+    await flush();
+    const patch = api.mock.calls.find(
+      ([, init]) => (init as { method?: string })?.method === 'PATCH',
+    );
+    expect(patch?.[0]).toBe('/warehouses/w3');
+    expect((patch?.[1] as { body: unknown }).body).toEqual({
+      acceptsDropOff: true,
+      address: null,
+      addressEn: null,
+      hoursAr: 'من 9 إلى 9',
+      hoursEn: 'Sat to Thu, 9 to 9',
+      phone: null,
+      mapUrl: 'https://maps.example/p',
+      latitude: '25.271',
+      longitude: '55.308',
+    });
     act(() => root.unmount());
   });
 });

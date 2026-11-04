@@ -2299,6 +2299,43 @@ tr.subtotal td {
   white-space: normal;
 }
 
+/* A record in a window of its own: its number, big, heads the window (owner ask 2026-11-03);
+   the kind (shipment / booking) sits small above it. */
+.standalone-root .page-head h1 {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+}
+
+.standalone-root .record-kind {
+  color: var(--muted);
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.standalone-root .record-number {
+  font-size: 2.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+/* A shipment or booking in a window of its own (/standalone/...): links to other pages are switched off
+   (standalone-links.ts). A link in text reads as plain text; a link styled as a button (a page
+   action, such as a new trip) is not shown at all. */
+.standalone-root a[data-standalone-blocked] {
+  pointer-events: none;
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+}
+
+.standalone-root a.button[data-standalone-blocked],
+.standalone-root .more-menu-list > a[data-standalone-blocked] {
+  display: none;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Printouts (/print/...): an A4 document on screen and on paper. Print colors are fixed (black
    on white, whatever the screen theme). Logical properties only, so Arabic and English both lay
@@ -3881,4 +3918,18 @@ span.capacity-full {
 .capacity-incomplete ul {
   margin: 0;
   padding-inline-start: 1.25rem;
+}
+
+/* A shipment number with its "open in its own window" button beside it (shipments list). */
+.number-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.window-button {
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: 0.25rem;
+  color: var(--muted);
 }

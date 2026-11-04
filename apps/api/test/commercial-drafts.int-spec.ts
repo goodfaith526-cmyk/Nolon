@@ -43,8 +43,14 @@ let jebelAli: string;
 let portSudan: string;
 
 const cookies = { admin: '', salesDxb: '', salesJed: '', opsDxb: '', branchMgrDxb: '' };
-const agentCookies = { salesAgent: '', opsAgent: '', whAgent: '', salesJedAgent: '' };
-const tokens = { sales: '', salesOther: '', ops: '', wh: '', salesJed: '' };
+const agentCookies = {
+  salesAgent: '',
+  opsAgent: '',
+  whAgent: '',
+  salesJedAgent: '',
+  salesTwoAgent: '',
+};
+const tokens = { sales: '', salesOther: '', ops: '', wh: '', salesJed: '', salesTwo: '' };
 
 const tomorrowPlus = (days: number) =>
   new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
@@ -132,6 +138,7 @@ beforeAll(async () => {
     opsAgent: await createUser(t.prisma, ['OPERATIONS'], ['DXB'], AGENT_PREFIX),
     whAgent: await createUser(t.prisma, ['WAREHOUSE'], ['DXB'], AGENT_PREFIX),
     salesJedAgent: await createUser(t.prisma, ['SALES'], ['JED'], AGENT_PREFIX),
+    salesTwoAgent: await createUser(t.prisma, ['SALES'], ['DXB', 'PTS'], AGENT_PREFIX),
   };
   for (const key of Object.keys(assistantUsers) as (keyof typeof assistantUsers)[]) {
     agentCookies[key] = await signIn(t, assistantUsers[key].email);
@@ -143,6 +150,7 @@ beforeAll(async () => {
   tokens.ops = await tokenFor(t, agentCookies.opsAgent, client);
   tokens.wh = await tokenFor(t, agentCookies.whAgent, client);
   tokens.salesJed = await tokenFor(t, agentCookies.salesJedAgent, client);
+  tokens.salesTwo = await tokenFor(t, agentCookies.salesTwoAgent, client);
 
   const newCustomer = async (branch: string, cookie: string, name: string) => {
     const created = (
@@ -223,9 +231,40 @@ describe('quotation drafts: the assistant proposes', () => {
       .expect(404);
   });
 
-  it('refuses a customer of another branch, as NOLON would', async () => {
-    await createQuotationDraft(quotationRequest(), tokens.salesJed).expect(404);
-    await createQuotationDraft(quotationRequest({ customerId: jedCustomer.id })).expect(404);
+  it('drafts in the branch the user writes in; a customer has no branch (plan 09f)', async () => {
+    const jed = await branchId(t.prisma, 'JED');
+    const pts = await branchId(t.prisma, 'PTS');
+    const branchOf = async (res: { body: unknown }) =>
+      (
+        await t.prisma.quotationDraft.findUniqueOrThrow({
+          where: { id: (res.body as EntryDraftSummaryDto).id },
+        })
+      ).branchId;
+    // One writable branch: that one.
+    expect(
+      await branchOf(await createQuotationDraft(quotationRequest(), tokens.salesJed).expect(201)),
+    ).toBe(jed);
+    // Several: the branch must be named (a field refusal), whatever the customer; then it is used.
+    for (const customerId of [undefined, jedCustomer.id]) {
+      const ask = await createQuotationDraft(
+        quotationRequest(customerId ? { customerId } : {}),
+        tokens.salesTwo,
+      ).expect(400);
+      expect(ask.body).toMatchObject({ code: 'BRANCH_REQUIRED', fields: ['branchId'] });
+    }
+    expect(
+      await branchOf(
+        await createQuotationDraft(
+          quotationRequest({ customerId: jedCustomer.id, branchId: pts }),
+          tokens.salesTwo,
+        ).expect(201),
+      ),
+    ).toBe(pts);
+    // Never a branch the user does not write in.
+    await createQuotationDraft(
+      quotationRequest({ customerId: jedCustomer.id, branchId: jed }),
+      tokens.salesTwo,
+    ).expect(403);
   });
 
   it('refuses a user without quotations:create', async () => {
@@ -560,7 +599,8 @@ describe('booking drafts', () => {
   });
 
   it('is branch-scoped and permission-checked like bookings', async () => {
-    await createBookingDraft(bookingRequest({ customerId: jedCustomer.id })).expect(404);
+    // Plan 09d: the JED customer is booked in the user's branch.
+    await createBookingDraft(bookingRequest({ customerId: jedCustomer.id })).expect(201);
     await createBookingDraft(bookingRequest(), tokens.wh).expect(403);
     const draft = await bookingDraft();
     await r.get(`/booking-drafts/${draft.id}`, cookies.salesJed).expect(404);
@@ -835,17 +875,17 @@ describe("booking drafts from a quotation: the quotation's branch", () => {
     expect(draft.branchId).toBe(dxb);
   });
 
-  it("refuses a quotation whose branch is not its customer's", async () => {
+  it("books a quotation of another branch than its customer's in the quotation's branch (plan 09d)", async () => {
     const quotationId = await approvedQuotation();
     const jed = await branchId(t.prisma, 'JED');
-    // Never made by NOLON (a quotation is priced in its customer's branch): forced here.
     await t.prisma.quotation.update({ where: { id: quotationId }, data: { branchId: jed } });
-    const bookings = await t.prisma.booking.count({ where: { quotationId } });
-    await r
-      .post(`/bookings/from-quotation/${quotationId}`, cookies.admin, {
-        items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
-      })
-      .expect(409);
-    expect(await t.prisma.booking.count({ where: { quotationId } })).toBe(bookings);
+    const made = (
+      await r
+        .post(`/bookings/from-quotation/${quotationId}`, cookies.admin, {
+          items: [{ cargoType: 'CONTAINER', containerTypeCode: '40HC', quantity: 1 }],
+        })
+        .expect(201)
+    ).body as { branchId: string };
+    expect(made.branchId).toBe(jed);
   });
 });

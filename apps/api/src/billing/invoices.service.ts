@@ -32,7 +32,7 @@ import { AutoJournalService } from '../accounting/auto-journal.service.js';
 import { FxRatesService } from '../accounting/fx-rates.service.js';
 import { toUsd } from '../accounting/journal-math.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { branchScope, reportBranchIds } from '../auth/branch-scope.js';
+import { branchScope, reportBranchIds, workBranch } from '../auth/branch-scope.js';
 import { fromDbDate, toDbDate, todayIn } from '../common/dates.js';
 import { beforeLocalToday, branchZones, dateRange } from '../common/list-filters.js';
 import { uuidList } from '../common/report-sql.js';
@@ -61,6 +61,9 @@ import {
   ShipmentInvoicesRegistry,
 } from '../shipments/shipment-invoices.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
+import { AccountsService } from '../accounting/accounts.service.js';
+import type { CommissionInvoice } from '../commissions/commission-math.js';
 import { computeInvoiceAmounts } from './invoice-math.js';
 import { isLiveInvoice } from './live-invoice.js';
 import {
@@ -204,6 +207,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     private readonly masterData: MasterDataService,
     private readonly rates: RatesService,
     private readonly shipmentInvoices: ShipmentInvoicesRegistry,
+    private readonly commissions: CommissionTriggers,
+    private readonly accounts: AccountsService,
   ) {}
 
   onModuleInit(): void {
@@ -222,6 +227,36 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       approved: live.flatMap((i) => (i.status === 'APPROVED' && i.number ? [i.number] : [])),
       drafts: live.filter((i) => i.status === 'DRAFT').length,
     };
+  }
+
+  /**
+   * For a percentage commission (plan 07, 4.2), in the caller's transaction: the shipment's
+   * approved invoices (not opening items), each with its lines that are not reimbursable charges
+   * and the credit notes approved against it.
+   */
+  async commissionInvoicesInTx(
+    tx: Tx,
+    shipmentId: string,
+  ): Promise<(CommissionInvoice & { invoiceDate: string })[]> {
+    const invoices = await tx.customerInvoice.findMany({
+      where: { shipmentId, status: 'APPROVED', isOpening: false },
+      include: { lines: { select: { chargeTypeCode: true, lineTotal: true } } },
+      orderBy: [{ invoiceDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    const reimbursable = await this.accounts.reimbursableCodes(
+      tx,
+      invoices.flatMap((i) => i.lines.map((l) => l.chargeTypeCode)),
+    );
+    return invoices.map((i) => ({
+      currency: i.currency,
+      fxRate: i.fxRate,
+      total: i.total,
+      credited: i.creditedAmount,
+      commissionable: i.lines
+        .filter((l) => !reimbursable.has(l.chargeTypeCode))
+        .reduce((sum, l) => sum.plus(l.lineTotal), dec(0)),
+      invoiceDate: fromDbDate(i.invoiceDate),
+    }));
   }
 
   async list(user: AuthUser, filters: InvoiceFilters): Promise<Page<CustomerInvoiceSummaryDto>> {
@@ -301,13 +336,12 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     customerId: string,
     currency: string | undefined,
     limit: number,
+    branchId?: string,
   ): Promise<ReceiptOpenInvoiceDto[]> {
     const customer = await this.customers.requireCustomer(user, customerId);
-    const ids = await this.settlementIds(
-      reportBranchIds(user, customer.branchId),
-      'OPEN',
-      customer.id,
-    );
+    // Plan 09d: the customer's open invoices in the user's branches (or the one asked for: a
+    // receipt settles invoices of its own branch only).
+    const ids = await this.settlementIds(reportBranchIds(user, branchId), 'OPEN', customer.id);
     const invoices = await this.prisma.customerInvoice.findMany({
       where: { id: { in: ids }, ...(currency ? { currency } : {}) },
       orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
@@ -359,6 +393,8 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     input: OpeningCustomerItemRequest,
   ): Promise<CustomerInvoiceDto> {
     const customer = await this.customers.requireCustomer(user, input.customerId);
+    // Plan 09d: the opening item is the branch's that carries it, not the customer's by rule.
+    const branchId = workBranch(user, 'manual_journals:create', input.branchId);
     if (input.dueDate < input.invoiceDate) {
       throw new BadRequestException('The due date is before the invoice date');
     }
@@ -368,7 +404,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const existing = await this.prisma.customerInvoice.findUnique({
       where: { id: input.requestId },
     });
-    if (existing) return this.sameOpeningRequest(user, existing, input);
+    if (existing) return this.sameOpeningRequest(user, existing, input, branchId);
     const amount = dec(input.amount);
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -392,7 +428,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
             sourceId: input.requestId,
             number,
             reference: input.reference,
-            branchId: customer.branchId,
+            branchId,
             customerId: customer.id,
             entryDate: input.entryDate,
             currency: currency.code,
@@ -406,7 +442,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           data: {
             id: input.requestId,
             number,
-            branchId: customer.branchId,
+            branchId,
             customerId: customer.id,
             isOpening: true,
             reference: input.reference,
@@ -433,7 +469,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         where: { id: input.requestId },
       });
       if (!raced) throw error;
-      return this.sameOpeningRequest(user, raced, input);
+      return this.sameOpeningRequest(user, raced, input, branchId);
     }
     return this.get(user, input.requestId);
   }
@@ -442,6 +478,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     user: AuthUser,
     existing: CustomerInvoice,
     input: OpeningCustomerItemRequest,
+    branchId: string,
   ): Promise<CustomerInvoiceDto> {
     const entry = existing.journalEntryId
       ? await this.prisma.journalEntry.findUnique({
@@ -460,7 +497,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       fromDbDate(existing.invoiceDate) === input.invoiceDate &&
       fromDbDate(existing.dueDate) === input.dueDate &&
       existing.reference === input.reference &&
-      existing.total.eq(dec(input.amount));
+      existing.total.eq(dec(input.amount)) &&
+      // Plan 09d (F184-8): the retry's work branch is the one the item was recorded in.
+      existing.branchId === branchId;
     if (!same) {
       throw new ConflictException('This request id was already used: send a new id');
     }
@@ -1190,6 +1229,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
       // The shipment first, then the invoice: the order a shipment's cancellation takes them in.
       await this.lockShipmentInvoices(tx, shipmentId);
       await lockStatus(tx, id, 'DRAFT');
+      await this.commissions.lockInTx(tx, shipmentId);
       const invoice = await tx.customerInvoice.findUniqueOrThrow({
         where: { id },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -1230,6 +1270,14 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           approvedById: user.id,
         },
       });
+      // The INVOICED event, and a percentage's base (plan 07, 4.2), on the invoice's date.
+      await this.commissions.shipmentChangedInTx(
+        tx,
+        user,
+        shipmentId,
+        'INVOICE_APPROVED',
+        invoiceDate,
+      );
     });
     return this.get(user, existing.id);
   }

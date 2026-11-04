@@ -1,3 +1,4 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
   Body,
   Controller,
@@ -8,8 +9,14 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  StreamableFile,
+  UseFilters,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
+  CS_REQUEST_ITEMS_MAX,
+  CS_ESTIMATE_NOTE_MAX,
   CS_REVIEW_FILTERS,
   LOAD_TYPES,
   SHIPPING_MODES,
@@ -22,7 +29,14 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, RequirePermission } from '../auth/decorators.js';
 import { bookingCreateBody } from '../bookings/bookings.controller.js';
-import { currencyCode, optionalText, parse, quantity, requiredText } from '../common/validation.js';
+import {
+  amount,
+  currencyCode,
+  optionalText,
+  parse,
+  quantity,
+  requiredText,
+} from '../common/validation.js';
 import { BookingReviewService, mayReview } from './booking-review.service.js';
 
 /**
@@ -39,6 +53,27 @@ function requireReviewer(user: AuthUser): AuthUser {
 const listQuery = z.object({ state: z.enum(CS_REVIEW_FILTERS).default('open') }).strict();
 const version = z.number().int().min(1);
 const routeBody = z.object({ version, branchId: z.uuid() }).strict();
+const closeBody = z.object({ version }).strict();
+/** Plan 09 section 12: staff's estimate of a request with an item outside the categories. */
+const estimateBody = z
+  .object({
+    version,
+    amount: amount.refine((v) => /[1-9]/.test(v), 'Must be above zero'),
+    currency: currencyCode,
+    // Codex F171-2: the route, mode and load type the estimate prices.
+    terms: z
+      .object({
+        originId: z.uuid(),
+        destinationId: z.uuid(),
+        mode: z.enum(SHIPPING_MODES),
+        loadType: z.enum(LOAD_TYPES).nullish(),
+      })
+      .strict(),
+    noteAr: optionalText(CS_ESTIMATE_NOTE_MAX),
+    noteEn: optionalText(CS_ESTIMATE_NOTE_MAX),
+    validUntil: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 const reasonCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'A code of capitals, digits and _');
 const rejectBody = z
   .object({ version, reasonCode, internalNote: optionalText(1000).optional() })
@@ -54,26 +89,45 @@ const priceInputs = z
     currency: currencyCode,
   })
   .strict();
+const fingerprint = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/)
+  .nullable();
+// Plan 09 section 4: a request with items is priced per line, in order (the service checks the
+// count and the shape against the request's items).
+const approveLine = z
+  .object({
+    category: z.string().trim().toUpperCase().min(1).max(20),
+    quantity,
+    pricingFingerprint: fingerprint,
+  })
+  .strict();
 const approveBody = z
   .object({
     version,
     paymentCurrency: currencyCode,
-    pricing: priceInputs,
-    pricingFingerprint: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .nullable(),
+    profileVersion: version.optional(),
+    pricing: priceInputs.partial({ category: true, quantity: true }),
+    lines: z.array(approveLine).min(1).max(CS_REQUEST_ITEMS_MAX).optional(),
+    dropOffId: z.uuid().optional(),
+    pricingFingerprint: fingerprint.optional(),
     // F137-1: route, mode, load type and cargo come from `pricing`; the booking has no line.
-    booking: bookingCreateBody.omit({
-      originLocationId: true,
-      destinationLocationId: true,
-      mode: true,
-      loadType: true,
-      cargoType: true,
-      items: true,
-    }),
+    booking: bookingCreateBody
+      .omit({
+        branchId: true,
+        originLocationId: true,
+        destinationLocationId: true,
+        mode: true,
+        loadType: true,
+        cargoType: true,
+        items: true,
+      })
+      .partial({ customerId: true }),
+    newCustomerFromRequest: z.literal(true).optional(),
   })
   .strict();
+const resolveBody = z.object({ bookingItemId: z.uuid() }).strict();
+const dropOffBody = z.object({ version, dropOffId: z.uuid() }).strict();
 const reasonBody = z
   .object({ textAr: requiredText(300), textEn: requiredText(300), isActive: z.boolean() })
   .strict();
@@ -83,6 +137,7 @@ const reasonBody = z
  * never an API key. Approval makes the booking with the ordinary create checks (R3-ج2).
  */
 @Controller('cs-booking-requests')
+@UseFilters(CustomerIdentityFilter)
 export class BookingReviewController {
   constructor(private readonly review: BookingReviewService) {}
 
@@ -149,6 +204,76 @@ export class BookingReviewController {
     @Body() body: unknown,
   ): Promise<CsBookingRequestStaffDto> {
     return this.review.reject(user, id, parse(rejectBody, body));
+  }
+
+  /** Plan 09 section 12: staff price a request with an item outside the standard categories. */
+  @Post(':id/estimate')
+  @RequirePermission('cs_booking_requests:approve')
+  estimate(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.estimate(user, id, parse(estimateBody, body));
+  }
+
+  /**
+   * Plan 09 section 12: a photo the customer sent, shown inline in its stored type and never
+   * sniffed as anything else.
+   */
+  @Get(':id/photos/:photoId')
+  @RequirePermission('cs_booking_requests:view')
+  async photo(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const photo = await this.review.photo(user, id, photoId);
+    res.set({
+      'Content-Type': photo.contentType,
+      'Content-Disposition': 'inline',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    });
+    return new StreamableFile(photo.content);
+  }
+
+  /** Plan 09 section 11: the drop-off point of an approved request, corrected. */
+  @Post(':id/drop-off')
+  @RequirePermission('cs_booking_requests:approve')
+  setDropOff(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.setDropOff(user, id, parse(dropOffBody, body));
+  }
+
+  /**
+   * Plan 09 section 4: an item that made no booking line, linked to the line staff added. On the
+   * request (not /bookings) so the bookings module never reads the customer service's tables.
+   */
+  @Post(':id/items/:itemId/resolve')
+  @RequirePermission('bookings:update')
+  resolveItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.resolveItem(user, id, itemId, parse(resolveBody, body));
+  }
+
+  /** Plan 09 section 2: the customer's cancel ask on an approved request, handled. */
+  @Post(':id/cancel-request/close')
+  @RequirePermission('cs_booking_requests:approve')
+  closeCancelRequest(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsBookingRequestStaffDto> {
+    return this.review.closeCancelRequest(user, id, parse(closeBody, body));
   }
 }
 

@@ -7,6 +7,7 @@ import { Link, useRouter } from '@/i18n/navigation';
 import { api } from '@/lib/api';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { useStandalone } from '../standalone/StandaloneShell';
 import { StatusBadge } from '../StatusBadge';
 import { InvoiceKindLabel, InvoiceNumber } from './Invoices';
 import { Money } from './common';
@@ -20,6 +21,8 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
   const t = useTranslations('Invoices');
   const me = useMe();
   const router = useRouter();
+  // A standalone window stays on its shipment: a new invoice is started from the system itself.
+  const standalone = useStandalone();
   const failure = useFailureText();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummaryDto[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,7 +92,7 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
     <div className="panel">
       <div className="panel-head">
         <h2>{t('title')}</h2>
-        {can(me, 'customer_invoices:create') && (
+        {can(me, 'customer_invoices:create') && !standalone && (
           <button
             type="button"
             className="primary"

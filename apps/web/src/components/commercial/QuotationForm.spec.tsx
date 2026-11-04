@@ -114,11 +114,12 @@ describe('QuotationForm new quotation defaults (functional review B3, B4, B6)', 
     api.mockImplementation((path: string) => {
       if (path.startsWith('/customers?')) {
         const id = path.includes('Second') ? 'c2' : 'c1';
-        const customer = { id, name: id, number: id, branchId: 'b1', isActive: true };
+        const customer = { id, name: id, number: id, isActive: true };
         return Promise.resolve({ items: [customer], total: 1, page: 1, pageSize: 20 });
       }
       if (path.startsWith('/quotations/defaults?customerId=')) {
-        return Promise.resolve(defaults[path.split('=')[1] ?? '']);
+        expect(path).toContain('&branchId=b1');
+        return Promise.resolve(defaults[path.split('=')[1]?.split('&')[0] ?? '']);
       }
       if (path.startsWith('/rates?')) {
         return Promise.resolve({ items: [rate], total: 1, page: 1, pageSize: 100 });

@@ -188,10 +188,11 @@ describe('Customer tokens (N1/N2)', () => {
     for (const phone of [uniquePhone(), silentPhone]) {
       expect((await issue(bot.key, { phone }).expect(200)).body).toEqual({ kind: 'none' });
     }
-    // A customer of another branch than the key's: not matched.
-    expect((await issue(jedBot.key, { phone: alphaPhone }).expect(200)).body).toEqual({
-      kind: 'none',
-    });
+    // Customers are central (plan 09f): a key of another branch matches the same customer.
+    expect(
+      ((await issue(jedBot.key, { phone: alphaPhone }).expect(200)).body as { customer: unknown })
+        .customer,
+    ).toMatchObject({ number: alpha.number });
     // Only a verified +E.164 number, and no unknown field.
     await issue(bot.key, { phone: '0912345678' }).expect(400);
     await issue(bot.key, { phone: alphaPhone, customerId: alpha.id }).expect(400);
@@ -295,7 +296,7 @@ describe('Customer tokens (N1/N2)', () => {
       phone: uniquePhone(),
       name: `Delta ${tag}`,
     });
-    const before = await token(bot.key, own.phone);
+    const before = await token(bot.key, own.phone!);
     await me('/shipments', before.token).expect(200);
     await patch(`/customers/${own.id}`, cookies.salesPts, { phone: uniquePhone() }).expect(200);
     await revokedBy(before.token);
@@ -326,7 +327,7 @@ describe('Customer tokens (N1/N2)', () => {
       phone: uniquePhone(),
       name: `Zeta ${tag}`,
     });
-    const zetaToken = await token(bot.key, zeta.phone);
+    const zetaToken = await token(bot.key, zeta.phone!);
     await post(`/customers/${zeta.id}/deactivate`, cookies.salesPts).expect(200);
     await revokedBy(zetaToken.token);
 

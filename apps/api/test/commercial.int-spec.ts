@@ -212,22 +212,79 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       const b = await createCustomer(cookies.salesDxb, dxb);
       expect(a.number).toMatch(/^CS\d{5,}$/);
       expect(b.number).not.toBe(a.number);
-      expect(a.branchId).toBe(dxb);
+      expect(a).not.toHaveProperty('branchId');
       expect(a.preferredCurrency).toBe('USD');
     });
 
-    it('refuses another branch: create 403, read 404, not listed', async () => {
+    it('is central (plan 09d): any branch reads, lists and edits; create only in own branches', async () => {
       await post('/customers', cookies.salesDxb, customerBody(jed)).expect(403);
       const jedCustomer = await createCustomer(cookies.salesJed, jed);
-      await get(`/customers/${jedCustomer.id}`, cookies.salesDxb).expect(404);
-      await patch(`/customers/${jedCustomer.id}`, cookies.salesDxb, { name: 'x' }).expect(404);
+      await get(`/customers/${jedCustomer.id}`, cookies.salesDxb).expect(200);
+      const edited = (
+        await patch(`/customers/${jedCustomer.id}`, cookies.salesDxb, { name: 'x' }).expect(200)
+      ).body as CustomerDto;
+      expect(edited).toMatchObject({ name: 'x' });
+      expect(edited).not.toHaveProperty('branchId');
       const list = (
         await get(`/customers?pageSize=100&q=${jedCustomer.number}`, cookies.salesDxb).expect(200)
       ).body as Page<CustomerDto>;
-      expect(list.items).toHaveLength(0);
-      const own = (await get(`/customers?q=${jedCustomer.number}`, cookies.salesJed).expect(200))
-        .body as Page<CustomerDto>;
-      expect(own.items.map((c) => c.id)).toEqual([jedCustomer.id]);
+      expect(list.items.map((c) => c.id)).toEqual([jedCustomer.id]);
+      // The driver holds no customers:view: still refused.
+      await get(`/customers/${jedCustomer.id}`, cookies.driver).expect(403);
+    });
+
+    it('shows and changes the credit limit only with customer_invoices:view (plan 09d)', async () => {
+      const limited = await createUser(t.prisma, ['SALES'], ['DXB']);
+      await t.prisma.userBranchPermission.create({
+        data: {
+          userId: limited.id,
+          branchId: dxb,
+          permission: 'customer_invoices:view',
+          effect: 'DENY',
+          sourceKey: '00000000-0000-0000-0000-000000000000',
+          createdById: ids.admin,
+        },
+      });
+      const cookie = await signIn(t, limited.email);
+      const made = await createCustomer(cookies.salesDxb, dxb);
+      await patch(`/customers/${made.id}`, cookies.salesDxb, {
+        creditLimit: '5000',
+        creditLimitCurrency: 'USD',
+      }).expect(200);
+      // Hidden from a user without it, also in what an edit returns.
+      const seen = (await get(`/customers/${made.id}`, cookie).expect(200)).body as CustomerDto;
+      expect(seen).toMatchObject({ creditLimit: null, creditLimitCurrency: null });
+      // Their form sends the hidden limit back empty: the stored one stays.
+      const edited = (
+        await patch(`/customers/${made.id}`, cookie, {
+          name: 'Renamed',
+          creditLimit: null,
+          creditLimitCurrency: null,
+        }).expect(200)
+      ).body as CustomerDto;
+      expect(edited.creditLimit).toBeNull();
+      // Setting one is refused, and nothing changes.
+      await patch(`/customers/${made.id}`, cookie, {
+        creditLimit: '1',
+        creditLimitCurrency: 'USD',
+      }).expect(403);
+      await post(
+        '/customers',
+        cookie,
+        customerBody(dxb, {
+          creditLimit: '1',
+          creditLimitCurrency: 'USD',
+        }),
+      ).expect(403);
+      const stored = await t.prisma.customer.findUniqueOrThrow({ where: { id: made.id } });
+      expect(stored.creditLimit?.toString()).toBe('5000');
+      expect(stored.name).toBe('Renamed');
+      // The holder sees it, from another branch too.
+      const jedSees = (await get(`/customers/${made.id}`, cookies.salesJed).expect(200))
+        .body as CustomerDto;
+      expect(jedSees).toMatchObject({ creditLimit: '5000', creditLimitCurrency: 'USD' });
+      // The test users are deleted together at the end: the grant names one as its author.
+      await t.prisma.userBranchPermission.deleteMany({ where: { userId: limited.id } });
     });
 
     it('enforces the permission matrix', async () => {
@@ -237,14 +294,15 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       await post('/customers', cookies.financeDxb, customerBody(dxb)).expect(403);
     });
 
-    it('adds a party only with customers:update, in the user’s own branches', async () => {
+    it('adds a party only with customers:update, to any branch’s customer (plan 09d)', async () => {
       const own = await createCustomer(cookies.salesDxb, dxb);
       const jedCustomer = await createCustomer(cookies.salesJed, jed);
       const party = { name: 'Omdurman Trading' };
       await post(`/customers/${own.id}/parties`, cookies.opsDxb, party).expect(403);
       await post(`/customers/${own.id}/parties`, cookies.financeDxb, party).expect(403);
       await post(`/customers/${own.id}/parties`, cookies.driver, party).expect(403);
-      await post(`/customers/${jedCustomer.id}/parties`, cookies.salesDxb, party).expect(404);
+      // Plan 09d: a customer of another branch is edited like one's own.
+      await post(`/customers/${jedCustomer.id}/parties`, cookies.salesDxb, party).expect(201);
       const untouched = (await get(`/customers/${own.id}`, cookies.salesDxb).expect(200))
         .body as CustomerDto;
       expect(untouched.parties).toEqual([]);
@@ -381,7 +439,7 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       });
     });
 
-    it('records a customer’s edits and deactivation, in the customer’s branch only', async () => {
+    it('records a customer’s edits and deactivation, with no branch (plan 09f)', async () => {
       const sales = await createUser(t.prisma, ['SALES'], ['DXB']);
       const cookie = await signIn(t, sales.email);
       const c = await createCustomer(cookie, dxb);
@@ -405,11 +463,46 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
       );
       expect(deactivated?.changes).toEqual([{ field: 'isActive', before: 'true', after: 'false' }]);
 
-      // Another branch's manager and a role without audit_log:view see nothing of it.
+      // The customer is central: another branch's manager reads its changes too, and a report
+      // asked for one branch leaves them out. A role without audit_log:view sees nothing.
       const managerJed = await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED']);
       const jedCookie = await signIn(t, managerJed.email);
-      expect(await entries(jedCookie, `userId=${sales.id}`)).toEqual([]);
+      expect((await entries(jedCookie, `userId=${sales.id}`)).map((e) => e.action)).toEqual([
+        'UPDATED',
+        'CREATED',
+      ]);
+      expect(await entries(cookies.managerDxb, `userId=${sales.id}&branchId=${dxb}`)).toEqual([]);
       await get(`/reports/audit-log?${around()}`, cookie).expect(403);
+    });
+
+    it('hides a customer’s credit-limit changes from who may not read the limit (F189-1)', async () => {
+      const c = await createCustomer(cookies.salesDxb, dxb);
+      await patch(`/customers/${c.id}`, cookies.salesDxb, {
+        city: 'Sharjah',
+        creditLimit: '73219',
+        creditLimitCurrency: 'USD',
+      }).expect(200);
+      // Another branch's manager, denied customer_invoices:view: the customer's other changes
+      // only. The stored record keeps them (a manager with the permission sees them).
+      const denied = await createUser(t.prisma, ['BRANCH_MANAGER'], ['JED']);
+      await t.prisma.userBranchPermission.create({
+        data: {
+          userId: denied.id,
+          branchId: jed,
+          permission: 'customer_invoices:view',
+          effect: 'DENY',
+          sourceKey: '00000000-0000-0000-0000-000000000000',
+          createdById: ids.admin,
+        },
+      });
+      const fieldsSeen = async (cookie: string) =>
+        (await entries(cookie, `userId=${ids.salesDxb}&entity=CUSTOMER`))
+          .filter((e) => e.reference.startsWith(c.number) && e.action === 'UPDATED')
+          .flatMap((e) => (e.changes ?? []).map((x) => x.field));
+      expect(await fieldsSeen(await signIn(t, denied.email))).toEqual(['city']);
+      expect(await fieldsSeen(cookies.managerDxb)).toEqual(
+        expect.arrayContaining(['city', 'creditLimit', 'creditLimitCurrency']),
+      );
     });
 
     it('records contact and party changes, before and after, under the customer', async () => {
@@ -852,7 +945,11 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     it('is branch-scoped and follows the permission matrix', async () => {
       const rate = await approvedRate();
       const body = quotationBody(customer.id, [{ rateCardId: rate.id, quantity: '1' }]);
-      await post('/quotations', cookies.salesJed, body).expect(404);
+      // Plan 09d: JED quotes the DXB customer, in JED (the branch it writes in).
+      const jedQ = (await post('/quotations', cookies.salesJed, body).expect(201))
+        .body as QuotationDto;
+      expect(jedQ.branchId).toBe(jed);
+      await post('/quotations', cookies.salesJed, { ...body, branchId: dxb }).expect(403);
       await post('/quotations', cookies.opsDxb, body).expect(403);
       await post('/quotations', cookies.managerDxb, body).expect(403);
       const q = (await post('/quotations', cookies.salesDxb, body).expect(201))
@@ -1348,7 +1445,11 @@ describe('commercial cycle: customers, rates, quotations, bookings', () => {
     });
 
     it('is branch-scoped and follows the permission matrix', async () => {
-      await post('/bookings', cookies.salesJed, directBooking()).expect(404);
+      // Plan 09d: JED books the DXB customer, in JED; never in a branch it does not write in.
+      const jedB = (await post('/bookings', cookies.salesJed, directBooking()).expect(201))
+        .body as BookingDto;
+      expect(jedB.branchId).toBe(jed);
+      await post('/bookings', cookies.salesJed, { ...directBooking(), branchId: dxb }).expect(403);
       await post('/bookings', cookies.financeDxb, directBooking()).expect(403);
       const b = (await post('/bookings', cookies.salesDxb, directBooking()).expect(201))
         .body as BookingDto;

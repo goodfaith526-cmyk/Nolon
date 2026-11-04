@@ -713,8 +713,8 @@ describe('financial reports', () => {
           c.marginPerUnitUsd,
         ]),
       ).toEqual([
-        // S1 + S2: 1300 - 400 over two pieces.
-        ['CARTON', 2, '1300', '400', 'PER_PIECE', '2', '450'],
+        // S1 + S2: 1300 - 400 over 8 CBM (5 + 3); CARTON defaults to PER_CBM after volume pricing.
+        ['CARTON', 2, '1300', '400', 'PER_CBM', '8', '112.5'],
         ['MIXED', 1, '1000', '0', null, null, null],
       ]);
       // The columns add up to the report's totals exactly.

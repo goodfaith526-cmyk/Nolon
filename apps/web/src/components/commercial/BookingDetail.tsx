@@ -12,6 +12,8 @@ import { StatusBadge } from '../StatusBadge';
 import { Notice, type NoticeState, useFailureText } from './Notice';
 import { PrintLink } from '../print/PrintLink';
 import { PartnerName } from '../partners/PartnerSelect';
+import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
+import { useStandalone } from '../standalone/StandaloneShell';
 
 export function BookingDetail({ id }: { id: string }) {
   const t = useTranslations('Bookings');
@@ -22,6 +24,7 @@ export function BookingDetail({ id }: { id: string }) {
   const name = useLocalName();
   const locale = useLocale();
   const me = useMe();
+  const standalone = useStandalone();
   const master = useMasterData();
   const locationName = useLocationName(master);
   const failure = useFailureText();
@@ -45,6 +48,12 @@ export function BookingDetail({ id }: { id: string }) {
   }, [id, failure, me]);
 
   useEffect(load, [load]);
+
+  // A standalone window's title is the booking number alone (owner: short, letters and number).
+  const windowTitle = standalone && booking ? booking.number : null;
+  useEffect(() => {
+    if (windowTitle) document.title = windowTitle;
+  }, [windowTitle]);
 
   if (!booking) {
     return notice ? <Notice notice={notice} /> : <p className="muted">{tc('loading')}</p>;
@@ -74,12 +83,17 @@ export function BookingDetail({ id }: { id: string }) {
       <div className="page-head">
         <div className="title-row">
           <h1>
-            {t('booking')} <span dir="ltr">{booking.number}</span>
+            <span className="record-kind">{t('booking')}</span>{' '}
+            <span dir="ltr" className="record-number">
+              {booking.number}
+            </span>
           </h1>
           <StatusBadge kind="booking" status={status} />
         </div>
         <div className="actions">
+          {!standalone && <StandaloneWindowButton record={{ kind: 'booking', id }} />}
           <MoreMenu>
+            {!standalone && <StandaloneWindowButton record={{ kind: 'booking', id }} />}
             {booking.quotationId && (
               <Link href={`/quotations/${booking.quotationId}`}>{t('openQuotation')}</Link>
             )}
@@ -95,6 +109,7 @@ export function BookingDetail({ id }: { id: string }) {
               {t('openShipment')} <span dir="ltr">{booking.shipmentNumber}</span>
             </Link>
           )}
+
           {status === 'DRAFT' && can(me, 'bookings:update') && (
             <Link href={`/bookings/${id}/edit`} className="button">
               {tc('edit')}

@@ -1,4 +1,6 @@
+import { CustomerIdentityFilter } from './customer-identity.filter.js';
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -11,30 +13,41 @@ import {
   Put,
   Query,
   Res,
+  Req,
+  type RawBodyRequest,
   UseGuards,
+  UseFilters,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { CustomerIdentityAuth, identityError } from './customer-identity-auth.js';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
   CS_BOT_HANDOVERS,
   CS_INVOICE_STATES,
   CS_HANDOVERS,
+  CS_OTHER_KIND,
+  CS_REQUEST_ITEMS_MAX,
   CS_REQUEST_SERVICES,
   CS_SCOPES,
   CS_SENDER_CHANNELS,
   CS_SHIPMENT_STATES,
   LOAD_TYPES,
   SHIPPING_MODES,
+  type CsBookingRequestCancelled,
+  type CsEstimateAccepted,
+  type CsPhotoUploaded,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
   type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
   type CsQuoteDto,
+  type CsQuotesDto,
   type CsInvoiceDto,
   type CsShipmentDto,
   type CsShipmentSummaryDto,
+  type CsWebhooksDto,
 } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -50,6 +63,7 @@ import {
 } from '../common/validation.js';
 import { type ApiClientAuth, ApiClientGuard, CurrentApiClient } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
+import { CsWebhooksService } from './cs-webhooks.service.js';
 import { RequireApiScope } from './api-scopes.js';
 import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
@@ -87,25 +101,55 @@ const tokenBody = z
       .optional(),
   })
   .strict();
+/** One piece's dimension in centimetres, positive, up to 2 decimals: Decimal(10, 2), as bookings. */
+const dimensionCm = z
+  .string()
+  .regex(/^\d{1,8}(\.\d{1,2})?$/, 'Invalid measurement')
+  .refine((v) => /[1-9]/.test(v), 'Must be positive');
+/** The pieces a volume request's CBM came from: a whole number, as a booking item's quantity. */
+const pieces = z.number().int().min(1).max(100_000);
 const quoteQuery = z
   .object({
     originId: z.uuid(),
     destinationId: z.uuid(),
     category: z.string().trim().min(1).max(20),
     quantity: quantity.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     mode: z.enum(SHIPPING_MODES).optional(),
     loadType: z.enum(LOAD_TYPES).optional(),
     currency: currencyCode.optional(),
     onDate: dateString.optional(),
   })
   .strict();
+// Plan 09 section 4: POST /cs/quotes, the route common and 1 to 10 items.
+const quotesBody = quoteQuery
+  .omit({ category: true, quantity: true, lengthCm: true, widthCm: true, heightCm: true })
+  .extend({
+    items: z
+      .array(
+        quoteQuery.pick({
+          category: true,
+          quantity: true,
+          lengthCm: true,
+          widthCm: true,
+          heightCm: true,
+        }),
+      )
+      .min(1)
+      .max(CS_REQUEST_ITEMS_MAX),
+  })
+  .strict();
 const telegramId = z.string().regex(/^[1-9]\d{0,19}$/, 'Telegram user id');
+/** A web chat visitor: 16 random hex digits the agent's site session issued (no phone, no account). */
+const webVisitorId = z.string().regex(/^[0-9a-f]{16}$/, 'Web chat visitor id');
 const sender = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('whatsapp'), id: phone }).strict(),
   z.object({ channel: z.literal('telegram'), id: telegramId }).strict(),
+  z.object({ channel: z.literal('web'), id: webVisitorId }).strict(),
 ]);
 const name200 = requiredText(200);
-const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
 const digitsPhone = z
   .string()
   .trim()
@@ -120,14 +164,87 @@ const bodyQuantity = z.union([
     .refine((n) => /^\d{1,14}(\.\d{1,4})?$/.test(String(n)), 'At most 4 decimals')
     .transform(String),
 ]);
+/** A total weight in kilograms, positive, up to 3 decimals: Decimal(12, 3), as booking lines. */
+const weightKg = z
+  .string()
+  .regex(/^\d{1,9}(\.\d{1,3})?$/, 'Invalid weight')
+  .refine((v) => /[1-9]/.test(v), 'Must be positive');
+const measures = {
+  pieces: pieces.optional(),
+  lengthCm: dimensionCm.optional(),
+  widthCm: dimensionCm.optional(),
+  heightCm: dimensionCm.optional(),
+  weightKg: weightKg.optional(),
+};
+/** Plan 09 section 12: an item outside the standard categories, in the customer's words. */
+const otherItem = z
+  .object({ kind: z.literal(CS_OTHER_KIND), description: requiredText(500), ...measures })
+  .strict();
+const quoteRefField = z.string().regex(/^q_[A-Za-z0-9_-]{32}$/);
+const idsItem = z.union([
+  z
+    .object({
+      category: z.string().trim().min(1).max(20),
+      quantity: bodyQuantity,
+      quoteRef: quoteRefField.optional(),
+      ...measures,
+    })
+    .strict(),
+  otherItem,
+]);
+const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
+const namesItem = z.union([
+  z.object({ kind: botName, quantity: bodyQuantity, ...measures }).strict(),
+  otherItem,
+]);
+/**
+ * Codex F167-2: one piece's three dimensions come together or not at all, as a booking line takes
+ * them. A partial set is refused at intake, naming the missing fields so the bot asks for them;
+ * nothing is guessed.
+ */
+function requireWholeDimensions(
+  items: readonly { lengthCm?: string; widthCm?: string; heightCm?: string }[],
+): void {
+  const fields = items.flatMap((item, index) => {
+    const given = (['lengthCm', 'widthCm', 'heightCm'] as const).filter(
+      (f) => item[f] !== undefined,
+    );
+    if (given.length === 0 || given.length === 3) return [];
+    return (['lengthCm', 'widthCm', 'heightCm'] as const)
+      .filter((f) => item[f] === undefined)
+      .map((f) => `items.${index}.${f}`);
+  });
+  if (fields.length > 0)
+    throw new BadRequestException({
+      code: 'DIMENSIONS_TOGETHER',
+      message: 'Send lengthCm, widthCm and heightCm together, or none of them',
+      fields,
+    });
+}
+const itemsField = <T extends z.ZodType>(item: T) =>
+  z.array(item).min(1).max(CS_REQUEST_ITEMS_MAX).optional();
+/** Plan 09 section 4: `items`, or the one-item shape, never both and never neither. */
+function oneShape(v: { items?: unknown[]; quantity?: unknown }, single: unknown): boolean {
+  return v.items === undefined
+    ? single !== undefined && v.quantity !== undefined
+    : single === undefined && v.quantity === undefined;
+}
 const requestBody = z
   .object({
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     sender: sender.optional(),
     contactPhone: phone.optional(),
     originId: z.uuid(),
     destinationId: z.uuid(),
-    category: z.string().trim().min(1).max(20),
-    quantity: bodyQuantity,
+    category: z.string().trim().min(1).max(20).optional(),
+    quantity: bodyQuantity.optional(),
+    items: itemsField(idsItem),
+    pieces: pieces.optional(),
+    lengthCm: dimensionCm.optional(),
+    widthCm: dimensionCm.optional(),
+    heightCm: dimensionCm.optional(),
     services: z
       .array(z.enum(CS_REQUEST_SERVICES))
       .max(CS_REQUEST_SERVICES.length)
@@ -146,25 +263,43 @@ const requestBody = z
     language: z.enum(['ar', 'en']),
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
   })
-  .strict();
+  .strict()
+  .refine((v) => oneShape(v, v.category), {
+    message: 'Send items, or category and quantity, not both',
+    params: { code: 'ITEMS_AND_SINGLE' },
+  })
+  .refine(
+    (v) =>
+      v.items === undefined ||
+      (v.pieces === undefined && v.lengthCm === undefined && v.quoteRef === undefined),
+    { message: 'With items, pieces, dimensions and quoteRef go on each item' },
+  );
 /** A request in the bot's own words (erp-agents #247): names, a number of pieces, its price. */
 const namesBody = z
   .object({
     idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+    profileId: z.uuid().optional(),
+    conversationId: z.string().min(1).max(128).optional(),
+    profileVersion: z.number().int().min(1).optional(),
     channel: z.enum(CS_SENDER_CHANNELS),
     origin: botName,
     destination: botName,
-    kind: botName,
-    quantity: bodyQuantity,
+    kind: botName.optional(),
+    quantity: bodyQuantity.optional(),
+    items: itemsField(namesItem),
     senderName: name200,
-    senderPhone: digitsPhone,
+    senderPhone: digitsPhone.optional(),
     receiverName: name200,
     receiverPhone: digitsPhone,
     handover: z.enum(CS_BOT_HANDOVERS),
     quotedPrice: z.object({ amount, currency: currencyCode }).strict().nullable().optional(),
   })
-  .strict();
-/** `X-Cs-Sender: whatsapp:+2499...` or `telegram:123`: the owner a key-only read names. */
+  .strict()
+  .refine((v) => oneShape(v, v.kind), {
+    message: 'Send items, or kind and quantity, not both',
+    params: { code: 'ITEMS_AND_SINGLE' },
+  });
+/** `X-Cs-Sender: whatsapp:+2499...`, `telegram:123` or `web:<16 hex>`: the owner a key-only read names. */
 function senderHeader(value: string | undefined): z.infer<typeof sender> | null {
   const at = value?.indexOf(':') ?? -1;
   if (!value || at < 0) return null;
@@ -173,11 +308,37 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     ? parsed.data
     : null;
 }
+const cancelBody = z.object({ reason: requiredText(300).optional() }).strict();
+const acceptEstimateBody = z.object({ estimateVersion: z.number().int().min(1) }).strict();
+/** Plan 09 section 12: the photo's idempotency key, as the signed identity covers it. */
+const photoKey = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9._:-]+$/);
 const scopes = z.array(z.enum(CS_SCOPES)).min(1).max(CS_SCOPES.length);
+const services = z.array(z.enum(CS_REQUEST_SERVICES)).max(CS_REQUEST_SERVICES.length);
 const createBody = z
-  .object({ name: requiredText(100), branchIds: z.array(z.uuid()).min(1).max(20), scopes })
+  .object({
+    name: requiredText(100),
+    branchIds: z.array(z.uuid()).min(1).max(20),
+    scopes,
+    services: services.optional(),
+  })
   .strict();
 const scopesBody = z.object({ scopes }).strict();
+const servicesBody = z.object({ services }).strict();
+
+/** Plan 09 section 5: an endpoint the key's bot receives notices at (checked by the service). */
+const webhookBody = z
+  .object({
+    url: z.string().trim().min(1).max(500),
+    audience: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/),
+  })
+  .strict();
 
 /**
  * Customer Service API (scope section 17): read-only, customer-safe, with an API key instead of a
@@ -265,8 +426,8 @@ export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get()
-  get(): Promise<CsCatalogDto> {
-    return this.catalog.catalog();
+  get(@CurrentApiClient() client: ApiClientAuth): Promise<CsCatalogDto> {
+    return this.catalog.catalog(client.services, client.allowedBranchIds);
   }
 }
 
@@ -284,6 +445,21 @@ export class QuoteController {
   }
 }
 
+/** Plan 09 section 4: the price of several items of one route, item by item, with their sum. */
+@Controller('cs/quotes')
+@Public()
+@UseGuards(ApiClientGuard)
+@RequireApiScope('cs:quote:read')
+export class QuotesController {
+  constructor(private readonly quotes: QuoteService) {}
+
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  quote(@CurrentApiClient() client: ApiClientAuth, @Body() body: unknown): Promise<CsQuotesDto> {
+    return this.quotes.quoteMany(client, parse(quotesBody, body));
+  }
+}
+
 /**
  * Booking requests (R3): a draft for staff, never a booking. With a customer token it is that
  * customer's; with the key alone, the sender's it names. Read back by the same owner only.
@@ -292,20 +468,59 @@ export class QuoteController {
 @Public()
 @UseGuards(BookingRequestGuard)
 @RequireApiScope('cs:booking_requests:create')
+@UseFilters(CustomerIdentityFilter)
 export class BookingRequestsController {
-  constructor(private readonly requests: BookingRequestsService) {}
+  constructor(
+    private readonly requests: BookingRequestsService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
 
   @Post()
   async create(
     @CurrentBookingCaller() caller: BookingRequestCaller,
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: RawBodyRequest<Request>,
   ): Promise<CsBookingRequestCreated> {
     // Names (origin as { ar, en }) are the bot's form; ids are the catalog's.
     const byNames = typeof body === 'object' && body !== null && 'channel' in body;
-    const { created, body: answer } = byNames
-      ? await this.requests.createByNames(caller, parse(namesBody, body))
-      : await this.requests.create(caller, parse(requestBody, body));
+    // Plan 09 section 4: items or the one-item shape, never both, refused with its own code.
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'items' in body &&
+      ['category', 'kind', 'quantity'].some((field) => field in body)
+    )
+      throw new BadRequestException({
+        code: 'ITEMS_AND_SINGLE',
+        message: 'Send items, or the one-item fields, not both',
+      });
+    const input = byNames ? parse(namesBody, body) : parse(requestBody, body);
+    requireWholeDimensions(input.items ?? []);
+    let binding;
+    if (input.profileId || input.conversationId || input.profileVersion !== undefined) {
+      if (!input.profileId || !input.conversationId || caller.kind !== 'key')
+        identityError(400, 'INVALID_INPUT');
+      const envelope = this.identityAuth.verify(caller.client.id, req);
+      const channel = envelope.context.channel.toLowerCase();
+      if (
+        ('channel' in input && input.channel !== channel) ||
+        ('sender' in input &&
+          input.sender &&
+          (input.sender.channel !== channel || input.sender.id !== envelope.context.subjectId))
+      )
+        identityError(401, 'INVALID_CHANNEL_ASSERTION');
+      binding = {
+        profileId: input.profileId,
+        conversationId: input.conversationId,
+        profileVersion: input.profileVersion,
+        context: envelope.context,
+      };
+    }
+    const { created, body: answer } =
+      'channel' in input
+        ? await this.requests.createByNames(caller, input, binding)
+        : await this.requests.create(caller, input, binding);
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     return answer;
   }
@@ -317,6 +532,79 @@ export class BookingRequestsController {
     @Headers('x-cs-sender') sender: string | undefined,
   ): Promise<CsBookingRequestDto> {
     return this.requests.read(caller, id, senderHeader(sender));
+  }
+
+  /** Plan 09 section 2: the owner cancels its request while staff have not decided it. */
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsBookingRequestCancelled> {
+    const input = parse(cancelBody, body ?? {});
+    return this.requests.cancel(caller, id, this.proofOf(caller, req), input.reason);
+  }
+
+  /**
+   * Plan 09 section 12: the owner sends one photo for staff, as the raw body (JPEG, PNG or WebP,
+   * at most 10 MB), with an Idempotency-Key. 201 when added, 200 when the same photo again.
+   */
+  @Post(':id/photos')
+  async addPhoto(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Req() req: RawBodyRequest<Request>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CsPhotoUploaded> {
+    const idempotencyKey = parse(photoKey, key);
+    const bytes = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.alloc(0);
+    const { created, body } = await this.requests.addPhoto(
+      caller,
+      id,
+      this.proofOf(caller, req),
+      idempotencyKey,
+      bytes,
+    );
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return body;
+  }
+
+  /** Plan 09 section 12: the owner accepts the estimate version it was shown. */
+  @Post(':id/accept-estimate')
+  @HttpCode(HttpStatus.OK)
+  acceptEstimate(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsEstimateAccepted> {
+    const input = parse(acceptEstimateBody, body);
+    return this.requests.acceptEstimate(
+      caller,
+      id,
+      this.proofOf(caller, req),
+      input.estimateVersion,
+    );
+  }
+
+  /** The owner's proof: the customer token, or a signed channel identity (plan 08) of the sender. */
+  private proofOf(
+    caller: BookingRequestCaller,
+    req: RawBodyRequest<Request>,
+  ): { channel: 'whatsapp' | 'telegram'; subjectId: string } | null {
+    const signed =
+      caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
+        ? this.identityAuth.verify(caller.client.id, req).context
+        : null;
+    return signed
+      ? {
+          channel: signed.channel === 'WHATSAPP' ? ('whatsapp' as const) : ('telegram' as const),
+          subjectId: signed.subjectId,
+        }
+      : null;
   }
 }
 
@@ -357,7 +645,51 @@ export class CustomerMeController {
 /** The Administrator's Customer Service API keys. */
 @Controller('api-clients')
 export class ApiClientsController {
-  constructor(private readonly clients: ApiClientsService) {}
+  constructor(
+    private readonly clients: ApiClientsService,
+    private readonly webhooks: CsWebhooksService,
+  ) {}
+
+  @Get(':id/webhooks')
+  @RequirePermission('users:view')
+  listWebhooks(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.view(user, id);
+  }
+
+  @Post(':id/webhooks')
+  @RequirePermission('users:create')
+  addWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.create(user, id, parse(webhookBody, body));
+  }
+
+  @Post(':id/webhooks/:endpointId/approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  approveWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.approve(user, id, endpointId);
+  }
+
+  @Post(':id/webhooks/:endpointId/retire')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('users:update')
+  retireWebhook(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('endpointId', ParseUUIDPipe) endpointId: string,
+  ): Promise<CsWebhooksDto> {
+    return this.webhooks.retire(user, id, endpointId);
+  }
 
   @Get()
   @RequirePermission('users:view')
@@ -379,6 +711,16 @@ export class ApiClientsController {
     @Body() body: unknown,
   ): Promise<ApiClientDto> {
     return this.clients.setScopes(user, id, parse(scopesBody, body).scopes);
+  }
+
+  @Put(':id/services')
+  @RequirePermission('users:update')
+  setServices(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ApiClientDto> {
+    return this.clients.setServices(user, id, parse(servicesBody, body).services);
   }
 
   @Post(':id/revoke')

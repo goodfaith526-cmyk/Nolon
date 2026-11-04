@@ -32,7 +32,7 @@ describe('isAllowedUnsafeRequest', () => {
 });
 
 describe('originCheck', () => {
-  function run(headers: Record<string, string>): number {
+  function run(headers: Record<string, string>, path = '/api/v1/x'): number {
     let status = 0;
     const res = {
       status: (code: number) => {
@@ -43,7 +43,7 @@ describe('originCheck', () => {
     const next: NextFunction = () => {
       status = 200;
     };
-    originCheck(allowed)({ method: 'POST', path: '/api/v1/x', headers } as Request, res, next);
+    originCheck(allowed)({ method: 'POST', path, headers } as Request, res, next);
     return status;
   }
 
@@ -55,5 +55,13 @@ describe('originCheck', () => {
     expect(run({ cookie: 'nolon_session=x' })).toBe(403);
     expect(run({ cookie: 'nolon_session=x', origin: 'https://evil.test' })).toBe(403);
     expect(run({ authorization: 'Bearer something-else' })).toBe(403);
+  });
+
+  it('lets a booking request cancel through with a CS key or customer token only (plan 09)', () => {
+    const cancel = '/api/v1/cs/booking-requests/0b0e9c0e-1f7a-4c2b-9a51-3d1c2b7e8f90/cancel';
+    expect(run({ authorization: 'Bearer nolcs_abc' }, cancel)).toBe(200);
+    expect(run({ authorization: 'Bearer nolct_abc' }, cancel)).toBe(200);
+    expect(run({ cookie: 'nolon_session=x' }, cancel)).toBe(403);
+    expect(run({ authorization: 'Bearer nolcs_abc' }, `${cancel}/x`)).toBe(403);
   });
 });

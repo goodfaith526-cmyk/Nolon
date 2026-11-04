@@ -53,6 +53,19 @@ INSERT INTO "grn_drafts" ("id", "shipment_id") VALUES (gen_random_uuid(), '00000
     expect(review(sql)).toEqual([]);
   });
 
+  it('passes the volume-pricing columns (nullable, on existing tables), not the category update', () => {
+    const dir = new URL('../../prisma/migrations/', import.meta.url);
+    const migration = (name: string) => readFileSync(new URL(`${name}/migration.sql`, dir), 'utf8');
+    const existing = new Set(['cs_quotes', 'cs_booking_requests', 'price_categories']);
+    const findings = (sql: string) =>
+      reviewMigrations([{ file: 'm', sql }], existing).map((f) => f.reason);
+    expect(findings(migration('20261101120000_cs_volume_pricing_dimensions'))).toEqual([]);
+    // Moving CARTON and PALLET to PER_CBM rewrites seeded rows: the owner signs it off (rule 4).
+    expect(findings(migration('20261101120100_cs_volume_pricing_categories'))).toEqual([
+      NOT_ALLOWED,
+    ]);
+  });
+
   it('counts tables created by an earlier migration of the same pull request as new', () => {
     expect(
       review(

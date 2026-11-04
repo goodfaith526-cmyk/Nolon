@@ -49,6 +49,9 @@ describe('permission matrix (annex A)', () => {
 
   // Spot checks against the annex table, row by row in its own words.
   const rows: [PermissionModule, string][] = [
+    ['customer_profiles', '— — — — — — — — — — —'],
+    ['customer_profile_intake', '— — — — — — — — — — —'],
+    ['customer_profile_followup', '— — — — — — — — — — —'],
     ['customers', 'ك ع ك ك ع ع ع ع — ك إ'],
     // Changed after the annex (owner, 2026-10-19): rate cards belong to the Sales & Marketing
     // Manager, the tenth column (Sales' cells elsewhere). The eleventh column is Outlet Staff
@@ -76,6 +79,9 @@ describe('permission matrix (annex A)', () => {
     // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
     ['partners', 'ك ع ك ع ع ع — — — ك ع'],
     ['partner_contracts', 'ك ع ع — — ع — — — ك —'],
+    // Plan 07 section 8: create = a statement, update = cancelling a draft one, approve = a manual
+    // adjustment. Finance makes statements, the Branch Manager adjusts.
+    ['partner_commissions', 'ك ع م — — إ — — — ع —'],
     ['supplier_payments', 'ك ع م — — ك — — — — —'],
     ['expenses', 'ك ع م — إ ك إ إ إ — —'],
     ['manual_journals', 'ك ع — — — ك — — — — —'],
@@ -95,6 +101,8 @@ describe('permission matrix (annex A)', () => {
     ['cs_booking_requests', 'ك ع ك ك ع — — — — ك —'],
     // Plan 04 section 4.1 (2026-10-28): payment instructions, two people per approval.
     ['payment_instructions', 'ك م ك ع — إ — — — — —'],
+    // The agent's request (2026-11-03): the Administrator sees the agent admin panel's menu item.
+    ['agent_admin', 'ع — — — — — — — — — —'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 

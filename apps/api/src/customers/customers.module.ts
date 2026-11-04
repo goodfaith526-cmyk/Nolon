@@ -7,6 +7,7 @@ import { MasterDataModule } from '../master-data/master-data.module.js';
 import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { CustomerDraftsController } from './customer-drafts.controller.js';
 import { CustomerDraftsService } from './customer-drafts.service.js';
+import { CustomerReportsService } from './customer-reports.service.js';
 import { CustomersImportController } from './customers-import.controller.js';
 import { CustomersImportService } from './customers-import.service.js';
 import { CustomersController } from './customers.controller.js';
@@ -29,7 +30,13 @@ import { PartyDraftsService } from './party-drafts.service.js';
     CustomerDraftsController,
     PartyDraftsController,
   ],
-  providers: [CustomersService, CustomersImportService, CustomerDraftsService, PartyDraftsService],
-  exports: [CustomersService, CustomerDraftsService, PartyDraftsService],
+  providers: [
+    CustomersService,
+    CustomersImportService,
+    CustomerDraftsService,
+    PartyDraftsService,
+    CustomerReportsService,
+  ],
+  exports: [CustomersService, CustomerDraftsService, PartyDraftsService, CustomerReportsService],
 })
 export class CustomersModule {}

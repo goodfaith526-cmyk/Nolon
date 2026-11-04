@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  SUPPLIER_BILL_LINE_KINDS,
+  ENTERED_BILL_LINE_KINDS,
   type BillableConsolidationDto,
   type BillableTripDto,
   type CreateSupplierBillRequest,
@@ -11,6 +11,7 @@ import {
   type SupplierBillDueDateDto,
   type SupplierBillInput,
   type SupplierBillLineInput,
+  type EnteredBillLineKind,
   type SupplierBillLineKind,
   type SupplierDto,
   type SupplierSummaryDto,
@@ -31,7 +32,7 @@ import { type PickedShipment, ShipmentPicker } from './ShipmentPicker';
 
 interface LineDraft {
   key: number;
-  kind: SupplierBillLineKind;
+  kind: EnteredBillLineKind;
   chargeTypeCode: string;
   /** The shipment picked from the list (functional review C10). */
   shipment: PickedShipment | null;
@@ -47,8 +48,14 @@ interface LineDraft {
   copied: { tripId: string; currency: string; amount: string } | null;
 }
 
+/** A saved line as the form edits it. A commission line is a partner statement's, not edited here. */
+function enteredKind(kind: SupplierBillLineKind): EnteredBillLineKind {
+  if (kind === 'COMMISSION') throw new Error('A commission line is edited from its statement');
+  return kind;
+}
+
 let nextKey = 1;
-const emptyLine = (kind: SupplierBillLineKind = 'EXPENSE'): LineDraft => ({
+const emptyLine = (kind: EnteredBillLineKind = 'EXPENSE'): LineDraft => ({
   key: nextKey++,
   kind,
   chargeTypeCode: '',
@@ -115,7 +122,7 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
     bill
       ? bill.lines.map((l) => ({
           key: nextKey++,
-          kind: l.kind,
+          kind: enteredKind(l.kind),
           chargeTypeCode: l.chargeTypeCode ?? '',
           shipment: l.shipmentId ? { id: l.shipmentId, number: l.shipmentNumber ?? '' } : null,
           tripId: l.tripId ?? '',
@@ -441,11 +448,11 @@ function BillForm({ bill }: { bill: SupplierBillDto | null }) {
                 onChange={(e) =>
                   update(l.key, {
                     ...dropCopied(l),
-                    kind: e.target.value as SupplierBillLineKind,
+                    kind: e.target.value as EnteredBillLineKind,
                   })
                 }
               >
-                {SUPPLIER_BILL_LINE_KINDS.map((k) => (
+                {ENTERED_BILL_LINE_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {te(`billLineKind_${k}`)}
                   </option>

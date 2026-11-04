@@ -197,7 +197,7 @@ describe('the chat card', () => {
     });
   });
 
-  it('names only what the user may see, leaving out another branch’s records', async () => {
+  it('names only what the user may see; a customer is central and named for any branch (09f)', async () => {
     const jed = await branchId(t.prisma, 'JED');
     const outsider = {
       allowedBranchIds: [jed],
@@ -206,8 +206,10 @@ describe('the chat card', () => {
     const names = await referenceNames(t.prisma, outsider, {
       customerId: customer.id,
       originLocationId: route.origin,
+      // A Dubai record the Jeddah user may not see.
+      branchId: await branchId(t.prisma, 'DXB'),
     });
-    expect(Object.keys(names)).toEqual([route.origin]);
+    expect(Object.keys(names).sort()).toEqual([customer.id, route.origin].sort());
   });
 
   it('is not found for another user or another assistant client, and refused to a session', async () => {
@@ -296,7 +298,7 @@ describe('deciding in the chat', () => {
     const today = new Date().toISOString().slice(0, 10);
     const rate = await t.prisma.rateCard.create({
       data: {
-        branchId: customer.branchId,
+        branchId: await branchId(t.prisma, 'DXB'),
         originLocationId: route.origin,
         destinationLocationId: route.destination,
         mode: 'SEA',

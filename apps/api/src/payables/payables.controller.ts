@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   MAX_ACKNOWLEDGED_BILLS,
-  SUPPLIER_BILL_LINE_KINDS,
+  ENTERED_BILL_LINE_KINDS,
   SUPPLIER_BILL_STATUSES,
   SUPPLIER_PAYMENT_STATUSES,
   PAYMENT_STATUSES,
@@ -70,7 +70,7 @@ const billableTripsQuery = z.strictObject({ branchId: z.uuid().optional() });
 
 const billLine = z
   .object({
-    kind: z.enum(SUPPLIER_BILL_LINE_KINDS),
+    kind: z.enum(ENTERED_BILL_LINE_KINDS),
     chargeTypeCode: z.string().trim().toUpperCase().min(1).max(20).nullish(),
     shipmentId: z.uuid().nullish(),
     tripId: z.uuid().nullish(),

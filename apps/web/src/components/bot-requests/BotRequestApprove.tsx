@@ -6,10 +6,9 @@ import type {
   CsBookingRequestStaffDto,
   CustomerSummaryDto,
   MasterDataDto,
-  ShippingMode,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { isPlace, useLocalName } from '@/lib/master-data';
 import { CustomerPicker } from '../commercial/CustomerPicker';
@@ -37,50 +36,129 @@ export function BotRequestApprove({
   const te = useTranslations('Enums');
   const name = useLocalName();
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
+  // Client request 2026-11-04: a request linked to no one (the website chat) books, by default, a
+  // new customer made from the name and phone the bot sent; staff may choose an existing one of
+  // the request's branch instead.
+  const mayUseRequest = !r.profile && !r.customerId;
+  const [fromRequest, setFromRequest] = useState(mayUseRequest);
+  // Codex F171-2: a request with an OTHER item books the terms its estimate priced, as set.
+  const terms = r.items.some((i) => i.isOther) ? (r.estimate?.terms ?? null) : null;
+  // The route, mode and currency are common; one priced line per item (or the one-item shape's).
   const [inputs, setInputs] = useState({
-    originId: r.originId ?? '',
-    destinationId: r.destinationId ?? '',
-    mode: 'SEA' as ShippingMode,
-    category: r.category ?? '',
-    quantity: r.quantity,
+    originId: terms?.originId ?? r.originId ?? '',
+    destinationId: terms?.destinationId ?? r.destinationId ?? '',
+    mode: terms?.mode ?? 'SEA',
     currency: r.priceCheck?.currency ?? r.botQuotedPrice?.currency ?? '',
   });
+  const byItems = r.items.length > 0;
+  const hasOther = r.items.some((i) => i.isOther);
+  // Plan 09 section 12: a request with an OTHER item is approved at the estimate the customer
+  // accepted (the current version, still valid); the API checks it again.
+  const estimate = r.estimate;
+  // When the form opened: the API checks validity again at approval.
+  const [openedAt] = useState(() => Date.now());
+  const estimateAccepted =
+    estimate !== null &&
+    estimate.terms !== null &&
+    estimate.acceptedVersion === estimate.version &&
+    new Date(estimate.validUntil).getTime() > openedAt;
+  const [lines, setLines] = useState<{ category: string; quantity: string }[]>(
+    byItems
+      ? r.items.map((i) => ({ category: i.category ?? '', quantity: i.quantity ?? '' }))
+      : [{ category: r.category ?? '', quantity: r.quantity }],
+  );
   const [paymentCurrency, setPaymentCurrency] = useState(inputs.currency);
-  const [price, setPrice] = useState<{ key: string; dto: CsApprovalPriceDto } | null>(null);
+  const [prices, setPrices] = useState<{ key: string; dtos: CsApprovalPriceDto[] } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  // Plan 09 section 11: the point the customer is told to bring the shipment to (none: the
+  // branch's only point, when it has exactly one).
+  const dropOffChoices = r.dropOffChoices.filter((d) => d.branchId === r.branchId);
+  const [dropOffId, setDropOffId] = useState('');
 
   const places = master.locations.filter((l) => l.isActive && isPlace(l));
   const currencies = master.currencies.filter((c) => c.isActive);
-  const key = JSON.stringify(inputs);
-  const priced = price !== null && price.key === key ? price.dto : null;
-  const category = master.priceCategories.find((c) => c.code === inputs.category);
-  const customerId = r.customerId ?? customer?.id ?? null;
+  const key = JSON.stringify({ inputs, lines });
+  const priced = prices !== null && prices.key === key ? prices.dtos : null;
+  const categoryOf = (code: string) => master.priceCategories.find((c) => c.code === code);
+  const customerId = r.customerId ?? (fromRequest ? null : (customer?.id ?? null));
+  const newCustomer = mayUseRequest && fromRequest;
   const set = (patch: Partial<typeof inputs>) => setInputs((v) => ({ ...v, ...patch }));
+  const setLine = (index: number, patch: Partial<(typeof lines)[number]>) =>
+    setLines((all) => all.map((l, i) => (i === index ? { ...l, ...patch } : l)));
 
   async function check() {
     setFailed(null);
     try {
-      const query = new URLSearchParams(inputs).toString();
-      setPrice({
-        key,
-        dto: await api<CsApprovalPriceDto>(`/cs-booking-requests/${r.id}/price?${query}`),
-      });
+      const dtos = [];
+      for (const line of lines) {
+        const query = new URLSearchParams({ ...inputs, ...line }).toString();
+        dtos.push(await api<CsApprovalPriceDto>(`/cs-booking-requests/${r.id}/price?${query}`));
+      }
+      setPrices({ key, dtos });
     } catch {
       setFailed(t('priceFailed'));
     }
   }
 
+  const linesReady = lines.every((l) => categoryOf(l.category) !== undefined && l.quantity !== '');
+  // Client request 2026-11-04: the request arrives complete, so its price is checked as the form
+  // opens; staff check again only after changing an input.
+  const inputsReady =
+    inputs.originId !== '' && inputs.destinationId !== '' && inputs.currency !== '';
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (autoChecked.current || hasOther || !inputsReady || !linesReady) return;
+    autoChecked.current = true;
+    void check();
+    // Once, when the form opens with a complete request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- check() reads the current inputs
+  }, [hasOther, inputsReady, linesReady]);
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!priced || !customerId || !category) return;
+    const customerOk =
+      (!!customerId || !!r.profile?.name || newCustomer) && !r.profile?.needsReview;
+    if (!hasOther && (!priced || !customerOk)) return;
+    if (hasOther) {
+      if (!estimateAccepted || !customerOk) return;
+      onApprove({
+        version: r.version,
+        ...(r.profile ? { profileVersion: r.profile.version } : {}),
+        paymentCurrency,
+        ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
+        ...(dropOffId ? { dropOffId } : {}),
+        pricing: { ...inputs, ...(terms?.loadType ? { loadType: terms.loadType } : {}) },
+        booking: {
+          ...(customerId ? { customerId } : {}),
+          services: [...r.services],
+          requestedDeparture: r.requestedDate,
+        },
+      });
+      return;
+    }
+    if (!linesReady || !priced) return;
+    const first = lines[0]!;
     onApprove({
       version: r.version,
+      ...(r.profile ? { profileVersion: r.profile.version } : {}),
       paymentCurrency,
-      pricing: inputs,
-      pricingFingerprint: priced.pricingFingerprint,
+      ...(newCustomer ? { newCustomerFromRequest: true as const } : {}),
+      ...(dropOffId ? { dropOffId } : {}),
+      // Plan 09 section 4: a request with items is priced per line; the one-item shape as before.
+      ...(byItems
+        ? {
+            pricing: inputs,
+            lines: lines.map((l, i) => ({
+              ...l,
+              pricingFingerprint: priced[i]?.pricingFingerprint ?? null,
+            })),
+          }
+        : {
+            pricing: { ...inputs, ...first },
+            pricingFingerprint: priced[0]?.pricingFingerprint ?? null,
+          }),
       // The route, mode and cargo of the booking are the priced inputs (the API takes them).
       booking: {
-        customerId,
+        ...(customerId ? { customerId } : {}),
         services: [...r.services],
         requestedDeparture: r.requestedDate,
       },
@@ -88,9 +166,9 @@ export function BotRequestApprove({
   }
 
   const ready =
-    priced !== null &&
-    customerId !== null &&
-    category !== undefined &&
+    (hasOther ? estimateAccepted : priced !== null && linesReady) &&
+    !r.profile?.needsReview &&
+    (customerId !== null || !!r.profile?.name || newCustomer) &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
     inputs.destinationId !== '';
@@ -101,16 +179,45 @@ export function BotRequestApprove({
       <div className="form-grid">
         <div className="field">
           {t('customer')}
-          {r.customerId ? (
+          {r.profile ? (
+            <strong>
+              {r.profile.name ?? t('profileNameRequired')}
+              {r.profile.needsReview ? (
+                <span className="error"> {t('profileReviewRequired')}</span>
+              ) : null}
+              {r.profile.phone && !r.profile.phoneVerified ? (
+                <span className="muted"> {t('profilePhoneUnverified')}</span>
+              ) : null}{' '}
+              <span dir="ltr">({r.profile.number})</span>
+            </strong>
+          ) : r.customerId ? (
             <strong dir="ltr">{r.customerNumber}</strong>
+          ) : newCustomer ? (
+            <div className="row">
+              <strong>
+                {t('newCustomerFromRequest', { name: r.senderName })}
+                {r.contactPhone ? <bdi dir="ltr"> {r.contactPhone}</bdi> : null}
+              </strong>
+              <button type="button" onClick={() => setFromRequest(false)}>
+                {t('chooseExistingCustomer')}
+              </button>
+            </div>
           ) : (
-            <CustomerPicker value={customer} onChange={setCustomer} />
+            <div className="stack">
+              <CustomerPicker value={customer} onChange={setCustomer} />
+              {mayUseRequest ? (
+                <button type="button" onClick={() => setFromRequest(true)}>
+                  {t('useRequestCustomer')}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
         <label className="field">
           {t('origin')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.originId}
             onChange={(e) => set({ originId: e.target.value })}
           >
@@ -128,6 +235,7 @@ export function BotRequestApprove({
           {t('destination')}
           <select
             required
+            disabled={terms !== null}
             value={inputs.destinationId}
             onChange={(e) => set({ destinationId: e.target.value })}
           >
@@ -141,39 +249,12 @@ export function BotRequestApprove({
             ))}
           </select>
         </label>
-        <ModePicker label={t('mode')} value={inputs.mode} onChange={(mode) => set({ mode })} />
-        <label className="field">
-          {t('category')}
-          <select
-            required
-            value={inputs.category}
-            onChange={(e) => set({ category: e.target.value })}
-          >
-            <option value="" disabled>
-              —
-            </option>
-            {master.priceCategories.map((c) => (
-              <option key={c.code} value={c.code}>
-                {name(c)} ({c.code})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          {t('quantity')}
-          <input
-            required
-            dir="ltr"
-            inputMode="decimal"
-            value={inputs.quantity}
-            onChange={(e) => set({ quantity: e.target.value.trim() })}
-          />
-          {category && (
-            <span className="muted">
-              {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
-            </span>
-          )}
-        </label>
+        <ModePicker
+          label={t('mode')}
+          value={inputs.mode}
+          disabled={terms !== null}
+          onChange={(mode) => set({ mode })}
+        />
         <label className="field">
           {t('priceCurrency')}
           <select
@@ -208,26 +289,107 @@ export function BotRequestApprove({
             ))}
           </select>
         </label>
-      </div>
-      <div className="row">
-        <button type="button" onClick={() => void check()} disabled={busy}>
-          {t('checkPrice')}
-        </button>
-        {priced ? (
-          priced.state === 'priced' ? (
-            <span>
-              <span dir="ltr">
-                {priced.total} {priced.currency}
-              </span>{' '}
-              <span className="muted">{t('priceSource')}</span>
-            </span>
-          ) : (
-            <span className="muted">{t(`priceNone_${priced.reason ?? 'NO_RATE'}`)}</span>
-          )
-        ) : (
-          <span className="muted">{t('checkPriceFirst')}</span>
+        {dropOffChoices.length > 0 && (
+          <label className="field">
+            {t('dropOff')}
+            <select value={dropOffId} onChange={(e) => setDropOffId(e.target.value)}>
+              <option value="">{t('dropOffAuto')}</option>
+              {dropOffChoices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {name(d)} ({d.code})
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
+      {hasOther &&
+        (estimateAccepted && estimate ? (
+          <p>
+            {t('approveAtEstimate')}{' '}
+            <strong dir="ltr">
+              {estimate.amount} {estimate.currency}
+            </strong>
+          </p>
+        ) : (
+          <p className="error">{t('estimateRequired')}</p>
+        ))}
+      {!hasOther && (
+        <div className="stack">
+          {lines.map((line, index) => {
+            const category = categoryOf(line.category);
+            const item = r.items[index];
+            const price = priced?.[index];
+            return (
+              <div key={item?.id ?? 'single'} className="form-grid">
+                {byItems && <strong>{t('itemLine', { line: item?.lineNo ?? index + 1 })}</strong>}
+                <label className="field">
+                  {t('category')}
+                  <select
+                    required
+                    value={line.category}
+                    onChange={(e) => setLine(index, { category: e.target.value })}
+                  >
+                    <option value="" disabled>
+                      —
+                    </option>
+                    {master.priceCategories.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {name(c)} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  {t('quantity')}
+                  <input
+                    required
+                    dir="ltr"
+                    inputMode="decimal"
+                    value={line.quantity}
+                    onChange={(e) => setLine(index, { quantity: e.target.value.trim() })}
+                  />
+                  {category && (
+                    <span className="muted">
+                      {t('quantityUnit', { unit: te(`unit_${category.defaultUnit}`) })}
+                    </span>
+                  )}
+                </label>
+                {byItems && price && (
+                  <span className="muted" dir="ltr">
+                    {price.state === 'priced'
+                      ? `${price.total} ${price.currency}`
+                      : t(`priceNone_${price.reason ?? 'NO_RATE'}`)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!hasOther && (
+        <div className="row">
+          <button type="button" onClick={() => void check()} disabled={busy}>
+            {t('checkPrice')}
+          </button>
+          {priced ? (
+            priced.every((p) => p.state === 'priced') ? (
+              <span>
+                <span dir="ltr">
+                  {totalOf(priced)} {priced[0]?.currency}
+                </span>{' '}
+                <span className="muted">{t('priceSource')}</span>
+              </span>
+            ) : (
+              <span className="muted">
+                {t(`priceNone_${priced.find((p) => p.state !== 'priced')?.reason ?? 'NO_RATE'}`)}
+              </span>
+            )
+          ) : (
+            <span className="muted">{t('checkPriceFirst')}</span>
+          )}
+        </div>
+      )}
       {failed && <p className="error">{failed}</p>}
       <div className="actions">
         <button type="submit" className="primary" disabled={busy || !ready}>
@@ -236,4 +398,22 @@ export function BotRequestApprove({
       </div>
     </form>
   );
+}
+
+/**
+ * The lines' totals summed for display only, in integer units of 1/10000 (decimal strings of up
+ * to 4 places): the API recomputes and keeps the total as Decimal on approval.
+ */
+function totalOf(prices: CsApprovalPriceDto[]): string {
+  const scale = 4;
+  let sum = BigInt(0);
+  for (const p of prices) {
+    const [whole = '0', frac = ''] = (p.total ?? '0').split('.');
+    sum += BigInt(whole + frac.padEnd(scale, '0').slice(0, scale));
+  }
+  const digits = sum.toString().padStart(scale + 1, '0');
+  const places = Math.max(0, ...prices.map((p) => (p.total ?? '').split('.')[1]?.length ?? 0));
+  const whole = digits.slice(0, -scale);
+  const frac = digits.slice(-scale).slice(0, places);
+  return places > 0 ? `${whole}.${frac}` : whole;
 }
