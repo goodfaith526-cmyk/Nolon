@@ -82,7 +82,6 @@ describe('A central customer from the first message (plan 09d 4a)', () => {
     t = await createTestApp({
       CS_CUSTOMER_IDENTITY_ENABLED: true,
       CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED: true,
-      CS_CUSTOMER_IDENTITY_HOME_BRANCH: 'DXB',
       CS_CUSTOMER_IDENTITY_COMPANY_ID: companyId,
       CS_CUSTOMER_IDENTITY_CLIENTS: JSON.stringify({
         [clientId]: { secret, accounts: [{ channel: 'TELEGRAM', channelAccountId: 'test-bot' }] },
