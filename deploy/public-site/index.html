@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>نولون | شحن من العالم إلى السودان</title>
-    <link rel="stylesheet" href="styles.css?v=12" />
+    <link rel="stylesheet" href="styles.css?v=13" />
     <meta
       name="description"
       content="نولون للخدمات اللوجستية: شحن الكراتين والبراميل والباليتات والحاويات من أي مكان في العالم إلى باب بيتك في السودان، بسعر ثابت وتتبّع في كل مرحلة."
@@ -139,7 +139,7 @@
                 <text x="30" y="24" text-anchor="middle" fill="#f2f6fb">DXB</text>
                 <text x="30" y="140" text-anchor="middle" fill="#f2f6fb">JED</text>
                 <text x="210" y="108" text-anchor="middle" fill="#f2f6fb">PTS</text>
-                <text x="330" y="32" text-anchor="middle" fill="#f39531" font-weight="600">
+                <text x="330" y="77" text-anchor="middle" fill="#f39531" font-weight="600">
                   ATB
                 </text>
                 <text x="395" y="124" text-anchor="middle" fill="#a9bdd4">KRT</text>
@@ -147,8 +147,25 @@
               <!-- Where the shipment is now. Drawn at the current station; site.js slides it
                    there along the orange line once, unless the visitor turned motion off. -->
               <g id="route-marker" transform="translate(330 52)" aria-hidden="true">
-                <circle r="9" fill="#f39531" fill-opacity=".25" />
-                <circle r="4.5" fill="#fff" stroke="#f39531" stroke-width="2" />
+                <!-- One barrel and one parcel riding on the line, same art as the logo trip. -->
+                <g transform="scale(1.35)">
+                  <ellipse cy="1" rx="13" ry="2.5" fill="#000" fill-opacity=".3" />
+                  <rect x="-12" y="-14" width="10" height="14" rx="2.5" fill="#f39531" />
+                  <rect x="-12" y="-10.6" width="10" height="1.6" fill="#c46a10" />
+                  <rect x="-12" y="-5" width="10" height="1.6" fill="#c46a10" />
+                  <rect
+                    x="-10.4"
+                    y="-13"
+                    width="1.6"
+                    height="12"
+                    rx=".8"
+                    fill="#fff"
+                    fill-opacity=".35"
+                  />
+                  <rect x="0" y="-11" width="13" height="11" rx="1.5" fill="#c9965f" />
+                  <rect x="0" y="-11" width="13" height="3" rx="1.5" fill="#b58049" />
+                  <rect x="5.4" y="-11" width="2.2" height="11" fill="#ecd3ad" />
+                </g>
               </g>
             </svg>
             <ol class="stages">
@@ -1197,6 +1214,6 @@
       </div>
     </div>
 
-    <script src="site.js?v=12" defer></script>
+    <script src="site.js?v=13" defer></script>
   </body>
 </html>
