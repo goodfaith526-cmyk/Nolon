@@ -2870,7 +2870,7 @@
     "STATEMENT_BILLED": "لهذا الكشف فاتورة مورّد. ألغِ الفاتورة أولاً.",
     "BILL_FROM_STATEMENT": "هذه الفاتورة صادرة من كشف شريك. ألغِها وأنشئها من جديد من الكشف.",
     "STATEMENT_BILL_MISMATCH": "هذه الفاتورة لم تعد مطابقة لكشفها. ألغِها وأنشئها من جديد من الكشف.",
-    "CREDIT_LIMIT_EXCEEDED": "العميل {customer} رصيده المفتوح {balance} {currency} وحدّه الائتماني {limit} {currency}. سجّل دفعته أولاً، أو يرفع المدير حدّه.",
+    "CREDIT_LIMIT_EXCEEDED": "العميل {customer} تجاوز حدّه الائتماني {limit} {currency}. سجّل دفعته أولاً، أو يرفع المدير حدّه.",
     "CREDIT_LIMIT_NO_RATE": "لا يوجد سعر صرف لـ {currency} لفحص حد ائتمان العميل {customer}. أضف السعر أولاً."
   },
   "Locations": {

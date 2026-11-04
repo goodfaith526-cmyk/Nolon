@@ -47,7 +47,6 @@ export function useCreditBlock(): (
     if (credit?.state === 'EXCEEDED') {
       return tr('CREDIT_LIMIT_EXCEEDED', {
         customer,
-        balance: formatAmount(credit.balance ?? '0'),
         limit: formatAmount(credit.limit ?? '0'),
         currency: credit.currency ?? '',
       });

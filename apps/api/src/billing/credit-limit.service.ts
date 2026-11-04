@@ -57,11 +57,31 @@ export function creditSnapshotSql(customerId: string, today: string): Prisma.Sql
       COALESCE((SELECT json_agg(json_build_object('currency', "currency", 'amount', "amount"::text))
                 FROM adv), '[]'::json) AS "advances",
       COALESCE((SELECT json_agg(json_build_object('currency', "currency", 'rate', "rate"))
-                FROM rates), '[]'::json) AS "rates"
+                FROM rates), '[]'::json) AS "rates",
+      -- F192-1: the branches whose documents make up the balance (an open approved invoice, an
+      -- unapplied advance), so a reader sees the total only when they may see each of them.
+      COALESCE((SELECT json_agg(DISTINCT b."branch_id") FROM (
+        SELECT i."branch_id" FROM "customer_invoices" i
+        WHERE i."customer_id" = ${customerId}::uuid AND i."status" = 'APPROVED'
+          AND i."total" - i."paid_amount" - i."credited_amount" <> 0
+        UNION
+        SELECT r."branch_id" FROM "receipts" r
+        WHERE r."customer_id" = ${customerId}::uuid AND r."status" = 'POSTED'
+          AND r."amount"
+              - COALESCE((SELECT SUM(a."amount") FROM "receipt_allocations" a
+                          WHERE a."receipt_id" = r."id"), 0)
+              - COALESCE((SELECT SUM(p."amount") FROM "receipt_applications" p
+                          WHERE p."receipt_id" = r."id" AND p."status" = 'ACTIVE'), 0) <> 0
+      ) b), '[]'::json) AS "branches"
     FROM c`;
 }
 
-type SnapshotResult = CreditSnapshotRow & { name: string; number: string };
+type SnapshotResult = CreditSnapshotRow & {
+  name: string;
+  number: string;
+  /** The branches of the documents in the balance (F192-1). */
+  branches: readonly string[];
+};
 
 /**
  * Client decision ب6: a customer with a credit limit gets no booking confirmed and no invoice
@@ -128,7 +148,12 @@ export class CreditLimitService {
         return {
           ...base,
           state: position.kind,
-          balance: toDecimalString(position.balance),
+          // F192-1: the total is company-wide; it is shown only to a reader who may see the
+          // invoices of every branch it comes from (AGENTS.md rule 2). The state alone is what
+          // a confirmation or approval would answer anyway.
+          balance: row.branches.every((b) => user.access.has('customer_invoices:view', b))
+            ? toDecimalString(position.balance)
+            : null,
           limit: toDecimalString(position.limit),
           currency: position.currency,
         };
@@ -173,14 +198,15 @@ export class CreditLimitService {
     if (position.kind === 'EXCEEDED') {
       const params = {
         customer: row.name,
-        balance: toDecimalString(position.balance),
         limit: toDecimalString(position.limit),
         currency: position.currency,
       };
+      // F192-1: no balance here. It is company-wide, and the person refused may work in one
+      // branch only; the customer page shows it to those who may see it.
       throw codedRefusal(
         HttpStatus.CONFLICT,
         'CREDIT_LIMIT_EXCEEDED',
-        `Customer ${row.name} has an open balance of ${params.balance} ${params.currency} and a limit of ${params.limit}: record their payment first, or have a manager raise the limit`,
+        `Customer ${row.name} is over their credit limit of ${params.limit} ${params.currency}: record their payment first, or have a manager raise the limit`,
         params,
       );
     }

@@ -171,8 +171,10 @@ describe('credit limit (ب6)', () => {
     const refused = await approve(invoice.id).expect(409);
     expect(refused.body).toMatchObject({
       code: 'CREDIT_LIMIT_EXCEEDED',
-      params: { customer: customer.name, balance: '600', limit: '500', currency: 'USD' },
+      params: { customer: customer.name, limit: '500', currency: 'USD' },
     });
+    // F192-1: the company-wide balance is not in the refusal.
+    expect((refused.body as { params: object }).params).not.toHaveProperty('balance');
     const row = await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
     expect(row).toMatchObject({ status: 'DRAFT', number: null, journalEntryId: null });
     // An advance of 100 brings it to 500: at the limit is allowed (over means greater).
@@ -305,6 +307,33 @@ describe('credit limit (ب6)', () => {
     const none = (await get(`/customer-credit/${other.id}`, cookies.financePts).expect(200))
       .body as CustomerCreditDto;
     expect(none.state).toBe('NO_LIMIT');
+  });
+
+  it('shows the balance only to a reader who may see every branch it comes from (F192-1)', async () => {
+    const customer = await newCustomer('10');
+    await post('/customer-invoices/opening', cookies.admin, {
+      requestId: randomUUID(),
+      customerId: customer.id,
+      branchId: jed,
+      entryDate: d('01-01'),
+      reference: 'JED-CREDIT',
+      invoiceDate: d('01-01'),
+      dueDate: d('01-31'),
+      currency: 'USD',
+      amount: '4321',
+    }).expect(201);
+    const all = (await get(`/customer-credit/${customer.id}`, cookies.admin).expect(200))
+      .body as CustomerCreditDto;
+    expect(all).toMatchObject({ state: 'EXCEEDED', balance: '4321', limit: '10' });
+    // A PTS finance user sees the customer and the state their own approval would meet, not the
+    // JED amount; nor does a refused confirmation carry it.
+    const pts = (await get(`/customer-credit/${customer.id}`, cookies.financePts).expect(200))
+      .body as CustomerCreditDto;
+    expect(pts).toMatchObject({ state: 'EXCEEDED', balance: null, limit: '10' });
+    const booking = await draftBooking(customer.id);
+    const refused = await post(`/bookings/${booking.id}/confirm`, cookies.salesPts).expect(409);
+    expect(refused.body).toMatchObject({ code: 'CREDIT_LIMIT_EXCEEDED' });
+    expect(JSON.stringify(refused.body)).not.toContain('4321');
   });
 
   it('still records an opening item over the limit (debt from before the system)', async () => {

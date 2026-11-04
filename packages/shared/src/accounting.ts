@@ -329,6 +329,10 @@ export interface InvoicePaymentDto {
 export interface CustomerCreditDto {
   customerId: string;
   state: 'NO_LIMIT' | 'WITHIN' | 'EXCEEDED' | 'NO_RATE';
+  /**
+   * The company-wide open balance in the limit's currency; null without a limit or a rate, or when
+   * part of it comes from a branch whose invoices the reader may not see (F192-1).
+   */
   balance: DecimalString | null;
   limit: DecimalString | null;
   currency: CurrencyCode | null;
