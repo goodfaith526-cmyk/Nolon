@@ -35,6 +35,9 @@ export function BotRequestDetail({ id }: { id: string }) {
   const [reasons, setReasons] = useState<CsRejectReasonDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  // An approval's refusal shows by its button, at the foot of the page (owner, 2026-11-05: at
+  // the top it was out of sight, and the button seemed to do nothing).
+  const [approveFailed, setApproveFailed] = useState<string | null>(null);
 
   useEffect(() => {
     api<CsRejectReasonDto[]>('/cs-booking-requests/reject-reasons')
@@ -58,6 +61,7 @@ export function BotRequestDetail({ id }: { id: string }) {
   async function post(path: string, body: unknown) {
     setBusy(true);
     setNotice(null);
+    setApproveFailed(null);
     try {
       setRecord(
         await api<CsBookingRequestStaffDto>(`/cs-booking-requests/${id}/${path}`, {
@@ -67,7 +71,8 @@ export function BotRequestDetail({ id }: { id: string }) {
       );
       setNotice({ ok: true, text: tc('saved') });
     } catch (e) {
-      setNotice({ ok: false, text: failure(e) });
+      if (path === 'approve') setApproveFailed(failure(e));
+      else setNotice({ ok: false, text: failure(e) });
     } finally {
       setBusy(false);
     }
@@ -545,6 +550,7 @@ export function BotRequestDetail({ id }: { id: string }) {
           request={r}
           master={master}
           busy={busy}
+          failed={approveFailed}
           onApprove={(body) => void post('approve', body)}
           defaultCurrency={me.branches.find((b) => b.id === r.branchId)?.defaultCurrency}
         />

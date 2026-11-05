@@ -210,6 +210,72 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
     await on?.close();
   });
 
+  it('confirms a one-item request (no items), priced or not, with its cargo line (website chat)', async () => {
+    const sales = staff(on, cookies.sales);
+    /** The one-item shape: the category and quantity on the request itself. */
+    const single = async () =>
+      (
+        (
+          await on
+            .http()
+            .post('/api/v1/cs/booking-requests')
+            .set('Authorization', `Bearer ${bot.key}`)
+            .send({
+              sender: { channel: 'whatsapp', id: uniquePhone() },
+              originId: ids.origin,
+              destinationId: ids.dest,
+              category,
+              quantity: '3',
+              services: [],
+              senderName: 'Sender',
+              consigneeName: 'Consignee',
+              consigneePhone: '0912345678',
+              handover: 'PICKUP',
+              language: 'ar',
+              idempotencyKey: `confirm-single-${randomUUID()}`,
+            })
+            .expect(201)
+        ).body as CsBookingRequestCreated
+      ).requestId;
+    const approveSingle = async (id: string, mode: string) => {
+      const pricing = { ...route, mode, category, quantity: '3' };
+      const price = (await sales.get(`/cs-booking-requests/${id}/price`, pricing).expect(200))
+        .body as CsApprovalPriceDto;
+      const detail = (await sales.get(`/cs-booking-requests/${id}`).expect(200))
+        .body as CsBookingRequestStaffDto;
+      const done = (
+        await sales
+          .post(`/cs-booking-requests/${id}/approve`, {
+            version: detail.version,
+            paymentCurrency: 'USD',
+            pricing,
+            pricingFingerprint: price.pricingFingerprint,
+            booking: { customerId: await newCustomer(), services: [] },
+          })
+          .expect(201)
+      ).body as CsBookingRequestStaffDto;
+      return {
+        price,
+        booking: await on.prisma.booking.findUniqueOrThrow({
+          where: { id: done.bookingId! },
+          include: { items: true },
+        }),
+      };
+    };
+    // Priced: one line of 3 barrels, confirmed.
+    const priced = await approveSingle(await single(), 'ROAD');
+    expect(priced.price.state).toBe('priced');
+    expect(priced.booking.status).toBe('CONFIRMED');
+    expect(priced.booking.items).toMatchObject([
+      { cargoType: 'BARREL', quantity: 3, priceCategoryCode: category },
+    ]);
+    // No card for the mode: approved with no price, still confirmed with its line.
+    const unpriced = await approveSingle(await single(), 'SEA');
+    expect(unpriced.price).toMatchObject({ state: 'none', reason: 'NO_RATE' });
+    expect(unpriced.booking.status).toBe('CONFIRMED');
+    expect(unpriced.booking.items).toHaveLength(1);
+  });
+
   it('confirms the booking, makes its shipment and its invoice, with the switch on', async () => {
     const id = await request();
     const approved = (await approve(on, id, await newCustomer(), 201))

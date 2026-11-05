@@ -26,12 +26,15 @@ export function BotRequestApprove({
   request: r,
   master,
   busy,
+  failed: approveFailed = null,
   onApprove,
   defaultCurrency,
 }: {
   request: CsBookingRequestStaffDto;
   master: MasterDataDto;
   busy: boolean;
+  /** Why the last approval was refused, shown by its button. */
+  failed?: string | null;
   onApprove: (body: CsApproveRequest) => void;
   /** The request branch's default currency: the price currency when the bot sent no quote. */
   defaultCurrency?: string;
@@ -60,7 +63,9 @@ export function BotRequestApprove({
   const [inputs, setInputs] = useState({
     originId: terms?.originId ?? r.originId ?? '',
     destinationId: terms?.destinationId ?? r.destinationId ?? '',
-    mode: terms?.mode ?? 'SEA',
+    // Owner, 2026-11-05: the mode the bot's quote priced (Jeddah to Khartoum is sea + road), not
+    // sea alone, so the price the bot gave is found again.
+    mode: terms?.mode ?? r.priceCheck?.mode ?? 'SEA',
     // A request with no quote (e.g. the website chat) is priced in its branch's currency, so the
     // price is checked as the form opens (owner, 2026-11-04: the currency was empty).
     currency: r.priceCheck?.currency ?? r.botQuotedPrice?.currency ?? defaultCurrency ?? '',
@@ -85,6 +90,7 @@ export function BotRequestApprove({
   const [paymentCurrency, setPaymentCurrency] = useState(inputs.currency);
   const [prices, setPrices] = useState<{ key: string; dtos: CsApprovalPriceDto[] } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   // Plan 09 section 11: the point the customer is told to bring the shipment to (none: the
   // branch's only point, when it has exactly one).
   const dropOffChoices = r.dropOffChoices.filter((d) => d.branchId === r.branchId);
@@ -105,6 +111,7 @@ export function BotRequestApprove({
 
   async function check() {
     setFailed(null);
+    setChecking(true);
     try {
       const dtos = [];
       for (const line of lines) {
@@ -114,6 +121,8 @@ export function BotRequestApprove({
       setPrices({ key, dtos });
     } catch {
       setFailed(t('priceFailed'));
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -417,10 +426,12 @@ export function BotRequestApprove({
       )}
       {!hasOther && (
         <div className="row">
-          <button type="button" onClick={() => void check()} disabled={busy}>
+          <button type="button" onClick={() => void check()} disabled={busy || checking}>
             {t('checkPrice')}
           </button>
-          {priced ? (
+          {checking ? (
+            <span className="muted">{t('checkingPrice')}</span>
+          ) : priced ? (
             priced.every((p) => p.state === 'priced') ? (
               <span>
                 <span dir="ltr">
@@ -439,6 +450,11 @@ export function BotRequestApprove({
         </div>
       )}
       {failed && <p className="error">{failed}</p>}
+      {approveFailed && (
+        <p className="error" role="alert">
+          {approveFailed}
+        </p>
+      )}
       <div className="actions">
         <button type="submit" className="primary" disabled={busy || !ready}>
           {t('approveAction')}

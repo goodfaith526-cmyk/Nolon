@@ -3214,7 +3214,7 @@
     "textAr": "Arabic text",
     "textEn": "English text",
     "approveTitle": "Open a booking",
-    "approveHint": "Confirm the customer, the route and what the price is for. NOLON prices it from its rate cards; the booking is saved as a draft with no price, and you can complete it on the booking screen.",
+    "approveHint": "Confirm the customer, the route and the cargo. NOLON prices it from its rate cards. Approval opens the booking, and you can complete it on the booking screen.",
     "customer": "Customer",
     "mode": "Mode",
     "quantityUnit": "In the category’s unit: {unit}",
@@ -3223,7 +3223,7 @@
     "checkPrice": "Check the price",
     "checkPriceFirst": "Check the price after any change, before you approve.",
     "priceSource": "from NOLON’s rate cards",
-    "priceNone_NO_RATE": "No approved price for these inputs.",
+    "priceNone_NO_RATE": "No approved price for these inputs. Check the shipping mode (sea, road or both) and the currency.",
     "priceNone_UNIT_MISMATCH": "The rate card is in another unit: price it on the quotation.",
     "priceNone_AMBIGUOUS": "More than one rate card matches: price it on the quotation.",
     "priceFailed": "The price could not be checked. Check the inputs.",
@@ -3308,7 +3308,8 @@
     "photoAlt": "Photo from the customer",
     "newCustomerFromRequest": "New customer from the request: {name}",
     "chooseExistingCustomer": "Choose an existing customer",
-    "useRequestCustomer": "New customer from the request's details"
+    "useRequestCustomer": "New customer from the request's details",
+    "checkingPrice": "Checking the price…"
   },
   "PaymentInstructions": {
     "title": "Payment instructions",
