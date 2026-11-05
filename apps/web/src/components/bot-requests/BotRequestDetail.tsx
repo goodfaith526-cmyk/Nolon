@@ -56,6 +56,11 @@ export function BotRequestDetail({ id }: { id: string }) {
     const b = branchId ? me.branches.find((x) => x.id === branchId) : undefined;
     return b ? localName(b) : t('noBranch');
   };
+  // The category's name in the page's language, with its code (the code alone read as English).
+  const categoryName = (code: string) => {
+    const c = master?.priceCategories.find((x) => x.code === code);
+    return c ? `${localName(c)} (${code})` : code;
+  };
   const routeTo = r.allowedBranchIds.filter((b) => me.branches.some((x) => x.id === b));
 
   async function post(path: string, body: unknown) {
@@ -105,217 +110,225 @@ export function BotRequestDetail({ id }: { id: string }) {
       </div>
       <Notice notice={notice} />
       {r.byNames && <p className="muted">{t('byNamesHint')}</p>}
-      <dl className="details">
-        <dt>{t('source')}</dt>
-        <dd>
-          {r.customerNumber
-            ? t('sourceCustomer', { number: r.customerNumber })
-            : r.channel
-              ? t(`channel_${r.channel}`)
-              : '—'}
-        </dd>
-        <dt>{t('createdAt')}</dt>
-        <dd>{new Date(r.createdAt).toLocaleString(locale)}</dd>
-        <dt>{t('expiresAt')}</dt>
-        <dd>{new Date(r.expiresAt).toLocaleString(locale)}</dd>
-        <dt>{t('origin')}</dt>
-        <dd>{place(r.originId, r.botNames?.origin)}</dd>
-        <dt>{t('destination')}</dt>
-        <dd>{place(r.destinationId, r.botNames?.destination)}</dd>
-        <dt>{t('category')}</dt>
-        <dd dir="ltr">{r.category ?? `${t('unmatched')}: «${named(r.botNames?.kind)}»`}</dd>
-        <dt>{t('quantity')}</dt>
-        <dd dir="ltr">{r.quantity}</dd>
-        <dt>{t('handover')}</dt>
-        <dd>{t(`handover_${r.handover}`)}</dd>
-        <dt>{t('sender')}</dt>
-        <dd>
-          {r.senderName}
-          {r.contactPhone && (
-            <span className="muted" dir="ltr">
-              {' '}
-              {r.contactPhone}
-            </span>
+      <div className="card">
+        <dl className="details pairs">
+          <dt>{t('source')}</dt>
+          <dd>
+            {r.customerNumber
+              ? t('sourceCustomer', { number: r.customerNumber })
+              : r.channel
+                ? t(`channel_${r.channel}`)
+                : '—'}
+          </dd>
+          <dt>{t('branch')}</dt>
+          <dd>{branchName(r.branchId)}</dd>
+          <dt>{t('createdAt')}</dt>
+          <dd>{new Date(r.createdAt).toLocaleString(locale)}</dd>
+          <dt>{t('expiresAt')}</dt>
+          <dd>{new Date(r.expiresAt).toLocaleString(locale)}</dd>
+          <dt>{t('origin')}</dt>
+          <dd>{place(r.originId, r.botNames?.origin)}</dd>
+          <dt>{t('destination')}</dt>
+          <dd>{place(r.destinationId, r.botNames?.destination)}</dd>
+          <dt>{t('category')}</dt>
+          <dd>
+            {r.category
+              ? categoryName(r.category)
+              : `${t('unmatched')}: «${named(r.botNames?.kind)}»`}
+          </dd>
+          <dt>{t('quantity')}</dt>
+          <dd dir="ltr">{r.quantity}</dd>
+          <dt>{t('sender')}</dt>
+          <dd>
+            {r.senderName}
+            {r.contactPhone && (
+              <>
+                {' '}
+                <bdi className="muted" dir="ltr">
+                  {r.contactPhone}
+                </bdi>
+              </>
+            )}
+          </dd>
+          <dt>{t('consignee')}</dt>
+          <dd>
+            {r.consigneeName}{' '}
+            <bdi className="muted" dir="ltr">
+              {r.consigneePhone}
+            </bdi>
+          </dd>
+          <dt>{t('handover')}</dt>
+          <dd>{t(`handover_${r.handover}`)}</dd>
+          {r.requestedDate && (
+            <>
+              <dt>{t('requestedDate')}</dt>
+              <dd dir="ltr">{r.requestedDate}</dd>
+            </>
           )}
-        </dd>
-        <dt>{t('consignee')}</dt>
-        <dd>
-          {r.consigneeName}{' '}
-          <span className="muted" dir="ltr">
-            {r.consigneePhone}
-          </span>
-        </dd>
-        {r.requestedDate && (
-          <>
-            <dt>{t('requestedDate')}</dt>
-            <dd dir="ltr">{r.requestedDate}</dd>
-          </>
-        )}
-        <dt>{t('branch')}</dt>
-        <dd>{branchName(r.branchId)}</dd>
-        <dt>{t('price')}</dt>
-        <dd>
-          {check ? (
-            <span>
-              <span dir="ltr">
-                {check.quotedTotal ?? check.unitPrice} {check.currency}
-              </span>{' '}
-              <span
-                className={`badge ${check.state === 'current' ? 'badge-APPROVED' : 'badge-EXPIRED'}`}
-              >
-                {t(`price_${check.state}`)}
-              </span>
-              {check.state === 'stale' && (
-                <span className="muted">
-                  {' '}
-                  {check.totalNow
-                    ? t('priceNow', { total: `${check.totalNow} ${check.currency}` })
-                    : t('priceNone')}
+          <dt>{t('price')}</dt>
+          <dd>
+            {check ? (
+              <span>
+                <span dir="ltr">
+                  {check.quotedTotal ?? check.unitPrice} {check.currency}
+                </span>{' '}
+                <span
+                  className={`badge ${check.state === 'current' ? 'badge-APPROVED' : 'badge-EXPIRED'}`}
+                >
+                  {t(`price_${check.state}`)}
                 </span>
-              )}
-            </span>
-          ) : (
-            t('noQuote')
+                {check.state === 'stale' && (
+                  <span className="muted">
+                    {' '}
+                    {check.totalNow
+                      ? t('priceNow', { total: `${check.totalNow} ${check.currency}` })
+                      : t('priceNone')}
+                  </span>
+                )}
+              </span>
+            ) : (
+              t('noQuote')
+            )}
+          </dd>
+          {r.botQuotedPrice && (
+            <>
+              <dt>{t('botPrice')}</dt>
+              <dd>
+                <span dir="ltr">
+                  {r.botQuotedPrice.amount} {r.botQuotedPrice.currency}
+                </span>{' '}
+                <span className="muted">{t('botPriceHint')}</span>
+              </dd>
+            </>
           )}
-        </dd>
-        {r.botQuotedPrice && (
-          <>
-            <dt>{t('botPrice')}</dt>
-            <dd>
-              <span dir="ltr">
-                {r.botQuotedPrice.amount} {r.botQuotedPrice.currency}
-              </span>{' '}
-              <span className="muted">{t('botPriceHint')}</span>
-            </dd>
-          </>
-        )}
-        {r.rejectReasonCode && (
-          <>
-            <dt>{t('rejectReason')}</dt>
-            <dd>
-              {(() => {
-                const reason = reasons.find((x) => x.code === r.rejectReasonCode);
-                return reason
-                  ? locale === 'ar'
-                    ? reason.textAr
-                    : reason.textEn
-                  : r.rejectReasonCode;
-              })()}
-            </dd>
-          </>
-        )}
-        {r.bookingId && (
-          <>
-            <dt>{t('booking')}</dt>
-            <dd>
-              <Link href={`/bookings/${r.bookingId}`} dir="ltr">
-                {r.bookingNumber}
-              </Link>{' '}
-              {r.paymentCurrency && (
+          {r.rejectReasonCode && (
+            <>
+              <dt>{t('rejectReason')}</dt>
+              <dd>
+                {(() => {
+                  const reason = reasons.find((x) => x.code === r.rejectReasonCode);
+                  return reason
+                    ? locale === 'ar'
+                      ? reason.textAr
+                      : reason.textEn
+                    : r.rejectReasonCode;
+                })()}
+              </dd>
+            </>
+          )}
+          {r.bookingId && (
+            <>
+              <dt>{t('booking')}</dt>
+              <dd>
+                <Link href={`/bookings/${r.bookingId}`} dir="ltr">
+                  {r.bookingNumber}
+                </Link>{' '}
+                {r.paymentCurrency && (
+                  <span className="muted">
+                    {t('paymentCurrency')}: <span dir="ltr">{r.paymentCurrency}</span>
+                  </span>
+                )}
+              </dd>
+            </>
+          )}
+          {(r.dropOffPoint || r.actions.canSetDropOff) && (
+            <>
+              <dt>{t('dropOff')}</dt>
+              <dd>
+                {r.dropOffPoint ? (
+                  <>
+                    {localName(r.dropOffPoint)} <span dir="ltr">({r.dropOffPoint.code})</span>
+                  </>
+                ) : (
+                  <span className="muted">{t('dropOffNone')}</span>
+                )}
+              </dd>
+            </>
+          )}
+          {r.approvedPricing && (
+            <>
+              <dt>{t('approvedPricing')}</dt>
+              <dd dir="ltr">
+                {r.approvedPricing.category} × {r.approvedPricing.quantity}
+                {r.approvedPricing.total !== null &&
+                  ` = ${r.approvedPricing.total} ${r.approvedPricing.currency}`}
+              </dd>
+            </>
+          )}
+          {r.cancelledAt && (
+            <>
+              <dt>{t('cancelledByCustomer')}</dt>
+              <dd>
+                <span dir="ltr">{r.cancelledAt.slice(0, 16).replace('T', ' ')}</span>
+                {r.cancelReason && <span className="pre"> — {r.cancelReason}</span>}
+              </dd>
+            </>
+          )}
+          {r.cancelRequest && (
+            <>
+              <dt>{t('cancelRequest')}</dt>
+              <dd>
+                <span dir="ltr">{r.cancelRequest.requestedAt.slice(0, 16).replace('T', ' ')}</span>
+                {r.cancelRequest.reason && (
+                  <span className="pre"> — {r.cancelRequest.reason}</span>
+                )}{' '}
                 <span className="muted">
-                  {t('paymentCurrency')}: <span dir="ltr">{r.paymentCurrency}</span>
+                  {r.cancelRequest.closedAt ? t('cancelRequestClosed') : t('cancelRequestOpen')}
                 </span>
-              )}
-            </dd>
-          </>
-        )}
-        {(r.dropOffPoint || r.actions.canSetDropOff) && (
-          <>
-            <dt>{t('dropOff')}</dt>
-            <dd>
-              {r.dropOffPoint ? (
-                <>
-                  {localName(r.dropOffPoint)} <span dir="ltr">({r.dropOffPoint.code})</span>
-                </>
-              ) : (
-                <span className="muted">{t('dropOffNone')}</span>
-              )}
-            </dd>
-          </>
-        )}
-        {r.approvedPricing && (
-          <>
-            <dt>{t('approvedPricing')}</dt>
-            <dd dir="ltr">
-              {r.approvedPricing.category} × {r.approvedPricing.quantity}
-              {r.approvedPricing.total !== null &&
-                ` = ${r.approvedPricing.total} ${r.approvedPricing.currency}`}
-            </dd>
-          </>
-        )}
-        {r.cancelledAt && (
-          <>
-            <dt>{t('cancelledByCustomer')}</dt>
-            <dd>
-              <span dir="ltr">{r.cancelledAt.slice(0, 16).replace('T', ' ')}</span>
-              {r.cancelReason && <span className="pre"> — {r.cancelReason}</span>}
-            </dd>
-          </>
-        )}
-        {r.cancelRequest && (
-          <>
-            <dt>{t('cancelRequest')}</dt>
-            <dd>
-              <span dir="ltr">{r.cancelRequest.requestedAt.slice(0, 16).replace('T', ' ')}</span>
-              {r.cancelRequest.reason && (
-                <span className="pre"> — {r.cancelRequest.reason}</span>
-              )}{' '}
-              <span className="muted">
-                {r.cancelRequest.closedAt ? t('cancelRequestClosed') : t('cancelRequestOpen')}
-              </span>
-            </dd>
-          </>
-        )}
-        {r.instantAccount && (
-          <>
-            <dt>{t('instantAccount')}</dt>
-            <dd>
-              {r.instantAccount.customerId ? (
-                <Link href={`/customers/${r.instantAccount.customerId}`}>
-                  {t('instantAccountMade')}
-                </Link>
-              ) : (
-                t('instantAccountWaits', {
-                  reason: t(`instantAccount_${r.instantAccount.outcome}`),
-                })
-              )}
-            </dd>
-          </>
-        )}
-        {r.otherSender && (
-          <>
-            <dt>{t('otherSender')}</dt>
-            <dd>
-              {r.otherSender.customerId ? (
-                <Link href={`/customers/${r.otherSender.customerId}`}>{r.otherSender.name}</Link>
-              ) : (
-                r.otherSender.name
-              )}{' '}
-              <span dir="ltr">{r.otherSender.phone}</span>
-            </dd>
-          </>
-        )}
-        {r.receiverAccount && (
-          <>
-            <dt>{t('receiverAccount')}</dt>
-            <dd>
-              {r.receiverAccount.customerId ? (
-                <Link href={`/customers/${r.receiverAccount.customerId}`}>
-                  {t(`receiverAccount_${r.receiverAccount.outcome}`)}
-                </Link>
-              ) : (
-                t(`receiverAccount_${r.receiverAccount.outcome}`)
-              )}
-            </dd>
-          </>
-        )}
-        {r.internalNote && (
-          <>
-            <dt>{t('internalNote')}</dt>
-            <dd className="pre">{r.internalNote}</dd>
-          </>
-        )}
-      </dl>
+              </dd>
+            </>
+          )}
+          {r.instantAccount && (
+            <>
+              <dt>{t('instantAccount')}</dt>
+              <dd>
+                {r.instantAccount.customerId ? (
+                  <Link href={`/customers/${r.instantAccount.customerId}`}>
+                    {t('instantAccountMade')}
+                  </Link>
+                ) : (
+                  t('instantAccountWaits', {
+                    reason: t(`instantAccount_${r.instantAccount.outcome}`),
+                  })
+                )}
+              </dd>
+            </>
+          )}
+          {r.otherSender && (
+            <>
+              <dt>{t('otherSender')}</dt>
+              <dd>
+                {r.otherSender.customerId ? (
+                  <Link href={`/customers/${r.otherSender.customerId}`}>{r.otherSender.name}</Link>
+                ) : (
+                  r.otherSender.name
+                )}{' '}
+                <span dir="ltr">{r.otherSender.phone}</span>
+              </dd>
+            </>
+          )}
+          {r.receiverAccount && (
+            <>
+              <dt>{t('receiverAccount')}</dt>
+              <dd>
+                {r.receiverAccount.customerId ? (
+                  <Link href={`/customers/${r.receiverAccount.customerId}`}>
+                    {t(`receiverAccount_${r.receiverAccount.outcome}`)}
+                  </Link>
+                ) : (
+                  t(`receiverAccount_${r.receiverAccount.outcome}`)
+                )}
+              </dd>
+            </>
+          )}
+          {r.internalNote && (
+            <>
+              <dt>{t('internalNote')}</dt>
+              <dd className="pre">{r.internalNote}</dd>
+            </>
+          )}
+        </dl>
+      </div>
 
       {r.items.length > 0 && (
         <div className="card stack">
@@ -443,6 +456,18 @@ export function BotRequestDetail({ id }: { id: string }) {
         onEstimate={(body) => void post('estimate', body)}
       />
 
+      {/* The decision staff usually take comes first; routing and rejecting follow. */}
+      {r.actions.canApprove && master && (
+        <BotRequestApprove
+          request={r}
+          master={master}
+          busy={busy}
+          failed={approveFailed}
+          onApprove={(body) => void post('approve', body)}
+          defaultCurrency={me.branches.find((b) => b.id === r.branchId)?.defaultCurrency}
+        />
+      )}
+
       {r.actions.canSetDropOff && (
         <form
           className="card stack"
@@ -544,16 +569,6 @@ export function BotRequestDetail({ id }: { id: string }) {
             </button>
           </div>
         </form>
-      )}
-      {r.actions.canApprove && master && (
-        <BotRequestApprove
-          request={r}
-          master={master}
-          busy={busy}
-          failed={approveFailed}
-          onApprove={(body) => void post('approve', body)}
-          defaultCurrency={me.branches.find((b) => b.id === r.branchId)?.defaultCurrency}
-        />
       )}
     </section>
   );
