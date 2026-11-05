@@ -43,6 +43,7 @@ import {
   type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
+  type CsQuotationSaved,
   type CsQuoteDto,
   type CsQuotesDto,
   type CsInvoiceDto,
@@ -82,6 +83,7 @@ import {
   CurrentBookingCaller,
 } from './booking-request.guard.js';
 import { BookingRequestsService } from './booking-requests.service.js';
+import { BotQuotationsService } from './bot-quotations.service.js';
 
 const reference = z.string().trim().min(1).max(30);
 const phoneQuery = z.object({ phone }).strict();
@@ -625,6 +627,49 @@ export class BookingRequestsController {
           subjectId: signed.subjectId,
         }
       : null;
+  }
+}
+
+const quotationSaveBody = z
+  .object({ quoteRefs: z.array(quoteRefField).min(1).max(CS_REQUEST_ITEMS_MAX) })
+  .strict();
+
+/**
+ * Owner, 2026-11-05: the prices the bot gave its customer, saved in Quotations. The customer is
+ * proven as for listing requests: a customer token, or the key with a signed channel identity of
+ * the sender (plan 08); the key alone is 403 OWNER_PROOF_REQUIRED. 201 when saved, 200 when the
+ * same quotes were saved before.
+ */
+@Controller('cs/quotations')
+@Public()
+@UseGuards(BookingRequestGuard)
+@RequireApiScope('cs:booking_requests:create')
+@UseFilters(CustomerIdentityFilter)
+export class QuotationSaveController {
+  constructor(
+    private readonly quotations: BotQuotationsService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
+
+  @Post()
+  async save(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CsQuotationSaved> {
+    const input = parse(quotationSaveBody, body);
+    const proof =
+      caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
+        ? this.identityAuth.verify(caller.client.id, req).context
+        : null;
+    const { created, body: answer } = await this.quotations.save(
+      caller,
+      proof ? { channel: proof.channel, subjectId: proof.subjectId } : null,
+      input.quoteRefs,
+    );
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return answer;
   }
 }
 

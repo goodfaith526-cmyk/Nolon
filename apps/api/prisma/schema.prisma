@@ -1334,23 +1334,28 @@ model Quotation {
   source                QuotationSource @default(STAFF)
   /// The bot request a BOT_REQUEST quotation was made from.
   csRequestId           String?         @unique @map("cs_request_id") @db.Uuid
+  /// A BOT_QUOTE quotation: the customer-service key whose bot gave the price (createdById is
+  /// then the key's creator).
+  createdViaApiClientId String?         @map("created_via_api_client_id") @db.Uuid
   createdById           String          @map("created_by_id") @db.Uuid
   createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  branch           Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  csRequest        CsBookingRequest?          @relation(fields: [csRequestId], references: [id], onDelete: Restrict)
-  customer         Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  origin           Location                   @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
-  destination      Location                   @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
-  currencyRef      Currency                   @relation(fields: [currency], references: [code], onDelete: Restrict)
-  createdBy        User                       @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  salesOutlet      Partner?                   @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
-  lines            QuotationLine[]
-  booking          Booking?
-  draft            QuotationDraft?            @relation("QuotationDraftResult")
-  newCustomerDraft NewCustomerQuotationDraft?
-  bookingDrafts    BookingDraft[]             @relation("BookingDraftSourceQuotation")
+  branch              Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  csRequest           CsBookingRequest?          @relation(fields: [csRequestId], references: [id], onDelete: Restrict)
+  customer            Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  origin              Location                   @relation("QuotationOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  destination         Location                   @relation("QuotationDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  currencyRef         Currency                   @relation(fields: [currency], references: [code], onDelete: Restrict)
+  createdBy           User                       @relation("QuotationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  salesOutlet         Partner?                   @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
+  lines               QuotationLine[]
+  booking             Booking?
+  draft               QuotationDraft?            @relation("QuotationDraftResult")
+  newCustomerDraft    NewCustomerQuotationDraft?
+  bookingDrafts       BookingDraft[]             @relation("BookingDraftSourceQuotation")
+  createdViaApiClient ApiClient?                 @relation("QuotationCreatedViaApiClient", fields: [createdViaApiClientId], references: [id], onDelete: Restrict)
+  csQuoteSaves        CsQuoteSave[]
 
   @@index([branchId, status])
   @@index([customerId])
@@ -2156,6 +2161,7 @@ enum InvoiceAutoRule {
 enum QuotationSource {
   STAFF
   BOT_REQUEST
+  BOT_QUOTE
 
   @@map("quotation_source")
 }
@@ -2742,10 +2748,10 @@ model CustomsFee {
   createdById String   @map("created_by_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
-  currencyRef Currency @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
-  createdBy   User     @relation("CustomsFeeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  branch       Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  shipment     Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  currencyRef  Currency              @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
+  createdBy    User                  @relation("CustomsFeeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   invoiceLines CustomerInvoiceLine[]
 
   @@index([shipmentId])
@@ -3621,6 +3627,7 @@ model ApiClient {
   customerTokens   CsCustomerToken[]
   accessEvents     CsAccessEvent[]
   quotes           CsQuote[]
+  quotationsMade   Quotation[]         @relation("QuotationCreatedViaApiClient")
   bookingRequests  CsBookingRequest[]
   customersMade    Customer[]          @relation("CustomerCreatedViaApiClient")
   webhookEndpoints CsWebhookEndpoint[]
@@ -3763,11 +3770,26 @@ model CsQuote {
   rateCard  RateCard               @relation(fields: [rateCardId], references: [id], onDelete: Restrict)
   requests  CsBookingRequest[]
   items     CsBookingRequestItem[]
+  saved     CsQuoteSave?
 
   @@index([apiClientId, createdAt])
   @@index([rateCardId])
   @@index([expiresAt])
   @@map("cs_quotes")
+}
+
+/// A bot's quote saved in Quotations (owner, 2026-11-05, POST /cs/quotations): once, in one
+/// BOT_QUOTE quotation. cs_quotes stay unchanged.
+model CsQuoteSave {
+  quoteRef    String   @id @map("quote_ref") @db.VarChar(40)
+  quotationId String   @map("quotation_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  quote     CsQuote   @relation(fields: [quoteRef], references: [ref], onDelete: Restrict)
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+
+  @@index([quotationId])
+  @@map("cs_quote_saves")
 }
 
 /// A booking request's state (docs/plans/04 section 7). Expired is read from expires_at.

@@ -494,6 +494,7 @@
     "paymentInstruction_RETIRED": "متقاعدة"
   },
   "Quotations": {
+    "fromBot": "من البوت",
     "title": "عروض الأسعار",
     "add": "عرض سعر جديد",
     "search": "الرقم أو العميل",

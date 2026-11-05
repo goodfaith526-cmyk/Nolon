@@ -84,6 +84,10 @@ export type RateStatus = (typeof RATE_STATUSES)[number];
 export const QUOTATION_STATUSES = ['DRAFT', 'SENT', 'APPROVED', 'REJECTED', 'EXPIRED'] as const;
 export type QuotationStatus = (typeof QUOTATION_STATUSES)[number];
 
+/** Who made a quotation: staff, approval of a bot request, or the bot's own price (POST /cs/quotations). */
+export const QUOTATION_SOURCES = ['STAFF', 'BOT_REQUEST', 'BOT_QUOTE'] as const;
+export type QuotationSource = (typeof QUOTATION_SOURCES)[number];
+
 export const BOOKING_STATUSES = ['DRAFT', 'CONFIRMED', 'COMPLETED', 'CANCELLED'] as const;
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
@@ -504,6 +508,7 @@ export interface QuotationSummaryDto {
   total: DecimalString;
   validUntil: DateString;
   status: QuotationStatus;
+  source: QuotationSource;
   createdAt: string;
 }
 

@@ -102,7 +102,10 @@ export function Quotations() {
                   <td dir="ltr">
                     <Link href={`/quotations/${x.id}`}>{x.number}</Link>
                   </td>
-                  <td>{x.customerName}</td>
+                  <td>
+                    {x.customerName}{' '}
+                    {x.source === 'BOT_QUOTE' && <span className="badge">{t('fromBot')}</span>}
+                  </td>
                   <td>
                     {tc('route', {
                       from: locationName(x.originLocationId),

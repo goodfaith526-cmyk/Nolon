@@ -22,6 +22,8 @@ import { BookingReviewController, RejectReasonsController } from './booking-revi
 import { BookingReviewService } from './booking-review.service.js';
 import { BookingRequestReportsService } from './booking-request-reports.service.js';
 import { BookingRequestsService } from './booking-requests.service.js';
+import { BotQuotationsService } from './bot-quotations.service.js';
+import { QuotationsModule } from '../quotations/quotations.module.js';
 import { CatalogService } from './catalog.service.js';
 import { ApiClientGuard } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
@@ -33,6 +35,7 @@ import {
   CustomerMeController,
   CustomerServiceController,
   CustomerTokensController,
+  QuotationSaveController,
   QuoteController,
   QuotesController,
 } from './customer-service.controller.js';
@@ -51,6 +54,7 @@ import { QuoteService } from './quote.service.js';
     BookingsModule,
     CurrenciesModule,
     MasterDataModule,
+    QuotationsModule,
     RatesModule,
     ShipmentsModule,
   ],
@@ -63,6 +67,7 @@ import { QuoteService } from './quote.service.js';
     QuoteController,
     QuotesController,
     BookingRequestsController,
+    QuotationSaveController,
     CustomerMeController,
     ApiClientsController,
     BookingReviewController,
@@ -84,6 +89,7 @@ import { QuoteService } from './quote.service.js';
     QuoteService,
     BookingRequestGuard,
     BookingRequestsService,
+    BotQuotationsService,
     BookingReviewService,
     PaymentInstructionsService,
     CustomerStagesService,

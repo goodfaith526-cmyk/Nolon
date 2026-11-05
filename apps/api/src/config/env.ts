@@ -150,6 +150,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Owner, 2026-11-05: POST /cs/quotations saves the prices the bot gave its customer as a SENT
+   * quotation (source BOT_QUOTE) in Quotations. Off (default): 503 QUOTE_SAVE_UNAVAILABLE, nothing
+   * is saved, until the bot calls it (consumer first).
+   */
+  CS_QUOTE_SAVE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Plan 12 section 4: approving a bot request also confirms its booking in the same transaction
    * (shipment and invoice made then), when the person may confirm bookings in that branch. Off:
    * approval leaves the booking a draft, and the BOOKING_DRAFT_FROM_REQUEST alert lists it.
