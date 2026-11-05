@@ -50,33 +50,44 @@ export function PrintToolbar({
  * each label. Null until loaded, or when the user may not see the shipment.
  */
 export function useQrSrc(shipmentId: string | null): string | null {
-  const [qr, setQr] = useState<{ id: string; src: string } | null>(null);
+  return useSvgSrc(shipmentId ? `/shipments/${shipmentId}/qr.svg` : null);
+}
+
+/** An SVG the API draws (a QR code), as a data URL; null until loaded or when refused. */
+export function useSvgSrc(path: string | null): string | null {
+  const [svg, setSvg] = useState<{ path: string; src: string } | null>(null);
   useEffect(() => {
-    if (!shipmentId) return;
+    if (!path) return;
     let cancelled = false;
-    void apiText(`/shipments/${shipmentId}/qr.svg`).then((svg) => {
-      if (!cancelled && svg) {
-        setQr({
-          id: shipmentId,
-          src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
-        });
+    void apiText(path).then((text) => {
+      if (!cancelled && text) {
+        setSvg({ path, src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}` });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [shipmentId]);
-  return qr && qr.id === shipmentId ? qr.src : null;
+  }, [path]);
+  return svg && svg.path === path ? svg.src : null;
 }
 
-export function QrCode({ src, size = 28 }: { src: string | null; size?: number }) {
+export function QrCode({
+  src,
+  size = 28,
+  caption,
+}: {
+  src: string | null;
+  size?: number;
+  /** Defaults to the tracking link's caption. */
+  caption?: string;
+}) {
   const t = useTranslations('Print');
   if (!src) return null;
   return (
     <figure className="doc-qr" style={{ inlineSize: `${size}mm` }}>
       {/* eslint-disable-next-line @next/next/no-img-element -- an SVG the API drew, as a data URL */}
       <img src={src} alt={t('qrAlt')} />
-      <figcaption>{t('qrCaption')}</figcaption>
+      <figcaption>{caption ?? t('qrCaption')}</figcaption>
     </figure>
   );
 }

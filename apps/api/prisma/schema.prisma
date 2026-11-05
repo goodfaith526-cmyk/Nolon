@@ -1450,6 +1450,9 @@ model Booking {
   confirmedAt           DateTime?        @map("confirmed_at") @db.Timestamptz(3)
   /// The partner sales outlet it was sold through (plan 3.3); Outlet Staff see only theirs.
   salesOutletId         String?          @map("sales_outlet_id") @db.Uuid
+  /// Plan 13 section 1: the drop-off point (a warehouse accepting drop-offs, of the booking's
+  /// branch) where the customer hands the goods over, when one is named.
+  dropOffWarehouseId    String?          @map("drop_off_warehouse_id") @db.Uuid
   /// Plan 12, section 1: sha256 of what was priced when a price was agreed (agreedTerms/1); the
   /// automatic invoice uses the agreed price only while the booking still hashes the same.
   agreedTermsHash       String?          @map("agreed_terms_hash") @db.Char(64)
@@ -1468,6 +1471,7 @@ model Booking {
   notifyParty      Party?                   @relation("BookingNotify", fields: [notifyPartyId], references: [id], onDelete: Restrict)
   createdBy        User                     @relation("BookingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   salesOutlet      Partner?                 @relation(fields: [salesOutletId], references: [id], onDelete: Restrict)
+  dropOff          Warehouse?               @relation("BookingDropOff", fields: [dropOffWarehouseId], references: [id], onDelete: Restrict)
   items            BookingItem[]
   shipment         Shipment?
   draft            BookingDraft?            @relation("BookingDraftResult")
@@ -1476,6 +1480,7 @@ model Booking {
 
   @@index([branchId, status])
   @@index([customerId])
+  @@index([dropOffWarehouseId])
   @@index([salesOutletId])
   @@map("bookings")
 }
@@ -2441,7 +2446,8 @@ model Warehouse {
   storageLocations StorageLocation[]
   movements        WarehouseMovement[]
 
-  releaseDrafts GoodsReleaseDraft[]
+  bookingsDropOff Booking[]           @relation("BookingDropOff")
+  releaseDrafts   GoodsReleaseDraft[]
 
   @@index([branchId])
   @@index([locationId])

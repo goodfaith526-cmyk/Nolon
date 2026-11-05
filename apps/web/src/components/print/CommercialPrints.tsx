@@ -14,7 +14,9 @@ import {
   PageStyle,
   PrintPending,
   PrintToolbar,
+  QrCode,
   SignatureBoxes,
+  useSvgSrc,
 } from './PrintKit';
 
 /** The customer's card, when the user may see customers (as on the screens); else null. */
@@ -210,6 +212,7 @@ export function BookingPrint({ id }: { id: string }) {
   const locationName = useLocationName(master);
   const { record: b, notice } = useRecord<BookingDto>(`/bookings/${id}`);
   const customer = useCustomer(b?.customerId ?? null);
+  const mapQr = useSvgSrc(b?.dropOff?.mapUrl ? `/bookings/${id}/drop-off-qr.svg` : null);
   if (!b) return <PrintPending notice={notice} />;
   const list = new Intl.ListFormat(locale);
   const watermark =
@@ -263,6 +266,7 @@ export function BookingPrint({ id }: { id: string }) {
         <DocSection title={t('items')}>
           <ItemsTable items={b.items} />
         </DocSection>
+        {b.dropOff && <DropOffBlock dropOff={b.dropOff} qr={mapQr} />}
         {b.specialInstructions && (
           <DocSection title={t('specialInstructions')}>
             <p className="pre">{b.specialInstructions}</p>
@@ -272,6 +276,46 @@ export function BookingPrint({ id }: { id: string }) {
         <SignatureBoxes labels={[tp('signForNolon'), tp('signCustomer')]} />
       </DocumentSheet>
     </>
+  );
+}
+
+/**
+ * Plan 13 section 1: where the customer hands over the goods (the booking's window): name,
+ * address, hours, phone, and its map link with a QR code of it.
+ */
+function DropOffBlock({
+  dropOff,
+  qr,
+}: {
+  dropOff: NonNullable<BookingDto['dropOff']>;
+  qr: string | null;
+}) {
+  const t = useTranslations('Bookings');
+  const locale = useLocale();
+  const pick = (v: { ar: string; en: string } | null) =>
+    v ? (locale === 'ar' ? v.ar : v.en) : null;
+  return (
+    <DocSection title={t('dropOffPrintTitle')}>
+      <div className="doc-columns">
+        <DocFields
+          fields={[
+            [t('dropOff'), `${pick(dropOff.name)} (${dropOff.code})`],
+            [t('dropOffAddress'), pick(dropOff.address)],
+            [t('dropOffHours'), pick(dropOff.hours)],
+            [t('dropOffPhone'), dropOff.phone && <span dir="ltr">{dropOff.phone}</span>],
+            [
+              t('dropOffMap'),
+              dropOff.mapUrl && (
+                <a href={dropOff.mapUrl} dir="ltr">
+                  {dropOff.mapUrl}
+                </a>
+              ),
+            ],
+          ]}
+        />
+        {dropOff.mapUrl && <QrCode src={qr} caption={t('dropOffMapQr')} />}
+      </div>
+    </DocSection>
   );
 }
 

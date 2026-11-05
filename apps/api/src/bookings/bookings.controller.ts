@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -20,6 +21,7 @@ import {
   type BookingFromQuotationPreviewDto,
   type BookingPartySuggestionDto,
   type BookingSummaryDto,
+  type CsDropOffChoiceDto,
   type Page,
 } from '@nolon/shared';
 import { z } from 'zod';
@@ -98,7 +100,12 @@ const screenItems = z
       .strict(),
   )
   .max(100);
-const screenFields = { salesOutletId: z.uuid().nullish(), items: screenItems };
+const screenFields = {
+  salesOutletId: z.uuid().nullish(),
+  // Plan 13 section 1: the booking's window (drop-off point).
+  dropOffWarehouseId: z.uuid().nullish(),
+  items: screenItems,
+};
 
 export const bookingCreateBody = z
   .object({
@@ -120,6 +127,7 @@ export const bookingFromQuotationBody = z
   .strict();
 const reasonBody = z.object({ reason: requiredText(1000) }).strict();
 const partySuggestionQuery = z.object({ customerId: z.uuid() }).strict();
+const dropOffPointsQuery = z.object({ branchId: z.uuid() }).strict();
 const listQuery = pageQuery
   .extend({
     status: z.enum(BOOKING_STATUSES).optional(),
@@ -152,6 +160,19 @@ export class BookingsController {
     return this.bookings.partySuggestion(user, parse(partySuggestionQuery, query).customerId);
   }
 
+  /**
+   * Plan 13 section 1: the windows (active drop-off points) a booking of `branchId` may name, for
+   * a person who creates or edits bookings there (declared before `:id`).
+   */
+  @Get('drop-off-points')
+  @RequirePermission('bookings:view')
+  dropOffPoints(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<CsDropOffChoiceDto[]> {
+    return this.bookings.dropOffPoints(user, parse(dropOffPointsQuery, query).branchId);
+  }
+
   /** What a booking from this approved quotation starts from; nothing is created. */
   @OutletScoped()
   @Get('from-quotation/:quotationId')
@@ -169,6 +190,18 @@ export class BookingsController {
   @RequirePermission('bookings:view')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<BookingDto> {
     return this.bookings.get(user, id);
+  }
+
+  /** Plan 13 section 1: a QR code (SVG) of the booking window's map link, for its print. */
+  @Get(':id/drop-off-qr.svg')
+  @RequirePermission('bookings:view')
+  @Header('Content-Type', 'image/svg+xml')
+  @Header('Cache-Control', 'private, no-store')
+  dropOffQr(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<string> {
+    return this.bookings.dropOffQrSvg(user, id);
   }
 
   @OutletScoped()

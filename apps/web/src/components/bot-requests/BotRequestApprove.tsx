@@ -353,7 +353,7 @@ export function BotRequestApprove({
               <option value="">{t('dropOffAuto')}</option>
               {dropOffChoices.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {name(d)} ({d.code})
+                  {name(d)} ({d.code}){d.outletName ? ` · ${d.outletName}` : ''}
                 </option>
               ))}
             </select>

@@ -122,6 +122,8 @@ const approveBody = z
         loadType: true,
         cargoType: true,
         items: true,
+        // Plan 13 section 1: the booking takes the request's window (`dropOffId`).
+        dropOffWarehouseId: true,
       })
       .partial({ customerId: true }),
     newCustomerFromRequest: z.literal(true).optional(),

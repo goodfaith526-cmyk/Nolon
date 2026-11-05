@@ -1,5 +1,6 @@
 import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { Locale } from './locales.js';
+import type { CsDropOffDto } from './customer-service.js';
 import type { PartnerRefDto } from './partners.js';
 
 /**
@@ -624,6 +625,12 @@ export interface BookingDto extends BookingSummaryDto {
   shipmentNumber: string | null;
   /** The sales outlet it is sold through (its quotation's, when made from one). */
   salesOutlet: PartnerRefDto | null;
+  /**
+   * Plan 13 section 1: the window (drop-off point) where the customer hands over the goods, or
+   * null. `dropOff` is its current details, null too once the point stops taking shipments.
+   */
+  dropOffWarehouseId: string | null;
+  dropOff: (CsDropOffDto & { code: string }) | null;
   items: BookingItemDto[];
 }
 
@@ -666,6 +673,12 @@ export interface BookingInput {
    * quotation keeps the quotation's outlet.
    */
   salesOutletId?: string | null;
+  /**
+   * Plan 13 section 1: an active drop-off point (window) of the booking's branch, or null for none;
+   * omitted on an edit, it stays (400 DROP_OFF_NOT_ALLOWED otherwise). A booking made from a bot
+   * request changes it on the request (409 DROP_OFF_FROM_REQUEST).
+   */
+  dropOffWarehouseId?: string | null;
   items: BookingItemInput[];
 }
 
@@ -966,6 +979,10 @@ export const FORM_REFUSALS = [
   'HANDOVER_NOT_INVOICED',
   'HANDOVER_UNPAID',
   'HANDOVER_OVER_LIMIT',
+  // Plan 13 section 1: a booking's window is an active drop-off point of its branch; a booking a
+  // bot request made changes it on the request.
+  'DROP_OFF_NOT_ALLOWED',
+  'DROP_OFF_FROM_REQUEST',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

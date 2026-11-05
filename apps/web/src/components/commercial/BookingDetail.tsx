@@ -214,6 +214,12 @@ export function BookingDetail({ id }: { id: string }) {
         <dd>
           <PartnerName partner={booking.salesOutlet} />
         </dd>
+        <dt>{t('dropOff')}</dt>
+        <dd>
+          {booking.dropOff
+            ? `${locale === 'ar' ? booking.dropOff.name.ar : booking.dropOff.name.en} (${booking.dropOff.code})`
+            : '—'}
+        </dd>
         {booking.cancelReason && (
           <>
             <dt>{t('cancelReason')}</dt>
