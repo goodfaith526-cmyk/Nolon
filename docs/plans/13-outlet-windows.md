@@ -171,13 +171,17 @@ This changes who holds NOLON's cash, so it is an accounting change.
     It deletes the processed check rows in that transaction. One shipment per transaction means the worker never holds
     two shipments, so it cannot deadlock with a multi-shipment receipt.
 
-  - **Episodes:** each set of `waybill_ready_at` is one episode and writes exactly one event; a later requalification
-    after a reversal is a new episode and a new event. Two workers on the same shipment serialize on its row lock, and the
-    second sees the column already set.
+  - **Episodes are what the worker observes (F202-5, coalesced on purpose).** An episode starts when the worker finds the
+    shipment eligible with `waybill_ready_at` null, and ends when it finds it not eligible with the column set. A reversal
+    and a requalification that both commit between two polls are **not** seen as an episode: the worker reads the final
+    state (eligible, column set) and does nothing. That is the intended behavior. The customer already holds a waybill
+    notice, the waybill is never stored (each download renders the current shipment), and the download rechecks the
+    predicate, so there is nothing new to tell them. Each episode the worker observes writes exactly one event. Two workers
+    on the same shipment serialize on its row lock, and the second sees the column already set.
   - **Latency:** the notice follows the payment within about 10 seconds. The download never depends on the column: it runs
     the predicate itself (above).
   - **Tests:** a receipt over two shipments racing a GRN on one of them (both commit, no deadlock, one event); receipt
-    cancelled while a check is queued (no event, column cleared); two workers on one batch (one event); requalification
+    cancelled while a check is queued (no event, column cleared); a cancellation and a repayment both committed before the worker runs (no second event, column stays set, download still works); two workers on one batch (one event); requalification
     after reversal (a second event); a check row for a shipment that is not eligible (no event).
 - **Switch:** `CS_NOTIFY_WAYBILL_ENABLED` (default false). Off: the column still tracks readiness, no event is written,
   and the download route is 404. The customer can also ask the bot for the waybill; the same predicate decides.
@@ -207,8 +211,8 @@ This changes who holds NOLON's cash, so it is an accounting change.
   one 201 and one 409; switch off: 404; cancel by the window: 403; journal immutability unchanged.
 - 13-5: plan 09 section 7 tests, plus: MAIN paid and ADDITIONAL unpaid: not eligible; no approved MAIN: not eligible;
   MAIN fully credited: not eligible; missing FX with a positive limit: not eligible; paid at the window: one
-  `waybill.ready`; receipt cancelled after that: `waybill_ready_at` cleared, download 404, no event; paid again: a second
-  `waybill.ready`; GRN cancelled: not eligible; switch off: no event and download 404.
+  `waybill.ready`; receipt cancelled after that and the worker runs: `waybill_ready_at` cleared, download 404, no event; paid again and
+  the worker runs: a second `waybill.ready`; cancelled and repaid before the worker runs: no second event; GRN cancelled: not eligible; switch off: no event and download 404.
 
 ## 8. PRs (each one push when complete, Codex review, all checks green)
 
