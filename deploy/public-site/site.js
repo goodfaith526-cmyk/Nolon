@@ -159,6 +159,7 @@
     helloEl = makeBubble(T[L()].hello, 'bot hello');
     msgs.insertBefore(helloEl, msgs.firstChild);
   }
+  // The document goes above the caption text, as in Telegram.
   function attachDocument(el, lineId) {
     call('/files/' + encodeURIComponent(lineId))
       .then(function (res) {
@@ -177,7 +178,7 @@
           a.target = '_blank';
           a.rel = 'noopener';
           a.appendChild(img);
-          el.appendChild(a);
+          el.insertBefore(a, el.firstChild);
         } else {
           var link = document.createElement('a');
           link.className = 'doc-link';
@@ -186,7 +187,7 @@
           link.rel = 'noopener';
           link.download = 'nolon-' + lineId + '.pdf';
           link.textContent = '📄 ' + T[L()].file;
-          el.appendChild(link);
+          el.insertBefore(link, el.firstChild);
         }
         scrollDown();
       })
