@@ -27,6 +27,7 @@ import {
   type CsBookingRequestCreate,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
+  type CsOwnBookingRequestDto,
   type CsBookingRequestState,
   CS_REQUEST_PHOTOS_MAX,
   CS_REQUEST_PHOTO_MAX_BYTES,
@@ -70,6 +71,70 @@ const placeSelect = {
   nameEn: true,
   city: { select: { nameAr: true, nameEn: true } },
 } as const;
+
+/** A request's route as the bot named it (bot_names), each end null when not stored as names. */
+function storedBotNames(value: unknown): {
+  origin: { ar: string; en: string } | null;
+  destination: { ar: string; en: string } | null;
+} {
+  const nameAt = (key: string) => {
+    const v =
+      value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : null;
+    if (v === null || typeof v !== 'object') return null;
+    const { ar, en } = v as Record<string, unknown>;
+    return typeof ar === 'string' && typeof en === 'string' ? { ar, en } : null;
+  };
+  return { origin: nameAt('origin'), destination: nameAt('destination') };
+}
+
+/** The booking and shipment columns a request's customer stage is read from (plan 09 section 3). */
+const trackedBookingSelect = {
+  number: true,
+  status: true,
+  shipment: {
+    select: {
+      number: true,
+      status: true,
+      createdAt: true,
+      trackingToken: true,
+      destination: { select: placeSelect },
+      currentLocation: { select: placeSelect },
+      events: {
+        select: { occurredAt: true },
+        orderBy: { occurredAt: 'desc' },
+        take: 1,
+      },
+    },
+  },
+} as const satisfies Prisma.BookingSelect;
+
+type TrackedBooking = Prisma.BookingGetPayload<{ select: typeof trackedBookingSelect }>;
+
+/** A request's customer stage, from its state and its booking's shipment. */
+function rowTrack(
+  row: CsBookingRequest & { booking: TrackedBooking | null },
+  stages: Parameters<typeof trackOf>[1],
+  mapping: Parameters<typeof trackOf>[2],
+): ReturnType<typeof trackOf> {
+  const shipment = row.booking?.shipment ?? null;
+  return trackOf(
+    {
+      state: stateOf(row),
+      booking: row.booking && {
+        status: row.booking.status,
+        shipment: shipment && {
+          number: shipment.number,
+          status: shipment.status,
+          destination: shipment.destination,
+          currentLocation: shipment.currentLocation,
+          updatedAt: shipment.events[0]?.occurredAt ?? shipment.createdAt,
+        },
+      },
+    },
+    stages,
+    mapping,
+  );
+}
 
 /**
  * A request's number as its booking keeps it. Since 2026-11-04 a request takes the next BK number
@@ -714,6 +779,78 @@ export class BookingRequestsService {
   }
 
   /**
+   * The proven owner's requests, newest first, at most `limit` (owner 2026-11-05: the bot answers
+   * "my bookings" from NOLON, never from its memory). The owner as for cancelling: a customer
+   * token's own requests, or a signed channel identity's (plan 08); the key alone, or X-Cs-Sender,
+   * is no proof: 403 OWNER_PROOF_REQUIRED. Requests of branches the key no longer serves are left
+   * out, as a read 404s them.
+   */
+  async list(
+    caller: BookingRequestCaller,
+    proof: { channel: CsSenderChannel; subjectId: string } | null,
+    limit: number,
+  ): Promise<CsOwnBookingRequestDto[]> {
+    const owner = provenOwnerOf(caller, proof, 'Listing requests');
+    const branchIds = [...caller.client.allowedBranchIds];
+    const rows = await this.prisma.csBookingRequest.findMany({
+      where: {
+        AND: [
+          owner,
+          {
+            OR: [
+              { branchId: { in: branchIds } },
+              { branchId: null, allowedBranchIds: { hasSome: branchIds } },
+            ],
+          },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      include: {
+        origin: { select: { nameAr: true, nameEn: true } },
+        destination: { select: { nameAr: true, nameEn: true } },
+        booking: { select: trackedBookingSelect },
+      },
+    });
+    if (caller.kind === 'customer') {
+      await this.tokens.record(
+        caller.client.id,
+        caller.token.tokenId,
+        caller.token.customerId,
+        'OK',
+        'GET /cs/booking-requests',
+      );
+    }
+    const { stages, mapping } = await this.stages.maps();
+    return rows
+      .filter((row) => servedBy(row, caller.client.allowedBranchIds))
+      .map((row) => {
+        const names = storedBotNames(row.botNames);
+        const track = rowTrack(row, stages, mapping);
+        return {
+          requestId: row.id,
+          reference: row.reference,
+          status: stateOf(row),
+          createdAt: row.createdAt.toISOString(),
+          bookingNumber: row.status === 'APPROVED' ? (row.booking?.number ?? null) : null,
+          origin: row.origin ? { ar: row.origin.nameAr, en: row.origin.nameEn } : names.origin,
+          destination: row.destination
+            ? { ar: row.destination.nameAr, en: row.destination.nameEn }
+            : names.destination,
+          stage: track.stage,
+          attention: track.attention,
+          shipment:
+            track.shipment && row.booking?.shipment
+              ? {
+                  ...track.shipment,
+                  trackingUrl: this.trackingUrl(row.booking.shipment.trackingToken),
+                }
+              : null,
+        };
+      });
+  }
+
+  /**
    * A request read by its owner through the key that made it (section 7.2): another key, another
    * owner, or a request whose branches the key no longer serves is 404, as one that does not exist.
    */
@@ -728,27 +865,7 @@ export class BookingRequestsService {
         rejectReason: true,
         dropOff: { select: dropOffSelect },
         _count: { select: { photos: true } },
-        booking: {
-          select: {
-            number: true,
-            status: true,
-            shipment: {
-              select: {
-                number: true,
-                status: true,
-                createdAt: true,
-                trackingToken: true,
-                destination: { select: placeSelect },
-                currentLocation: { select: placeSelect },
-                events: {
-                  select: { occurredAt: true },
-                  orderBy: { occurredAt: 'desc' },
-                  take: 1,
-                },
-              },
-            },
-          },
-        },
+        booking: { select: trackedBookingSelect },
       },
     });
     const served = row !== null && servedBy(row, caller.client.allowedBranchIds);
@@ -764,23 +881,7 @@ export class BookingRequestsService {
     if (!row || !served) throw new NotFoundException('Booking request not found');
     const { stages, mapping } = await this.stages.maps();
     const shipment = row.booking?.shipment ?? null;
-    const track = trackOf(
-      {
-        state: stateOf(row),
-        booking: row.booking && {
-          status: row.booking.status,
-          shipment: shipment && {
-            number: shipment.number,
-            status: shipment.status,
-            destination: shipment.destination,
-            currentLocation: shipment.currentLocation,
-            updatedAt: shipment.events[0]?.occurredAt ?? shipment.createdAt,
-          },
-        },
-      },
-      stages,
-      mapping,
-    );
+    const track = rowTrack(row, stages, mapping);
     return {
       requestId: row.id,
       reference: row.reference,
@@ -1284,11 +1385,19 @@ function provenOwner(
   proof: { channel: CsSenderChannel; subjectId: string } | null,
   what: string,
 ): Prisma.CsBookingRequestWhereInput {
+  return { id, ...provenOwnerOf(caller, proof, what) };
+}
+
+/** The proven owner's requests (any id): as provenOwner, the key alone is no proof. */
+function provenOwnerOf(
+  caller: BookingRequestCaller,
+  proof: { channel: CsSenderChannel; subjectId: string } | null,
+  what: string,
+): Prisma.CsBookingRequestWhereInput {
   if (caller.kind === 'customer')
-    return { id, apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
+    return { apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
   if (proof)
     return {
-      id,
       apiClientId: caller.client.id,
       senderChannel: proof.channel,
       senderId: proof.subjectId,

@@ -607,6 +607,26 @@ export interface CsBookingRequestDto {
 }
 
 /**
+ * GET /cs/booking-requests: one of the proven owner's requests, newest first, for the bot to
+ * answer "my bookings" from NOLON (owner, 2026-11-05). The full request is read by its id.
+ */
+export interface CsOwnBookingRequestDto {
+  requestId: string;
+  reference: string;
+  status: CsBookingRequestState;
+  createdAt: string;
+  /** The booking's number once approved, else null. */
+  bookingNumber: string | null;
+  /** The route as the request names it (the catalog's names, else the bot's); null when unknown. */
+  origin: { ar: string; en: string } | null;
+  destination: { ar: string; en: string } | null;
+  /** As on the full request (plan 09 section 3). */
+  stage: CsStageDto | null;
+  attention: 'staff' | null;
+  shipment: CsShipmentTrackDto | null;
+}
+
+/**
  * Plan 09 section 12: staff's price for a request with an item outside the standard categories.
  * `version` is what the bot sends back to accept it; the price is valid until `validUntil`.
  */

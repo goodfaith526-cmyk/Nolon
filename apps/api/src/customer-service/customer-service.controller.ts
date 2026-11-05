@@ -39,6 +39,7 @@ import {
   type CsPhotoUploaded,
   type CsBookingRequestCreated,
   type CsBookingRequestDto,
+  type CsOwnBookingRequestDto,
   type CsCatalogDto,
   type CsCustomerDto,
   type CsCustomerTokenAnswer,
@@ -313,6 +314,7 @@ function senderHeader(value: string | undefined): z.infer<typeof sender> | null 
     : null;
 }
 const cancelBody = z.object({ reason: requiredText(300).optional() }).strict();
+const listQuery = z.object({ limit }).strict();
 const acceptEstimateBody = z.object({ estimateVersion: z.number().int().min(1) }).strict();
 /** Plan 09 section 12: the photo's idempotency key, as the signed identity covers it. */
 const photoKey = z
@@ -527,6 +529,20 @@ export class BookingRequestsController {
         : await this.requests.create(caller, input, binding);
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     return answer;
+  }
+
+  /**
+   * The proven owner's requests, newest first (owner 2026-11-05): a customer token, or the key with
+   * a signed channel identity of the sender; the key alone is 403 OWNER_PROOF_REQUIRED.
+   */
+  @Get()
+  list(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Query() query: unknown,
+    @Req() req: RawBodyRequest<Request>,
+  ): Promise<CsOwnBookingRequestDto[]> {
+    const q = parse(listQuery, query);
+    return this.requests.list(caller, this.proofOf(caller, req), q.limit);
   }
 
   @Get(':id')
