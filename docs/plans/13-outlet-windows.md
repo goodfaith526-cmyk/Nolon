@@ -153,13 +153,32 @@ This changes who holds NOLON's cash, so it is an accounting change.
      unpaid ADDITIONAL and no credit is **not** eligible.
 - **Checked every time it matters:** when the link is issued, and again at the download, inside the download's
   transaction. Not eligible at download: `404`, as plan 09 section 7. No copy of the waybill is stored.
-- **Readiness and the notice.** Additive column `shipments.waybill_ready_at` timestamptz NULL. A small registry (as
-  `ShipmentStatusListenersRegistry`) is called as the last step of every write that can change the predicate: receipt
-  create, apply, cancel and reversal; credit note approve; invoice approve and cancel; goods receipt create and cancel;
-  shipment cancel. It recomputes the predicate under the locks that write already holds:
-  - eligible and `waybill_ready_at` null: set it and write `waybill.ready` (once);
-  - not eligible and `waybill_ready_at` set: clear it, no event (a reversal);
-  - requalifying later sets it again and writes a new `waybill.ready` (a new event id; the bot sends the current one).
+- **Readiness and the notice: transactional enqueue, separate worker (F202-4).** No write takes a new lock for this.
+  - **Enqueue only.** As the last step of every write that can change the predicate (receipt create, apply, cancel and
+    reversal; credit note approve; invoice approve and cancel; goods receipt create and cancel; shipment cancel), the write
+    inserts one row per affected shipment into a new table `waybill_checks (shipment_id, enqueued_at)` in its own
+    transaction. That is a plain `INSERT` into a table nobody else locks: no shipment row, no credit lock, so a receipt
+    covering several shipments and a GRN on one of them never wait on each other here. Duplicates are fine.
+  - **Worker** (the same process and polling style as the outbox delivery worker, every 10 seconds): takes a batch with
+    `FOR UPDATE SKIP LOCKED`, groups it by shipment, and for each shipment, **in its own transaction**, uses the existing
+    handover lock order: the shipment row `FOR UPDATE` first, then the customer's credit lock last (as
+    `WarehouseMovementsService` and `requireHandoverInTx` do today). It recomputes `waybillEligibleInTx`, then:
+    - eligible and `waybill_ready_at` null: set it and write one `waybill.ready` (the outbox insert is in the same
+      transaction, so the notice exists if and only if the episode started);
+    - not eligible and `waybill_ready_at` set: clear it, no event (a reversal ends the episode);
+    - otherwise nothing.
+
+    It deletes the processed check rows in that transaction. One shipment per transaction means the worker never holds
+    two shipments, so it cannot deadlock with a multi-shipment receipt.
+
+  - **Episodes:** each set of `waybill_ready_at` is one episode and writes exactly one event; a later requalification
+    after a reversal is a new episode and a new event. Two workers on the same shipment serialize on its row lock, and the
+    second sees the column already set.
+  - **Latency:** the notice follows the payment within about 10 seconds. The download never depends on the column: it runs
+    the predicate itself (above).
+  - **Tests:** a receipt over two shipments racing a GRN on one of them (both commit, no deadlock, one event); receipt
+    cancelled while a check is queued (no event, column cleared); two workers on one batch (one event); requalification
+    after reversal (a second event); a check row for a shipment that is not eligible (no event).
 - **Switch:** `CS_NOTIFY_WAYBILL_ENABLED` (default false). Off: the column still tracks readiness, no event is written,
   and the download route is 404. The customer can also ask the bot for the waybill; the same predicate decides.
 - **Agent first:** the event type and the download need the erp-agents compat PR merged and deployed before the switch is
