@@ -624,6 +624,9 @@ describe('Customer Service booking request review (R3c1)', () => {
       currency: 'USD',
       quotedTotal: quote.total,
       totalNow: quote.total,
+      // The approval form starts from the mode and load type the quote priced.
+      mode: quote.mode,
+      loadType: quote.loadType,
     });
     await t.prisma.rateCard.update({ where: { id: cardId }, data: { status: 'CANCELLED' } });
     try {

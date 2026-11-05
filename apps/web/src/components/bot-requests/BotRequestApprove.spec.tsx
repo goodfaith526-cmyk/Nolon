@@ -397,6 +397,45 @@ describe('BotRequestApprove', () => {
     expect(body.paymentCurrency).toBe('USD');
     act(() => root.unmount());
   });
+  it('prices in the mode the quote priced, and shows a refused approval by its button (owner 2026-11-05)', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const quoted = {
+      ...request,
+      priceCheck: {
+        state: 'current',
+        rateCardId: 'card1',
+        approvedAt: null,
+        currency: 'USD',
+        unitPrice: '40',
+        quotedTotal: '80.00',
+        totalNow: '80.00',
+        mode: 'SEA_ROAD',
+        loadType: 'LCL',
+      },
+    } as unknown as CsBookingRequestStaffDto;
+    act(() =>
+      root.render(
+        <BotRequestApprove
+          request={quoted}
+          master={master}
+          busy={false}
+          failed="Add at least one cargo line before confirming"
+          onApprove={vi.fn()}
+        />,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls.some((c) => c.includes('mode=SEA_ROAD'))).toBe(true);
+    const alert = host.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toBe('Add at least one cargo line before confirming');
+    // Next to the approve button, not out of sight at the top of the page.
+    expect(alert.nextElementSibling?.querySelector('button[type="submit"]')).not.toBeNull();
+    act(() => root.unmount());
+  });
   it('holds approval of a request with a non-standard item', () => {
     host = document.createElement('div');
     document.body.append(host);

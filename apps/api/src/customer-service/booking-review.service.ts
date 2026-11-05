@@ -564,8 +564,9 @@ export class BookingReviewService {
    * request's branch and (a request of a customer) for that customer, the person's approve
    * permission there, the key still active and serving it, the payment and pricing currencies
    * active, and the price again (requireSamePrice). The booking is the cargo priced (Codex F137-1):
-   * route, mode, cargo and load type from the pricing inputs, no line; the request keeps what was
-   * priced. Any refusal makes neither the booking nor the approval.
+   * route, mode, cargo and load type from the pricing inputs; the one-item shape's line is that
+   * cargo with the request's pieces and dimensions (none when its count is not certain); the
+   * request keeps what was priced. Any refusal makes neither the booking nor the approval.
    */
   async approve(
     user: AuthUser,
@@ -608,22 +609,38 @@ export class BookingReviewService {
       });
     const cargoTypes = new Set(cargos.map((c) => c.cargoType));
     // Plan 09 section 4: an item becomes a booking line only when its count is certain.
-    const made = lines.flatMap((line, index) => {
-      const cargo = cargos[index]!;
-      // Codex F167-1: the line books what was priced, the approved category and quantity.
-      const item = !line.item
-        ? null
-        : line.inputs && cargo.category !== null
-          ? bookingLineOf(
-              line.item,
-              { ...cargo, category: cargo.category },
-              dec(line.inputs.quantity),
-            )
-          : line.item.isOther
-            ? otherLineOf(line.item)
-            : null;
-      return item && line.item ? [{ itemId: line.item.id, item }] : [];
-    });
+    const made = lines.flatMap(
+      (line, index): { itemId: string | null; item: BookingItemInput }[] => {
+        const cargo = cargos[index]!;
+        // Codex F167-1: the line books what was priced, the approved category and quantity.
+        const item = !line.item
+          ? null
+          : line.inputs && cargo.category !== null
+            ? bookingLineOf(
+                line.item,
+                { ...cargo, category: cargo.category },
+                dec(line.inputs.quantity),
+              )
+            : line.item.isOther
+              ? otherLineOf(line.item)
+              : null;
+        if (!line.item) {
+          // The one-item shape (no items, e.g. the website chat): its line is the cargo priced, with
+          // the request's own pieces and dimensions, so the booking can be confirmed (plan 12
+          // section 4 confirms it on approval).
+          const single =
+            line.inputs && cargo.category !== null
+              ? bookingLineOf(
+                  { ...initial, weightKg: null },
+                  { ...cargo, category: cargo.category },
+                  dec(line.inputs.quantity),
+                )
+              : null;
+          return single ? [{ itemId: null, item: single }] : [];
+        }
+        return item ? [{ itemId: line.item.id, item }] : [];
+      },
+    );
     const booking: Omit<CreateBookingRequest, 'customerId'> & { customerId?: string } = {
       ...input.booking,
       originLocationId: input.pricing.originId,
@@ -802,7 +819,11 @@ export class BookingReviewService {
           orderBy: { lineNo: 'asc' },
           select: { id: true },
         });
-        lineOf = new Map(made.map((m, index) => [m.itemId, bookingLines[index]?.id ?? null]));
+        lineOf = new Map(
+          made.flatMap((m, index) =>
+            m.itemId === null ? [] : [[m.itemId, bookingLines[index]?.id ?? null] as const],
+          ),
+        );
         for (const [index, line] of lines.entries()) {
           if (!line.item) continue;
           await tx.csBookingRequestItem.update({
@@ -923,8 +944,13 @@ export class BookingReviewService {
       // request's rows (its cargo check reads them) and request.approved (shipment notices follow
       // it). Every confirm check runs; a refusal undoes the whole approval. The invoice step and
       // the credit limit come last (finalChecksInTx). Without the right, the booking stays a draft
-      // for someone who may confirm it (alert BOOKING_DRAFT_FROM_REQUEST).
-      if (this.env.CS_APPROVE_CONFIRMS_ENABLED && user.access.has(CONFIRM_BOOKING, row.branchId)) {
+      // for someone who may confirm it (alert BOOKING_DRAFT_FROM_REQUEST); so does a booking with
+      // no cargo line (a container, or no certain count), which staff complete before confirming.
+      if (
+        this.env.CS_APPROVE_CONFIRMS_ENABLED &&
+        user.access.has(CONFIRM_BOOKING, row.branchId) &&
+        made.length > 0
+      ) {
         await this.bookings.confirmInTx(tx, user, bookingId);
         await this.bookings.finalChecksInTx(tx, user, bookingId);
       }
@@ -1492,7 +1518,7 @@ function sameItems(a: CsBookingRequestItem[], b: CsBookingRequestItem[]): boolea
  * before confirming.
  */
 function bookingLineOf(
-  item: CsBookingRequestItem,
+  item: Pick<CsBookingRequestItem, 'pieces' | 'lengthCm' | 'widthCm' | 'heightCm' | 'weightKg'>,
   cargo: { category: string; cargoType: CargoType; unit: RateUnit },
   quantity: Prisma.Decimal,
 ): BookingItemInput | null {

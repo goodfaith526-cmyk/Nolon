@@ -873,6 +873,9 @@ export interface CsRequestPriceCheck {
   quotedTotal: DecimalString | null;
   /** The engine's total today for the request's quantity; null when no card prices it now. */
   totalNow: DecimalString | null;
+  /** The mode and load type the quote priced: the approval form starts from them. */
+  mode: ShippingMode;
+  loadType: LoadType | null;
 }
 
 export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {

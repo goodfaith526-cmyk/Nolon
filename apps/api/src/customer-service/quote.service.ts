@@ -551,6 +551,8 @@ export class QuoteService {
       unitPrice: toDecimalString(quote.price),
       quotedTotal: quote.total === null ? null : quote.total.toFixed(places),
       totalNow: totalNow === null ? null : totalNow.toFixed(places),
+      mode: quote.mode,
+      loadType: quote.loadType,
     };
   }
 }

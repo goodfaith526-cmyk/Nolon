@@ -337,9 +337,13 @@ describe('Customer Service notices (plan 09 section 5)', () => {
     const bookingId = (await t.prisma.csBookingRequest.findUniqueOrThrow({ where: { id } }))
       .bookingId!;
     expect(approved.status).toBe('approved');
-    await t.prisma.bookingItem.create({
-      data: { bookingId, lineNo: 1, cargoType: 'BARREL', quantity: 2 },
-    });
+    // The one-item request's booking has its cargo line from the approval.
+    expect(
+      await t.prisma.bookingItem.findMany({
+        where: { bookingId },
+        select: { cargoType: true, quantity: true },
+      }),
+    ).toEqual([{ cargoType: 'BARREL', quantity: 2 }]);
     await staff(cookies.sales).post(`/bookings/${bookingId}/confirm`, {}).expect(200);
     const shipment = await t.prisma.shipment.findUniqueOrThrow({ where: { bookingId } });
     for (const status of ['TRIP_SCHEDULED', 'ROAD_DEPARTED', 'ROAD_ARRIVED', 'DELIVERED']) {
