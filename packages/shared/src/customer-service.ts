@@ -279,6 +279,19 @@ export interface CsCatalogDto {
    * bot to show (a footer, a hand-over to staff).
    */
   support: { branchId: string; code: string; nameAr: string; nameEn: string; phone: string }[];
+  /**
+   * The key's branches' drop-off points (active, taking shipments), so the bot can say where an
+   * office is before any booking: the same details a request shows once staff name its point.
+   */
+  dropOffPoints: CsCatalogDropOffDto[];
+}
+
+/** A drop-off point in the catalog: its branch, its place (when set) and its public details. */
+export interface CsCatalogDropOffDto extends CsDropOffDto {
+  branchId: string;
+  branchCode: string;
+  /** The location the point is at, when staff set one (a city or port of the catalog). */
+  placeId: string | null;
 }
 
 /** A location's other names, as the master-data screen sets them. */

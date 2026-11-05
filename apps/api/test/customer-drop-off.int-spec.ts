@@ -346,6 +346,43 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
     expect((await catalog()).support).toEqual([]);
   });
 
+  it("lists its branches' open drop-off points in the catalog, and no other", async () => {
+    const name = (n: string) => ({ nameAr: `مكتب ${tag} ${n}`, nameEn: `Office ${tag} ${n}` });
+    await point(krt, {
+      ...name('open'),
+      address: 'السوق العربي، الخرطوم',
+      phone: '+249900000098',
+      latitude: '15.5',
+      longitude: '32.5',
+      hoursAr: 'من 8 إلى 5',
+      locationId: ids.origin,
+    });
+    await point(krt, { ...name('closed'), acceptsDropOff: false });
+    await point(krt, { ...name('off'), isActive: false });
+    await point(pts, name('other-branch'));
+    const listed = (
+      (
+        await t
+          .http()
+          .get('/api/v1/cs/catalog')
+          .set('Authorization', `Bearer ${bot.key}`)
+          .expect(200)
+      ).body as CsCatalogDto
+    ).dropOffPoints.filter((p) => p.name.en.startsWith(`Office ${tag}`));
+    expect(listed).toEqual([
+      {
+        branchId: krt,
+        branchCode: 'KRT',
+        placeId: ids.origin,
+        name: { ar: `مكتب ${tag} open`, en: `Office ${tag} open` },
+        address: { ar: 'السوق العربي، الخرطوم', en: 'السوق العربي، الخرطوم' },
+        phone: '+249900000098',
+        mapUrl: 'https://www.google.com/maps/search/?api=1&query=15.5,32.5',
+        hours: { ar: 'من 8 إلى 5', en: 'من 8 إلى 5' },
+      },
+    ]);
+  });
+
   it('audits a rename alone, and never leaves half a position when edits race (Codex F169-1, F169-3)', async () => {
     const id = await point(krt, { latitude: '15', longitude: '32', acceptsDropOff: false });
     await staff(cookies.admin)
