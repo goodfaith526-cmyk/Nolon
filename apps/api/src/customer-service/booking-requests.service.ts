@@ -663,6 +663,10 @@ export class BookingRequestsService {
       select: { instantCustomerId: true },
     });
     if (earlier?.instantCustomerId) {
+      // Owner, 2026-11-05: new information is added to the file: a phone this request brings
+      // fills the sender's customer that has none yet.
+      if (phone !== null)
+        await this.customers.addMissingPhoneInTx(tx, earlier.instantCustomerId, phone);
       const [row] = await tx.$queryRaw<{ isActive: boolean }[]>`
         SELECT "is_active" AS "isActive" FROM "customers"
         WHERE "id" = ${earlier.instantCustomerId}::uuid FOR SHARE`;
