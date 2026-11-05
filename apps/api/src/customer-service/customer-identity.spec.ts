@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { loadEnv } from '../config/env.js';
 import { CustomerIdentityAuth, sha256 } from './customer-identity-auth.js';
 import {
@@ -129,6 +129,13 @@ describe('Customer identity contract and trusted wrapper', () => {
   });
   it('rejects expired/future assertions and accepts a fresh signature on identical old body bytes', () => {
     const auth = new CustomerIdentityAuth(env());
+    // Frozen clock: with a live one, a second boundary between this line and verify() turned
+    // now + 61 into the accepted now' + 60 (CI failure on #202).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-05T12:00:00.500Z'));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const now = Math.floor(Date.now() / 1000);
     expect(() => auth.verify(clientId, signed('{}', undefined, now - 301))).toThrow(
       /INVALID_CHANNEL_ASSERTION/,
