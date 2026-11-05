@@ -58,14 +58,14 @@ describe('Customer Service quotation save', () => {
   /** POST /cs/quotations, signed (plan 08) for `subjectId` when given; the key alone otherwise. */
   function save(
     quoteRefs: string[],
-    opts: { subjectId?: string; sign?: string; app?: TestApp } = {},
+    opts: { subjectId?: string; sign?: string; app?: TestApp; other?: boolean } = {},
   ) {
     const path = '/api/v1/cs/quotations';
     const raw = JSON.stringify({ quoteRefs });
     const req = (opts.app ?? t)
       .http()
       .post(path)
-      .set('Authorization', `Bearer ${key.key}`)
+      .set('Authorization', `Bearer ${opts.other ? otherKey.key : key.key}`)
       .set('Content-Type', 'application/json');
     if (opts.subjectId) {
       const rawContext = JSON.stringify({
@@ -78,7 +78,7 @@ describe('Customer Service quotation save', () => {
       const issued = Math.floor(Date.now() / 1000).toString();
       const payload = [
         'v1',
-        clientId,
+        opts.other ? otherId : clientId,
         'POST',
         path,
         '',
@@ -274,6 +274,16 @@ describe('Customer Service quotation save', () => {
     expect(code(await save(refs, { subjectId: stranger.subjectId }).expect(409))).toBe(
       'QUOTE_ALREADY_SAVED',
     );
+  });
+
+  it('answers a replay only while the key still serves the quotation branch (F203-1)', async () => {
+    const { subjectId } = await customerSender();
+    const refs = await quotes([{ category, quantity: '1' }], { token: otherKey.key });
+    await save(refs, { subjectId, other: true }).expect(201);
+    await t.prisma.apiClientBranch.deleteMany({ where: { apiClientId: otherId, branchId: dxb } });
+    const replay = await save(refs, { subjectId, other: true }).expect(422);
+    expect(code(replay)).toBe('BRANCH_NOT_SERVED');
+    expect(replay.body).not.toHaveProperty('quotationId');
   });
 
   it('staff see it in Quotations, marked as from the bot, and may approve and book it', async () => {

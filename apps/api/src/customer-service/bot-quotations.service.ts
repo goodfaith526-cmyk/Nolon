@@ -126,6 +126,8 @@ export class BotQuotationsService {
       const savedId = first.saved?.quotationId ?? null;
       if (savedIn.size === 1 && savedId !== null) {
         const quotation = await tx.quotation.findUniqueOrThrow({ where: { id: savedId } });
+        // Codex F203-1: a replay answers only in a branch the key still serves, as a new save.
+        if (!branchIds.includes(quotation.branchId)) throw branchNotServed();
         const sameSet =
           (await tx.csQuoteSave.count({ where: { quotationId: savedId } })) === refs.length;
         if (quotation.customerId !== customerId || !sameSet) throw alreadySaved();
@@ -155,13 +157,7 @@ export class BotQuotationsService {
         );
       }
       const branchId = first.rateCard.branchId;
-      if (!branchIds.includes(branchId)) {
-        throw coded(
-          HttpStatus.UNPROCESSABLE_ENTITY,
-          'BRANCH_NOT_SERVED',
-          'The branch that priced these quotes is not one of this key',
-        );
-      }
+      if (!branchIds.includes(branchId)) throw branchNotServed();
       const key = await tx.apiClient.findUniqueOrThrow({
         where: { id: apiClientId },
         select: { createdById: true },
@@ -251,6 +247,14 @@ export class BotQuotationsService {
     }
     return customerId;
   }
+}
+
+function branchNotServed(): HttpException {
+  return coded(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'BRANCH_NOT_SERVED',
+    'The branch that priced these quotes is not one of this key',
+  );
 }
 
 function alreadySaved(): HttpException {
