@@ -57,6 +57,39 @@ PRs of section 8, each after this plan has a Codex OK. Every step is behind a sw
 - **It appears at the moment of confirmation** by construction: the list reads confirmed bookings; nothing is copied.
 - **Switch:** `WINDOW_DESK_ENABLED` (default false): off, the route is 404 and the menu item is hidden.
 
+## 2a. The window adapter: one scoped entry point for every read, print and write (F202-1)
+
+The window's customers are often **not** its own: a bot customer, or one sold by another outlet, whose goods are assigned
+to this window. The ordinary routes do not fit and are **not widened**: `customerOutletScope` and `salesOutletScope` stay
+as they are, `/customers`, `/bookings`, invoice and receipt routes keep their scopes, and `receipts:create` and
+`warehouse:create` are never given to `OUTLET_STAFF`.
+
+- **One module, `window-desk`, with its own `@OutletScoped()` controller and `WindowDeskService`.** Every route takes a
+  booking id and, inside its transaction, first runs `authorizeWindowInTx(tx, user, bookingId)`:
+  1. the existing outlet-scope recheck under lock (`outlet-scope.ts`: role, branches and outlets as at sign-in, else 403);
+  2. the booking row `FOR SHARE`: CONFIRMED, `drop_off_warehouse_id` not null;
+  3. that warehouse `FOR SHARE`: active, `accepts_drop_off`, `partner_id` ∈ the user's outlets, and its branch = the
+     booking's branch ∈ the user's branches;
+  4. the partner active.
+
+  Anything else is `404` (the window learns nothing about bookings that are not its own). The result is a
+  `WindowContext {bookingId, shipmentId, customerId, branchId, warehouseId, partnerId}` that the service passes on.
+
+- **Reads and prints** come only from the adapter, as projections built for the window:
+  `GET /window-desk/expected`, `GET /window-desk/bookings/:id` (the row of section 2),
+  `GET /window-desk/bookings/:id/print/booking|invoice/:invoiceId|grn/:movementId|receipt/:receiptId`. Each print returns the
+  same DTO the existing print screen renders, read by the existing service through an **internal** method that takes the
+  `WindowContext` instead of a user scope, and checks that the invoice, movement or receipt belongs to that booking's
+  shipment and, for receipts and GRNs, was made at this window. No cost, margin or customer-file field.
+- **Writes** call internal service methods that take the `WindowContext` and skip only the two user-scope steps the
+  adapter replaced (`customers.requireCustomer` and `workBranch`): `WarehouseMovementsService.receiveForWindowInTx` and
+  `ReceiptsService.createForWindowInTx`. Every other check, lock and audit entry of those services runs unchanged, inside
+  the same transaction as the adapter. The audit records the user, the window and the partner.
+- **Tests (added to section 7):** a customer sold by **another** outlet, assigned to this window: the desk shows it, the
+  window receives and collects; the same user on `GET /customers/:id`, `GET /bookings/:id`, `POST /receipts` and
+  `POST /shipments/:id/warehouse/receipts` still gets 404/403. A window user whose outlet is removed between sign-in and
+  the write: 403. A booking whose window is changed to another partner's after the list was read: 404 on the write.
+
 ## 3. The window receives the goods (PR 13-3)
 
 - `POST /window-desk/bookings/:id/receipt` makes a goods receipt (GRN) **into the booking's window**, for the booking's
@@ -81,9 +114,24 @@ This changes who holds NOLON's cash, so it is an accounting change.
 - **Link:** `window_cash_accounts (warehouse_id, currency, account_id)`, unique on `(warehouse_id, currency)`. The
   accountant sets it on the warehouses screen (`accounts:update`). **This names `accounts`, so the migration is not
   additive: it needs the owner's OK and the label** (rule 4).
-- `POST /window-desk/bookings/:id/payment {amount, currency, method: CASH, reference?, requestKey}`: only to the booking's
-  MAIN or ADDITIONAL invoices, only up to their balance, only into the window's own account for that currency, only by
-  `window_desk:collect` (seeded for `OUTLET_STAFF`). The window cannot cancel a receipt; NOLON's finance can, as today.
+- **Collection contract (F202-2).** `POST /window-desk/bookings/:id/payment {requestId, amount, currency, reference?}`,
+  by `window_desk:collect` (seeded for `OUTLET_STAFF` only).
+  - **No allocation input; the server allocates, all of it.** The payable invoices are the live APPROVED invoices of the
+    booking's shipment **in `currency`** (MAIN and ADDITIONAL; live = not cancelled, not fully credited), in this order:
+    MAIN first, then ADDITIONAL by invoice date, then number; each takes up to its balance. `amount` must be > 0 and
+    ≤ the sum of those balances, else `409 WINDOW_OVER_BALANCE {balance, currency}`. So the whole amount is always
+    allocated and no advance is ever made by a window. No such invoice: `409 WINDOW_NOTHING_TO_COLLECT`.
+  - **Same currency only, no FX.** An invoice in another currency is collected in its own currency; if the window has no
+    cash account for it: `409 WINDOW_NO_CASH_ACCOUNT {currency}`.
+  - **Idempotency:** `requestId` (uuid, required) becomes the receipt's id, the existing durable mechanism of
+    `ReceiptsService.create` (B1-3). A retry by the same user with the same booking, amount, currency and reference returns
+    the receipt it posted; any other content under the id is `409 REQUEST_ID_REUSED`. The retry compares the inputs, not
+    the computed allocations.
+  - **Locks (existing order):** the booking row `FOR SHARE`, then the window's `window_cash_accounts` row and its account
+    `FOR SHARE` (active, `is_cash`, currency = `currency`, branch = the window's branch or null), then the invoices as
+    `ReceiptsService.createInTx` locks them today; the allocation is computed after those locks, from the balances read
+    under them. Two collections racing over the same balance: one 201, the other `409 WINDOW_OVER_BALANCE`.
+- The window cannot cancel or apply a receipt; NOLON's finance can, as today.
 - The receipt voucher print (existing) is what the window gives the customer, with the window's name on it.
 - **Settlement** of the window's cash to NOLON is the existing cash transfer or journal by the accountant; a dedicated
   settlement screen and netting against commission are a later plan.
@@ -94,12 +142,26 @@ This changes who holds NOLON's cash, so it is an accounting change.
 - Built as plan 09 section 7 (N-C4): Gotenberg on the internal network, the HTML template in the API, the protected
   download link `GET /cs/documents/:token`, the bot downloads and uploads the file to Telegram. That section's safety rules
   and tests stand.
-- **When it is ready ⭐:** the shipment is `RECEIVED_ORIGIN_WAREHOUSE` or later (plan 09) **and** the MAIN invoice is
-  approved with nothing left to pay, or the customer is within a positive credit limit (the same current check as the
-  handover gate, plan 12 section 3). The window's payment (13-4) therefore makes it ready at once.
-- **Notice:** a new outbox event `waybill.ready` in the transaction that makes it ready (the receipt's or the GRN's), behind
-  `CS_NOTIFY_WAYBILL_ENABLED` (default false). The bot then downloads the waybill and sends it. The customer can also ask
-  for it.
+- **One eligibility predicate, `waybillEligibleInTx(tx, shipmentId)` (F202-3), no exception.** All of:
+  1. the shipment and its booking are not cancelled;
+  2. the shipment's status is in a fixed list, `RECEIVED_ORIGIN_WAREHOUSE` or later (in the code, not `sort_order`), and
+     it has at least one live (not cancelled) goods receipt;
+  3. **the handover decision of plan 12 section 3 is OK**, by the same function (`handoverDecision` over the same
+     `creditSnapshotSql` read, under the customer's credit lock): so it needs a live APPROVED MAIN invoice, it counts every
+     live approved invoice of the shipment including ADDITIONAL, a fully credited or cancelled invoice is not live, and a
+     missing FX rate makes it not eligible (`CREDIT_LIMIT_NO_RATE`), exactly as the handover gate. A paid MAIN with an
+     unpaid ADDITIONAL and no credit is **not** eligible.
+- **Checked every time it matters:** when the link is issued, and again at the download, inside the download's
+  transaction. Not eligible at download: `404`, as plan 09 section 7. No copy of the waybill is stored.
+- **Readiness and the notice.** Additive column `shipments.waybill_ready_at` timestamptz NULL. A small registry (as
+  `ShipmentStatusListenersRegistry`) is called as the last step of every write that can change the predicate: receipt
+  create, apply, cancel and reversal; credit note approve; invoice approve and cancel; goods receipt create and cancel;
+  shipment cancel. It recomputes the predicate under the locks that write already holds:
+  - eligible and `waybill_ready_at` null: set it and write `waybill.ready` (once);
+  - not eligible and `waybill_ready_at` set: clear it, no event (a reversal);
+  - requalifying later sets it again and writes a new `waybill.ready` (a new event id; the bot sends the current one).
+- **Switch:** `CS_NOTIFY_WAYBILL_ENABLED` (default false). Off: the column still tracks readiness, no event is written,
+  and the download route is 404. The customer can also ask the bot for the waybill; the same predicate decides.
 - **Agent first:** the event type and the download need the erp-agents compat PR merged and deployed before the switch is
   turned on (compat rule).
 
@@ -120,10 +182,14 @@ This changes who holds NOLON's cash, so it is an accounting change.
   a draft or cancelled booking, another branch: absent; a non-outlet user: 403; switch off: 404; no cost fields.
 - 13-3: receipt at own window: 201, status moves; another window, another booking, a draft booking: 404/409; no
   `window_desk:receive`: 403; the outlet cannot reach `POST /shipments/:id/warehouse/receipts`.
-- 13-4: receipt into the window's account, applied, posted balanced; over the balance: 409; another currency without an
-  account: 409; another window's booking: 404; switch off: 404; cancel by the window: 403; journal immutability unchanged.
-- 13-5: plan 09 section 7 tests, plus: unpaid: not ready; paid at the window: ready and one `waybill.ready`; switch off: no
-  event.
+- 13-4: receipt into the window's account, fully allocated MAIN first then ADDITIONAL, posted balanced; over the balance:
+  409; another currency without an account: 409; an inactive or other-branch mapped account: 409; another window's booking:
+  404; same `requestId` same content: the same receipt; changed content: 409; two simultaneous collections over one balance:
+  one 201 and one 409; switch off: 404; cancel by the window: 403; journal immutability unchanged.
+- 13-5: plan 09 section 7 tests, plus: MAIN paid and ADDITIONAL unpaid: not eligible; no approved MAIN: not eligible;
+  MAIN fully credited: not eligible; missing FX with a positive limit: not eligible; paid at the window: one
+  `waybill.ready`; receipt cancelled after that: `waybill_ready_at` cleared, download 404, no event; paid again: a second
+  `waybill.ready`; GRN cancelled: not eligible; switch off: no event and download 404.
 
 ## 8. PRs (each one push when complete, Codex review, all checks green)
 
