@@ -25,11 +25,13 @@ async function render(value: string, heldCode: string | null = null) {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => {
+  act(() => {
     root!.render(
       <DropOffSelect branchId="b1" value={value} onChange={() => {}} heldCode={heldCode} />,
     );
   });
+  // Lets the list's request settle.
+  await act(() => Promise.resolve());
   return host;
 }
 
