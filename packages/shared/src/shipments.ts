@@ -347,6 +347,12 @@ export interface ShipmentStatusRequest {
    */
   noChargeReason?: string | null;
   /**
+   * Plan 12 section 6: DELIVERED or PARTIALLY_DELIVERED set by hand on a shipment with no live
+   * proof of delivery: why (at least SHIPMENT_REASON_MIN_LENGTH characters), recorded as the
+   * event's reason. Missing then: 400 DELIVERY_REASON_REQUIRED.
+   */
+  deliveryReason?: string | null;
+  /**
    * Plan 12 section 3: hands the goods over without the invoice or payment the handover gate asks
    * for. Only with handover_payment:approve in the shipment's branch; at least
    * HANDOVER_OVERRIDE_MIN_LENGTH characters. Recorded with the handover and in the audit log.

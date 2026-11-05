@@ -448,7 +448,10 @@ describe('warehouse and customs', () => {
       const s = await confirmedShipment(['MAIN_FREIGHT']);
       await receive(s.id, cookies.warehouseDxb, { packages: 4 }).expect(201);
       for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
-        await post(`/shipments/${s.id}/status`, cookies.opsDxb, { status: next }).expect(200);
+        await post(`/shipments/${s.id}/status`, cookies.opsDxb, {
+          status: next,
+          ...(next === 'DELIVERED' ? { deliveryReason: 'Handed over at the office' } : {}),
+        }).expect(200);
       }
       const delivered = (await get(`/shipments/${s.id}`, cookies.opsDxb).expect(200))
         .body as ShipmentDto;
@@ -477,7 +480,10 @@ describe('warehouse and customs', () => {
     it('a closed or cancelled shipment takes no receipt (409); a cancelled one can return goods', async () => {
       const closed = await confirmedShipment(['MAIN_FREIGHT']);
       for (const next of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
-        await post(`/shipments/${closed.id}/status`, cookies.opsDxb, { status: next }).expect(200);
+        await post(`/shipments/${closed.id}/status`, cookies.opsDxb, {
+          status: next,
+          ...(next === 'DELIVERED' ? { deliveryReason: 'Handed over at the office' } : {}),
+        }).expect(200);
       }
       await post(`/shipments/${closed.id}/status`, cookies.opsDxb, {
         status: 'CLOSED',
@@ -1397,7 +1403,10 @@ describe('warehouse and customs', () => {
       const events = (id: string) =>
         t.prisma.shipmentEvent.findMany({ where: { shipmentId: id }, orderBy: { id: 'asc' } });
       const move = (id: string, to: string) =>
-        post(`/shipments/${id}/status`, cookies.opsDxb, { status: to }).expect(200);
+        post(`/shipments/${id}/status`, cookies.opsDxb, {
+          status: to,
+          ...(to === 'DELIVERED' ? { deliveryReason: 'Handed over at the office' } : {}),
+        }).expect(200);
       /** A sea shipment with customs booked, arrived at the port. */
       async function atPort(): Promise<ShipmentDto> {
         const s = await confirmedShipment(['MAIN_FREIGHT', 'CUSTOMS']);

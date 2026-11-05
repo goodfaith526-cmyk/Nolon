@@ -179,6 +179,8 @@ const podBody = z
   .object({
     recipientName: requiredText(200),
     recipientCapacity: requiredText(100),
+    recipientIdType: optionalText(50),
+    recipientIdNumber: optionalText(50),
     deliveredAt: timestamp.optional().or(z.literal('').transform(() => undefined)),
     packages: z
       .string()

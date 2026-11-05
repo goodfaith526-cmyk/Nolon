@@ -67,29 +67,52 @@ export class BillingReportsService {
   }
 
   /**
-   * Plan 12 section 7: shipments of the user's branches confirmed more than `graceDays` days ago
-   * (in their branch's time zone), not cancelled, with no live approved MAIN invoice (approved,
-   * and not credited in full while unpaid: live-invoice.ts). Oldest first.
+   * Alert SHIPMENT_NOT_INVOICED (plan 12 section 7): shipments not cancelled, of the user's
+   * branches, with no live approved MAIN invoice past `graceDays` since they were made, or with a
+   * customs fee no live approved invoice bills past `graceDays` since it was recorded (none while
+   * a live approved MAIN invoice bills the charge CUSTOMS: its agreed price covers customs).
    */
   async uninvoicedShipments(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
     const branchIds = reportBranchIds(user);
     if (branchIds.length === 0) return { count: 0, rows: [] };
+    const liveApproved = (alias: string) => Prisma.sql`
+      ${Prisma.raw(alias)}."status" = 'APPROVED'
+      AND NOT (${Prisma.raw(alias)}."paid_amount" = 0
+               AND ${Prisma.raw(alias)}."credited_amount" >= ${Prisma.raw(alias)}."total")`;
     return alertRows(
       await this.prisma.$queryRaw<AlertSqlRow[]>`
         SELECT *, count(*) OVER ()::int AS "count" FROM (
           SELECT s."id" AS "refId", s."number", b."code" AS "branchCode", c."name" AS "detail",
-                 (s."created_at" AT TIME ZONE b."timezone")::date AS "since",
+                 (w."since" AT TIME ZONE b."timezone")::date AS "since",
                  ((now() AT TIME ZONE b."timezone")::date
-                   - (s."created_at" AT TIME ZONE b."timezone")::date)::int AS "days"
+                   - (w."since" AT TIME ZONE b."timezone")::date)::int AS "days"
           FROM "shipments" s
           JOIN "branches" b ON b."id" = s."branch_id"
           JOIN "customers" c ON c."id" = s."customer_id"
+          CROSS JOIN LATERAL (
+            SELECT CASE
+              WHEN NOT EXISTS (
+                SELECT 1 FROM "customer_invoices" i
+                WHERE i."shipment_id" = s."id" AND i."kind" = 'MAIN' AND ${liveApproved('i')})
+              THEN s."created_at"
+              WHEN EXISTS (
+                SELECT 1 FROM "customer_invoices" i
+                JOIN "customer_invoice_lines" l ON l."invoice_id" = i."id"
+                WHERE i."shipment_id" = s."id" AND i."kind" = 'MAIN' AND ${liveApproved('i')}
+                  AND l."charge_type_code" = 'CUSTOMS')
+              THEN NULL
+              ELSE (
+                SELECT min(f."created_at") FROM "customs_fees" f
+                WHERE f."shipment_id" = s."id"
+                  AND NOT EXISTS (
+                    SELECT 1 FROM "customer_invoice_lines" l
+                    JOIN "customer_invoices" i ON i."id" = l."invoice_id"
+                    WHERE l."customs_fee_id" = f."id" AND ${liveApproved('i')}))
+            END AS "since"
+          ) w
           WHERE s."branch_id" IN ${uuidList(branchIds)}
             AND s."status" <> 'CANCELLED'
-            AND NOT EXISTS (
-              SELECT 1 FROM "customer_invoices" i
-              WHERE i."shipment_id" = s."id" AND i."kind" = 'MAIN' AND i."status" = 'APPROVED'
-                AND NOT (i."paid_amount" = 0 AND i."credited_amount" >= i."total"))
+            AND w."since" IS NOT NULL
         ) uninvoiced
         WHERE "days" > ${graceDays}
         ORDER BY "days" DESC, "number"

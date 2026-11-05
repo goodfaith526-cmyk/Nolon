@@ -2250,11 +2250,17 @@ model CustomerInvoiceLine {
   unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
   /// round(quantity * unitPrice) to the currency's minor units.
   lineTotal      Decimal @map("line_total") @db.Decimal(18, 4)
+  /// Plan 12 section 5: the customs fee of the shipment this line bills (charge CUSTOMS, on an
+  /// additional services invoice); a fee is on one live invoice at most (checked under the
+  /// shipment's invoice lock).
+  customsFeeId   String? @map("customs_fee_id") @db.Uuid
 
   invoice    CustomerInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   chargeType ChargeType      @relation(fields: [chargeTypeCode], references: [code], onDelete: Restrict)
+  customsFee CustomsFee?     @relation(fields: [customsFeeId], references: [id], onDelete: Restrict)
 
   @@unique([invoiceId, lineNo])
+  @@index([customsFeeId])
   @@map("customer_invoice_lines")
 }
 
@@ -2740,6 +2746,7 @@ model CustomsFee {
   shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
   currencyRef Currency @relation(fields: [currency], references: [code], onUpdate: Restrict, onDelete: Restrict)
   createdBy   User     @relation("CustomsFeeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  invoiceLines CustomerInvoiceLine[]
 
   @@index([shipmentId])
   @@index([branchId])
@@ -3139,6 +3146,9 @@ model ProofOfDelivery {
   tripId                String?         @map("trip_id") @db.Uuid
   recipientName         String          @map("recipient_name") @db.VarChar(200)
   recipientCapacity     String          @map("recipient_capacity") @db.VarChar(100)
+  /// Plan 12 section 6: the ID the recipient showed (type as typed, e.g. passport), optional.
+  recipientIdType       String?         @map("recipient_id_type") @db.VarChar(50)
+  recipientIdNumber     String?         @map("recipient_id_number") @db.VarChar(50)
   deliveredAt           DateTime        @map("delivered_at") @db.Timestamptz(3)
   packages              Int?
   note                  String?
@@ -3561,6 +3571,7 @@ enum AlertKind {
   TRIP_LATE
   SHIPMENT_NOT_INVOICED
   BOOKING_DRAFT_FROM_REQUEST
+  DELIVERED_NOT_CLOSED
   SHIPMENT_ARRIVING_SOON
 
   @@map("alert_kind")

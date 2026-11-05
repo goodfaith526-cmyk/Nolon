@@ -967,6 +967,20 @@ export class ShipmentsService {
         id,
         this.statusPlan(user, { ...input, occurredAt, entered: input.occurredAt !== undefined }),
       );
+      // Plan 12 section 6: delivered by hand with no live proof of delivery says why (recorded
+      // on the event); checked under the shipment lock the event took.
+      if (
+        applied &&
+        handover &&
+        !input.deliveryReason &&
+        !(await this.links.hasLivePodInTx(tx, id))
+      ) {
+        throw fieldRefusal(
+          'DELIVERY_REASON_REQUIRED',
+          'Delivered by hand with no proof of delivery: say why',
+          ['deliveryReason'],
+        );
+      }
       // Plan 12 section 3: delivered by hand is a handover; the gate is the last step.
       if (applied && handover) {
         await this.handoverGateInTx(tx, user, id, override, `status ${input.status}`);
@@ -1027,6 +1041,19 @@ export class ShipmentsService {
       id,
       this.statusPlan(user, { ...input, occurredAt: new Date() }),
     );
+    // Plan 12 section 6: a draft carries no delivery reason, so with no live proof of delivery
+    // it is refused (fail closed); staff deliver it from the shipment with a reason instead.
+    if (
+      applied &&
+      HANDOVER_STATUSES.has(input.status) &&
+      !(await this.links.hasLivePodInTx(tx, id))
+    ) {
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'DELIVERY_PROOF_REQUIRED',
+        'This shipment has no proof of delivery: record it, or deliver from the shipment with a reason',
+      );
+    }
     // Plan 12 section 3: an approved status draft that delivers is a handover, with no override.
     if (applied && HANDOVER_STATUSES.has(input.status)) {
       await this.handoverGateInTx(tx, user, id, null, `status ${input.status}`);
@@ -1047,6 +1074,7 @@ export class ShipmentsService {
       locationId?: string | null;
       note?: string | null;
       noChargeReason?: string | null;
+      deliveryReason?: string | null;
     },
   ): Planner {
     return (shipment, path) => {
@@ -1087,7 +1115,12 @@ export class ShipmentsService {
         occurredAt: input.occurredAt,
         locationId: input.locationId ?? null,
         note: input.note ?? null,
-        reason: input.status === 'CLOSED' ? (input.noChargeReason ?? null) : null,
+        reason:
+          input.status === 'CLOSED'
+            ? (input.noChargeReason ?? null)
+            : HANDOVER_STATUSES.has(input.status)
+              ? (input.deliveryReason ?? null)
+              : null,
         update: {
           status: input.status,
           ...(input.status === 'CLOSED' ? { closedAt: new Date() } : {}),

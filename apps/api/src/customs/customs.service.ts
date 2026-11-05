@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -17,6 +18,8 @@ import type { AuthUser } from '../auth/auth-user.js';
 import { shipmentScope, holdsOnShipment } from '../shipments/shipment-scope.js';
 import { fromDbDateOrNull, toDbDate, todayIn } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
+import { isForeignKeyViolation } from '../common/prisma-errors.js';
+import { codedRefusal } from '../common/validation.js';
 import { CurrenciesService } from '../currencies/currencies.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { SupplierBillsService } from '../payables/supplier-bills.service.js';
@@ -259,16 +262,29 @@ export class CustomsService implements OnModuleInit {
     return this.suppliers.activeOptions();
   }
 
-  /** Removes a fee entered by mistake (nothing was posted for it). */
+  /**
+   * Removes a fee entered by mistake (nothing was posted for it). A fee an invoice line names
+   * (plan 12 section 5) stays: 409 CUSTOMS_FEE_INVOICED.
+   */
   async removeFee(user: AuthUser, shipmentId: string, feeId: string): Promise<ShipmentCustomsDto> {
     await this.requireActive(user, shipmentId);
-    await this.prisma.$transaction(async (tx) => {
-      await this.lockActive(tx, shipmentId);
-      const { count } = await tx.customsFee.deleteMany({
-        where: { id: feeId, shipmentId, shipment: shipmentScope(user) },
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockActive(tx, shipmentId);
+        const { count } = await tx.customsFee.deleteMany({
+          where: { id: feeId, shipmentId, shipment: shipmentScope(user) },
+        });
+        if (count === 0) throw new NotFoundException('Fee not found');
       });
-      if (count === 0) throw new NotFoundException('Fee not found');
-    });
+    } catch (error) {
+      if (isForeignKeyViolation(error))
+        throw codedRefusal(
+          HttpStatus.CONFLICT,
+          'CUSTOMS_FEE_INVOICED',
+          'The fee is on an invoice: it is kept',
+        );
+      throw error;
+    }
     return this.get(user, shipmentId);
   }
 

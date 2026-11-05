@@ -30,6 +30,7 @@ const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = {
   SHIPMENT_ARRIVING_SOON: 3,
   SHIPMENT_NOT_INVOICED: 0,
   BOOKING_DRAFT_FROM_REQUEST: 1,
+  DELIVERED_NOT_CLOSED: 3,
 };
 
 /** Alerts whose rows point at a shipment by id only: its number comes from the shipments module. */
@@ -150,6 +151,8 @@ export class AlertsService {
         return this.trips.late(user, days, ALERT_LIST_LIMIT);
       case 'SHIPMENT_NOT_INVOICED':
         return this.billing.uninvoicedShipments(user, days, ALERT_LIST_LIMIT);
+      case 'DELIVERED_NOT_CLOSED':
+        return this.shipmentReports.deliveredNotClosed(user, days, ALERT_LIST_LIMIT);
       case 'BOOKING_DRAFT_FROM_REQUEST':
         return this.bookingRequests.draftBookings(user, days, ALERT_LIST_LIMIT);
     }

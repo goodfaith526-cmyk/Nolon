@@ -20,6 +20,8 @@ interface LineState {
   unitPrice: string;
   /** A saved line's price, in the invoice's saved currency, while its charge and price are untouched. */
   savedPrice?: string;
+  /** Plan 12 section 5: the customs fee the line bills, kept while its charge is unchanged. */
+  customsFeeId?: string | null;
 }
 
 let nextKey = 1;
@@ -88,6 +90,7 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
           quantity: l.quantity,
           unitPrice: l.unitPrice,
           savedPrice: l.unitPrice,
+          customsFeeId: l.customsFeeId,
         })),
   );
   const [busy, setBusy] = useState(false);
@@ -114,9 +117,18 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
   // it never comes back (Codex F92-6).
   function updateLine(key: number, patch: Partial<LineState>) {
     const repriced = patch.chargeTypeCode !== undefined || patch.unitPrice !== undefined;
+    // Another charge bills something else than the customs fee the line was made for.
+    const recharged = patch.chargeTypeCode !== undefined;
     setLines((all) =>
       all.map((l) =>
-        l.key === key ? { ...l, ...patch, ...(repriced ? { savedPrice: undefined } : {}) } : l,
+        l.key === key
+          ? {
+              ...l,
+              ...patch,
+              ...(repriced ? { savedPrice: undefined } : {}),
+              ...(recharged ? { customsFeeId: null } : {}),
+            }
+          : l,
       ),
     );
   }
@@ -138,6 +150,7 @@ function InvoiceForm({ invoice }: { invoice: CustomerInvoiceDto }) {
         description: l.description.trim() || null,
         quantity: l.quantity.trim(),
         unitPrice: l.unitPrice.trim(),
+        customsFeeId: l.customsFeeId ?? null,
       })),
     };
     setBusy(true);

@@ -33,6 +33,7 @@ describe('which alerts concern a user', () => {
       'TRIP_LATE',
       'SHIPMENT_NOT_INVOICED',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     expect(kindsOf(['WAREHOUSE'])).toEqual([
       'SHIPMENT_ARRIVING_SOON',
@@ -40,6 +41,7 @@ describe('which alerts concern a user', () => {
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
     expect(kindsOf(['CUSTOMS'])).toEqual([
       'SHIPMENT_ARRIVING_SOON',
@@ -47,6 +49,7 @@ describe('which alerts concern a user', () => {
       'CUSTOMS_STALLED',
       'STORAGE_EXCEEDED',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
   });
 
@@ -58,6 +61,7 @@ describe('which alerts concern a user', () => {
       'STORAGE_EXCEEDED',
       'TRIP_LATE',
       'BOOKING_DRAFT_FROM_REQUEST',
+      'DELIVERED_NOT_CLOSED',
     ]);
   });
 });

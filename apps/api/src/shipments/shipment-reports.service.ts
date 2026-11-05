@@ -272,6 +272,36 @@ export class ShipmentReportsService {
   }
 
   /**
+   * Alert DELIVERED_NOT_CLOSED (plan 12 section 7): shipments DELIVERED and not closed more than
+   * `graceDays` days after they were delivered (their last DELIVERED status event, in the owning
+   * branch's time zone), longest first.
+   */
+  async deliveredNotClosed(user: AuthUser, graceDays: number, limit: number): Promise<AlertRows> {
+    const branchIds = reportBranchIds(user);
+    if (branchIds.length === 0) return { count: 0, rows: [] };
+    return alertRows(
+      await this.prisma.$queryRaw<AlertSqlRow[]>`
+        SELECT *, count(*) OVER ()::int AS "count" FROM (
+          SELECT s."id" AS "refId", s."number", b."code" AS "branchCode", c."name" AS "detail",
+                 ${localDay(Prisma.sql`d."at"`)} AS "since",
+                 (${localDay(Prisma.sql`now()`)} - ${localDay(Prisma.sql`d."at"`)})::int AS "days"
+          FROM "shipments" s
+          JOIN "branches" b ON b."id" = s."branch_id"
+          JOIN "customers" c ON c."id" = s."customer_id"
+          CROSS JOIN LATERAL (
+            SELECT max(e."occurred_at") AS "at" FROM "shipment_events" e
+            WHERE e."shipment_id" = s."id" AND e."status" = 'DELIVERED'
+          ) d
+          WHERE ${shipmentVisibleIn('s', branchIds)}
+            AND s."status" = 'DELIVERED' AND d."at" IS NOT NULL
+        ) open
+        WHERE "days" > ${graceDays}
+        ORDER BY "days" DESC, "number"
+        LIMIT ${limit}`,
+    );
+  }
+
+  /**
    * Alert SHIPMENT_ARRIVING_SOON: shipments still on the way (not yet arrived at a port or city,
    * nor further on, nor on hold or cancelled) whose ETA is today or within `aheadDays` days, soonest
    * first. Each goes to the office that receives it: the branches sharing the shipment, or the

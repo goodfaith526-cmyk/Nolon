@@ -348,6 +348,9 @@ export interface PodDto {
   recipientName: string;
   /** Consignee, agent, employee... as written. */
   recipientCapacity: string;
+  /** Plan 12 section 6: the ID the recipient showed, as typed (optional). */
+  recipientIdType: string | null;
+  recipientIdNumber: string | null;
   deliveredAt: string;
   packages: number | null;
   note: string | null;
@@ -395,6 +398,9 @@ export interface ShipmentPodsDto {
 export interface PodFields {
   recipientName: string;
   recipientCapacity: string;
+  /** Plan 12 section 6: the ID type (free text, e.g. passport) and number the recipient showed. */
+  recipientIdType?: string | null;
+  recipientIdNumber?: string | null;
   deliveredAt?: string;
   packages?: number | null;
   note?: string | null;

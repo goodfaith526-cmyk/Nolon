@@ -1,4 +1,5 @@
 import type {
+  AlertsDto,
   BookingDto,
   CustomerDto,
   Page,
@@ -91,8 +92,13 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
       .body as ShipmentDto;
   }
 
+  // Plan 12 section 6: delivered by hand with no proof of delivery says why.
+  const handedOver = (status: string) =>
+    status === 'DELIVERED' || status === 'PARTIALLY_DELIVERED'
+      ? { deliveryReason: 'Handed over at the office' }
+      : {};
   const move = (id: string, cookie: string, status: string, extra: object = {}) =>
-    post(`/shipments/${id}/status`, cookie, { status, ...extra });
+    post(`/shipments/${id}/status`, cookie, { status, ...handedOver(status), ...extra });
   /** Dates the shipment's creation and its history `hours` back (a shipment entered late). */
   const backdate = async (id: string, hours: number) => {
     const ms = hours * 60 * 60 * 1000;
@@ -705,6 +711,24 @@ describe('shipments: creation, state machine, documents, public tracking', () =>
         .body as ShipmentDto;
       expect(after.status).toBe('CANCELLED');
       expect(after.events.at(-1)).toMatchObject({ kind: 'CANCEL', reason: 'Changed mind' });
+    });
+
+    it('lists a shipment delivered and not closed past its wait (plan 12 section 7)', async () => {
+      const s = await confirmedShipment();
+      for (const status of ['LOADED', 'DEPARTED', 'ARRIVED_PORT', 'DELIVERED']) {
+        await move(s.id, cookies.opsDxb, status).expect(200);
+      }
+      const listed = async () =>
+        ((await get('/alerts', cookies.opsDxb).expect(200)).body as AlertsDto).groups
+          .find((g) => g.kind === 'DELIVERED_NOT_CLOSED')
+          ?.items.find((a) => a.refId === s.id);
+      // Delivered today: within the 3-day wait.
+      expect(await listed()).toBeUndefined();
+      await t.prisma.shipmentEvent.updateMany({
+        where: { shipmentId: s.id, status: 'DELIVERED' },
+        data: { occurredAt: new Date(Date.now() - 5 * 86_400_000) },
+      });
+      expect(await listed()).toMatchObject({ number: s.number });
     });
 
     it('a delivered shipment cannot be cancelled', async () => {

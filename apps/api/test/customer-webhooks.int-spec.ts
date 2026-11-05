@@ -343,7 +343,12 @@ describe('Customer Service notices (plan 09 section 5)', () => {
     await staff(cookies.sales).post(`/bookings/${bookingId}/confirm`, {}).expect(200);
     const shipment = await t.prisma.shipment.findUniqueOrThrow({ where: { bookingId } });
     for (const status of ['TRIP_SCHEDULED', 'ROAD_DEPARTED', 'ROAD_ARRIVED', 'DELIVERED']) {
-      await staff(cookies.admin).post(`/shipments/${shipment.id}/status`, { status }).expect(200);
+      await staff(cookies.admin)
+        .post(`/shipments/${shipment.id}/status`, {
+          status,
+          ...(status === 'DELIVERED' ? { deliveryReason: 'Handed over at the office' } : {}),
+        })
+        .expect(200);
     }
     const events = await stream(id);
     // 1, 2, 3, ... with no gap and no repeat; a status that keeps the stage sends nothing.

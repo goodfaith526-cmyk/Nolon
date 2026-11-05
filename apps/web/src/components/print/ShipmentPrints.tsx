@@ -364,6 +364,11 @@ export function DeliveryNotePrint({ id, podId }: { id: string; podId: string }) 
             fields={[
               [tt('recipientName'), pod.recipientName],
               [tt('recipientCapacity'), pod.recipientCapacity],
+              [
+                tt('recipientId'),
+                (pod.recipientIdType || pod.recipientIdNumber) &&
+                  [pod.recipientIdType, pod.recipientIdNumber].filter(Boolean).join(' '),
+              ],
               [tt('deliveredAt'), dateTime(pod.deliveredAt)],
               [tt('podPackages'), pod.packages !== null && <span dir="ltr">{pod.packages}</span>],
               [tt('note'), pod.note && <span className="pre">{pod.note}</span>],
