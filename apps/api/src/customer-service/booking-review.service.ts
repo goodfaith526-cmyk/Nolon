@@ -60,7 +60,7 @@ import {
 import { internationalPhone, samePhone } from '../common/phones.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { reservedBookingNumber, stateOf } from './booking-requests.service.js';
+import { namesSender, reservedBookingNumber, stateOf } from './booking-requests.service.js';
 import { type EstimateTerms, estimateOf, storedTerms } from './estimates.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
@@ -804,6 +804,36 @@ export class BookingReviewService {
           prices.push(now.dto);
         }
       }
+      // Owner, 2026-11-05: the booking names the request's sender and receiver, with their phones,
+      // as parties of the booking's customer (reused when the same name and phone exist). The
+      // sender is the other person the bot named, else the chat owner. Parties staff chose stay.
+      // A party keeps an international phone only (E.164); a local one is left off.
+      const sender =
+        row.otherSenderName !== null
+          ? { name: row.otherSenderName, phone: internationalPhone(row.otherSenderPhone) }
+          : {
+              name: row.senderName,
+              phone:
+                internationalPhone(row.contactPhone) ??
+                (row.senderChannel === 'whatsapp' && row.senderId !== null
+                  ? internationalPhone(namesSender('whatsapp', row.senderId))
+                  : null),
+            };
+      const receiverParty = {
+        name: row.consigneeName,
+        phone: internationalPhone(row.consigneePhone) ?? internationalPhone(input.receiverPhone),
+      };
+      const header = { ...prepared.header };
+      if (header.shipperId === null && sender.name.trim() !== '')
+        header.shipperId = await this.customers.partyForInTx(tx, user, prepared.customerId, sender);
+      if (header.consigneeId === null && receiverParty.name.trim() !== '')
+        header.consigneeId = await this.customers.partyForInTx(
+          tx,
+          user,
+          prepared.customerId,
+          receiverParty,
+        );
+      prepared = { ...prepared, header };
       // Owner, 2026-11-04: the booking keeps the BK number the request took when it arrived.
       const bookingId = await this.bookings.insertInTx(
         tx,

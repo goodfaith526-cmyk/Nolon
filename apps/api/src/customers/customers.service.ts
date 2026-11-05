@@ -473,6 +473,39 @@ export class CustomersService {
   }
 
   /**
+   * Owner, 2026-11-05: a sender's customer that has no phone yet takes the international phone a
+   * later bot request brings, marked unverified (it grants no customer token until staff confirm
+   * it). A phone already set is never replaced, and a phone another customer holds is not taken.
+   * Under the customer-key lock, then the row lock: the order customer edits take.
+   */
+  async addMissingPhoneInTx(
+    tx: Prisma.TransactionClient,
+    customerId: string,
+    phone: string,
+  ): Promise<void> {
+    await lockCustomerKeys(tx);
+    if ((await tx.customer.count({ where: { phone } })) > 0) return;
+    const [row] = await tx.$queryRaw<{ phone: string | null; number: string }[]>`
+      SELECT "phone", "number" FROM "customers" WHERE "id" = ${customerId}::uuid FOR UPDATE`;
+    if (!row || row.phone !== null) return;
+    await tx.customer.update({
+      where: { id: customerId },
+      data: { phone, phoneUnverified: true },
+    });
+    await this.audit.recordApi(tx, {
+      branchId: null,
+      entity: 'CUSTOMER',
+      entityId: customerId,
+      reference: row.number,
+      action: 'UPDATED',
+      changes: [
+        { field: 'phone', before: null, after: phone },
+        { field: 'phoneUnverified', before: 'false', after: 'true' },
+      ],
+    });
+  }
+
+  /**
    * Plan 09e (owner, 2026-11-04): the customer of a person someone else named with an international
    * phone (another sender in the chat). The phone is the key against duplicates: the one customer
    * with it is linked and never changed (one inactive is reported, not linked); several are
@@ -1051,6 +1084,27 @@ export class CustomersService {
         .id;
     });
     return partyId;
+  }
+
+  /**
+   * The customer's party with this name and phone, or a new one made as addPartyInTx makes it (a
+   * bot request's sender and receiver on its approval, owner 2026-11-05). The same name and phone
+   * again reuse the party: approvals for the same people make no copies. The caller checked access.
+   */
+  async partyForInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    customerId: string,
+    input: { name: string; phone: string | null },
+  ): Promise<string> {
+    const name = input.name.trim();
+    const phone = input.phone?.trim() || null;
+    const existing = await tx.party.findFirst({
+      where: { customerId, name, phone },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    return existing?.id ?? this.addPartyInTx(tx, user, customerId, { name, phone });
   }
 
   async updateParty(

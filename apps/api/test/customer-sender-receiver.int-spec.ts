@@ -540,4 +540,60 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       instantCustomerId: first.instantCustomerId,
     });
   });
+  it('names the sender and receiver with their phones on the booking, reused next time (owner 2026-11-05)', async () => {
+    const owner = uniquePhone();
+    const receiverPhone = uniquePhone();
+    const partiesOf = async (requestId: string) => {
+      const done = (await approve(on, requestId)).body as CsBookingRequestStaffDto;
+      return on.prisma.booking.findUniqueOrThrow({
+        where: { id: done.bookingId! },
+        include: { shipper: true, consignee: true },
+      });
+    };
+    const first = await partiesOf(
+      await request(on, { consigneeName: 'Named Receiver', consigneePhone: receiverPhone }, owner),
+    );
+    expect(first.shipper).toMatchObject({
+      customerId: first.customerId,
+      name: 'Chat owner',
+      phone: owner,
+    });
+    expect(first.consignee).toMatchObject({
+      customerId: first.customerId,
+      name: 'Named Receiver',
+      phone: receiverPhone,
+    });
+    // The same people again: the same parties, no copies.
+    const second = await partiesOf(
+      await request(on, { consigneeName: 'Named Receiver', consigneePhone: receiverPhone }, owner),
+    );
+    expect(second.customerId).toBe(first.customerId);
+    expect(second.shipperId).toBe(first.shipperId);
+    expect(second.consigneeId).toBe(first.consigneeId);
+    expect(await on.prisma.party.count({ where: { customerId: first.customerId } })).toBe(2);
+  });
+
+  it("adds a phone a later request brings to the sender's file that has none (owner 2026-11-05)", async () => {
+    const chat = String(randomInt(100_000_000, 999_999_999));
+    const sender = { channel: 'telegram', id: chat };
+    const first = await row(
+      await request(on, { sender, contactPhone: undefined, senderName: 'No Phone Yet' }),
+    );
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: first.instantCustomerId! } }),
+    ).toMatchObject({ phone: null });
+    // A later request of the same chat shares a phone: the file takes it, unverified.
+    const phone = uniquePhone();
+    const later = await row(await request(on, { sender, contactPhone: phone }));
+    expect(later.instantCustomerId).toBe(first.instantCustomerId);
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: first.instantCustomerId! } }),
+    ).toMatchObject({ phone, phoneUnverified: true });
+    // A phone already set is never replaced, and another customer's phone is never taken.
+    const taken = (await customer(uniquePhone())).phone!;
+    await request(on, { sender, contactPhone: taken });
+    expect(
+      await on.prisma.customer.findUniqueOrThrow({ where: { id: first.instantCustomerId! } }),
+    ).toMatchObject({ phone });
+  });
 });

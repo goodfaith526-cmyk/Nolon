@@ -78,8 +78,25 @@ export function BookingDetail({ id }: { id: string }) {
     }
   }
 
-  const party = (partyId: string | null) =>
-    partyId ? (customer?.parties.find((p) => p.id === partyId)?.name ?? '…') : '—';
+  // Owner, 2026-11-05: a party with its phone, so the sender and receiver can be called.
+  const party = (partyId: string | null) => {
+    if (!partyId) return '—';
+    const found = customer?.parties.find((p) => p.id === partyId);
+    if (!found) return '…';
+    return (
+      <>
+        {found.name}
+        {found.phone && (
+          <>
+            {' '}
+            <bdi className="muted" dir="ltr">
+              {found.phone}
+            </bdi>
+          </>
+        )}
+      </>
+    );
+  };
   const status = booking.status;
   const creditBlock = block(credit, booking.customerName);
   const categoryName = (code: string | null) => {
