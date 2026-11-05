@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,10 +19,12 @@ import type {
   BookingStatus,
   BookingSummaryDto,
   CreateBookingRequest,
+  CsDropOffChoiceDto,
   NewCustomerBookingRequest,
   Page,
 } from '@nolon/shared';
 import { hasSeaLeg } from '@nolon/shared';
+import QRCode from 'qrcode';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope, listBranchScope, workBranch } from '../auth/branch-scope.js';
 import { assertOutletInTx, lockRecordOutletInTx, salesOutletScope } from '../auth/outlet-scope.js';
@@ -45,6 +48,13 @@ import {
   agreedTermsReconciled,
 } from '../billing/agreed-terms.js';
 import { CustomersService } from '../customers/customers.service.js';
+import {
+  type DropOffRow,
+  dropOffChoice,
+  dropOffChoiceSelect,
+  dropOffDto,
+  dropOffSelect,
+} from '../customer-service/drop-off.js';
 import type { Booking, BookingItem, Prisma } from '../generated/prisma/client.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
 import {
@@ -58,6 +68,7 @@ import { ShipmentsService } from '../shipments/shipments.service.js';
 import { BookingConfirmChecksRegistry } from './booking-confirm-checks.registry.js';
 import { bookingCargoHeader, type BookingCargo } from './booking-cargo.js';
 import { bookingItemMissingFields } from './booking-draft-missing.js';
+import { refuseRequestBookingInTx, requireDropOffPointInTx } from './booking-drop-off.js';
 import { prepareCargoLine } from './cargo-line.js';
 
 export interface BookingFilters extends PageQuery, RouteFilters {
@@ -75,6 +86,7 @@ type BookingWithDetails = Booking & {
   customer: { name: string };
   shipment: { id: string; number: string } | null;
   salesOutlet: { id: string; number: string; name: string; isActive: boolean } | null;
+  dropOff: (DropOffRow & { code: string }) | null;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -87,6 +99,7 @@ const details = {
   customer: { select: { name: true } },
   shipment: { select: { id: true, number: true } },
   salesOutlet: partnerRefSelect,
+  dropOff: { select: { ...dropOffSelect, code: true } },
 } satisfies Prisma.BookingInclude;
 
 /**
@@ -171,6 +184,31 @@ export class BookingsService {
    * suggestion; the form shows where it comes from and keeps a party the person chose; the save
    * checks each party again. The customer must be active and in the user's branches (404).
    */
+  /**
+   * Plan 13 section 1: the windows a booking of the branch may name, for a person who creates or
+   * edits bookings there (403 otherwise), each labelled with the outlet that runs it.
+   */
+  async dropOffPoints(user: AuthUser, branchId: string): Promise<CsDropOffChoiceDto[]> {
+    if (
+      !user.access.has('bookings:create', branchId) &&
+      !user.access.has('bookings:update', branchId)
+    )
+      throw new ForbiddenException('You may not write bookings in this branch');
+    const rows = await this.prisma.warehouse.findMany({
+      where: { branchId, isActive: true, acceptsDropOff: true },
+      orderBy: { code: 'asc' },
+      select: dropOffChoiceSelect,
+    });
+    return rows.map(dropOffChoice);
+  }
+
+  /** Plan 13 section 1: a QR code (SVG) of the window's map link; 404 when it has none. */
+  async dropOffQrSvg(user: AuthUser, id: string): Promise<string> {
+    const url = bookingDropOff((await this.findScoped(user, id)).dropOff)?.mapUrl;
+    if (!url) throw new NotFoundException('This booking has no drop-off map link');
+    return QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 2 });
+  }
+
   async partySuggestion(user: AuthUser, customerId: string): Promise<BookingPartySuggestionDto> {
     const customer = await this.customers.requireActiveCustomer(user, customerId);
     return this.suggestParties(user, customer.id);
@@ -311,6 +349,7 @@ export class BookingsService {
       ...prepared,
       // Only when sent (NOLON screens, plan 7.2).
       ...(input.salesOutletId !== undefined ? { salesOutletId: input.salesOutletId } : {}),
+      ...(input.dropOffWarehouseId ? { dropOffWarehouseId: input.dropOffWarehouseId } : {}),
     };
   }
 
@@ -514,6 +553,10 @@ export class BookingsService {
           branchIds: [prepared.branchId],
           field: 'salesOutletId',
         });
+    // Plan 13 section 1: the window named on a staff booking (a bot request's comes on approval).
+    const dropOffWarehouseId = prepared.dropOffWarehouseId
+      ? await requireDropOffPointInTx(tx, prepared.dropOffWarehouseId, prepared.branchId)
+      : null;
     const number = reserved ?? (await this.allocateNumber(tx));
     try {
       const created = await tx.booking.create({
@@ -524,6 +567,7 @@ export class BookingsService {
           customerId: prepared.customerId,
           quotationId: prepared.quotationId,
           salesOutletId,
+          dropOffWarehouseId,
           createdById: user.id,
           items: { create: prepared.items },
         },
@@ -683,13 +727,50 @@ export class BookingsService {
         field: 'salesOutletId',
       });
       await this.lockDraftInTx(tx, id);
-      await casStatus(tx, id, ['DRAFT'], { ...prepared.header, salesOutletId });
+      // Plan 13 section 1: omitted, the window stays; a bot request's booking changes it there.
+      const dropOff =
+        input.dropOffWarehouseId === undefined ||
+        (input.dropOffWarehouseId?.toLowerCase() ?? null) === existing.dropOffWarehouseId
+          ? {}
+          : {
+              dropOffWarehouseId: await this.dropOffForEditInTx(
+                tx,
+                id,
+                existing.branchId,
+                input.dropOffWarehouseId,
+              ),
+            };
+      await casStatus(tx, id, ['DRAFT'], { ...prepared.header, salesOutletId, ...dropOff });
       await tx.bookingItem.deleteMany({ where: { bookingId: id } });
       await tx.bookingItem.createMany({
         data: prepared.items.map((item) => ({ ...item, bookingId: id })),
       });
     });
     return this.get(user, id);
+  }
+
+  private async dropOffForEditInTx(
+    tx: Tx,
+    id: string,
+    branchId: string,
+    requested: string | null,
+  ): Promise<string | null> {
+    await refuseRequestBookingInTx(tx, id);
+    return requested === null ? null : requireDropOffPointInTx(tx, requested, branchId);
+  }
+
+  /**
+   * Plan 13 section 1: a bot request's window, copied to its booking on approval and on the
+   * request's correction, in the caller's transaction (which checked the point and holds the
+   * request's lock; the booking row lock follows it, as the item link takes it).
+   */
+  async setDropOffInTx(
+    tx: Tx,
+    bookingId: string,
+    dropOffWarehouseId: string | null,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "bookings" WHERE "id" = ${bookingId}::uuid FOR UPDATE`;
+    await tx.booking.update({ where: { id: bookingId }, data: { dropOffWarehouseId } });
   }
 
   /**
@@ -866,6 +947,8 @@ export interface PreparedBooking {
   quotationId: string | null;
   /** As sent from a NOLON screen: the sales outlet to record (insertInTx checks it). */
   salesOutletId?: string | null;
+  /** Plan 13 section 1: the window named on a staff booking (insertInTx checks it). */
+  dropOffWarehouseId?: string | null;
   header: Awaited<ReturnType<BookingsService['prepare']>>['header'];
   items: Awaited<ReturnType<BookingsService['prepare']>>['items'];
 }
@@ -879,6 +962,12 @@ async function casStatus(
 ): Promise<void> {
   const { count } = await db.booking.updateMany({ where: { id, status: { in: from } }, data });
   if (count === 0) throw new ConflictException('Booking changed meanwhile; reload and retry');
+}
+
+/** Plan 13 section 1: the booking's window as it is now; none once it stops taking shipments. */
+function bookingDropOff(w: BookingWithDetails['dropOff']): BookingDto['dropOff'] {
+  const point = w && dropOffDto(w);
+  return w && point ? { ...point, code: w.code } : null;
 }
 
 function toSummary(b: BookingWithDetails): BookingSummaryDto {
@@ -914,6 +1003,8 @@ function toDto(b: BookingWithDetails): BookingDto {
     shipmentId: b.shipment?.id ?? null,
     shipmentNumber: b.shipment?.number ?? null,
     salesOutlet: toPartnerRef(b.salesOutlet),
+    dropOffWarehouseId: b.dropOffWarehouseId,
+    dropOff: bookingDropOff(b.dropOff),
     items: b.items.map((i) => ({
       lineNo: i.lineNo,
       cargoType: i.cargoType,

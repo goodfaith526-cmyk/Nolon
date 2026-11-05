@@ -5,8 +5,10 @@ import type {
   CsApprovalPriceDto,
   CsBookingRequestCreated,
   CsBookingRequestDto,
+  BookingDto,
   CsBookingRequestStaffDto,
   CsCatalogDto,
+  CsDropOffChoiceDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -26,6 +28,8 @@ import { uniquePhone } from './test-data.js';
  * in the catalog. Negative cases: no point while pending or rejected, a point of another branch,
  * one not taking shipments or turned off, two points and none named, a stale or unpermitted
  * correction, a non-https map link and a malformed phone.
+ * Plan 13 section 1: the booking carries the window (copied on approval, updated by the
+ * correction, named on a staff booking), the dropdown names the outlet, and the print's map QR.
  */
 describe('Customer Service drop-off points (plan 09 section 11)', () => {
   let t: TestApp;
@@ -250,6 +254,16 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
     });
     expect((await detail(id)).dropOffPoint?.id).toBe(ids.full);
     ids.approved = id;
+    // Plan 13 section 1: its booking carries the same window, and the print draws its map QR.
+    ids.approvedBooking = (await detail(id)).bookingId!;
+    const booking = (await staff(cookies.sales).get(`/bookings/${ids.approvedBooking}`).expect(200))
+      .body as BookingDto;
+    expect(booking.dropOffWarehouseId).toBe(ids.full);
+    expect(booking.dropOff).toMatchObject({ code: `${tag}-${seq}`, phone: '+249900000001' });
+    const qr = await staff(cookies.sales)
+      .get(`/bookings/${ids.approvedBooking}/drop-off-qr.svg`)
+      .expect(200);
+    expect(String(qr.text ?? qr.body)).toContain('<svg');
   });
 
   it('reads the point as it is now: an edit shows at once, no position and no link is no link', async () => {
@@ -292,6 +306,78 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
     expect((await botRead(id)).dropOff?.mapUrl).toBe('https://maps.example/second');
   });
 
+  it('lets a staff booking name a window of its branch, labelled with its outlet (plan 13)', async () => {
+    const outlet = await t.prisma.partner.create({
+      data: {
+        number: `${tag}-PTR`,
+        kind: 'SALES_OUTLET',
+        branchId: krt,
+        name: `${tag} travel agency`,
+        countryCode: 'SD',
+        currency: 'USD',
+        createdById,
+      },
+    });
+    await t.prisma.warehouse.update({ where: { id: ids.second }, data: { partnerId: outlet.id } });
+    const choices = (
+      await staff(cookies.sales).get('/bookings/drop-off-points', { branchId: krt }).expect(200)
+    ).body as CsDropOffChoiceDto[];
+    expect(choices.map((c) => c.id)).toEqual([ids.full, ids.second]);
+    expect(choices.find((c) => c.id === ids.second)?.outletName).toBe(`${tag} travel agency`);
+    expect(choices.find((c) => c.id === ids.full)?.outletName).toBeNull();
+    // The approval dropdown carries the same label.
+    const pending = await request();
+    expect(
+      (await detail(pending)).dropOffChoices.find((c) => c.id === ids.second)?.outletName,
+    ).toBe(`${tag} travel agency`);
+    // Only a branch where the person writes bookings.
+    await staff(cookies.sales).get('/bookings/drop-off-points', { branchId: pts }).expect(403);
+
+    const body = {
+      customerId: ids.customer,
+      branchId: krt,
+      originLocationId: ids.origin,
+      destinationLocationId: ids.dest,
+      mode: 'ROAD',
+      services: [],
+      items: [{ cargoType: 'BARREL', quantity: 1 }],
+    };
+    for (const refused of [ids.other, ids.closed, ids.off]) {
+      const res = await staff(cookies.sales)
+        .post('/bookings', { ...body, dropOffWarehouseId: refused })
+        .expect(400);
+      expect(res.body).toMatchObject({ code: 'DROP_OFF_NOT_ALLOWED' });
+    }
+    const made = (
+      await staff(cookies.sales)
+        .post('/bookings', { ...body, dropOffWarehouseId: ids.second })
+        .expect(201)
+    ).body as BookingDto;
+    expect(made.dropOffWarehouseId).toBe(ids.second);
+    expect(made.dropOff?.mapUrl).toBe('https://maps.example/second');
+    const edit = { ...body, customerId: undefined, branchId: undefined };
+    // Left out on an edit, it stays; another branch's is refused; null clears it.
+    const kept = (await staff(cookies.sales).patch(`/bookings/${made.id}`, edit).expect(200))
+      .body as BookingDto;
+    expect(kept.dropOffWarehouseId).toBe(ids.second);
+    await staff(cookies.sales)
+      .patch(`/bookings/${made.id}`, { ...edit, dropOffWarehouseId: ids.other })
+      .expect(400);
+    const cleared = (
+      await staff(cookies.sales)
+        .patch(`/bookings/${made.id}`, { ...edit, dropOffWarehouseId: null })
+        .expect(200)
+    ).body as BookingDto;
+    expect(cleared.dropOffWarehouseId).toBeNull();
+    expect(cleared.dropOff).toBeNull();
+    await staff(cookies.sales).get(`/bookings/${made.id}/drop-off-qr.svg`).expect(404);
+    // A bot request's booking changes its window on the request, never on the booking form.
+    const res = await staff(cookies.sales)
+      .patch(`/bookings/${ids.approvedBooking}`, { ...edit, dropOffWarehouseId: ids.second })
+      .expect(409);
+    expect(res.body).toMatchObject({ code: 'DROP_OFF_FROM_REQUEST' });
+  });
+
   it('lets staff who may approve correct the point of an approved request', async () => {
     const id = ids.approved!;
     const { version } = await detail(id);
@@ -311,6 +397,10 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
     ).body as CsBookingRequestStaffDto;
     expect(fixed.dropOffPoint?.id).toBe(ids.second);
     expect((await botRead(id)).dropOff?.name.en).toBe(`Point 2`);
+    // Plan 13 section 1: the correction moves the booking's window too.
+    const moved = (await staff(cookies.sales).get(`/bookings/${ids.approvedBooking}`).expect(200))
+      .body as BookingDto;
+    expect(moved.dropOffWarehouseId).toBe(ids.second);
     // A point turned off later reads as none.
     await t.prisma.warehouse.update({ where: { id: ids.second }, data: { isActive: false } });
     expect((await botRead(id)).dropOff).toBeNull();

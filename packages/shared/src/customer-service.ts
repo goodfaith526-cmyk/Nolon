@@ -1137,6 +1137,7 @@ export type CsApproveBooking = Omit<
   | 'loadType'
   | 'cargoType'
   | 'items'
+  | 'dropOffWarehouseId'
 > & { customerId?: string };
 
 /**
@@ -1171,6 +1172,8 @@ export interface CsDropOffChoiceDto {
   code: string;
   nameAr: string;
   nameEn: string;
+  /** Plan 13 section 1: the partner outlet that runs the point, labelled with it; else null. */
+  outletName: string | null;
 }
 
 /** POST /cs-booking-requests/:id/drop-off: staff correct the point of an approved request. */

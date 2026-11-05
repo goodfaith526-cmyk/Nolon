@@ -616,7 +616,17 @@
     "fromQuotationHint": "Filled in from the quotation. Review it and save: nothing is created until you save. The route, mode and cargo stay the quotation's.",
     "itemsFromQuotation": "Container lines come from the quotation's per-container charges. Check them before saving.",
     "partiesFromLastBooking": "Suggested from the customer's last booking, {number}. Change them if needed.",
-    "partiesFromOnlyParty": "Suggested: the customer's only party, as consignee. Change it if needed."
+    "partiesFromOnlyParty": "Suggested: the customer's only party, as consignee. Change it if needed.",
+    "dropOffTitle": "Drop-off window",
+    "dropOffHint": "Where the customer hands over the goods: an active window of the booking's branch.",
+    "dropOff": "Drop-off window",
+    "dropOffNone": "No window",
+    "dropOffPrintTitle": "Where to hand over the goods",
+    "dropOffAddress": "Address",
+    "dropOffHours": "Opening hours",
+    "dropOffPhone": "Phone",
+    "dropOffMap": "Map location",
+    "dropOffMapQr": "Scan for the location"
   },
   "Shipments": {
     "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
@@ -2918,7 +2928,9 @@
     "PERIOD_CLOSED": "The accounting period {period} is closed: choose a date in an open period, or have finance reopen it.",
     "HANDOVER_NOT_INVOICED": "Shipment {shipment} has no approved invoice. Approve its invoice before the goods are handed over.",
     "HANDOVER_UNPAID": "Shipment {shipment} still has {balance} {currency} to pay. Record the payment before the goods are handed over.",
-    "HANDOVER_OVER_LIMIT": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment before the goods are handed over."
+    "HANDOVER_OVER_LIMIT": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment before the goods are handed over.",
+    "DROP_OFF_NOT_ALLOWED": "Choose an active drop-off point of the booking's branch.",
+    "DROP_OFF_FROM_REQUEST": "This booking came from a bot request: change its drop-off point on the request."
   },
   "Locations": {
     "title": "Ports and cities",

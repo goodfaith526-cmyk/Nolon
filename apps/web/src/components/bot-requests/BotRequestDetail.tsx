@@ -489,7 +489,7 @@ export function BotRequestDetail({ id }: { id: string }) {
                 .filter((d) => d.branchId === r.branchId)
                 .map((d) => (
                   <option key={d.id} value={d.id}>
-                    {localName(d)} ({d.code})
+                    {localName(d)} ({d.code}){d.outletName ? ` · ${d.outletName}` : ''}
                   </option>
                 ))}
             </select>

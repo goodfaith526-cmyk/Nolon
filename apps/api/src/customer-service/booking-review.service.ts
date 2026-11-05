@@ -18,7 +18,6 @@ import type {
   CsApprovalPriceDto,
   CsApproveRequest,
   CsBookingRequestStaffDto,
-  CsDropOffChoiceDto,
   CsEstimateRequest,
   CsEstimateTerms,
   CsRequestPhotoType,
@@ -62,6 +61,7 @@ import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { namesSender, reservedBookingNumber, stateOf } from './booking-requests.service.js';
 import { type EstimateTerms, estimateOf, storedTerms } from './estimates.js';
+import { type DropOffChoiceRow, dropOffChoice, dropOffChoiceSelect } from './drop-off.js';
 import { type ApprovalPrice, QuoteService } from './quote.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -88,7 +88,7 @@ type Row = CsBookingRequest & {
     }[];
   } | null;
   items: CsBookingRequestItem[];
-  dropOff: CsDropOffChoiceDto | null;
+  dropOff: DropOffChoiceRow | null;
   photos: { id: string; contentType: string; sizeBytes: number; createdAt: Date }[];
 };
 type QuotedRow = Row & { quote: CsQuote | null };
@@ -105,7 +105,7 @@ const rowInclude = {
     },
   },
   items: { orderBy: { lineNo: 'asc' } },
-  dropOff: { select: { id: true, branchId: true, code: true, nameAr: true, nameEn: true } },
+  dropOff: { select: dropOffChoiceSelect },
   // Plan 09 section 12: the photos' details only; staff fetch each one's bytes on its own.
   photos: {
     orderBy: { createdAt: 'asc' },
@@ -258,11 +258,13 @@ export class BookingReviewService {
     // Plan 09 section 11: the points staff may name, while they may approve or correct.
     // Both actions need DECIDE in the request's branch, and a point is named from that branch only.
     if ((dto.actions.canApprove || dto.actions.canSetDropOff) && row.branchId !== null)
-      dto.dropOffChoices = await this.prisma.warehouse.findMany({
-        where: { isActive: true, acceptsDropOff: true, branchId: row.branchId },
-        orderBy: { code: 'asc' },
-        select: { id: true, branchId: true, code: true, nameAr: true, nameEn: true },
-      });
+      dto.dropOffChoices = (
+        await this.prisma.warehouse.findMany({
+          where: { isActive: true, acceptsDropOff: true, branchId: row.branchId },
+          orderBy: { code: 'asc' },
+          select: dropOffChoiceSelect,
+        })
+      ).map(dropOffChoice);
     // The request's ordinary branch permission authorises only its linked profile's minimum.
     const profile = row.profileId
       ? await this.prisma.customerProfile.findUnique({
@@ -928,6 +930,8 @@ export class BookingReviewService {
         });
       }
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
+      // Plan 13 section 1: the booking carries the request's window (the window desk reads it).
+      if (dropOffId !== null) await this.bookings.setDropOffInTx(tx, bookingId, dropOffId);
       const receiver = this.env.CS_RECEIVER_CUSTOMER_ENABLED
         ? await this.receiverAccountInTx(
             tx,
@@ -1095,6 +1099,8 @@ export class BookingReviewService {
       if (!user.access.has(DECIDE, row.branchId))
         throw new ForbiddenException('You may not change this request');
       const dropOffId = await dropOffFor(tx, user, row.branchId, input.dropOffId);
+      // Plan 13 section 1: its booking too, so the bot and the window desk name the same point.
+      if (row.bookingId !== null) await this.bookings.setDropOffInTx(tx, row.bookingId, dropOffId);
       await this.audit.record(tx, user, {
         branchId: row.branchId,
         entity: 'CS_BOOKING_REQUEST',
@@ -1775,7 +1781,7 @@ function staffDto(
         ? null
         : { outcome: r.receiverAccount, customerId: r.receiverCustomerId },
     dropOffId: r.dropOffWarehouseId,
-    dropOffPoint: r.dropOff,
+    dropOffPoint: r.dropOff === null ? null : dropOffChoice(r.dropOff),
     dropOffChoices: [],
     estimate: (() => {
       const estimate = estimateOf(r);

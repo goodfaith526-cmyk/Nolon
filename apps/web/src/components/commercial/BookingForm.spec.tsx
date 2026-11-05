@@ -45,6 +45,10 @@ vi.mock('../partners/PartnerSelect', async (actual) => ({
   // Its own spec covers it; here it would take the api calls these tests queue.
   PartnerSelect: () => null,
 }));
+vi.mock('./DropOffSelect', () => ({
+  // Its own spec covers it; here it would take the api calls these tests queue.
+  DropOffSelect: () => null,
+}));
 vi.mock('../StaffShell', () => ({
   useMe: () => ({ permissions, branches: [{ id: 'b1', nameEn: 'Dubai', nameAr: 'دبي' }] }),
   can: (me: { permissions: string[] }, p: string) => me.permissions.includes(p),

@@ -45,6 +45,7 @@ import {
   useRefusalReason,
 } from './Notice';
 import { PartyForm } from './PartyForm';
+import { DropOffSelect } from './DropOffSelect';
 import { PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { refusedForm, ReviewWithAssistant } from './ReviewWithAssistant';
 
@@ -131,6 +132,8 @@ export function BookingForm({
   const me = useMe();
   const heldOutlet = booking?.salesOutlet ?? null;
   const [outletId, setOutletId] = useState(heldOutlet?.id ?? '');
+  // Plan 13 section 1: the window (drop-off point) where the customer hands over the goods.
+  const [dropOffId, setDropOffId] = useState(booking?.dropOffWarehouseId ?? '');
 
   const [customer, setCustomer] = useState<CustomerSummaryDto | null>(null);
   const [details, setDetails] = useState<CustomerDto | null>(null);
@@ -212,6 +215,9 @@ export function BookingForm({
     };
   }, [customerId]);
 
+  // The windows of the booking's branch (none on a container's or a quotation's booking form).
+  const windowBranchId = consolidation || fromQuotation ? '' : (booking?.branchId ?? workBranchId);
+
   // Only a customer picked on this form asks for a suggestion (an edit has its parties).
   const pickedCustomerId = customer?.id;
   useEffect(() => {
@@ -264,6 +270,10 @@ export function BookingForm({
       requestedDeparture: text('requestedDeparture'),
       specialInstructions: text('specialInstructions'),
       salesOutletId: partnerChange(heldOutlet, outletId),
+      // Sent only when changed: a bot request's booking keeps the request's window.
+      ...((dropOffId || null) !== (booking?.dropOffWarehouseId ?? null)
+        ? { dropOffWarehouseId: dropOffId || null }
+        : {}),
       items: items.map((i) => ({
         cargoType: i.cargoType,
         containerTypeCode: i.cargoType === 'CONTAINER' ? i.containerTypeCode : null,
@@ -477,6 +487,17 @@ export function BookingForm({
             </label>
           </div>
         </section>
+      )}
+      {windowBranchId && (
+        <DropOffSelect
+          {...mark('dropOffWarehouseId')}
+          branchId={windowBranchId}
+          value={dropOffId}
+          onChange={setDropOffId}
+          heldCode={booking?.dropOff?.code ?? null}
+        >
+          <FieldNote note={note} path="dropOffWarehouseId" />
+        </DropOffSelect>
       )}
       <section className="form-section">
         <header>

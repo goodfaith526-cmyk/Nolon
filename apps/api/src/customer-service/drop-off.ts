@@ -1,4 +1,4 @@
-import type { CsDropOffDto } from '@nolon/shared';
+import type { CsDropOffChoiceDto, CsDropOffDto } from '@nolon/shared';
 import type { Prisma } from '../generated/prisma/client.js';
 
 /** The warehouse columns a drop-off point is read from. */
@@ -44,5 +44,28 @@ export function dropOffDto(w: DropOffRow | null): CsDropOffDto | null {
     phone: w.phone,
     mapUrl: w.mapUrl ?? position,
     hours: pair(w.hoursAr, w.hoursEn),
+  };
+}
+
+/** Plan 13 section 1: a point staff may name, labelled with the partner outlet that runs it. */
+export const dropOffChoiceSelect = {
+  id: true,
+  branchId: true,
+  code: true,
+  nameAr: true,
+  nameEn: true,
+  partner: { select: { name: true } },
+} as const satisfies Prisma.WarehouseSelect;
+
+export type DropOffChoiceRow = Prisma.WarehouseGetPayload<{ select: typeof dropOffChoiceSelect }>;
+
+export function dropOffChoice(w: DropOffChoiceRow): CsDropOffChoiceDto {
+  return {
+    id: w.id,
+    branchId: w.branchId,
+    code: w.code,
+    nameAr: w.nameAr,
+    nameEn: w.nameEn,
+    outletName: w.partner?.name ?? null,
   };
 }
