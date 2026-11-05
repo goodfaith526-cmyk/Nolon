@@ -279,6 +279,19 @@ export interface CsCatalogDto {
    * bot to show (a footer, a hand-over to staff).
    */
   support: { branchId: string; code: string; nameAr: string; nameEn: string; phone: string }[];
+  /**
+   * The key's branches' drop-off points (active, taking shipments), so the bot can say where an
+   * office is before any booking: the same details a request shows once staff name its point.
+   */
+  dropOffPoints: CsCatalogDropOffDto[];
+}
+
+/** A drop-off point in the catalog: its branch, its place (when set) and its public details. */
+export interface CsCatalogDropOffDto extends CsDropOffDto {
+  branchId: string;
+  branchCode: string;
+  /** The location the point is at, when staff set one (a city or port of the catalog). */
+  placeId: string | null;
 }
 
 /** A location's other names, as the master-data screen sets them. */
@@ -589,6 +602,26 @@ export interface CsBookingRequestDto {
    */
   stage: CsStageDto | null;
   /** 'staff': the bot hands the customer to staff (on hold, cancelled, partly delivered...). */
+  attention: 'staff' | null;
+  shipment: CsShipmentTrackDto | null;
+}
+
+/**
+ * GET /cs/booking-requests: one of the proven owner's requests, newest first, for the bot to
+ * answer "my bookings" from NOLON (owner, 2026-11-05). The full request is read by its id.
+ */
+export interface CsOwnBookingRequestDto {
+  requestId: string;
+  reference: string;
+  status: CsBookingRequestState;
+  createdAt: string;
+  /** The booking's number once approved, else null. */
+  bookingNumber: string | null;
+  /** The route as the request names it (the catalog's names, else the bot's); null when unknown. */
+  origin: { ar: string; en: string } | null;
+  destination: { ar: string; en: string } | null;
+  /** As on the full request (plan 09 section 3). */
+  stage: CsStageDto | null;
   attention: 'staff' | null;
   shipment: CsShipmentTrackDto | null;
 }

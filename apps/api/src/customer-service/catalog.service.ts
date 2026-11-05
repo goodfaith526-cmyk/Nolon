@@ -10,7 +10,9 @@ import {
 } from '@nolon/shared';
 import { todayIn } from '../common/dates.js';
 import { MasterDataService } from '../master-data/master-data.service.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { RatesService } from '../rates/rates.service.js';
+import { dropOffDto, dropOffSelect } from './drop-off.js';
 
 /**
  * The Customer Service catalog (R1, docs/plans/04 section 4): the places a bot can quote and book
@@ -26,18 +28,30 @@ export class CatalogService {
   constructor(
     private readonly masterData: MasterDataService,
     private readonly rates: RatesService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async catalog(
     offered: readonly CsRequestService[],
     branchIds: readonly string[],
   ): Promise<CsCatalogDto> {
-    const [all, aliases, ends, routing, phones] = await Promise.all([
+    const [all, aliases, ends, routing, phones, points] = await Promise.all([
       this.masterData.all(),
       this.masterData.locationAliases(),
       this.rates.approvedRouteEnds(todayIn('UTC')),
       this.masterData.routingBranches(),
       this.masterData.supportPhones(),
+      // The key's branches only, as for the support numbers.
+      this.prisma.warehouse.findMany({
+        where: { isActive: true, acceptsDropOff: true, branchId: { in: [...branchIds] } },
+        select: {
+          ...dropOffSelect,
+          branchId: true,
+          locationId: true,
+          branch: { select: { code: true } },
+        },
+        orderBy: { code: 'asc' },
+      }),
     ]);
     // Places only: a country is a pricing scope, never a quote's or a booking's end.
     const active = all.locations.filter((l) => l.isActive && l.kind !== 'COUNTRY');
@@ -86,6 +100,12 @@ export class CatalogService {
             ]
           : [],
       ),
+      dropOffPoints: points.flatMap((w) => {
+        const details = dropOffDto(w);
+        return details
+          ? [{ branchId: w.branchId, branchCode: w.branch.code, placeId: w.locationId, ...details }]
+          : [];
+      }),
     };
     const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
     return { version, ...body };
