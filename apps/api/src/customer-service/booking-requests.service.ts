@@ -1409,7 +1409,7 @@ function provenOwnerOf(
   );
 }
 
-async function currentKey(
+export async function currentKey(
   tx: Prisma.TransactionClient,
   caller: BookingRequestCaller,
 ): Promise<{ branchIds: string[]; services: CsRequestService[] }> {

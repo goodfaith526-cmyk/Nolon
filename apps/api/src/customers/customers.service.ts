@@ -1223,6 +1223,25 @@ export class CustomersService {
     if (!customer.isActive) throw new BadRequestException('Customer is inactive');
   }
 
+  /**
+   * The active central customer of a unified profile (plan 09d: the oldest active one), row-locked
+   * FOR SHARE so a deactivation waits for the write; null when the profile has none active yet.
+   */
+  async activeProfileCustomerInTx(
+    tx: Prisma.TransactionClient,
+    profileId: string,
+  ): Promise<string | null> {
+    const found = await tx.customer.findFirst({
+      where: { profileId, isActive: true },
+      orderBy: PROFILE_ACCOUNT_ORDER,
+      select: { id: true },
+    });
+    if (!found) return null;
+    const rows = await tx.$queryRaw<{ isActive: boolean }[]>`
+      SELECT "is_active" AS "isActive" FROM "customers" WHERE "id" = ${found.id}::uuid FOR SHARE`;
+    return rows[0]?.isActive ? found.id : null;
+  }
+
   async requireActiveCustomer(user: AuthUser, id: string): Promise<Customer> {
     const customer = await this.prisma.customer.findFirst({
       where: { id, ...customerScope(user) },

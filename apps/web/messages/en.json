@@ -494,6 +494,7 @@
     "paymentInstruction_RETIRED": "Retired"
   },
   "Quotations": {
+    "fromBot": "From the bot",
     "title": "Quotations",
     "add": "New quotation",
     "search": "Number or customer",

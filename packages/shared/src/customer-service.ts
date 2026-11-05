@@ -7,6 +7,7 @@ import type {
   LoadType,
   LocationKind,
   PriceScope,
+  QuotationStatus,
   RateUnit,
   ShippingMode,
 } from './commercial.js';
@@ -346,6 +347,25 @@ export interface CsQuotesRequest extends Omit<
 
 /** Why POST /cs/quotes has no total: an item has no price, or no total, or the currencies differ. */
 export type CsQuotesTotalReason = 'ITEM_NOT_PRICED' | 'ITEM_WITHOUT_TOTAL' | 'CURRENCIES_DIFFER';
+
+/** POST /cs/quotations: the quotes the bot gave, saved as one NOLON quotation for its customer. */
+export interface CsQuotationSaveRequest {
+  /** The quoteRefs of one answer (GET /cs/quote or POST /cs/quotes), 1 to 10. */
+  quoteRefs: string[];
+}
+
+/** The quotation the quotes were saved in; the same one again for the same quotes. */
+export interface CsQuotationSaved {
+  quotationId: string;
+  /** QT00012: the number staff see in Quotations. */
+  number: string;
+  status: QuotationStatus;
+  currency: CurrencyCode;
+  total: DecimalString;
+  validUntil: DateString;
+  /** False when these quotes were saved before (the same quotation is answered). */
+  created: boolean;
+}
 
 export interface CsQuotesDto {
   /** In the request's order: the item's quote (its own quoteRef), or why it has none. */

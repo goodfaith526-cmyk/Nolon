@@ -467,6 +467,82 @@ export class QuotationsService {
     return created.id;
   }
 
+  /**
+   * The bot's own price (owner, 2026-11-05): the quotes a customer-service bot gave its customer,
+   * saved as one SENT quotation (source BOT_QUOTE) in the branch whose rate card priced them, so
+   * staff see it in Quotations and can approve it and book from it as any sent quotation. One
+   * FREIGHT-card line per quote, at the quote's price, minimum and total; valid for the branch's
+   * QUOTATION_VALIDITY_DAYS, never past the cards' own end. Made by the key's creator, through the
+   * key (createdViaApiClientId). The caller checked the quotes, the branch and the customer.
+   */
+  async insertFromBotQuotesInTx(
+    tx: Tx,
+    input: {
+      apiClientId: string;
+      createdById: string;
+      branchId: string;
+      customerId: string;
+      currency: string;
+      header: {
+        originLocationId: string;
+        destinationLocationId: string;
+        mode: ShippingMode;
+        loadType: LoadType | null;
+        cargoType: CargoType;
+      };
+      /** The cards' last valid day, when one has an end. */
+      cardsValidTo: string | null;
+      lines: readonly {
+        rateCardId: string;
+        chargeTypeCode: string;
+        unit: RateUnit;
+        quantity: Prisma.Decimal;
+        unitPrice: Prisma.Decimal;
+        minimumCharge: Prisma.Decimal;
+        lineTotal: Prisma.Decimal;
+        priceCategoryCode: string;
+      }[];
+    },
+  ): Promise<Quotation> {
+    const total = input.lines.reduce((sum, l) => sum.plus(l.lineTotal), ZERO);
+    const today = await this.branchToday(input.branchId);
+    const usual = addDays(today, this.env.QUOTATION_VALIDITY_DAYS);
+    const validUntil =
+      input.cardsValidTo !== null && input.cardsValidTo < usual ? input.cardsValidTo : usual;
+    const number = formatShortNumber('QT', await nextSequenceValue(tx, 'QUOTATION'));
+    return tx.quotation.create({
+      data: {
+        ...input.header,
+        number,
+        branchId: input.branchId,
+        customerId: input.customerId,
+        currency: input.currency,
+        subtotal: total,
+        total,
+        validUntil: toDbDate(validUntil),
+        status: 'SENT',
+        sentAt: new Date(),
+        source: 'BOT_QUOTE',
+        createdById: input.createdById,
+        createdViaApiClientId: input.apiClientId,
+        lines: {
+          create: input.lines.map((l, index) => ({
+            lineNo: index + 1,
+            chargeTypeCode: l.chargeTypeCode,
+            rateCardId: l.rateCardId,
+            unit: l.unit,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            minimumCharge: l.minimumCharge,
+            lineTotal: l.lineTotal,
+            priceCategoryCode: l.priceCategoryCode,
+            priceSource: 'RATE_CARD' as const,
+          })),
+        },
+      },
+    });
+  }
+
   /** Drafts only; the lines are replaced as a whole. */
   async update(user: AuthUser, id: string, input: QuotationInput): Promise<QuotationDto> {
     const existing = await this.findScoped(user, id);
@@ -809,6 +885,7 @@ function toSummary(q: QuotationWithDetails): QuotationSummaryDto {
     total: toDecimalString(q.total),
     validUntil: fromDbDate(q.validUntil),
     status: q.status,
+    source: q.source,
     createdAt: q.createdAt.toISOString(),
   };
 }
