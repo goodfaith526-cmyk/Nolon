@@ -425,7 +425,14 @@ export function BotRequestApprove({
         </div>
       )}
       {!hasOther && (
+<<<<<<< HEAD
         <div className="approve-price" aria-live="polite">
+=======
+        <div className="row">
+          <button type="button" onClick={() => void check()} disabled={busy || checking}>
+            {t('checkPrice')}
+          </button>
+>>>>>>> origin/claude/project-thread-7fdg9k
           {checking ? (
             <span className="muted">{t('checkingPrice')}</span>
           ) : priced ? (
