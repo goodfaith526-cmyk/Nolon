@@ -3933,3 +3933,41 @@ span.capacity-full {
   padding: 0.25rem;
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Bot booking request page (owner, 2026-11-05): two label/value pairs per row on wide screens,
+   and the approval's price as a clear line above its buttons.
+   --------------------------------------------------------------------------------------------- */
+
+.details.pairs {
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  gap: 0.875rem 1.5rem;
+}
+
+@media (max-width: 56rem) {
+  .details.pairs {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 40rem) {
+  .details.pairs {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.125rem;
+  }
+}
+
+.approve-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-alt);
+}
+
+.approve-price strong {
+  font-size: var(--text-lg, 1.25rem);
+}

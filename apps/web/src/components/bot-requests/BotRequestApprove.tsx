@@ -206,7 +206,7 @@ export function BotRequestApprove({
       <h2>{t('approveTitle')}</h2>
       <p className="muted">{t('approveHint')}</p>
       <div className="form-grid">
-        <div className="field">
+        <div className="field span-all">
           {t('customer')}
           {r.otherSender ? (
             <strong>
@@ -214,7 +214,7 @@ export function BotRequestApprove({
               <span className="muted">({t('otherSender')})</span>
             </strong>
           ) : useRegistered ? (
-            <div className="row">
+            <div className="title-row">
               <strong>
                 <Link href={`/customers/${registered}`}>{r.senderName}</Link>{' '}
                 <span className="muted">({t('registeredSender')})</span>
@@ -237,7 +237,7 @@ export function BotRequestApprove({
           ) : r.customerId ? (
             <strong dir="ltr">{r.customerNumber}</strong>
           ) : newCustomer ? (
-            <div className="row">
+            <div className="title-row">
               <strong>
                 {t('newCustomerFromRequest', { name: r.senderName })}
                 {r.contactPhone ? <bdi dir="ltr"> {r.contactPhone}</bdi> : null}
@@ -425,22 +425,19 @@ export function BotRequestApprove({
         </div>
       )}
       {!hasOther && (
-        <div className="row">
-          <button type="button" onClick={() => void check()} disabled={busy || checking}>
-            {t('checkPrice')}
-          </button>
+        <div className="approve-price" aria-live="polite">
           {checking ? (
             <span className="muted">{t('checkingPrice')}</span>
           ) : priced ? (
             priced.every((p) => p.state === 'priced') ? (
-              <span>
-                <span dir="ltr">
+              <>
+                <strong dir="ltr">
                   {totalOf(priced)} {priced[0]?.currency}
-                </span>{' '}
+                </strong>
                 <span className="muted">{t('priceSource')}</span>
-              </span>
+              </>
             ) : (
-              <span className="muted">
+              <span className="error">
                 {t(`priceNone_${priced.find((p) => p.state !== 'priced')?.reason ?? 'NO_RATE'}`)}
               </span>
             )
@@ -456,6 +453,11 @@ export function BotRequestApprove({
         </p>
       )}
       <div className="actions">
+        {!hasOther && (
+          <button type="button" onClick={() => void check()} disabled={busy || checking}>
+            {t('checkPrice')}
+          </button>
+        )}
         <button type="submit" className="primary" disabled={busy || !ready}>
           {t('approveAction')}
         </button>
