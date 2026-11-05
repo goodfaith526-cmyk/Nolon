@@ -66,6 +66,9 @@ type CustomerWriteFields = Omit<CustomerInput, 'phone'> & { phone: string | null
 /** The per-branch lock every write that can change a customer's phone or tax number takes. */
 export const CUSTOMER_UNIQUE_RULE = 'customer-phone-tax';
 
+/** Codex F200-2: the lock a bot approval takes before it finds or makes a customer's party. */
+const CUSTOMER_PARTIES_RULE = 'customer-approval-parties';
+
 /**
  * Plan 09d: the lock every write that can change a customer's phone or tax number takes. One for
  * the company, since both are unique across all branches.
@@ -483,11 +486,19 @@ export class CustomersService {
     customerId: string,
     phone: string,
   ): Promise<void> {
+    // Most returning senders have a phone already: no lock is taken for them.
+    const seen = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { phone: true },
+    });
+    if (!seen || seen.phone !== null) return;
+    // Codex F200-1: the row first, then the company key lock, the order customer edits take
+    // (update: FOR NO KEY UPDATE, then lockCustomerKeys); both checks again under the locks.
+    const [row] = await tx.$queryRaw<{ phone: string | null; number: string }[]>`
+      SELECT "phone", "number" FROM "customers" WHERE "id" = ${customerId}::uuid FOR NO KEY UPDATE`;
+    if (!row || row.phone !== null) return;
     await lockCustomerKeys(tx);
     if ((await tx.customer.count({ where: { phone } })) > 0) return;
-    const [row] = await tx.$queryRaw<{ phone: string | null; number: string }[]>`
-      SELECT "phone", "number" FROM "customers" WHERE "id" = ${customerId}::uuid FOR UPDATE`;
-    if (!row || row.phone !== null) return;
     await tx.customer.update({
       where: { id: customerId },
       data: { phone, phoneUnverified: true },
@@ -1099,12 +1110,27 @@ export class CustomersService {
   ): Promise<string> {
     const name = input.name.trim();
     const phone = input.phone?.trim() || null;
+    // Codex F200-2: approvals may already hold the customer row FOR SHARE; upgrading it to the
+    // row lock party edits take would deadlock two approvals of one customer. They serialize on
+    // a lock of the customer's approval parties instead, taken before the lookup (so two never
+    // both make the same party), and insert under the shared row lock the foreign key needs.
+    await lockBranchRule(tx, CUSTOMER_PARTIES_RULE, [customerId]);
     const existing = await tx.party.findFirst({
       where: { customerId, name, phone },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
-    return existing?.id ?? this.addPartyInTx(tx, user, customerId, { name, phone });
+    if (existing) return existing.id;
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
+    const before = await tx.party.findMany({ where: { customerId } });
+    const { id } = await tx.party.create({
+      data: { customerId, name, phone },
+      select: { id: true },
+    });
+    const after = await tx.party.findMany({ where: { customerId } });
+    const changes = childChanges('party', before, after, PARTY_AUDIT_FIELDS);
+    await this.audit.record(tx, user, auditRecord(customer, 'UPDATED', changes));
+    return id;
   }
 
   async updateParty(

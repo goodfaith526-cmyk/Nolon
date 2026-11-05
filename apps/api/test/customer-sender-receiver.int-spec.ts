@@ -596,4 +596,60 @@ describe('Other sender and receiver customers (plan 09e)', () => {
       await on.prisma.customer.findUniqueOrThrow({ where: { id: first.instantCustomerId! } }),
     ).toMatchObject({ phone });
   });
+  it('fills the phone while a customer edit holds the row, without a deadlock (F200-1)', async () => {
+    const sender = { channel: 'telegram', id: String(randomInt(100_000_000, 999_999_999)) };
+    const first = await row(
+      await request(on, { sender, contactPhone: undefined, senderName: 'Edit Race' }),
+    );
+    const customerId = first.instantCustomerId!;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    // A customer edit's order: the row (FOR NO KEY UPDATE), then the customer-key lock.
+    const editing = on.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customerId}::uuid FOR NO KEY UPDATE`;
+      await held;
+      await lockCustomerKeys(tx);
+      await tx.customer.update({ where: { id: customerId }, data: { city: 'Edited' } });
+    });
+    const phone = uniquePhone();
+    const arriving = request(on, { sender, contactPhone: phone });
+    await waitForLockWaiter(on.prisma);
+    release();
+    await editing;
+    expect((await row(await arriving)).instantCustomerId).toBe(customerId);
+    expect(await on.prisma.customer.findUniqueOrThrow({ where: { id: customerId } })).toMatchObject(
+      { phone, phoneUnverified: true, city: 'Edited' },
+    );
+  });
+
+  it("makes an approval's parties while another approval holds the customer, without a deadlock (F200-2)", async () => {
+    const owner = uniquePhone();
+    const firstId = await request(on, {}, owner);
+    const customerId = (await row(firstId)).instantCustomerId!;
+    const secondId = await request(on, {}, owner);
+    // Another approval of the same customer, holding its row FOR SHARE as approvals do.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let sharing: () => void = () => undefined;
+    const shared = new Promise<void>((resolve) => (sharing = resolve));
+    const other = on.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${customerId}::uuid FOR SHARE`;
+      sharing();
+      await held;
+    });
+    await shared;
+    try {
+      // Made while the share is held: the parties never wait to upgrade the row lock.
+      const done = (await approve(on, firstId)).body as CsBookingRequestStaffDto;
+      const booking = await on.prisma.booking.findUniqueOrThrow({ where: { id: done.bookingId! } });
+      expect(booking.shipperId).not.toBeNull();
+      expect(booking.consigneeId).not.toBeNull();
+    } finally {
+      release();
+      await other;
+    }
+    // Two approvals of one customer at once: both pass, and the parties are made once.
+    await Promise.all([approve(on, secondId), approve(on, await request(on, {}, owner))]);
+    expect(await on.prisma.party.count({ where: { customerId } })).toBe(2);
+  });
 });
