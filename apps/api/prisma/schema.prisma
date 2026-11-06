@@ -3705,6 +3705,11 @@ model CsCustomerToken {
   level        CsAccessLevel
   issuedAt     DateTime      @default(now()) @map("issued_at") @db.Timestamptz(3)
   expiresAt    DateTime      @map("expires_at") @db.Timestamptz(3)
+  /// Plan 14-1: the channel that proved the phone (whatsapp, or telegram by an own shared contact).
+  channel      String        @default("whatsapp") @db.VarChar(20)
+  /// Plan 14-1: WhatsApp tokens only, SHA-256 of `whatsapp:+<digits>` (the verified sender), so the
+  /// statement finds the requests this same sender made. Null for Telegram.
+  senderHash   String?       @map("sender_hash") @db.Char(64)
 
   apiClient    ApiClient        @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
   customer     Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)

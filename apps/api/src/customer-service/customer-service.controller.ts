@@ -102,6 +102,15 @@ const tokenBody = z
       .string()
       .regex(/^[A-Za-z0-9_-]{8,200}$/)
       .optional(),
+    /** Plan 14-1: with a signed Telegram assertion only. */
+    phoneEvidence: z
+      .object({
+        kind: z.literal('TELEGRAM_OWN_CONTACT'),
+        contactUserId: z.string().regex(/^[1-9]\d{0,31}$/),
+        value: phone,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 /** One piece's dimension in centimetres, positive, up to 2 decimals: Decimal(10, 2), as bookings. */
@@ -413,15 +422,37 @@ export class CustomerServiceController {
 @UseGuards(ApiClientGuard)
 @RequireApiScope('cs:customer_tokens:issue')
 export class CustomerTokensController {
-  constructor(private readonly tokens: CustomerTokensService) {}
+  constructor(
+    private readonly tokens: CustomerTokensService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
 
+  /**
+   * Without a channel assertion: WhatsApp, as before. With one (plan 14-1): a Telegram sender's
+   * own shared contact, checked by the signed assertion; `phoneEvidence` without one is 400.
+   */
   @Post()
   @HttpCode(HttpStatus.OK)
   issue(
     @CurrentApiClient() client: ApiClientAuth,
     @Body() body: unknown,
+    @Req() req: RawBodyRequest<Request>,
   ): Promise<CsCustomerTokenAnswer> {
-    return this.tokens.issue(client, parse(tokenBody, body));
+    const input = parse(tokenBody, body);
+    if (req.get('X-Nolon-Channel-Assertion') === undefined) {
+      if (input.phoneEvidence) {
+        throw new BadRequestException({
+          message: 'phoneEvidence needs a signed channel assertion',
+          code: 'ASSERTION_REQUIRED',
+          error: 'Bad Request',
+          statusCode: 400,
+        });
+      }
+      return this.tokens.issue(client, input);
+    }
+    this.tokens.requireTelegram();
+    const { context } = this.identityAuth.verify(client.id, req);
+    return this.tokens.issueTelegram(client, input, context);
   }
 }
 

@@ -154,6 +154,15 @@ const envSchema = z.object({
    * quotation (source BOT_QUOTE) in Quotations. Off (default): 503 QUOTE_SAVE_UNAVAILABLE, nothing
    * is saved, until the bot calls it (consumer first).
    */
+  /**
+   * Plan 14-1: POST /cs/customer-tokens also accepts a signed Telegram assertion whose phone is the
+   * sender's own shared contact. Off (default): such a request is 503 TELEGRAM_TOKENS_UNAVAILABLE;
+   * WhatsApp tokens are unaffected.
+   */
+  CS_TELEGRAM_TOKENS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   CS_QUOTE_SAVE_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
