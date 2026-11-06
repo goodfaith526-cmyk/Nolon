@@ -1,4 +1,5 @@
 import { dropOffDto, dropOffSelect } from './drop-off.js';
+import { senderChannelOf, senderIdOf } from './customer-identity.contract.js';
 import { estimateOf, imageTypeOf, storedTerms } from './estimates.js';
 import {
   CustomerIdentityService,
@@ -331,8 +332,8 @@ export class BookingRequestsService {
       input = {
         ...input,
         sender: {
-          channel: binding.context.channel === 'WHATSAPP' ? 'whatsapp' : 'telegram',
-          id: binding.context.subjectId,
+          channel: senderChannelOf(binding.context.channel),
+          id: senderIdOf(binding.context),
         },
       };
     if (caller.kind === 'key' && !input.sender) {

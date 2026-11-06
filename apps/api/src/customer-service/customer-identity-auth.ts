@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import {
+  IDENTITY_CHANNELS,
   channelContext,
   type IdentityContext,
   type IdentitySender,
@@ -33,7 +34,7 @@ const configurations = z.record(
         .array(
           z
             .object({
-              channel: z.enum(['WHATSAPP', 'TELEGRAM']),
+              channel: z.enum(IDENTITY_CHANNELS),
               channelAccountId: z.string().min(1).max(128),
             })
             .strict(),
@@ -97,6 +98,8 @@ export class CustomerIdentityAuth {
     const parsed = channelContext.safeParse(unknownContext);
     if (!parsed.success) identityError(401, 'INVALID_CHANNEL_ASSERTION');
     const context = parsed.data;
+    // Each key signs only the channel accounts it lists (plan 08), a website (WEB) one included
+    // (Codex F214-1): a key without a WEB account never mints website visitors.
     if (
       !config.accounts.some(
         (a) => a.channel === context.channel && a.channelAccountId === context.channelAccountId,

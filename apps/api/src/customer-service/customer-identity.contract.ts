@@ -4,9 +4,32 @@ export const IDENTITY_VERSION = 'nolon.customer-identity/1' as const;
 export const identityKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const identityPhone = z.string().regex(/^\+[1-9]\d{5,14}$/);
+/**
+ * The channels a signed identity names. WEB (owner, 2026-11-06): a website chat visitor, `web` and
+ * the 16 hex digits the agent's site session issued; it proves only that the agent vouches for
+ * that session, never a phone, so it carries no phone evidence.
+ */
+export const IDENTITY_CHANNELS = ['WHATSAPP', 'TELEGRAM', 'WEB'] as const;
+export type IdentityChannel = (typeof IDENTITY_CHANNELS)[number];
+/** The booking-request sender channel (whatsapp, telegram, web) of a signed channel. */
+export function senderChannelOf(channel: IdentityChannel): 'whatsapp' | 'telegram' | 'web' {
+  return channel === 'WHATSAPP' ? 'whatsapp' : channel === 'TELEGRAM' ? 'telegram' : 'web';
+}
+const subjectIdOf: Record<IdentityChannel, z.ZodType<string>> = {
+  WHATSAPP: identityPhone,
+  TELEGRAM: z.string().regex(/^[1-9]\d{0,31}$/),
+  WEB: z.string().regex(/^web[0-9a-f]{16}$/),
+};
+/**
+ * The booking-request sender id of a signed identity: as signed, except a website visitor, whose
+ * requests name the 16 hex digits without the `web` prefix (the web chat's sender id).
+ */
+export function senderIdOf(context: { channel: IdentityChannel; subjectId: string }): string {
+  return context.channel === 'WEB' ? context.subjectId.slice(3) : context.subjectId;
+}
 export const channelContext = z
   .object({
-    channel: z.enum(['WHATSAPP', 'TELEGRAM']),
+    channel: z.enum(IDENTITY_CHANNELS),
     subjectId: text(32),
     channelAccountId: text(128),
     eventId: text(128),
@@ -14,11 +37,7 @@ export const channelContext = z
   })
   .strict()
   .superRefine((v, ctx) => {
-    if (
-      !(v.channel === 'WHATSAPP' ? identityPhone : z.string().regex(/^[1-9]\d{0,31}$/)).safeParse(
-        v.subjectId,
-      ).success
-    ) {
+    if (!subjectIdOf[v.channel].safeParse(v.subjectId).success) {
       ctx.addIssue({ code: 'custom', path: ['subjectId'], message: 'Invalid channel identity' });
     }
   });
@@ -41,7 +60,9 @@ export const identitySender = channelContext
       p &&
       !(s.channel === 'WHATSAPP'
         ? p.kind === 'WHATSAPP_SENDER' && p.value === s.subjectId
-        : p.kind === 'TELEGRAM_OWN_CONTACT' && p.contactUserId === s.subjectId)
+        : s.channel === 'TELEGRAM' &&
+          p.kind === 'TELEGRAM_OWN_CONTACT' &&
+          p.contactUserId === s.subjectId)
     ) {
       ctx.addIssue({
         code: 'custom',

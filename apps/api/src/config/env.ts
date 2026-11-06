@@ -100,7 +100,10 @@ const envSchema = z.object({
       .regex(/^[A-Za-z0-9_-]{1,100}$/)
       .optional(),
   ),
-  /** Secret JSON map keyed by API client UUID: { secret, accounts: [{channel, channelAccountId}] }. */
+  /**
+   * Secret JSON map keyed by API client UUID: { secret, accounts: [{channel, channelAccountId}] }.
+   * channel WHATSAPP, TELEGRAM or WEB (owner 2026-11-06: a key's website chat, e.g. nolon).
+   */
   CS_CUSTOMER_IDENTITY_CLIENTS: emptyAsUnset(z.string().default('{}')),
   CS_CUSTOMER_FOLLOWUP_ENABLED: z
     .enum(['true', 'false'])
