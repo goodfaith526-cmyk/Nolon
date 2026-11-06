@@ -53,8 +53,10 @@ phone`. Anything else is `401 INVALID_CHANNEL_ASSERTION`. A body with `phoneEvid
   `token`, same grants (`CUSTOMER_PHONE` unverified-phone rule included), same `grantVersion`, same guard rechecks on
   every read. Level stays `L1`.
 - The token remembers its channel and sender: new columns `cs_customer_tokens.channel varchar(20) NOT NULL DEFAULT
-'whatsapp'` and `sender_hash char(64) NULL` = `sha256('<channel>:<subject>')` (WhatsApp: the verified number;
-  Telegram: the signed `subjectId`). Both additive. The hash is what 14-2 uses to find the requests this sender made. The access-log rows of the token's reads carry the token's channel instead of the fixed
+'whatsapp'` and `sender_hash char(64) NULL`, set for WhatsApp tokens only (F206-5): `sha256('whatsapp:' + canon(phone))` where
+  `canon` keeps the digits and prefixes `+` (+E.164). Both additive. The hash is what 14-2 uses to find the WhatsApp
+  requests this sender made. The same `canon` is applied to `phone` and `phoneEvidence.value` before they are compared
+  and matched. The access-log rows of the token's reads carry the token's channel instead of the fixed
   `'whatsapp'`; the token request's own row carries the channel it came from.
 - Switch `CS_TELEGRAM_TOKENS_ENABLED` (default false). Off: an assertion on this route is `503
 TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
@@ -69,9 +71,15 @@ TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
 `GET /cs/me/statement?from=YYYY-MM-DD&to=YYYY-MM-DD` with a customer token (any channel).
 
 - **Range:** both optional. `to` defaults to today, `from` to `to` minus 6 months. `from ≤ to`, at most 366 days, and
-  `to` not after today; otherwise `400 INVALID_RANGE`. Dates are calendar dates, compared on the document's own date
-  (request: created; booking: created; invoice: `invoice_date`).
+  `to` not after today; otherwise `400 INVALID_RANGE`. Dates are calendar dates in the company's customer-day
+  timezone, `Africa/Khartoum` (the existing `CUSTOMER_DAY_TIMEZONE` of customer reports) (F206-8): "today" is today
+  there; a timestamp (request and booking `created_at`) is in the range when `startOfDayIn(from) ≤ t <
+startOfDayIn(to + 1 day)`, so `to` includes its whole day; `invoice_date` (a date column) is compared as a date.
+  Boundary tests use 23:59 and 00:00 Khartoum time.
 - **The customer comes from the token only.** Documents are limited to the key's branches, as `/cs/me/*` today.
+  Requests use `servedBy` (`branch_id`, else `allowed_branch_ids` for a request awaiting routing), exactly as
+  `GET /cs/booking-requests` (F206-6). Test: an unrouted request whose candidates are all outside the key's branches is
+  absent; one with a candidate inside is present.
 - **Content** (each section newest first, at most 200 rows, with `count` and `truncated: true` when cut):
   - `requests`: the bot booking requests **the token holder owns** (F206-1) in the range, **of every status**:
     `reference`, `createdAt`, origin and destination names (`{ ar, en }`), the goods (category name, quantity and unit),
@@ -79,9 +87,14 @@ TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
     holder's when one of these verified links holds, and only then:
     1. `customer_id` = the token's customer (the request was made with a customer token of that customer);
     2. `profile_id` = the token customer's profile (made under a signed channel identity bound to that profile, plan 08);
-    3. the request's own sender is the token's sender: `sender_channel` = the token's channel and
-       `sha256(channel:sender_id)` = the token's new `sender_hash` (14-1: for WhatsApp the verified number, for
-       Telegram the signed `subjectId`). That is the same channel identity, proven both times by the channel.
+    3. **WhatsApp only** (F206-5): `sender_channel = 'whatsapp'`, the token's channel is WhatsApp, and
+       `sha256('whatsapp:' + canon(sender_id))` = the token's `sender_hash`. A WhatsApp sender id is the number
+       WhatsApp verified, stored as `+<digits>` or `<digits>`; `canon` makes both one form. Telegram requests match
+       through links 1 and 2 only: a request saved under a signed Telegram assertion always has `profile_id` (link 2),
+       while a key-vouched Telegram `sender.id` or a `tel:<typed digits>` id is not a proof and never matches.
+       Regressions: a WhatsApp request stored as `249…` and one as `+249…` both match a token for `+249…`; a Telegram
+       request with `tel:<same digits>` does not; a Telegram request with the same unsigned `sender.id` as the token's
+       subject does not.
   - **Request owner is not booking customer.** A website-chat request (`instant_customer_id` from a typed phone, no
     profile, no token), a request where the customer is only the receiver or the "other sender", or any request linked
     only by a phone someone typed, is **not** in `requests`, even after its booking was approved for this customer.
@@ -101,8 +114,13 @@ TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
     rows, so totals and rows are one snapshot. Each section also carries `count` (all matching rows) next to
     `truncated`.
   - `customer`: `number` and `label` only; `period`: `{ from, to }`; `generatedAt`.
-- **Invoices and the grant (⭐ owner request 2026-11-05):** the `invoices` section is filled for a token on the
-  customer's **own** number (`CUSTOMER_PHONE`, `CUSTOMER_WHATSAPP`). For an authorized person (`CONTACT_PHONE`) it is
+- **Invoices at L1: an explicit exception to plan 04 N3 (F206-4).** `/cs/me/invoices` needs L2 (an email code, N3).
+  The statement gives invoices at **L1**, because the owner asked (2026-11-05, the agent project's request the owner
+  pasted) for the statement with its invoices after proof of identity, and the proof here is the customer's own number
+  proven by the channel (WhatsApp sender, Telegram own contact). The exception covers the statement only;
+  `/cs/me/invoices` stays L2. Test: the same L1 token that gets the statement's invoices gets `403 L2_REQUIRED` on
+  `/cs/me/invoices`. The `invoices` section is filled for a token on the customer's **own** number (`CUSTOMER_PHONE`,
+  `CUSTOMER_WHATSAPP`). For an authorized person (`CONTACT_PHONE`) it is
   `null` with `invoicesHidden: 'CONTACT'`: they may ask about shipments, not money. `null` hides **everything**
   invoice-derived: rows, `count`, `truncated` and every per-currency total; the invoice queries are not even run for
   that grant, and the PDF has no invoices section, totals or count (F206-3). Regression: a contact's token, JSON and
@@ -125,7 +143,9 @@ TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
 both), `lang` defaulting to the customer's preferred locale, else `ar`.
 
 - **Renderer (plan 09 section 7, ⭐ (a)):** Gotenberg (Chromium in its own container) on the internal Docker network
-  only, no egress, started with `--chromium-deny-list=.*`. One shared `PdfService` in the API (reused later by the
+  only, no egress, started with `--chromium-deny-list=^(?!file:///tmp/).*` (Gotenberg must still load its own `file:///tmp/…/index.html`;
+  everything else is denied, and data: URIs are not network fetches) and `--chromium-disable-javascript=true` (F206-7).
+  The internal network with no egress stays the real guard. One shared `PdfService` in the API (reused later by the
   waybill, plan 13-5): at most 2 renders at a time, 20-second timeout, HTML ≤ 512 KB, PDF ≤ 5 MB, answer must start
   with `%PDF-`. `PDF_RENDERER_URL` (optional env); unset = `503 PDF_UNAVAILABLE`, the JSON statement still works.
 - **Template in the API:** self-contained HTML (A4, RTL for Arabic), every value escaped before HTML, NOLON's logo
@@ -162,5 +182,5 @@ deployed, on staging and production together.
 
 1. Telegram proof = the customer's own shared contact, not a code; website chat = continue on WhatsApp/Telegram.
 2. Default range 6 months, at most 366 days.
-3. Invoices in the statement for the customer's own number; an authorized person sees requests and shipments only.
+3. Invoices in the statement at L1 for the customer's own number (exception to plan 04 N3, statement only); an authorized person sees requests and shipments only.
 4. The PDF is rendered on request and never stored.
