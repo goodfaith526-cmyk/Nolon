@@ -48,6 +48,7 @@ import {
   type CsQuotesDto,
   type CsInvoiceDto,
   type CsShipmentDto,
+  type CsStatementDto,
   type CsShipmentSummaryDto,
   type CsWebhooksDto,
 } from '@nolon/shared';
@@ -69,6 +70,7 @@ import { CsWebhooksService } from './cs-webhooks.service.js';
 import { RequireApiScope } from './api-scopes.js';
 import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
+import { CustomerStatementService } from './customer-statement.service.js';
 import { CustomerServiceService } from './customer-service.service.js';
 import {
   type CustomerTokenAuth,
@@ -94,6 +96,11 @@ const shipmentsQuery = z
 const invoicesQuery = z
   .object({ state: z.enum(CS_INVOICE_STATES).default('open'), limit })
   .strict();
+/** Plan 14-2: the period's dates, YYYY-MM-DD, validated by the service so a bad one is logged. */
+const statementQuery = z
+  .object({ from: z.string().max(10).optional(), to: z.string().max(10).optional() })
+  .strict();
+
 const tokenBody = z
   .object({
     phone,
@@ -712,7 +719,19 @@ export class QuotationSaveController {
 @Public()
 @UseGuards(CustomerTokenGuard)
 export class CustomerMeController {
-  constructor(private readonly me: CustomerMeService) {}
+  constructor(
+    private readonly me: CustomerMeService,
+    private readonly statements: CustomerStatementService,
+  ) {}
+
+  /** Plan 14-2: the customer's statement for a period (dates checked, and logged, by the service). */
+  @Get('statement')
+  statement(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+  ): Promise<CsStatementDto> {
+    return this.statements.statement(auth, parse(statementQuery, query));
+  }
 
   @Get('shipments')
   shipments(

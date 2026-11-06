@@ -65,7 +65,7 @@ import { PaymentInstructionsService } from './payment-instructions.service.js';
 const DAY_MS = 86_400_000;
 
 /** A place's names and its city's, for the customer's stage city (plan 09 section 3). */
-const placeSelect = {
+export const placeSelect = {
   kind: true,
   nameAr: true,
   nameEn: true,
@@ -73,7 +73,7 @@ const placeSelect = {
 } as const;
 
 /** A request's route as the bot named it (bot_names), each end null when not stored as names. */
-function storedBotNames(value: unknown): {
+export function storedBotNames(value: unknown): {
   origin: { ar: string; en: string } | null;
   destination: { ar: string; en: string } | null;
 } {

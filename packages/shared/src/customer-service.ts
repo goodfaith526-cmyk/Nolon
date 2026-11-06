@@ -1320,3 +1320,65 @@ export interface CsWebhookEndpointCreate {
   url: string;
   audience: string;
 }
+
+/** Plan 14-2: at most this many rows per statement section; `count` and the totals cover all. */
+export const CS_STATEMENT_MAX_ROWS = 200;
+
+/** One section of a statement: the newest rows, how many match in all, and whether it was cut. */
+export interface CsStatementSection<T> {
+  rows: T[];
+  count: number;
+  truncated: boolean;
+}
+
+/** A bot booking request the token holder made (plan 14 F206-1), of any state. */
+export interface CsStatementRequestDto {
+  reference: string;
+  createdAt: string;
+  origin: { ar: string; en: string } | null;
+  destination: { ar: string; en: string } | null;
+  goods: {
+    category: { ar: string; en: string } | null;
+    quantity: DecimalString;
+    unit: string | null;
+  };
+  status: CsBookingRequestState;
+  bookingNumber: string | null;
+}
+
+/** A booking of the customer, with its shipment's customer stage. No price, no cost. */
+export interface CsStatementBookingDto {
+  number: string;
+  createdAt: string;
+  origin: { ar: string; en: string };
+  destination: { ar: string; en: string };
+  cargoDescription: string | null;
+  status: string;
+  shipment: { number: string; stage: CsStageDto | null; deliveredAt: string | null } | null;
+}
+
+/** All the period's invoices in one currency, before the row cap (F206-2). */
+export interface CsStatementInvoiceTotalDto {
+  currency: CurrencyCode;
+  count: number;
+  total: DecimalString;
+  paid: DecimalString;
+  credited: DecimalString;
+  balance: DecimalString;
+}
+
+export interface CsStatementInvoicesDto extends CsStatementSection<CsInvoiceDto> {
+  totals: CsStatementInvoiceTotalDto[];
+}
+
+/** GET /cs/me/statement (plan 14-2). */
+export interface CsStatementDto {
+  customer: CsCustomerChoiceDto;
+  period: { from: DateString; to: DateString };
+  generatedAt: string;
+  requests: CsStatementSection<CsStatementRequestDto>;
+  bookings: CsStatementSection<CsStatementBookingDto>;
+  /** Null for an authorized person's token (CONTACT_PHONE): nothing invoice-derived (F206-3). */
+  invoices: CsStatementInvoicesDto | null;
+  invoicesHidden: 'CONTACT' | null;
+}

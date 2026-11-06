@@ -1,15 +1,20 @@
-import type {
-  AccountDto,
-  AccountingSettingsDto,
-  BookingDto,
-  CustomerDto,
-  CustomerInvoiceDto,
-  CustomerStatementDto,
-  JournalEntryDto,
-  ReceiptDto,
-} from '@nolon/shared';
 import { randomInt, randomUUID } from 'node:crypto';
+import type {
+  BookingDto,
+  CsBookingRequestCreated,
+  CsCustomerTokenAnswer,
+  CsStatementDto,
+  CustomerDto,
+} from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { addDays, toDbDate, todayIn } from '../src/common/dates.js';
+import { startOfDayIn } from '../src/common/list-filters.js';
+import { newApiKey } from '../src/customer-service/api-key.js';
+import {
+  monthsBefore,
+  STATEMENT_TIMEZONE,
+  statementPeriod,
+} from '../src/customer-service/customer-statement.service.js';
 import {
   APP_ORIGIN,
   LEDGER_PREFIX,
@@ -21,587 +26,454 @@ import {
 } from './auth-test-app.js';
 import { uniquePhone } from './test-data.js';
 
+type TokenAnswer = Extract<CsCustomerTokenAnswer, { kind: 'token' }>;
+
 /**
- * Customer statement of account (annex D printout 12) against PostgreSQL. Posted entries are never
- * deleted, so the users are LEDGER users, the customer and cash accounts are this run's own and
- * everything is dated in a random year of this suite's range (600-999; the other ledger suites
- * use 1000-2000). Only the receipt's cancellation is dated today (the API dates it so).
+ * GET /cs/me/statement (plan 14-2). Negative cases: switch off, no or expired token, another
+ * customer, a branch the key does not serve, a request linked only by a typed phone, a Telegram
+ * `tel:` id, a contact's token (no invoice data at all), bad ranges; plus the row cap with
+ * totals over every invoice, Khartoum day boundaries, and one access-log row per read.
  */
-describe('customer statement', () => {
-  let t: TestApp;
-  let pts: string;
-  let jed: string;
-  let customer: CustomerDto;
-  let other: CustomerDto;
-  let cashUsd: AccountDto;
-  let cashSdg: AccountDto;
-  const inv: Record<'i1' | 'i2' | 'i3', CustomerInvoiceDto> = {} as Record<
-    'i1' | 'i2' | 'i3',
-    CustomerInvoiceDto
-  >;
-  const rc: Record<'r1' | 'r2' | 'r3' | 'r4', ReceiptDto> = {} as Record<
-    'r1' | 'r2' | 'r3' | 'r4',
-    ReceiptDto
-  >;
-  const year = String(randomInt(600, 1000)).padStart(4, '0');
-  const d = (monthDay: string) => `${year}-${monthDay}`;
-  /** Far enough ahead to include today's cancellation in any branch time zone. */
-  const later = `${new Date().getUTCFullYear() + 1}-12-31`;
-  const cookies = {
-    admin: '',
-    financePts: '',
-    financeJed: '',
-    financeBoth: '',
-    salesPts: '',
-    opsPts: '',
-  };
-  /** Who posts the ledger entries written below (see `ledgerEntry`). */
-  let financePtsId = '';
+describe('Customer statement (plan 14-2)', () => {
+  let on: TestApp;
+  let off: TestApp;
+  let dxb = '';
+  let jed = '';
+  let admin = '';
+  let salesDxb = '';
+  let salesJed = '';
+  let adminId = '';
+  const clientId = randomUUID();
+  const key = newApiKey();
+  const tag = String(randomInt(100_000, 999_999));
+  const category = `S${randomUUID().slice(0, 6).toUpperCase()}`;
+  const originId = randomUUID();
+  const destinationId = randomUUID();
+  const alphaPhone = uniquePhone();
+  const contactPhone = uniquePhone();
+  const betaPhone = uniquePhone();
+  let alpha: CustomerDto;
+  let beta: CustomerDto;
+  let receivableId = '';
+  let periodId = '';
+  let n = 0;
+  const num = () => `ST${tag}-${++n}`;
+  const today = todayIn(STATEMENT_TIMEZONE);
 
-  const get = (path: string, cookie: string) =>
-    t.http().get(`/api/v1${path}`).set('Cookie', cookie);
-  const post = (path: string, cookie: string, body: object = {}) =>
-    t.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
-  const patch = (path: string, cookie: string, body: object) =>
-    t.http().patch(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body);
+  const api = (app: TestApp) => ({
+    post: (path: string, cookie: string, body: object = {}) =>
+      app.http().post(`/api/v1${path}`).set('Origin', APP_ORIGIN).set('Cookie', cookie).send(body),
+  });
+  const statement = (app: TestApp, token: string, query = '') =>
+    app
+      .http()
+      .get(`/api/v1/cs/me/statement${query ? `?${query}` : ''}`)
+      .set('Authorization', `Bearer ${token}`);
+  const code = (res: { body: unknown }) => (res.body as { code?: string }).code;
+  const body = (res: { body: unknown }) => res.body as CsStatementDto;
 
-  async function statement(
-    query: string,
-    cookie = cookies.financePts,
-    id = customer.id,
-  ): Promise<CustomerStatementDto> {
-    return (await get(`/customer-statements/${id}?${query}`, cookie).expect(200))
-      .body as CustomerStatementDto;
+  async function token(app: TestApp, phone: string): Promise<TokenAnswer> {
+    const answer = (
+      await app
+        .http()
+        .post('/api/v1/cs/customer-tokens')
+        .set('Authorization', `Bearer ${key.key}`)
+        .send({ phone })
+        .expect(200)
+    ).body as CsCustomerTokenAnswer;
+    if (answer.kind !== 'token') throw new Error(`Expected a token, got ${answer.kind}`);
+    return answer;
   }
 
-  async function shipment(customerId = customer.id): Promise<string> {
-    const loc = async (code: string) =>
-      (await t.prisma.location.findUniqueOrThrow({ where: { code } })).id;
-    const booking = (
-      await post('/bookings', cookies.salesPts, {
-        customerId,
-        originLocationId: await loc('SDPZU'),
-        destinationLocationId: await loc('SDKRT'),
-        mode: 'ROAD',
-        cargoType: 'GENERAL',
-        services: ['MAIN_FREIGHT'],
-        items: [{ cargoType: 'GENERAL', quantity: 1, volumeCbm: '1', weightKg: '100' }],
-      }).expect(201)
-    ).body as BookingDto;
-    const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.salesPts).expect(200))
-      .body as BookingDto;
-    if (!confirmed.shipmentId) throw new Error('No shipment');
-    return confirmed.shipmentId;
+  /** A bot request through the key for a WhatsApp sender, then moved to `createdAt` if given. */
+  async function request(
+    senderPhone: string,
+    data: Record<string, unknown> = {},
+  ): Promise<{ id: string; reference: string }> {
+    const res = await on
+      .http()
+      .post('/api/v1/cs/booking-requests')
+      .set('Authorization', `Bearer ${key.key}`)
+      .send({
+        sender: { channel: 'whatsapp', id: senderPhone },
+        originId,
+        destinationId,
+        category,
+        quantity: '2',
+        services: [],
+        senderName: 'Sender',
+        consigneeName: 'Consignee',
+        consigneePhone: uniquePhone(),
+        handover: 'BRANCH_DROP',
+        language: 'ar',
+        idempotencyKey: `idem-${randomUUID()}`,
+      })
+      .expect(201);
+    const created = res.body as CsBookingRequestCreated;
+    const row = await on.prisma.csBookingRequest.update({
+      where: { id: created.requestId },
+      data,
+    });
+    return { id: row.id, reference: row.reference };
   }
 
+  /** A request made with a token of `customerId` (link 1): a customer owner, no sender. */
+  const owned = (customerId: string) => ({
+    customerId,
+    grantId: `g${'0'.repeat(40)}`,
+    senderChannel: null,
+    senderId: null,
+  });
+
+  async function booking(cookie: string, customer: CustomerDto): Promise<string> {
+    const loc = async (c: string) =>
+      (await on.prisma.location.findUniqueOrThrow({ where: { code: c } })).id;
+    return (
+      (
+        await api(on)
+          .post('/bookings', cookie, {
+            customerId: customer.id,
+            originLocationId: await loc('SDPZU'),
+            destinationLocationId: await loc('SDKRT'),
+            mode: 'ROAD',
+            cargoType: 'GENERAL',
+            services: ['MAIN_FREIGHT'],
+            cargoDescription: `Goods ${tag}`,
+            items: [{ cargoType: 'GENERAL', quantity: 1, weightKg: '100' }],
+          })
+          .expect(201)
+      ).body as BookingDto
+    ).number;
+  }
+
+  /** An approved opening invoice written straight to the table (no journal is posted). */
   async function invoice(
-    fields: { currency: string; fxRate?: string; invoiceDate: string },
-    unitPrice: string,
-    approve = true,
-    customerId = customer.id,
-  ): Promise<CustomerInvoiceDto> {
-    const draft = (
-      await post('/customer-invoices', cookies.financePts, {
-        shipmentId: await shipment(customerId),
-      }).expect(201)
-    ).body as CustomerInvoiceDto;
-    await patch(`/customer-invoices/${draft.id}`, cookies.financePts, {
-      ...fields,
-      repriced: true,
-      dueDate: fields.invoiceDate,
-      lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice }],
-    }).expect(200);
-    if (!approve) return draft;
-    return (await post(`/customer-invoices/${draft.id}/approve`, cookies.financePts).expect(200))
-      .body as CustomerInvoiceDto;
-  }
-
-  async function newCustomer(name: string): Promise<CustomerDto> {
-    return (
-      await post('/customers', cookies.salesPts, {
-        branchId: pts,
-        kind: 'COMPANY',
-        name: `${name} ${year} ${randomUUID().slice(0, 6)}`,
-        phone: uniquePhone(),
-        preferredCurrency: 'USD',
-      }).expect(201)
-    ).body as CustomerDto;
-  }
-
-  async function receipt(body: object): Promise<ReceiptDto> {
-    return (
-      await post('/receipts', cookies.financePts, { customerId: customer.id, ...body }).expect(201)
-    ).body as ReceiptDto;
+    customerId: string,
+    branch: string,
+    date: string,
+    amounts: { currency?: string; total: string; paid: string },
+  ): Promise<string> {
+    const entry = await on.prisma.journalEntry.create({
+      data: {
+        number: num(),
+        branchId: branch,
+        entryDate: toDbDate(date),
+        periodId,
+        description: tag,
+        source: 'CUSTOMER_INVOICE',
+        createdById: adminId,
+      },
+    });
+    const currency = amounts.currency ?? 'USD';
+    const row = await on.prisma.customerInvoice.create({
+      data: {
+        number: num(),
+        branchId: branch,
+        customerId,
+        currency,
+        fxRate: currency === 'USD' ? '1' : '600',
+        invoiceDate: toDbDate(date),
+        dueDate: toDbDate(date),
+        status: 'APPROVED',
+        total: amounts.total,
+        totalUsd: amounts.total,
+        paidAmount: amounts.paid,
+        paidUsd: amounts.paid,
+        isOpening: true,
+        journalEntryId: entry.id,
+        receivableAccountId: receivableId,
+        approvedAt: new Date(),
+        approvedById: adminId,
+        createdById: adminId,
+      },
+    });
+    return row.number ?? '';
   }
 
   beforeAll(async () => {
-    t = await createTestApp();
-    pts = await branchId(t.prisma, 'PTS');
-    jed = await branchId(t.prisma, 'JED');
+    on = await createTestApp({ CS_STATEMENT_ENABLED: true });
+    off = await createTestApp({ CS_STATEMENT_ENABLED: false });
+    dxb = await branchId(on.prisma, 'DXB');
+    jed = await branchId(on.prisma, 'JED');
     const users = {
-      admin: await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX),
-      financePts: await createUser(t.prisma, ['FINANCE'], ['PTS'], LEDGER_PREFIX),
-      financeJed: await createUser(t.prisma, ['FINANCE'], ['JED'], LEDGER_PREFIX),
-      financeBoth: await createUser(t.prisma, ['FINANCE'], ['PTS', 'JED'], LEDGER_PREFIX),
-      salesPts: await createUser(t.prisma, ['SALES'], ['PTS'], LEDGER_PREFIX),
-      opsPts: await createUser(t.prisma, ['OPERATIONS'], ['PTS'], LEDGER_PREFIX),
+      admin: await createUser(on.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX),
+      salesDxb: await createUser(on.prisma, ['SALES'], ['DXB'], LEDGER_PREFIX),
+      salesJed: await createUser(on.prisma, ['SALES'], ['JED'], LEDGER_PREFIX),
     };
-    for (const key of Object.keys(users) as (keyof typeof users)[]) {
-      cookies[key] = await signIn(t, users[key].email);
+    adminId = users.admin.id;
+    admin = await signIn(on, users.admin.email);
+    salesDxb = await signIn(on, users.salesDxb.email);
+    salesJed = await signIn(on, users.salesJed.email);
+    await on.prisma.priceCategory.create({
+      data: {
+        code: category,
+        nameEn: `Cat ${category}`,
+        nameAr: 'صنف اختبار',
+        cargoType: 'GENERAL',
+        defaultUnit: 'PER_SHIPMENT',
+      },
+    });
+    for (const [id, suffix] of [
+      [originId, 'O'],
+      [destinationId, 'D'],
+    ] as const) {
+      await on.prisma.location.create({
+        data: {
+          id,
+          code: `${category}${suffix}`,
+          nameEn: `${category}${suffix}`,
+          nameAr: 'مدينة اختبار',
+          kind: 'CITY',
+          countryCode: 'AE',
+        },
+      });
     }
-    financePtsId = users.financePts.id;
-    customer = await newCustomer('Statement');
-    other = await newCustomer('Statement Other');
-    const suffix = randomUUID().slice(0, 6).toUpperCase();
-    const cash = async (code: string, currency: string) =>
+    await on.prisma.branchRoutingRule.create({ data: { locationId: originId, branchId: dxb } });
+    await on.prisma.apiClient.create({
+      data: {
+        id: clientId,
+        name: `Statement test ${tag}`,
+        keyPrefix: key.prefix,
+        keyHash: key.hash,
+        createdById: adminId,
+        customersRead: false,
+        branches: { create: [{ branchId: dxb }] },
+        scopes: {
+          create: [
+            { scope: 'CUSTOMER_TOKENS_ISSUE', grantedById: adminId },
+            { scope: 'BOOKING_REQUESTS_CREATE', grantedById: adminId },
+          ],
+        },
+      },
+    });
+    const makeCustomer = async (phone: string, name: string) =>
       (
-        await post('/accounting/accounts', cookies.admin, {
-          code,
-          nameEn: `Statement test cash ${currency}`,
-          nameAr: 'نقدية اختبار كشف الحساب',
+        await api(on)
+          .post('/customers', admin, {
+            branchId: dxb,
+            kind: 'INDIVIDUAL',
+            preferredCurrency: 'USD',
+            phone,
+            name,
+          })
+          .expect(201)
+      ).body as CustomerDto;
+    alpha = await makeCustomer(alphaPhone, `Alpha ${tag}`);
+    beta = await makeCustomer(betaPhone, `Beta ${tag}`);
+    await api(on)
+      .post(`/customers/${alpha.id}/contacts`, admin, {
+        name: 'Inquirer',
+        phone: contactPhone,
+        canInquire: true,
+      })
+      .expect(201);
+    receivableId = (
+      await on.prisma.account.create({
+        data: {
+          code: `ST${tag}`,
+          nameEn: 'Statement receivable',
+          nameAr: 'ذمم',
           type: 'ASSET',
-          isPostable: true,
-          isCash: true,
-          currency,
-          branchId: pts,
-        }).expect(201)
-      ).body as AccountDto;
-    cashUsd = await cash(`S${suffix}U`, 'USD');
-    cashSdg = await cash(`S${suffix}S`, 'SDG');
-
-    // Invoices: 1000 USD (10 Jan), 300 USD (1 Feb), 600,000 SDG at 600 (10 Feb); a draft of
-    // 5,555 USD posts nothing.
-    inv.i1 = await invoice({ currency: 'USD', invoiceDate: d('01-10') }, '1000');
-    inv.i2 = await invoice({ currency: 'USD', invoiceDate: d('02-01') }, '300');
-    inv.i3 = await invoice({ currency: 'SDG', fxRate: '600', invoiceDate: d('02-10') }, '600000');
-    await invoice({ currency: 'USD', invoiceDate: d('02-11') }, '5555', false);
-
-    // Receipts: 400 USD on I1; 300,000 SDG at 500 on I3 (clears 500 USD at the invoice's rate;
-    // the gain is not the customer's balance); 100 USD on I2, cancelled today (a reversing
-    // entry); 50 USD unallocated (an advance).
-    rc.r1 = await receipt({
-      receiptDate: d('02-15'),
-      currency: 'USD',
-      amount: '400',
-      cashAccountId: cashUsd.id,
-      allocations: [{ invoiceId: inv.i1.id, amount: '400' }],
-    });
-    rc.r2 = await receipt({
-      receiptDate: d('03-05'),
-      currency: 'SDG',
-      fxRate: '500',
-      amount: '300000',
-      cashAccountId: cashSdg.id,
-      allocations: [{ invoiceId: inv.i3.id, amount: '300000' }],
-    });
-    rc.r3 = await receipt({
-      receiptDate: d('03-20'),
-      currency: 'USD',
-      amount: '100',
-      cashAccountId: cashUsd.id,
-      allocations: [{ invoiceId: inv.i2.id, amount: '100' }],
-    });
-    rc.r4 = await receipt({
-      receiptDate: d('03-25'),
-      currency: 'USD',
-      amount: '50',
-      cashAccountId: cashUsd.id,
-      allocations: [],
-    });
-    rc.r3 = (
-      await post(`/receipts/${rc.r3.id}/cancel`, cookies.financePts, { reason: 'Bounced' }).expect(
-        200,
-      )
-    ).body as ReceiptDto;
+        },
+      })
+    ).id;
+    const existing = await on.prisma.fiscalPeriod.findFirst();
+    periodId =
+      existing?.id ??
+      (
+        await on.prisma.fiscalPeriod.create({
+          data: {
+            year: 2093,
+            month: 1,
+            startDate: toDbDate('2093-01-01'),
+            endDate: toDbDate('2093-01-31'),
+          },
+        })
+      ).id;
   });
 
   afterAll(async () => {
-    await t.close();
+    await on?.close();
+    await off?.close();
   });
 
-  it('gives the opening balance, every posted line with a running balance, per currency', async () => {
-    const s = await statement(`from=${d('02-01')}&to=${later}`);
-    expect(s).toMatchObject({
-      customerId: customer.id,
-      customerNumber: customer.number,
-      customerName: customer.name,
+  it('checks the period: defaults, 366 days, order, the future, bad dates', () => {
+    expect(statementPeriod({}, '2026-11-05')).toEqual({ from: '2026-05-05', to: '2026-11-05' });
+    expect(monthsBefore('2026-08-31', 6)).toBe('2026-02-28');
+    expect(statementPeriod({ from: '2025-11-05', to: '2026-11-05' }, '2026-11-05')).not.toBeNull();
+    expect(statementPeriod({ from: '2025-11-04', to: '2026-11-05' }, '2026-11-05')).toBeNull();
+    expect(statementPeriod({ from: '2026-11-05', to: '2026-11-04' }, '2026-11-05')).toBeNull();
+    expect(statementPeriod({ to: '2026-11-06' }, '2026-11-05')).toBeNull();
+    expect(statementPeriod({ from: '2026-13-01' }, '2026-11-05')).toBeNull();
+  });
+
+  it('is off by default (503, logged), needs a valid token, and 400s a bad range (logged)', async () => {
+    const tok = await token(on, alphaPhone);
+    expect(code(await statement(off, tok.token).expect(503))).toBe('STATEMENT_UNAVAILABLE');
+    await statement(on, 'nolct_' + 'x'.repeat(43)).expect(401);
+    expect(code(await statement(on, tok.token, 'from=2020-01-01&to=2021-06-01').expect(400))).toBe(
+      'INVALID_RANGE',
+    );
+    expect(code(await statement(on, tok.token, 'from=bad').expect(400))).toBe('INVALID_RANGE');
+    expect(code(await statement(on, tok.token, `to=${addDays(today, 1)}`).expect(400))).toBe(
+      'INVALID_RANGE',
+    );
+    const row = await on.prisma.csCustomerToken.findFirstOrThrow({
+      where: { customerId: alpha.id },
+      orderBy: { issuedAt: 'desc' },
+    });
+    const outcomes = (
+      await on.prisma.csAccessEvent.findMany({
+        where: { tokenId: row.id, route: 'GET /cs/me/statement' },
+        orderBy: { id: 'asc' },
+      })
+    ).map((e) => e.outcome);
+    expect(outcomes).toEqual(['UNAVAILABLE', 'INVALID_RANGE', 'INVALID_RANGE', 'INVALID_RANGE']);
+    await on.prisma.csCustomerToken.update({
+      where: { id: row.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(code(await statement(on, tok.token).expect(401))).toBe('TOKEN_EXPIRED');
+  });
+
+  it("holds only the token holder's requests, the customer's bookings, in the key's branches", async () => {
+    const mineByToken = await request(uniquePhone(), owned(alpha.id));
+    // Link 3 (F206-5): the same WhatsApp sender, stored without '+'.
+    const mineBySender = await request(alphaPhone, { senderId: alphaPhone.slice(1) });
+    const mineCancelled = await request(alphaPhone, { status: 'CANCELLED' });
+    // F206-1: a typed-phone website link, and a Telegram `tel:` id, are not proof.
+    const website = await request(uniquePhone(), {
+      instantCustomerId: alpha.id,
+      instantAccount: 'REUSED',
+    });
+    const typedTelegram = await request(uniquePhone(), {
+      senderChannel: 'telegram',
+      senderId: `tel:${alphaPhone.slice(1)}`,
+    });
+    const others = await request(betaPhone, owned(beta.id));
+    // F206-6: an unrouted request whose candidates are all outside the key's branches.
+    const unrouted = await request(alphaPhone, {
       branchId: null,
-      from: d('02-01'),
-      to: later,
+      status: 'AWAITING_ROUTING',
+      allowedBranchIds: [jed],
     });
-    expect(s.sections.map((x) => x.currency)).toEqual(['SDG', 'USD']);
-    const [sdg, usd] = s.sections;
-
-    expect(sdg).toMatchObject({
-      openingBalance: '0',
-      totalDebit: '600000',
-      totalCredit: '300000',
-      closingBalance: '300000',
-      closingBalanceUsd: '500',
+    const unroutedInside = await request(alphaPhone, {
+      branchId: null,
+      status: 'AWAITING_ROUTING',
+      allowedBranchIds: [jed, dxb],
     });
-    expect(
-      sdg?.lines.map((l) => [l.date, l.kind, l.documentNumber, l.debit, l.credit, l.balance]),
-    ).toEqual([
-      [d('02-10'), 'INVOICE', inv.i3.number, '600000', '0', '600000'],
-      [d('03-05'), 'RECEIPT', rc.r2.number, '0', '300000', '300000'],
-    ]);
+    const bookingDxb = await booking(salesDxb, alpha);
+    const bookingJed = await booking(salesJed, alpha);
+    const bookingBeta = await booking(salesDxb, beta);
 
-    // Opening: I1 (1000). Then I2, R1, R3, the advance R4 and, today, R3's cancellation.
-    expect(usd).toMatchObject({
-      openingBalance: '1000',
-      totalDebit: '400',
-      totalCredit: '550',
-      closingBalance: '850',
-      closingBalanceUsd: '850',
-    });
-    const lines = usd?.lines ?? [];
-    expect(lines.map((l) => [l.kind, l.documentId, l.debit, l.credit, l.balance])).toEqual([
-      ['INVOICE', inv.i2.id, '300', '0', '1300'],
-      ['RECEIPT', rc.r1.id, '0', '400', '900'],
-      ['RECEIPT', rc.r3.id, '0', '100', '800'],
-      ['RECEIPT', rc.r4.id, '0', '50', '750'],
-      ['RECEIPT_CANCELLATION', rc.r3.id, '100', '0', '850'],
-    ]);
-    expect(lines[0]?.entryNumber).toBe(inv.i2.journalEntryNumber);
-    expect(lines[4]?.entryNumber).toBe(rc.r3.cancelJournalEntryNumber);
-    expect(lines[4]?.documentNumber).toBe(rc.r3.number);
-  });
-
-  it('is as of its end date: a later cancellation does not show yet', async () => {
-    const s = await statement(`from=${d('01-01')}&to=${d('12-31')}`);
-    const usd = s.sections.find((x) => x.currency === 'USD');
-    expect(usd?.openingBalance).toBe('0');
-    expect(usd?.lines.map((l) => [l.kind, l.balance])).toEqual([
-      ['INVOICE', '1000'],
-      ['INVOICE', '1300'],
-      ['RECEIPT', '900'],
-      ['RECEIPT', '800'],
-      ['RECEIPT', '750'],
-    ]);
-    expect(usd?.closingBalance).toBe('750');
-  });
-
-  it('carries everything before the period into the opening balance', async () => {
-    const s = await statement(`from=${d('04-01')}&to=${d('12-31')}`);
-    expect(
-      s.sections.map((x) => [x.currency, x.openingBalance, x.lines.length, x.closingBalance]),
-    ).toEqual([
-      ['SDG', '300000', 0, '300000'],
-      ['USD', '750', 0, '750'],
-    ]);
-  });
-
-  it('is empty for a customer with no posted lines', async () => {
-    const s = await statement(`from=${d('01-01')}&to=${later}`, cookies.financePts, other.id);
-    expect(s.sections).toEqual([]);
-  });
-
-  it('covers only the branch asked for', async () => {
-    const all = await statement(`from=${d('01-01')}&to=${later}&branchId=${pts}`, cookies.admin);
-    expect(all.sections.map((x) => x.closingBalance)).toEqual(['300000', '850']);
-    // The customer is PTS's: its lines are not JED's.
-    const jedOnly = await statement(
-      `from=${d('01-01')}&to=${later}&branchId=${jed}`,
-      cookies.admin,
+    const tok = await token(on, alphaPhone);
+    const s = body(await statement(on, tok.token).expect(200));
+    const refs = s.requests.rows.map((r) => r.reference);
+    expect(refs).toEqual(
+      expect.arrayContaining([
+        mineByToken.reference,
+        mineBySender.reference,
+        mineCancelled.reference,
+        unroutedInside.reference,
+      ]),
     );
-    expect(jedOnly.sections).toEqual([]);
-  });
-
-  it('lets Sales read it (invoices and receipts are theirs to view)', async () => {
-    const s = await statement(`from=${d('01-01')}&to=${later}`, cookies.salesPts);
-    expect(s.sections).toHaveLength(2);
-    // Invoices and receipts are shown in full: they are Sales's own documents.
-    const lines = s.sections.flatMap((x) => x.lines);
-    expect(lines.every((l) => !l.detailsHidden && l.entryNumber !== null)).toBe(true);
-  });
-
-  it('shows another branch’s customer with only the user’s own lines, and refuses another branch (403)', async () => {
-    const query = `from=${d('01-01')}&to=${later}`;
-    // Plan 09d: the customer is central, the documents stay in their branch.
-    const jedView = (
-      await get(`/customer-statements/${customer.id}?${query}`, cookies.financeJed).expect(200)
-    ).body as CustomerStatementDto;
-    expect(jedView.sections).toEqual([]);
-    await get(
-      `/customer-statements/${customer.id}?${query}&branchId=${jed}`,
-      cookies.financePts,
-    ).expect(403);
-    await get(`/customer-statements/${randomUUID()}?${query}`, cookies.financePts).expect(404);
-  });
-
-  it('needs both invoice and receipt view permissions (403 without)', async () => {
-    await get(
-      `/customer-statements/${customer.id}?from=${d('01-01')}&to=${later}`,
-      cookies.opsPts,
-    ).expect(403);
-  });
-
-  it('rejects a bad period and unknown fields (400), and needs a session (401)', async () => {
-    await get(
-      `/customer-statements/${customer.id}?from=${d('03-01')}&to=${d('02-01')}`,
-      cookies.financePts,
-    ).expect(400);
-    await get(`/customer-statements/${customer.id}?from=${d('03-01')}`, cookies.financePts).expect(
-      400,
-    );
-    await get(
-      `/customer-statements/${customer.id}?from=${d('01-01')}&to=${later}&customerId=${other.id}`,
-      cookies.financePts,
-    ).expect(400);
-    await t
-      .http()
-      .get(`/api/v1/customer-statements/${customer.id}?from=${d('01-01')}&to=${later}`)
-      .expect(401);
-  });
-
-  /**
-   * Lines with no invoice or receipt behind them. Manual entries cannot post to a control
-   * account through the API, so `ledgerEntry` writes one as the ledger would hold it: a manual
-   * draft made through the API, its debit line moved onto the receivable with the customer, then
-   * posted (the database triggers still check the balance and the period).
-   */
-  describe('other ledger lines, other customers, branches and remaps', () => {
-    let receivableId = '';
-    let advancesId = '';
-    let ledgerCustomer: CustomerDto;
-    let stranger: CustomerDto;
-    let manual: { id: string; number: string };
-    let manualReversal: JournalEntryDto;
-    const may = (day: string) => d(`05-${day}`);
-    const mayQuery = `from=${may('01')}&to=${may('31')}`;
-
-    async function ledgerEntry(
-      cookie: string,
-      branch: string,
-      entryDate: string,
-      customerId: string,
-      amount: string,
-      postIt: boolean,
-    ): Promise<{ id: string; number: string }> {
-      const accounts = (await get('/accounting/accounts', cookies.admin).expect(200))
-        .body as AccountDto[];
-      const pick = (type: string) => {
-        const found = accounts.find(
-          (a) => a.type === type && a.isPostable && a.isActive && !a.isCash && !a.isControl,
-        );
-        if (!found) throw new Error(`No ${type} account`);
-        return found.id;
-      };
-      const expense = pick('EXPENSE');
-      const draft = (
-        await post('/accounting/journals', cookie, {
-          branchId: branch,
-          entryDate,
-          description: `Statement ledger test ${amount}`,
-          lines: [
-            { accountId: expense, currency: 'USD', debit: amount },
-            { accountId: pick('REVENUE'), currency: 'USD', credit: amount },
-          ],
-        }).expect(201)
-      ).body as JournalEntryDto;
-      await t.prisma.journalLine.updateMany({
-        where: { entryId: draft.id, accountId: expense },
-        data: { accountId: receivableId, customerId },
-      });
-      if (postIt) {
-        await t.prisma.journalEntry.update({
-          where: { id: draft.id },
-          data: { status: 'POSTED', postedById: financePtsId, postedAt: new Date() },
-        });
-      }
-      return { id: draft.id, number: draft.number };
+    for (const absent of [website, typedTelegram, others, unrouted]) {
+      expect(refs).not.toContain(absent.reference);
     }
-
-    beforeAll(async () => {
-      const settings = (await get('/accounting/settings', cookies.admin).expect(200))
-        .body as AccountingSettingsDto;
-      const role = (r: string) => settings.mappings.find((m) => m.role === r)?.accountId ?? '';
-      receivableId = role('RECEIVABLE');
-      advancesId = role('CUSTOMER_ADVANCES');
-      ledgerCustomer = await newCustomer('Statement Ledger');
-      stranger = await newCustomer('Statement Stranger');
-      // 40 USD posted on 10 May and reversed on 20 May; a 999 USD draft; 70 USD for another
-      // customer on the same receivable; 15 USD posted in JED for this (PTS) customer.
-      manual = await ledgerEntry(cookies.financePts, pts, may('10'), ledgerCustomer.id, '40', true);
-      manualReversal = (
-        await post(`/accounting/journals/${manual.id}/reverse`, cookies.financePts, {
-          entryDate: may('20'),
-          reason: 'Entered twice',
-        }).expect(200)
-      ).body as JournalEntryDto;
-      await ledgerEntry(cookies.financePts, pts, may('12'), ledgerCustomer.id, '999', false);
-      await ledgerEntry(cookies.financePts, pts, may('11'), stranger.id, '70', true);
-      await ledgerEntry(cookies.financeJed, jed, may('15'), ledgerCustomer.id, '15', true);
+    const cancelled = s.requests.rows.find((r) => r.reference === mineCancelled.reference);
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      goods: { category: { en: `Cat ${category}` }, quantity: '2', unit: 'PER_SHIPMENT' },
     });
+    const numbers = s.bookings.rows.map((b) => b.number);
+    expect(numbers).toContain(bookingDxb);
+    expect(numbers).not.toContain(bookingJed);
+    expect(numbers).not.toContain(bookingBeta);
+    expect(s.bookings.rows.find((b) => b.number === bookingDxb)).toMatchObject({
+      cargoDescription: `Goods ${tag}`,
+      status: 'DRAFT',
+      shipment: null,
+    });
+    expect(s).toMatchObject({ customer: { number: alpha.number }, invoicesHidden: null });
+    const logged = await on.prisma.csAccessEvent.count({
+      where: { route: 'GET /cs/me/statement', outcome: 'OK', customerId: alpha.id },
+    });
+    expect(logged).toBeGreaterThanOrEqual(1);
+  });
 
-    it('shows a posted manual entry and its reversal with the running balance', async () => {
-      const s = await statement(mayQuery, cookies.financePts, ledgerCustomer.id);
-      expect(s.sections).toHaveLength(1);
-      const [usd] = s.sections;
-      expect(usd).toMatchObject({
+  it('uses Khartoum days: both boundary days are in, the days outside are out (F206-8)', async () => {
+    const from = addDays(today, -20);
+    const to = addDays(today, -10);
+    const at = (date: string, minutes: number) =>
+      new Date(startOfDayIn(date, STATEMENT_TIMEZONE).getTime() + minutes * 60_000);
+    const first = await request(uniquePhone(), { ...owned(alpha.id), createdAt: at(from, 0) });
+    const last = await request(uniquePhone(), {
+      ...owned(alpha.id),
+      createdAt: at(to, 23 * 60 + 59),
+    });
+    const before = await request(uniquePhone(), { ...owned(alpha.id), createdAt: at(from, -1) });
+    const after = await request(uniquePhone(), {
+      ...owned(alpha.id),
+      createdAt: at(addDays(to, 1), 0),
+    });
+    const tok = await token(on, alphaPhone);
+    const refs = body(
+      await statement(on, tok.token, `from=${from}&to=${to}`).expect(200),
+    ).requests.rows.map((r) => r.reference);
+    expect(refs).toEqual(expect.arrayContaining([first.reference, last.reference]));
+    expect(refs).not.toContain(before.reference);
+    expect(refs).not.toContain(after.reference);
+  });
+
+  it('caps invoices at 200 with totals over all of them, and exact decimals (F206-2)', async () => {
+    const date = addDays(today, -40);
+    // The oldest, the one left out by the cap, carries the only balance.
+    await invoice(beta.id, dxb, addDays(date, -1), { total: '50.0005', paid: '0' });
+    for (let i = 0; i < 200; i += 1) {
+      await invoice(beta.id, dxb, date, { total: '10.10', paid: '10.10' });
+    }
+    await invoice(beta.id, jed, date, { total: '999', paid: '0' });
+    const tok = await token(on, betaPhone);
+    const s = body(
+      await statement(on, tok.token, `from=${addDays(date, -1)}&to=${date}`).expect(200),
+    );
+    expect(s.invoices).not.toBeNull();
+    const inv = s.invoices!;
+    expect(inv.rows).toHaveLength(200);
+    expect(inv).toMatchObject({ count: 201, truncated: true });
+    expect(inv.totals).toEqual([
+      {
         currency: 'USD',
-        openingBalance: '0',
-        totalDebit: '40',
-        totalCredit: '40',
-        closingBalance: '0',
-      });
-      expect(
-        usd?.lines.map((l) => [l.date, l.kind, l.entryNumber, l.debit, l.credit, l.balance]),
-      ).toEqual([
-        [may('10'), 'OTHER', manual.number, '40', '0', '40'],
-        [may('20'), 'REVERSAL', manualReversal.number, '0', '40', '0'],
-      ]);
-      expect(usd?.lines[0]).toMatchObject({
-        entryId: manual.id,
-        documentId: null,
-        detailsHidden: false,
-        description: 'Statement ledger test 40',
-      });
-    });
+        count: 201,
+        total: '2070.0005',
+        paid: '2020',
+        credited: '0',
+        balance: '50.0005',
+      },
+    ]);
+  });
 
-    it('leaves out a draft entry on the receivable with this customer', async () => {
-      const s = await statement(mayQuery, cookies.financePts, ledgerCustomer.id);
-      const amounts = s.sections.flatMap((x) => x.lines.map((l) => l.debit));
-      expect(amounts).not.toContain('999');
-    });
+  it("gives an authorized person's token no invoice data at all (F206-3)", async () => {
+    await invoice(alpha.id, dxb, addDays(today, -5), { total: '70', paid: '0' });
+    const tok = await token(on, contactPhone);
+    const s = body(await statement(on, tok.token).expect(200));
+    expect(s.invoices).toBeNull();
+    expect(s.invoicesHidden).toBe('CONTACT');
+    expect(JSON.stringify(s)).not.toContain('"balance"');
+    // The customer's own number sees them.
+    const own = body(await statement(on, (await token(on, alphaPhone)).token).expect(200));
+    expect(own.invoices?.totals[0]).toMatchObject({ currency: 'USD', balance: '70' });
+  });
 
-    it('leaves out another customer’s posted lines on the same receivable', async () => {
-      const mine = await statement(mayQuery, cookies.financePts, ledgerCustomer.id);
-      expect(mine.sections.flatMap((x) => x.lines.map((l) => l.debit))).not.toContain('70');
-      // They are that customer's own.
-      const theirs = await statement(mayQuery, cookies.financePts, stranger.id);
-      expect(theirs.sections.map((x) => [x.currency, x.closingBalance])).toEqual([['USD', '70']]);
-    });
-
-    it('keeps another branch’s line from a user of this branch only', async () => {
-      const both = await statement(mayQuery, cookies.financeBoth, ledgerCustomer.id);
-      expect(both.sections[0]?.lines.map((l) => [l.date, l.debit, l.credit, l.balance])).toEqual([
-        [may('10'), '40', '0', '40'],
-        [may('15'), '15', '0', '55'],
-        [may('20'), '0', '40', '15'],
-      ]);
-      const ptsOnly = await statement(
-        `${mayQuery}&branchId=${pts}`,
-        cookies.financeBoth,
-        ledgerCustomer.id,
-      );
-      expect(ptsOnly.sections[0]?.closingBalance).toBe('0');
-      expect(ptsOnly.sections[0]?.lines.map((l) => l.debit)).not.toContain('15');
-      const own = await statement(mayQuery, cookies.financePts, ledgerCustomer.id);
-      expect(own.sections[0]?.lines).toHaveLength(2);
-      expect(own.sections[0]?.closingBalance).toBe('0');
-    });
-
-    it('withholds a manual entry’s text and number from a user who cannot view journals', async () => {
-      const s = await statement(mayQuery, cookies.salesPts, ledgerCustomer.id);
-      const lines = s.sections[0]?.lines ?? [];
-      // The amounts and the running balance are the same as Finance sees.
-      expect(lines.map((l) => [l.kind, l.debit, l.credit, l.balance])).toEqual([
-        ['OTHER', '40', '0', '40'],
-        ['REVERSAL', '0', '40', '0'],
-      ]);
-      for (const l of lines) {
-        expect(l).toMatchObject({
-          entryId: null,
-          entryNumber: null,
-          documentId: null,
-          documentNumber: null,
-          description: 'Accounting entry',
-          detailsHidden: true,
-        });
-      }
-      expect(JSON.stringify(s)).not.toContain('Statement ledger test');
-      expect(JSON.stringify(s)).not.toContain(manual.number);
-      expect(JSON.stringify(s)).not.toContain('Entered twice');
-    });
-
-    it('keeps lines posted before a remap of the receivable and advances accounts', async () => {
-      const remapped = await newCustomer('Statement Remap');
-      const june = (day: string) => d(`06-${day}`);
-      const before = await invoice(
-        { currency: 'USD', invoiceDate: june('05') },
-        '200',
-        true,
-        remapped.id,
-      );
-      await receipt({
-        customerId: remapped.id,
-        receiptDate: june('06'),
-        currency: 'USD',
-        amount: '30',
-        cashAccountId: cashUsd.id,
-        allocations: [],
-      });
-      const suffix = randomUUID().slice(0, 6).toUpperCase();
-      const account = async (code: string, type: string) =>
-        (
-          await post('/accounting/accounts', cookies.admin, {
-            code,
-            nameEn: `Statement remap ${type}`,
-            nameAr: 'حساب اختبار إعادة الربط',
-            type,
-            isPostable: true,
-          }).expect(201)
-        ).body as AccountDto;
-      const newReceivable = await account(`T${suffix}R`, 'ASSET');
-      const newAdvances = await account(`T${suffix}A`, 'LIABILITY');
-      let after: CustomerInvoiceDto;
-      try {
-        await t
-          .http()
-          .put('/api/v1/accounting/settings/mappings/RECEIVABLE')
-          .set('Origin', APP_ORIGIN)
-          .set('Cookie', cookies.admin)
-          .send({ accountId: newReceivable.id })
-          .expect(200);
-        await t
-          .http()
-          .put('/api/v1/accounting/settings/mappings/CUSTOMER_ADVANCES')
-          .set('Origin', APP_ORIGIN)
-          .set('Cookie', cookies.admin)
-          .send({ accountId: newAdvances.id })
-          .expect(200);
-        after = await invoice(
-          { currency: 'USD', invoiceDate: june('10') },
-          '100',
-          true,
-          remapped.id,
-        );
-        await receipt({
-          customerId: remapped.id,
-          receiptDate: june('11'),
-          currency: 'USD',
-          amount: '20',
-          cashAccountId: cashUsd.id,
-          allocations: [],
-        });
-      } finally {
-        for (const [role, accountId] of [
-          ['RECEIVABLE', receivableId],
-          ['CUSTOMER_ADVANCES', advancesId],
-        ] as const) {
-          await t.prisma.accountMapping.update({ where: { role }, data: { accountId } });
-        }
-      }
-      const invoiceAccount = async (id: string) =>
-        (await t.prisma.customerInvoice.findUniqueOrThrow({ where: { id } })).receivableAccountId;
-      expect(await invoiceAccount(before.id)).toBe(receivableId);
-      expect(await invoiceAccount(after.id)).toBe(newReceivable.id);
-
-      // Both receivables and both advances accounts, before and after the remap (and again now
-      // that the mappings are back).
-      const s = await statement(
-        `from=${june('01')}&to=${june('30')}`,
-        cookies.financePts,
-        remapped.id,
-      );
-      expect(s.sections[0]?.lines.map((l) => [l.kind, l.documentNumber, l.balance])).toEqual([
-        ['INVOICE', before.number, '200'],
-        ['RECEIPT', expect.any(String), '170'],
-        ['INVOICE', after.number, '270'],
-        ['RECEIPT', expect.any(String), '250'],
-      ]);
-      expect(s.sections[0]?.closingBalance).toBe('250');
-    });
+  it('keeps /cs/me/invoices at L2 for the same L1 token (F206-4)', async () => {
+    const tok = await token(on, alphaPhone);
+    expect(tok.level).toBe('L1');
+    await statement(on, tok.token).expect(200);
+    const res = await on
+      .http()
+      .get('/api/v1/cs/me/invoices')
+      .set('Authorization', `Bearer ${tok.token}`)
+      .expect(403);
+    expect(code(res)).toBe('L2_REQUIRED');
   });
 });

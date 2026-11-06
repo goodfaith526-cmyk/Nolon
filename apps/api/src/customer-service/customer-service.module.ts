@@ -28,6 +28,7 @@ import { CatalogService } from './catalog.service.js';
 import { ApiClientGuard } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { CustomerMeService } from './customer-me.service.js';
+import { CustomerStatementService } from './customer-statement.service.js';
 import {
   ApiClientsController,
   BookingRequestsController,
@@ -85,6 +86,7 @@ import { QuoteService } from './quote.service.js';
     CustomerTokensService,
     CustomerTokenGuard,
     CustomerMeService,
+    CustomerStatementService,
     CatalogService,
     QuoteService,
     BookingRequestGuard,

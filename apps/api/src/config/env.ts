@@ -159,6 +159,14 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 14-2: GET /cs/me/statement, the customer's requests, bookings and invoices for a period.
+   * Off (default): 503 STATEMENT_UNAVAILABLE, logged, until the bot calls it (consumer first).
+   */
+  CS_STATEMENT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Owner, 2026-11-05: POST /cs/quotations saves the prices the bot gave its customer as a SENT
    * quotation (source BOT_QUOTE) in Quotations. Off (default): 503 QUOTE_SAVE_UNAVAILABLE, nothing
    * is saved, until the bot calls it (consumer first).
