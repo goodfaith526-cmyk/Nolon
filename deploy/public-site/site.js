@@ -12,6 +12,7 @@
       e403: 'في مشكلة في إعداد المحادثة. كلّمنا في تليغرام لحدي ما نصلحها.',
       e400: 'الرسالة فاضية أو أطول من 1000 حرف.',
       enet: 'ما قدرنا نوصل للوكيل. اتأكد من الإنترنت وأرسل تاني.',
+      e5xx: 'الوكيل مشغول أو بيتحدّث هسي. جرّب تاني بعد دقيقة.',
       retry: 'اضغط على الرسالة عشان تعيد إرسالها.',
       file: 'افتح الملف',
       image: 'صورة',
@@ -27,6 +28,7 @@
       e403: 'The chat is not set up correctly. Talk to us on Telegram until we fix it.',
       e400: 'The message is empty or longer than 1000 characters.',
       enet: 'We could not reach the assistant. Check your connection and send again.',
+      e5xx: 'The assistant is busy or updating right now. Try again in a minute.',
       retry: 'Tap the message to send it again.',
       file: 'Open the file',
       image: 'Image',
@@ -139,6 +141,7 @@
     if (e.status === 429) return t.e429;
     if (e.status === 403) return t.e403;
     if (e.status === 400) return t.e400;
+    if (e.status >= 500) return t.e5xx;
     return t.enet;
   }
   function showStatus(text) {
@@ -231,6 +234,7 @@
         return res.json();
       })
       .then(function (b) {
+        pollFailures = 0;
         var fresh = false;
         (b.messages || [])
           .slice()
@@ -251,14 +255,35 @@
         showHello();
       })
       .catch(function (e) {
+        // A read that fails once or twice is retried by the next poll; say nothing until it
+        // keeps failing.
+        if (transient(e) && ++pollFailures < 3) return;
         if (!chat.hidden && e instanceof ApiError && e.status !== 429) showStatus(errorText(e));
       })
       .then(schedule);
   }
+  // A dropped connection or a 5xx (the assistant restarting during a release, a proxy timeout)
+  // passes in seconds. The server stores a message once per id, so resending the same id is
+  // safe: retry quietly for about half a minute before telling the visitor anything.
+  function transient(e) {
+    return !(e instanceof ApiError) || e.status >= 500;
+  }
+  var RETRY_DELAYS = [1500, 3000, 5000, 8000, 12000];
+  function post(path, json, attempt) {
+    return call(path, { method: 'POST', json: json }).catch(function (e) {
+      if (!transient(e) || attempt >= RETRY_DELAYS.length) throw e;
+      return new Promise(function (resolve) {
+        setTimeout(resolve, RETRY_DELAYS[attempt]);
+      }).then(function () {
+        return post(path, json, attempt + 1);
+      });
+    });
+  }
+  var pollFailures = 0;
   function send(text, el, id) {
     el.classList.add('pending');
     el.classList.remove('failed');
-    call('/messages', { method: 'POST', json: { id: id, text: text } })
+    post('/messages', { id: id, text: text }, 0)
       .then(function () {
         el.classList.remove('pending');
         waiting = true;
