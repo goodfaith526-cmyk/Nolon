@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  type ReceiptData,
-  type WaybillData,
-  maskPhone,
-  receiptHtml,
-  waybillHtml,
-} from './document-html.js';
+import { type ReceiptData, type WaybillData, receiptHtml, waybillHtml } from './document-html.js';
 
 const evil = '<script>alert(1)</script>';
 
@@ -52,24 +46,18 @@ describe('waybill and receipt documents (plan 13-5)', () => {
     }
   });
 
-  it('is right to left in Arabic, and the waybill has no price and masks phones', () => {
+  it('is right to left in Arabic, and the waybill has no price and shows phones in full', () => {
     const ar = waybillHtml(waybill, 'ar');
     expect(ar).toContain('dir="rtl"');
     expect(waybillHtml(waybill, 'en')).toContain('dir="ltr"');
     expect(ar).toContain('بوليصة الشحن');
-    expect(ar).not.toContain('+249912000651');
-    expect(ar).toContain(maskPhone('+249912000651')!);
+    expect(ar).toContain('+249912000651');
+    expect(ar).not.toContain('•');
     // No currency anywhere in the text (the embedded font and logo set aside).
     expect(ar.replace(/data:[^"')]+/g, '')).not.toMatch(/USD|SAR|SDG/);
     const r = receiptHtml(receipt, 'ar');
     expect(r).toContain('NOL-RC-2026-000005');
     expect(r).toContain('600 SAR');
     expect(r).toContain('NOL-INV-2026-000012');
-  });
-
-  it('masks the middle of a phone', () => {
-    expect(maskPhone('+249912000651')).toBe('+249••••••651');
-    expect(maskPhone('12345')).toBe('•••••');
-    expect(maskPhone(null)).toBeNull();
   });
 });

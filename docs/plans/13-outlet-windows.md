@@ -234,7 +234,7 @@ url, expiresAt}] }` (receipts: posted, allocated to the shipment's invoices, in 
   rendered then and never stored; every download is in `cs_access_events`. Off: `documents: null` and every download
   `404`.
 - **No new notice:** the bot already reads approved requests on a schedule; it sends each new document once (agent
-  side). The waybill PDF masks the phones; the receipt shows the window and its outlet when paid there.
+  side). The waybill PDF shows the phones in full (owner, 2026-11-06); the receipt shows the window and its outlet when paid there.
 
 ## 6. Decisions taken for the owner (⭐, into the decisions file)
 
