@@ -312,7 +312,7 @@ function MasterList({
       {entries.length === 0 ? (
         <p className="empty">{t('none')}</p>
       ) : (
-        <div className="card">
+        <div className="table-wrap">
           <table>
             <thead>
               <tr>

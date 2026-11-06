@@ -1,4 +1,4 @@
-import { FORM_REFUSALS } from '@nolon/shared';
+import { AUDIT_ENTITIES, FORM_REFUSALS } from '@nolon/shared';
 import { describe, expect, it } from 'vitest';
 import ar from '../../messages/ar.json' with { type: 'json' };
 import en from '../../messages/en.json' with { type: 'json' };
@@ -29,5 +29,12 @@ describe('translations', () => {
 
   it('says every reason the API refuses a booking or quotation for', () => {
     expect(Object.keys(en.Refusals).sort()).toEqual([...FORM_REFUSALS].sort());
+  });
+
+  it('names every audit-log entity, so the log never shows a raw key', () => {
+    for (const messages of [ar, en]) {
+      const ops = messages.OpsReports as Record<string, string>;
+      expect(AUDIT_ENTITIES.filter((e) => !ops[`entity_${e}`])).toEqual([]);
+    }
   });
 });

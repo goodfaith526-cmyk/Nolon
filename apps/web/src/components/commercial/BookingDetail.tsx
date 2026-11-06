@@ -119,7 +119,6 @@ export function BookingDetail({ id }: { id: string }) {
         <div className="actions">
           {!standalone && <StandaloneWindowButton record={{ kind: 'booking', id }} />}
           <MoreMenu>
-            {!standalone && <StandaloneWindowButton record={{ kind: 'booking', id }} />}
             {booking.quotationId && (
               <Link href={`/quotations/${booking.quotationId}`}>{t('openQuotation')}</Link>
             )}

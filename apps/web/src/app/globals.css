@@ -729,6 +729,8 @@ html[dir='rtl'] .nav-title[aria-expanded='false'] .icon {
 
 .auth-main {
   display: grid;
+  /* A sized track, so the form's 100% width resolves against it and never outgrows a phone. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding-block: 2rem;
   padding-inline: 1.5rem;

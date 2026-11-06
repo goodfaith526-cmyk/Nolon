@@ -357,7 +357,12 @@ export function ItemsTable({
             <td>{i.lineNo}</td>
             <td>
               {te(`cargo_${i.cargoType}`)}
-              {i.containerTypeCode && <span dir="ltr"> · {i.containerTypeCode}</span>}
+              {i.containerTypeCode && (
+                <>
+                  {' · '}
+                  <bdi>{i.containerTypeCode}</bdi>
+                </>
+              )}
             </td>
             <td>{i.description ?? '—'}</td>
             <td className="num" dir="ltr">

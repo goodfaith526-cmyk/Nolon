@@ -193,7 +193,10 @@ export function PackageLabelsPrint({
                 <div>
                   {te(`cargo_${label.line.cargoType}`)}
                   {label.line.containerTypeCode && (
-                    <span dir="ltr"> · {label.line.containerTypeCode}</span>
+                    <>
+                      {' · '}
+                      <bdi>{label.line.containerTypeCode}</bdi>
+                    </>
                   )}
                 </div>
                 {label.line.description && <div className="muted">{label.line.description}</div>}
