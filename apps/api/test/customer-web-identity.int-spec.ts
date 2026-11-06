@@ -242,6 +242,84 @@ describe('Customer Service website identity', () => {
     ).body as IdentityResult;
     expect(claimer.outcome).toBe('NEEDS_REVIEW');
     expect(claimer.profileId).not.toBe(holder.profileId);
+    // Owner, 2026-11-05: the typed phone is in the holder's file, marked unverified.
+    expect(await accountsOf(holder.profileId!)).toMatchObject([{ phone, phoneUnverified: true }]);
+  });
+
+  it('adds a phone given later to the file, from the chat or from a booking request', async () => {
+    const later = `+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    const who = visitor();
+    const conversationId = randomUUID();
+    const send = (fields: object, sender = who) =>
+      call(
+        t,
+        '/cs/customer-profiles/capture',
+        { schemaVersion: 'nolon.customer-identity/1', conversationId, sender, fields },
+        sender,
+      );
+    const first = (await send(named('Later phone')).expect(201)).body as IdentityResult;
+    expect(await accountsOf(first.profileId!)).toMatchObject([{ phone: null }]);
+    await send(
+      { phone: { value: later, source: 'CUSTOMER_STATEMENT' } },
+      { ...who, eventId: randomUUID() },
+    ).expect(200);
+    expect(await accountsOf(first.profileId!)).toMatchObject([
+      { phone: later, phoneUnverified: true },
+    ]);
+
+    // A visitor who typed the phone only in the booking request.
+    const booker = visitor();
+    const bookerConversation = randomUUID();
+    const bookerProfile = (
+      (
+        await call(
+          t,
+          '/cs/customer-profiles/capture',
+          {
+            schemaVersion: 'nolon.customer-identity/1',
+            conversationId: bookerConversation,
+            sender: booker,
+            fields: named('Booking phone'),
+          },
+          booker,
+        ).expect(201)
+      ).body as IdentityResult
+    ).profileId!;
+    const book = (contactPhone: string) => {
+      const idempotencyKey = randomUUID();
+      return call(
+        t,
+        '/cs/booking-requests',
+        {
+          idempotencyKey,
+          profileId: bookerProfile,
+          conversationId: bookerConversation,
+          sender: { channel: 'web', id: booker.subjectId.slice(3) },
+          contactPhone,
+          originId,
+          destinationId,
+          category,
+          quantity: '1',
+          services: [],
+          senderName: 'Booking phone',
+          consigneeName: 'Receiver',
+          consigneePhone: '0912345678',
+          handover: 'BRANCH_DROP',
+          language: 'ar',
+        },
+        booker,
+        idempotencyKey,
+      ).expect(201);
+    };
+    // A phone another customer holds is never taken; the file keeps none.
+    await book(later);
+    expect(await accountsOf(bookerProfile)).toMatchObject([{ phone: null }]);
+    const own = `+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    await book(own);
+    expect(await accountsOf(bookerProfile)).toMatchObject([{ phone: own, phoneUnverified: true }]);
+    // A phone already in the file is never replaced.
+    await book(`+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`);
+    expect(await accountsOf(bookerProfile)).toMatchObject([{ phone: own }]);
   });
 
   it('binds a booking request to the visitor file, and saves the quotes in it', async () => {

@@ -245,7 +245,9 @@ describe('Instant branch account from a signed bot booking request', () => {
     expect(account).toMatchObject({
       kind: 'INDIVIDUAL',
       name: 'Instant sender',
-      phone: null, // 10: an unverified phone is never copied.
+      // 10 (owner, 2026-11-05): a typed phone is copied too, marked unverified.
+      phone: unverified,
+      phoneUnverified: true,
       creditLimit: null,
       creditLimitCurrency: null,
       paymentTermsDays: 0,

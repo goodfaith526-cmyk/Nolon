@@ -652,6 +652,16 @@ export class BookingRequestsService {
               apiClientId,
             })
           : null;
+      // Owner, 2026-11-05: new information is added to the file. The phone a signed request
+      // brings fills its profile's customer when that has none yet (marked unverified).
+      const requestPhone = internationalPhone(data.contactPhone);
+      if (
+        caller.kind === 'key' &&
+        profile &&
+        requestPhone !== null &&
+        this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED
+      )
+        await this.customers.addMissingProfilePhoneInTx(tx, profile.id, requestPhone);
       const senderCustomerId = sender?.create
         ? await this.customers.phoneCustomerCreateInTx(tx, {
             name: sender.name,

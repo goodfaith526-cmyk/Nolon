@@ -335,7 +335,7 @@ export class CustomersService {
    * ready gives a reason for staff instead of a refusal, so the request is still saved: a stale
    * profile version, identity proposals to review, no explicit name, a verified phone another
    * account of the branch already has (never merged by phone or name), an inactive account. An
-   * unverified phone is never copied; the account is an individual with no credit or terms. The
+   * unverified phone is copied marked unverified, unless another customer holds it; the account is an individual with no credit or terms. The
    * audit record names the key, never the customer's name or phone.
    */
   async botAccountInTx(
@@ -373,9 +373,17 @@ export class CustomersService {
     }
     const name = profile.name?.trim();
     if (!name) return skip('NAME_MISSING');
-    const phone = profile.phoneVerified ? profile.phone : null;
     await lockCustomerKeys(tx);
-    if (phone && (await tx.customer.count({ where: { phone } })) > 0) return skip('PHONE_IN_USE');
+    const taken = async (p: string) => (await tx.customer.count({ where: { phone: p } })) > 0;
+    if (profile.phoneVerified && profile.phone && (await taken(profile.phone)))
+      return skip('PHONE_IN_USE');
+    // Owner, 2026-11-05: a typed phone goes in the file too, marked unverified (it grants
+    // nothing, plan 14); one another customer holds is left off, never a reason to skip.
+    const phone =
+      profile.phone && (profile.phoneVerified || !(await taken(profile.phone)))
+        ? profile.phone
+        : null;
+    const phoneUnverified = phone !== null && !profile.phoneVerified;
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
       data: {
@@ -383,6 +391,7 @@ export class CustomersService {
         kind: 'INDIVIDUAL',
         name,
         phone,
+        phoneUnverified,
         profileId: profile.id,
         createdViaApiClientId: input.apiClientId,
       },
@@ -398,6 +407,7 @@ export class CustomersService {
         { field: 'profileId', before: null, after: profile.id },
         { field: 'createdViaApiClientId', before: null, after: input.apiClientId },
         { field: 'phoneCopied', before: null, after: phone === null ? 'no' : 'yes' },
+        ...(phoneUnverified ? [{ field: 'phoneUnverified', before: null, after: 'true' }] : []),
       ],
     });
     return { outcome: 'CREATED', customerId: customer.id };
@@ -473,6 +483,24 @@ export class CustomersService {
     if (input.user) await this.audit.record(tx, input.user, record);
     else await this.audit.recordApi(tx, record);
     return customer.id;
+  }
+
+  /**
+   * Owner, 2026-11-05: a phone a booking request brings fills the requesting profile's customer
+   * when it has none yet (as `addMissingPhoneInTx`, marked unverified). No customer, no change.
+   */
+  async addMissingProfilePhoneInTx(
+    tx: Prisma.TransactionClient,
+    profileId: string,
+    phone: string,
+  ): Promise<void> {
+    const found = await tx.customer.findFirst({
+      where: { profileId },
+      orderBy: PROFILE_ACCOUNT_ORDER,
+      select: { id: true, isActive: true },
+    });
+    // An inactive customer is staff's to bring back: the channel never changes it.
+    if (found?.isActive) await this.addMissingPhoneInTx(tx, found.id, phone);
   }
 
   /**
@@ -594,11 +622,16 @@ export class CustomersService {
       data.name = given;
       changes.push({ field: 'name', before: existing.name, after: given });
     }
-    if (profile.phoneVerified && profile.phone && existing.phone === null) {
+    // Owner, 2026-11-05: new information is added to the file. A phone the customer typed is
+    // copied too, marked unverified (it grants nothing, plan 14), when no customer holds it.
+    if (profile.phone && existing.phone === null) {
       await lockCustomerKeys(tx);
       if ((await tx.customer.count({ where: { phone: profile.phone } })) === 0) {
         data.phone = profile.phone;
+        data.phoneUnverified = !profile.phoneVerified;
         changes.push({ field: 'phoneCopied', before: null, after: 'yes' });
+        if (!profile.phoneVerified)
+          changes.push({ field: 'phoneUnverified', before: 'false', after: 'true' });
       }
     }
     if (changes.length === 0) return;
