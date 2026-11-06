@@ -416,6 +416,33 @@ describe('inland transport: fleet, trips, POD', () => {
       expect(after.shipments.map((s) => s.shipmentId)).toEqual([a.id]);
     });
 
+    it('a shipment whose stage cannot go on a trip yet is refused with a coded 409', async () => {
+      // A sea shipment just booked: the trip stage is not reachable from CREATED.
+      const booking = (
+        await post('/bookings', cookies.opsDxb, {
+          customerId: customer.id,
+          originLocationId: portSudan,
+          destinationLocationId: khartoum,
+          mode: 'SEA',
+          loadType: 'LCL',
+          cargoType: 'GENERAL',
+          services: ['MAIN_FREIGHT'],
+          items: [{ cargoType: 'GENERAL', quantity: 2, weightKg: '20' }],
+        }).expect(201)
+      ).body as BookingDto;
+      const confirmed = (await post(`/bookings/${booking.id}/confirm`, cookies.opsDxb).expect(200))
+        .body as BookingDto;
+      const sea = (await get(`/shipments/${confirmed.shipmentId}`, cookies.opsDxb).expect(200))
+        .body as ShipmentDto;
+      const refused = await post('/trips', cookies.opsDxb, ownTrip([sea.id])).expect(409);
+      const body = refused.body as { code: string; params: { shipments: string }; message: string };
+      expect(body.code).toBe('TRIP_SHIPMENT_NOT_READY');
+      expect(body.params.shipments).toBe(sea.number);
+      expect(body.message).toContain(`${sea.number} (CREATED)`);
+      expect(await status(sea.id)).toBe('CREATED');
+      expect(await t.prisma.tripShipment.count({ where: { shipmentId: sea.id } })).toBe(0);
+    });
+
     it('a trip move a shipment cannot take is refused with 409 and nothing applied', async () => {
       const [a, b] = [await roadShipment(), await roadShipment()];
       if (!a || !b) throw new Error('No shipments');

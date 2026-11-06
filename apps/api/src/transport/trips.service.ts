@@ -774,7 +774,7 @@ export class TripsService implements OnModuleInit {
     shipmentIds: readonly string[],
     numbers: ReadonlyMap<string, string>,
   ): Promise<void> {
-    const blocked: string[] = [];
+    const blocked: { label: string; status: string }[] = [];
     for (const shipmentId of [...shipmentIds].sort()) {
       const label = numbers.get(shipmentId) ?? shipmentId;
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
@@ -803,14 +803,19 @@ export class TripsService implements OnModuleInit {
           occurredAt: new Date(),
           note: trip.number,
         });
-        if (!moved) blocked.push(`${label} (${status})`);
+        if (!moved) blocked.push({ label, status });
       }
       await tx.tripShipment.create({
         data: { tripId: trip.id, shipmentId, branchId: trip.branchId },
       });
     }
     if (blocked.length > 0) {
-      throw new ConflictException(`Cannot schedule a trip for: ${blocked.join(', ')}`);
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'TRIP_SHIPMENT_NOT_READY',
+        `Cannot schedule a trip for: ${blocked.map((b) => `${b.label} (${b.status})`).join(', ')}`,
+        { shipments: blocked.map((b) => b.label).join(', ') },
+      );
     }
   }
 
