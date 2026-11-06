@@ -43,6 +43,11 @@ const envSchema = z.object({
    */
   PUBLIC_WEB_URL: emptyAsUnset(z.string().url().optional()),
   /**
+   * Plan 14-3: the PDF renderer (Gotenberg on the internal network, e.g. http://gotenberg:3000).
+   * Unset: PDF routes answer 503 PDF_UNAVAILABLE; the JSON statement still works.
+   */
+  PDF_RENDERER_URL: emptyAsUnset(z.string().url().optional()),
+  /**
    * Where staff open the AI assistant (the platform's staff screen, e.g.
    * https://pilot.example.com/?tenant=nolon). Empty: no assistant button. HTTPS only, except
    * localhost for development.

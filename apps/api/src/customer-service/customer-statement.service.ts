@@ -14,6 +14,7 @@ import { type Decimal, toDecimalString } from '../common/money.js';
 import { uuidList } from '../common/report-sql.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { PdfService, PdfUnavailableError } from '../pdf/pdf.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { placeSelect, stateOf, storedBotNames } from './booking-requests.service.js';
 import { identityError } from './customer-identity-auth.js';
@@ -21,6 +22,7 @@ import { trackOf } from './customer-stages.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import type { CustomerTokenAuth } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
+import { type StatementLang, statementHtml } from './statement-html.js';
 
 /** The company's customer day (plan 14 F206-8), as the customer reports. */
 export const STATEMENT_TIMEZONE = 'Africa/Khartoum';
@@ -92,6 +94,7 @@ export class CustomerStatementService {
     private readonly prisma: PrismaService,
     private readonly tokens: CustomerTokensService,
     private readonly stages: CustomerStagesService,
+    private readonly pdfs: PdfService,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -99,22 +102,78 @@ export class CustomerStatementService {
   async statement(
     auth: CustomerTokenAuth,
     raw: { from?: string; to?: string },
-    route = 'GET /cs/me/statement',
   ): Promise<CsStatementDto> {
-    const record = (outcome: string) =>
-      this.tokens.record(auth.client.id, auth.tokenId, auth.customerId, outcome, route);
+    const route = 'GET /cs/me/statement';
+    const dto = await this.prepare(auth, raw, route);
+    await this.record(auth, route, 'OK');
+    return dto;
+  }
+
+  /**
+   * GET /cs/me/statement/pdf (plan 14-3): the same checks and data, rendered on request and never
+   * stored. No renderer: 503 PDF_UNAVAILABLE; a failed render: 503 PDF_FAILED. Both logged.
+   */
+  async pdf(
+    auth: CustomerTokenAuth,
+    raw: { from?: string; to?: string; lang?: string },
+  ): Promise<{ bytes: Buffer; filename: string }> {
+    const route = 'GET /cs/me/statement/pdf';
+    if (raw.lang !== undefined && raw.lang !== 'ar' && raw.lang !== 'en') {
+      await this.record(auth, route, 'INVALID_LANG');
+      identityError(400, 'INVALID_LANG');
+    }
+    if (!this.pdfs.configured && this.env.CS_STATEMENT_ENABLED) {
+      await this.record(auth, route, 'PDF_UNAVAILABLE');
+      identityError(503, 'PDF_UNAVAILABLE');
+    }
+    const dto = await this.prepare(auth, raw, route);
+    const lang: StatementLang =
+      raw.lang === 'ar' || raw.lang === 'en'
+        ? raw.lang
+        : (
+              await this.prisma.customer.findUnique({
+                where: { id: auth.customerId },
+                select: { preferredLocale: true },
+              })
+            )?.preferredLocale === 'en'
+          ? 'en'
+          : 'ar';
+    let bytes: Buffer;
+    try {
+      bytes = await this.pdfs.render(statementHtml(dto, lang));
+    } catch (error) {
+      if (!(error instanceof PdfUnavailableError)) throw error;
+      const code = error.reason === 'NOT_CONFIGURED' ? 'PDF_UNAVAILABLE' : 'PDF_FAILED';
+      await this.record(auth, route, code);
+      identityError(503, code);
+    }
+    await this.record(auth, route, 'OK');
+    return {
+      bytes,
+      filename: `statement-${dto.customer.number}-${dto.period.from}-${dto.period.to}.pdf`,
+    };
+  }
+
+  private record(auth: CustomerTokenAuth, route: string, outcome: string): Promise<void> {
+    return this.tokens.record(auth.client.id, auth.tokenId, auth.customerId, outcome, route);
+  }
+
+  /** The switch and the period, each refusal logged; then the statement. */
+  private async prepare(
+    auth: CustomerTokenAuth,
+    raw: { from?: string; to?: string },
+    route: string,
+  ): Promise<CsStatementDto> {
     if (!this.env.CS_STATEMENT_ENABLED) {
-      await record('UNAVAILABLE');
+      await this.record(auth, route, 'UNAVAILABLE');
       identityError(503, 'STATEMENT_UNAVAILABLE');
     }
     const period = statementPeriod(raw, todayIn(STATEMENT_TIMEZONE));
     if (!period) {
-      await record('INVALID_RANGE');
+      await this.record(auth, route, 'INVALID_RANGE');
       identityError(400, 'INVALID_RANGE');
     }
-    const dto = await this.build(auth, period);
-    await record('OK');
-    return dto;
+    return this.build(auth, period);
   }
 
   private async build(

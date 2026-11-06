@@ -1,4 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
+import { type Server, createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type {
   BookingDto,
   CsBookingRequestCreated,
@@ -37,6 +39,10 @@ type TokenAnswer = Extract<CsCustomerTokenAnswer, { kind: 'token' }>;
 describe('Customer statement (plan 14-2)', () => {
   let on: TestApp;
   let off: TestApp;
+  let noPdf: TestApp;
+  let renderer: Server;
+  let rendered = '';
+  let renderAnswer = '%PDF-1.7 fake';
   let dxb = '';
   let jed = '';
   let admin = '';
@@ -191,8 +197,23 @@ describe('Customer statement (plan 14-2)', () => {
   }
 
   beforeAll(async () => {
-    on = await createTestApp({ CS_STATEMENT_ENABLED: true });
+    // A fake renderer (plan 14-3): answers `renderAnswer`, keeps the HTML it was sent.
+    renderer = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        rendered = Buffer.concat(chunks).toString('utf8');
+        res.writeHead(200, { 'Content-Type': 'application/pdf' }).end(renderAnswer);
+      });
+    });
+    await new Promise<void>((resolve) => renderer.listen(0, '127.0.0.1', resolve));
+    const port = (renderer.address() as AddressInfo).port;
+    on = await createTestApp({
+      CS_STATEMENT_ENABLED: true,
+      PDF_RENDERER_URL: `http://127.0.0.1:${port}`,
+    });
     off = await createTestApp({ CS_STATEMENT_ENABLED: false });
+    noPdf = await createTestApp({ CS_STATEMENT_ENABLED: true, PDF_RENDERER_URL: undefined });
     dxb = await branchId(on.prisma, 'DXB');
     jed = await branchId(on.prisma, 'JED');
     const users = {
@@ -295,6 +316,8 @@ describe('Customer statement (plan 14-2)', () => {
   afterAll(async () => {
     await on?.close();
     await off?.close();
+    await noPdf?.close();
+    renderer?.close();
   });
 
   it('checks the period: defaults, 366 days, order, the future, bad dates', () => {
@@ -475,5 +498,75 @@ describe('Customer statement (plan 14-2)', () => {
       .set('Authorization', `Bearer ${tok.token}`)
       .expect(403);
     expect(code(res)).toBe('L2_REQUIRED');
+  });
+
+  const pdf = (app: TestApp, tok: string, query = '') =>
+    app
+      .http()
+      .get(`/api/v1/cs/me/statement/pdf${query ? `?${query}` : ''}`)
+      .set('Authorization', `Bearer ${tok}`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+  const pdfCode = (res: { body: unknown }) =>
+    (JSON.parse((res.body as Buffer).toString('utf8')) as { code?: string }).code;
+  const pdfLog = (tokenId: string) =>
+    on.prisma.csAccessEvent.findMany({
+      where: { tokenId, route: 'GET /cs/me/statement/pdf' },
+      orderBy: { id: 'asc' },
+    });
+  const lastTokenId = async (customerId: string) =>
+    (
+      await on.prisma.csCustomerToken.findFirstOrThrow({
+        where: { customerId },
+        orderBy: { issuedAt: 'desc' },
+      })
+    ).id;
+
+  it('answers the PDF, attachment and no-store, logged OK (plan 14-3)', async () => {
+    renderAnswer = '%PDF-1.7 fake';
+    const tok = await token(on, alphaPhone);
+    const res = await pdf(on, tok.token, 'lang=en').expect(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['content-disposition']).toMatch(
+      new RegExp(
+        `^attachment; filename="statement-${alpha.number}-\\d{4}-\\d{2}-\\d{2}-${today}\\.pdf"$`,
+      ),
+    );
+    expect((res.body as Buffer).toString('latin1')).toBe('%PDF-1.7 fake');
+    expect(rendered).toContain('dir="ltr"');
+    expect(rendered).not.toMatch(/https?:\/\//);
+    expect((await pdfLog(await lastTokenId(alpha.id))).map((e) => e.outcome)).toEqual(['OK']);
+  });
+
+  it("sends the renderer no invoice data for an authorized person's token (F206-3)", async () => {
+    const tok = await token(on, contactPhone);
+    await pdf(on, tok.token).expect(200);
+    expect(rendered).toContain('dir="rtl"');
+    expect(rendered).not.toContain('<h2>الفواتير</h2>');
+    expect(rendered).not.toContain('<h2>الإجماليات</h2>');
+  });
+
+  it('503s and logs a renderer that answers no PDF, or none configured; 400s a bad lang', async () => {
+    renderAnswer = '<html>not a pdf</html>';
+    const tok = await token(on, alphaPhone);
+    expect(pdfCode(await pdf(on, tok.token).expect(503))).toBe('PDF_FAILED');
+    renderAnswer = '%PDF-1.7 fake';
+    expect(pdfCode(await pdf(on, tok.token, 'lang=fr').expect(400))).toBe('INVALID_LANG');
+    expect((await pdfLog(await lastTokenId(alpha.id))).map((e) => e.outcome)).toEqual([
+      'PDF_FAILED',
+      'INVALID_LANG',
+    ]);
+    const other = await token(noPdf, alphaPhone);
+    expect(pdfCode(await pdf(noPdf, other.token).expect(503))).toBe('PDF_UNAVAILABLE');
+    expect((await pdfLog(await lastTokenId(alpha.id))).map((e) => e.outcome)).toEqual([
+      'PDF_UNAVAILABLE',
+    ]);
+    // The JSON statement still works without a renderer.
+    await statement(noPdf, other.token).expect(200);
   });
 });

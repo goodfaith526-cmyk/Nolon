@@ -13,6 +13,7 @@ import {
   Put,
   Query,
   Res,
+  StreamableFile,
   Req,
   type RawBodyRequest,
   UseGuards,
@@ -99,6 +100,14 @@ const invoicesQuery = z
 /** Plan 14-2: the period's dates, YYYY-MM-DD, validated by the service so a bad one is logged. */
 const statementQuery = z
   .object({ from: z.string().max(10).optional(), to: z.string().max(10).optional() })
+  .strict();
+
+const statementPdfQuery = z
+  .object({
+    from: z.string().max(10).optional(),
+    to: z.string().max(10).optional(),
+    lang: z.string().max(5).optional(),
+  })
   .strict();
 
 const tokenBody = z
@@ -731,6 +740,22 @@ export class CustomerMeController {
     @Query() query: unknown,
   ): Promise<CsStatementDto> {
     return this.statements.statement(auth, parse(statementQuery, query));
+  }
+
+  /** Plan 14-3: the same statement as a NOLON PDF, rendered on request, never stored. */
+  @Get('statement/pdf')
+  async statementPdf(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { bytes, filename } = await this.statements.pdf(auth, parse(statementPdfQuery, query));
+    res.setHeader('Cache-Control', 'no-store');
+    return new StreamableFile(bytes, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${filename}"`,
+      length: bytes.byteLength,
+    });
   }
 
   @Get('shipments')

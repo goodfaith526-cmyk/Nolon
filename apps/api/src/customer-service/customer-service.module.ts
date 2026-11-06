@@ -29,6 +29,7 @@ import { ApiClientGuard } from './api-client.guard.js';
 import { ApiClientsService } from './api-clients.service.js';
 import { CustomerMeService } from './customer-me.service.js';
 import { CustomerStatementService } from './customer-statement.service.js';
+import { PdfModule } from '../pdf/pdf.module.js';
 import {
   ApiClientsController,
   BookingRequestsController,
@@ -51,6 +52,7 @@ import { QuoteService } from './quote.service.js';
 @Module({
   imports: [
     CustomersModule,
+    PdfModule,
     AuditModule,
     BookingsModule,
     CurrenciesModule,
