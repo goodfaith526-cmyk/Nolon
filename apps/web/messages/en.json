@@ -84,7 +84,8 @@
     "branchPermissions": "Branch permissions",
     "paymentInstructions": "Payment instructions",
     "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
-    "agentAdmin": "Bookings agent admin"
+    "agentAdmin": "Bookings agent admin",
+    "windowDesk": "Goods to receive"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -3163,7 +3164,8 @@
     "levelName_C": "Another mix of actions",
     "module_payment_instructions": "Payment instructions",
     "module_agent_admin": "Bookings agent's admin panel",
-    "module_handover_payment": "Hand goods over without payment (with a reason)"
+    "module_handover_payment": "Hand goods over without payment (with a reason)",
+    "module_window_desk": "Window desk (goods to receive)"
   },
   "BotRequests": {
     "title": "Bot booking requests",
@@ -3447,5 +3449,33 @@
     "manual": "Manual: {reason}",
     "noLines": "No commissions in this statement.",
     "note": "Commissions accrued to the partner on NOLON shipments, settled by one supplier bill."
+  },
+  "WindowDesk": {
+    "title": "Goods to receive",
+    "hint": "Confirmed bookings whose goods are handed over at your windows. Call the sender if they are late.",
+    "search": "Booking number or phone",
+    "filter": "Show",
+    "filter_expected": "Awaiting the goods",
+    "filter_received": "Received",
+    "filter_all": "All",
+    "empty": "No bookings here.",
+    "todo_receive": "Receive the goods",
+    "todo_collect": "Collect the amount",
+    "todo_none": "Nothing left to do",
+    "sender": "Sender",
+    "receiver": "Receiver",
+    "route": "Route",
+    "amount": "Balance / total",
+    "noInvoice": "No invoice yet",
+    "show": "Details",
+    "hide": "Hide details",
+    "print": "Print",
+    "confirmedAt": "Confirmed on",
+    "window": "Drop-off window",
+    "mode": "Mode",
+    "items": "Goods",
+    "invoice": "Invoice",
+    "invoice_DRAFT": "Pro forma",
+    "invoice_APPROVED": "Approved"
   }
 }

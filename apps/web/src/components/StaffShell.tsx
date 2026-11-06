@@ -57,12 +57,15 @@ interface NavLink {
     | 'alertSettings'
     | 'apiKeys'
     | 'assistantDrafts'
-    | 'botRequests';
+    | 'botRequests'
+    | 'windowDesk';
   icon: keyof typeof icons;
   /** Shown with this permission, or with any of these. */
   permission?: Permission | readonly Permission[];
   /** Shown to a person holding a live delegation (plan 03), whatever their permissions. */
   delegates?: true;
+  /** Shown only while this switch is on (plan 13 section 2: the window desk). */
+  when?: 'windowDeskEnabled';
 }
 
 type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
@@ -121,6 +124,13 @@ const NAV_SECTIONS: readonly {
     title: 'operations',
     links: [
       { href: '/shipments', label: 'shipments', icon: 'ship', permission: 'shipments:view' },
+      {
+        href: '/window-desk',
+        label: 'windowDesk',
+        icon: 'warehouse',
+        permission: 'window_desk:view',
+        when: 'windowDeskEnabled',
+      },
       {
         href: '/consolidations',
         label: 'consolidations',
@@ -307,6 +317,7 @@ export function can(me: AuthMeResponse, permission: Permission): boolean {
 
 function canSee(me: AuthMeResponse, link: NavLink): boolean {
   if (link.delegates) return (me.delegations?.length ?? 0) > 0;
+  if (link.when && !me[link.when]) return false;
   const { permission } = link;
   if (permission === undefined) return true;
   if (typeof permission === 'string') return can(me, permission);
