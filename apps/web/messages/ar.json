@@ -629,7 +629,8 @@
     "dropOffHours": "أوقات العمل",
     "dropOffPhone": "الهاتف",
     "dropOffMap": "الموقع على الخريطة",
-    "dropOffMapQr": "امسح للوصول إلى الموقع"
+    "dropOffMapQr": "امسح للوصول إلى الموقع",
+    "shipment": "الشحنة"
   },
   "Shipments": {
     "paymentOverrideReason": "سبب التسليم بدون فاتورة أو دفع (10 أحرف على الأقل)",
@@ -752,7 +753,19 @@
     "widthCm": "العرض (سم)",
     "heightCm": "الارتفاع (سم)",
     "lineDescription": "الوصف",
-    "tabProfit": "الربحية"
+    "tabProfit": "الربحية",
+    "progressLabel": "مراحل الشحنة",
+    "milestone_REGISTERED": "التسجيل",
+    "milestone_ORIGIN": "الاستلام في المنشأ",
+    "milestone_ON_THE_WAY": "في الطريق",
+    "milestone_ARRIVED": "الوصول",
+    "milestone_CUSTOMS": "الجمارك",
+    "milestone_DELIVERY": "التسليم",
+    "stoppedHold": "الشحنة متوقفة مؤقتاً عند هذه المرحلة.",
+    "stoppedCancelled": "أُلغيت الشحنة عند هذه المرحلة.",
+    "lastUpdate": "آخر تحديث",
+    "nextStep": "الخطوة التالية",
+    "drawerClose": "إغلاق"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -3329,7 +3342,10 @@
     "newCustomerFromRequest": "عميل جديد من الطلب: {name}",
     "chooseExistingCustomer": "اختيار عميل موجود",
     "useRequestCustomer": "عميل جديد من بيانات الطلب",
-    "checkingPrice": "جارٍ فحص السعر…"
+    "checkingPrice": "جارٍ فحص السعر…",
+    "tabRequests": "الطلبات",
+    "tabSettings": "إعدادات البوت",
+    "noRequests": "ما في طلبات بالحالة دي."
   },
   "PaymentInstructions": {
     "title": "تعليمات الدفع",

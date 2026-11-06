@@ -43,6 +43,8 @@ import { PrintLink } from '../print/PrintLink';
 import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
 import { useStandalone } from '../standalone/StandaloneShell';
 import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
+import { Drawer } from '../Drawer';
+import { ShipmentProgress } from './ShipmentProgress';
 
 type Panel = 'status' | 'hold' | 'revert' | 'cancel' | 'edit' | null;
 
@@ -135,6 +137,7 @@ export function ShipmentDetail({ id }: { id: string }) {
   }
 
   function openPanel(next: Panel) {
+    setNotice(null);
     setNextStatus('');
     setPickedLocation(null);
     setPanel(next);
@@ -278,6 +281,15 @@ export function ShipmentDetail({ id }: { id: string }) {
     statusReceipt.warehouses,
   );
 
+  const panelTitle = (open: NonNullable<Panel>) =>
+    ({
+      status: t('changeStatus'),
+      hold: t('hold'),
+      revert: t('revert'),
+      cancel: t('cancel'),
+      edit: t('editDetails'),
+    })[open];
+
   const reasonForm = (action: 'hold' | 'cancel', label: string, submit: string) => (
     <form className="card stack" onSubmit={(e) => onReason(e, action)}>
       <label className="field">
@@ -361,7 +373,7 @@ export function ShipmentDetail({ id }: { id: string }) {
           )}
         </div>
       </div>
-      <Notice notice={notice} />
+      {!panel && <Notice notice={notice} />}
       {actions.containerMoves && (
         <p className="muted">
           {t('containerMovesNotice', {
@@ -373,225 +385,241 @@ export function ShipmentDetail({ id }: { id: string }) {
         </p>
       )}
 
-      {panel === 'status' && (
-        <form className="card stack" onSubmit={onStatus}>
-          <div className="grid">
-            <label className="field">
-              <span>{t('newStatus')}</span>
-              <select
-                name="status"
-                required
-                value={chosenStatus}
-                onChange={(e) => setNextStatus(e.target.value as ShipmentStatus)}
-              >
-                {actions.transitions.map((next) => (
-                  <option key={next} value={next}>
-                    {te(`shipment_${next}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>{t('occurredAt')}</span>
-              <input name="occurredAt" type="datetime-local" min={earliestMinute} />
-            </label>
-            {!withReceipt && (
-              <label className="field">
-                <span>{t('location')}</span>
-                <select
-                  name="locationId"
-                  value={chosenLocation}
-                  onChange={(e) => setPickedLocation(e.target.value)}
-                >
-                  <option value="">—</option>
-                  {activeLocations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {localName(l)} ({l.code})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
-          {withReceipt && statusReceipt.view && (
-            <StatusReceiptFields
-              view={statusReceipt.view}
-              warehouses={statusReceipt.warehouses}
-              usualLocationId={suggested}
-            />
-          )}
-          {warehouseStatus && !withReceipt && statusReceipt.view && (
-            <p className={statusReceipt.view.heldPackages > 0 ? 'muted' : 'warning'}>
-              {statusReceipt.view.heldPackages > 0
-                ? tw('statusAlreadyHeld', { held: statusReceipt.view.heldPackages })
-                : tw('statusWithoutReceipt')}
-            </p>
-          )}
-          <label className="field">
-            <span>{t('note')}</span>
-            <textarea name="note" maxLength={1000} />
-          </label>
-          {closing && closeCheck && closeCheck.goodsOnHand.length > 0 && (
-            <p className="warning">
-              {t('closeGoodsOnHand', {
-                warehouses: closeCheck.goodsOnHand
-                  .map((g) => `${g.warehouseCode} (${g.packages})`)
-                  .join(', '),
-              })}
-            </p>
-          )}
-          {closing && closeCheck?.podMissing && <p className="warning">{t('closeNoPod')}</p>}
-          {closing && closeCheck && !closeCheck.invoiced && (
-            <>
-              <p className="warning">{t('closeNotInvoiced')}</p>
-              <label className="field">
-                <span>{t('noChargeReason')}</span>
-                <textarea
-                  name="noChargeReason"
-                  required
-                  minLength={SHIPMENT_REASON_MIN_LENGTH}
-                  maxLength={1000}
-                />
-              </label>
-            </>
-          )}
-          {closing && <p className="muted">{t('closeCostsReminder')}</p>}
-          {handingOver && (
-            <label className="field">
-              <span>{t('deliveryReason')}</span>
-              <input
-                name="deliveryReason"
-                minLength={SHIPMENT_REASON_MIN_LENGTH}
-                maxLength={1000}
-                placeholder={t('deliveryReasonHint')}
-              />
-            </label>
-          )}
-          {handingOver && shipment.actions.canOverridePayment && (
-            <label className="field">
-              <span>{t('paymentOverrideReason')}</span>
-              <input name="paymentOverrideReason" maxLength={1000} />
-            </label>
-          )}
-          {!withReceipt && suggested && chosenLocation !== suggested && (
-            <p className="warning">
-              {t('locationNotUsual', {
-                status: te(`shipment_${chosenStatus}`),
-                usual: locationName(suggested),
-              })}
-            </p>
-          )}
-          <p className="muted">
-            {t('occurredAtHint', {
-              earliest: dateTime.format(new Date(earliestMinute)),
-            })}
-          </p>
-          <div className="actions">
-            <button
-              type="submit"
-              className="primary"
-              disabled={busy || goodsBlockClose || receiptLoading}
-            >
-              {tc('save')}
-            </button>
-            <button type="button" onClick={() => setPanel(null)}>
-              {tc('back')}
-            </button>
-          </div>
-        </form>
-      )}
-      {panel === 'hold' && reasonForm('hold', t('holdReason'), t('hold'))}
-      {panel === 'revert' && (
-        <ShipmentRevertForm
-          step={actions.revertUndoes}
-          to={actions.revertTo}
-          busy={busy}
-          onRevert={(reason, undoEventId) =>
-            void send('/revert', { reason, undoEventId }, t('revertedNotice'))
-          }
-          onTooShort={() =>
-            setNotice({ ok: false, text: t('reasonTooShort', { min: SHIPMENT_REASON_MIN_LENGTH }) })
-          }
-          onBack={() => setPanel(null)}
-        />
-      )}
-      {panel === 'cancel' && reasonForm('cancel', t('cancelReason'), t('cancel'))}
-      {panel === 'edit' && (
-        <form className="card stack" onSubmit={onEdit}>
-          <div className="grid">
-            {(['carrierName', 'vesselName', 'voyageNumber', 'blNumber'] as const).map((name) => (
-              <label key={name} className="field">
-                <span>{t(name)}</span>
-                <input name={name} defaultValue={s[name] ?? ''} maxLength={200} />
-              </label>
-            ))}
-            <label className="field">
-              <span>{t('etd')}</span>
-              <input name="etd" type="date" defaultValue={s.etd ?? ''} />
-            </label>
-            <label className="field">
-              <span>{t('eta')}</span>
-              <input name="eta" type="date" defaultValue={s.eta ?? ''} />
-            </label>
-            <PartnerChoice
-              name="originConsolidatorId"
-              label={tpa('originConsolidator')}
-              kind="ORIGIN_CONSOLIDATOR"
-              branchIds={partnerBranchIds}
-              held={s.originConsolidator}
-            />
-            <PartnerChoice
-              name="distributorId"
-              label={tpa('distributor')}
-              kind="DISTRIBUTOR"
-              branchIds={partnerBranchIds}
-              held={s.distributor}
-            />
-          </div>
-          <fieldset>
-            <legend>{t('services')}</legend>
-            <div className="checks">
-              {BOOKING_SERVICES.map((service) => (
-                <label key={service}>
-                  <input
-                    type="checkbox"
-                    name="services"
-                    value={service}
-                    defaultChecked={s.services.includes(service)}
-                  />
-                  {te(`service_${service}`)}
+      <ShipmentProgress shipment={s} locationName={locationName} />
+
+      {panel && (
+        <Drawer
+          title={panelTitle(panel)}
+          closeLabel={t('drawerClose')}
+          onClose={() => setPanel(null)}
+        >
+          <Notice notice={notice} />
+          {panel === 'status' && (
+            <form className="card stack" onSubmit={onStatus}>
+              <div className="grid">
+                <label className="field">
+                  <span>{t('newStatus')}</span>
+                  <select
+                    name="status"
+                    required
+                    value={chosenStatus}
+                    onChange={(e) => setNextStatus(e.target.value as ShipmentStatus)}
+                  >
+                    {actions.transitions.map((next) => (
+                      <option key={next} value={next}>
+                        {te(`shipment_${next}`)}
+                      </option>
+                    ))}
+                  </select>
                 </label>
-              ))}
-            </div>
-          </fieldset>
-          {actions.canShareBranches && (
-            <fieldset>
-              <legend>{t('sharedBranches')}</legend>
-              <p className="muted">{t('sharedBranchesHint')}</p>
-              <div className="checks">
-                {s.shareableBranches.map((b) => (
-                  <label key={b.id}>
-                    <input
-                      type="checkbox"
-                      name="sharedBranchIds"
-                      value={b.id}
-                      defaultChecked={s.sharedBranchIds.includes(b.id)}
-                    />
-                    {localName(b)} ({b.code})
+                <label className="field">
+                  <span>{t('occurredAt')}</span>
+                  <input name="occurredAt" type="datetime-local" min={earliestMinute} />
+                </label>
+                {!withReceipt && (
+                  <label className="field">
+                    <span>{t('location')}</span>
+                    <select
+                      name="locationId"
+                      value={chosenLocation}
+                      onChange={(e) => setPickedLocation(e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {activeLocations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {localName(l)} ({l.code})
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                ))}
+                )}
               </div>
-            </fieldset>
+              {withReceipt && statusReceipt.view && (
+                <StatusReceiptFields
+                  view={statusReceipt.view}
+                  warehouses={statusReceipt.warehouses}
+                  usualLocationId={suggested}
+                />
+              )}
+              {warehouseStatus && !withReceipt && statusReceipt.view && (
+                <p className={statusReceipt.view.heldPackages > 0 ? 'muted' : 'warning'}>
+                  {statusReceipt.view.heldPackages > 0
+                    ? tw('statusAlreadyHeld', { held: statusReceipt.view.heldPackages })
+                    : tw('statusWithoutReceipt')}
+                </p>
+              )}
+              <label className="field">
+                <span>{t('note')}</span>
+                <textarea name="note" maxLength={1000} />
+              </label>
+              {closing && closeCheck && closeCheck.goodsOnHand.length > 0 && (
+                <p className="warning">
+                  {t('closeGoodsOnHand', {
+                    warehouses: closeCheck.goodsOnHand
+                      .map((g) => `${g.warehouseCode} (${g.packages})`)
+                      .join(', '),
+                  })}
+                </p>
+              )}
+              {closing && closeCheck?.podMissing && <p className="warning">{t('closeNoPod')}</p>}
+              {closing && closeCheck && !closeCheck.invoiced && (
+                <>
+                  <p className="warning">{t('closeNotInvoiced')}</p>
+                  <label className="field">
+                    <span>{t('noChargeReason')}</span>
+                    <textarea
+                      name="noChargeReason"
+                      required
+                      minLength={SHIPMENT_REASON_MIN_LENGTH}
+                      maxLength={1000}
+                    />
+                  </label>
+                </>
+              )}
+              {closing && <p className="muted">{t('closeCostsReminder')}</p>}
+              {handingOver && (
+                <label className="field">
+                  <span>{t('deliveryReason')}</span>
+                  <input
+                    name="deliveryReason"
+                    minLength={SHIPMENT_REASON_MIN_LENGTH}
+                    maxLength={1000}
+                    placeholder={t('deliveryReasonHint')}
+                  />
+                </label>
+              )}
+              {handingOver && shipment.actions.canOverridePayment && (
+                <label className="field">
+                  <span>{t('paymentOverrideReason')}</span>
+                  <input name="paymentOverrideReason" maxLength={1000} />
+                </label>
+              )}
+              {!withReceipt && suggested && chosenLocation !== suggested && (
+                <p className="warning">
+                  {t('locationNotUsual', {
+                    status: te(`shipment_${chosenStatus}`),
+                    usual: locationName(suggested),
+                  })}
+                </p>
+              )}
+              <p className="muted">
+                {t('occurredAtHint', {
+                  earliest: dateTime.format(new Date(earliestMinute)),
+                })}
+              </p>
+              <div className="actions">
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={busy || goodsBlockClose || receiptLoading}
+                >
+                  {tc('save')}
+                </button>
+                <button type="button" onClick={() => setPanel(null)}>
+                  {tc('back')}
+                </button>
+              </div>
+            </form>
           )}
-          <div className="actions">
-            <button type="submit" className="primary" disabled={busy}>
-              {tc('save')}
-            </button>
-            <button type="button" onClick={() => setPanel(null)}>
-              {tc('back')}
-            </button>
-          </div>
-        </form>
+          {panel === 'hold' && reasonForm('hold', t('holdReason'), t('hold'))}
+          {panel === 'revert' && (
+            <ShipmentRevertForm
+              step={actions.revertUndoes}
+              to={actions.revertTo}
+              busy={busy}
+              onRevert={(reason, undoEventId) =>
+                void send('/revert', { reason, undoEventId }, t('revertedNotice'))
+              }
+              onTooShort={() =>
+                setNotice({
+                  ok: false,
+                  text: t('reasonTooShort', { min: SHIPMENT_REASON_MIN_LENGTH }),
+                })
+              }
+              onBack={() => setPanel(null)}
+            />
+          )}
+          {panel === 'cancel' && reasonForm('cancel', t('cancelReason'), t('cancel'))}
+          {panel === 'edit' && (
+            <form className="card stack" onSubmit={onEdit}>
+              <div className="grid">
+                {(['carrierName', 'vesselName', 'voyageNumber', 'blNumber'] as const).map(
+                  (name) => (
+                    <label key={name} className="field">
+                      <span>{t(name)}</span>
+                      <input name={name} defaultValue={s[name] ?? ''} maxLength={200} />
+                    </label>
+                  ),
+                )}
+                <label className="field">
+                  <span>{t('etd')}</span>
+                  <input name="etd" type="date" defaultValue={s.etd ?? ''} />
+                </label>
+                <label className="field">
+                  <span>{t('eta')}</span>
+                  <input name="eta" type="date" defaultValue={s.eta ?? ''} />
+                </label>
+                <PartnerChoice
+                  name="originConsolidatorId"
+                  label={tpa('originConsolidator')}
+                  kind="ORIGIN_CONSOLIDATOR"
+                  branchIds={partnerBranchIds}
+                  held={s.originConsolidator}
+                />
+                <PartnerChoice
+                  name="distributorId"
+                  label={tpa('distributor')}
+                  kind="DISTRIBUTOR"
+                  branchIds={partnerBranchIds}
+                  held={s.distributor}
+                />
+              </div>
+              <fieldset>
+                <legend>{t('services')}</legend>
+                <div className="checks">
+                  {BOOKING_SERVICES.map((service) => (
+                    <label key={service}>
+                      <input
+                        type="checkbox"
+                        name="services"
+                        value={service}
+                        defaultChecked={s.services.includes(service)}
+                      />
+                      {te(`service_${service}`)}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              {actions.canShareBranches && (
+                <fieldset>
+                  <legend>{t('sharedBranches')}</legend>
+                  <p className="muted">{t('sharedBranchesHint')}</p>
+                  <div className="checks">
+                    {s.shareableBranches.map((b) => (
+                      <label key={b.id}>
+                        <input
+                          type="checkbox"
+                          name="sharedBranchIds"
+                          value={b.id}
+                          defaultChecked={s.sharedBranchIds.includes(b.id)}
+                        />
+                        {localName(b)} ({b.code})
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+              <div className="actions">
+                <button type="submit" className="primary" disabled={busy}>
+                  {tc('save')}
+                </button>
+                <button type="button" onClick={() => setPanel(null)}>
+                  {tc('back')}
+                </button>
+              </div>
+            </form>
+          )}
+        </Drawer>
       )}
 
       <Tabs

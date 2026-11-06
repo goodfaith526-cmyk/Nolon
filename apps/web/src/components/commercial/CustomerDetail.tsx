@@ -2,6 +2,7 @@
 
 import type { CustomerDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
+import { useCountryName } from '../CountrySelect';
 import { MoreMenu } from '../MoreMenu';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
@@ -21,6 +22,7 @@ type Mode = 'view' | 'edit' | 'contact' | 'party';
 export function CustomerDetail({ id }: { id: string }) {
   const t = useTranslations('Customers');
   const tc = useTranslations('Common');
+  const countryName = useCountryName();
   const tp = useTranslations('Print');
   const me = useMe();
   const name = useLocalName();
@@ -180,8 +182,16 @@ export function CustomerDetail({ id }: { id: string }) {
           <dd dir="ltr">{customer.whatsapp ?? '—'}</dd>
           <dt>{t('email')}</dt>
           <dd dir="ltr">{customer.email ?? '—'}</dd>
+          <dt>{t('country')}</dt>
+          <dd>{customer.countryCode ? countryName(customer.countryCode) : '—'}</dd>
           <dt>{t('city')}</dt>
           <dd>{customer.city ?? '—'}</dd>
+          <dt>{t('address')}</dt>
+          <dd>{customer.address ?? '—'}</dd>
+          <dt>{t('taxNumber')}</dt>
+          <dd dir="ltr">{customer.taxNumber ?? '—'}</dd>
+          <dt>{t('preferredLocale')}</dt>
+          <dd>{t(`locale_${customer.preferredLocale}`)}</dd>
           <dt>{t('preferredCurrency')}</dt>
           <dd>{customer.preferredCurrency ?? '—'}</dd>
           <dt>{t('paymentTermsDays')}</dt>
@@ -220,6 +230,8 @@ export function CustomerDetail({ id }: { id: string }) {
           </dd>
           <dt>{tc('status')}</dt>
           <dd>{customer.isActive ? tc('active') : tc('inactive')}</dd>
+          <dt>{t('notes')}</dt>
+          <dd className="pre">{customer.notes ?? '—'}</dd>
         </dl>
       )}
 
