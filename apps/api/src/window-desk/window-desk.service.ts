@@ -101,7 +101,9 @@ export class WindowDeskService {
                   { number: { contains: term, mode: 'insensitive' } },
                   { shipper: { phone: { contains: term } } },
                   { consignee: { phone: { contains: term } } },
-                  { customer: { phone: { contains: term } } },
+                  // The customer's phone only where it is the sender shown (no shipper): never a
+                  // way to probe the customer's file (F207-7).
+                  { shipperId: null, customer: { phone: { contains: term } } },
                 ],
               }
             : {},

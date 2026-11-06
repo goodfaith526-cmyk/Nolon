@@ -180,6 +180,17 @@ describe('Window desk (plan 13 section 2)', () => {
     const found = (await as(on, cookies.staffA!).get('/window-desk/expected', { q: mine.number }))
       .body as WindowDeskBookingDto[];
     expect(found.map((r) => r.bookingId)).toEqual([mine.id]);
+    // The sender shown is the customer (no shipper): its phone finds the booking.
+    const customerPhone = (
+      await on.prisma.customer.findUniqueOrThrow({
+        where: { id: ids.customer },
+        select: { phone: true },
+      })
+    ).phone!;
+    const byPhone = (
+      await as(on, cookies.staffA!).get('/window-desk/expected', { q: customerPhone })
+    ).body as WindowDeskBookingDto[];
+    expect(byPhone.map((r) => r.bookingId)).toContain(mine.id);
   });
 
   it("opens only its own windows' confirmed bookings", async () => {
