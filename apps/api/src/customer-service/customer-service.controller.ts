@@ -13,6 +13,7 @@ import {
   Put,
   Query,
   Res,
+  StreamableFile,
   Req,
   type RawBodyRequest,
   UseGuards,
@@ -48,6 +49,7 @@ import {
   type CsQuotesDto,
   type CsInvoiceDto,
   type CsShipmentDto,
+  type CsStatementDto,
   type CsShipmentSummaryDto,
   type CsWebhooksDto,
 } from '@nolon/shared';
@@ -69,6 +71,7 @@ import { CsWebhooksService } from './cs-webhooks.service.js';
 import { RequireApiScope } from './api-scopes.js';
 import { CatalogService } from './catalog.service.js';
 import { CustomerMeService } from './customer-me.service.js';
+import { CustomerStatementService } from './customer-statement.service.js';
 import { CustomerServiceService } from './customer-service.service.js';
 import {
   type CustomerTokenAuth,
@@ -94,6 +97,7 @@ const shipmentsQuery = z
 const invoicesQuery = z
   .object({ state: z.enum(CS_INVOICE_STATES).default('open'), limit })
   .strict();
+
 const tokenBody = z
   .object({
     phone,
@@ -712,7 +716,35 @@ export class QuotationSaveController {
 @Public()
 @UseGuards(CustomerTokenGuard)
 export class CustomerMeController {
-  constructor(private readonly me: CustomerMeService) {}
+  constructor(
+    private readonly me: CustomerMeService,
+    private readonly statements: CustomerStatementService,
+  ) {}
+
+  /** Plan 14-2: the customer's statement for a period (query checked, and logged, by the service). */
+  @Get('statement')
+  statement(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+  ): Promise<CsStatementDto> {
+    return this.statements.statement(auth, query);
+  }
+
+  /** Plan 14-3: the same statement as a NOLON PDF, rendered on request, never stored. */
+  @Get('statement/pdf')
+  async statementPdf(
+    @CurrentCustomerToken() auth: CustomerTokenAuth,
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { bytes, filename } = await this.statements.pdf(auth, query);
+    res.setHeader('Cache-Control', 'no-store');
+    return new StreamableFile(bytes, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${filename}"`,
+      length: bytes.byteLength,
+    });
+  }
 
   @Get('shipments')
   shipments(
