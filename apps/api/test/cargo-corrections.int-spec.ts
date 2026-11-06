@@ -420,6 +420,101 @@ describe('cargo line corrections (B3-3)', () => {
     await correct(id, await request(id, [{ quantity: 2 }])).expect(200);
   });
 
+  describe('measures from a goods receipt (trial 2026-11-06)', () => {
+    const receive = (id: string, body: object) =>
+      post(`/shipments/${id}/warehouse/receipts`, cookies.warehouseJed, {
+        warehouseId: warehouse.id,
+        packages: 1,
+        condition: 'GOOD',
+        ...body,
+      }).expect(201);
+
+    it('fills the single cargo line that has none, recorded as a correction by the receipt', async () => {
+      const id = await shipment({ quantity: 2 });
+      const grn = (await receive(id, { weightKg: '20.5', volumeCbm: '0.35' })).body as {
+        number: string;
+        volumeCbm: string | null;
+      };
+      expect(grn.volumeCbm).toBe('0.35');
+      const after = await view(id);
+      expect(after.items.map((i) => [i.weightKg, i.volumeCbm])).toEqual([['20.5', '0.35']]);
+      expect(after.cargoCorrections).toEqual([
+        expect.objectContaining({
+          revision: 1,
+          reason: grn.number,
+          itemsBefore: [expect.objectContaining({ weightKg: null, volumeCbm: null })],
+          itemsAfter: [expect.objectContaining({ weightKg: '20.5', volumeCbm: '0.35' })],
+        }),
+      ]);
+      // A later receipt never overwrites a measure the line has.
+      await receive(id, { weightKg: '99', volumeCbm: '9' });
+      expect((await view(id)).items.map((i) => [i.weightKg, i.volumeCbm])).toEqual([
+        ['20.5', '0.35'],
+      ]);
+      expect((await view(id)).cargoRevision).toBe(1);
+    });
+
+    it('fills only the missing measure, and leaves two lines or a container to the cargo form', async () => {
+      const weighed = await shipment({ quantity: 1, weightKg: '10' });
+      await receive(weighed, { weightKg: '12', volumeCbm: '0.2' });
+      expect((await view(weighed)).items.map((i) => [i.weightKg, i.volumeCbm])).toEqual([
+        ['10', '0.2'],
+      ]);
+
+      const two = await shipment({ quantity: 1 });
+      await correct(two, await request(two, [{ quantity: 1 }, { quantity: 1 }])).expect(200);
+      await receive(two, { weightKg: '12', volumeCbm: '0.2' });
+      expect((await view(two)).items.map((i) => i.weightKg)).toEqual([null, null]);
+
+      const loaded = await shipment({ quantity: 1 });
+      await container(await containerType(null, null), [loaded]);
+      await receive(loaded, { weightKg: '12', volumeCbm: '0.2' });
+      expect((await view(loaded)).items.map((i) => i.weightKg)).toEqual([null]);
+    });
+
+    it('fills nothing while an approved invoice bills a shipment it cannot tell is priced per piece', async () => {
+      const id = await shipment({ quantity: 1 });
+      const draft = (
+        await post('/customer-invoices', cookies.financeJed, { shipmentId: id }).expect(201)
+      ).body as CustomerInvoiceDto;
+      await patch(`/customer-invoices/${draft.id}`, cookies.financeJed, {
+        currency: 'USD',
+        invoiceDate: d('03-10'),
+        dueDate: d('03-10'),
+        lines: [{ chargeTypeCode: 'FREIGHT', quantity: '1', unitPrice: '100' }],
+      }).expect(200);
+      await post(`/customer-invoices/${draft.id}/approve`, cookies.financeJed).expect(200);
+      await receive(id, { weightKg: '12', volumeCbm: '0.2' });
+      expect((await view(id)).items.map((i) => [i.weightKg, i.volumeCbm])).toEqual([[null, null]]);
+      expect((await view(id)).cargoRevision).toBe(0);
+    });
+  });
+
+  it('takes loaded goods out of their warehouse when the container is loaded (trial 2026-11-06)', async () => {
+    const id = await shipment({ quantity: 2, weightKg: '10', volumeCbm: '0.1' });
+    await post(`/shipments/${id}/warehouse/receipts`, cookies.warehouseJed, {
+      warehouseId: warehouse.id,
+      packages: 2,
+      condition: 'GOOD',
+      occurredAt: at('02-01'),
+    }).expect(201);
+    const box = await container(await containerType(null, null), [id]);
+    await close(box.id).expect(200);
+    await post(`/consolidations/${box.id}/status`, cookies.opsJed, {
+      status: 'LOADED',
+      occurredAt: at('03-02'),
+    }).expect(200);
+    const stock = (await get(`/shipments/${id}/warehouse`, cookies.warehouseJed).expect(200))
+      .body as {
+      heldPackages: number;
+      movements: { kind: string; packages: number; note: string | null }[];
+    };
+    expect(stock.heldPackages).toBe(0);
+    expect(stock.movements.filter((m) => m.kind === 'RELEASE')).toEqual([
+      expect.objectContaining({ packages: 2, note: 'Loaded in container MSCU1234565' }),
+    ]);
+  });
+
   it('refuses fewer packages than its warehouses hold', async () => {
     const id = await shipment({ quantity: 4 });
     await post(`/shipments/${id}/warehouse/receipts`, cookies.warehouseJed, {

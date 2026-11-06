@@ -4,6 +4,7 @@ import type {
   ApiClientCreatedDto,
   CsApprovalPriceDto,
   CsBookingRequestCreated,
+  CsBookingRequestDto,
   CsBookingRequestStaffDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -63,7 +64,7 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
   }
 
   /** A bot request of 4 barrels at 10: 40. */
-  async function request(): Promise<string> {
+  async function request(senderId = uniquePhone()): Promise<string> {
     return (
       (
         await on
@@ -71,7 +72,7 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
           .post('/api/v1/cs/booking-requests')
           .set('Authorization', `Bearer ${bot.key}`)
           .send({
-            sender: { channel: 'whatsapp', id: uniquePhone() },
+            sender: { channel: 'whatsapp', id: senderId },
             originId: ids.origin,
             destinationId: ids.dest,
             services: [],
@@ -305,6 +306,123 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
     const approvedAt = events.findIndex((e) => e.type === 'request.approved');
     expect(approvedAt).toBeGreaterThanOrEqual(0);
     expect(events.slice(0, approvedAt).every((e) => e.type.startsWith('request.'))).toBe(true);
+  });
+
+  it('tells the bot what was billed and paid, credited apart from paid (trial 2026-11-06)', async () => {
+    const phone = uniquePhone();
+    const id = await request(phone);
+    const read = async () =>
+      (
+        await on
+          .http()
+          .get(`/api/v1/cs/booking-requests/${id}`)
+          .set('Authorization', `Bearer ${bot.key}`)
+          .set('X-Cs-Sender', `whatsapp:${phone}`)
+          .expect(200)
+      ).body as CsBookingRequestDto;
+    expect((await read()).payment).toBeNull();
+
+    const approved = (await approve(on, id, await newCustomer(), 201))
+      .body as CsBookingRequestStaffDto;
+    const booking = await on.prisma.booking.findUniqueOrThrow({
+      where: { id: approved.bookingId! },
+      include: { shipment: true },
+    });
+    const invoice = await on.prisma.customerInvoice.findFirstOrThrow({
+      where: { shipmentId: booking.shipment!.id },
+    });
+    expect((await read()).payment).toEqual({
+      invoices: [
+        expect.objectContaining({
+          number: invoice.number,
+          kind: 'MAIN',
+          currency: 'USD',
+          total: '40',
+          paid: '0',
+          credited: '0',
+          balance: '40',
+          state: 'open',
+        }),
+      ],
+      draftInvoices: 0,
+    });
+
+    // The amounts are the invoice's as they are now: partly paid, paid, then cleared by credit.
+    const set = (paidAmount: string, creditedAmount: string) =>
+      on.prisma.customerInvoice.update({
+        where: { id: invoice.id },
+        data: { paidAmount, creditedAmount },
+      });
+    await set('15', '0');
+    expect((await read()).payment?.invoices[0]).toMatchObject({
+      balance: '25',
+      state: 'partly_paid',
+    });
+    await set('40', '0');
+    expect((await read()).payment?.invoices[0]).toMatchObject({ balance: '0', state: 'paid' });
+    await set('0', '40');
+    expect((await read()).payment?.invoices[0]).toMatchObject({ state: 'credited' });
+
+    // A draft is counted, never shown with an amount; a cancelled one is left out.
+    for (const status of ['DRAFT', 'CANCELLED'] as const) {
+      await on.prisma.customerInvoice.create({
+        data: {
+          branchId: invoice.branchId,
+          customerId: invoice.customerId,
+          shipmentId: invoice.shipmentId,
+          kind: 'ADDITIONAL',
+          currency: 'USD',
+          fxRate: '1',
+          invoiceDate: invoice.invoiceDate,
+          dueDate: invoice.dueDate,
+          status,
+          ...(status === 'CANCELLED' ? { cancelReason: 'test', cancelledAt: new Date() } : {}),
+          total: '7',
+          createdById: userIds.sales,
+        },
+      });
+    }
+    const last = (await read()).payment;
+    expect(last?.invoices).toHaveLength(1);
+    expect(last?.draftInvoices).toBe(1);
+  });
+
+  it('fills the measures a receipt weighed while its approved invoice is priced per barrel (trial 2026-11-06)', async () => {
+    const approved = (await approve(on, await request(), await newCustomer(), 201))
+      .body as CsBookingRequestStaffDto;
+    const booking = await on.prisma.booking.findUniqueOrThrow({
+      where: { id: approved.bookingId! },
+      include: { shipment: true, quotation: { include: { lines: true } } },
+    });
+    expect(booking.quotation?.lines.map((l) => l.unit)).toEqual(['PER_BARREL']);
+    const shipmentId = booking.shipment!.id;
+    expect(
+      await on.prisma.customerInvoice.count({ where: { shipmentId, status: 'APPROVED' } }),
+    ).toBe(1);
+    const code = `${tag}W${randomInt(1000, 9999)}`;
+    const warehouse = (
+      await staff(on, cookies.admin)
+        .post('/warehouses', {
+          branchId: pts,
+          code,
+          nameEn: `Store ${code}`,
+          nameAr: `مستودع ${code}`,
+        })
+        .expect(201)
+    ).body as { id: string };
+    await staff(on, cookies.admin)
+      .post(`/shipments/${shipmentId}/warehouse/receipts`, {
+        warehouseId: warehouse.id,
+        packages: 4,
+        weightKg: '20',
+        volumeCbm: '0.5',
+        condition: 'GOOD',
+      })
+      .expect(201);
+    const items = await on.prisma.shipmentItem.findMany({ where: { shipmentId } });
+    expect(items.map((i) => [i.weightKg?.toString(), i.volumeCbm?.toString()])).toEqual([
+      ['20', '0.5'],
+    ]);
   });
 
   it('refuses the whole approval when the balance is already over the credit limit', async () => {

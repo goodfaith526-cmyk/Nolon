@@ -74,6 +74,7 @@ export interface WindowDeskReceiptDto {
 export interface WindowDeskReceiptRequest {
   packages: number;
   weightKg?: DecimalString | null;
+  volumeCbm?: DecimalString | null;
   condition: GoodsCondition;
   partyName?: string | null;
   partyIdType?: string | null;

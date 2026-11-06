@@ -371,6 +371,13 @@ describe('list filters', () => {
       { invoiceDate: '2001-03-01', dueDate: '2001-03-31' },
       { paidAmount: '90', creditedAmount: '10' },
     );
+    // Trial 2026-11-06: closed by a credit note with nothing paid: CREDITED, not PAID.
+    await invoice(
+      'invCredited',
+      dxb,
+      { invoiceDate: '2001-04-01', dueDate: '2001-04-30' },
+      { paidAmount: '0', creditedAmount: '100' },
+    );
     await invoice(
       'invDraft',
       dxb,
@@ -816,6 +823,9 @@ describe('list filters', () => {
         sorted('invPartial'),
       );
       expect(await listIds(`${base()}&paymentStatus=PAID`, managerBoth)).toEqual(sorted('invPaid'));
+      expect(await listIds(`${base()}&paymentStatus=CREDITED`, managerBoth)).toEqual(
+        sorted('invCredited'),
+      );
       expect(await listIds(`${base()}&paymentStatus=UNPAID`, managerBoth)).toEqual(
         sorted('invOverdue', 'invDraft', 'invJed'),
       );

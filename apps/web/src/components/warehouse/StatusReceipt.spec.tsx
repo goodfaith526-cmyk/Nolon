@@ -59,6 +59,7 @@ describe('the status form records a goods receipt for a warehouse status', () =>
     form.set('warehouseId', 'w1');
     form.set('packages', '7');
     form.set('weightKg', ' ');
+    form.set('volumeCbm', '0.35');
     form.set('condition', 'DAMAGED');
     form.set('note', ' wet cartons ');
     expect(
@@ -67,6 +68,7 @@ describe('the status form records a goods receipt for a warehouse status', () =>
       warehouseId: 'w1',
       packages: 7,
       weightKg: null,
+      volumeCbm: '0.35',
       condition: 'DAMAGED',
       note: 'wet cartons',
       occurredAt: '2026-10-28T10:00:00.000Z',

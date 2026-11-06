@@ -36,6 +36,7 @@ export const CARGO_WRITES: Readonly<Record<string, Readonly<Record<string, strin
     'shipment.create': 'createForBooking: a new shipment has no event or invoice yet',
     'shipmentItem.deleteMany': 'correctCargo: CARGO_CORRECTED',
     'shipmentItem.createMany': 'correctCargo: CARGO_CORRECTED',
+    'shipmentItem.update': 'measuresFromReceiptInTx: CARGO_CORRECTED',
   },
 };
 

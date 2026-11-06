@@ -38,11 +38,14 @@ import {
   type CsItemMeasures,
   type CsNamesItemInput,
   type CsOtherSender,
+  type CsRequestInvoiceDto,
+  type CsRequestInvoiceState,
   type CsRequestItemInput,
+  type CsRequestPaymentDto,
   type CsRequestService,
   type CsSenderChannel,
 } from '@nolon/shared';
-import { todayIn, toDbDate } from '../common/dates.js';
+import { fromDbDate, todayIn, toDbDate } from '../common/dates.js';
 import { dec, toDecimalString } from '../common/money.js';
 import { formatShortNumber, nextSequenceValue } from '../common/numbering.js';
 import { internationalPhone, samePhone } from '../common/phones.js';
@@ -94,6 +97,7 @@ const trackedBookingSelect = {
   status: true,
   shipment: {
     select: {
+      id: true,
       number: true,
       status: true,
       createdAt: true,
@@ -110,6 +114,16 @@ const trackedBookingSelect = {
 } as const satisfies Prisma.BookingSelect;
 
 type TrackedBooking = Prisma.BookingGetPayload<{ select: typeof trackedBookingSelect }>;
+
+/** An approved invoice's state for the customer (trial 2026-11-06: credited is not "paid"). */
+export function invoiceStateOf(
+  paid: Prisma.Decimal,
+  credited: Prisma.Decimal,
+  balance: Prisma.Decimal,
+): CsRequestInvoiceState {
+  if (balance.gt(0)) return paid.gt(0) ? 'partly_paid' : 'open';
+  return paid.isZero() && credited.gt(0) ? 'credited' : 'paid';
+}
 
 /** A request's customer stage, from its state and its booking's shipment. */
 function rowTrack(
@@ -918,7 +932,60 @@ export class BookingRequestsService {
         track.shipment && shipment
           ? { ...track.shipment, trackingUrl: this.trackingUrl(shipment.trackingToken) }
           : null,
+      payment:
+        row.status === 'APPROVED' && shipment
+          ? await this.paymentOf(caller.client, shipment.id)
+          : null,
     };
+  }
+
+  /**
+   * Trial 2026-11-06: the shipment's invoices as the customer's bot may tell them: approved ones
+   * with their amounts, drafts as a count only. Invoices of branches the key does not serve are
+   * left out (rule 2).
+   */
+  private async paymentOf(client: ApiClientAuth, shipmentId: string): Promise<CsRequestPaymentDto> {
+    const rows = await this.prisma.customerInvoice.findMany({
+      where: {
+        shipmentId,
+        branchId: { in: [...client.allowedBranchIds] },
+        status: { in: ['APPROVED', 'DRAFT'] },
+      },
+      orderBy: [{ invoiceDate: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        number: true,
+        kind: true,
+        status: true,
+        invoiceDate: true,
+        dueDate: true,
+        currency: true,
+        total: true,
+        paidAmount: true,
+        creditedAmount: true,
+      },
+    });
+    const invoices: CsRequestInvoiceDto[] = [];
+    let draftInvoices = 0;
+    for (const r of rows) {
+      if (r.status !== 'APPROVED' || r.number === null) {
+        draftInvoices += 1;
+        continue;
+      }
+      const balance = r.total.minus(r.paidAmount).minus(r.creditedAmount);
+      invoices.push({
+        number: r.number,
+        kind: r.kind,
+        invoiceDate: fromDbDate(r.invoiceDate),
+        dueDate: fromDbDate(r.dueDate),
+        currency: r.currency,
+        total: toDecimalString(r.total),
+        paid: toDecimalString(r.paidAmount),
+        credited: toDecimalString(r.creditedAmount),
+        balance: toDecimalString(balance),
+        state: invoiceStateOf(r.paidAmount, r.creditedAmount, balance),
+      });
+    }
+    return { invoices, draftInvoices };
   }
 
   /**

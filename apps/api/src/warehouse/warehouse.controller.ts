@@ -95,12 +95,19 @@ const weightKg = z
   .regex(/^\d{1,9}(\.\d{1,3})?$/, 'Invalid weight')
   .nullish();
 
+/** CBM: non-negative, at most 8 integer and 4 decimal digits (Decimal(12, 4)). */
+const volumeCbm = z
+  .string()
+  .regex(/^\d{1,8}(\.\d{1,4})?$/, 'Invalid volume')
+  .nullish();
+
 export const receiptBody = z
   .object({
     warehouseId: z.uuid(),
     storageLocationId: z.uuid().nullish(),
     packages,
     weightKg,
+    volumeCbm,
     condition: z.enum(GOODS_CONDITIONS),
     partyName: optionalText(200),
     // Plan 09e section 4: the ID the person handing over showed, as typed (free text).

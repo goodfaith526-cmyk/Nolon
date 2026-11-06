@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -948,6 +948,99 @@ export class ShipmentsService {
     return this.get(user, id);
   }
 
+  /**
+   * Trial 2026-11-06 (owner's star option): a goods receipt's measured weight and volume fill the
+   * shipment's cargo line when the shipment has exactly one line and that line has no such
+   * measure. A bot request carries none, and a container cannot close without them. Recorded as a
+   * cargo correction (reason: the receipt's number), so the history shows before and after.
+   *
+   * Nothing is filled while the shipment is in a container (its lock comes first: a correction
+   * through the cargo form then), or when a measure could change a price: an approved invoice
+   * bills the shipment and its booking's quotation prices a line by weight or volume (PER_KG,
+   * PER_CBM), or has no quotation to tell. A per-piece price stays right, so no credit note is
+   * needed. Runs under the shipment's exclusive lock, which the receipt took.
+   */
+  async measuresFromReceiptInTx(
+    tx: Tx,
+    user: AuthUser,
+    shipmentId: string,
+    receiptNumber: string,
+    measured: { weightKg: Prisma.Decimal | null; volumeCbm: Prisma.Decimal | null },
+  ): Promise<void> {
+    if (measured.weightKg === null && measured.volumeCbm === null) return;
+    const items = await tx.shipmentItem.findMany({
+      where: { shipmentId },
+      orderBy: { lineNo: 'asc' },
+    });
+    if (items.length !== 1) return;
+    const before = items[0]!;
+    const fill = {
+      ...(before.weightKg === null && measured.weightKg?.gt(0)
+        ? { weightKg: measured.weightKg }
+        : {}),
+      ...(before.volumeCbm === null && measured.volumeCbm?.gt(0)
+        ? { volumeCbm: measured.volumeCbm }
+        : {}),
+    };
+    if (Object.keys(fill).length === 0) return;
+    if (await this.containers.get().liveContainerInTx(tx, shipmentId)) return;
+    const { approved } = await this.invoices.get().liveInvoicesInTx(tx, shipmentId);
+    if (approved.length > 0 && (await this.pricedByMeasureInTx(tx, shipmentId))) return;
+    const shipment = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      select: { branchId: true },
+    });
+    const after = await tx.shipmentItem.update({ where: { id: before.id }, data: fill });
+    const revision = await tx.shipmentCargoCorrection.count({ where: { shipmentId } });
+    await tx.shipmentCargoCorrection.create({
+      data: {
+        shipmentId,
+        branchId: shipment.branchId,
+        revision: revision + 1,
+        requestId: randomUUID(),
+        requestHash: requestHash({ receipt: receiptNumber, ...fill }),
+        itemsBefore: [toItemDto(before)] as unknown as Prisma.InputJsonValue,
+        itemsAfter: [toItemDto(after)] as unknown as Prisma.InputJsonValue,
+        reason: receiptNumber,
+        containerId: null,
+        correctedById: user.id,
+      },
+    });
+    await this.commissions.shipmentChangedInTx(tx, user, shipmentId, 'CARGO_CORRECTED');
+  }
+
+  /**
+   * Trial 2026-11-06: the shipments were loaded into container `containerNumber`: the goods still
+   * held in warehouses leave them (ShipmentStockHandler.releaseLoadedInTx). The caller holds each
+   * shipment's exclusive lock.
+   */
+  async releaseLoadedInTx(
+    tx: Tx,
+    user: AuthUser,
+    shipmentIds: readonly string[],
+    occurredAt: Date,
+    containerNumber: string,
+  ): Promise<void> {
+    for (const id of shipmentIds) {
+      await this.stock
+        .get()
+        .releaseLoadedInTx(tx, user.id, id, occurredAt, `Loaded in container ${containerNumber}`);
+    }
+  }
+
+  /** Whether the shipment's price may follow its weight or volume (unknown counts as yes). */
+  private async pricedByMeasureInTx(tx: Tx, shipmentId: string): Promise<boolean> {
+    const { booking } = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      select: { booking: { select: { quotationId: true } } },
+    });
+    if (!booking.quotationId) return true;
+    const byMeasure = await tx.quotationLine.count({
+      where: { quotationId: booking.quotationId, unit: { in: ['PER_KG', 'PER_CBM'] } },
+    });
+    return byMeasure > 0;
+  }
+
   /** Moves the shipment forward (or to CLOSED) along the state machine. */
   async changeStatus(
     user: AuthUser,
@@ -1447,10 +1540,42 @@ export class ShipmentsService {
       etd?: Date | null;
       eta?: Date | null;
     },
+    /**
+     * Trial 2026-11-06: the container's master BL becomes the BL of each shipment that has none
+     * (staff may enter a house BL instead; a BL a shipment has is never replaced).
+     */
+    masterBlNumber: string | null = null,
   ): Promise<void> {
+    if (ids.length === 0) return;
+    if (masterBlNumber) {
+      await tx.shipment.updateMany({
+        where: { id: { in: [...ids] }, blNumber: null },
+        data: { blNumber: masterBlNumber },
+      });
+    }
     const data = Object.fromEntries(Object.entries(voyage).filter(([, v]) => v !== undefined));
-    if (ids.length === 0 || Object.keys(data).length === 0) return;
+    if (Object.keys(data).length === 0) return;
     await tx.shipment.updateMany({ where: { id: { in: [...ids] } }, data });
+  }
+
+  /**
+   * Trial 2026-11-06: the shipments' ETD (departed) or ETA (arrived) becomes the day it happened.
+   * The other estimate, when it no longer fits (an ETA before the departure), is cleared.
+   */
+  async setActualVoyageDateInTx(
+    tx: Tx,
+    ids: readonly string[],
+    field: 'etd' | 'eta',
+    day: Date,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const where = { id: { in: [...ids] } };
+    if (field === 'etd') {
+      await tx.shipment.updateMany({ where: { ...where, eta: { lt: day } }, data: { eta: null } });
+    } else {
+      await tx.shipment.updateMany({ where: { ...where, etd: { gt: day } }, data: { etd: null } });
+    }
+    await tx.shipment.updateMany({ where, data: { [field]: day } });
   }
 
   /** For a proof of delivery without a trip, inside its transaction: the shipment's destination. */

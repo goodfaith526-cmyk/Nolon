@@ -14,6 +14,7 @@ import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 
 /** Kilograms with up to 3 decimals, as the API takes them. */
 const WEIGHT_PATTERN = '\\d{1,9}(\\.\\d{1,3})?';
+const VOLUME_PATTERN = '\\d{1,8}(\\.\\d{1,4})?';
 
 /**
  * Plan 13 section 3: the window receives the goods. A goods receipt (GRN) into the booking's
@@ -40,6 +41,7 @@ export function WindowReceiptForm({
     const body: WindowDeskReceiptRequest = {
       packages: Number.parseInt(field(f, 'packages'), 10),
       weightKg: field(f, 'weightKg').trim() || null,
+      volumeCbm: field(f, 'volumeCbm').trim() || null,
       condition: field(f, 'condition') as GoodsCondition,
       partyName: field(f, 'partyName').trim() || null,
       partyIdType: field(f, 'partyIdType').trim() || null,
@@ -83,6 +85,10 @@ export function WindowReceiptForm({
         <label className="field">
           <span>{tw('weightKg')}</span>
           <input name="weightKg" inputMode="decimal" dir="ltr" pattern={WEIGHT_PATTERN} />
+        </label>
+        <label className="field">
+          <span>{tw('volumeCbm')}</span>
+          <input name="volumeCbm" inputMode="decimal" dir="ltr" pattern={VOLUME_PATTERN} />
         </label>
         <label className="field">
           <span>{tw('condition')}</span>

@@ -28,6 +28,7 @@ type Form = 'receipt' | 'release' | null;
 
 /** Weight inputs: what the API accepts (up to 9 integer and 3 decimal digits). */
 const WEIGHT_PATTERN = '\\d{1,9}(\\.\\d{1,3})?';
+const VOLUME_PATTERN = '\\d{1,8}(\\.\\d{1,4})?';
 
 /** datetime-local value (local time, no zone) to an ISO timestamp with offset. */
 function toIso(local: string): string | undefined {
@@ -177,6 +178,7 @@ export function ShipmentWarehouse({
       storageLocationId: field(f, 'storageLocationId') || null,
       packages: Number.parseInt(field(f, 'packages'), 10),
       weightKg: field(f, 'weightKg').trim() || null,
+      volumeCbm: field(f, 'volumeCbm').trim() || null,
       condition: field(f, 'condition') as GoodsCondition,
       partyName: field(f, 'partyName').trim() || null,
       partyIdType: field(f, 'partyIdType').trim() || null,
@@ -374,6 +376,10 @@ export function ShipmentWarehouse({
               <label className="field">
                 <span>{t('weightKg')}</span>
                 <input name="weightKg" inputMode="decimal" dir="ltr" pattern={WEIGHT_PATTERN} />
+              </label>
+              <label className="field">
+                <span>{t('volumeCbm')}</span>
+                <input name="volumeCbm" inputMode="decimal" dir="ltr" pattern={VOLUME_PATTERN} />
               </label>
               <label className="field">
                 <span>{t('condition')}</span>
