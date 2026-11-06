@@ -99,6 +99,83 @@ export function WindowReceiptPrint({
 }
 
 /**
+ * Plan 13-5 (owner, 2026-11-06): the waybill the window hands the customer for the parcel, as
+ * soon as it is received, read from the window desk: the shipment's number (the waybill's), the
+ * sender and receiver, the route, what was received and the cargo lines. No prices.
+ */
+export function WindowWaybillPrint({ bookingId }: { bookingId: string }) {
+  const tp = useTranslations('Print');
+  const tw = useTranslations('Warehouse');
+  const td = useTranslations('WindowDesk');
+  const locale = useLocale();
+  const master = useMasterData();
+  const locationName = useLocationName(master);
+  const dateTime = useDateTime();
+  const { record: r, notice } = useRecord<WindowDeskBookingDto>(
+    `/window-desk/bookings/${bookingId}`,
+  );
+  if (!r) return <PrintPending notice={notice} />;
+  const first = r.receipts[0];
+  if (!first) return <PrintPending notice={{ ok: false, text: tp('notFound') }} />;
+  const windowName = locale === 'ar' ? r.window.name.ar : r.window.name.en;
+  const weights = r.receipts.flatMap((m) => (m.weightKg ? [Number(m.weightKg)] : []));
+  return (
+    <>
+      <PageStyle />
+      <PrintToolbar back="/window-desk" ready={master !== null} />
+      <DocumentSheet
+        title={tp('waybillTitle')}
+        number={r.shipmentNumber}
+        date={dateTime(first.occurredAt)}
+        branchId={r.branchId}
+      >
+        <DocSection title={tp('shipmentDetails')}>
+          <DocFields
+            fields={[
+              [tp('bookingNumber'), <span dir="ltr">{r.bookingNumber}</span>],
+              [td('sender'), r.sender.name],
+              [tp('phone'), r.sender.phone && <span dir="ltr">{r.sender.phone}</span>],
+              [td('receiver'), r.receiver?.name],
+              [tp('phone'), r.receiver?.phone && <span dir="ltr">{r.receiver.phone}</span>],
+              [
+                tp('route'),
+                tp('routeNames', {
+                  from: locationName(r.originLocationId),
+                  to: locationName(r.destinationLocationId),
+                }),
+              ],
+            ]}
+          />
+        </DocSection>
+        <DocSection title={tw('receiptTitle')}>
+          <DocFields
+            fields={[
+              [td('window'), `${r.window.code} · ${windowName}`],
+              [td('outlet'), r.window.outletName],
+              [
+                tw('packages'),
+                <span dir="ltr">{r.receipts.reduce((sum, m) => sum + m.packages, 0)}</span>,
+              ],
+              [
+                tw('weightKg'),
+                weights.length > 0 && (
+                  <span dir="ltr">{weights.reduce((sum, w) => sum + w, 0)}</span>
+                ),
+              ],
+            ]}
+          />
+        </DocSection>
+        <DocSection title={tp('shipmentCargo')}>
+          <ItemsTable items={r.items} />
+        </DocSection>
+        <p className="muted">{tp('waybillNote')}</p>
+        <SignatureBoxes labels={[tp('signDeliveredBy'), tp('signWarehouseKeeper')]} />
+      </DocumentSheet>
+    </>
+  );
+}
+
+/**
  * Plan 13 section 4: printout 11, the receipt voucher, of a payment taken at a window, read from
  * the window desk (the outlet cannot open the receipt): the amount, the invoices it paid, and the
  * window's and the outlet's names. The window hands it to the customer.

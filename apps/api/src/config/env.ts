@@ -175,6 +175,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 13-5: the request read gives its proven owner links to the waybill (once the goods are
+   * received) and to each receipt, and GET /cs/documents/:token renders them. Off (default): no
+   * links and every download 404, until the bot sends them (consumer first).
+   */
+  CS_DOCUMENTS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Owner, 2026-11-05: POST /cs/quotations saves the prices the bot gave its customer as a SENT
    * quotation (source BOT_QUOTE) in Quotations. Off (default): 503 QUOTE_SAVE_UNAVAILABLE, nothing
    * is saved, until the bot calls it (consumer first).

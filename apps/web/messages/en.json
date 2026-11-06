@@ -2187,7 +2187,10 @@
     "labelsNext": "Next labels, from package {from}",
     "hiddenEntry": "Accounting entry",
     "kind_ADVANCE_APPLICATION": "Advance applied",
-    "kind_ADVANCE_APPLICATION_REVERSAL": "Advance application reversed"
+    "kind_ADVANCE_APPLICATION_REVERSAL": "Advance application reversed",
+    "waybillTitle": "Waybill",
+    "waybillNote": "The waybill number is the shipment number. This waybill proves the packages above were received for shipping; it carries no prices.",
+    "phone": "Phone"
   },
   "CreditNotes": {
     "title": "Credit notes",
@@ -3523,6 +3526,7 @@
     "collectReference": "Reference (optional)",
     "collectSubmit": "Record the payment",
     "paymentLine": "Receipt {number}: {amount} {currency}",
-    "printReceipt": "Print receipt"
+    "printReceipt": "Print receipt",
+    "printWaybill": "Print waybill"
   }
 }

@@ -19,7 +19,7 @@ const ASSETS = join(import.meta.dirname, '..', '..', 'assets', 'statement');
 let cached: { fonts: string; logo: Record<StatementLang, string> } | null = null;
 
 /** The font (IBM Plex Sans Arabic, OFL, as the web app) and NOLON's logo, as data URIs. */
-function assets(): { fonts: string; logo: Record<StatementLang, string> } {
+export function assets(): { fonts: string; logo: Record<StatementLang, string> } {
   if (cached) return cached;
   const data = (file: string, type: string) =>
     `data:${type};base64,${readFileSync(join(ASSETS, file)).toString('base64')}`;

@@ -13,6 +13,7 @@ import { CurrenciesModule } from '../currencies/currencies.module.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { RatesModule } from '../rates/rates.module.js';
 import { ShipmentsModule } from '../shipments/shipments.module.js';
+import { CsDocumentsService } from './cs-documents.service.js';
 import { CsEventsService } from './cs-events.service.js';
 import { CS_NOTICE_TRANSPORT, CsOutboxWorker } from './cs-outbox.worker.js';
 import { CsWebhooksService } from './cs-webhooks.service.js';
@@ -33,6 +34,7 @@ import { PdfModule } from '../pdf/pdf.module.js';
 import {
   ApiClientsController,
   BookingRequestsController,
+  CsDocumentsController,
   CatalogController,
   CustomerMeController,
   CustomerServiceController,
@@ -77,6 +79,7 @@ import { QuoteService } from './quote.service.js';
     RejectReasonsController,
     PaymentInstructionsController,
     CustomerStagesController,
+    CsDocumentsController,
   ],
   providers: [
     CustomerProfileReviewService,
@@ -98,6 +101,7 @@ import { QuoteService } from './quote.service.js';
     PaymentInstructionsService,
     CustomerStagesService,
     CsEventsService,
+    CsDocumentsService,
     CsWebhooksService,
     CsOutboxWorker,
     { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },

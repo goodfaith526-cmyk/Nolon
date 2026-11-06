@@ -634,6 +634,31 @@ export interface CsBookingRequestDto {
    * answers "did I pay?" from NOLON. Null until the request is approved and its shipment exists.
    */
   payment: CsRequestPaymentDto | null;
+  /**
+   * Plan 13-5 (owner 2026-11-06): one document for each thing the customer handed over: the
+   * waybill for the parcel, once it is received, and a receipt for each payment. Short-lived
+   * download links (`GET /cs/documents/:token`, 10 minutes, the same key and owner proof), to a
+   * proven owner of an approved request only; null otherwise or while the switch is off.
+   */
+  documents: CsRequestDocumentsDto | null;
+}
+
+/** A short-lived link to a PDF NOLON renders at download (never stored). */
+export interface CsDocumentLinkDto {
+  url: string;
+  expiresAt: string;
+}
+
+export interface CsRequestDocumentsDto {
+  /** The shipment's waybill, once its goods are received; null before. */
+  waybill: CsDocumentLinkDto | null;
+  /** A receipt for each posted payment towards the shipment's invoices, oldest first. */
+  receipts: (CsDocumentLinkDto & {
+    number: string;
+    receiptDate: string;
+    amount: DecimalString;
+    currency: string;
+  })[];
 }
 
 /**
