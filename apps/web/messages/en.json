@@ -84,7 +84,7 @@
     "branchPermissions": "Branch permissions",
     "paymentInstructions": "Payment instructions",
     "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
-    "agentAdmin": "Bookings agent admin"
+    "agentAdmin": "AI Agents Management"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",

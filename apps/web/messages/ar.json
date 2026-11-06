@@ -84,7 +84,7 @@
     "branchPermissions": "صلاحيات الفرع",
     "paymentInstructions": "تعليمات الدفع",
     "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة.",
-    "agentAdmin": "إدارة وكيل الحجوزات"
+    "agentAdmin": "إدارة الوكلاء الذكيين"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
