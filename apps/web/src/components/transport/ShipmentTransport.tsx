@@ -193,7 +193,7 @@ export function ShipmentPods({
       <div className="panel-head">
         <h2>{t('podSection')}</h2>
         {data?.actions.canRecord && !open && (
-          <button type="button" className="primary" onClick={() => setOpen(true)}>
+          <button type="button" onClick={() => setOpen(true)}>
             {t('recordPod')}
           </button>
         )}

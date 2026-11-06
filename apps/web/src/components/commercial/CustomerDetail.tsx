@@ -2,6 +2,7 @@
 
 import type { CustomerDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
+import { MoreMenu } from '../MoreMenu';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { field } from '@/lib/form';
@@ -120,18 +121,21 @@ export function CustomerDetail({ id }: { id: string }) {
                 <button type="button" onClick={() => setMode('edit')}>
                   {tc('edit')}
                 </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void post(
-                      `/customers/${customer.id}/${customer.isActive ? 'deactivate' : 'activate'}`,
-                      undefined,
-                      tc('saved'),
-                    )
-                  }
-                >
-                  {customer.isActive ? tc('deactivate') : tc('activate')}
-                </button>
+                <MoreMenu>
+                  <button
+                    type="button"
+                    className={customer.isActive ? 'danger' : undefined}
+                    onClick={() =>
+                      void post(
+                        `/customers/${customer.id}/${customer.isActive ? 'deactivate' : 'activate'}`,
+                        undefined,
+                        tc('saved'),
+                      )
+                    }
+                  >
+                    {customer.isActive ? tc('deactivate') : tc('activate')}
+                  </button>
+                </MoreMenu>
               </>
             )}
           </div>
@@ -154,8 +158,8 @@ export function CustomerDetail({ id }: { id: string }) {
           <dt>{t('kind')}</dt>
           <dd>{t(`kind_${customer.kind}`)}</dd>
           <dt>{t('companyName')}</dt>
-          <dd>{customer.companyName ?? '—'}</dd>
-          <dt>{t('phone')}</dt>
+          <dd>{customer.companyName ? <bdi>{customer.companyName}</bdi> : '—'}</dd>
+          <dt>{t('phoneShort')}</dt>
           <dd>
             <bdi dir="ltr">{customer.phone}</bdi>
             {customer.phoneUnverified ? (
@@ -283,7 +287,7 @@ export function CustomerDetail({ id }: { id: string }) {
             <thead>
               <tr>
                 <th>{t('name')}</th>
-                <th>{t('phone')}</th>
+                <th>{t('phoneShort')}</th>
                 <th>{t('canInquire')}</th>
                 <th>{t('canReceiveCargo')}</th>
                 <th>{t('canReceiveDocuments')}</th>
