@@ -163,15 +163,15 @@ const envSchema = z.object({
    * (shipment and invoice made then), when the person may confirm bookings in that branch. Off:
    * approval leaves the booking a draft, and the BOOKING_DRAFT_FROM_REQUEST alert lists it.
    */
+  CS_APPROVE_CONFIRMS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /**
    * Plan 13 section 2: the window desk (a partner outlet's list of the bookings to be handed over
    * at its windows). Off: its routes are 404 and the menu item is hidden.
    */
   WINDOW_DESK_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
-  CS_APPROVE_CONFIRMS_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),

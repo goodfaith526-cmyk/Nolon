@@ -150,6 +150,7 @@ describe('Window desk (plan 13 section 2)', () => {
     const atB = await booking(ids.windowB!, true);
     const draft = await booking(ids.windowA!, false);
     ids.mine = mine.id;
+    ids.soldByB = soldByB.id;
     ids.atB = atB.id;
     ids.draft = draft.id;
     const list = (await as(on, cookies.staffA!).get('/window-desk/expected').expect(200))
@@ -188,8 +189,112 @@ describe('Window desk (plan 13 section 2)', () => {
     await as(on, cookies.staffA!).get(`/window-desk/bookings/${ids.atB}`).expect(404);
     await as(on, cookies.staffA!).get(`/window-desk/bookings/${ids.draft}`).expect(404);
     await as(on, cookies.staffA!).get(`/window-desk/bookings/${randomUUID()}`).expect(404);
-    // The window's ordinary routes are not widened: a booking another outlet sold stays hidden.
-    await as(on, cookies.staffA!).get(`/bookings/${ids.atB}`).expect(404);
+    // Section 2a: the booking another outlet sold opens on the desk, and nowhere else.
+    await as(on, cookies.staffA!).get(`/window-desk/bookings/${ids.soldByB}`).expect(200);
+    await as(on, cookies.staffA!).get(`/bookings/${ids.soldByB}`).expect(404);
+    await as(on, cookies.staffA!).get(`/customers/${ids.customer}`).expect(404);
+  });
+
+  it('reads what the customer owes: total less paid less credited; no cancelled invoice', async () => {
+    const shipment = await on.prisma.shipment.findUniqueOrThrow({
+      where: { bookingId: ids.mine },
+      select: { id: true },
+    });
+    // Any invoice confirmation made is set aside, so the one written here is the MAIN one.
+    await on.prisma.customerInvoice.updateMany({
+      where: { shipmentId: shipment.id, status: 'DRAFT' },
+      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: 'test' },
+    });
+    const day = new Date('2026-11-05');
+    const invoice = await on.prisma.customerInvoice.create({
+      data: {
+        branchId: jed,
+        customerId: ids.customer!,
+        shipmentId: shipment.id,
+        kind: 'MAIN',
+        currency: 'SAR',
+        fxRate: '3.75',
+        invoiceDate: day,
+        dueDate: day,
+        total: '100',
+        totalUsd: '26.6667',
+        paidAmount: '20',
+        paidUsd: '5.3333',
+        creditedAmount: '30',
+        creditedUsd: '8',
+        createdById: ids.creator!,
+      },
+    });
+    const read = async () =>
+      (await as(on, cookies.staffA!).get(`/window-desk/bookings/${ids.mine}`).expect(200))
+        .body as WindowDeskBookingDto;
+    expect((await read()).invoice).toMatchObject({ total: '100', balance: '50', currency: 'SAR' });
+    expect((await read()).todo).toContain('collect');
+    await on.prisma.customerInvoice.update({
+      where: { id: invoice.id },
+      data: { paidAmount: '70', paidUsd: '18.6667' },
+    });
+    expect((await read()).invoice?.balance).toBe('0');
+    expect((await read()).todo).not.toContain('collect');
+    await on.prisma.customerInvoice.update({
+      where: { id: invoice.id },
+      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: 'test' },
+    });
+    expect((await read()).invoice).toBeNull();
+  });
+
+  it("hides a booking whose window is not the outlet's usable window of the booking's branch", async () => {
+    const pts = await branchId(on.prisma, 'PTS');
+    const make = async (data: object) =>
+      (
+        await on.prisma.warehouse.create({
+          data: {
+            branchId: jed,
+            code: `${tag}-${randomUUID().slice(0, 4).toUpperCase()}`,
+            nameAr: 'نافذة',
+            nameEn: 'Window',
+            acceptsDropOff: true,
+            partnerId: ids.outletA,
+            ...data,
+          },
+        })
+      ).id;
+    const outletC = await outlet('C');
+    await on.prisma.userPartner.create({ data: { userId: ids.staffA!, partnerId: outletC } });
+    const cases = {
+      otherBranchWindow: await make({ branchId: pts }),
+      inactive: await make({}),
+      closed: await make({}),
+      inactivePartner: await make({ partnerId: outletC }),
+    };
+    const moved: Record<string, string> = {};
+    for (const [name, window] of Object.entries(cases)) {
+      const b = await booking(ids.windowA!, true);
+      await on.prisma.booking.update({ where: { id: b.id }, data: { dropOffWarehouseId: window } });
+      moved[name] = b.id;
+    }
+    // A booking of a branch the user does not hold, at a window of that branch run by the outlet.
+    const outside = await booking(ids.windowA!, true);
+    await on.prisma.booking.update({
+      where: { id: outside.id },
+      data: { branchId: pts, dropOffWarehouseId: cases.otherBranchWindow },
+    });
+    moved.outsideBranch = outside.id;
+    await on.prisma.warehouse.update({ where: { id: cases.inactive }, data: { isActive: false } });
+    await on.prisma.warehouse.update({
+      where: { id: cases.closed },
+      data: { acceptsDropOff: false },
+    });
+    await on.prisma.partner.update({ where: { id: outletC }, data: { isActive: false } });
+    const listed = (
+      (await as(on, cookies.staffA!).get('/window-desk/expected', { status: 'all' }).expect(200))
+        .body as WindowDeskBookingDto[]
+    ).map((r) => r.bookingId);
+    expect(listed).toContain(ids.mine);
+    for (const [name, id] of Object.entries(moved)) {
+      expect(listed, name).not.toContain(id);
+      await as(on, cookies.staffA!).get(`/window-desk/bookings/${id}`).expect(404);
+    }
   });
 
   it('is closed to everyone else, and while the switch is off', async () => {

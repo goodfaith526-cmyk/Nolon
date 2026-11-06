@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 
 type Tx = Prisma.TransactionClient;
 
-/** The most bookings the desk lists at once (newest confirmed first among them). */
+/** The most bookings the desk lists at once (the oldest confirmed). */
 const LIST_LIMIT = 200;
 
 const deskSelect = {
@@ -34,7 +34,14 @@ const deskSelect = {
         where: { kind: 'MAIN', status: { not: 'CANCELLED' } },
         orderBy: { createdAt: 'asc' },
         take: 1,
-        select: { number: true, status: true, currency: true, total: true, paidAmount: true },
+        select: {
+          number: true,
+          status: true,
+          currency: true,
+          total: true,
+          paidAmount: true,
+          creditedAmount: true,
+        },
       },
       movements: {
         where: { kind: 'RECEIPT', cancellation: null },
@@ -100,7 +107,8 @@ export class WindowDeskService {
             : {},
         ],
       },
-      orderBy: [{ confirmedAt: 'desc' }, { number: 'desc' }],
+      // Oldest first (plan 13 section 2): past the cap, the newest are the ones left out.
+      orderBy: [{ confirmedAt: 'asc' }, { number: 'asc' }],
       take: LIST_LIMIT,
       select: deskSelect,
     });
@@ -190,7 +198,10 @@ function toDeskDto(r: DeskRow): WindowDeskBookingDto {
   if (!r.dropOff || !point) throw new NotFoundException('Booking not found');
   const invoice = r.shipment?.invoices[0] ?? null;
   const received = (r.shipment?.movements.length ?? 0) > 0;
-  const balance = invoice ? invoice.total.minus(invoice.paidAmount) : null;
+  // What is still owed, as every other balance reads it: total less paid less credited.
+  const balance = invoice
+    ? invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount)
+    : null;
   const todo: WindowDeskTodo[] = [];
   if (!received) todo.push('receive');
   if (invoice === null || balance!.gt(0)) todo.push('collect');
