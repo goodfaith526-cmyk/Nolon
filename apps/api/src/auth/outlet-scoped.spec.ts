@@ -59,6 +59,8 @@ const OPEN = [
   'rates/rates.controller.ts GET :id',
   'shipments/shipments.controller.ts GET ',
   'shipments/shipments.controller.ts GET :id',
+  'window-desk/window-desk.controller.ts GET bookings/:id',
+  'window-desk/window-desk.controller.ts GET expected',
 ];
 
 /** `file METHOD path` of every handler carrying @OutletScoped(). */

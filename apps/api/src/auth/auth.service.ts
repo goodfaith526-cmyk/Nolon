@@ -317,6 +317,7 @@ export class AuthService {
           ? this.env.AGENT_ADMIN_URL
           : null,
       outletStaffAssignable: this.env.OUTLET_STAFF_ASSIGNABLE,
+      windowDeskEnabled: this.env.WINDOW_DESK_ENABLED,
     };
   }
 

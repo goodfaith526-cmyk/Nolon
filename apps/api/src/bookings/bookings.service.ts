@@ -964,6 +964,23 @@ async function casStatus(
   if (count === 0) throw new ConflictException('Booking changed meanwhile; reload and retry');
 }
 
+/** A booking's cargo line as the API returns it. */
+export function bookingItemDto(i: BookingItem): BookingDto['items'][number] {
+  return {
+    lineNo: i.lineNo,
+    cargoType: i.cargoType,
+    containerTypeCode: i.containerTypeCode,
+    description: i.description,
+    quantity: i.quantity,
+    lengthCm: toDecimalStringOrNull(i.lengthCm),
+    widthCm: toDecimalStringOrNull(i.widthCm),
+    heightCm: toDecimalStringOrNull(i.heightCm),
+    weightKg: toDecimalStringOrNull(i.weightKg),
+    volumeCbm: toDecimalStringOrNull(i.volumeCbm),
+    priceCategoryCode: i.priceCategoryCode,
+  };
+}
+
 /** Plan 13 section 1: the booking's window as it is now; none once it stops taking shipments. */
 function bookingDropOff(w: BookingWithDetails['dropOff']): BookingDto['dropOff'] {
   const point = w && dropOffDto(w);
@@ -1005,19 +1022,7 @@ function toDto(b: BookingWithDetails): BookingDto {
     salesOutlet: toPartnerRef(b.salesOutlet),
     dropOffWarehouseId: b.dropOffWarehouseId,
     dropOff: bookingDropOff(b.dropOff),
-    items: b.items.map((i) => ({
-      lineNo: i.lineNo,
-      cargoType: i.cargoType,
-      containerTypeCode: i.containerTypeCode,
-      description: i.description,
-      quantity: i.quantity,
-      lengthCm: toDecimalStringOrNull(i.lengthCm),
-      widthCm: toDecimalStringOrNull(i.widthCm),
-      heightCm: toDecimalStringOrNull(i.heightCm),
-      weightKg: toDecimalStringOrNull(i.weightKg),
-      volumeCbm: toDecimalStringOrNull(i.volumeCbm),
-      priceCategoryCode: i.priceCategoryCode,
-    })),
+    items: b.items.map(bookingItemDto),
   };
 }
 

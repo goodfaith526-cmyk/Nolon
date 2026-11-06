@@ -177,6 +177,14 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 13 section 2: the window desk (a partner outlet's list of the bookings to be handed over
+   * at its windows). Off: its routes are 404 and the menu item is hidden.
+   */
+  WINDOW_DESK_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Plan 09e section 3 (owner, 2026-11-04): when staff approve a bot request, the receiver gets a
    * customer of their own (made or linked by international phone, marked unverified). Off: none.
    */

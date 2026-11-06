@@ -39,3 +39,4 @@ export * from './access-control.js';
 export * from './partner-contracts.js';
 export * from './partner-commissions.js';
 export * from './rate-costs.js';
+export * from './window-desk.js';

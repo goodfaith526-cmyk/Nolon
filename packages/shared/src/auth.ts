@@ -88,6 +88,9 @@ export const PERMISSION_MODULES = [
   // item that opens it. The panel itself decides who enters (its own list of admins).
   'agent_admin',
   'handover_payment',
+  // Plan 13 section 2: a partner outlet's window desk (Outlet Staff of the outlet that runs the
+  // window). view: the bookings to be handed over at its windows.
+  'window_desk',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -186,6 +189,8 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Plan 12 section 3: handover_payment:approve hands goods over without the invoice or payment
   // the handover gate asks for, with a reason. No role holds it; the Administrator grants it.
   handover_payment: 'NNNNNNNNNNN',
+  // Plan 13 section 2: Outlet Staff only (the outlet that runs the window).
+  window_desk: 'NNNNNNNNNNV',
 };
 
 /**
@@ -200,6 +205,7 @@ export const OUTLET_SCOPED: readonly PermissionModule[] = [
   'shipments',
   'documents',
   'partners',
+  'window_desk',
 ];
 
 /** Every permission, in module order. */
@@ -287,6 +293,7 @@ export const OUTLET_READY_PERMISSIONS: readonly Permission[] = [
   'quotations:view',
   'rates:view',
   'shipments:view',
+  'window_desk:view',
 ];
 
 /** Modules where the Driver sees and edits only the trips assigned to them. */
@@ -394,4 +401,6 @@ export interface AuthMeResponse {
   agentAdminUrl: string | null;
   /** Whether the users screen offers the Outlet Staff role (OUTLET_STAFF_ASSIGNABLE). */
   outletStaffAssignable: boolean;
+  /** Plan 13 section 2: whether the window desk is on (WINDOW_DESK_ENABLED). */
+  windowDeskEnabled: boolean;
 }

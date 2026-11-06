@@ -32,6 +32,23 @@ export function salesOutletScope(user: AuthUser): { salesOutletId?: { in: string
 }
 
 /**
+ * Plan 13 section 2: Prisma `where` fragment for bookings handed over at the user's windows (drop-off
+ * points their outlets run, active and taking shipments, of the user's branches). Outlet Staff
+ * only: for any other user it matches nothing, since nobody else has a window desk.
+ */
+export function windowScope(user: AuthUser): Prisma.BookingWhereInput {
+  return {
+    dropOff: {
+      partnerId: { in: outletLimited(user) ? outletIds(user) : [] },
+      branchId: { in: [...user.allowedBranchIds] },
+      isActive: true,
+      acceptsDropOff: true,
+      partner: { isActive: true },
+    },
+  };
+}
+
+/**
  * Prisma `where` fragment for partners: Outlet Staff see only their own outlets. Under `AND`, so
  * it never replaces the caller's own `id` condition when spread next to it.
  */
