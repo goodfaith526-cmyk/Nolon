@@ -226,7 +226,7 @@
     "chooseFile": "اختر ملفاً",
     "chooseFiles": "اختر ملفات",
     "noFileChosen": "لم يُختر ملف",
-    "filesChosen": "{count} ملفات مختارة"
+    "filesChosen": "{count, plural, two {ملفان مختاران} few {# ملفات مختارة} other {# ملفاً مختاراً}}"
   },
   "Customers": {
     "title": "العملاء",

@@ -226,7 +226,7 @@
     "chooseFile": "Choose file",
     "chooseFiles": "Choose files",
     "noFileChosen": "No file chosen",
-    "filesChosen": "{count} files chosen"
+    "filesChosen": "{count, plural, one {# file chosen} other {# files chosen}}"
   },
   "Customers": {
     "title": "Customers",
