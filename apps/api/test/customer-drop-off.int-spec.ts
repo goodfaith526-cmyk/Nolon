@@ -428,12 +428,23 @@ describe('Customer Service drop-off points (plan 09 section 11)', () => {
           .set('Authorization', `Bearer ${bot.key}`)
           .expect(200)
       ).body as CsCatalogDto;
-    // The key's branch only.
-    expect((await catalog()).support).toEqual([
+    const krtOf = async () => (await catalog()).support.filter((p) => p.branchId === krt);
+    expect(await krtOf()).toEqual([
       expect.objectContaining({ branchId: krt, code: 'KRT', phone: '+249900000099' }),
     ]);
+    // Trial 2026-11-06: a branch the key does not serve is listed too (the destination answers).
+    const dxb = (await t.prisma.branch.findUniqueOrThrow({ where: { code: 'DXB' } })).id;
+    await staff(cookies.admin)
+      .put(`/master-data/branches/${dxb}/support-phone`, { phone: '+971500000099' })
+      .expect(200);
+    expect((await catalog()).support).toContainEqual(
+      expect.objectContaining({ branchId: dxb, code: 'DXB', phone: '+971500000099' }),
+    );
+    await staff(cookies.admin)
+      .put(`/master-data/branches/${dxb}/support-phone`, { phone: null })
+      .expect(200);
     await set(null).expect(200);
-    expect((await catalog()).support).toEqual([]);
+    expect(await krtOf()).toEqual([]);
   });
 
   it("lists its branches' open drop-off points in the catalog, and no other", async () => {

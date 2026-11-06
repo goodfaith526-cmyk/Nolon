@@ -281,8 +281,8 @@ export interface CsCatalogDto {
   categories: CsCatalogCategoryDto[];
   services: { code: BookingService; nameAr: string; nameEn: string }[];
   /**
-   * Plan 09 amendment 4: the customer service numbers of the key's branches that have one, for the
-   * bot to show (a footer, a hand-over to staff).
+   * Plan 09 amendment 4: the customer service numbers of the branches that have one (every branch,
+   * trial 2026-11-06: after departure the destination branch answers), for the bot to show.
    */
   support: { branchId: string; code: string; nameAr: string; nameEn: string; phone: string }[];
   /**

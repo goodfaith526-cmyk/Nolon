@@ -86,9 +86,11 @@ export class CatalogService {
           pricingMode: pricingModeOf(c.defaultUnit),
         })),
       services: CS_CATALOG_SERVICES.filter((s) => offered.includes(s.code)).map((s) => ({ ...s })),
-      // Plan 09 amendment 4: the key's branches' customer service numbers.
+      // Plan 09 amendment 4: the branches' customer service numbers. Trial 2026-11-06: every
+      // branch that has one, not only the key's: after departure the customer calls the
+      // destination branch (a public number, no branch data).
       support: phones.flatMap((p) =>
-        p.phone !== null && branchIds.includes(p.branchId)
+        p.phone !== null
           ? [
               {
                 branchId: p.branchId,
