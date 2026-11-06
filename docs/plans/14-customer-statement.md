@@ -93,17 +93,21 @@ TELEGRAM_TOKENS_UNAVAILABLE` and nothing is issued; WhatsApp is unaffected.
   - `bookings`: the bookings whose **customer** is the token's customer, in the range, of every status (a bot approval's `DRAFT` booking included):
     `number`, `createdAt`, origin and destination, `cargoDescription`, `status`, and its `shipment` (`number`, the
     customer stage of plan 09-2, `deliveredAt` or null). No costs, no prices.
-  - `invoices`: the customer's invoices in the range as `/cs/me/invoices` shows them (approved, from `cs_invoices`):
-    `number`, `shipmentNumber`, `invoiceDate`, `dueDate`, `currency`, `total`, `paid`, `credited`, `balance` (decimal
+  - `invoices`: one object `{ rows, count, truncated, totals }`. `rows`: the customer's invoices in the range as
+    `/cs/me/invoices` shows them (approved, from `cs_invoices`): `number`, `shipmentNumber`, `invoiceDate`, `dueDate`, `currency`, `total`, `paid`, `credited`, `balance` (decimal
     strings). Draft (proforma) invoices are not in it.
-  - `totals` per currency (F206-2): `count`, `total`, `paid`, `credited`, `balance` over **every** invoice of the
+  - `invoices.totals` per currency (F206-2), **inside** the invoices object so one mask covers it (F206-3): `count`, `total`, `paid`, `credited`, `balance` over **every** invoice of the
     filtered period, computed in SQL **before** the row cap, in the same read-only `REPEATABLE READ` transaction as the
     rows, so totals and rows are one snapshot. Each section also carries `count` (all matching rows) next to
     `truncated`.
   - `customer`: `number` and `label` only; `period`: `{ from, to }`; `generatedAt`.
 - **Invoices and the grant (⭐ owner request 2026-11-05):** the `invoices` section is filled for a token on the
   customer's **own** number (`CUSTOMER_PHONE`, `CUSTOMER_WHATSAPP`). For an authorized person (`CONTACT_PHONE`) it is
-  `null` with `invoicesHidden: 'CONTACT'`: they may ask about shipments, not money. `/cs/me/invoices` is unchanged (it
+  `null` with `invoicesHidden: 'CONTACT'`: they may ask about shipments, not money. `null` hides **everything**
+  invoice-derived: rows, `count`, `truncated` and every per-currency total; the invoice queries are not even run for
+  that grant, and the PDF has no invoices section, totals or count (F206-3). Regression: a contact's token, JSON and
+  PDF (renderer faked, HTML inspected), on a customer with unpaid invoices, returns no invoice number, amount,
+  currency total or invoice count. `/cs/me/invoices` is unchanged (it
   still needs L2).
 - **Access log:** one `cs_access_events` row per read, route `GET /cs/me/statement`, outcome `OK`, `INVALID_RANGE` or
   `UNAVAILABLE`; channel = the token's channel. Never the dates or any value.
