@@ -140,7 +140,7 @@ This changes who holds NOLON's cash, so it is an accounting change.
   - **Locks (existing order):** the booking row `FOR SHARE`, then the window's `window_cash_accounts` row and its account
     `FOR SHARE` (active, `is_cash`, currency = `currency`, branch = the window's branch or null), then the invoices as
     `ReceiptsService.createInTx` locks them today; the allocation is computed after those locks, from the balances read
-    under them. Two collections racing over the same balance: one 201, the other `409 WINDOW_OVER_BALANCE`.
+    under them. Two collections racing over the same balance: one 201, the other 409: `WINDOW_NOTHING_TO_COLLECT` once nothing is owed, `WINDOW_OVER_BALANCE` while less is owed than it asks.
 - The window cannot cancel or apply a receipt; NOLON's finance can, as today.
 - The receipt voucher print (existing) is what the window gives the customer, with the window's name on it.
 - **Settlement** of the window's cash to NOLON is the existing cash transfer or journal by the accountant; a dedicated

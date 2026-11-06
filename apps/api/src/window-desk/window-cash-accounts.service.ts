@@ -130,7 +130,7 @@ export class WindowCashAccountsService {
     user: AuthUser,
     warehouseId: string,
   ): Promise<{ branchId: string; code: string }> {
-    await tx.$queryRaw`SELECT 1 FROM "warehouses" WHERE "id" = ${warehouseId}::uuid FOR UPDATE`;
+    // Scope and right first, so a refused user takes no lock; the lock then holds the branch read.
     const window = await tx.warehouse.findFirst({
       where: { id: warehouseId, ...branchScope(user) },
       select: { branchId: true, code: true },
@@ -138,6 +138,10 @@ export class WindowCashAccountsService {
     if (!window) throw new NotFoundException('Warehouse not found');
     if (!user.access.has('chart_of_accounts:update', window.branchId))
       throw new ForbiddenException('Missing permission');
+    const locked = await tx.$queryRaw<unknown[]>`
+      SELECT 1 FROM "warehouses"
+      WHERE "id" = ${warehouseId}::uuid AND "branch_id" = ${window.branchId}::uuid FOR UPDATE`;
+    if (locked.length === 0) throw new NotFoundException('Warehouse not found');
     return window;
   }
 }

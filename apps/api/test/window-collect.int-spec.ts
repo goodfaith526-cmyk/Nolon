@@ -161,6 +161,9 @@ describe('Window collects the money (plan 13 section 4)', () => {
     ids.staff = staff.id;
     cookies.staff = await signIn(on, staff.email);
     cookies.staffOff = await signIn(off, staff.email);
+    const other = await createUser(on.prisma, ['OUTLET_STAFF'], ['PTS'], LEDGER_PREFIX);
+    await on.prisma.userPartner.create({ data: { userId: other.id, partnerId: a.partner } });
+    cookies.otherStaff = await signIn(on, other.email);
     const account = (code: string, currency: string) =>
       as(on, cookies.admin!)
         .post('/accounting/accounts', {
@@ -280,10 +283,79 @@ describe('Window collects the money (plan 13 section 4)', () => {
     expect(still.status).toBe('DRAFT');
   });
 
+  it('pays MAIN first, then additional invoices by date and number, in the currency only', async () => {
+    const { booking } = await proForma(ids.windowA!, '100');
+    const shipment = await on.prisma.shipment.findUniqueOrThrow({ where: { bookingId: booking } });
+    const finance = as(on, cookies.finance!);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    // A rate for the SAR invoice's approval; one the run may already have is kept.
+    await on.prisma.fxRate.upsert({
+      where: { currency_rateDate: { currency: 'SAR', rateDate: new Date(today) } },
+      create: { currency: 'SAR', rateDate: new Date(today), rate: '3.75', createdById: ids.admin! },
+      update: {},
+    });
+    async function additional(currency: string, date: string, amount: string): Promise<string> {
+      const draft = (
+        await finance
+          .post('/customer-invoices', { shipmentId: shipment.id, kind: 'ADDITIONAL' })
+          .expect(201)
+      ).body as CustomerInvoiceDto;
+      await finance
+        .patch(`/customer-invoices/${draft.id}`, {
+          currency,
+          invoiceDate: date,
+          dueDate: today,
+          repriced: true,
+          lines: [{ chargeTypeCode: 'DOCS', quantity: '1', unitPrice: amount }],
+        })
+        .expect(200);
+      await finance.post(`/customer-invoices/${draft.id}/approve`).expect(200);
+      return draft.id;
+    }
+    // Made in another order than they are paid: the later one first.
+    const later = await additional('USD', today, '20');
+    const earlier = await additional('USD', yesterday, '30');
+    const sar = await additional('SAR', today, '50');
+    const requestId = randomUUID();
+    await pay(booking, '140', { requestId }).expect(201);
+    const main = await on.prisma.customerInvoice.findFirstOrThrow({
+      where: { shipmentId: shipment.id, kind: 'MAIN' },
+    });
+    const allocations = await on.prisma.receiptAllocation.findMany({
+      where: { receiptId: requestId },
+    });
+    expect(Object.fromEntries(allocations.map((a) => [a.invoiceId, a.amount.toFixed()]))).toEqual({
+      [main.id]: '100',
+      [earlier]: '30',
+      [later]: '10',
+    });
+    const untouched = await on.prisma.customerInvoice.findUniqueOrThrow({ where: { id: sar } });
+    expect(untouched.paidAmount.toFixed()).toBe('0');
+    // The rest owed in USD is the later invoice's 10; the SAR invoice is not counted.
+    const over = await pay(booking, '10.01').expect(409);
+    expect(over.body).toMatchObject({ params: { balance: '10', currency: 'USD' } });
+  });
+
+  it('posts one receipt for the same request sent twice at once; another user may not reuse it', async () => {
+    const { booking } = await proForma(ids.windowA!, '25');
+    const requestId = randomUUID();
+    const [first, second] = await Promise.all([
+      pay(booking, '25', { requestId }),
+      pay(booking, '25', { requestId }),
+    ]);
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(await on.prisma.receipt.count({ where: { id: requestId } })).toBe(1);
+    const read = second.body as WindowDeskBookingDto;
+    expect(read.payments).toHaveLength(1);
+    await pay(booking, '25', { requestId }, on, cookies.otherStaff).expect(409);
+  });
+
   it('lets two payments race over one balance: one is posted, the other refused', async () => {
     const { booking } = await proForma(ids.windowA!, '30');
     const [first, second] = await Promise.all([pay(booking, '30'), pay(booking, '30')]);
     expect([first.status, second.status].sort()).toEqual([201, 409]);
+    const loser = first.status === 409 ? first : second;
+    expect(loser.body).toMatchObject({ code: 'WINDOW_NOTHING_TO_COLLECT' });
     const read = (await as(on, cookies.staff!).get(`/window-desk/bookings/${booking}`).expect(200))
       .body as WindowDeskBookingDto;
     expect(read.payments).toHaveLength(1);
