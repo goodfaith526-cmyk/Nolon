@@ -16,6 +16,7 @@ import type {
   WarehouseBalanceDto,
   WarehouseMovementDto,
   WarehouseMovementKind,
+  WindowDeskReceiptRequest,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { branchScope } from '../auth/branch-scope.js';
@@ -306,9 +307,73 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     prepared: PreparedReceipt,
     input: GoodsReceiptRequest,
   ): Promise<string> {
+    const status = await this.shipments.lockForChildWrite(tx, prepared.shipment.id, {
+      exclusive: true,
+    });
+    return this.recordReceiptInTx(tx, user, prepared, status, input, {
+      scope: shipmentScope(user),
+    });
+  }
+
+  /**
+   * Plan 13 section 3: a goods receipt at a window, from the window desk, inside the caller's
+   * transaction; the movement id. The caller authorized it first (authorizeWindowInTx: the user's
+   * outlet runs the window, the booking is confirmed and handed over there, both rows share-locked;
+   * no path takes those rows after a shipment's lock, so taking the shipment lock after them is
+   * safe). The user may not see the shipment as staff do (another outlet may have sold it), so
+   * the receipt goes into the booking's window only, and the move to RECEIVED_ORIGIN_WAREHOUSE is
+   * allowed by window_desk:create instead of the warehouse stage's permission. The rest is the
+   * goods receipt's: the exclusive shipment lock, the warehouse check, the extra packages rule,
+   * the GRN number and the state machine.
+   */
+  async receiveAtWindowInTx(
+    tx: Tx,
+    user: AuthUser,
+    window: { shipmentId: string; warehouseId: string },
+    input: WindowDeskReceiptRequest,
+  ): Promise<string> {
+    if (input.extraPackagesConfirmed && !input.note) {
+      throw new BadRequestException('Say in the note why there are extra packages');
+    }
+    const occurredAt = occurredAtOf(input.occurredAt);
+    const status = await this.shipments.lockForChildWrite(tx, window.shipmentId, {
+      exclusive: true,
+    });
+    const { branchId } = await tx.shipment.findUniqueOrThrow({
+      where: { id: window.shipmentId },
+      select: { branchId: true },
+    });
+    const packages = await this.shipments.packagesInTx(tx, window.shipmentId);
+    return this.recordReceiptInTx(
+      tx,
+      user,
+      { shipment: { id: window.shipmentId, branchId, status, packages }, occurredAt },
+      status,
+      {
+        ...input,
+        warehouseId: window.warehouseId,
+        storageLocationId: null,
+        shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
+      },
+      { scope: {}, permissions: ['window_desk:create'] },
+    );
+  }
+
+  /**
+   * A goods receipt under the shipment's exclusive lock (taken by the caller, `status` read under
+   * it). `access.scope` narrows the movement log to shipments the user may see; `permissions`,
+   * when set, allow the status move instead of the stage's (ShipmentsService.advanceInTx).
+   */
+  private async recordReceiptInTx(
+    tx: Tx,
+    user: AuthUser,
+    prepared: PreparedReceipt,
+    status: ShipmentStatus,
+    input: GoodsReceiptRequest,
+    access: { scope: Prisma.ShipmentWhereInput; permissions?: readonly Permission[] },
+  ): Promise<string> {
     const { shipment, occurredAt } = prepared;
     const shipmentId = shipment.id;
-    const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
     if (!isActive(status)) {
       throw new ConflictException('A closed or cancelled shipment cannot receive goods');
     }
@@ -321,7 +386,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     );
     // Under the exclusive shipment lock: every earlier receipt and release is counted.
     const logged = await tx.warehouseMovement.findMany({
-      where: { shipmentId, shipment: shipmentScope(user), cancellation: null },
+      where: { shipmentId, shipment: access.scope, cancellation: null },
       select: {
         kind: true,
         warehouseId: true,
@@ -345,6 +410,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
           note: number,
           // The tracking page shows where the goods are: at the warehouse's place, when set (D9).
           locationId: warehouse.locationId,
+          permissions: access.permissions,
         })
       : false;
     const movement = await tx.warehouseMovement.create({

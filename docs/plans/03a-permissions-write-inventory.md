@@ -308,3 +308,4 @@
 - PATCH `/warehouses/:id` · `WarehousesController.update` · `warehouse/warehouse.controller.ts` · warehouse:update
 - POST `/warehouses/:id/locations` · `WarehousesController.addLocation` · `warehouse/warehouse.controller.ts` · warehouse:update
 - PATCH `/warehouses/:id/locations/:locationId` · `WarehousesController.updateLocation` · `warehouse/warehouse.controller.ts` · warehouse:update
+- POST `/window-desk/bookings/:id/receipt` · `WindowDeskController.receive` · `window-desk/window-desk.controller.ts` · window_desk:create

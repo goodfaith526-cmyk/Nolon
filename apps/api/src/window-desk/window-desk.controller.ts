@@ -1,9 +1,10 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { WINDOW_DESK_FILTERS, type WindowDeskBookingDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
 import { parse } from '../common/validation.js';
+import { receiptBody } from '../warehouse/warehouse.controller.js';
 import { WindowDeskService } from './window-desk.service.js';
 
 const expectedQuery = z
@@ -11,6 +12,14 @@ const expectedQuery = z
     status: z.enum(WINDOW_DESK_FILTERS).default('expected'),
     q: z.string().trim().max(50).optional(),
   })
+  .strict();
+
+/**
+ * Plan 13 section 3: the goods receipt body without the warehouse, its storage location or the
+ * status (the booking's window, and RECEIVED_ORIGIN_WAREHOUSE when the state machine allows it).
+ */
+const windowReceiptBody = receiptBody
+  .omit({ warehouseId: true, storageLocationId: true, shipmentStatus: true })
   .strict();
 
 /** Plan 13 section 2: a partner outlet's window desk (Outlet Staff only, WINDOW_DESK_ENABLED). */
@@ -37,5 +46,16 @@ export class WindowDeskController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<WindowDeskBookingDto> {
     return this.desk.booking(user, id);
+  }
+
+  @OutletScoped()
+  @Post('bookings/:id/receipt')
+  @RequirePermission('window_desk:create')
+  receive(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<WindowDeskBookingDto> {
+    return this.desk.receive(user, id, parse(windowReceiptBody, body));
   }
 }

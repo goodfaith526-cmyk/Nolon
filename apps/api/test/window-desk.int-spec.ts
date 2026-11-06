@@ -221,6 +221,133 @@ describe('Window desk (plan 13 section 2)', () => {
     await as(on, cookies.staffA!).get(`/customers/${ids.customer}`).expect(404);
   });
 
+  describe('receives the goods (plan 13 section 3)', () => {
+    const receipt = { packages: 3, condition: 'GOOD', partyName: `${tag} courier` };
+    const shipmentOf = (bookingId: string) =>
+      on.prisma.shipment.findUniqueOrThrow({
+        where: { bookingId },
+        select: { id: true, status: true },
+      });
+    const movementsOf = async (bookingId: string) =>
+      on.prisma.warehouseMovement.findMany({
+        where: { shipmentId: (await shipmentOf(bookingId)).id },
+      });
+
+    it("makes a GRN into the booking's window and moves the shipment", async () => {
+      const b = await booking(ids.windowA!, true, { services: ['WAREHOUSE'] });
+      const read = (
+        await as(on, cookies.staffA!)
+          .post(`/window-desk/bookings/${b.id}/receipt`, receipt)
+          .expect(201)
+      ).body as WindowDeskBookingDto;
+      expect(read).toMatchObject({
+        received: true,
+        window: { id: ids.windowA, outletName: `${tag} A` },
+      });
+      expect(read.shipmentNumber).toMatch(/\S/);
+      expect(read.todo).not.toContain('receive');
+      expect(read.receipts).toEqual([
+        expect.objectContaining({
+          number: expect.stringMatching(/-GRN-/),
+          packages: 3,
+          condition: 'GOOD',
+          partyName: `${tag} courier`,
+        }),
+      ]);
+      expect((await shipmentOf(b.id)).status).toBe('RECEIVED_ORIGIN_WAREHOUSE');
+      const [movement] = await movementsOf(b.id);
+      expect(movement).toMatchObject({
+        kind: 'RECEIPT',
+        warehouseId: ids.windowA,
+        createdById: ids.staffA,
+        statusApplied: 'RECEIVED_ORIGIN_WAREHOUSE',
+      });
+      // The window's received list shows it now.
+      const received = (
+        (await as(on, cookies.staffA!).get('/window-desk/expected', { status: 'received' }))
+          .body as WindowDeskBookingDto[]
+      ).map((r) => r.bookingId);
+      expect(received).toContain(b.id);
+    });
+
+    it('receives a booking another outlet sold; the status only moves where the stage applies', async () => {
+      const b = await booking(ids.windowA!, true, { salesOutletId: ids.outletB });
+      await as(on, cookies.staffA!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, receipt)
+        .expect(201);
+      const [movement] = await movementsOf(b.id);
+      expect(movement).toMatchObject({ warehouseId: ids.windowA, statusApplied: null });
+      expect((await shipmentOf(b.id)).status).not.toBe('RECEIVED_ORIGIN_WAREHOUSE');
+    });
+
+    it('refuses more packages than the cargo lines without a confirmation and a note', async () => {
+      const b = await booking(ids.windowA!, true);
+      await as(on, cookies.staffA!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, { ...receipt, packages: 5 })
+        .expect(409);
+      await as(on, cookies.staffA!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, {
+          ...receipt,
+          packages: 5,
+          extraPackagesConfirmed: true,
+        })
+        .expect(400);
+      expect(await movementsOf(b.id)).toEqual([]);
+      await as(on, cookies.staffA!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, {
+          ...receipt,
+          packages: 5,
+          extraPackagesConfirmed: true,
+          note: 'Two more boxes than booked',
+        })
+        .expect(201);
+    });
+
+    it('takes no warehouse, place or status from the body', async () => {
+      const b = await booking(ids.windowA!, true);
+      for (const extra of [
+        { warehouseId: ids.windowB },
+        { storageLocationId: randomUUID() },
+        { shipmentStatus: 'RECEIVED_DESTINATION_WAREHOUSE' },
+      ]) {
+        await as(on, cookies.staffA!)
+          .post(`/window-desk/bookings/${b.id}/receipt`, { ...receipt, ...extra })
+          .expect(400);
+      }
+      expect(await movementsOf(b.id)).toEqual([]);
+    });
+
+    it("refuses another window's booking, a draft and an unknown booking (404)", async () => {
+      const atB = await booking(ids.windowB!, true);
+      const draft = await booking(ids.windowA!, false);
+      for (const id of [atB.id, draft.id, randomUUID()]) {
+        await as(on, cookies.staffA!)
+          .post(`/window-desk/bookings/${id}/receipt`, receipt)
+          .expect(404);
+      }
+      expect(await movementsOf(atB.id)).toEqual([]);
+    });
+
+    it('is closed to staff without the permission, to staff routes, and while off', async () => {
+      const b = await booking(ids.windowA!, true);
+      // Sales holds no window_desk:create.
+      await as(on, cookies.sales!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, receipt)
+        .expect(403);
+      // The outlet still cannot reach the staff goods receipt route.
+      const shipment = await shipmentOf(b.id);
+      const staffRoute = await as(on, cookies.staffA!).post(
+        `/shipments/${shipment.id}/warehouse/receipts`,
+        { ...receipt, warehouseId: ids.windowA },
+      );
+      expect([403, 404]).toContain(staffRoute.status);
+      await as(off, cookies.staffOff!)
+        .post(`/window-desk/bookings/${b.id}/receipt`, receipt)
+        .expect(404);
+      expect(await movementsOf(b.id)).toEqual([]);
+    });
+  });
+
   it('reads what the customer owes: total less paid less credited; no cancelled invoice', async () => {
     const shipment = await on.prisma.shipment.findUniqueOrThrow({
       where: { bookingId: ids.mine },

@@ -89,7 +89,8 @@ export const PERMISSION_MODULES = [
   'agent_admin',
   'handover_payment',
   // Plan 13 section 2: a partner outlet's window desk (Outlet Staff of the outlet that runs the
-  // window). view: the bookings to be handed over at its windows.
+  // window). view: the bookings to be handed over at its windows; create: receive the goods
+  // there (plan 13 section 3).
   'window_desk',
 ] as const;
 
@@ -189,8 +190,9 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Plan 12 section 3: handover_payment:approve hands goods over without the invoice or payment
   // the handover gate asks for, with a reason. No role holds it; the Administrator grants it.
   handover_payment: 'NNNNNNNNNNN',
-  // Plan 13 section 2: Outlet Staff only (the outlet that runs the window).
-  window_desk: 'NNNNNNNNNNV',
+  // Plan 13 sections 2 and 3: Outlet Staff only (the outlet that runs the window). The level
+  // also brings update, used by no route until 13-4 (the window takes the money).
+  window_desk: 'NNNNNNNNNNE',
 };
 
 /**
@@ -293,6 +295,7 @@ export const OUTLET_READY_PERMISSIONS: readonly Permission[] = [
   'quotations:view',
   'rates:view',
   'shipments:view',
+  'window_desk:create',
   'window_desk:view',
 ];
 

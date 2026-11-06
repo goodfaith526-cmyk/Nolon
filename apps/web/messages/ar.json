@@ -3476,6 +3476,12 @@
     "items": "البضاعة",
     "invoice": "الفاتورة",
     "invoice_DRAFT": "مبدئية",
-    "invoice_APPROVED": "معتمدة"
+    "invoice_APPROVED": "معتمدة",
+    "receive": "استلام البضاعة",
+    "receiveTitle": "استلام البضاعة في النافذة",
+    "extraPackages": "طرود أكثر من المحجوزة ({booked}): اكتب السبب في الملاحظات",
+    "receiptLine": "إيصال استلام {number}: {packages} طرد",
+    "printGrn": "طباعة إيصال الاستلام",
+    "outlet": "المنفذ"
   }
 }

@@ -105,8 +105,8 @@ describe('permission matrix (annex A)', () => {
     ['agent_admin', 'ع — — — — — — — — — —'],
     // Plan 12 section 3: the handover gate's override, granted by hand only.
     ['handover_payment', '— — — — — — — — — — —'],
-    // Plan 13 section 2: the window desk, Outlet Staff only.
-    ['window_desk', '— — — — — — — — — — ع'],
+    // Plan 13 sections 2 and 3: the window desk, Outlet Staff only (create: receive the goods).
+    ['window_desk', '— — — — — — — — — — إ'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 

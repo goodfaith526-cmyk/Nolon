@@ -1269,13 +1269,19 @@ export class ShipmentsService {
        * message instead of rewriting its timeline. Only checked when the move happens.
        */
       beforeLatestEvent?: string;
+      /**
+       * Plan 13 section 3: the permissions that allow the move instead of the stage's (one of
+       * them, on the shipment's branches), for a caller that authorized the user another way (a
+       * window's receipt: window_desk:create).
+       */
+      permissions?: readonly Permission[];
     },
   ): Promise<boolean> {
     return this.applyEventInTx(tx, user, id, (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
         return null;
       }
-      requireAny(user, permissionForTransition(status), shipment);
+      requireAny(user, options.permissions ?? permissionForTransition(status), shipment);
       if (options.beforeLatestEvent) {
         const latest = shipment.events.reduce<Date | null>(
           (max, e) => (max && max >= e.occurredAt ? max : e.occurredAt),
