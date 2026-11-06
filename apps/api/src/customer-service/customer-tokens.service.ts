@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   CS_TOKEN_PREFIX,
   CS_TOKEN_TTL_MS,
@@ -9,10 +9,13 @@ import {
   type CsCustomerTokenRequest,
 } from '@nolon/shared';
 import { FailureLimiter, type LimitRule } from '../common/failure-limiter.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import type { CsGrantKind } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 import { hashApiKey } from './api-key.js';
+import { identityError } from './customer-identity-auth.js';
+import type { IdentityContext } from './customer-identity.contract.js';
 
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
 
@@ -33,8 +36,19 @@ export const TOKEN_KEY_RULE: LimitRule = {
 /** How many accounts a `choose` answer lists, at most. */
 const CHOICES = 5;
 
-/** Tokens come only from numbers a channel verified; WhatsApp is the only such channel today. */
+/** Tokens come only from numbers a channel verified: WhatsApp's sender, or (plan 14-1) a Telegram own contact. */
 export const TOKEN_CHANNEL = 'whatsapp';
+export type TokenChannel = 'whatsapp' | 'telegram';
+
+/** A phone in one form, +<digits> (plan 14 F206-5): `249…` and `+249…` are the same number. */
+export function canonPhone(raw: string): string {
+  return `+${raw.replace(/\D/g, '')}`;
+}
+
+/** Plan 14-1: what a WhatsApp token remembers of its sender, to find the requests it made. */
+export function whatsappSenderHash(phone: string): string {
+  return sha256(`whatsapp:${canonPhone(phone)}`);
+}
 
 const TOKEN_PATTERN = new RegExp(`^${CS_TOKEN_PREFIX}[A-Za-z0-9_-]{43}$`);
 
@@ -106,15 +120,87 @@ export class CustomerTokensService {
   private readonly phoneLimiter = new FailureLimiter(TOKEN_PHONE_RULE);
   private readonly keyLimiter = new FailureLimiter(TOKEN_KEY_RULE);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(APP_ENV) private readonly env: AppEnv,
+  ) {}
+
+  /** Plan 14-1: Telegram tokens are off until the switch is on (503, nothing issued). */
+  requireTelegram(): void {
+    if (!this.env.CS_TELEGRAM_TOKENS_ENABLED) identityError(503, 'TELEGRAM_TOKENS_UNAVAILABLE');
+  }
+
+  /**
+   * Plan 14-1: a token from a Telegram sender's own shared contact. The assertion (already
+   * verified) must be Telegram's, and the evidence the sender's own contact with this phone;
+   * anything else is 401 INVALID_CHANNEL_ASSERTION. From there it is WhatsApp's match.
+   */
+  async issueTelegram(
+    client: ApiClientAuth,
+    input: CsCustomerTokenRequest,
+    verify: () => IdentityContext,
+  ): Promise<CsCustomerTokenAnswer> {
+    this.requireTelegram();
+    if (this.keyLimiter.isBlocked(client.id)) {
+      await this.record(client.id, null, null, 'LIMITED', undefined, 'telegram');
+      throw new HttpException(
+        { message: 'Too many attempts, try again later', code: 'TOO_MANY', statusCode: 429 },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    // F208-2: a failed proof is logged and counts against the key, as a phone matching nobody.
+    const refuse = async (error: unknown): Promise<never> => {
+      this.keyLimiter.recordFailure(client.id);
+      await this.record(client.id, null, null, 'INVALID_ASSERTION', undefined, 'telegram');
+      throw error;
+    };
+    let context: IdentityContext;
+    try {
+      context = verify();
+    } catch (error) {
+      const status = error instanceof HttpException ? error.getStatus() : 0;
+      if (status === 401 || status === 403) return refuse(error);
+      throw error;
+    }
+    const evidence = input.phoneEvidence;
+    if (
+      context.channel !== 'TELEGRAM' ||
+      !evidence ||
+      evidence.kind !== 'TELEGRAM_OWN_CONTACT' ||
+      evidence.contactUserId !== context.subjectId ||
+      canonPhone(evidence.value) !== canonPhone(input.phone)
+    ) {
+      return refuse(
+        new HttpException(
+          {
+            statusCode: 401,
+            code: 'INVALID_CHANNEL_ASSERTION',
+            message: 'INVALID_CHANNEL_ASSERTION',
+          },
+          401,
+        ),
+      );
+    }
+    return this.issue(
+      client,
+      {
+        phone: canonPhone(input.phone),
+        ...(input.customerNumber ? { customerNumber: input.customerNumber } : {}),
+      },
+      'telegram',
+    );
+  }
 
   async issue(
     client: ApiClientAuth,
     input: CsCustomerTokenRequest,
+    channel: TokenChannel = TOKEN_CHANNEL,
   ): Promise<CsCustomerTokenAnswer> {
+    const log = (tokenId: string | null, customerId: string | null, outcome: string) =>
+      this.record(client.id, tokenId, customerId, outcome, undefined, channel);
     const phoneKey = `${client.id}:${sha256(input.phone)}`;
     if (this.phoneLimiter.isBlocked(phoneKey) || this.keyLimiter.isBlocked(client.id)) {
-      await this.record(client.id, null, null, 'LIMITED');
+      await log(null, null, 'LIMITED');
       throw new HttpException(
         { message: 'Too many attempts, try again later', code: 'TOO_MANY', statusCode: 429 },
         HttpStatus.TOO_MANY_REQUESTS,
@@ -128,11 +214,11 @@ export class CustomerTokensService {
     if (!only) {
       this.phoneLimiter.recordFailure(phoneKey);
       this.keyLimiter.recordFailure(client.id);
-      await this.record(client.id, null, null, 'NONE');
+      await log(null, null, 'NONE');
       return { kind: 'none' };
     }
     if (others.length > 0) {
-      await this.record(client.id, null, null, 'CHOOSE');
+      await log(null, null, 'CHOOSE');
       return { kind: 'choose', customers: matches.slice(0, CHOICES).map(choice) };
     }
     const grant = bestGrant(only, input.phone);
@@ -154,10 +240,12 @@ export class CustomerTokensService {
         grantVersion: BigInt(version),
         level,
         expiresAt,
+        channel,
+        senderHash: channel === 'whatsapp' ? whatsappSenderHash(input.phone) : null,
       },
     });
     this.phoneLimiter.reset(phoneKey);
-    await this.record(client.id, row.id, only.id, 'TOKEN');
+    await log(row.id, only.id, 'TOKEN');
     return {
       kind: 'token',
       token,
@@ -169,16 +257,37 @@ export class CustomerTokensService {
     };
   }
 
-  /** One row of the access log (N4). */
+  /**
+   * One row of the access log (N4). The channel is the token's (plan 14-1) when a token is named,
+   * else the one given (the channel a token request came from), else WhatsApp.
+   */
   async record(
     apiClientId: string,
     tokenId: string | null,
     customerId: string | null,
     outcome: string,
     route = 'POST /cs/customer-tokens',
+    channel?: TokenChannel,
   ): Promise<void> {
+    const tokenChannel =
+      channel ??
+      (tokenId
+        ? (
+            await this.prisma.csCustomerToken.findUnique({
+              where: { id: tokenId },
+              select: { channel: true },
+            })
+          )?.channel
+        : undefined);
     await this.prisma.csAccessEvent.create({
-      data: { apiClientId, tokenId, customerId, channel: TOKEN_CHANNEL, route, outcome },
+      data: {
+        apiClientId,
+        tokenId,
+        customerId,
+        channel: tokenChannel ?? TOKEN_CHANNEL,
+        route,
+        outcome,
+      },
     });
   }
 

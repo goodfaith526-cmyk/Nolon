@@ -180,6 +180,11 @@ export interface CsCustomerTokenRequest {
   customerNumber?: string;
   /** A proof of an email code (N3). Until N3 exists, no proof is valid and the level is L1. */
   verificationId?: string;
+  /**
+   * Plan 14-1, with a signed Telegram assertion only: the sender shared its own contact, and
+   * `value` is `phone`.
+   */
+  phoneEvidence?: { kind: 'TELEGRAM_OWN_CONTACT'; contactUserId: string; value: string };
 }
 
 /** What the sender may choose between: no phone, email or balance. */
