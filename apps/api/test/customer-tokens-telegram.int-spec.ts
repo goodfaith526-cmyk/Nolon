@@ -258,4 +258,70 @@ describe('Customer tokens from a Telegram own contact (plan 14-1)', () => {
     expect(row.senderHash).toBe(whatsappSenderHash(alphaPhone));
     expect(whatsappSenderHash(alphaPhone.slice(1))).toBe(row.senderHash);
   });
+  it('logs and counts a failed proof as INVALID_ASSERTION on telegram (F208-2)', async () => {
+    const subject = telegramId();
+    const since = new Date();
+    await issue(
+      on,
+      { phone: alphaPhone, phoneEvidence: evidence(subject, alphaPhone) },
+      { subjectId: subject, sign: 'another-secret-of-at-least-32-characters' },
+    ).expect(401);
+    await issue(
+      on,
+      { phone: alphaPhone, phoneEvidence: evidence(telegramId(), alphaPhone) },
+      { subjectId: subject },
+    ).expect(401);
+    const rows = await on.prisma.csAccessEvent.findMany({
+      where: { apiClientId: clientId, outcome: 'INVALID_ASSERTION', occurredAt: { gte: since } },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.channel === 'telegram' && r.tokenId === null)).toBe(true);
+  });
+
+  it('a Telegram contact equal to an unverified customer phone grants nothing (F208-1)', async () => {
+    const typed = uniquePhone();
+    const unverified = (
+      await on
+        .http()
+        .post('/api/v1/customers')
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', cookie)
+        .send({
+          branchId: pts,
+          kind: 'INDIVIDUAL',
+          preferredCurrency: 'USD',
+          phone: typed,
+          name: `Unverified ${tag}`,
+        })
+        .expect(201)
+    ).body as CustomerDto;
+    await on.prisma.customer.update({
+      where: { id: unverified.id },
+      data: { phoneUnverified: true },
+    });
+    const subject = telegramId();
+    const res = await issue(
+      on,
+      { phone: typed, phoneEvidence: evidence(subject, typed) },
+      { subjectId: subject },
+    ).expect(200);
+    expect(res.body).toEqual({ kind: 'none' });
+    expect(await tokenRows(unverified.id)).toBe(0);
+  });
+
+  it('Telegram numbers matching nobody count in the shared limiter: 429 (F208-1)', async () => {
+    const nobody = uniquePhone();
+    const subject = telegramId();
+    const attempt = () =>
+      issue(
+        on,
+        { phone: nobody, phoneEvidence: evidence(subject, nobody) },
+        { subjectId: subject },
+      );
+    for (let i = 0; i < 10; i += 1)
+      expect((await attempt().expect(200)).body).toEqual({ kind: 'none' });
+    expect(code(await attempt().expect(429))).toBe('TOO_MANY');
+    // The same phone through WhatsApp shares the limiter (per key and phone).
+    expect(code(await issue(on, { phone: nobody }).expect(429))).toBe('TOO_MANY');
+  });
 });

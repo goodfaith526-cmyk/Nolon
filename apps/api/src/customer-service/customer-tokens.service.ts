@@ -138,9 +138,30 @@ export class CustomerTokensService {
   async issueTelegram(
     client: ApiClientAuth,
     input: CsCustomerTokenRequest,
-    context: IdentityContext,
+    verify: () => IdentityContext,
   ): Promise<CsCustomerTokenAnswer> {
     this.requireTelegram();
+    if (this.keyLimiter.isBlocked(client.id)) {
+      await this.record(client.id, null, null, 'LIMITED', undefined, 'telegram');
+      throw new HttpException(
+        { message: 'Too many attempts, try again later', code: 'TOO_MANY', statusCode: 429 },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    // F208-2: a failed proof is logged and counts against the key, as a phone matching nobody.
+    const refuse = async (error: unknown): Promise<never> => {
+      this.keyLimiter.recordFailure(client.id);
+      await this.record(client.id, null, null, 'INVALID_ASSERTION', undefined, 'telegram');
+      throw error;
+    };
+    let context: IdentityContext;
+    try {
+      context = verify();
+    } catch (error) {
+      const status = error instanceof HttpException ? error.getStatus() : 0;
+      if (status === 401 || status === 403) return refuse(error);
+      throw error;
+    }
     const evidence = input.phoneEvidence;
     if (
       context.channel !== 'TELEGRAM' ||
@@ -149,7 +170,16 @@ export class CustomerTokensService {
       evidence.contactUserId !== context.subjectId ||
       canonPhone(evidence.value) !== canonPhone(input.phone)
     ) {
-      identityError(401, 'INVALID_CHANNEL_ASSERTION');
+      return refuse(
+        new HttpException(
+          {
+            statusCode: 401,
+            code: 'INVALID_CHANNEL_ASSERTION',
+            message: 'INVALID_CHANNEL_ASSERTION',
+          },
+          401,
+        ),
+      );
     }
     return this.issue(
       client,

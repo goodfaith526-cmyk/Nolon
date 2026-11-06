@@ -451,8 +451,11 @@ export class CustomerTokensController {
       return this.tokens.issue(client, input);
     }
     this.tokens.requireTelegram();
-    const { context } = this.identityAuth.verify(client.id, req);
-    return this.tokens.issueTelegram(client, input, context);
+    return this.tokens.issueTelegram(
+      client,
+      input,
+      () => this.identityAuth.verify(client.id, req).context,
+    );
   }
 }
 
