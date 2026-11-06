@@ -2187,7 +2187,10 @@
     "labelsNext": "الملصقات التالية، من الطرد {from}",
     "hiddenEntry": "قيد محاسبي",
     "kind_ADVANCE_APPLICATION": "تطبيق دفعة مقدمة",
-    "kind_ADVANCE_APPLICATION_REVERSAL": "عكس تطبيق دفعة مقدمة"
+    "kind_ADVANCE_APPLICATION_REVERSAL": "عكس تطبيق دفعة مقدمة",
+    "waybillTitle": "بوليصة الشحن",
+    "waybillNote": "رقم البوليصة هو رقم الشحنة. هذه البوليصة إثبات استلام الطرود المذكورة للشحن، ولا تتضمن أسعاراً.",
+    "phone": "الهاتف"
   },
   "CreditNotes": {
     "title": "الإشعارات الدائنة",
@@ -3523,6 +3526,7 @@
     "collectReference": "المرجع (اختياري)",
     "collectSubmit": "تسجيل الدفع",
     "paymentLine": "إيصال {number}: {amount} {currency}",
-    "printReceipt": "طباعة الإيصال"
+    "printReceipt": "طباعة الإيصال",
+    "printWaybill": "طباعة البوليصة"
   }
 }

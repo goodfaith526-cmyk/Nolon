@@ -108,7 +108,7 @@ describe('WindowDesk', () => {
     expect(buttons(again)).toContain('receive');
   });
 
-  it('receives the goods and lists the GRN with its printout', async () => {
+  it('receives the goods and lists the GRN and the waybill with their printouts', async () => {
     me = {
       windowDeskEnabled: true,
       windowCollectEnabled: false,
@@ -156,6 +156,9 @@ describe('WindowDesk', () => {
     expect(el.querySelector('form.card')).toBeNull();
     const link = el.querySelector('a[href="/window-desk/b1/receipts/m1"]');
     expect(link?.textContent).toBe('printGrn');
+    // Plan 13-5: the waybill for the parcel, printed at the same time.
+    const waybill = el.querySelector('a[href="/window-desk/b1/waybill"]');
+    expect(waybill?.textContent).toBe('printWaybill');
     expect(el.textContent).not.toContain('todo_receive');
   });
 

@@ -256,6 +256,14 @@ export function WindowDeskCard({
               />
             </li>
           ))}
+          {/* Plan 13-5: the waybill for the parcel, handed over as soon as it is received. */}
+          <li className="row">
+            <PrintLink
+              small
+              href={`/window-desk/${r.bookingId}/waybill`}
+              label={t('printWaybill')}
+            />
+          </li>
         </ul>
       )}
       {open && (

@@ -87,6 +87,7 @@ import {
   CurrentBookingCaller,
 } from './booking-request.guard.js';
 import { BookingRequestsService } from './booking-requests.service.js';
+import { CsDocumentsService } from './cs-documents.service.js';
 import { BotQuotationsService } from './bot-quotations.service.js';
 
 const reference = z.string().trim().min(1).max(30);
@@ -657,16 +658,56 @@ export class BookingRequestsController {
     caller: BookingRequestCaller,
     req: RawBodyRequest<Request>,
   ): { channel: 'whatsapp' | 'telegram' | 'web'; subjectId: string } | null {
-    const signed =
-      caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
-        ? this.identityAuth.verify(caller.client.id, req).context
-        : null;
-    return signed
-      ? {
-          channel: senderChannelOf(signed.channel),
-          subjectId: senderIdOf(signed),
-        }
+    return ownerProofOf(this.identityAuth, caller, req);
+  }
+}
+
+/** The signed channel identity of the sender, when the key sent one (checked: 401 when wrong). */
+function ownerProofOf(
+  identityAuth: CustomerIdentityAuth,
+  caller: BookingRequestCaller,
+  req: RawBodyRequest<Request>,
+): { channel: 'whatsapp' | 'telegram' | 'web'; subjectId: string } | null {
+  const signed =
+    caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
+      ? identityAuth.verify(caller.client.id, req).context
       : null;
+  return signed
+    ? { channel: senderChannelOf(signed.channel), subjectId: senderIdOf(signed) }
+    : null;
+}
+
+/**
+ * Plan 13-5: a document of an approved request (the waybill, a receipt) behind a short-lived link
+ * the request's read gave its proven owner. The same key, and the owner's proof again (a customer
+ * token, or the signed identity of the sender); rendered now, never stored.
+ */
+@Controller('cs/documents')
+@Public()
+@UseGuards(BookingRequestGuard)
+@RequireApiScope('cs:booking_requests:create')
+@UseFilters(CustomerIdentityFilter)
+export class CsDocumentsController {
+  constructor(
+    private readonly documents: CsDocumentsService,
+    private readonly identityAuth: CustomerIdentityAuth,
+  ) {}
+
+  @Get(':token')
+  async download(
+    @CurrentBookingCaller() caller: BookingRequestCaller,
+    @Param('token') token: string,
+    @Req() req: RawBodyRequest<Request>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const proof = ownerProofOf(this.identityAuth, caller, req);
+    const { bytes, filename } = await this.documents.download(caller, token, proof);
+    res.setHeader('Cache-Control', 'no-store');
+    return new StreamableFile(bytes, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${filename}"`,
+      length: bytes.byteLength,
+    });
   }
 }
 

@@ -56,6 +56,8 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { trackOf } from './customer-stages.js';
+import { CsDocumentsService } from './cs-documents.service.js';
+import { ownerRef, provenOwnerOf, servedBy } from './request-owner.js';
 import { CsEventsService } from './cs-events.service.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
@@ -65,6 +67,8 @@ import { matchCategory, matchPlace } from './bot-names.js';
 import { grantHoldsInTx } from './customer-token.guard.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
 import { PaymentInstructionsService } from './payment-instructions.service.js';
+
+export { ownerRef, provenOwnerOf, servedBy };
 
 const DAY_MS = 86_400_000;
 
@@ -158,13 +162,6 @@ function rowTrack(
  */
 export function reservedBookingNumber(reference: string): string | undefined {
   return /^BK\d{5,}$/.test(reference) ? reference : undefined;
-}
-
-/** The owner of a request: the customer and the reason of its match, or a channel identity. */
-export function ownerRef(caller: BookingRequestCaller, sender?: CsBookingRequestCreate['sender']) {
-  return caller.kind === 'customer'
-    ? `c:${caller.token.customerId}:${caller.token.grantId}`
-    : `s:${sender?.channel ?? ''}:${sender?.id ?? ''}`;
 }
 
 /** A value with its object keys sorted, so equal content always serializes the same. */
@@ -293,16 +290,6 @@ export function namesSender(channel: CsBookingRequestByNames['channel'], phone: 
   return channel === 'whatsapp' ? `+${digits}` : `tel:${digits}`;
 }
 
-/** Whether a key with these branches serves a request: its branch, or one it may be routed to. */
-export function servedBy(
-  r: Pick<CsBookingRequest, 'branchId' | 'allowedBranchIds'>,
-  branchIds: readonly string[],
-): boolean {
-  return r.branchId === null
-    ? r.allowedBranchIds.some((b) => branchIds.includes(b))
-    : branchIds.includes(r.branchId);
-}
-
 function coded(status: HttpStatus, code: string, message: string): HttpException {
   return new HttpException({ message, code, statusCode: status }, status);
 }
@@ -326,6 +313,7 @@ export class BookingRequestsService {
     private readonly stages: CustomerStagesService,
     private readonly customers: CustomersService,
     private readonly events: CsEventsService,
+    private readonly documents: CsDocumentsService,
   ) {}
 
   /** The public tracking page of a shipment, as its QR code opens it; null when not configured. */
@@ -939,6 +927,14 @@ export class BookingRequestsService {
         row.status === 'APPROVED' && shipment && provesOwner(caller, proof, row)
           ? await this.paymentOf(caller.client, shipment.id)
           : null,
+      // Plan 13-5: the waybill and the receipts, as short-lived links, to a proven owner too.
+      documents:
+        row.status === 'APPROVED' &&
+        shipment &&
+        row.booking?.status !== 'CANCELLED' &&
+        provesOwner(caller, proof, row)
+          ? await this.documents.linksFor(caller.client, row.id, shipment.id)
+          : null,
     };
   }
 
@@ -1467,27 +1463,6 @@ function provesOwner(
 ): boolean {
   if (caller.kind === 'customer') return true;
   return proof !== null && row.senderChannel === proof.channel && row.senderId === proof.subjectId;
-}
-
-/** The proven owner's requests (any id): as provenOwner, the key alone is no proof. */
-function provenOwnerOf(
-  caller: BookingRequestCaller,
-  proof: { channel: CsSenderChannel; subjectId: string } | null,
-  what: string,
-): Prisma.CsBookingRequestWhereInput {
-  if (caller.kind === 'customer')
-    return { apiClientId: caller.client.id, ownerRef: ownerRef(caller) };
-  if (proof)
-    return {
-      apiClientId: caller.client.id,
-      senderChannel: proof.channel,
-      senderId: proof.subjectId,
-    };
-  throw coded(
-    HttpStatus.FORBIDDEN,
-    'OWNER_PROOF_REQUIRED',
-    `${what} needs the customer token or a signed channel identity of the sender`,
-  );
 }
 
 export async function currentKey(

@@ -213,13 +213,36 @@ This changes who holds NOLON's cash, so it is an accounting change.
 - **Agent first:** the event type and the download need the erp-agents compat PR merged and deployed before the switch is
   turned on (compat rule).
 
+### As built (13-5)
+
+The owner's rule of 2026-11-06 replaces the payment gate, the readiness worker and the `waybill.ready` notice above: «the
+customer hands the outlet two things, the parcel and the fees, and gets one document for each: the waybill for the
+parcel and the receipt for the fees». So:
+
+- **The waybill is ready as soon as the goods are received:** a live goods receipt (not cancelled) on a shipment and
+  booking that are not cancelled. It does not wait for the payment. The fees have their own document, the receipt.
+- **At the window:** the desk prints the waybill (`/print/window-desk/:bookingId/waybill`, the shipment's number, sender
+  and receiver, route, what was received, cargo lines, no prices) beside the GRN, and the receipt of each payment
+  (13-4).
+- **For the bot (switch `CS_DOCUMENTS_ENABLED`, off by default):** `GET /cs/booking-requests/:id` gives a proven owner of
+  an approved request `documents: { waybill: {url, expiresAt} | null, receipts: [{number, receiptDate, amount, currency,
+url, expiresAt}] }` (receipts: posted, allocated to the shipment's invoices, in the key's branches). Links are plan 09
+  section 7's: `GET /cs/documents/:token`, a random 32-byte token kept as its SHA-256 in `cs_document_links`, 10 minutes,
+  the same key, and the owner's proof again (a customer token or the signed identity of the sender; the key alone is
+  `403 OWNER_PROOF_REQUIRED`). At download everything is checked again: another key, another sender, a branch the key no
+  longer serves, a cancelled goods receipt or receipt: `404`; expired: `410`. The PDF (Gotenberg, `PdfService`) is
+  rendered then and never stored; every download is in `cs_access_events`. Off: `documents: null` and every download
+  `404`.
+- **No new notice:** the bot already reads approved requests on a schedule; it sends each new document once (agent
+  side). The waybill PDF masks the phones; the receipt shows the window and its outlet when paid there.
+
 ## 6. Decisions taken for the owner (⭐, into the decisions file)
 
 1. The staff dropdown lists drop-off points labelled with their outlet (section 1 (a)).
 2. The window sees sender and receiver names and phones of its expected bookings only, never customer files (section 2).
 3. The window receives into its own place only and cannot cancel (section 3).
 4. Each window holds NOLON's cash in its own cash account per currency (section 4 (a)); settlement by the accountant.
-5. The waybill is ready when the goods are received at origin and the invoice is paid or within credit (section 5).
+5. The waybill is ready when the goods are received (owner, 2026-11-06: one document for the parcel, one for the fees).
 6. Every step is behind a switch, off by default.
 
 ## 7. Tests (rule 7)
