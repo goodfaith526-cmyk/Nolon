@@ -37,6 +37,10 @@ for stack in staging production; do
   printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED=true' 'HANDOVER_PAYMENT_GATE_ENABLED=false' \
     > "$work/switches.env"
   expect "$stack" ok "the plan 12 billing switches"
+  printf '%s\n' 'WINDOW_DESK_ENABLED=true' > "$work/switches.env"
+  expect "$stack" ok "the plan 13 window desk switch"
+  printf '%s\n' 'WINDOW_DESK_ENABLED=1' > "$work/switches.env"
+  expect "$stack" refused "a window switch that is not true or false"
   printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED=yes' > "$work/switches.env"
   expect "$stack" refused "a billing switch that is not true or false"
   printf '%s\n' 'BILLING_AUTO_APPROVE_ENABLED_X=true' > "$work/switches.env"

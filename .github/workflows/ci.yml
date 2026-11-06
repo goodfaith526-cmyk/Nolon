@@ -161,7 +161,7 @@ jobs:
         run: deploy/production/test-backup.sh production
       - name: Staging backup and restore round trip (same tools, staging stack)
         run: deploy/production/test-backup.sh staging
-      - name: switches.env guard refuses anything but CS_* settings and the plan 12 billing switches (deploy/production/test-switches.sh)
+      - name: switches.env guard refuses anything but CS_* settings and the plan 12 and 13 switches (deploy/production/test-switches.sh)
         run: deploy/production/test-switches.sh
       - name: Production takes the commit staging deployed (deploy/production/test-staging-deployed.sh)
         run: deploy/production/test-staging-deployed.sh
