@@ -97,18 +97,6 @@ const shipmentsQuery = z
 const invoicesQuery = z
   .object({ state: z.enum(CS_INVOICE_STATES).default('open'), limit })
   .strict();
-/** Plan 14-2: the period's dates, YYYY-MM-DD, validated by the service so a bad one is logged. */
-const statementQuery = z
-  .object({ from: z.string().max(10).optional(), to: z.string().max(10).optional() })
-  .strict();
-
-const statementPdfQuery = z
-  .object({
-    from: z.string().max(10).optional(),
-    to: z.string().max(10).optional(),
-    lang: z.string().max(5).optional(),
-  })
-  .strict();
 
 const tokenBody = z
   .object({
@@ -733,13 +721,13 @@ export class CustomerMeController {
     private readonly statements: CustomerStatementService,
   ) {}
 
-  /** Plan 14-2: the customer's statement for a period (dates checked, and logged, by the service). */
+  /** Plan 14-2: the customer's statement for a period (query checked, and logged, by the service). */
   @Get('statement')
   statement(
     @CurrentCustomerToken() auth: CustomerTokenAuth,
     @Query() query: unknown,
   ): Promise<CsStatementDto> {
-    return this.statements.statement(auth, parse(statementQuery, query));
+    return this.statements.statement(auth, query);
   }
 
   /** Plan 14-3: the same statement as a NOLON PDF, rendered on request, never stored. */
@@ -749,7 +737,7 @@ export class CustomerMeController {
     @Query() query: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const { bytes, filename } = await this.statements.pdf(auth, parse(statementPdfQuery, query));
+    const { bytes, filename } = await this.statements.pdf(auth, query);
     res.setHeader('Cache-Control', 'no-store');
     return new StreamableFile(bytes, {
       type: 'application/pdf',

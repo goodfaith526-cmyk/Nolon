@@ -98,35 +98,35 @@ export class CustomerStatementService {
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
-  /** GET /cs/me/statement. */
-  async statement(
-    auth: CustomerTokenAuth,
-    raw: { from?: string; to?: string },
-  ): Promise<CsStatementDto> {
+  /** GET /cs/me/statement. The raw query is read here so every refusal is logged. */
+  async statement(auth: CustomerTokenAuth, query: unknown): Promise<CsStatementDto> {
     const route = 'GET /cs/me/statement';
-    const dto = await this.prepare(auth, raw, route);
+    await this.requireEnabled(auth, route);
+    const raw = await this.readQuery(auth, route, query, ['from', 'to']);
+    const dto = await this.build(auth, await this.period(auth, route, raw));
     await this.record(auth, route, 'OK');
     return dto;
   }
 
   /**
    * GET /cs/me/statement/pdf (plan 14-3): the same checks and data, rendered on request and never
-   * stored. No renderer: 503 PDF_UNAVAILABLE; a failed render: 503 PDF_FAILED. Both logged.
+   * stored. Order: switch, query, lang, period, renderer. No renderer: 503 PDF_UNAVAILABLE; a
+   * failed or overloaded render: 503 PDF_FAILED. All logged.
    */
-  async pdf(
-    auth: CustomerTokenAuth,
-    raw: { from?: string; to?: string; lang?: string },
-  ): Promise<{ bytes: Buffer; filename: string }> {
+  async pdf(auth: CustomerTokenAuth, query: unknown): Promise<{ bytes: Buffer; filename: string }> {
     const route = 'GET /cs/me/statement/pdf';
+    await this.requireEnabled(auth, route);
+    const raw = await this.readQuery(auth, route, query, ['from', 'to', 'lang']);
     if (raw.lang !== undefined && raw.lang !== 'ar' && raw.lang !== 'en') {
       await this.record(auth, route, 'INVALID_LANG');
       identityError(400, 'INVALID_LANG');
     }
-    if (!this.pdfs.configured && this.env.CS_STATEMENT_ENABLED) {
+    const period = await this.period(auth, route, raw);
+    if (!this.pdfs.configured) {
       await this.record(auth, route, 'PDF_UNAVAILABLE');
       identityError(503, 'PDF_UNAVAILABLE');
     }
-    const dto = await this.prepare(auth, raw, route);
+    const dto = await this.build(auth, period);
     const lang: StatementLang =
       raw.lang === 'ar' || raw.lang === 'en'
         ? raw.lang
@@ -158,22 +158,52 @@ export class CustomerStatementService {
     return this.tokens.record(auth.client.id, auth.tokenId, auth.customerId, outcome, route);
   }
 
-  /** The switch and the period, each refusal logged; then the statement. */
-  private async prepare(
-    auth: CustomerTokenAuth,
-    raw: { from?: string; to?: string },
-    route: string,
-  ): Promise<CsStatementDto> {
+  private async requireEnabled(auth: CustomerTokenAuth, route: string): Promise<void> {
     if (!this.env.CS_STATEMENT_ENABLED) {
       await this.record(auth, route, 'UNAVAILABLE');
       identityError(503, 'STATEMENT_UNAVAILABLE');
     }
+  }
+
+  /**
+   * The query as given (F209-2): only the allowed keys, each one string of at most 10 characters.
+   * Anything else (unknown key, repeated key, too long) is logged and refused as INVALID_RANGE.
+   */
+  private async readQuery(
+    auth: CustomerTokenAuth,
+    route: string,
+    query: unknown,
+    allowed: readonly string[],
+  ): Promise<Record<string, string | undefined>> {
+    const out: Record<string, string | undefined> = {};
+    let ok = query === undefined || (typeof query === 'object' && query !== null);
+    if (ok && query) {
+      for (const [key, value] of Object.entries(query)) {
+        if (!allowed.includes(key) || typeof value !== 'string' || value.length > 10) {
+          ok = false;
+          break;
+        }
+        out[key] = value;
+      }
+    }
+    if (!ok) {
+      await this.record(auth, route, 'INVALID_RANGE');
+      identityError(400, 'INVALID_RANGE');
+    }
+    return out;
+  }
+
+  private async period(
+    auth: CustomerTokenAuth,
+    route: string,
+    raw: { from?: string; to?: string },
+  ): Promise<{ from: string; to: string }> {
     const period = statementPeriod(raw, todayIn(STATEMENT_TIMEZONE));
     if (!period) {
       await this.record(auth, route, 'INVALID_RANGE');
       identityError(400, 'INVALID_RANGE');
     }
-    return this.build(auth, period);
+    return period;
   }
 
   private async build(
