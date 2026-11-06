@@ -222,7 +222,11 @@
     "chooseCountry": "اختر الدولة",
     "countriesInUse": "دول مستخدمة",
     "allCountries": "كل الدول",
-    "workBranch": "فرع المستند"
+    "workBranch": "فرع المستند",
+    "chooseFile": "اختر ملفاً",
+    "chooseFiles": "اختر ملفات",
+    "noFileChosen": "لم يُختر ملف",
+    "filesChosen": "{count} ملفات مختارة"
   },
   "Customers": {
     "title": "العملاء",

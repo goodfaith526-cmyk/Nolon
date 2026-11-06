@@ -222,7 +222,11 @@
     "chooseCountry": "Choose a country",
     "countriesInUse": "Countries in use",
     "allCountries": "All countries",
-    "workBranch": "Document branch"
+    "workBranch": "Document branch",
+    "chooseFile": "Choose file",
+    "chooseFiles": "Choose files",
+    "noFileChosen": "No file chosen",
+    "filesChosen": "{count} files chosen"
   },
   "Customers": {
     "title": "Customers",

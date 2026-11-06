@@ -8,6 +8,7 @@ import { field } from '@/lib/form';
 import { useLocalName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { FileInput } from '../FileInput';
 
 /** Uploads one file with its type; the API checks the content, size and permissions. */
 async function uploadDocument(shipmentId: string, form: FormData): Promise<ShipmentDocumentDto> {
@@ -115,9 +116,8 @@ export function ShipmentDocuments({ shipmentId }: { shipmentId: string }) {
           </label>
           <label className="field">
             <span>{t('file')}</span>
-            <input
+            <FileInput
               name="file"
-              type="file"
               required
               accept="application/pdf,image/jpeg,image/png,image/webp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             />
