@@ -34,7 +34,14 @@ export function autoApprovalRule(input: {
   mayApprove: boolean;
   /** The shipment's booked services: priced from rate cards, each needs a line (Codex F193-2). */
   services: readonly string[];
+  /**
+   * Plan 13 section 4 (owner, 2026-11-05): the booking's goods and money are handed over at a
+   * window that takes the money (WINDOW_COLLECT_ENABLED): the invoice stays pro forma until the
+   * customer pays there, and that payment approves it.
+   */
+  awaitsWindowPayment?: boolean;
 }): { rule: AutoApprovalRule } | { note: AutoInvoiceNote } {
+  if (input.awaitsWindowPayment) return { note: 'AWAITS_WINDOW_PAYMENT' };
   const { lines, unresolved } = input.derivation;
   const filled = lines.filter((l) => l.use === 'FILL');
   const complete =
@@ -110,7 +117,12 @@ export class AutoInvoiceService {
     const { user } = booking;
     const shipment = await tx.shipment.findUnique({
       where: { bookingId: booking.id },
-      select: { id: true, branchId: true, services: true },
+      select: {
+        id: true,
+        branchId: true,
+        services: true,
+        booking: { select: { dropOffWarehouseId: true } },
+      },
     });
     if (!shipment) throw new Error(`Booking ${booking.id} was confirmed with no shipment`);
     const terms = await this.bookings.agreedTermsInTx(tx, booking.id);
@@ -149,6 +161,10 @@ export class AutoInvoiceService {
         user.allowedBranchIds.includes(shipment.branchId) &&
         user.access.has('customer_invoices:approve', shipment.branchId),
       services: shipment.services,
+      awaitsWindowPayment:
+        this.env.WINDOW_DESK_ENABLED &&
+        this.env.WINDOW_COLLECT_ENABLED &&
+        (shipment.booking?.dropOffWarehouseId ?? null) !== null,
     });
     if ('note' in decided) {
       await this.fallbackInTx(tx, draft.id, booking.customerId, decided.note);

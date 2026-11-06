@@ -61,6 +61,7 @@ const OPEN = [
   'shipments/shipments.controller.ts GET :id',
   'window-desk/window-desk.controller.ts GET bookings/:id',
   'window-desk/window-desk.controller.ts GET expected',
+  'window-desk/window-desk.controller.ts POST bookings/:id/payment',
   'window-desk/window-desk.controller.ts POST bookings/:id/receipt',
 ];
 

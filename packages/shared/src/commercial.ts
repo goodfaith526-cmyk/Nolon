@@ -986,6 +986,13 @@ export const FORM_REFUSALS = [
   // bot request made changes it on the request.
   'DROP_OFF_NOT_ALLOWED',
   'DROP_OFF_FROM_REQUEST',
+  // Plan 13 section 4: the window takes the money. No cash account of the window for the
+  // currency (param `currency`); nothing owed in it (`currency`); more than is owed (`balance`,
+  // `currency`); a cash account that already serves another window or currency.
+  'WINDOW_NO_CASH_ACCOUNT',
+  'WINDOW_NOTHING_TO_COLLECT',
+  'WINDOW_OVER_BALANCE',
+  'WINDOW_CASH_ACCOUNT_TAKEN',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

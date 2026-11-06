@@ -34,6 +34,8 @@ import { uniquePhone } from './test-data.js';
 describe('automatic invoice on booking confirmation (plan 12 section 2)', () => {
   let t: TestApp;
   let off: TestApp;
+  let windowOn: TestApp;
+  let collectOff: TestApp;
   let pts = '';
   let bot: ApiClientCreatedDto;
   const cookies = { admin: '', sales: '', approver: '' };
@@ -140,6 +142,7 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
   async function cardBooking(
     customerId: string,
     services: string[] = ['MAIN_FREIGHT'],
+    dropOffWarehouseId?: string,
   ): Promise<string> {
     return (
       (
@@ -151,6 +154,7 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
             mode: 'ROAD',
             cargoType: 'GENERAL',
             services,
+            ...(dropOffWarehouseId ? { dropOffWarehouseId } : {}),
             items: [
               {
                 cargoType: 'GENERAL',
@@ -185,6 +189,9 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
   beforeAll(async () => {
     t = await createTestApp({ BILLING_AUTO_APPROVE_ENABLED: true });
     off = await createTestApp({ BILLING_AUTO_APPROVE_ENABLED: false });
+    const windows = { BILLING_AUTO_APPROVE_ENABLED: true, WINDOW_DESK_ENABLED: true };
+    windowOn = await createTestApp({ ...windows, WINDOW_COLLECT_ENABLED: true });
+    collectOff = await createTestApp({ ...windows, WINDOW_COLLECT_ENABLED: false });
     pts = await branchId(t.prisma, 'PTS');
     const user = async (roles: Parameters<typeof createUser>[1], branches: string[]) =>
       createUser(t.prisma, roles, branches, LEDGER_PREFIX);
@@ -271,6 +278,8 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
   });
 
   afterAll(async () => {
+    await windowOn?.close();
+    await collectOff?.close();
     await off?.close();
     await t?.close();
   });
@@ -379,6 +388,55 @@ describe('automatic invoice on booking confirmation (plan 12 section 2)', () => 
       approvedById: userIds.approver,
       autoInitiatedById: userIds.approver,
       autoTermsHash: null,
+    });
+  });
+
+  it('keeps a window booking pro forma until the window takes the money (plan 13 section 4)', async () => {
+    const partner = await t.prisma.partner.create({
+      data: {
+        number: `${tag}-W`,
+        kind: 'SALES_OUTLET',
+        branchId: pts,
+        name: `${tag} window`,
+        countryCode: 'SD',
+        currency: 'USD',
+        createdById: userIds.sales,
+      },
+    });
+    const window = (
+      await t.prisma.warehouse.create({
+        data: {
+          branchId: pts,
+          code: `${tag}-W`,
+          nameAr: 'نافذة اختبار',
+          nameEn: 'Test window',
+          acceptsDropOff: true,
+          partnerId: partner.id,
+        },
+      })
+    ).id;
+    // Both switches on: a draft that waits for the window's payment.
+    const atWindow = await cardBooking(await newCustomer(), ['MAIN_FREIGHT'], window);
+    await confirm(atWindow, cookies.approver, () => windowOn).expect(200);
+    expect(await onlyInvoice(atWindow)).toMatchObject({
+      status: 'DRAFT',
+      autoNote: 'AWAITS_WINDOW_PAYMENT',
+      approvedAt: null,
+    });
+    // The window not taking money: approved on confirmation as before.
+    const notCollecting = await cardBooking(await newCustomer(), ['MAIN_FREIGHT'], window);
+    await confirm(notCollecting, cookies.approver, () => collectOff).expect(200);
+    expect(await onlyInvoice(notCollecting)).toMatchObject({
+      status: 'APPROVED',
+      autoRule: 'RATE_CARD_WITH_RIGHT',
+    });
+    // A booking with no window: unchanged with both switches on.
+    const noWindow = await cardBooking(await newCustomer());
+    await confirm(noWindow, cookies.approver, () => windowOn).expect(200);
+    expect(await onlyInvoice(noWindow)).toMatchObject({
+      status: 'APPROVED',
+      autoRule: 'RATE_CARD_WITH_RIGHT',
+      autoNote: null,
     });
   });
 

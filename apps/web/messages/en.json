@@ -887,7 +887,9 @@
     "autoNote_PERIOD_CLOSED": "the accounting period of its date is closed.",
     "autoNote_CREDIT_LIMIT_EXCEEDED": "approving it would take the customer over their credit limit.",
     "autoNote_CREDIT_LIMIT_NO_RATE": "an exchange rate needed to check the credit limit is missing.",
-    "autoNote_SWITCH_OFF": "automatic approval is turned off."
+    "autoNote_SWITCH_OFF": "automatic approval is turned off.",
+    "autoNote_AWAITS_WINDOW_PAYMENT": "it waits for the customer's payment at the window, which approves it.",
+    "windowApproved": "Approved by the customer's payment at the window, taken by {name}."
   },
   "Receipts": {
     "title": "Receipts",
@@ -1204,7 +1206,13 @@
     "latitude": "Latitude",
     "longitude": "Longitude",
     "outlet": "Sales outlet",
-    "saveDropOff": "Save drop-off details"
+    "saveDropOff": "Save drop-off details",
+    "windowCashTitle": "Window cash accounts",
+    "windowCashHint": "The cash account this window takes customers' money into, one per currency. Each account serves one window only.",
+    "windowCashNone": "No cash account yet: the window cannot take money.",
+    "windowCashRemove": "Remove",
+    "windowCashAccount": "Cash account",
+    "windowCashSet": "Set"
   },
   "Customs": {
     "section": "Customs",
@@ -2949,7 +2957,11 @@
     "HANDOVER_UNPAID": "Shipment {shipment} still has {balance} {currency} to pay. Record the payment before the goods are handed over.",
     "HANDOVER_OVER_LIMIT": "Customer {customer} is over their credit limit of {limit} {currency}. Record their payment before the goods are handed over.",
     "DROP_OFF_NOT_ALLOWED": "Choose an active drop-off point of the booking's branch.",
-    "DROP_OFF_FROM_REQUEST": "This booking came from a bot request: change its drop-off point on the request."
+    "DROP_OFF_FROM_REQUEST": "This booking came from a bot request: change its drop-off point on the request.",
+    "WINDOW_NO_CASH_ACCOUNT": "This window has no cash account for {currency}. Ask NOLON's accountant to set one.",
+    "WINDOW_NOTHING_TO_COLLECT": "Nothing is owed on this booking in {currency}.",
+    "WINDOW_OVER_BALANCE": "The customer owes {balance} {currency} on this booking: take no more than that.",
+    "WINDOW_CASH_ACCOUNT_TAKEN": "This cash account already serves another window or currency. Choose another account."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -3503,6 +3515,14 @@
     "extraPackages": "More packages than booked ({booked}): say why in the note",
     "receiptLine": "GRN {number}: {packages} packages",
     "printGrn": "Print GRN",
-    "outlet": "Outlet"
+    "outlet": "Outlet",
+    "collect": "Take the payment",
+    "collectTitle": "Take the customer's payment",
+    "collectApproves": "The invoice is pro forma: the payment approves it.",
+    "collectAmount": "Amount received ({currency})",
+    "collectReference": "Reference (optional)",
+    "collectSubmit": "Record the payment",
+    "paymentLine": "Receipt {number}: {amount} {currency}",
+    "printReceipt": "Print receipt"
   }
 }

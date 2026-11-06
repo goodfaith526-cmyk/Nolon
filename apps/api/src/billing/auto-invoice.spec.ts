@@ -37,6 +37,22 @@ describe('autoApprovalRule (plan 12 section 2.1)', () => {
     }
   });
 
+  it('keeps a window booking pro forma until the customer pays there (plan 13 section 4)', () => {
+    const input = {
+      enabled: true,
+      derivation: quoted,
+      agreed: matching,
+      services: [],
+      mayApprove: true,
+    };
+    expect(autoApprovalRule({ ...input, awaitsWindowPayment: true })).toEqual({
+      note: 'AWAITS_WINDOW_PAYMENT',
+    });
+    expect(autoApprovalRule({ ...input, awaitsWindowPayment: false })).toEqual({
+      rule: 'AGREED_PRICE',
+    });
+  });
+
   it('keeps a draft when the agreed terms changed, or the quotation is no longer approved', () => {
     for (const agreed of [
       { approved: true, matches: false, reconciled: true },

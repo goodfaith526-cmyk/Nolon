@@ -149,6 +149,7 @@ model Currency {
   rateCardCosts        RateCardCost[]
   quotations           Quotation[]
   accounts             Account[]
+  windowCashAccounts   WindowCashAccount[]
   fxRates              FxRate[]
   journalLines         JournalLine[]
   invoices             CustomerInvoice[]
@@ -208,6 +209,7 @@ model User {
   branches             UserBranch[]
   /// Outlet Staff only: the sales outlets whose records the user sees (plan 4.2).
   outlets              UserPartner[]
+  windowCashAccounts   WindowCashAccount[]   @relation("WindowCashAccountCreatedBy")
   sessions             Session[]
   /// Forms this user could not save and opened with the staff assistant.
   assistantFormReviews AssistantFormReview[]
@@ -1899,6 +1901,7 @@ model Account {
   journalLines JournalLine[]
   receipts     Receipt[]
   invoices     CustomerInvoice[]   @relation("InvoiceReceivable")
+  windowCash   WindowCashAccount?
   tripExpenses TripExpense[]
 
   costChargeTypes   ChargeTypePosting[] @relation("ChargeTypeCost")
@@ -2152,6 +2155,8 @@ enum InvoiceKind {
 enum InvoiceApprovalSource {
   MANUAL
   AUTO_ON_CONFIRM
+  /// Plan 13 section 4: approved by the system when the customer paid at the window.
+  WINDOW_PAYMENT
 
   @@map("invoice_approval_source")
 }
@@ -2447,6 +2452,7 @@ model Warehouse {
   movements        WarehouseMovement[]
 
   bookingsDropOff Booking[]           @relation("BookingDropOff")
+  cashAccounts    WindowCashAccount[]
   releaseDrafts   GoodsReleaseDraft[]
 
   @@index([branchId])
@@ -5372,4 +5378,25 @@ model ShipmentStatusStage {
   stage CustomerStage @relation(fields: [stageCode], references: [code], onDelete: Restrict)
 
   @@map("shipment_status_stages")
+}
+
+/// Plan 13 section 4: the cash account a window (a drop-off warehouse run by a partner outlet)
+/// takes a customer's money into, per currency. The accountant sets it (accounts:update); an
+/// account serves one window and one currency only.
+model WindowCashAccount {
+  id          String   @id @default(uuid()) @db.Uuid
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  currency    String   @db.Char(3)
+  accountId   String   @unique @map("account_id") @db.Uuid
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  currencyRef Currency  @relation(fields: [currency], references: [code], onDelete: Restrict)
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  createdBy   User      @relation("WindowCashAccountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([warehouseId, currency])
+  @@map("window_cash_accounts")
 }

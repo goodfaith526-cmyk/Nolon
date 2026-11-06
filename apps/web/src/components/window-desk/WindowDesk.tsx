@@ -12,6 +12,7 @@ import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, useFailureText } from '../commercial/Notice';
 import { PrintLink } from '../print/PrintLink';
 import { can, useMe } from '../StaffShell';
+import { WindowPaymentForm } from './WindowPaymentForm';
 import { WindowReceiptForm } from './WindowReceiptForm';
 
 /**
@@ -136,6 +137,12 @@ export function WindowDeskCard({
   const t = useTranslations('WindowDesk');
   const me = useMe();
   const [receiving, setReceiving] = useState(false);
+  const [collecting, setCollecting] = useState(false);
+  const mayCollect =
+    me.windowCollectEnabled &&
+    can(me, 'window_desk:update') &&
+    r.invoice !== null &&
+    r.todo.includes('collect');
   const te = useTranslations('Enums');
   const locale = useLocale();
   const master = useMasterData();
@@ -188,6 +195,16 @@ export function WindowDeskCard({
             {t('receive')}
           </button>
         )}
+        {mayCollect && (
+          <button
+            type="button"
+            className="primary"
+            aria-expanded={collecting}
+            onClick={() => setCollecting(!collecting)}
+          >
+            {t('collect')}
+          </button>
+        )}
       </div>
       {receiving && r.todo.includes('receive') && (
         <WindowReceiptForm
@@ -197,6 +214,32 @@ export function WindowDeskCard({
             onChanged(next);
           }}
         />
+      )}
+      {collecting && mayCollect && (
+        <WindowPaymentForm
+          row={r}
+          onPaid={(next) => {
+            setCollecting(false);
+            onChanged(next);
+          }}
+        />
+      )}
+      {r.payments.length > 0 && (
+        <ul className="stack">
+          {r.payments.map((p) => (
+            <li key={p.id} className="row">
+              <span>
+                {t('paymentLine', { number: p.number, amount: p.amount, currency: p.currency })}{' '}
+                <span dir="ltr">{p.receiptDate}</span>
+              </span>
+              <PrintLink
+                small
+                href={`/window-desk/${r.bookingId}/payments/${p.id}`}
+                label={t('printReceipt')}
+              />
+            </li>
+          ))}
+        </ul>
       )}
       {r.receipts.length > 0 && (
         <ul className="stack">

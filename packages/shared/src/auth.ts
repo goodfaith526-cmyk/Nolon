@@ -90,7 +90,7 @@ export const PERMISSION_MODULES = [
   'handover_payment',
   // Plan 13 section 2: a partner outlet's window desk (Outlet Staff of the outlet that runs the
   // window). view: the bookings to be handed over at its windows; create: receive the goods
-  // there (plan 13 section 3).
+  // there (plan 13 section 3); update: take the customer's money there (section 4).
   'window_desk',
 ] as const;
 
@@ -190,8 +190,8 @@ export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
   // Plan 12 section 3: handover_payment:approve hands goods over without the invoice or payment
   // the handover gate asks for, with a reason. No role holds it; the Administrator grants it.
   handover_payment: 'NNNNNNNNNNN',
-  // Plan 13 sections 2 and 3: Outlet Staff only (the outlet that runs the window). The level
-  // also brings update, used by no route until 13-4 (the window takes the money).
+  // Plan 13 sections 2 to 4: Outlet Staff only (the outlet that runs the window): view, receive
+  // the goods (create) and take the money (update).
   window_desk: 'NNNNNNNNNNE',
 };
 
@@ -296,6 +296,7 @@ export const OUTLET_READY_PERMISSIONS: readonly Permission[] = [
   'rates:view',
   'shipments:view',
   'window_desk:create',
+  'window_desk:update',
   'window_desk:view',
 ];
 
@@ -406,4 +407,6 @@ export interface AuthMeResponse {
   outletStaffAssignable: boolean;
   /** Plan 13 section 2: whether the window desk is on (WINDOW_DESK_ENABLED). */
   windowDeskEnabled: boolean;
+  /** Plan 13 section 4: whether the window takes the customer's money (WINDOW_COLLECT_ENABLED). */
+  windowCollectEnabled: boolean;
 }

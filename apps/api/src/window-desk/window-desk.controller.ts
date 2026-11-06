@@ -3,8 +3,9 @@ import { WINDOW_DESK_FILTERS, type WindowDeskBookingDto } from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
-import { parse } from '../common/validation.js';
+import { amount, currencyCode, optionalText, parse } from '../common/validation.js';
 import { receiptBody } from '../warehouse/warehouse.controller.js';
+import { WindowCollectService } from './window-collect.service.js';
 import { WindowDeskService } from './window-desk.service.js';
 
 const expectedQuery = z
@@ -22,10 +23,23 @@ const windowReceiptBody = receiptBody
   .omit({ warehouseId: true, storageLocationId: true, shipmentStatus: true })
   .strict();
 
+/** Plan 13 section 4: what the window took; the server allocates it (F202-2). */
+const paymentBody = z
+  .object({
+    requestId: z.uuid(),
+    amount,
+    currency: currencyCode,
+    reference: optionalText(100),
+  })
+  .strict();
+
 /** Plan 13 section 2: a partner outlet's window desk (Outlet Staff only, WINDOW_DESK_ENABLED). */
 @Controller('window-desk')
 export class WindowDeskController {
-  constructor(private readonly desk: WindowDeskService) {}
+  constructor(
+    private readonly desk: WindowDeskService,
+    private readonly collector: WindowCollectService,
+  ) {}
 
   @OutletScoped()
   @Get('expected')
@@ -57,5 +71,16 @@ export class WindowDeskController {
     @Body() body: unknown,
   ): Promise<WindowDeskBookingDto> {
     return this.desk.receive(user, id, parse(windowReceiptBody, body));
+  }
+
+  @OutletScoped()
+  @Post('bookings/:id/payment')
+  @RequirePermission('window_desk:update')
+  collect(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<WindowDeskBookingDto> {
+    return this.collector.collect(user, id, parse(paymentBody, body));
   }
 }

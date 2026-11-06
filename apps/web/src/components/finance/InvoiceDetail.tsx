@@ -165,6 +165,11 @@ export function InvoiceDetail({ id }: { id: string }) {
           })}
         </p>
       )}
+      {inv.windowApproval && (
+        <p className="muted" role="status">
+          {t('windowApproved', { name: inv.windowApproval.initiatedByName })}
+        </p>
+      )}
       {inv.status === 'DRAFT' && inv.autoNote && (
         <p className="warning" role="status">
           {t('autoDraft', { reason: t(`autoNote_${inv.autoNote}`) })}

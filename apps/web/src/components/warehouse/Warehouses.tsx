@@ -18,6 +18,7 @@ import { useBranchCode } from '../finance/common';
 import { can, useMe } from '../StaffShell';
 import { StatusBadge } from '../StatusBadge';
 import { DropOffEditor } from './DropOffEditor';
+import { WindowCashAccounts } from './WindowCashAccounts';
 
 /** Pattern for warehouse and storage location codes: letters and digits, dash-separated. */
 const CODE_PATTERN = '[A-Za-z0-9]+(-[A-Za-z0-9]+)*';
@@ -300,6 +301,9 @@ export function Warehouses() {
                 busy={busy}
                 onSave={(body) => update(w, body)}
               />
+            )}
+            {w.partner !== null && can(me, 'chart_of_accounts:view') && (
+              <WindowCashAccounts warehouse={w} />
             )}
             <WarehouseStock stock={stock} warehouseId={w.id} />
             {w.storageLocations.length === 0 ? (

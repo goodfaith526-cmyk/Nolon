@@ -887,7 +887,9 @@
     "autoNote_PERIOD_CLOSED": "الفترة المحاسبية لتاريخها مقفولة.",
     "autoNote_CREDIT_LIMIT_EXCEEDED": "اعتمادها يتجاوز بالعميل حد الائتمان.",
     "autoNote_CREDIT_LIMIT_NO_RATE": "ينقص سعر صرف لازم لفحص حد الائتمان.",
-    "autoNote_SWITCH_OFF": "الاعتماد التلقائي مقفول."
+    "autoNote_SWITCH_OFF": "الاعتماد التلقائي مقفول.",
+    "autoNote_AWAITS_WINDOW_PAYMENT": "تنتظر دفع العميل في النافذة، والدفع يعتمدها.",
+    "windowApproved": "اعتُمدت بدفع العميل في النافذة، واستلم المبلغ {name}."
   },
   "Receipts": {
     "title": "سندات القبض",
@@ -1204,7 +1206,13 @@
     "latitude": "خط العرض",
     "longitude": "خط الطول",
     "outlet": "منفذ البيع",
-    "saveDropOff": "حفظ بيانات التسليم"
+    "saveDropOff": "حفظ بيانات التسليم",
+    "windowCashTitle": "حسابات نقدية النافذة",
+    "windowCashHint": "حساب النقدية الذي تستلم فيه النافذة أموال العملاء، حساب لكل عملة. كل حساب لنافذة واحدة فقط.",
+    "windowCashNone": "لا يوجد حساب نقدية بعد: لا تستطيع النافذة استلام المال.",
+    "windowCashRemove": "إزالة",
+    "windowCashAccount": "حساب النقدية",
+    "windowCashSet": "تحديد"
   },
   "Customs": {
     "section": "الجمارك",
@@ -2949,7 +2957,11 @@
     "HANDOVER_UNPAID": "الشحنة {shipment} لسه عليها {balance} {currency}. سجّل الدفعة قبل تسليم البضاعة.",
     "HANDOVER_OVER_LIMIT": "العميل {customer} تجاوز حدّه الائتماني {limit} {currency}. سجّل دفعته قبل تسليم البضاعة.",
     "DROP_OFF_NOT_ALLOWED": "اختر نافذة تسليم نشطة تابعة لفرع الحجز.",
-    "DROP_OFF_FROM_REQUEST": "هذا الحجز جاء من طلب البوت: غيّر نافذة التسليم من شاشة الطلب."
+    "DROP_OFF_FROM_REQUEST": "هذا الحجز جاء من طلب البوت: غيّر نافذة التسليم من شاشة الطلب.",
+    "WINDOW_NO_CASH_ACCOUNT": "لا يوجد لهذه النافذة حساب نقدية بعملة {currency}. اطلب من محاسب نولون تحديده.",
+    "WINDOW_NOTHING_TO_COLLECT": "لا يوجد مبلغ مستحق على هذا الحجز بعملة {currency}.",
+    "WINDOW_OVER_BALANCE": "المستحق على العميل في هذا الحجز {balance} {currency}: لا تستلم أكثر من ذلك.",
+    "WINDOW_CASH_ACCOUNT_TAKEN": "حساب النقدية هذا مرتبط بنافذة أو عملة أخرى. اختر حسابًا آخر."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -3503,6 +3515,14 @@
     "extraPackages": "طرود أكثر من المحجوزة ({booked}): اكتب السبب في الملاحظات",
     "receiptLine": "إيصال استلام {number}: {packages} طرد",
     "printGrn": "طباعة إيصال الاستلام",
-    "outlet": "المنفذ"
+    "outlet": "المنفذ",
+    "collect": "استلام المبلغ",
+    "collectTitle": "استلام مبلغ العميل",
+    "collectApproves": "الفاتورة مبدئية: الدفع يعتمدها.",
+    "collectAmount": "المبلغ المستلم ({currency})",
+    "collectReference": "المرجع (اختياري)",
+    "collectSubmit": "تسجيل الدفع",
+    "paymentLine": "إيصال {number}: {amount} {currency}",
+    "printReceipt": "طباعة الإيصال"
   }
 }

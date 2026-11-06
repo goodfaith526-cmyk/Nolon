@@ -318,6 +318,7 @@ export class AuthService {
           : null,
       outletStaffAssignable: this.env.OUTLET_STAFF_ASSIGNABLE,
       windowDeskEnabled: this.env.WINDOW_DESK_ENABLED,
+      windowCollectEnabled: this.env.WINDOW_DESK_ENABLED && this.env.WINDOW_COLLECT_ENABLED,
     };
   }
 

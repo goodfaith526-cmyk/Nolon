@@ -369,6 +369,8 @@ export const INVOICE_AUTO_NOTES = [
   'CREDIT_LIMIT_EXCEEDED',
   'CREDIT_LIMIT_NO_RATE',
   'SWITCH_OFF',
+  // Plan 13 section 4: a window booking's invoice stays pro forma until the customer pays there.
+  'AWAITS_WINDOW_PAYMENT',
 ] as const;
 export type InvoiceAutoNote = (typeof INVOICE_AUTO_NOTES)[number];
 
@@ -393,6 +395,8 @@ export interface CustomerInvoiceDto extends CustomerInvoiceSummaryDto {
    * rule and the person whose confirmation made it; null for an invoice a person approved.
    */
   autoApproval: { rule: InvoiceAutoRule; initiatedByName: string } | null;
+  /** Plan 13 section 4: approved by the customer's payment at a window, taken by this user. */
+  windowApproval: { initiatedByName: string } | null;
   /** Plan 12 section 2.2: why an invoice made on confirmation stayed a draft; else null. */
   autoNote: InvoiceAutoNote | null;
   /**
