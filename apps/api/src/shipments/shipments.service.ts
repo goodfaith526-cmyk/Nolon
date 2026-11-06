@@ -159,9 +159,12 @@ const CONTAINER_MOVED: readonly ShipmentStatus[] = [
 
 const branchRef = { select: { id: true, code: true, nameEn: true, nameAr: true } };
 
+/** Plan 13 section 3: the booking's window, which opens the origin warehouse stage. */
+const bookingWindow = { select: { dropOffWarehouseId: true } } as const;
+
 const details = {
   customer: { select: { name: true } },
-  booking: { select: { number: true } },
+  booking: { select: { number: true, dropOffWarehouseId: true } },
   salesOutlet: partnerRefSelect,
   originConsolidator: partnerRefSelect,
   distributor: partnerRefSelect,
@@ -533,6 +536,7 @@ export class ShipmentsService {
         items: { select: { quantity: true } },
         events: { orderBy: { id: 'asc' } },
         sharedBranches: sharedBranchesSelect,
+        booking: bookingWindow,
       },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
@@ -1270,18 +1274,24 @@ export class ShipmentsService {
        */
       beforeLatestEvent?: string;
       /**
-       * Plan 13 section 3: the permissions that allow the move instead of the stage's (one of
-       * them, on the shipment's branches), for a caller that authorized the user another way (a
-       * window's receipt: window_desk:create).
+       * Plan 13 section 3: a receipt at the booking's window, which the caller authorized. Only
+       * the move to RECEIVED_ORIGIN_WAREHOUSE is then allowed by window_desk:create (on the
+       * shipment's branches) instead of the stage's permissions; any other move keeps its own.
        */
-      permissions?: readonly Permission[];
+      windowReceipt?: boolean;
     },
   ): Promise<boolean> {
     return this.applyEventInTx(tx, user, id, (shipment, path) => {
       if (!nextStatuses(shipment.status, shipment, visitedStatuses(path)).includes(status)) {
         return null;
       }
-      requireAny(user, options.permissions ?? permissionForTransition(status), shipment);
+      requireAny(
+        user,
+        options.windowReceipt && status === 'RECEIVED_ORIGIN_WAREHOUSE'
+          ? ['window_desk:create']
+          : permissionForTransition(status),
+        shipment,
+      );
       if (options.beforeLatestEvent) {
         const latest = shipment.events.reduce<Date | null>(
           (max, e) => (max && max >= e.occurredAt ? max : e.occurredAt),
@@ -1994,6 +2004,7 @@ export class ShipmentsService {
         events: { orderBy: { id: 'asc' } },
         consolidationLinks: lockedContainerLinks,
         sharedBranches: sharedBranchesSelect,
+        booking: bookingWindow,
       },
     });
     const path = replayHistory(shipment.events);

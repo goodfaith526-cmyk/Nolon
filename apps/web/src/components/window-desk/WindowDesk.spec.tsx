@@ -128,11 +128,17 @@ describe('WindowDesk', () => {
       ],
     };
     api.mockResolvedValueOnce(received);
-    act(() => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
     await act(() => Promise.resolve());
     expect(api).toHaveBeenLastCalledWith('/window-desk/bookings/b1/receipt', {
       method: 'POST',
-      body: expect.objectContaining({ packages: 2, condition: 'GOOD', partyName: 'Sender' }),
+      body: expect.objectContaining({
+        packages: 2,
+        condition: 'GOOD',
+        partyName: 'Sender',
+      }) as unknown,
     });
     expect(el.querySelector('form.card')).toBeNull();
     const link = el.querySelector('a[href="/window-desk/b1/receipts/m1"]');

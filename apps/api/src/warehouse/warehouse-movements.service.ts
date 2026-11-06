@@ -317,10 +317,10 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
 
   /**
    * Plan 13 section 3: a goods receipt at a window, from the window desk, inside the caller's
-   * transaction; the movement id. The caller authorized it first (authorizeWindowInTx: the user's
-   * outlet runs the window, the booking is confirmed and handed over there, both rows share-locked;
-   * no path takes those rows after a shipment's lock, so taking the shipment lock after them is
-   * safe). The user may not see the shipment as staff do (another outlet may have sold it), so
+   * transaction; the movement id. The caller took the shipment's exclusive lock first (as closing
+   * and cancelling do before they write the booking), then authorized the receipt
+   * (authorizeWindowInTx: the user's outlet runs the window, the booking is confirmed and handed
+   * over there). The user may not see the shipment as staff do (another outlet may have sold it), so
    * the receipt goes into the booking's window only, and the move to RECEIVED_ORIGIN_WAREHOUSE is
    * allowed by window_desk:create instead of the warehouse stage's permission. The rest is the
    * goods receipt's: the exclusive shipment lock, the warehouse check, the extra packages rule,
@@ -355,14 +355,15 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         storageLocationId: null,
         shipmentStatus: 'RECEIVED_ORIGIN_WAREHOUSE',
       },
-      { scope: {}, permissions: ['window_desk:create'] },
+      { scope: {}, windowReceipt: true },
     );
   }
 
   /**
    * A goods receipt under the shipment's exclusive lock (taken by the caller, `status` read under
-   * it). `access.scope` narrows the movement log to shipments the user may see; `permissions`,
-   * when set, allow the status move instead of the stage's (ShipmentsService.advanceInTx).
+   * it). `access.scope` narrows the movement log to shipments the user may see; `windowReceipt`
+   * lets window_desk:create allow the move to RECEIVED_ORIGIN_WAREHOUSE
+   * (ShipmentsService.advanceInTx).
    */
   private async recordReceiptInTx(
     tx: Tx,
@@ -370,7 +371,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
     prepared: PreparedReceipt,
     status: ShipmentStatus,
     input: GoodsReceiptRequest,
-    access: { scope: Prisma.ShipmentWhereInput; permissions?: readonly Permission[] },
+    access: { scope: Prisma.ShipmentWhereInput; windowReceipt?: boolean },
   ): Promise<string> {
     const { shipment, occurredAt } = prepared;
     const shipmentId = shipment.id;
@@ -410,7 +411,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
           note: number,
           // The tracking page shows where the goods are: at the warehouse's place, when set (D9).
           locationId: warehouse.locationId,
-          permissions: access.permissions,
+          windowReceipt: access.windowReceipt,
         })
       : false;
     const movement = await tx.warehouseMovement.create({

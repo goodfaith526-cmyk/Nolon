@@ -248,7 +248,7 @@ describe('Window desk (plan 13 section 2)', () => {
       expect(read.todo).not.toContain('receive');
       expect(read.receipts).toEqual([
         expect.objectContaining({
-          number: expect.stringMatching(/-GRN-/),
+          number: expect.stringMatching(/-GRN-/) as unknown,
           packages: 3,
           condition: 'GOOD',
           partyName: `${tag} courier`,
@@ -270,14 +270,18 @@ describe('Window desk (plan 13 section 2)', () => {
       expect(received).toContain(b.id);
     });
 
-    it('receives a booking another outlet sold; the status only moves where the stage applies', async () => {
+    it('receives a booking another outlet sold, booked without the warehouse service', async () => {
+      // A bot booking names no services: its window still opens the origin warehouse stage.
       const b = await booking(ids.windowA!, true, { salesOutletId: ids.outletB });
       await as(on, cookies.staffA!)
         .post(`/window-desk/bookings/${b.id}/receipt`, receipt)
         .expect(201);
       const [movement] = await movementsOf(b.id);
-      expect(movement).toMatchObject({ warehouseId: ids.windowA, statusApplied: null });
-      expect((await shipmentOf(b.id)).status).not.toBe('RECEIVED_ORIGIN_WAREHOUSE');
+      expect(movement).toMatchObject({
+        warehouseId: ids.windowA,
+        statusApplied: 'RECEIVED_ORIGIN_WAREHOUSE',
+      });
+      expect((await shipmentOf(b.id)).status).toBe('RECEIVED_ORIGIN_WAREHOUSE');
     });
 
     it('refuses more packages than the cargo lines without a confirmation and a note', async () => {
@@ -301,6 +305,20 @@ describe('Window desk (plan 13 section 2)', () => {
           note: 'Two more boxes than booked',
         })
         .expect(201);
+    });
+
+    it('runs beside a cancellation without a deadlock (F211-1: the shipment lock first)', async () => {
+      for (let i = 0; i < 3; i++) {
+        const b = await booking(ids.windowA!, true, { services: ['WAREHOUSE'] });
+        const [received, cancelled] = await Promise.all([
+          as(on, cookies.staffA!).post(`/window-desk/bookings/${b.id}/receipt`, receipt),
+          as(on, cookies.sales!).post(`/bookings/${b.id}/cancel`, {
+            reason: 'Customer changed plans',
+          }),
+        ]);
+        expect([201, 404]).toContain(received.status);
+        expect([200, 201, 409]).toContain(cancelled.status);
+      }
     });
 
     it('takes no warehouse, place or status from the body', async () => {
