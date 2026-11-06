@@ -2,12 +2,14 @@ import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nest
 import type {
   WindowDeskBookingDto,
   WindowDeskFilter,
+  WindowDeskPaymentDto,
   WindowDeskReceiptRequest,
   WindowDeskTodo,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { lockOutletsInTx, outletLimited, windowScope } from '../auth/outlet-scope.js';
 import { bookingItemDto } from '../bookings/bookings.service.js';
+import { fromDbDate } from '../common/dates.js';
 import { toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { dropOffDto, dropOffSelect } from '../customer-service/drop-off.js';
@@ -147,9 +149,10 @@ export class WindowDeskService {
       select: deskSelect,
     });
     // The window's branch is the booking's (a column comparison Prisma's filter cannot express).
-    return rows
-      .filter((r) => r.shipment !== null && r.dropOff?.branchId === r.branchId)
-      .map(toDeskDto)
+    const shown = rows.filter((r) => r.shipment !== null && r.dropOff?.branchId === r.branchId);
+    const payments = await windowPayments(this.prisma, shown);
+    return shown
+      .map((r) => toDeskDto(r, payments))
       .sort((a, b) => Number(a.received) - Number(b.received));
   }
 
@@ -161,7 +164,7 @@ export class WindowDeskService {
         where: { id: ctx.bookingId },
         select: deskSelect,
       });
-      return toDeskDto(row);
+      return toDeskDto(row, await windowPayments(tx, [row]));
     });
   }
 
@@ -194,7 +197,8 @@ export class WindowDeskService {
     return this.booking(user, bookingId);
   }
 
-  private requireDesk(user: AuthUser): void {
+  /** 404 while the desk is off; 403 for anyone not limited by outlet. */
+  requireDesk(user: AuthUser): void {
     if (!this.env.WINDOW_DESK_ENABLED) throw new NotFoundException();
     if (!outletLimited(user))
       throw new ForbiddenException('The window desk is for partner outlets');
@@ -256,7 +260,69 @@ export async function authorizeWindowInTx(
   };
 }
 
-function toDeskDto(r: DeskRow): WindowDeskBookingDto {
+/** shipmentId -> the payments taken for it at the booking's window (posted receipts). */
+type PaymentsByShipment = ReadonlyMap<string, WindowDeskPaymentDto[]>;
+
+/**
+ * Plan 13 section 4: the customer's payments taken at each row's window: posted receipts into
+ * one of that window's cash accounts, paying invoices of the row's shipment.
+ */
+async function windowPayments(
+  db: Tx | PrismaService,
+  rows: readonly DeskRow[],
+): Promise<PaymentsByShipment> {
+  const windowOf = new Map(
+    rows.flatMap((r) => (r.shipment && r.dropOff ? [[r.shipment.id, r.dropOff.id] as const] : [])),
+  );
+  if (windowOf.size === 0) return new Map();
+  const receipts = await db.receipt.findMany({
+    where: {
+      status: 'POSTED',
+      cashAccount: { windowCash: { warehouseId: { in: [...new Set(windowOf.values())] } } },
+      allocations: { some: { invoice: { shipmentId: { in: [...windowOf.keys()] } } } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { number: 'asc' }],
+    select: {
+      id: true,
+      number: true,
+      receiptDate: true,
+      currency: true,
+      amount: true,
+      reference: true,
+      createdBy: { select: { fullName: true } },
+      cashAccount: { select: { windowCash: { select: { warehouseId: true } } } },
+      allocations: {
+        orderBy: { invoice: { number: 'asc' } },
+        select: { amount: true, invoice: { select: { number: true, shipmentId: true } } },
+      },
+    },
+  });
+  const out = new Map<string, WindowDeskPaymentDto[]>();
+  for (const r of receipts) {
+    const shipmentIds = new Set(r.allocations.map((a) => a.invoice.shipmentId));
+    for (const shipmentId of shipmentIds) {
+      if (shipmentId === null) continue;
+      if (windowOf.get(shipmentId) !== r.cashAccount.windowCash?.warehouseId) continue;
+      const list = out.get(shipmentId) ?? [];
+      list.push({
+        id: r.id,
+        number: r.number,
+        receiptDate: fromDbDate(r.receiptDate),
+        currency: r.currency,
+        amount: toDecimalString(r.amount),
+        reference: r.reference,
+        createdByName: r.createdBy.fullName,
+        invoices: r.allocations
+          .filter((a) => a.invoice.shipmentId === shipmentId)
+          .map((a) => ({ number: a.invoice.number, amount: toDecimalString(a.amount) })),
+      });
+      out.set(shipmentId, list);
+    }
+  }
+  return out;
+}
+
+function toDeskDto(r: DeskRow, payments: PaymentsByShipment): WindowDeskBookingDto {
   const point = r.dropOff && dropOffDto(r.dropOff);
   if (!r.dropOff || !point) throw new NotFoundException('Booking not found');
   if (!r.shipment) throw new NotFoundException('Booking not found');
@@ -302,6 +368,7 @@ function toDeskDto(r: DeskRow): WindowDeskBookingDto {
           }
         : null,
     received,
+    payments: payments.get(r.shipment.id) ?? [],
     receipts: r.shipment.movements
       .filter((m) => m.warehouseId === windowId)
       .map((m) => ({

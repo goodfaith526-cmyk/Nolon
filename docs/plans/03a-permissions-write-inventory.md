@@ -306,6 +306,9 @@
 - POST `/users/:id/password` · `UsersController.resetPassword` · `users/users.controller.ts` · users:update
 - POST `/warehouses` · `WarehousesController.create` · `warehouse/warehouse.controller.ts` · warehouse:create
 - PATCH `/warehouses/:id` · `WarehousesController.update` · `warehouse/warehouse.controller.ts` · warehouse:update
+- DELETE `/warehouses/:id/cash-accounts/:currency` · `WindowCashAccountsController.remove` · `window-desk/window-cash-accounts.controller.ts` · chart_of_accounts:update
+- PUT `/warehouses/:id/cash-accounts/:currency` · `WindowCashAccountsController.set` · `window-desk/window-cash-accounts.controller.ts` · chart_of_accounts:update
 - POST `/warehouses/:id/locations` · `WarehousesController.addLocation` · `warehouse/warehouse.controller.ts` · warehouse:update
 - PATCH `/warehouses/:id/locations/:locationId` · `WarehousesController.updateLocation` · `warehouse/warehouse.controller.ts` · warehouse:update
+- POST `/window-desk/bookings/:id/payment` · `WindowDeskController.collect` · `window-desk/window-desk.controller.ts` · window_desk:update
 - POST `/window-desk/bookings/:id/receipt` · `WindowDeskController.receive` · `window-desk/window-desk.controller.ts` · window_desk:create

@@ -1431,7 +1431,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           approvalSource: 'AUTO_ON_CONFIRM';
           autoRule: 'AGREED_PRICE' | 'RATE_CARD_WITH_RIGHT';
           autoTermsHash: string | null;
-        },
+        }
+      // Plan 13 section 4: the customer paid at the window; `actor` is the window's user.
+      | { approvedById: null; approvalSource: 'WINDOW_PAYMENT' },
   ): Promise<{ customerId: string }> {
     await lockStatus(tx, id, 'DRAFT');
     await this.commissions.lockInTx(tx, shipmentId);
@@ -1473,9 +1475,10 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
         ...('approvalSource' in approval
           ? {
               approvalSource: approval.approvalSource,
-              autoRule: approval.autoRule,
+              autoRule: approval.approvalSource === 'AUTO_ON_CONFIRM' ? approval.autoRule : null,
               autoInitiatedById: actor.id,
-              autoTermsHash: approval.autoTermsHash,
+              autoTermsHash:
+                approval.approvalSource === 'AUTO_ON_CONFIRM' ? approval.autoTermsHash : null,
             }
           : {}),
       },
@@ -1799,6 +1802,10 @@ function toDto(i: InvoiceWithDetails, user: AuthUser): CustomerInvoiceDto {
     autoApproval:
       i.approvalSource === 'AUTO_ON_CONFIRM' && i.autoRule !== null
         ? { rule: i.autoRule, initiatedByName: i.autoInitiatedBy?.fullName ?? '' }
+        : null,
+    windowApproval:
+      i.approvalSource === 'WINDOW_PAYMENT'
+        ? { initiatedByName: i.autoInitiatedBy?.fullName ?? '' }
         : null,
     autoNote: isAutoNote(i.autoNote) ? i.autoNote : null,
     pricingNotice: null,

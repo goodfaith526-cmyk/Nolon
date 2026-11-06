@@ -146,6 +146,21 @@ This changes who holds NOLON's cash, so it is an accounting change.
 - **Settlement** of the window's cash to NOLON is the existing cash transfer or journal by the accountant; a dedicated
   settlement screen and netting against commission are a later plan.
 - **Switch:** `WINDOW_COLLECT_ENABLED` (default false), on top of `WINDOW_DESK_ENABLED`.
+- **As built (13-4), with the owner's decisions:**
+  - Owner, 2026-11-05 23:20: a window booking's MAIN invoice stays pro forma (a DRAFT, note `AWAITS_WINDOW_PAYMENT`)
+    on confirmation while `WINDOW_COLLECT_ENABLED` is on; plan 12's automatic approval is skipped for it. The window's
+    payment approves it (`approval_source = WINDOW_PAYMENT`, the window's user as `auto_initiated_by_id`, no approver,
+    no plan 12 rule) and posts the receipt, in one transaction. Only the MAIN draft in the payment's currency is approved
+    this way; an additional invoice still needs NOLON's approval first.
+  - Owner's OK for the migration, 2026-11-06 02:25 («موافق»): `window_cash_accounts` (unique per window and currency,
+    and per account), the enum value and the two approval checks re-added to allow it.
+  - Permission: `window_desk:update` (Outlet Staff's level E) is the collection, not a new `window_desk:collect` key.
+    The cash accounts are kept with `chart_of_accounts:update` in the window's branch, on the warehouses screen
+    (`GET|PUT|DELETE /warehouses/:id/cash-accounts[/:currency]`), audited on the warehouse.
+  - Lock order: the shipment first (as closing, cancelling and an invoice's approval), then the window's check, the
+    cash account row, the invoice's approval, the receipt (`ReceiptsService.createInTx`) and the credit check last.
+  - A reused request id with other content is a plain 409 (as receipts); a retry with the same content returns the
+    booking. The receipt voucher is printed from the desk (`/print/window-desk/:bookingId/payments/:receiptId`).
 
 ## 5. The waybill after payment, sent by the bot (PR 13-5)
 

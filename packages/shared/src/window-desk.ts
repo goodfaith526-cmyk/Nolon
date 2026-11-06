@@ -48,6 +48,8 @@ export interface WindowDeskBookingDto {
   received: boolean;
   /** Plan 13 section 3: the live goods receipts made at this window, oldest first. */
   receipts: WindowDeskReceiptDto[];
+  /** Plan 13 section 4: the customer's payments taken at this window, oldest first. */
+  payments: WindowDeskPaymentDto[];
   todo: WindowDeskTodo[];
 }
 
@@ -83,4 +85,45 @@ export interface WindowDeskReceiptRequest {
   occurredAt?: string;
   /** Confirms more packages than the cargo lines have; a note is then required. */
   extraPackagesConfirmed?: boolean;
+}
+
+/** A customer's payment taken at the window: a posted receipt into the window's cash account. */
+export interface WindowDeskPaymentDto {
+  id: string;
+  number: string;
+  receiptDate: string;
+  currency: CurrencyCode;
+  amount: DecimalString;
+  reference: string | null;
+  createdByName: string;
+  /** The invoices it paid, as their printout lists them. */
+  invoices: { number: string | null; amount: DecimalString }[];
+}
+
+/**
+ * POST /window-desk/bookings/:id/payment (plan 13 section 4): the window takes the customer's
+ * money. The server approves the booking's pro forma invoice if it is still one, then posts a
+ * receipt into the window's cash account for `currency`, paying the booking's invoices in that
+ * currency (main first, then additional by date); never more than they owe, never an advance.
+ * `requestId` becomes the receipt's id: a retry with the same content returns it.
+ */
+export interface WindowDeskPaymentRequest {
+  requestId: string;
+  amount: DecimalString;
+  currency: CurrencyCode;
+  reference?: string | null;
+}
+
+/** GET /warehouses/:id/cash-accounts: a window's cash account for one currency. */
+export interface WindowCashAccountDto {
+  currency: CurrencyCode;
+  accountId: string;
+  accountCode: string;
+  accountNameAr: string;
+  accountNameEn: string;
+}
+
+/** PUT /warehouses/:id/cash-accounts/:currency (accounts:update). */
+export interface WindowCashAccountRequest {
+  accountId: string;
 }

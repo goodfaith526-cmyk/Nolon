@@ -454,8 +454,10 @@ export class BillingReportsService {
              COALESCE(i."approved_by_id", i."auto_initiated_by_id"), 'INVOICE', 'APPROVED',
              i."number", NULL,
              -- Plan 12 section 2.1: an automatic approval names its rule and agreed terms.
+             -- Plan 13 section 4: approved by the customer's payment at a window.
              CASE WHEN i."approval_source" = 'AUTO_ON_CONFIRM'
                   THEN concat_ws(' ', 'AUTO_ON_CONFIRM', i."auto_rule"::text, i."auto_terms_hash")
+                  WHEN i."approval_source" = 'WINDOW_PAYMENT' THEN 'WINDOW_PAYMENT'
              END
       FROM "customer_invoices" i WHERE i."approved_at" IS NOT NULL
       UNION ALL

@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WindowDesk } from './WindowDesk';
 
 const api = vi.fn();
-let me = { windowDeskEnabled: true, permissions: ['window_desk:view'] };
+let me = {
+  windowDeskEnabled: true,
+  windowCollectEnabled: false,
+  permissions: ['window_desk:view'],
+};
 vi.mock('next-intl', () => ({
   useLocale: () => 'en',
   useTranslations: () => (key: string) => key,
@@ -55,6 +59,7 @@ const row: WindowDeskBookingDto = {
   invoice: { number: null, status: 'DRAFT', currency: 'SAR', total: '100.00', balance: '100.00' },
   received: false,
   receipts: [],
+  payments: [],
   todo: ['receive', 'collect'],
 };
 
@@ -64,7 +69,7 @@ afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
   api.mockReset();
-  me = { windowDeskEnabled: true, permissions: ['window_desk:view'] };
+  me = { windowDeskEnabled: true, windowCollectEnabled: false, permissions: ['window_desk:view'] };
 });
 
 async function render() {
@@ -94,13 +99,21 @@ describe('WindowDesk', () => {
     expect(buttons(el)).not.toContain('receive');
     act(() => root!.unmount());
     host!.remove();
-    me = { windowDeskEnabled: true, permissions: ['window_desk:view', 'window_desk:create'] };
+    me = {
+      windowDeskEnabled: true,
+      windowCollectEnabled: false,
+      permissions: ['window_desk:view', 'window_desk:create'],
+    };
     const again = await render();
     expect(buttons(again)).toContain('receive');
   });
 
   it('receives the goods and lists the GRN with its printout', async () => {
-    me = { windowDeskEnabled: true, permissions: ['window_desk:view', 'window_desk:create'] };
+    me = {
+      windowDeskEnabled: true,
+      windowCollectEnabled: false,
+      permissions: ['window_desk:view', 'window_desk:create'],
+    };
     api.mockResolvedValueOnce([row]);
     const el = await render();
     const open = [...el.querySelectorAll('button')].find((b) => b.textContent === 'receive')!;
@@ -146,8 +159,59 @@ describe('WindowDesk', () => {
     expect(el.textContent).not.toContain('todo_receive');
   });
 
+  it('takes the payment only with the switch and window_desk:update, posting what is owed', async () => {
+    api.mockResolvedValue([row]);
+    const buttons = (h: HTMLElement) => [...h.querySelectorAll('button')].map((b) => b.textContent);
+    expect(buttons(await render())).not.toContain('collect');
+    act(() => root!.unmount());
+    host!.remove();
+    me = {
+      windowDeskEnabled: true,
+      windowCollectEnabled: true,
+      permissions: ['window_desk:view', 'window_desk:update'],
+    };
+    api.mockReset();
+    api.mockResolvedValueOnce([row]);
+    const el = await render();
+    const open = [...el.querySelectorAll('button')].find((b) => b.textContent === 'collect')!;
+    act(() => open.click());
+    const form = el.querySelector('form.card')!;
+    expect((form.querySelector('input[name=amount]') as HTMLInputElement).value).toBe('100.00');
+    api.mockResolvedValueOnce({
+      ...row,
+      todo: ['receive'],
+      payments: [
+        {
+          id: 'r1',
+          number: 'RC-2026-000001',
+          receiptDate: '2026-11-06',
+          currency: 'SAR',
+          amount: '100',
+          reference: null,
+          createdByName: 'Window clerk',
+          invoices: [{ number: 'INV-2026-000001', amount: '100' }],
+        },
+      ],
+    } satisfies WindowDeskBookingDto);
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(() => Promise.resolve());
+    expect(api).toHaveBeenLastCalledWith('/window-desk/bookings/b1/payment', {
+      method: 'POST',
+      body: expect.objectContaining({ amount: '100.00', currency: 'SAR' }) as unknown,
+    });
+    expect(el.querySelector('a[href="/window-desk/b1/payments/r1"]')?.textContent).toBe(
+      'printReceipt',
+    );
+  });
+
   it('asks nothing while the switch is off or without the permission', async () => {
-    me = { windowDeskEnabled: false, permissions: ['window_desk:view'] };
+    me = {
+      windowDeskEnabled: false,
+      windowCollectEnabled: false,
+      permissions: ['window_desk:view'],
+    };
     expect((await render()).textContent).toContain('noAccess');
     expect(api).not.toHaveBeenCalled();
   });
