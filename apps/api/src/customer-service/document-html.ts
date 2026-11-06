@@ -4,7 +4,8 @@ import { assets, escapeHtml, type StatementLang } from './statement-html.js';
  * Plan 13-5 (owner, 2026-11-06): the two documents the customer gets for what they hand over at
  * the window, the waybill for the parcel and a receipt for the fees, as self-contained HTML (A4,
  * RTL for Arabic) for the PDF renderer: no external URL, no script, every value escaped (plan 09
- * section 7). The waybill carries no price; phones are shown masked.
+ * section 7). The waybill carries no price; phones are shown in full (owner,
+ * 2026-11-06).
  */
 
 export type DocumentLang = StatementLang;
@@ -143,14 +144,6 @@ const TEXT = {
   },
 } as const;
 
-/** A phone with its middle hidden: the first 4 and the last 3 characters stay. */
-export function maskPhone(phone: string | null): string | null {
-  if (!phone) return null;
-  const p = phone.trim();
-  if (p.length <= 7) return '•'.repeat(p.length);
-  return `${p.slice(0, 4)}${'•'.repeat(p.length - 7)}${p.slice(-3)}`;
-}
-
 const day = (iso: string) => iso.slice(0, 10);
 
 function page(lang: DocumentLang, title: string, body: string, footer: string): string {
@@ -196,7 +189,7 @@ export function waybillHtml(w: WaybillData, lang: DocumentLang): string {
     p: { name: string; phone: string | null; city?: string | null } | null,
   ) =>
     `<div class="box"><b>${e(title)}</b><div class="meta"><span>${e(p?.name ?? t.none)}</span><span></span>${
-      p?.phone ? `<span>${e(t.phone)}</span>${ltr(maskPhone(p.phone) ?? '')}` : ''
+      p?.phone ? `<span>${e(t.phone)}</span>${ltr(p.phone)}` : ''
     }${p?.city ? `<span>${e(t.city)}</span><span>${e(p.city)}</span>` : ''}</div></div>`;
   const items = w.items
     .map(
