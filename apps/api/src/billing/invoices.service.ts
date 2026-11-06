@@ -24,7 +24,7 @@ import type {
   InvoiceStatus,
   OpeningCustomerItemRequest,
   Page,
-  InvoicePaymentStatus,
+  PaymentStatus,
   ReceiptOpenInvoiceDto,
   ShipmentInvoiceRefDto,
   UpdateCustomerInvoiceRequest,
@@ -97,7 +97,7 @@ export interface InvoiceFilters extends PageQuery {
   /** Approved invoices with a balance left, due before today in their branch's time zone. */
   overdue?: boolean;
   /** By what payments and credit notes settled (as `paymentStatus` in the summary). */
-  paymentStatus?: InvoicePaymentStatus;
+  paymentStatus?: PaymentStatus;
   /** One of the user's branches (403 otherwise); else all of them. */
   branchId?: string;
   /** Invoice date from / to, both included. */
@@ -402,7 +402,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
    */
   private async settlementIds(
     branchIds: readonly string[],
-    settlement: 'OPEN' | 'PARTIAL' | 'PAID' | 'CREDITED',
+    settlement: 'OPEN' | 'PARTIAL' | 'PAID',
     customerId?: string,
   ): Promise<string[]> {
     if (branchIds.length === 0) return [];
@@ -410,8 +410,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     const condition = {
       OPEN: Prisma.sql`"status" = 'APPROVED' AND ${settled} < "total"`,
       PARTIAL: Prisma.sql`${settled} > 0 AND ${settled} < "total"`,
-      PAID: Prisma.sql`"paid_amount" <> 0 AND ${settled} >= "total"`,
-      CREDITED: Prisma.sql`"paid_amount" = 0 AND "credited_amount" <> 0 AND ${settled} >= "total"`,
+      PAID: Prisma.sql`${settled} <> 0 AND ${settled} >= "total"`,
     }[settlement];
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "customer_invoices"
@@ -1708,17 +1707,24 @@ function addDays(date: string, days: number): string {
   return fromDbDate(d);
 }
 
-/**
- * UNPAID, PARTIAL or PAID by what payments and credit notes settled together; CREDITED when credit
- * notes alone settled it (nothing was paid on it).
- */
+/** UNPAID, PARTIAL or PAID by what payments and credit notes settled together. */
 export function paymentStatus(
   invoice: Pick<CustomerInvoice, 'total' | 'paidAmount' | 'creditedAmount'>,
-): InvoicePaymentStatus {
+): PaymentStatus {
   const settled = invoice.paidAmount.plus(invoice.creditedAmount);
   if (settled.isZero()) return 'UNPAID';
-  if (settled.lt(invoice.total)) return 'PARTIAL';
-  return invoice.paidAmount.isZero() ? 'CREDITED' : 'PAID';
+  return settled.gte(invoice.total) ? 'PAID' : 'PARTIAL';
+}
+
+/** Trial 2026-11-06: settled by credit notes alone, nothing paid on it. */
+export function creditedOnly(
+  invoice: Pick<CustomerInvoice, 'total' | 'paidAmount' | 'creditedAmount'>,
+): boolean {
+  return (
+    invoice.paidAmount.isZero() &&
+    invoice.creditedAmount.gt(0) &&
+    invoice.creditedAmount.gte(invoice.total)
+  );
 }
 
 function balance(invoice: {
@@ -1749,6 +1755,7 @@ function toSummary(i: InvoiceWithDetails): CustomerInvoiceSummaryDto {
     creditedAmount: i.creditedAmount.toFixed(),
     balance: balance(i).toFixed(),
     paymentStatus: paymentStatus(i),
+    creditedOnly: creditedOnly(i),
     kind: i.kind,
     live: isLiveInvoice(i),
   };

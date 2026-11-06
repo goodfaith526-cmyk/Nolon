@@ -1137,6 +1137,14 @@ describe('consolidated LCL containers', () => {
     }).expect(200);
     expect(await bl(late)).toBe('MEDU0000002');
     expect(created.masterBlNumber).toBe('MEDU0000001');
+    // F215-3: corrected, the copies follow; a BL of its own stays; taken out, the copy leaves.
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      masterBlNumber: 'MEDU0000003',
+    }).expect(200);
+    expect([await bl(bare), await bl(own)]).toEqual(['MEDU0000003', 'HBL-OWN-1']);
+    await del(`/consolidations/${created.id}/shipments/${bare}`, cookies.opsJed).expect(200);
+    await del(`/consolidations/${created.id}/shipments/${own}`, cookies.opsJed).expect(200);
+    expect([await bl(bare), await bl(own)]).toEqual([null, 'HBL-OWN-1']);
   });
 
   it('a shipment in a container gets the container statuses from the container only (أ3)', async () => {

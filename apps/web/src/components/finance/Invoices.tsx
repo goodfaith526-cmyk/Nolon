@@ -139,7 +139,10 @@ export function Invoices() {
                     </td>
                     <td>
                       {i.status === 'APPROVED' ? (
-                        <StatusBadge kind="payment" status={i.paymentStatus} />
+                        <StatusBadge
+                          kind="payment"
+                          status={i.creditedOnly ? 'CREDITED' : i.paymentStatus}
+                        />
                       ) : (
                         '—'
                       )}

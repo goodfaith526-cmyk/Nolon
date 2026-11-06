@@ -873,6 +873,7 @@ export class BookingRequestsService {
     caller: BookingRequestCaller,
     id: string,
     sender: { channel: CsSenderChannel; id: string } | null,
+    proof: { channel: CsSenderChannel; subjectId: string } | null = null,
   ): Promise<CsBookingRequestDto> {
     const row = await this.prisma.csBookingRequest.findFirst({
       where: ownedWhere(caller, id, sender),
@@ -932,8 +933,10 @@ export class BookingRequestsService {
         track.shipment && shipment
           ? { ...track.shipment, trackingUrl: this.trackingUrl(shipment.trackingToken) }
           : null,
+      // F215-4: amounts only to a proven owner (a customer token, or a signed identity of the
+      // request's sender); X-Cs-Sender alone is no proof.
       payment:
-        row.status === 'APPROVED' && shipment
+        row.status === 'APPROVED' && shipment && provesOwner(caller, proof, row)
           ? await this.paymentOf(caller.client, shipment.id)
           : null,
     };
@@ -1454,6 +1457,16 @@ function provenOwner(
   what: string,
 ): Prisma.CsBookingRequestWhereInput {
   return { id, ...provenOwnerOf(caller, proof, what) };
+}
+
+/** Whether the caller is the request's proven owner (a customer token or a signed identity). */
+function provesOwner(
+  caller: BookingRequestCaller,
+  proof: { channel: CsSenderChannel; subjectId: string } | null,
+  row: CsBookingRequest,
+): boolean {
+  if (caller.kind === 'customer') return true;
+  return proof !== null && row.senderChannel === proof.channel && row.senderId === proof.subjectId;
 }
 
 /** The proven owner's requests (any id): as provenOwner, the key alone is no proof. */

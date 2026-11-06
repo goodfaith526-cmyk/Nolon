@@ -417,6 +417,10 @@ describe('cargo line corrections (B3-3)', () => {
       }).expect(201)
     ).body as CreditNoteDto;
     await post(`/credit-notes/${credit.id}/approve`, cookies.managerJed).expect(200);
+    // Trial 2026-11-06: settled by the credit note alone, it is not shown as paid.
+    expect(
+      (await get(`/customer-invoices/${invoice.id}`, cookies.financeJed).expect(200)).body,
+    ).toMatchObject({ paymentStatus: 'PAID', creditedOnly: true });
     await correct(id, await request(id, [{ quantity: 2 }])).expect(200);
   });
 

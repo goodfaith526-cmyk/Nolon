@@ -95,13 +95,6 @@ export type InvoiceKind = (typeof INVOICE_KINDS)[number];
 export const PAYMENT_STATUSES = ['UNPAID', 'PARTIAL', 'PAID'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
-/**
- * A customer invoice's settlement: as PAYMENT_STATUSES, plus CREDITED when credit notes closed it
- * with nothing paid on it (trial 2026-11-06: such an invoice is not "paid").
- */
-export const INVOICE_PAYMENT_STATUSES = [...PAYMENT_STATUSES, 'CREDITED'] as const;
-export type InvoicePaymentStatus = (typeof INVOICE_PAYMENT_STATUSES)[number];
-
 export const RECEIPT_STATUSES = ['POSTED', 'CANCELLED'] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
@@ -310,10 +303,13 @@ export interface CustomerInvoiceSummaryDto {
   creditedAmount: DecimalString;
   /** Total less payments and credit notes. */
   balance: DecimalString;
+  /** PAID once payments and credit notes cover the total. */
+  paymentStatus: PaymentStatus;
   /**
-   * PAID once payments and credit notes cover the total; CREDITED when credit notes alone did.
+   * Trial 2026-11-06: PAID by credit notes alone, nothing paid on it (shown "closed by credit
+   * note", not "paid"). A field of its own: paymentStatus keeps its three values (F215-1).
    */
-  paymentStatus: InvoicePaymentStatus;
+  creditedOnly: boolean;
   kind: InvoiceKind;
   /**
    * The invoice still bills its shipment: a draft, or approved and not wholly credited unpaid.

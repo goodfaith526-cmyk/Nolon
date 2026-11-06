@@ -448,6 +448,14 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       const ids = await this.lockShipments(tx, id);
       // Only the voyage fields sent are copied, a clear (null) included: an edit of the notes
       // leaves the shipments' own voyage alone.
+      if (input.masterBlNumber !== undefined) {
+        await this.shipments.replaceMasterBlInTx(
+          tx,
+          ids,
+          container.masterBlNumber,
+          updated.masterBlNumber,
+        );
+      }
       await this.shipments.setVoyageInTx(
         tx,
         ids,
@@ -656,6 +664,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       const container = await lockContainer(tx, id);
       requireOpen(container);
       await takeOut(tx, id, shipmentId);
+      // F215-3: a BL copied from this container's master BL leaves with it.
+      await this.shipments.replaceMasterBlInTx(tx, [shipmentId], container.masterBlNumber, null);
     });
     return this.get(user, id);
   }
@@ -693,6 +703,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       requireOpen(target);
       await requireRoom(tx, target);
       await takeOut(tx, id, shipmentId);
+      // F215-3: a BL copied from this container's master BL leaves with it.
+      await this.shipments.replaceMasterBlInTx(tx, [shipmentId], source.masterBlNumber, null);
       await this.addShipments(tx, user, target, [shipmentId], numbers, { moving: true });
     });
     return this.get(user, id);

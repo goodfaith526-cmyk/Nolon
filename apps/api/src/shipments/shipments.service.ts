@@ -1578,6 +1578,23 @@ export class ShipmentsService {
     await tx.shipment.updateMany({ where, data: { [field]: day } });
   }
 
+  /**
+   * F215-3: a container's master BL changed from `before` (or the shipments left it): those that
+   * carry the old one as their BL take `after` (null clears it). A BL of their own stays.
+   */
+  async replaceMasterBlInTx(
+    tx: Tx,
+    ids: readonly string[],
+    before: string | null,
+    after: string | null,
+  ): Promise<void> {
+    if (ids.length === 0 || !before || before === after) return;
+    await tx.shipment.updateMany({
+      where: { id: { in: [...ids] }, blNumber: before },
+      data: { blNumber: after },
+    });
+  }
+
   /** For a proof of delivery without a trip, inside its transaction: the shipment's destination. */
   async destinationInTx(tx: Tx, id: string): Promise<string> {
     const shipment = await tx.shipment.findUniqueOrThrow({

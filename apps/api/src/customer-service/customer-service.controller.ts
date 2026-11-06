@@ -591,8 +591,9 @@ export class BookingRequestsController {
     @CurrentBookingCaller() caller: BookingRequestCaller,
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-cs-sender') sender: string | undefined,
+    @Req() req: RawBodyRequest<Request>,
   ): Promise<CsBookingRequestDto> {
-    return this.requests.read(caller, id, senderHeader(sender));
+    return this.requests.read(caller, id, senderHeader(sender), this.proofOf(caller, req));
   }
 
   /** Plan 09 section 2: the owner cancels its request while staff have not decided it. */

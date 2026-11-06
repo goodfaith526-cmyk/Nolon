@@ -15,7 +15,7 @@ import {
   INVOICE_KINDS,
   INVOICE_STATUSES,
   MAX_ACKNOWLEDGED_INVOICES,
-  INVOICE_PAYMENT_STATUSES,
+  PAYMENT_STATUSES,
   RECEIPT_STATUSES,
   type CreditNoteDto,
   type CreditNoteSummaryDto,
@@ -91,7 +91,7 @@ const invoiceListQuery = pageQuery
     openOnly: flag,
     /** Approved, not fully settled, due before today (branch-local). */
     overdue: flag,
-    paymentStatus: z.enum(INVOICE_PAYMENT_STATUSES).optional(),
+    paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
     ...branchPeriodFields,
   })
   .superRefine(periodInOrder);
