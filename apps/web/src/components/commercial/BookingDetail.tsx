@@ -1,6 +1,6 @@
 'use client';
 
-import type { BookingDto, CustomerDto } from '@nolon/shared';
+import type { BookingDto, CustomerDto, ShipmentDto, ShipmentStatus } from '@nolon/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/i18n/navigation';
@@ -31,6 +31,8 @@ export function BookingDetail({ id }: { id: string }) {
   const failure = useFailureText();
   const [booking, setBooking] = useState<BookingDto | null>(null);
   const [customer, setCustomer] = useState<CustomerDto | null>(null);
+  // Where the booking's shipment stands, so the booking page answers "where is it now?".
+  const [shipmentStatus, setShipmentStatus] = useState<ShipmentStatus | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [reason, setReason] = useState('');
   const [notice, setNotice] = useState<NoticeState | null>(null);
@@ -49,6 +51,11 @@ export function BookingDetail({ id }: { id: string }) {
         if (can(me, 'customers:view')) {
           api<CustomerDto>(`/customers/${b.customerId}`)
             .then(setCustomer)
+            .catch(() => undefined);
+        }
+        if (b.shipmentId && can(me, 'shipments:view')) {
+          api<ShipmentDto>(`/shipments/${b.shipmentId}`)
+            .then((shipment) => setShipmentStatus(shipment.status))
             .catch(() => undefined);
         }
       })
@@ -201,6 +208,8 @@ export function BookingDetail({ id }: { id: string }) {
         <dd>
           {new Intl.ListFormat(locale).format(booking.services.map((s) => te(`service_${s}`)))}
         </dd>
+        <dt>{t('cargoDescription')}</dt>
+        <dd>{booking.cargoDescription ?? '—'}</dd>
         <dt>{t('shipperId')}</dt>
         <dd>{party(booking.shipperId)}</dd>
         <dt>{t('consigneeId')}</dt>
@@ -219,6 +228,22 @@ export function BookingDetail({ id }: { id: string }) {
             ? `${locale === 'ar' ? booking.dropOff.name.ar : booking.dropOff.name.en} (${booking.dropOff.code})`
             : '—'}
         </dd>
+        <dt>{t('specialInstructions')}</dt>
+        <dd className="pre">{booking.specialInstructions ?? '—'}</dd>
+        {booking.shipmentId && (
+          <>
+            <dt>{t('shipment')}</dt>
+            <dd>
+              <span dir="ltr">{booking.shipmentNumber}</span>
+              {shipmentStatus && (
+                <>
+                  {' '}
+                  <StatusBadge kind="shipment" status={shipmentStatus} />
+                </>
+              )}
+            </dd>
+          </>
+        )}
         {booking.cancelReason && (
           <>
             <dt>{t('cancelReason')}</dt>

@@ -1,6 +1,11 @@
 'use client';
 
-import type { CreateCreditNoteRequest, CreditNoteDto, CustomerInvoiceDto } from '@nolon/shared';
+import {
+  BASE_CURRENCY,
+  type CreateCreditNoteRequest,
+  type CreditNoteDto,
+  type CustomerInvoiceDto,
+} from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { Link, useRouter } from '@/i18n/navigation';
@@ -294,10 +299,10 @@ export function InvoiceDetail({ id }: { id: string }) {
                   </td>
                   <td dir="ltr">{l.quantity}</td>
                   <td dir="ltr">
-                    <Money value={l.unitPrice} />
+                    <Money value={l.unitPrice} currency={inv.currency} />
                   </td>
                   <td dir="ltr">
-                    <Money value={l.lineTotal} />
+                    <Money value={l.lineTotal} currency={inv.currency} />
                   </td>
                 </tr>
               ))}
@@ -313,10 +318,15 @@ export function InvoiceDetail({ id }: { id: string }) {
             <Money value={inv.total} currency={inv.currency} />
           </strong>
         </dd>
-        <dt>{t('totalUsd')}</dt>
-        <dd dir="ltr">
-          <Money value={inv.totalUsd} currency="USD" />
-        </dd>
+        {/* In dollars already: the dollar total would repeat the total above. */}
+        {inv.currency !== BASE_CURRENCY && (
+          <>
+            <dt>{t('totalUsd')}</dt>
+            <dd dir="ltr">
+              <Money value={inv.totalUsd} currency={BASE_CURRENCY} />
+            </dd>
+          </>
+        )}
         <dt>{t('paid')}</dt>
         <dd dir="ltr">
           <Money value={inv.paidAmount} currency={inv.currency} />

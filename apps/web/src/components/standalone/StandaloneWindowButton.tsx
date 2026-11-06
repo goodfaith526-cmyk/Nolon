@@ -22,7 +22,7 @@ export function StandaloneWindowButton({
   return (
     <button
       type="button"
-      className={iconOnly ? 'ghost icon-button window-button' : undefined}
+      className={iconOnly ? 'ghost icon-button window-button' : 'window-button-labelled'}
       title={label}
       aria-label={iconOnly ? label : undefined}
       onClick={() => openStandaloneWindow(locale, record)}

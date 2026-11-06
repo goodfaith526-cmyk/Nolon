@@ -3973,3 +3973,220 @@ span.capacity-full {
 .approve-price strong {
   font-size: var(--text-lg, 1.25rem);
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Side sheet (screen review 2026-11-06): a record page's forms open beside the page, not inside it.
+   --------------------------------------------------------------------------------------------- */
+
+.drawer {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  inline-size: min(40rem, 100vw);
+  max-inline-size: 100vw;
+  block-size: 100dvh;
+  max-block-size: 100dvh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.drawer::backdrop {
+  background: rgb(15 27 45 / 0.45);
+}
+
+.drawer-sheet {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 1rem;
+  padding-inline: 1.5rem;
+  border-block-end: 1px solid var(--border);
+}
+
+.drawer-head h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-block: 1.25rem;
+  padding-inline: 1.5rem;
+}
+
+/* A form that is a card on the page reads as the sheet itself here. */
+.drawer-body > .card {
+  max-inline-size: none;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Shipment progress: the milestones bar and the key facts above the tabs.
+   --------------------------------------------------------------------------------------------- */
+
+.shipment-progress {
+  padding-block: 1.25rem 1rem;
+  padding-inline: 1.25rem;
+}
+
+.milestones {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.milestone {
+  position: relative;
+  display: flex;
+  flex: 1 0 6.5rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  text-align: center;
+}
+
+/* The line joining each dot to the one before it. */
+.milestone + .milestone::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-end: 50%;
+  inline-size: 100%;
+  block-size: 2px;
+  background: var(--border-strong);
+}
+
+.milestone.done + .milestone::before {
+  background: var(--brand-blue);
+}
+
+.milestone-dot {
+  position: relative;
+  z-index: 1;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.milestone.done .milestone-dot {
+  border-color: var(--brand-blue);
+  background: var(--brand-blue);
+}
+
+.milestone.current .milestone-dot {
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 4px var(--brand-blue-ring);
+}
+
+.milestone.current.stopped-ON_HOLD .milestone-dot {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 4px var(--warn-soft);
+}
+
+.milestone.current.stopped-CANCELLED .milestone-dot {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 4px var(--bad-soft);
+}
+
+.milestone-label {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.milestone.done .milestone-label,
+.milestone.current .milestone-label {
+  color: var(--fg);
+}
+
+.milestone.current .milestone-label {
+  font-weight: 700;
+}
+
+.milestone-date {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.milestone-stopped {
+  margin: 0.75rem 0 0;
+  padding-block: 0.5rem;
+  padding-inline: 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.milestone-stopped.ON_HOLD {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.milestone-stopped.CANCELLED {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.key-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 1.25rem 0 0;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--border);
+}
+
+.key-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-inline-size: 0;
+}
+
+.key-facts dt {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.key-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .milestone {
+    flex-basis: 3.5rem;
+  }
+
+  .milestone-label {
+    font-size: var(--text-xs);
+  }
+
+  .key-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* A window of its own means nothing on a phone; the record page already fills the screen. */
+  .page-head .window-button-labelled {
+    display: none;
+  }
+}

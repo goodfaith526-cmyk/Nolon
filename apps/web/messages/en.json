@@ -629,7 +629,8 @@
     "dropOffHours": "Opening hours",
     "dropOffPhone": "Phone",
     "dropOffMap": "Map location",
-    "dropOffMapQr": "Scan for the location"
+    "dropOffMapQr": "Scan for the location",
+    "shipment": "Shipment"
   },
   "Shipments": {
     "paymentOverrideReason": "Hand over without the invoice or payment: reason (at least 10 characters)",
@@ -752,7 +753,19 @@
     "widthCm": "Width (cm)",
     "heightCm": "Height (cm)",
     "lineDescription": "Description",
-    "tabProfit": "Profit"
+    "tabProfit": "Profit",
+    "progressLabel": "Shipment progress",
+    "milestone_REGISTERED": "Registered",
+    "milestone_ORIGIN": "At origin",
+    "milestone_ON_THE_WAY": "On the way",
+    "milestone_ARRIVED": "Arrived",
+    "milestone_CUSTOMS": "Customs",
+    "milestone_DELIVERY": "Delivery",
+    "stoppedHold": "The shipment is on hold at this step.",
+    "stoppedCancelled": "The shipment was cancelled at this step.",
+    "lastUpdate": "Last update",
+    "nextStep": "Next step",
+    "drawerClose": "Close"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -3329,7 +3342,10 @@
     "newCustomerFromRequest": "New customer from the request: {name}",
     "chooseExistingCustomer": "Choose an existing customer",
     "useRequestCustomer": "New customer from the request's details",
-    "checkingPrice": "Checking the price…"
+    "checkingPrice": "Checking the price…",
+    "tabRequests": "Requests",
+    "tabSettings": "Bot settings",
+    "noRequests": "No requests in this state."
   },
   "PaymentInstructions": {
     "title": "Payment instructions",

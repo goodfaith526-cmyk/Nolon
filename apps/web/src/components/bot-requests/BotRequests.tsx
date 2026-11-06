@@ -14,6 +14,7 @@ import { field } from '@/lib/form';
 import { useLocalName, useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { can, useMe } from '../StaffShell';
+import { Tabs } from '../Tabs';
 import { CustomerStages } from './CustomerStages';
 import { SupportPhones } from './SupportPhones';
 
@@ -56,70 +57,103 @@ export function BotRequests() {
       <h1>{t('title')}</h1>
       <p className="muted">{t('intro')}</p>
       <Notice notice={notice} />
-      <div className="row">
-        <select
-          value={state}
-          aria-label={tc('status')}
-          onChange={(e) => {
-            setRows(null);
-            setState(e.target.value as CsReviewFilter);
-          }}
-        >
-          {CS_REVIEW_FILTERS.map((s) => (
-            <option key={s} value={s}>
-              {t(`filter_${s}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-      {rows === null ? (
-        <p className="muted">{tc('loading')}</p>
-      ) : rows.length === 0 ? (
-        <p className="muted">{tc('empty')}</p>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t('reference')}</th>
-                <th>{t('createdAt')}</th>
-                <th>{t('route')}</th>
-                <th>{t('category')}</th>
-                <th>{t('quantity')}</th>
-                <th>{t('sender')}</th>
-                <th>{t('branch')}</th>
-                <th>{tc('status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td dir="ltr">
-                    <Link href={`/cs-booking-requests/${r.id}`}>{r.reference}</Link>
-                  </td>
-                  <td>{new Date(r.createdAt).toLocaleString(locale)}</td>
-                  <td>{t('routeOf', { from: place(r.originId), to: place(r.destinationId) })}</td>
-                  <td dir="ltr">{r.category ?? t('unmatched')}</td>
-                  <td dir="ltr">{r.quantity}</td>
-                  <td>
-                    {r.senderName}
-                    {r.channel && <span className="muted"> · {t(`channel_${r.channel}`)}</span>}
-                  </td>
-                  <td>{branch(r.branchId)}</td>
-                  <td>
-                    <span className={`badge badge-${r.status.toUpperCase()}`}>
-                      {t(`state_${r.status}`)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <RejectReasons editable={can(me, 'master_data:update')} />
-      {can(me, 'master_data:view') && <CustomerStages editable={can(me, 'master_data:update')} />}
-      {can(me, 'master_data:view') && <SupportPhones editable={can(me, 'master_data:update')} />}
+      {/* Screen review 2026-11-06: the requests are the page; the bot's settings sit on their own tab. */}
+      <Tabs
+        label={t('title')}
+        tabs={[
+          {
+            key: 'requests',
+            label: t('tabRequests'),
+            content: (
+              <>
+                <div className="row">
+                  <select
+                    value={state}
+                    aria-label={tc('status')}
+                    onChange={(e) => {
+                      setRows(null);
+                      setState(e.target.value as CsReviewFilter);
+                    }}
+                  >
+                    {CS_REVIEW_FILTERS.map((s) => (
+                      <option key={s} value={s}>
+                        {t(`filter_${s}`)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {rows === null ? (
+                  <p className="muted">{tc('loading')}</p>
+                ) : rows.length === 0 ? (
+                  <p className="empty">{t('noRequests')}</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>{t('reference')}</th>
+                          <th>{t('createdAt')}</th>
+                          <th>{t('route')}</th>
+                          <th>{t('category')}</th>
+                          <th>{t('quantity')}</th>
+                          <th>{t('sender')}</th>
+                          <th>{t('branch')}</th>
+                          <th>{tc('status')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r) => (
+                          <tr key={r.id}>
+                            <td dir="ltr">
+                              <Link href={`/cs-booking-requests/${r.id}`}>{r.reference}</Link>
+                            </td>
+                            <td>{new Date(r.createdAt).toLocaleString(locale)}</td>
+                            <td>
+                              {t('routeOf', {
+                                from: place(r.originId),
+                                to: place(r.destinationId),
+                              })}
+                            </td>
+                            <td dir="ltr">{r.category ?? t('unmatched')}</td>
+                            <td dir="ltr">{r.quantity}</td>
+                            <td>
+                              {r.senderName}
+                              {r.channel && (
+                                <span className="muted"> · {t(`channel_${r.channel}`)}</span>
+                              )}
+                            </td>
+                            <td>{branch(r.branchId)}</td>
+                            <td>
+                              <span className={`badge badge-${r.status.toUpperCase()}`}>
+                                {t(`state_${r.status}`)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            ),
+          },
+          {
+            key: 'bot-settings',
+            label: t('tabSettings'),
+            content: (
+              <>
+                <RejectReasons editable={can(me, 'master_data:update')} />
+                {can(me, 'master_data:view') && (
+                  <CustomerStages editable={can(me, 'master_data:update')} />
+                )}
+                {can(me, 'master_data:view') && (
+                  <SupportPhones editable={can(me, 'master_data:update')} />
+                )}
+              </>
+            ),
+          },
+        ]}
+      />
     </section>
   );
 }
