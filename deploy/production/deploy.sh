@@ -105,8 +105,8 @@ compose run --rm migrate
 echo "==> Branches and the first Administrator (no demo data)"
 compose run --rm migrate node dist/seed/base-main.js
 
-echo "==> Starting api, web and caddy"
-compose up -d --wait --remove-orphans api web caddy
+echo "==> Starting the PDF renderer, api, web and caddy"
+compose up -d --wait --remove-orphans gotenberg api web caddy
 
 if [ "$backups" = 1 ]; then
   ./backup.sh install-cron

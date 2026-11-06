@@ -136,8 +136,8 @@ if grep -qx "SEED_DEMO_DATA=true" .env; then
   compose run --rm migrate node dist/seed/main.js
 fi
 
-echo "==> Starting api, web and caddy"
-compose up -d --wait --remove-orphans api web caddy
+echo "==> Starting the PDF renderer, api, web and caddy"
+compose up -d --wait --remove-orphans gotenberg api web caddy
 
 if [ "$backups" = 1 ]; then
   ./backup.sh install-cron
