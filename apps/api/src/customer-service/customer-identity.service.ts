@@ -34,6 +34,20 @@ export interface ProfileBookingBinding {
   context: IdentityEnvelope['context'];
 }
 const DAY = 86_400_000;
+/** New website visitor identities one key may start in 24 hours (owner, 2026-11-06). */
+export const WEB_NEW_VISITORS_PER_DAY = 200;
+
+/** The WEB identities this key's conversations started in the last 24 hours. */
+async function newWebVisitors(tx: Tx, companyId: string, apiClientId: string, now: Date) {
+  return tx.customerChannelIdentity.count({
+    where: {
+      companyId,
+      channel: 'WEB',
+      createdAt: { gte: new Date(now.getTime() - DAY) },
+      conversations: { some: { apiClientId } },
+    },
+  });
+}
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
 export async function identityLock(tx: Tx, key: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`customer-profile:${key}`}, 0))`;
@@ -144,6 +158,13 @@ export class CustomerIdentityService {
         ].sort();
         for (const p of phones) await identityLock(tx, `${companyId}:phone:${p}`);
         if (!identity) {
+          // Owner, 2026-11-06: a website visitor proves nothing but the agent's session, so a key
+          // starts at most WEB_NEW_VISITORS_PER_DAY new visitor identities a day.
+          if (
+            channel === 'WEB' &&
+            (await newWebVisitors(tx, companyId, clientId, now)) >= WEB_NEW_VISITORS_PER_DAY
+          )
+            identityError(429, 'CAPTURE_LIMIT', { retryAfterSeconds: 3600 });
           identity = await tx.customerChannelIdentity.create({
             data: {
               ...selector,
@@ -355,7 +376,11 @@ export class CustomerIdentityService {
         ) {
           await this.customers.channelAccountInTx(tx, {
             profile,
-            channelName: identity.displayName ?? identity.username ?? null,
+            // A website visitor's file waits for the name they give (owner, 2026-11-06).
+            channelName:
+              identity.channel === 'WEB'
+                ? null
+                : (identity.displayName ?? identity.username ?? null),
             apiClientId: clientId,
           });
         }

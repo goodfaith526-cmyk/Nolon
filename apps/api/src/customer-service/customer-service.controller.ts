@@ -21,6 +21,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { CustomerIdentityAuth, identityError } from './customer-identity-auth.js';
+import { senderChannelOf, senderIdOf } from './customer-identity.contract.js';
 import {
   type ApiClientCreatedDto,
   type ApiClientDto,
@@ -553,7 +554,7 @@ export class BookingRequestsController {
         ('channel' in input && input.channel !== channel) ||
         ('sender' in input &&
           input.sender &&
-          (input.sender.channel !== channel || input.sender.id !== envelope.context.subjectId))
+          (input.sender.channel !== channel || input.sender.id !== senderIdOf(envelope.context)))
       )
         identityError(401, 'INVALID_CHANNEL_ASSERTION');
       binding = {
@@ -654,15 +655,15 @@ export class BookingRequestsController {
   private proofOf(
     caller: BookingRequestCaller,
     req: RawBodyRequest<Request>,
-  ): { channel: 'whatsapp' | 'telegram'; subjectId: string } | null {
+  ): { channel: 'whatsapp' | 'telegram' | 'web'; subjectId: string } | null {
     const signed =
       caller.kind === 'key' && req.get('X-Nolon-Channel-Assertion') !== undefined
         ? this.identityAuth.verify(caller.client.id, req).context
         : null;
     return signed
       ? {
-          channel: signed.channel === 'WHATSAPP' ? ('whatsapp' as const) : ('telegram' as const),
-          subjectId: signed.subjectId,
+          channel: senderChannelOf(signed.channel),
+          subjectId: senderIdOf(signed),
         }
       : null;
   }

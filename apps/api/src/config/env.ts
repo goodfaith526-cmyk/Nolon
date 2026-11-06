@@ -102,6 +102,17 @@ const envSchema = z.object({
   ),
   /** Secret JSON map keyed by API client UUID: { secret, accounts: [{channel, channelAccountId}] }. */
   CS_CUSTOMER_IDENTITY_CLIENTS: emptyAsUnset(z.string().default('{}')),
+  /**
+   * Owner, 2026-11-06: the website chat's channel account (e.g. nolon.dev). Set, a configured key
+   * may sign WEB identities of its website visitors under it (a customer file once the visitor
+   * gives a name; their quotes saved there). Unset (default): no WEB identity is accepted.
+   */
+  CS_WEB_IDENTITY_ACCOUNT: emptyAsUnset(
+    z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .optional(),
+  ),
   CS_CUSTOMER_FOLLOWUP_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

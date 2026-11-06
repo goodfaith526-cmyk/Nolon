@@ -10,11 +10,12 @@ import { QuotationsService } from '../quotations/quotations.service.js';
 import type { BookingRequestCaller } from './booking-request.guard.js';
 import { currentKey } from './booking-requests.service.js';
 import { CustomerIdentityAuth } from './customer-identity-auth.js';
+import type { IdentityChannel } from './customer-identity.contract.js';
 import { CustomerTokensService } from './customer-tokens.service.js';
 
 /** The sender proven by a signed channel identity (plan 08), as its context names it. */
 export interface QuoteSaveProof {
-  channel: 'WHATSAPP' | 'TELEGRAM';
+  channel: IdentityChannel;
   subjectId: string;
 }
 

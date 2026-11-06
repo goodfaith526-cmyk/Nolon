@@ -88,6 +88,7 @@ services:
       CS_WEBHOOK_WORKER_ENABLED: ${CS_WEBHOOK_WORKER_ENABLED:-false}
       CS_CUSTOMER_IDENTITY_COMPANY_ID: ${CS_CUSTOMER_IDENTITY_COMPANY_ID:-}
       CS_CUSTOMER_IDENTITY_CLIENTS: ${CS_CUSTOMER_IDENTITY_CLIENTS:-}
+      CS_WEB_IDENTITY_ACCOUNT: ${CS_WEB_IDENTITY_ACCOUNT:-}
       CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED: ${CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED:-false}
       # Host nginx, then this stack's Caddy (which trusts nginx and appends to X-Forwarded-For),
       # so the API sees each client's real IP and the per-IP sign-in limit works

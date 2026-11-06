@@ -97,13 +97,16 @@ export class CustomerIdentityAuth {
     const parsed = channelContext.safeParse(unknownContext);
     if (!parsed.success) identityError(401, 'INVALID_CHANNEL_ASSERTION');
     const context = parsed.data;
-    if (
-      !config.accounts.some(
-        (a) => a.channel === context.channel && a.channelAccountId === context.channelAccountId,
-      )
-    ) {
-      identityError(403, 'CHANNEL_NOT_ALLOWED');
-    }
+    // WEB (owner, 2026-11-06): the one website account CS_WEB_IDENTITY_ACCOUNT names, for every
+    // configured key; unset, no website identity is accepted.
+    const allowed =
+      context.channel === 'WEB'
+        ? this.env.CS_WEB_IDENTITY_ACCOUNT !== undefined &&
+          context.channelAccountId === this.env.CS_WEB_IDENTITY_ACCOUNT
+        : config.accounts.some(
+            (a) => a.channel === context.channel && a.channelAccountId === context.channelAccountId,
+          );
+    if (!allowed) identityError(403, 'CHANNEL_NOT_ALLOWED');
     const isGet = req.method === 'GET';
     const idempotencyKey = isGet ? '' : (req.get('Idempotency-Key') ?? '');
     const rawBody = isGet ? Buffer.alloc(0) : req.rawBody;
