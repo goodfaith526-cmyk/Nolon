@@ -811,6 +811,9 @@ export const FORM_REFUSALS = [
   'CONTAINER_VOLUME_MISSING',
   'CONTAINER_WEIGHT_MISSING',
   'SAME_CONTAINER',
+  // A trip refused for shipments not yet at a stage that goes on a trip (e.g. not received at
+  // the origin warehouse): param `shipments`, their numbers.
+  'TRIP_SHIPMENT_NOT_READY',
   'SHIPMENT_OTHER_BRANCH',
   'SHIPMENT_NOT_LCL_SEA',
   'SHIPMENT_OTHER_PORT',
