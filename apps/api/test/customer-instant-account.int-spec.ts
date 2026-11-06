@@ -245,7 +245,9 @@ describe('Instant branch account from a signed bot booking request', () => {
     expect(account).toMatchObject({
       kind: 'INDIVIDUAL',
       name: 'Instant sender',
-      phone: null, // 10: an unverified phone is never copied.
+      // 10 (owner, 2026-11-05): a typed phone is copied too, marked unverified.
+      phone: unverified,
+      phoneUnverified: true,
       creditLimit: null,
       creditLimitCurrency: null,
       paymentTermsDays: 0,
@@ -329,6 +331,27 @@ describe('Instant branch account from a signed bot booking request', () => {
     const row = await requestOf(await book(t, q, body(q)).expect(201));
     expect(row).toMatchObject({ instantAccount: 'PHONE_IN_USE', instantCustomerId: null });
     expect(await accountsOf(q.profileId)).toHaveLength(0);
+  });
+
+  it('a typed phone in another file never keeps a verified owner from it (Codex F220-1)', async () => {
+    const phone = uniquePhone();
+    const squatter = await profile(t);
+    await t.prisma.customerProfile.update({
+      where: { id: squatter.profileId },
+      data: { phone, phoneVerified: false },
+    });
+    await book(t, squatter, body(squatter)).expect(201);
+    expect(await accountsOf(squatter.profileId)).toMatchObject([{ phone, phoneUnverified: true }]);
+
+    const owner = await profile(t);
+    await t.prisma.customerProfile.update({
+      where: { id: owner.profileId },
+      data: { phone, phoneVerified: true },
+    });
+    const row = await requestOf(await book(t, owner, body(owner)).expect(201));
+    const [account] = await accountsOf(owner.profileId);
+    expect(row).toMatchObject({ instantAccount: 'CREATED', instantCustomerId: account!.id });
+    expect(account).toMatchObject({ phone, phoneUnverified: false });
   });
 
   it('a replay makes no second account (2)', async () => {
