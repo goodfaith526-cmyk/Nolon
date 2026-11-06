@@ -191,6 +191,21 @@ describe('Window desk (plan 13 section 2)', () => {
       await as(on, cookies.staffA!).get('/window-desk/expected', { q: customerPhone })
     ).body as WindowDeskBookingDto[];
     expect(byPhone.map((r) => r.bookingId)).toContain(mine.id);
+    // With a shipper, the sender shown is the shipper: the customer's phone does not find it.
+    const shipper = await on.prisma.party.create({
+      data: { customerId: ids.customer!, name: `${tag} shipper`, phone: uniquePhone() },
+    });
+    const shipped = await booking(ids.windowA!, true, { shipperId: shipper.id });
+    const byCustomer = (
+      (await as(on, cookies.staffA!).get('/window-desk/expected', { q: customerPhone }))
+        .body as WindowDeskBookingDto[]
+    ).map((r) => r.bookingId);
+    expect(byCustomer).not.toContain(shipped.id);
+    const byShipper = (
+      (await as(on, cookies.staffA!).get('/window-desk/expected', { q: shipper.phone! }))
+        .body as WindowDeskBookingDto[]
+    ).map((r) => r.bookingId);
+    expect(byShipper).toEqual([shipped.id]);
   });
 
   it("opens only its own windows' confirmed bookings", async () => {
