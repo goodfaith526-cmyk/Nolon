@@ -3477,6 +3477,12 @@
     "items": "Goods",
     "invoice": "Invoice",
     "invoice_DRAFT": "Pro forma",
-    "invoice_APPROVED": "Approved"
+    "invoice_APPROVED": "Approved",
+    "receive": "Receive the goods",
+    "receiveTitle": "Receive the goods at the window",
+    "extraPackages": "More packages than booked ({booked}): say why in the note",
+    "receiptLine": "GRN {number}: {packages} packages",
+    "printGrn": "Print GRN",
+    "outlet": "Outlet"
   }
 }

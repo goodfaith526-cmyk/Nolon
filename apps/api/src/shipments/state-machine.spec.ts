@@ -143,6 +143,20 @@ describe('shipment state machine: annex B section 5 paths', () => {
     ]);
   });
 
+  it('plan 13: goods handed over at a window are received at origin, whatever was booked', () => {
+    const bot: ShipmentShape = { mode: 'ROAD', loadType: null, services: ['MAIN_FREIGHT'] };
+    expect(nextStatuses('CREATED', bot, new Set())).not.toContain('RECEIVED_ORIGIN_WAREHOUSE');
+    const atWindow = { ...bot, booking: { dropOffWarehouseId: 'w1' } };
+    expect(nextStatuses('CREATED', atWindow, new Set())).toContain('RECEIVED_ORIGIN_WAREHOUSE');
+    expect(
+      nextStatuses('CREATED', { ...bot, booking: { dropOffWarehouseId: null } }, new Set()),
+    ).not.toContain('RECEIVED_ORIGIN_WAREHOUSE');
+    // The destination warehouse stays the booked service's.
+    expect(nextStatuses('ROAD_ARRIVED', atWindow, new Set())).not.toContain(
+      'RECEIVED_DESTINATION_WAREHOUSE',
+    );
+  });
+
   it('F: partial delivery in batches', () => {
     walk(
       { mode: 'SEA', loadType: 'FCL', services: ['MAIN_FREIGHT', 'LAST_MILE'] },

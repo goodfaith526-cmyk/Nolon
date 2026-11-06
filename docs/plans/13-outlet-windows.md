@@ -100,6 +100,16 @@ as they are, `/customers`, `/bookings`, invoice and receipt routes keep their sc
 - **Permission:** a new key `window_desk:receive`, seeded for `OUTLET_STAFF` only (the role is already locked to
   outlet-scoped routes), and visible on the permissions screen.
 - The GRN print is the existing one, with the window's name and the outlet's name on it.
+- **As built (13-3):** the permission is `window_desk:create` (the matrix's actions are fixed: create = receive;
+  Outlet Staff's level E also brings `window_desk:update`, which no route uses until 13-4 takes the money). A booking
+  with a window opens the origin warehouse stage whatever services it names (a bot booking names none; the full-cycle
+  trial's BK00044 stayed CREATED), so a window receipt, or a staff GRN, moves the shipment to
+  `RECEIVED_ORIGIN_WAREHOUSE` when the state machine allows it; window_desk:create allows that one move only. Lock order
+  (F211-1): the shipment's exclusive lock first, as closing and cancelling take it before they write the booking; then
+  the window's check (outlets, booking, window `FOR SHARE`). The GRN printout is
+  `/print/window-desk/:bookingId/receipts/:movementId`, the same sections as the staff GRN, read from the desk (the
+  outlet cannot open the shipment), without the shipment's QR code. Photos on a window receipt are left for later:
+  NOLON staff can add them on the shipment.
 
 ## 4. The window takes the money and gives the receipt (PR 13-4)
 

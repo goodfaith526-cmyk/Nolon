@@ -121,6 +121,8 @@ export interface ShipmentShape {
   mode: ShippingMode;
   loadType: LoadType | null;
   services: readonly BookingService[];
+  /** Plan 13 section 3: the window (drop-off point) the booking's goods are handed over at. */
+  booking?: { dropOffWarehouseId: string | null } | null;
 }
 
 /**
@@ -147,6 +149,9 @@ export function stageApplies(status: ShipmentStatus, shipment: ShipmentShape): b
     case 'PICKUP_SCHEDULED':
       return has('PICKUP');
     case 'RECEIVED_ORIGIN_WAREHOUSE':
+      // Plan 13 section 3: goods handed over at a window are received at origin, whatever
+      // services were booked (a bot booking names none).
+      return has('WAREHOUSE') || (shipment.booking?.dropOffWarehouseId ?? null) !== null;
     case 'RECEIVED_DESTINATION_WAREHOUSE':
       return has('WAREHOUSE');
     case 'CONSOLIDATED':

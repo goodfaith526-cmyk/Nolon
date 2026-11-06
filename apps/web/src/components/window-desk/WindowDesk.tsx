@@ -10,11 +10,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { Notice, useFailureText } from '../commercial/Notice';
+import { PrintLink } from '../print/PrintLink';
 import { can, useMe } from '../StaffShell';
+import { WindowReceiptForm } from './WindowReceiptForm';
 
 /**
  * Plan 13 section 2: «طلبات الاستلام», a partner outlet's list of the confirmed bookings whose
- * goods are handed over at its windows: expected first, then received. Read only.
+ * goods are handed over at its windows: expected first, then received. The window receives the
+ * goods here (plan 13 section 3) and prints the goods receipt.
  */
 export function WindowDesk() {
   const t = useTranslations('WindowDesk');
@@ -102,6 +105,11 @@ export function WindowDesk() {
               row={r}
               open={open === r.bookingId}
               onToggle={() => setOpen(open === r.bookingId ? null : r.bookingId)}
+              onChanged={(next) =>
+                setRows((list) =>
+                  list ? list.map((x) => (x.bookingId === next.bookingId ? next : x)) : list,
+                )
+              }
             />
           ))}
         </div>
@@ -110,17 +118,24 @@ export function WindowDesk() {
   );
 }
 
-/** One booking: who brings what, what they owe, and what is left to do; details on demand. */
+/**
+ * One booking: who brings what, what they owe, and what is left to do; details, the goods
+ * receipts made at the window and the form to receive the goods on demand.
+ */
 export function WindowDeskCard({
   row: r,
   open,
   onToggle,
+  onChanged,
 }: {
   row: WindowDeskBookingDto;
   open: boolean;
   onToggle: () => void;
+  onChanged: (row: WindowDeskBookingDto) => void;
 }) {
   const t = useTranslations('WindowDesk');
+  const me = useMe();
+  const [receiving, setReceiving] = useState(false);
   const te = useTranslations('Enums');
   const locale = useLocale();
   const master = useMasterData();
@@ -163,7 +178,43 @@ export function WindowDeskCard({
             {t('print')}
           </button>
         )}
+        {r.todo.includes('receive') && can(me, 'window_desk:create') && (
+          <button
+            type="button"
+            className="primary"
+            aria-expanded={receiving}
+            onClick={() => setReceiving(!receiving)}
+          >
+            {t('receive')}
+          </button>
+        )}
       </div>
+      {receiving && r.todo.includes('receive') && (
+        <WindowReceiptForm
+          row={r}
+          onReceived={(next) => {
+            setReceiving(false);
+            onChanged(next);
+          }}
+        />
+      )}
+      {r.receipts.length > 0 && (
+        <ul className="stack">
+          {r.receipts.map((m) => (
+            <li key={m.id} className="row">
+              <span>
+                {t('receiptLine', { number: m.number, packages: m.packages })}{' '}
+                <span dir="ltr">{m.occurredAt.slice(0, 10)}</span>
+              </span>
+              <PrintLink
+                small
+                href={`/window-desk/${r.bookingId}/receipts/${m.id}`}
+                label={t('printGrn')}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
       {open && (
         <dl className="details">
           <dt>{t('confirmedAt')}</dt>
@@ -182,6 +233,7 @@ export function WindowDeskCard({
           <dt>{t('window')}</dt>
           <dd>
             {pick(r.window.name)} ({r.window.code})
+            {r.window.outletName && ` · ${r.window.outletName}`}
           </dd>
           <dt>{t('mode')}</dt>
           <dd>{te(`mode_${r.mode}`)}</dd>

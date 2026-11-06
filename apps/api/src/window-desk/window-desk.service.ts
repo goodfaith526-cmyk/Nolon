@@ -1,13 +1,20 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { WindowDeskBookingDto, WindowDeskFilter, WindowDeskTodo } from '@nolon/shared';
+import type {
+  WindowDeskBookingDto,
+  WindowDeskFilter,
+  WindowDeskReceiptRequest,
+  WindowDeskTodo,
+} from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
 import { lockOutletsInTx, outletLimited, windowScope } from '../auth/outlet-scope.js';
 import { bookingItemDto } from '../bookings/bookings.service.js';
-import { toDecimalString } from '../common/money.js';
+import { toDecimalString, toDecimalStringOrNull } from '../common/money.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { dropOffDto, dropOffSelect } from '../customer-service/drop-off.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ShipmentsService } from '../shipments/shipments.service.js';
+import { WarehouseMovementsService } from '../warehouse/warehouse-movements.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -26,10 +33,19 @@ const deskSelect = {
   customer: { select: { name: true, phone: true } },
   shipper: { select: { name: true, phone: true } },
   consignee: { select: { name: true, phone: true, city: true } },
-  dropOff: { select: { ...dropOffSelect, id: true, code: true, branchId: true } },
+  dropOff: {
+    select: {
+      ...dropOffSelect,
+      id: true,
+      code: true,
+      branchId: true,
+      partner: { select: { name: true } },
+    },
+  },
   shipment: {
     select: {
       id: true,
+      number: true,
       invoices: {
         where: { kind: 'MAIN', status: { not: 'CANCELLED' } },
         orderBy: { createdAt: 'asc' },
@@ -43,10 +59,24 @@ const deskSelect = {
           creditedAmount: true,
         },
       },
+      // Every live receipt, wherever made (`received`); those at the window are listed.
       movements: {
         where: { kind: 'RECEIPT', cancellation: null },
-        take: 1,
-        select: { id: true },
+        orderBy: [{ occurredAt: 'asc' }, { number: 'asc' }],
+        select: {
+          id: true,
+          number: true,
+          warehouseId: true,
+          occurredAt: true,
+          packages: true,
+          weightKg: true,
+          condition: true,
+          partyName: true,
+          partyIdType: true,
+          partyIdNumber: true,
+          note: true,
+          createdBy: { select: { fullName: true } },
+        },
       },
     },
   },
@@ -75,6 +105,8 @@ export interface WindowContext {
 export class WindowDeskService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly movements: WarehouseMovementsService,
+    private readonly shipments: ShipmentsService,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -116,7 +148,7 @@ export class WindowDeskService {
     });
     // The window's branch is the booking's (a column comparison Prisma's filter cannot express).
     return rows
-      .filter((r) => r.dropOff !== null && r.dropOff.branchId === r.branchId)
+      .filter((r) => r.shipment !== null && r.dropOff?.branchId === r.branchId)
       .map(toDeskDto)
       .sort((a, b) => Number(a.received) - Number(b.received));
   }
@@ -131,6 +163,35 @@ export class WindowDeskService {
       });
       return toDeskDto(row);
     });
+  }
+
+  /**
+   * Plan 13 section 3: the window receives the goods. A goods receipt (GRN) into the booking's
+   * window, for its shipment, in one transaction: the shipment's lock, the window's check, then
+   * window_desk:create in the booking's branch. The booking as the desk shows it afterwards, with the new receipt.
+   */
+  async receive(
+    user: AuthUser,
+    bookingId: string,
+    input: WindowDeskReceiptRequest,
+  ): Promise<WindowDeskBookingDto> {
+    this.requireDesk(user);
+    await this.prisma.$transaction(async (tx) => {
+      // F211-1: the shipment's exclusive lock comes first, as closing and cancelling take it
+      // before they write the booking; the window's check (booking, window FOR SHARE) follows.
+      const shipment = await tx.shipment.findUnique({
+        where: { bookingId },
+        select: { id: true },
+      });
+      if (!shipment) throw new NotFoundException('Booking not found');
+      await this.shipments.lockForChildWrite(tx, shipment.id, { exclusive: true });
+      const ctx = await authorizeWindowInTx(tx, user, bookingId);
+      if (ctx.shipmentId !== shipment.id) throw new NotFoundException('Booking not found');
+      if (!user.access.has('window_desk:create', ctx.branchId))
+        throw new ForbiddenException('Missing permission');
+      await this.movements.receiveAtWindowInTx(tx, user, ctx, input);
+    });
+    return this.booking(user, bookingId);
   }
 
   private requireDesk(user: AuthUser): void {
@@ -198,8 +259,10 @@ export async function authorizeWindowInTx(
 function toDeskDto(r: DeskRow): WindowDeskBookingDto {
   const point = r.dropOff && dropOffDto(r.dropOff);
   if (!r.dropOff || !point) throw new NotFoundException('Booking not found');
-  const invoice = r.shipment?.invoices[0] ?? null;
-  const received = (r.shipment?.movements.length ?? 0) > 0;
+  if (!r.shipment) throw new NotFoundException('Booking not found');
+  const windowId = r.dropOff.id;
+  const invoice = r.shipment.invoices[0] ?? null;
+  const received = r.shipment.movements.length > 0;
   // What is still owed, as every other balance reads it: total less paid less credited.
   const balance = invoice
     ? invoice.total.minus(invoice.paidAmount).minus(invoice.creditedAmount)
@@ -211,6 +274,8 @@ function toDeskDto(r: DeskRow): WindowDeskBookingDto {
   return {
     bookingId: r.id,
     bookingNumber: r.number,
+    branchId: r.branchId,
+    shipmentNumber: r.shipment.number,
     confirmedAt: r.confirmedAt?.toISOString() ?? null,
     sender: { name: sender.name, phone: sender.phone },
     receiver: r.consignee
@@ -220,7 +285,12 @@ function toDeskDto(r: DeskRow): WindowDeskBookingDto {
     destinationLocationId: r.destinationLocationId,
     mode: r.mode,
     items: r.items.map(bookingItemDto),
-    window: { ...point, id: r.dropOff.id, code: r.dropOff.code },
+    window: {
+      ...point,
+      id: r.dropOff.id,
+      code: r.dropOff.code,
+      outletName: r.dropOff.partner?.name ?? null,
+    },
     invoice:
       invoice && (invoice.status === 'DRAFT' || invoice.status === 'APPROVED')
         ? {
@@ -232,6 +302,21 @@ function toDeskDto(r: DeskRow): WindowDeskBookingDto {
           }
         : null,
     received,
+    receipts: r.shipment.movements
+      .filter((m) => m.warehouseId === windowId)
+      .map((m) => ({
+        id: m.id,
+        number: m.number,
+        occurredAt: m.occurredAt.toISOString(),
+        packages: m.packages,
+        weightKg: toDecimalStringOrNull(m.weightKg),
+        condition: m.condition,
+        partyName: m.partyName,
+        partyIdType: m.partyIdType,
+        partyIdNumber: m.partyIdNumber,
+        note: m.note,
+        createdByName: m.createdBy.fullName,
+      })),
     todo,
   };
 }

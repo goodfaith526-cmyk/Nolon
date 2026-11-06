@@ -28,6 +28,11 @@ import { WarehouseReportsService } from './warehouse-reports.service.js';
     GrnDraftsService,
     GoodsReleaseDraftsService,
   ],
-  exports: [WarehouseReportsService, GoodsReleaseDraftsService, GrnDraftsService],
+  exports: [
+    WarehouseReportsService,
+    GoodsReleaseDraftsService,
+    GrnDraftsService,
+    WarehouseMovementsService,
+  ],
 })
 export class WarehouseModule {}
