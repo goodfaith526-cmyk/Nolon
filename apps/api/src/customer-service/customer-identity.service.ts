@@ -160,11 +160,12 @@ export class CustomerIdentityService {
         if (!identity) {
           // Owner, 2026-11-06: a website visitor proves nothing but the agent's session, so a key
           // starts at most WEB_NEW_VISITORS_PER_DAY new visitor identities a day.
-          if (
-            channel === 'WEB' &&
-            (await newWebVisitors(tx, companyId, clientId, now)) >= WEB_NEW_VISITORS_PER_DAY
-          )
-            identityError(429, 'CAPTURE_LIMIT', { retryAfterSeconds: 3600 });
+          if (channel === 'WEB') {
+            // One key's new visitors counted one at a time (Codex F214-2): the cap is exact.
+            await identityLock(tx, `${companyId}:web-cap:${clientId}`);
+            if ((await newWebVisitors(tx, companyId, clientId, now)) >= WEB_NEW_VISITORS_PER_DAY)
+              identityError(429, 'CAPTURE_LIMIT', { retryAfterSeconds: 3600 });
+          }
           identity = await tx.customerChannelIdentity.create({
             data: {
               ...selector,

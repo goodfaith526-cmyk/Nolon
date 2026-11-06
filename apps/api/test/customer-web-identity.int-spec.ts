@@ -14,10 +14,10 @@ import {
 } from './auth-test-app.js';
 
 /**
- * Website chat visitors (owner, 2026-11-06): a signed WEB identity (`web` + 16 hex, the website
- * account CS_WEB_IDENTITY_ACCOUNT names) gets its customer file once the visitor gives a name, a
- * booking request bound to it, and the bot's quotes saved in it. Negative cases: the account unset
- * or another one, a malformed visitor id, phone evidence, no name, a typed phone another file
+ * Website chat visitors (owner, 2026-11-06): a signed WEB identity (`web` + 16 hex, under a WEB
+ * channel account the key lists, Codex F214-1) gets its customer file once the visitor gives a name, a
+ * booking request bound to it, and the bot's quotes saved in it. Negative cases: a key listing no
+ * WEB account, another website account, a malformed visitor id, phone evidence, no name, a typed phone another file
  * holds (never linked), the daily cap on new visitors.
  */
 describe('Customer Service website identity', () => {
@@ -106,12 +106,18 @@ describe('Customer Service website identity', () => {
       CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: true,
       CS_QUOTE_SAVE_ENABLED: true,
       CS_CUSTOMER_IDENTITY_COMPANY_ID: companyId,
-      CS_CUSTOMER_IDENTITY_CLIENTS: JSON.stringify({
-        [clientId]: { secret, accounts: [{ channel: 'TELEGRAM', channelAccountId: 'test-bot' }] },
-      }),
     };
-    t = await createTestApp({ ...env, CS_WEB_IDENTITY_ACCOUNT: 'nolon' });
-    off = await createTestApp(env);
+    const telegram = { channel: 'TELEGRAM', channelAccountId: 'test-bot' };
+    const clients = (accounts: object[]) => JSON.stringify({ [clientId]: { secret, accounts } });
+    t = await createTestApp({
+      ...env,
+      CS_CUSTOMER_IDENTITY_CLIENTS: clients([
+        telegram,
+        { channel: 'WEB', channelAccountId: 'nolon' },
+      ]),
+    });
+    // The same key listing only its Telegram bot: no website visitor (Codex F214-1).
+    off = await createTestApp({ ...env, CS_CUSTOMER_IDENTITY_CLIENTS: clients([telegram]) });
     const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
     dxb = await branchId(t.prisma, 'DXB');
     await t.prisma.priceCategory.create({
@@ -185,7 +191,7 @@ describe('Customer Service website identity', () => {
     await off?.close();
   });
 
-  it('accepts a website visitor only under the configured website account', async () => {
+  it('accepts a website visitor only under a WEB account the key lists', async () => {
     expect(code(await capture(visitor(), named('Off visitor'), {}, off).expect(403))).toBe(
       'CHANNEL_NOT_ALLOWED',
     );
@@ -287,30 +293,35 @@ describe('Customer Service website identity', () => {
       senderChannel: 'web',
       senderId: who.subjectId.slice(3),
     });
-    // The prefixed id as the request's sender does not match the signed visitor.
-    const wrongKey = randomUUID();
-    await call(
-      t,
-      '/cs/booking-requests',
-      {
-        idempotencyKey: wrongKey,
-        profileId: captured.profileId,
-        conversationId,
-        sender: { channel: 'telegram', id: '12345' },
-        originId,
-        destinationId,
-        category,
-        quantity: '1',
-        services: [],
-        senderName: 'Booking visitor',
-        consigneeName: 'Receiver',
-        consigneePhone: '0912345678',
-        handover: 'BRANCH_DROP',
-        language: 'ar',
-      },
-      who,
-      wrongKey,
-    ).expect(401);
+    // Another channel's sender, or the visitor id with its `web` prefix (Codex F214-3), is refused.
+    for (const [wrongSender, status] of [
+      [{ channel: 'telegram', id: '12345' }, 401],
+      [{ channel: 'web', id: who.subjectId }, 400],
+    ] as const) {
+      const wrongKey = randomUUID();
+      await call(
+        t,
+        '/cs/booking-requests',
+        {
+          idempotencyKey: wrongKey,
+          profileId: captured.profileId,
+          conversationId,
+          sender: wrongSender,
+          originId,
+          destinationId,
+          category,
+          quantity: '1',
+          services: [],
+          senderName: 'Booking visitor',
+          consigneeName: 'Receiver',
+          consigneePhone: '0912345678',
+          handover: 'BRANCH_DROP',
+          language: 'ar',
+        },
+        who,
+        wrongKey,
+      ).expect(status);
+    }
 
     const quoted = await t
       .http()

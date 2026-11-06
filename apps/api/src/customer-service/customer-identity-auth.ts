@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import {
+  IDENTITY_CHANNELS,
   channelContext,
   type IdentityContext,
   type IdentitySender,
@@ -33,7 +34,7 @@ const configurations = z.record(
         .array(
           z
             .object({
-              channel: z.enum(['WHATSAPP', 'TELEGRAM']),
+              channel: z.enum(IDENTITY_CHANNELS),
               channelAccountId: z.string().min(1).max(128),
             })
             .strict(),
@@ -97,16 +98,15 @@ export class CustomerIdentityAuth {
     const parsed = channelContext.safeParse(unknownContext);
     if (!parsed.success) identityError(401, 'INVALID_CHANNEL_ASSERTION');
     const context = parsed.data;
-    // WEB (owner, 2026-11-06): the one website account CS_WEB_IDENTITY_ACCOUNT names, for every
-    // configured key; unset, no website identity is accepted.
-    const allowed =
-      context.channel === 'WEB'
-        ? this.env.CS_WEB_IDENTITY_ACCOUNT !== undefined &&
-          context.channelAccountId === this.env.CS_WEB_IDENTITY_ACCOUNT
-        : config.accounts.some(
-            (a) => a.channel === context.channel && a.channelAccountId === context.channelAccountId,
-          );
-    if (!allowed) identityError(403, 'CHANNEL_NOT_ALLOWED');
+    // Each key signs only the channel accounts it lists (plan 08), a website (WEB) one included
+    // (Codex F214-1): a key without a WEB account never mints website visitors.
+    if (
+      !config.accounts.some(
+        (a) => a.channel === context.channel && a.channelAccountId === context.channelAccountId,
+      )
+    ) {
+      identityError(403, 'CHANNEL_NOT_ALLOWED');
+    }
     const isGet = req.method === 'GET';
     const idempotencyKey = isGet ? '' : (req.get('Idempotency-Key') ?? '');
     const rawBody = isGet ? Buffer.alloc(0) : req.rawBody;
