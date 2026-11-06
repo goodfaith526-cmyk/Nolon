@@ -333,6 +333,27 @@ describe('Instant branch account from a signed bot booking request', () => {
     expect(await accountsOf(q.profileId)).toHaveLength(0);
   });
 
+  it('a typed phone in another file never keeps a verified owner from it (Codex F220-1)', async () => {
+    const phone = uniquePhone();
+    const squatter = await profile(t);
+    await t.prisma.customerProfile.update({
+      where: { id: squatter.profileId },
+      data: { phone, phoneVerified: false },
+    });
+    await book(t, squatter, body(squatter)).expect(201);
+    expect(await accountsOf(squatter.profileId)).toMatchObject([{ phone, phoneUnverified: true }]);
+
+    const owner = await profile(t);
+    await t.prisma.customerProfile.update({
+      where: { id: owner.profileId },
+      data: { phone, phoneVerified: true },
+    });
+    const row = await requestOf(await book(t, owner, body(owner)).expect(201));
+    const [account] = await accountsOf(owner.profileId);
+    expect(row).toMatchObject({ instantAccount: 'CREATED', instantCustomerId: account!.id });
+    expect(account).toMatchObject({ phone, phoneUnverified: false });
+  });
+
   it('a replay makes no second account (2)', async () => {
     const p = await profile(t);
     const b = body(p);

@@ -84,6 +84,16 @@ export const lockCustomerKeys = (tx: Prisma.TransactionClient) =>
  * Plan 09d: one account per profile. Where older data holds several, the profile's account is the
  * oldest active one (then the oldest inactive one): a stable choice, the others stay as they are.
  */
+/**
+ * The customers whose phone binds: every holder except a channel file holding a phone its own
+ * visitor typed (unverified, with a profile). Such a copy (owner, 2026-11-05) is the file's note
+ * only: it never links another sender, receiver or booking to that file, and never keeps anyone,
+ * a verified owner above all, from the phone (Codex F220-1).
+ */
+export function bindingPhone(phone: string): Prisma.CustomerWhereInput {
+  return { phone, NOT: { phoneUnverified: true, profileId: { not: null } } };
+}
+
 const PROFILE_ACCOUNT_ORDER: Prisma.CustomerOrderByWithRelationInput[] = [
   { isActive: 'desc' },
   { createdAt: 'asc' },
@@ -334,8 +344,9 @@ export class CustomersService {
    * signed binding and locked the profile. The checks of approval apply, but a profile that is not
    * ready gives a reason for staff instead of a refusal, so the request is still saved: a stale
    * profile version, identity proposals to review, no explicit name, a verified phone another
-   * account of the branch already has (never merged by phone or name), an inactive account. An
-   * unverified phone is copied marked unverified, unless another customer holds it; the account is an individual with no credit or terms. The
+   * account of the branch already has (never merged by phone or name), an inactive account. A
+   * typed phone is copied marked unverified unless another customer holds it (owner, 2026-11-05);
+   * the account is an individual with no credit or terms. The
    * audit record names the key, never the customer's name or phone.
    */
   async botAccountInTx(
@@ -374,13 +385,14 @@ export class CustomersService {
     const name = profile.name?.trim();
     if (!name) return skip('NAME_MISSING');
     await lockCustomerKeys(tx);
-    const taken = async (p: string) => (await tx.customer.count({ where: { phone: p } })) > 0;
-    if (profile.phoneVerified && profile.phone && (await taken(profile.phone)))
+    const taken = async (p: string, binding: boolean) =>
+      (await tx.customer.count({ where: binding ? bindingPhone(p) : { phone: p } })) > 0;
+    if (profile.phoneVerified && profile.phone && (await taken(profile.phone, true)))
       return skip('PHONE_IN_USE');
     // Owner, 2026-11-05: a typed phone goes in the file too, marked unverified (it grants
     // nothing, plan 14); one another customer holds is left off, never a reason to skip.
     const phone =
-      profile.phone && (profile.phoneVerified || !(await taken(profile.phone)))
+      profile.phone && (profile.phoneVerified || !(await taken(profile.phone, false)))
         ? profile.phone
         : null;
     const phoneUnverified = phone !== null && !profile.phoneVerified;
@@ -428,7 +440,7 @@ export class CustomersService {
     | { kind: 'ONE'; customerId: string; isActive: boolean }
   > {
     const found = await tx.customer.findMany({
-      where: { phone },
+      where: bindingPhone(phone),
       select: { id: true },
       orderBy: { id: 'asc' },
       take: 2,
@@ -454,7 +466,7 @@ export class CustomersService {
     ),
   ): Promise<string> {
     await lockCustomerKeys(tx);
-    if (input.phone !== null && (await tx.customer.count({ where: { phone: input.phone } })) > 0)
+    if (input.phone !== null && (await tx.customer.count({ where: bindingPhone(input.phone) })) > 0)
       throw phoneChanged();
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
@@ -522,11 +534,17 @@ export class CustomersService {
     if (!seen || seen.phone !== null) return;
     // Codex F200-1: the row first, then the company key lock, the order customer edits take
     // (update: FOR NO KEY UPDATE, then lockCustomerKeys); both checks again under the locks.
-    const [row] = await tx.$queryRaw<{ phone: string | null; number: string }[]>`
-      SELECT "phone", "number" FROM "customers" WHERE "id" = ${customerId}::uuid FOR NO KEY UPDATE`;
+    const [row] = await tx.$queryRaw<
+      { phone: string | null; number: string; profileId: string | null }[]
+    >`
+      SELECT "phone", "number", "profile_id" AS "profileId" FROM "customers"
+      WHERE "id" = ${customerId}::uuid FOR NO KEY UPDATE`;
     if (!row || row.phone !== null) return;
     await lockCustomerKeys(tx);
-    if ((await tx.customer.count({ where: { phone } })) > 0) return;
+    // A channel file's typed copy is taken only when no one holds the phone; a sender's binding
+    // phone (plan 09e) only when no binding holder does (Codex F220-1).
+    const holders = row.profileId === null ? bindingPhone(phone) : { phone };
+    if ((await tx.customer.count({ where: holders })) > 0) return;
     await tx.customer.update({
       where: { id: customerId },
       data: { phone, phoneUnverified: true },
@@ -626,7 +644,10 @@ export class CustomersService {
     // copied too, marked unverified (it grants nothing, plan 14), when no customer holds it.
     if (profile.phone && existing.phone === null) {
       await lockCustomerKeys(tx);
-      if ((await tx.customer.count({ where: { phone: profile.phone } })) === 0) {
+      const holders = profile.phoneVerified
+        ? bindingPhone(profile.phone)
+        : { phone: profile.phone };
+      if ((await tx.customer.count({ where: holders })) === 0) {
         data.phone = profile.phone;
         data.phoneUnverified = !profile.phoneVerified;
         changes.push({ field: 'phoneCopied', before: null, after: 'yes' });

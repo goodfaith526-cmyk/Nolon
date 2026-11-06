@@ -320,6 +320,34 @@ describe('Customer Service website identity', () => {
     // A phone already in the file is never replaced.
     await book(`+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`);
     expect(await accountsOf(bookerProfile)).toMatchObject([{ phone: own }]);
+
+    // Codex F220-1: a stranger's request bringing that typed phone is never linked to the file.
+    const stranger = await t
+      .http()
+      .post('/api/v1/cs/booking-requests')
+      .set('Authorization', `Bearer ${key.key}`)
+      .send({
+        idempotencyKey: randomUUID(),
+        sender: { channel: 'web', id: randomBytes(8).toString('hex') },
+        contactPhone: own,
+        originId,
+        destinationId,
+        category,
+        quantity: '1',
+        services: [],
+        senderName: 'Stranger',
+        consigneeName: 'Receiver',
+        consigneePhone: '0912345678',
+        handover: 'BRANCH_DROP',
+        language: 'ar',
+      })
+      .expect(201);
+    const strangerRow = await t.prisma.csBookingRequest.findUniqueOrThrow({
+      where: { id: (stranger.body as { requestId: string }).requestId },
+    });
+    const [file] = await accountsOf(bookerProfile);
+    expect(strangerRow.instantCustomerId).not.toBeNull();
+    expect(strangerRow.instantCustomerId).not.toBe(file!.id);
   });
 
   it('binds a booking request to the visitor file, and saves the quotes in it', async () => {
