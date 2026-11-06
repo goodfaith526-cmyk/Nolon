@@ -1716,6 +1716,17 @@ export function paymentStatus(
   return settled.gte(invoice.total) ? 'PAID' : 'PARTIAL';
 }
 
+/** Trial 2026-11-06: settled by credit notes alone, nothing paid on it. */
+export function creditedOnly(
+  invoice: Pick<CustomerInvoice, 'total' | 'paidAmount' | 'creditedAmount'>,
+): boolean {
+  return (
+    invoice.paidAmount.isZero() &&
+    invoice.creditedAmount.gt(0) &&
+    invoice.creditedAmount.gte(invoice.total)
+  );
+}
+
 function balance(invoice: {
   total: Decimal;
   paidAmount: Decimal;
@@ -1744,6 +1755,7 @@ function toSummary(i: InvoiceWithDetails): CustomerInvoiceSummaryDto {
     creditedAmount: i.creditedAmount.toFixed(),
     balance: balance(i).toFixed(),
     paymentStatus: paymentStatus(i),
+    creditedOnly: creditedOnly(i),
     kind: i.kind,
     live: isLiveInvoice(i),
   };

@@ -127,6 +127,7 @@ export interface WarehouseMovementDto {
   storageLocationCode: string | null;
   packages: number;
   weightKg: DecimalString | null;
+  volumeCbm: DecimalString | null;
   condition: GoodsCondition | null;
   partyName: string | null;
   /** Plan 09e: the ID the person who handed the goods over showed (receipts only), as typed. */
@@ -207,6 +208,11 @@ export interface GoodsReceiptRequest {
   storageLocationId?: string | null;
   packages: number;
   weightKg?: DecimalString | null;
+  /**
+   * Trial 2026-11-06: the volume measured (CBM). With the weight, it fills a single cargo line
+   * that has none, when that changes no price (ShipmentsService.measuresFromReceiptInTx).
+   */
+  volumeCbm?: DecimalString | null;
   condition: GoodsCondition;
   partyName?: string | null;
   /** Plan 09e: the ID type (free text, e.g. passport) and number the person handing over showed. */

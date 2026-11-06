@@ -2511,6 +2511,8 @@ model WarehouseMovement {
   /// Number of packages (pieces, pallets, containers) received or released.
   packages              Int
   weightKg              Decimal?              @map("weight_kg") @db.Decimal(12, 3)
+  /// Trial 2026-11-06: the volume measured at a receipt (CBM), null when not measured.
+  volumeCbm             Decimal?              @map("volume_cbm") @db.Decimal(12, 4)
   /// Required on receipts.
   condition             GoodsCondition?
   /// Who delivered the goods (receipt) or collected them (release).

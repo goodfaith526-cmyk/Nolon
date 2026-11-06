@@ -82,6 +82,7 @@ export function statusReceiptBody(
     warehouseId: field(form, 'warehouseId'),
     packages: Number.parseInt(field(form, 'packages'), 10),
     weightKg: field(form, 'weightKg').trim() || null,
+    volumeCbm: field(form, 'volumeCbm').trim() || null,
     condition: field(form, 'condition') as GoodsCondition,
     note: field(form, 'note').trim() || null,
     occurredAt,
@@ -91,6 +92,7 @@ export function statusReceiptBody(
 
 /** Weight inputs: what the API accepts (up to 9 integer and 3 decimal digits). */
 const WEIGHT_PATTERN = '\\d{1,9}(\\.\\d{1,3})?';
+const VOLUME_PATTERN = '\\d{1,8}(\\.\\d{1,4})?';
 
 /**
  * The receipt fields of the status form. The warehouse at the status's usual place is picked
@@ -138,6 +140,10 @@ export function StatusReceiptFields({
         <label className="field">
           <span>{t('weightKg')}</span>
           <input name="weightKg" inputMode="decimal" pattern={WEIGHT_PATTERN} dir="ltr" />
+        </label>
+        <label className="field">
+          <span>{t('volumeCbm')}</span>
+          <input name="volumeCbm" inputMode="decimal" pattern={VOLUME_PATTERN} dir="ltr" />
         </label>
         <label className="field">
           <span>{t('condition')}</span>

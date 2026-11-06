@@ -448,7 +448,20 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       const ids = await this.lockShipments(tx, id);
       // Only the voyage fields sent are copied, a clear (null) included: an edit of the notes
       // leaves the shipments' own voyage alone.
-      await this.shipments.setVoyageInTx(tx, ids, sentVoyage(input, updated));
+      if (input.masterBlNumber !== undefined) {
+        await this.shipments.replaceMasterBlInTx(
+          tx,
+          ids,
+          container.masterBlNumber,
+          updated.masterBlNumber,
+        );
+      }
+      await this.shipments.setVoyageInTx(
+        tx,
+        ids,
+        sentVoyage(input, updated),
+        input.masterBlNumber ? updated.masterBlNumber : null,
+      );
     });
     return this.get(user, id);
   }
@@ -651,6 +664,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       const container = await lockContainer(tx, id);
       requireOpen(container);
       await takeOut(tx, id, shipmentId);
+      // F215-3: a BL copied from this container's master BL leaves with it.
+      await this.shipments.replaceMasterBlInTx(tx, [shipmentId], container.masterBlNumber, null);
     });
     return this.get(user, id);
   }
@@ -688,6 +703,8 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       requireOpen(target);
       await requireRoom(tx, target);
       await takeOut(tx, id, shipmentId);
+      // F215-3: a BL copied from this container's master BL leaves with it.
+      await this.shipments.replaceMasterBlInTx(tx, [shipmentId], source.masterBlNumber, null);
       await this.addShipments(tx, user, target, [shipmentId], numbers, { moving: true });
     });
     return this.get(user, id);
@@ -729,6 +746,16 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       if (input.status === 'CLOSED' || input.status === 'LOADED') {
         await this.requireMeasuredFit(tx, container, shipmentIds, numbers);
       }
+      if (input.status === 'LOADED') {
+        // Trial 2026-11-06: loaded goods are in no warehouse any more (a window kept them).
+        await this.shipments.releaseLoadedInTx(
+          tx,
+          user,
+          shipmentIds,
+          occurredAt,
+          container.containerNumber ?? container.number,
+        );
+      }
       if (input.status === 'CLOSED') {
         if (shipmentIds.length === 0) {
           throw new ConflictException('An empty container cannot be closed');
@@ -749,6 +776,25 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       if (input.status === 'LOADED') data.loadedAt = occurredAt;
       if (input.status === 'DEPARTED') data.departedAt = occurredAt;
       if (input.status === 'ARRIVED') data.arrivedAt = occurredAt;
+      // Trial 2026-11-06: once it happened, the estimate is the day it did (the branch's date):
+      // a delivered shipment showed an ETD and ETA still to come.
+      if (input.status === 'DEPARTED' || input.status === 'ARRIVED') {
+        const day = toDbDate(todayIn(branch.timezone, occurredAt));
+        if (input.status === 'DEPARTED') {
+          data.etd = day;
+          // An estimated arrival before the real departure was stale: cleared (ETA >= ETD).
+          if (container.eta && container.eta < day) data.eta = null;
+        } else {
+          data.eta = day;
+          if (container.etd && container.etd > day) data.etd = null;
+        }
+        await this.shipments.setActualVoyageDateInTx(
+          tx,
+          shipmentIds,
+          input.status === 'DEPARTED' ? 'etd' : 'eta',
+          day,
+        );
+      }
       if (input.status === 'DECONSOLIDATED') data.deconsolidatedAt = occurredAt;
       // Compare-and-set on top of the row lock: the update applies only from the status read.
       const { count } = await tx.consolidation.updateMany({
@@ -1143,7 +1189,12 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     const limits = await limitsInTx(tx, container.containerTypeCode);
     const over = overLimits(limits, before, after)[0];
     if (over) throw overRefusal(container, over, limits, before, after);
-    await this.shipments.setVoyageInTx(tx, shipmentIds, knownVoyage(container));
+    await this.shipments.setVoyageInTx(
+      tx,
+      shipmentIds,
+      knownVoyage(container),
+      container.masterBlNumber,
+    );
   }
 
   /**

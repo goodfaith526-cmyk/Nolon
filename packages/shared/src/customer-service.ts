@@ -629,6 +629,41 @@ export interface CsBookingRequestDto {
   /** 'staff': the bot hands the customer to staff (on hold, cancelled, partly delivered...). */
   attention: 'staff' | null;
   shipment: CsShipmentTrackDto | null;
+  /**
+   * Trial 2026-11-06: what the customer was billed and paid for this booking's shipment, so the bot
+   * answers "did I pay?" from NOLON. Null until the request is approved and its shipment exists.
+   */
+  payment: CsRequestPaymentDto | null;
+}
+
+/**
+ * How an approved invoice of a request's shipment stands: `credited` when credit notes cleared it
+ * in full (nothing was paid on it), `paid` when nothing is left, `partly_paid` when some was paid.
+ */
+export type CsRequestInvoiceState = 'open' | 'partly_paid' | 'paid' | 'credited';
+
+export interface CsRequestInvoiceDto {
+  number: string;
+  /** MAIN, or ADDITIONAL for charges billed after it. */
+  kind: 'MAIN' | 'ADDITIONAL';
+  invoiceDate: DateString;
+  dueDate: DateString;
+  currency: CurrencyCode;
+  total: DecimalString;
+  paid: DecimalString;
+  credited: DecimalString;
+  balance: DecimalString;
+  state: CsRequestInvoiceState;
+}
+
+export interface CsRequestPaymentDto {
+  /** The shipment's approved invoices (cancelled ones left out), oldest first. */
+  invoices: CsRequestInvoiceDto[];
+  /**
+   * Invoices still being prepared (drafts: no number, amount not final). A window booking's
+   * invoice stays a draft until the window collects the payment (plan 13).
+   */
+  draftInvoices: number;
 }
 
 /**

@@ -152,6 +152,70 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
       .sort((a, b) => a.warehouseCode.localeCompare(b.warehouseCode));
   }
 
+  /**
+   * Trial 2026-11-06: loading a container takes the goods out of every warehouse (a drop-off
+   * window kept showing them after they sailed). What each warehouse still holds at the loading
+   * time leaves it by a release that says so; no handover gate (an origin move), and the person
+   * who loaded the container records it.
+   */
+  async releaseLoadedInTx(
+    tx: Tx,
+    userId: string,
+    shipmentId: string,
+    occurredAt: Date,
+    note: string,
+  ): Promise<void> {
+    const movements = await tx.warehouseMovement.findMany({
+      where: { shipmentId, cancellation: null },
+      select: {
+        kind: true,
+        warehouseId: true,
+        packages: true,
+        weightKg: true,
+        occurredAt: true,
+        createdAt: true,
+      },
+    });
+    const warehouseIds = [...new Set(movements.map((m) => m.warehouseId))].sort();
+    if (warehouseIds.length === 0) return;
+    const { branchId } = await tx.shipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      select: { branchId: true },
+    });
+    for (const warehouseId of warehouseIds) {
+      const packages = releasableAt(movements, warehouseId, occurredAt);
+      if (packages <= 0) continue;
+      const warehouse = await tx.warehouse.findUniqueOrThrow({
+        where: { id: warehouseId },
+        select: {
+          id: true,
+          code: true,
+          branchId: true,
+          locationId: true,
+          branch: { select: { timezone: true } },
+        },
+      });
+      const number = await this.nextNumber(tx, 'RELEASE', {
+        ...warehouse,
+        timezone: warehouse.branch.timezone,
+        storageLocationId: null,
+      });
+      await tx.warehouseMovement.create({
+        data: {
+          number,
+          kind: 'RELEASE',
+          branchId,
+          shipmentId,
+          warehouseId,
+          packages,
+          note,
+          occurredAt,
+          createdById: userId,
+        },
+      });
+    }
+  }
+
   async view(user: AuthUser, shipmentId: string): Promise<ShipmentWarehouseDto> {
     const shipment = await this.shipments.childContext(user, shipmentId);
     const logged = await this.prisma.warehouseMovement.findMany({
@@ -424,6 +488,7 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         storageLocationId: warehouse.storageLocationId,
         packages: input.packages,
         weightKg: input.weightKg ? dec(input.weightKg) : null,
+        volumeCbm: input.volumeCbm ? dec(input.volumeCbm) : null,
         condition: input.condition,
         partyName: input.partyName ?? null,
         partyIdType: input.partyIdType ?? null,
@@ -434,6 +499,11 @@ export class WarehouseMovementsService implements OnModuleInit, ShipmentStockHan
         createdById: user.id,
       },
       select: { id: true },
+    });
+    // Trial 2026-11-06: the measured weight and volume fill a cargo line that has none.
+    await this.shipments.measuresFromReceiptInTx(tx, user, shipmentId, number, {
+      weightKg: input.weightKg ? dec(input.weightKg) : null,
+      volumeCbm: input.volumeCbm ? dec(input.volumeCbm) : null,
     });
     return movement.id;
   }
@@ -731,6 +801,7 @@ function toDto(m: MovementWithDetails): WarehouseMovementDto {
     storageLocationCode: m.storageLocation?.code ?? null,
     packages: m.packages,
     weightKg: toDecimalStringOrNull(m.weightKg),
+    volumeCbm: toDecimalStringOrNull(m.volumeCbm),
     condition: m.condition,
     partyName: m.partyName,
     partyIdType: m.partyIdType,

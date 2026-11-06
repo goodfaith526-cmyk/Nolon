@@ -22,6 +22,18 @@ export interface ShipmentStockHandler {
    * the shipment's row lock the answer stays true until the commit.
    */
   goodsOnHandInTx(tx: Tx, shipmentId: string): Promise<ShipmentGoodsOnHand[]>;
+  /**
+   * Trial 2026-11-06: the shipment was loaded into a container, so no warehouse holds its goods
+   * any more. Records a release of what each warehouse still held at `occurredAt`, with `note`.
+   * The caller holds the shipment's exclusive lock.
+   */
+  releaseLoadedInTx(
+    tx: Tx,
+    userId: string,
+    shipmentId: string,
+    occurredAt: Date,
+    note: string,
+  ): Promise<void>;
 }
 
 @Injectable()

@@ -1101,7 +1101,13 @@ describe('consolidated LCL containers', () => {
     expect(renumbered.status).toBe(409);
     expect((renumbered.body as { params?: object }).params).toEqual({ record: renamed });
     await move('DEPARTED', '04-02');
+    // Trial 2026-11-06: the estimates become the days it happened; an ETA before is cleared.
+    const departed = await t.prisma.shipment.findUniqueOrThrow({ where: { id } });
+    expect([departed.etd?.toISOString().slice(0, 10), departed.eta]).toEqual([d('04-02'), null]);
     await move('ARRIVED', '04-06');
+    const arrived = await t.prisma.shipment.findUniqueOrThrow({ where: { id } });
+    expect(arrived.eta?.toISOString().slice(0, 10)).toBe(d('04-06'));
+    expect((await container(created.id)).eta).toBe(d('04-06'));
     expect(code(await cancel())).toBe('SHIPMENT_CANCEL_IN_CONTAINER');
     expect(code(await revert())).toBe('REVERT_BY_CONTAINER');
     expect((await container(created.id)).status).toBe('ARRIVED');
@@ -1111,6 +1117,34 @@ describe('consolidated LCL containers', () => {
     expect((await revert()).status).toBe(200);
     expect((await cancel()).status).toBe(200);
     expect((await t.prisma.shipment.findUniqueOrThrow({ where: { id } })).status).toBe('CANCELLED');
+  });
+
+  it('gives its master BL to each shipment that has no BL of its own (trial 2026-11-06)', async () => {
+    const bare = await lclShipment(customers[1], '1');
+    const own = await lclShipment(customers[1], '1');
+    await t.prisma.shipment.update({ where: { id: own }, data: { blNumber: 'HBL-OWN-1' } });
+    const created = (await newContainer([bare, own], { masterBlNumber: 'MEDU0000001' }).expect(201))
+      .body as ConsolidationDto;
+    const bl = async (sid: string) =>
+      (await t.prisma.shipment.findUniqueOrThrow({ where: { id: sid } })).blNumber;
+    expect([await bl(bare), await bl(own)]).toEqual(['MEDU0000001', 'HBL-OWN-1']);
+    // Entered later, it fills only a BL still empty.
+    const late = await lclShipment(customers[1], '1');
+    const other = (await newContainer([late]).expect(201)).body as ConsolidationDto;
+    expect(await bl(late)).toBeNull();
+    await patch(`/consolidations/${other.id}`, cookies.opsJed, {
+      masterBlNumber: 'MEDU0000002',
+    }).expect(200);
+    expect(await bl(late)).toBe('MEDU0000002');
+    expect(created.masterBlNumber).toBe('MEDU0000001');
+    // F215-3: corrected, the copies follow; a BL of its own stays; taken out, the copy leaves.
+    await patch(`/consolidations/${created.id}`, cookies.opsJed, {
+      masterBlNumber: 'MEDU0000003',
+    }).expect(200);
+    expect([await bl(bare), await bl(own)]).toEqual(['MEDU0000003', 'HBL-OWN-1']);
+    await del(`/consolidations/${created.id}/shipments/${bare}`, cookies.opsJed).expect(200);
+    await del(`/consolidations/${created.id}/shipments/${own}`, cookies.opsJed).expect(200);
+    expect([await bl(bare), await bl(own)]).toEqual([null, 'HBL-OWN-1']);
   });
 
   it('a shipment in a container gets the container statuses from the container only (أ3)', async () => {

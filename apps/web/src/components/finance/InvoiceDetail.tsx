@@ -101,7 +101,12 @@ export function InvoiceDetail({ id }: { id: string }) {
             {t('invoice')} <InvoiceNumber number={inv.number} />
           </h1>
           <StatusBadge kind="invoice" status={inv.status} />
-          {inv.status === 'APPROVED' && <StatusBadge kind="payment" status={inv.paymentStatus} />}
+          {inv.status === 'APPROVED' && (
+            <StatusBadge
+              kind="payment"
+              status={inv.creditedOnly ? 'CREDITED' : inv.paymentStatus}
+            />
+          )}
           <InvoiceKindLabel kind={inv.kind} />
         </div>
         <div className="actions">

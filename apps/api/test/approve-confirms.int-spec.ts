@@ -1,9 +1,10 @@
-import { randomInt, randomUUID } from 'node:crypto';
+import { createHmac, randomInt, randomUUID } from 'node:crypto';
 import type {
   AlertsDto,
   ApiClientCreatedDto,
   CsApprovalPriceDto,
   CsBookingRequestCreated,
+  CsBookingRequestDto,
   CsBookingRequestStaffDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,6 +17,7 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { sha256 } from '../src/customer-service/customer-identity-auth.js';
 import { uniquePhone } from './test-data.js';
 
 /**
@@ -30,6 +32,9 @@ import { uniquePhone } from './test-data.js';
 describe('approving a bot request confirms its booking (plan 12 section 4)', () => {
   let on: TestApp;
   let off: TestApp;
+  /** The same database with the bot's signed channel identities on (F215-4). */
+  let signed: TestApp;
+  const secret = 'test-channel-assertion-secret-32-characters';
   let pts = '';
   let bot: ApiClientCreatedDto;
   const cookies = { admin: '', sales: '' };
@@ -63,7 +68,7 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
   }
 
   /** A bot request of 4 barrels at 10: 40. */
-  async function request(): Promise<string> {
+  async function request(senderId = uniquePhone(), channel = 'whatsapp'): Promise<string> {
     return (
       (
         await on
@@ -71,7 +76,7 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
           .post('/api/v1/cs/booking-requests')
           .set('Authorization', `Bearer ${bot.key}`)
           .send({
-            sender: { channel: 'whatsapp', id: uniquePhone() },
+            sender: { channel, id: senderId },
             originId: ids.origin,
             destinationId: ids.dest,
             services: [],
@@ -203,9 +208,22 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
         approvedAt: new Date(),
       },
     });
+    signed = await createTestApp({
+      CS_APPROVE_CONFIRMS_ENABLED: true,
+      BILLING_AUTO_APPROVE_ENABLED: true,
+      CS_CUSTOMER_IDENTITY_ENABLED: true,
+      CS_CUSTOMER_IDENTITY_COMPANY_ID: `confirm-${randomUUID()}`,
+      CS_CUSTOMER_IDENTITY_CLIENTS: JSON.stringify({
+        [bot.client.id]: {
+          secret,
+          accounts: [{ channel: 'TELEGRAM', channelAccountId: 'test-bot' }],
+        },
+      }),
+    });
   });
 
   afterAll(async () => {
+    await signed?.close();
     await off?.close();
     await on?.close();
   });
@@ -305,6 +323,177 @@ describe('approving a bot request confirms its booking (plan 12 section 4)', () 
     const approvedAt = events.findIndex((e) => e.type === 'request.approved');
     expect(approvedAt).toBeGreaterThanOrEqual(0);
     expect(events.slice(0, approvedAt).every((e) => e.type.startsWith('request.'))).toBe(true);
+  });
+
+  it('tells the bot what was billed and paid, credited apart from paid (trial 2026-11-06)', async () => {
+    const subjectId = `${Date.now()}${randomInt(100_000)}`;
+    const id = await request(subjectId, 'telegram');
+    const path = `/api/v1/cs/booking-requests/${id}`;
+    /** GET as the bot: signed for the sender (plan 08) unless `unsigned`. */
+    const readAs = async (unsigned: boolean) => {
+      const req = signed
+        .http()
+        .get(path)
+        .set('Authorization', `Bearer ${bot.key}`)
+        .set('X-Cs-Sender', `telegram:${subjectId}`);
+      if (!unsigned) {
+        const rawContext = JSON.stringify({
+          channel: 'TELEGRAM',
+          subjectId,
+          channelAccountId: 'test-bot',
+          eventId: randomUUID(),
+          observedAt: new Date().toISOString(),
+        });
+        const issued = Math.floor(Date.now() / 1000).toString();
+        const payload = [
+          'v1',
+          bot.client.id,
+          'GET',
+          path,
+          '',
+          issued,
+          sha256(rawContext),
+          sha256(''),
+        ].join('\n');
+        const signature = createHmac('sha256', secret).update(payload).digest('base64url');
+        req
+          .set('X-Nolon-Channel-Assertion', `v1:${issued}:${signature}`)
+          .set('X-Nolon-Channel-Context', Buffer.from(rawContext).toString('base64url'));
+      }
+      return (await req.expect(200)).body as CsBookingRequestDto;
+    };
+    const read = () => readAs(false);
+    expect((await read()).payment).toBeNull();
+
+    const approved = (await approve(on, id, await newCustomer(), 201))
+      .body as CsBookingRequestStaffDto;
+    const booking = await on.prisma.booking.findUniqueOrThrow({
+      where: { id: approved.bookingId! },
+      include: { shipment: true },
+    });
+    const invoice = await on.prisma.customerInvoice.findFirstOrThrow({
+      where: { shipmentId: booking.shipment!.id },
+    });
+    expect((await read()).payment).toEqual({
+      invoices: [
+        expect.objectContaining({
+          number: invoice.number,
+          kind: 'MAIN',
+          currency: 'USD',
+          total: '40',
+          paid: '0',
+          credited: '0',
+          balance: '40',
+          state: 'open',
+        }),
+      ],
+      draftInvoices: 0,
+    });
+
+    // F215-4: X-Cs-Sender alone reads the request, never its amounts.
+    expect((await readAs(true)).payment).toBeNull();
+
+    // The amounts are the invoice's as they are now: partly paid, paid, then cleared by credit.
+    const set = (paidAmount: string, creditedAmount: string) =>
+      on.prisma.customerInvoice.update({
+        where: { id: invoice.id },
+        data: { paidAmount, creditedAmount },
+      });
+    await set('15', '0');
+    expect((await read()).payment?.invoices[0]).toMatchObject({
+      balance: '25',
+      state: 'partly_paid',
+    });
+    await set('40', '0');
+    expect((await read()).payment?.invoices[0]).toMatchObject({ balance: '0', state: 'paid' });
+    await set('0', '40');
+    expect((await read()).payment?.invoices[0]).toMatchObject({ state: 'credited' });
+
+    // A draft is counted, never shown with an amount; a cancelled one is left out.
+    for (const status of ['DRAFT', 'CANCELLED'] as const) {
+      await on.prisma.customerInvoice.create({
+        data: {
+          branchId: invoice.branchId,
+          customerId: invoice.customerId,
+          shipmentId: invoice.shipmentId,
+          kind: 'ADDITIONAL',
+          currency: 'USD',
+          fxRate: '1',
+          invoiceDate: invoice.invoiceDate,
+          dueDate: invoice.dueDate,
+          status,
+          ...(status === 'CANCELLED' ? { cancelReason: 'test', cancelledAt: new Date() } : {}),
+          total: '7',
+          createdById: userIds.sales,
+        },
+      });
+    }
+    // F215-2: an invoice of a branch the key does not serve is left out.
+    await on.prisma.customerInvoice.create({
+      data: {
+        branchId: await branchId(on.prisma, 'DXB'),
+        customerId: invoice.customerId,
+        shipmentId: invoice.shipmentId,
+        kind: 'ADDITIONAL',
+        currency: 'USD',
+        fxRate: '1',
+        invoiceDate: invoice.invoiceDate,
+        dueDate: invoice.dueDate,
+        total: '9',
+        createdById: userIds.sales,
+      },
+    });
+    const last = (await read()).payment;
+    expect(last?.invoices).toHaveLength(1);
+    expect(last?.draftInvoices).toBe(1);
+  });
+
+  it('fills the measures a receipt weighed while its approved invoice is priced per barrel, not per kg (trial 2026-11-06)', async () => {
+    const code = `${tag}W${randomInt(1000, 9999)}`;
+    const warehouse = (
+      await staff(on, cookies.admin)
+        .post('/warehouses', {
+          branchId: pts,
+          code,
+          nameEn: `Store ${code}`,
+          nameAr: `مستودع ${code}`,
+        })
+        .expect(201)
+    ).body as { id: string };
+    /** An approved, invoiced bot booking whose quotation prices its line by `unit`; its measures after a receipt. */
+    const filledWith = async (unit: 'PER_BARREL' | 'PER_KG') => {
+      const approved = (await approve(on, await request(), await newCustomer(), 201))
+        .body as CsBookingRequestStaffDto;
+      const booking = await on.prisma.booking.findUniqueOrThrow({
+        where: { id: approved.bookingId! },
+        include: { shipment: true, quotation: { include: { lines: true } } },
+      });
+      expect(booking.quotation?.lines.map((l) => l.unit)).toEqual(['PER_BARREL']);
+      if (unit !== 'PER_BARREL') {
+        await on.prisma.quotationLine.updateMany({
+          where: { quotationId: booking.quotationId! },
+          data: { unit },
+        });
+      }
+      const shipmentId = booking.shipment!.id;
+      expect(
+        await on.prisma.customerInvoice.count({ where: { shipmentId, status: 'APPROVED' } }),
+      ).toBe(1);
+      await staff(on, cookies.admin)
+        .post(`/shipments/${shipmentId}/warehouse/receipts`, {
+          warehouseId: warehouse.id,
+          packages: 4,
+          weightKg: '20',
+          volumeCbm: '0.5',
+          condition: 'GOOD',
+        })
+        .expect(201);
+      const items = await on.prisma.shipmentItem.findMany({ where: { shipmentId } });
+      return items.map((i) => [i.weightKg?.toString() ?? null, i.volumeCbm?.toString() ?? null]);
+    };
+    expect(await filledWith('PER_BARREL')).toEqual([['20', '0.5']]);
+    // F215-2: a price by weight would change: the credit note route stays.
+    expect(await filledWith('PER_KG')).toEqual([[null, null]]);
   });
 
   it('refuses the whole approval when the balance is already over the credit limit', async () => {

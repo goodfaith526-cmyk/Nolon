@@ -305,6 +305,11 @@ export interface CustomerInvoiceSummaryDto {
   balance: DecimalString;
   /** PAID once payments and credit notes cover the total. */
   paymentStatus: PaymentStatus;
+  /**
+   * Trial 2026-11-06: PAID by credit notes alone, nothing paid on it (shown "closed by credit
+   * note", not "paid"). A field of its own: paymentStatus keeps its three values (F215-1).
+   */
+  creditedOnly: boolean;
   kind: InvoiceKind;
   /**
    * The invoice still bills its shipment: a draft, or approved and not wholly credited unpaid.

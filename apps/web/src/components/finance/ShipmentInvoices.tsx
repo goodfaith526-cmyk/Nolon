@@ -141,7 +141,10 @@ export function ShipmentInvoices({ shipmentId }: { shipmentId: string }) {
                   <span className="actions">
                     <StatusBadge kind="invoice" status={i.status} />
                     {i.status === 'APPROVED' && (
-                      <StatusBadge kind="payment" status={i.paymentStatus} />
+                      <StatusBadge
+                        kind="payment"
+                        status={i.creditedOnly ? 'CREDITED' : i.paymentStatus}
+                      />
                     )}
                   </span>
                 </td>
