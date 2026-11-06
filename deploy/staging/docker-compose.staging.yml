@@ -113,6 +113,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Plan 13-5: started with the API (deploy.sh never named it, so it never ran).
+      gotenberg:
+        condition: service_started
 
   # Plan 14-3 (plan 09 section 7): Chromium PDF rendering for the API only. Internal network with
   # no egress and no published port; every fetch but its own file:///tmp page is denied, and
