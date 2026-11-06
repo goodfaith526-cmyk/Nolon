@@ -69,6 +69,10 @@ export class CsDocumentsService {
       ...(ready ? [{ token: randomBytes(32).toString('base64url'), receiptId: null }] : []),
       ...receipts.map((r) => ({ token: randomBytes(32).toString('base64url'), receiptId: r.id })),
     ];
+    // F221-2: every read issues fresh links; the request's expired ones go, so they never pile up.
+    await this.prisma.csDocumentLink.deleteMany({
+      where: { requestId, expiresAt: { lt: new Date() } },
+    });
     if (issued.length > 0) {
       await this.prisma.csDocumentLink.createMany({
         data: issued.map((i) => ({

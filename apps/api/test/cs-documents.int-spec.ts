@@ -401,4 +401,47 @@ describe('the waybill and the receipts for the bot (plan 13-5)', () => {
     await asBot(on, pathOf(docs.receipts[0]!.url), subjectId).expect(404);
     expect((await read(on, id, subjectId)).documents?.receipts).toEqual([]);
   });
+  it('refuses a receipt of a branch the key does not serve, and every document once the key loses the branch', async () => {
+    const { id, subjectId, shipmentId } = await approvedRequest();
+    await receive(shipmentId);
+    const receipt = await pay(shipmentId, '10');
+    const docs = (await read(on, id, subjectId)).documents!;
+    expect(docs.receipts).toHaveLength(1);
+    // The receipt moved to a branch the key does not serve: its link is refused.
+    const dxb = await branchId(on.prisma, 'DXB');
+    await on.prisma.receipt.update({ where: { id: receipt.id }, data: { branchId: dxb } });
+    await asBot(on, pathOf(docs.receipts[0]!.url), subjectId).expect(404);
+    await on.prisma.receipt.update({ where: { id: receipt.id }, data: { branchId: pts } });
+    await asBot(on, pathOf(docs.receipts[0]!.url), subjectId).expect(200);
+    // The key now serves DXB only: the request's branch is no longer its own, both links refused.
+    await on.prisma.apiClientBranch.create({ data: { apiClientId: bot.client.id, branchId: dxb } });
+    await on.prisma.apiClientBranch.delete({
+      where: { apiClientId_branchId: { apiClientId: bot.client.id, branchId: pts } },
+    });
+    try {
+      await asBot(on, pathOf(docs.waybill!.url), subjectId).expect(404);
+      await asBot(on, pathOf(docs.receipts[0]!.url), subjectId).expect(404);
+    } finally {
+      await on.prisma.apiClientBranch.create({
+        data: { apiClientId: bot.client.id, branchId: pts },
+      });
+      await on.prisma.apiClientBranch.delete({
+        where: { apiClientId_branchId: { apiClientId: bot.client.id, branchId: dxb } },
+      });
+    }
+  });
+
+  it('keeps only live links: expired ones of the request are pruned when new ones are issued', async () => {
+    const { id, subjectId, shipmentId } = await approvedRequest();
+    await receive(shipmentId);
+    await read(on, id, subjectId);
+    await on.prisma.csDocumentLink.updateMany({
+      where: { requestId: id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    await read(on, id, subjectId);
+    const rows = await on.prisma.csDocumentLink.findMany({ where: { requestId: id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
 });
