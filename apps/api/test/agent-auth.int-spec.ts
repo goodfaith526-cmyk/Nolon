@@ -327,9 +327,12 @@ describe('code exchange', () => {
     const user = await staff();
     const { verifier, challenge } = pkce();
     const { code } = await authorize(user.cookie, challenge);
+    // One clock reading: two Date.now() calls a millisecond apart make the gap 60.001 s, which
+    // the 60-second expiry check refuses.
+    const now = Date.now();
     await t.prisma.agentAuthCode.updateMany({
       where: { userId: user.id },
-      data: { createdAt: new Date(Date.now() - 61_000), expiresAt: new Date(Date.now() - 1000) },
+      data: { createdAt: new Date(now - 61_000), expiresAt: new Date(now - 1000) },
     });
     await exchange(code, verifier).expect(400);
   });
