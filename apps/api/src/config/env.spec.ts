@@ -119,11 +119,15 @@ describe('loadEnv', () => {
     expect(env.CORS_ORIGINS).toEqual(['http://a.test', 'http://b.test']);
   });
 
-  it('customer identity limits: none by default; 0 is off', () => {
+  it('visitor limits (identity, booking requests, quotes): none by default; 0 is off', () => {
     const DB = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
     const env = loadEnv(DB);
     expect(env.CS_IDENTITY_KEY_OPERATIONS_PER_DAY).toBe(0);
     expect(env.CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR).toBe(0);
+    expect(env.CS_BOOKING_REQUESTS_PER_SENDER_DAY).toBe(0);
+    expect(env.CS_QUOTES_PER_KEY_15MIN).toBe(0);
+    expect(loadEnv({ ...DB, CS_QUOTES_PER_KEY_15MIN: '' }).CS_QUOTES_PER_KEY_15MIN).toBe(0);
+    expect(() => loadEnv({ ...DB, CS_BOOKING_REQUESTS_PER_SENDER_DAY: '-1' })).toThrow();
     const empty = loadEnv({
       ...DB,
       CS_IDENTITY_KEY_OPERATIONS_PER_DAY: '',

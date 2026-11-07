@@ -244,6 +244,16 @@ const envSchema = z.object({
    */
   CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
   /**
+   * Owner, 2026-11-07: new booking requests one sender may make in a day (UTC); a retry is not
+   * counted. 0 (default): no limit (emergency switch only).
+   */
+  CS_BOOKING_REQUESTS_PER_SENDER_DAY: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
+   * Owner, 2026-11-07: quotes one bot key may ask in 15 minutes before it is blocked for 15
+   * minutes. 0 (default): no limit (emergency switch only).
+   */
+  CS_QUOTES_PER_KEY_15MIN: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
    * Which deployment this is, set by its compose file: `staging` or `production`. Unset (local
    * development, tests): `local`. Only CS_TEST_AUTOCYCLE_ENABLED reads it.
    */

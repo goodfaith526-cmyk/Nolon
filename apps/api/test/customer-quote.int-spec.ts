@@ -395,4 +395,20 @@ describe('Customer Service quote (R2)', () => {
     await quote(bot.key, { ...q, originId: ids.dest! }).expect(400);
     await quote(bot.key, { ...q, onDate: iso(1) }).expect(200);
   });
+
+  it('limits no key by default; set, CS_QUOTES_PER_KEY_15MIN blocks the key (F228-2)', async () => {
+    const q = { originId: ids.city!, destinationId: ids.dest!, category: cat.shipment };
+    // Owner, 2026-11-07: past the old 300 quotes in 15 minutes, the key still gets its answers.
+    for (let i = 0; i < 301; i += 1) await quote(bot.key, q).expect(200);
+    const limited = await createTestApp({ CS_QUOTES_PER_KEY_15MIN: 2 });
+    try {
+      const ask = () =>
+        limited.http().get('/api/v1/cs/quote').query(q).set('Authorization', `Bearer ${bot.key}`);
+      await ask().expect(200);
+      await ask().expect(200);
+      expect(code(await ask().expect(429))).toBe('TOO_MANY');
+    } finally {
+      await limited.close();
+    }
+  });
 });

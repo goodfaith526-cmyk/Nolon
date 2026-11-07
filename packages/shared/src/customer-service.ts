@@ -436,9 +436,6 @@ export type CsSenderChannel = (typeof CS_SENDER_CHANNELS)[number];
 
 export const CS_HANDOVERS = ['PICKUP', 'BRANCH_DROP'] as const;
 
-/** At most this many new booking requests per owner per day (UTC); a retry does not count. */
-export const CS_DAILY_REQUESTS = 5;
-
 /** A request nobody decided in this long is expired. */
 export const CS_REQUEST_TTL_DAYS = 14;
 

@@ -467,6 +467,46 @@ describe('Customer Service website identity', () => {
     );
   });
 
+  it('with the default settings, neither one person nor one key is ever limited (F228-1)', async () => {
+    // One visitor, well past the old 10 operations an hour.
+    const who = visitor();
+    await capture(who, named('Busy Visitor')).expect(201);
+    for (let i = 0; i < 11; i += 1) {
+      const res = await capture({ ...who, eventId: randomUUID() }, named('Busy Visitor'));
+      expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
+    }
+    // The key, past the old 1000 operations in 24 hours.
+    const identity = await t.prisma.customerChannelIdentity.findUniqueOrThrow({
+      where: {
+        companyId_channel_subjectId: { companyId, channel: 'WEB', subjectId: who.subjectId },
+      },
+    });
+    // Copies of one real operation (the table checks its result's shape).
+    const real = await t.prisma.customerProfileOperation.findFirstOrThrow({
+      where: { companyId, identityId: identity.id },
+    });
+    const ops = await t.prisma.customerProfileOperation.count({
+      where: { companyId, apiClientId: clientId },
+    });
+    await t.prisma.customerProfileOperation.createMany({
+      data: Array.from({ length: Math.max(0, 1001 - ops) }, () => {
+        const id = randomUUID();
+        return {
+          id,
+          companyId,
+          apiClientId: clientId,
+          identityId: identity.id,
+          idempotencyKey: randomUUID(),
+          contentHash: real.contentHash,
+          result: { ...(real.result as object), operationId: id },
+          context: real.context ?? {},
+        };
+      }),
+    });
+    await capture(visitor(), named('Past the old key limit')).expect(201);
+    await capture({ ...who, eventId: randomUUID() }, named('Busy Visitor')).expect(200);
+  });
+
   it('has no cap on new website visitors; the per-key daily limit is a setting, off by default', async () => {
     const made = await t.prisma.customerChannelIdentity.count({
       where: { companyId, channel: 'WEB' },
