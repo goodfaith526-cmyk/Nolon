@@ -142,15 +142,21 @@ export class CustomerProfileReviewService {
         });
         value = city?.nameAr ?? row.value;
       }
-      if (row.field === 'phone')
-        heldBy = (
-          await this.prisma.customer.findMany({
-            where: { phone: row.value, id: { not: customerId } },
-            orderBy: { number: 'asc' },
-            take: 3,
-            select: { number: true },
-          })
-        ).map((c) => c.number);
+      if (row.field === 'phone') {
+        // As phoneTaken counts holders (F227-2): customers by digits of phone or WhatsApp, and
+        // other profiles with the phone, by their customer's number or else their own.
+        const numbers = await this.customers.phoneHolderNumbers(row.value, customerId);
+        const profiles = await this.prisma.customerProfile.findMany({
+          where: { companyId: this.auth.companyId, phone: row.value, id: { not: profile.id } },
+          orderBy: { number: 'asc' },
+          take: 5,
+          select: { number: true, accounts: { select: { number: true } } },
+        });
+        for (const p of profiles)
+          if (!p.accounts.some((a) => numbers.includes(a.number)))
+            numbers.push(p.accounts[0]?.number ?? p.number);
+        heldBy = [...new Set(numbers)].slice(0, 5);
+      }
       warnings.push({
         field:
           row.field === 'residenceCityId' ? 'city' : (row.field as 'name' | 'phone' | 'address'),

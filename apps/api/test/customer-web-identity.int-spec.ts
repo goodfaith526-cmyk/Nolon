@@ -552,6 +552,100 @@ describe('Customer Service website identity', () => {
       ).warnings,
     ).toEqual([]);
   });
+  it('never overwrites an address, city or name staff put in the file (F227-1, F227-3)', async () => {
+    const staff = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const who = visitor();
+    const made = (await capture(who, named('Staff Kept')).expect(201)).body as IdentityResult;
+    const [file] = await accountsOf(made.profileId!);
+    // Staff typed the address and city, and the file is a staff-made account linked to the profile.
+    await t.prisma.customer.update({
+      where: { id: file!.id },
+      data: {
+        address: 'Staff street',
+        city: 'Staff city',
+        createdById: staff.id,
+        createdViaApiClientId: null,
+      },
+    });
+    await capture(
+      { ...who, eventId: randomUUID() },
+      {
+        ...named('Staff Kept Completed'),
+        address: { value: 'Chat street', source: 'CUSTOMER_STATEMENT' },
+        residenceCityId: { value: originId, source: 'CUSTOMER_STATEMENT' },
+      },
+    ).expect(200);
+    expect((await accountsOf(made.profileId!))[0]).toMatchObject({
+      name: 'Staff Kept',
+      address: 'Staff street',
+      city: 'Staff city',
+    });
+    // The profile took them (it had none); a different address later is a warning on it.
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: made.profileId! } }),
+    ).toMatchObject({ name: 'Staff Kept Completed', address: 'Chat street', needsReview: false });
+    await capture(
+      { ...who, eventId: randomUUID() },
+      { address: { value: 'Another street', source: 'CUSTOMER_STATEMENT' } },
+    ).expect(200);
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: made.profileId! } }),
+    ).toMatchObject({ address: 'Chat street', needsReview: true });
+    expect(
+      await t.prisma.customerProfileEvidence.count({
+        where: {
+          profileId: made.profileId!,
+          field: 'address',
+          value: 'Another street',
+          applied: false,
+        },
+      }),
+    ).toBe(1);
+    expect((await accountsOf(made.profileId!))[0]?.address).toBe('Staff street');
+  });
+
+  it('names every holder of a warned phone, as the phone check counts them, never the file itself (F227-2)', async () => {
+    const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const digits = `97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    const phone = `+${digits}`;
+    // An old account holding the number only as its WhatsApp.
+    const legacy = await t.prisma.customer.create({
+      data: {
+        number: `OLD${randomUUID().slice(0, 12)}`,
+        name: 'Legacy holder',
+        kind: 'INDIVIDUAL',
+        whatsapp: phone,
+        createdById: admin.id,
+      },
+    });
+    const claimer = (
+      await capture(visitor(), {
+        ...named('Legacy claimer'),
+        phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
+      }).expect(201)
+    ).body as IdentityResult;
+    const [own] = await accountsOf(claimer.profileId!);
+    const cookie = await signIn(t, admin.email);
+    const warned = (
+      await t
+        .http()
+        .get(`/api/v1/customer-profiles/customer/${own!.id}/warnings`)
+        .set('Cookie', cookie)
+        .expect(200)
+    ).body as CustomerChatWarningsDto;
+    const warning = warned.warnings.find((w) => w.field === 'phone');
+    expect(warning?.heldBy).toEqual([legacy.number]);
+    expect(warning?.heldBy).not.toContain(own!.number);
+    // Outlet staff never reach the warnings.
+    const outlet = await createUser(t.prisma, ['OUTLET_STAFF'], ['DXB'], LEDGER_PREFIX);
+    const outletCookie = await signIn(t, outlet.email);
+    const refused = await t
+      .http()
+      .get(`/api/v1/customer-profiles/customer/${own!.id}/warnings`)
+      .set('Cookie', outletCookie);
+    expect([403, 404]).toContain(refused.status);
+  });
+
   it(`starts at most ${WEB_NEW_VISITORS_PER_DAY} new visitors a key a day`, async () => {
     const made = await t.prisma.customerChannelIdentity.count({
       where: { companyId, channel: 'WEB' },

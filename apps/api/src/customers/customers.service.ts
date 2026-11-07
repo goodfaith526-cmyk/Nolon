@@ -219,6 +219,21 @@ export class CustomersService {
         OR regexp_replace(whatsapp, '[^0-9]', '', 'g') = ${value.slice(1)})`;
   }
 
+  /**
+   * Owner, 2026-11-07: the numbers of the other customers holding `phone`, matched as
+   * profilePhoneOwnersInTx matches (digits of the phone or the WhatsApp number), for a staff
+   * warning. Numbers only; at most 5.
+   */
+  async phoneHolderNumbers(phone: string, exceptCustomerId: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ number: string }[]>`
+      SELECT "number" FROM customers
+      WHERE id <> ${exceptCustomerId}::uuid
+      AND (regexp_replace(phone, '[^0-9]', '', 'g') = ${phone.slice(1)}
+        OR regexp_replace(whatsapp, '[^0-9]', '', 'g') = ${phone.slice(1)})
+      ORDER BY "number" LIMIT 5`;
+    return rows.map((r) => r.number);
+  }
+
   async profileLinkCandidateInTx(
     tx: Prisma.TransactionClient,
     user: AuthUser,
@@ -649,6 +664,7 @@ export class CustomersService {
         address: true,
         city: true,
         countryCode: true,
+        createdViaApiClientId: true,
       },
     });
     // An inactive customer is staff's to bring back: the channel never changes it.
@@ -658,7 +674,9 @@ export class CustomersService {
     const given = profile.name?.trim() || null;
     // The file follows the chat's name while it still carries the name the chat gave before
     // (the channel's, or the profile's previous one, owner 2026-11-07); a name staff typed stays.
-    const previous = input.previousName?.trim() || null;
+    // Only a file the chat made follows the profile's previous name: a staff-made account linked
+    // to a profile keeps the name staff typed (F227-3).
+    const previous = existing.createdViaApiClientId ? input.previousName?.trim() || null : null;
     const chatNamed =
       (channelName !== null && existing.name === channelName) ||
       (previous !== null && existing.name === previous);
