@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newApiKey } from '../src/customer-service/api-key.js';
 import { sha256 } from '../src/customer-service/customer-identity-auth.js';
 import type { IdentityResult } from '../src/customer-service/customer-identity.contract.js';
-import { WEB_NEW_VISITORS_PER_DAY } from '../src/customer-service/customer-identity.service.js';
+import { APP_ENV, type AppEnv } from '../src/config/env.js';
 import {
   APP_ORIGIN,
   LEDGER_PREFIX,
@@ -15,12 +15,15 @@ import {
   signIn,
 } from './auth-test-app.js';
 
+/** The visitor cap removed by the owner on 2026-11-07. */
+const OLD_WEB_CAP = 200;
+
 /**
  * Website chat visitors (owner, 2026-11-06): a signed WEB identity (`web` + 16 hex, under a WEB
  * channel account the key lists, Codex F214-1) gets its customer file once the visitor gives a name, a
  * booking request bound to it, and the bot's quotes saved in it. Negative cases: a key listing no
  * WEB account, another website account, a malformed visitor id, phone evidence, no name, a typed phone another file
- * holds (never linked), the daily cap on new visitors.
+ * holds (never linked). No cap on new visitors (owner, 2026-11-07).
  */
 describe('Customer Service website identity', () => {
   let t: TestApp;
@@ -646,12 +649,52 @@ describe('Customer Service website identity', () => {
     expect([403, 404]).toContain(refused.status);
   });
 
-  it(`starts at most ${WEB_NEW_VISITORS_PER_DAY} new visitors a key a day`, async () => {
+  it('with the default settings, neither one person nor one key is ever limited (F228-1)', async () => {
+    // One visitor, well past the old 10 operations an hour.
+    const who = visitor();
+    await capture(who, named('Busy Visitor')).expect(201);
+    for (let i = 0; i < 11; i += 1) {
+      const res = await capture({ ...who, eventId: randomUUID() }, named('Busy Visitor'));
+      expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
+    }
+    // The key, past the old 1000 operations in 24 hours.
+    const identity = await t.prisma.customerChannelIdentity.findUniqueOrThrow({
+      where: {
+        companyId_channel_subjectId: { companyId, channel: 'WEB', subjectId: who.subjectId },
+      },
+    });
+    // Copies of one real operation (the table checks its result's shape).
+    const real = await t.prisma.customerProfileOperation.findFirstOrThrow({
+      where: { companyId, identityId: identity.id },
+    });
+    const ops = await t.prisma.customerProfileOperation.count({
+      where: { companyId, apiClientId: clientId },
+    });
+    await t.prisma.customerProfileOperation.createMany({
+      data: Array.from({ length: Math.max(0, 1001 - ops) }, () => {
+        const id = randomUUID();
+        return {
+          id,
+          companyId,
+          apiClientId: clientId,
+          identityId: identity.id,
+          idempotencyKey: randomUUID(),
+          contentHash: real.contentHash,
+          result: { ...(real.result as object), operationId: id },
+          context: real.context ?? {},
+        };
+      }),
+    });
+    await capture(visitor(), named('Past the old key limit')).expect(201);
+    await capture({ ...who, eventId: randomUUID() }, named('Busy Visitor')).expect(200);
+  });
+
+  it('has no cap on new website visitors; the per-key daily limit is a setting, off by default', async () => {
     const made = await t.prisma.customerChannelIdentity.count({
       where: { companyId, channel: 'WEB' },
     });
-    // Visitors made by earlier tests count; fill up to the cap directly, as earlier captures did.
-    for (let i = made; i < WEB_NEW_VISITORS_PER_DAY; i += 1) {
+    // Owner, 2026-11-07: no visitor cap. Past the old 200 a day, a new visitor still gets a file.
+    for (let i = made; i < OLD_WEB_CAP; i += 1) {
       const identity = await t.prisma.customerChannelIdentity.create({
         data: {
           companyId,
@@ -669,16 +712,20 @@ describe('Customer Service website identity', () => {
         },
       });
     }
-    expect(code(await capture(visitor(), named('Over the cap')).expect(429))).toBe('CAPTURE_LIMIT');
-    // A Telegram sender is not counted.
-    await capture(
-      {
-        ...visitor(),
-        channel: 'TELEGRAM',
-        subjectId: `${Date.now()}`,
-        channelAccountId: 'test-bot',
-      },
-      named('Telegram sender'),
-    ).expect(201);
+    await capture(visitor(), named('Past the old cap')).expect(201);
+    // Set on the server, the per-key daily limit turns the next operation away.
+    const env = t.app.get<AppEnv>(APP_ENV);
+    const ops = await t.prisma.customerProfileOperation.count({
+      where: { companyId, apiClientId: clientId },
+    });
+    Object.assign(env, { CS_IDENTITY_KEY_OPERATIONS_PER_DAY: ops });
+    try {
+      expect(code(await capture(visitor(), named('Over the key limit')).expect(429))).toBe(
+        'CAPTURE_LIMIT',
+      );
+    } finally {
+      Object.assign(env, { CS_IDENTITY_KEY_OPERATIONS_PER_DAY: 0 });
+    }
+    await capture(visitor(), named('Limit off again')).expect(201);
   });
 });

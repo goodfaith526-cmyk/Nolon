@@ -119,6 +119,8 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       CS_CUSTOMER_BOOKING_IDENTITY_ENABLED: true,
       CS_CUSTOMER_IDENTITY_COMPANY_ID: companyId,
       CS_CUSTOMER_IDENTITY_CLIENTS: JSON.stringify({ [clientId]: config, [otherId]: config }),
+      // The per-person limit test below counts to 10.
+      CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: 10,
     });
     const user = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
     creatorId = user.id;

@@ -16,7 +16,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
-  CS_DAILY_REQUESTS,
   CS_OTHER_KIND,
   CS_SCOPES,
   CS_REQUEST_TTL_DAYS,
@@ -298,7 +297,7 @@ function coded(status: HttpStatus, code: string, message: string): HttpException
  * Booking requests from customer-service clients (R3, docs/plans/04 sections 6 and 7.1-7.2): a
  * draft for staff, never a booking. The branch comes from the routing rules of the origin only,
  * capped by the key's branches; a request is made once per idempotency key, and an owner makes at
- * most CS_DAILY_REQUESTS new ones a day. Only its owner, through the same key, reads it back.
+ * most CS_BOOKING_REQUESTS_PER_SENDER_DAY new ones a day when that is set (0, the default: no limit). Only its owner, through the same key, reads it back.
  */
 @Injectable()
 export class BookingRequestsService {
@@ -609,16 +608,20 @@ export class BookingRequestsService {
       ) {
         throw notServed();
       }
-      const dayStart = toDbDate(todayIn('UTC', now));
-      const today = await tx.csBookingRequest.count({
-        where: { ownerRef: owner, createdAt: { gte: dayStart } },
-      });
-      if (today >= CS_DAILY_REQUESTS) {
-        throw coded(
-          HttpStatus.TOO_MANY_REQUESTS,
-          'DAILY_LIMIT',
-          `At most ${CS_DAILY_REQUESTS} new requests a day`,
-        );
+      // Owner, 2026-11-07: no limit on visitors; a per-sender daily limit is an emergency switch.
+      const perDay = this.env.CS_BOOKING_REQUESTS_PER_SENDER_DAY;
+      if (perDay) {
+        const dayStart = toDbDate(todayIn('UTC', now));
+        const today = await tx.csBookingRequest.count({
+          where: { ownerRef: owner, createdAt: { gte: dayStart } },
+        });
+        if (today >= perDay) {
+          throw coded(
+            HttpStatus.TOO_MANY_REQUESTS,
+            'DAILY_LIMIT',
+            `At most ${perDay} new requests a day`,
+          );
+        }
       }
       // Plan 09e: the other sender's customer found (row-locked) before any customer-key lock;
       // one to make is made last, after the owner's instant account (Codex F191-3).

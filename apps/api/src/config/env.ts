@@ -233,6 +233,27 @@ const envSchema = z.object({
   /** Seconds between the test autocycle's steps (and from the request to its approval). */
   CS_TEST_AUTOCYCLE_DELAY_S: emptyAsUnset(z.coerce.number().int().min(0).max(3600).default(30)),
   /**
+   * Owner, 2026-11-07: customer identity operations (capture, update, follow-up) one bot key may
+   * make in 24 hours. 0 (default): no limit, so visitors are never turned away (emergency switch only).
+   */
+  CS_IDENTITY_KEY_OPERATIONS_PER_DAY: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
+   * Identity operations one person (channel identity) may make in an hour; a replay is not
+   * counted. 0 (default): no limit. Owner, 2026-11-07: no limit of any kind on visitors; this is
+   * only an emergency switch against one sender's flood.
+   */
+  CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
+   * Owner, 2026-11-07: new booking requests one sender may make in a day (UTC); a retry is not
+   * counted. 0 (default): no limit (emergency switch only).
+   */
+  CS_BOOKING_REQUESTS_PER_SENDER_DAY: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
+   * Owner, 2026-11-07: quotes one bot key may ask in 15 minutes before it is blocked for 15
+   * minutes. 0 (default): no limit (emergency switch only).
+   */
+  CS_QUOTES_PER_KEY_15MIN: emptyAsUnset(z.coerce.number().int().min(0).default(0)),
+  /**
    * Which deployment this is, set by its compose file: `staging` or `production`. Unset (local
    * development, tests): `local`. Only CS_TEST_AUTOCYCLE_ENABLED reads it.
    */

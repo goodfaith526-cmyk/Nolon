@@ -88,6 +88,11 @@ services:
       CS_TELEGRAM_TOKENS_ENABLED: ${CS_TELEGRAM_TOKENS_ENABLED:-false}
       CS_STATEMENT_ENABLED: ${CS_STATEMENT_ENABLED:-false}
       CS_DOCUMENTS_ENABLED: ${CS_DOCUMENTS_ENABLED:-false}
+      # Owner, 2026-11-07: no limit on visitors. Empty: no limit (emergency switches only).
+      CS_IDENTITY_KEY_OPERATIONS_PER_DAY: ${CS_IDENTITY_KEY_OPERATIONS_PER_DAY:-}
+      CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: ${CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR:-}
+      CS_BOOKING_REQUESTS_PER_SENDER_DAY: ${CS_BOOKING_REQUESTS_PER_SENDER_DAY:-}
+      CS_QUOTES_PER_KEY_15MIN: ${CS_QUOTES_PER_KEY_15MIN:-}
       # Owner, 2026-11-07: staging trials only. Requests named «اختبار» are approved, received and
       # paid by the Test Autocycle users. The production stack never passes these two.
       CS_TEST_AUTOCYCLE_ENABLED: ${CS_TEST_AUTOCYCLE_ENABLED:-false}

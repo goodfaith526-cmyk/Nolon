@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   CS_QUOTE_INCLUDES,
   type CargoType,
@@ -19,6 +19,7 @@ import {
   pricingModeOf,
 } from '@nolon/shared';
 import { cbmFromDimensions } from '../bookings/cbm.js';
+import { APP_ENV, type AppEnv } from '../config/env.js';
 import { addDays, fromDbDateOrNull, todayIn, toDbDate } from '../common/dates.js';
 import { FailureLimiter, type LimitRule } from '../common/failure-limiter.js';
 import { ZERO, dec, toDecimalString, toDecimalStringOrNull } from '../common/money.js';
@@ -30,12 +31,13 @@ import { computeQuotationAmounts } from '../quotations/quotation-totals.js';
 import { RatesService } from '../rates/rates.service.js';
 import type { ApiClientAuth } from './api-client.guard.js';
 
-/** Per key: 300 quotes in 15 minutes. Prices are public, but a key must not scrape them all. */
-export const QUOTE_KEY_RULE: LimitRule = {
-  maxFailures: 300,
-  windowMs: 15 * 60 * 1000,
-  blockMs: 15 * 60 * 1000,
-};
+/**
+ * Per key: at most `max` quotes in 15 minutes, then 15 minutes blocked. Owner, 2026-11-07: no
+ * limit on visitors, so this is on only when CS_QUOTES_PER_KEY_15MIN is set (emergency switch).
+ */
+export function quoteKeyRule(max: number): LimitRule {
+  return { maxFailures: max, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 };
+}
 
 /** The charge a quote prices in its first version (plan 5, point 5). */
 const FREIGHT = 'FREIGHT';
@@ -162,18 +164,23 @@ export function volumeOf(input: Pick<CsQuoteRequest, VolumeField>): QuoteVolume 
  */
 @Injectable()
 export class QuoteService {
-  private readonly limiter = new FailureLimiter(QUOTE_KEY_RULE);
+  /** Null (CS_QUOTES_PER_KEY_15MIN 0, the default): quotes are not limited. */
+  private readonly limiter: FailureLimiter | null;
 
   constructor(
+    @Inject(APP_ENV) env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly masterData: MasterDataService,
     private readonly rates: RatesService,
     private readonly currencies: CurrenciesService,
-  ) {}
+  ) {
+    const max = env.CS_QUOTES_PER_KEY_15MIN;
+    this.limiter = max ? new FailureLimiter(quoteKeyRule(max)) : null;
+  }
 
   async quote(client: ApiClientAuth, input: CsQuoteRequest): Promise<CsQuoteDto> {
     this.requireNotBlocked(client);
-    this.limiter.recordFailure(client.id);
+    this.limiter?.recordFailure(client.id);
     return this.quoteOne(client, input);
   }
 
@@ -188,7 +195,7 @@ export class QuoteService {
     const { items, ...common } = input;
     const answers: CsQuotesDto['items'] = [];
     for (const item of items) {
-      this.limiter.recordFailure(client.id);
+      this.limiter?.recordFailure(client.id);
       try {
         answers.push({ quote: await this.quoteOne(client, { ...common, ...item }), error: null });
       } catch (e) {
@@ -230,7 +237,7 @@ export class QuoteService {
   }
 
   private requireNotBlocked(client: ApiClientAuth): void {
-    if (this.limiter.isBlocked(client.id)) {
+    if (this.limiter?.isBlocked(client.id)) {
       throw new HttpException(
         { message: 'Too many quotes, try again later', code: 'TOO_MANY', statusCode: 429 },
         HttpStatus.TOO_MANY_REQUESTS,

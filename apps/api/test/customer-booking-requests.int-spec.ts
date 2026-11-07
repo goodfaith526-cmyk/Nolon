@@ -12,6 +12,7 @@ import type {
   CustomerDto,
 } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { APP_ENV, type AppEnv } from '../src/config/env.js';
 import {
   APP_ORIGIN,
   LEDGER_PREFIX,
@@ -239,7 +240,7 @@ describe('Customer Service booking requests (R3)', () => {
     });
   });
 
-  it('keeps one row for ten concurrent sends, and a retry never counts toward the day', async () => {
+  it('keeps one row for ten concurrent sends; no daily limit unless set, and a retry never counts', async () => {
     const sender = newSender();
     const same = body({ sender });
     const answers = await Promise.all(Array.from({ length: 10 }, () => create(bot.key, same)));
@@ -251,10 +252,19 @@ describe('Customer Service booking requests (R3)', () => {
       await t.prisma.csBookingRequest.count({ where: { ownerRef: `s:whatsapp:${sender.id}` } }),
     ).toBe(1);
 
-    for (let i = 0; i < 4; i += 1) await create(bot.key, body({ sender })).expect(201);
-    const sixth = await create(bot.key, body({ sender })).expect(429);
-    expect(code(sixth)).toBe('DAILY_LIMIT');
-    await create(bot.key, same).expect(200);
+    // Owner, 2026-11-07: no limit by default; the old 5 a day no longer turns a sender away.
+    for (let i = 0; i < 6; i += 1) await create(bot.key, body({ sender })).expect(201);
+    // Set on the server (emergency switch), the per-sender daily limit applies; a retry passes.
+    const env = t.app.get<AppEnv>(APP_ENV);
+    Object.assign(env, { CS_BOOKING_REQUESTS_PER_SENDER_DAY: 7 });
+    try {
+      const eighth = await create(bot.key, body({ sender })).expect(429);
+      expect(code(eighth)).toBe('DAILY_LIMIT');
+      await create(bot.key, same).expect(200);
+    } finally {
+      Object.assign(env, { CS_BOOKING_REQUESTS_PER_SENDER_DAY: 0 });
+    }
+    await create(bot.key, body({ sender })).expect(201);
   });
 
   it('takes the branch from the origin only, capped by the key', async () => {
