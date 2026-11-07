@@ -34,20 +34,6 @@ export interface ProfileBookingBinding {
   context: IdentityEnvelope['context'];
 }
 const DAY = 86_400_000;
-/** New website visitor identities one key may start in 24 hours (owner, 2026-11-06). */
-export const WEB_NEW_VISITORS_PER_DAY = 200;
-
-/** The WEB identities this key's conversations started in the last 24 hours. */
-async function newWebVisitors(tx: Tx, companyId: string, apiClientId: string, now: Date) {
-  return tx.customerChannelIdentity.count({
-    where: {
-      companyId,
-      channel: 'WEB',
-      createdAt: { gte: new Date(now.getTime() - DAY) },
-      conversations: { some: { apiClientId } },
-    },
-  });
-}
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
 export async function identityLock(tx: Tx, key: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`customer-profile:${key}`}, 0))`;
@@ -126,15 +112,23 @@ export class CustomerIdentityService {
           identityError(404, 'PROFILE_NOT_BOUND');
 
         const now = new Date();
+        // Owner, 2026-11-07: no limit of any kind on visitors. Both limits are off (0) unless set
+        // on the server as an emergency switch.
+        const {
+          CS_IDENTITY_KEY_OPERATIONS_PER_DAY: perKeyDay,
+          CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: perPersonHour,
+        } = this.env;
         const [daily, hourly] = await Promise.all([
-          tx.customerProfileOperation.count({
-            where: {
-              companyId,
-              apiClientId: clientId,
-              createdAt: { gte: new Date(now.getTime() - DAY) },
-            },
-          }),
-          identity
+          !perKeyDay
+            ? 0
+            : tx.customerProfileOperation.count({
+                where: {
+                  companyId,
+                  apiClientId: clientId,
+                  createdAt: { gte: new Date(now.getTime() - DAY) },
+                },
+              }),
+          identity && perPersonHour
             ? tx.customerProfileOperation.count({
                 where: {
                   companyId,
@@ -144,7 +138,7 @@ export class CustomerIdentityService {
               })
             : 0,
         ]);
-        if (daily >= 1000 || hourly >= 10)
+        if ((perKeyDay && daily >= perKeyDay) || (perPersonHour && hourly >= perPersonHour))
           identityError(429, 'CAPTURE_LIMIT', { retryAfterSeconds: 3600 });
         const fields: IdentityFields = 'fields' in input ? (input.fields ?? {}) : {};
         const phoneEvidence =
@@ -158,14 +152,6 @@ export class CustomerIdentityService {
         ].sort();
         for (const p of phones) await identityLock(tx, `${companyId}:phone:${p}`);
         if (!identity) {
-          // Owner, 2026-11-06: a website visitor proves nothing but the agent's session, so a key
-          // starts at most WEB_NEW_VISITORS_PER_DAY new visitor identities a day.
-          if (channel === 'WEB') {
-            // One key's new visitors counted one at a time (Codex F214-2): the cap is exact.
-            await identityLock(tx, `${companyId}:web-cap:${clientId}`);
-            if ((await newWebVisitors(tx, companyId, clientId, now)) >= WEB_NEW_VISITORS_PER_DAY)
-              identityError(429, 'CAPTURE_LIMIT', { retryAfterSeconds: 3600 });
-          }
           identity = await tx.customerChannelIdentity.create({
             data: {
               ...selector,

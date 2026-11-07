@@ -119,6 +119,29 @@ describe('loadEnv', () => {
     expect(env.CORS_ORIGINS).toEqual(['http://a.test', 'http://b.test']);
   });
 
+  it('customer identity limits: none by default; 0 is off', () => {
+    const DB = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    const env = loadEnv(DB);
+    expect(env.CS_IDENTITY_KEY_OPERATIONS_PER_DAY).toBe(0);
+    expect(env.CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR).toBe(0);
+    const empty = loadEnv({
+      ...DB,
+      CS_IDENTITY_KEY_OPERATIONS_PER_DAY: '',
+      CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: '',
+    });
+    expect(empty.CS_IDENTITY_KEY_OPERATIONS_PER_DAY).toBe(0);
+    expect(empty.CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR).toBe(0);
+    const set = loadEnv({
+      ...DB,
+      CS_IDENTITY_KEY_OPERATIONS_PER_DAY: '5000',
+      CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: '0',
+    });
+    expect(set.CS_IDENTITY_KEY_OPERATIONS_PER_DAY).toBe(5000);
+    expect(set.CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR).toBe(0);
+    expect(() => loadEnv({ ...DB, CS_IDENTITY_PERSON_OPERATIONS_PER_HOUR: '-1' })).toThrow();
+    expect(() => loadEnv({ ...DB, CS_IDENTITY_KEY_OPERATIONS_PER_DAY: '1.5' })).toThrow();
+  });
+
   it('fails fast when DATABASE_URL is missing', () => {
     expect(() => loadEnv({})).toThrow(/DATABASE_URL/);
   });
