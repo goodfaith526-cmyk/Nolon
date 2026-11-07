@@ -107,6 +107,6 @@ import { QuoteService } from './quote.service.js';
     { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },
     BookingRequestReportsService,
   ],
-  exports: [ApiClientGuard, BookingRequestReportsService],
+  exports: [ApiClientGuard, BookingRequestReportsService, BookingReviewService],
 })
 export class CustomerServiceModule {}

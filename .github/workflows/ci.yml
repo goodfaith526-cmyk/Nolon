@@ -154,6 +154,11 @@ jobs:
             jq -e '[.services[].ports // [] | .[]] | length == 1 and all(.host_ip == "127.0.0.1")'; then
             echo "::error::production must publish one port, on 127.0.0.1 only"; exit 1
           fi
+          # The staging-only test autocycle: production names itself and never passes the switch.
+          if ! docker compose -f docker-compose.production.yml config --format json |
+            jq -e '.services.api.environment | (has("CS_TEST_AUTOCYCLE_ENABLED") | not) and .DEPLOY_STACK == "production"'; then
+            echo "::error::production must set DEPLOY_STACK=production and never pass CS_TEST_AUTOCYCLE_ENABLED"; exit 1
+          fi
           rm .env
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

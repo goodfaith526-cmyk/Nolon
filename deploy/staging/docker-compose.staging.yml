@@ -88,6 +88,11 @@ services:
       CS_TELEGRAM_TOKENS_ENABLED: ${CS_TELEGRAM_TOKENS_ENABLED:-false}
       CS_STATEMENT_ENABLED: ${CS_STATEMENT_ENABLED:-false}
       CS_DOCUMENTS_ENABLED: ${CS_DOCUMENTS_ENABLED:-false}
+      # Owner, 2026-11-07: staging trials only. Requests named «اختبار» are approved, received and
+      # paid by the Test Autocycle users. The production stack never passes these two.
+      CS_TEST_AUTOCYCLE_ENABLED: ${CS_TEST_AUTOCYCLE_ENABLED:-false}
+      CS_TEST_AUTOCYCLE_DELAY_S: ${CS_TEST_AUTOCYCLE_DELAY_S:-30}
+      DEPLOY_STACK: staging
       CS_WEBHOOK_SECRET: ${CS_WEBHOOK_SECRET:-}
       CS_WEBHOOK_ALLOWED_HOSTS: ${CS_WEBHOOK_ALLOWED_HOSTS:-}
       CS_WEBHOOK_WORKER_ENABLED: ${CS_WEBHOOK_WORKER_ENABLED:-false}

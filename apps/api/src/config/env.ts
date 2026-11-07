@@ -220,6 +220,24 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Owner, 2026-11-07: staging trials only. A bot request whose sender's name holds «اختبار» is
+   * approved, received at its window and paid there by the system's Test Autocycle users, through
+   * the same services staff and the window use, CS_TEST_AUTOCYCLE_DELAY_S apart. Never runs with
+   * NODE_ENV=production unless DEPLOY_STACK=staging (test-autocycle.ts, autocycleAllowed); the
+   * production stack does not pass it at all.
+   */
+  CS_TEST_AUTOCYCLE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /** Seconds between the test autocycle's steps (and from the request to its approval). */
+  CS_TEST_AUTOCYCLE_DELAY_S: emptyAsUnset(z.coerce.number().int().min(0).max(3600).default(30)),
+  /**
+   * Which deployment this is, set by its compose file: `staging` or `production`. Unset (local
+   * development, tests): `local`. Only CS_TEST_AUTOCYCLE_ENABLED reads it.
+   */
+  DEPLOY_STACK: emptyAsUnset(z.enum(['local', 'staging', 'production']).default('local')),
+  /**
    * Plan 09e section 3 (owner, 2026-11-04): when staff approve a bot request, the receiver gets a
    * customer of their own (made or linked by international phone, marked unverified). Off: none.
    */

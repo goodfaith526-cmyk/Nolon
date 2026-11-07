@@ -23,5 +23,7 @@ import { WindowDeskService } from './window-desk.service.js';
   ],
   controllers: [WindowDeskController, WindowCashAccountsController],
   providers: [WindowDeskService, WindowCollectService, WindowCashAccountsService],
+  // The staging test autocycle receives and collects through them (test-autocycle).
+  exports: [WindowDeskService, WindowCollectService],
 })
 export class WindowDeskModule {}
