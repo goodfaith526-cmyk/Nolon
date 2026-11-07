@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { CustomersService } from '../customers/customers.service.js';
 import { CustomerIdentityService } from './customer-identity.service.js';
 import {
@@ -622,6 +623,7 @@ export class BookingReviewService {
                 line.item,
                 { ...cargo, category: cargo.category },
                 dec(line.inputs.quantity),
+                contentsOf(line.item.description, line.item.botKind, initial.language),
               )
             : line.item.isOther
               ? otherLineOf(line.item)
@@ -636,6 +638,7 @@ export class BookingReviewService {
                   { ...initial, weightKg: null },
                   { ...cargo, category: cargo.category },
                   dec(line.inputs.quantity),
+                  contentsOf(null, kindOfNames(initial.botNames), initial.language),
                 )
               : null;
           return single ? [{ itemId: null, item: single }] : [];
@@ -1506,6 +1509,32 @@ function estimateRequired(): ConflictException {
 }
 
 /**
+ * Trial 2026-11-06 (BK00070): a booking line says what it holds, so the waybill's description is
+ * never empty. The customer's own words for the contents when the bot sent them, else the kind
+ * the customer named ("كراتين"), in the request's language. Null when the bot sent neither.
+ */
+export function contentsOf(
+  description: string | null,
+  kind: Prisma.JsonValue | null,
+  language: string | null,
+): string | null {
+  const given = description?.trim();
+  if (given) return given;
+  const named = csName.safeParse(kind);
+  if (!named.success) return null;
+  const text = (language === 'en' ? named.data.en : named.data.ar).trim();
+  return text || null;
+}
+
+/** The kind of a request by names (its `botNames.kind`), or null. */
+export function kindOfNames(botNames: Prisma.JsonValue | null): Prisma.JsonValue | null {
+  if (botNames === null || typeof botNames !== 'object' || Array.isArray(botNames)) return null;
+  return botNames.kind ?? null;
+}
+
+const csName = z.object({ ar: z.string(), en: z.string() });
+
+/**
  * Plan 09 section 12: the booking line of an OTHER item, GENERAL cargo of its pieces, described
  * in the customer's words; no pieces, no line (staff complete it before confirming).
  */
@@ -1557,6 +1586,7 @@ function bookingLineOf(
   item: Pick<CsBookingRequestItem, 'pieces' | 'lengthCm' | 'widthCm' | 'heightCm' | 'weightKg'>,
   cargo: { category: string; cargoType: CargoType; unit: RateUnit },
   quantity: Prisma.Decimal,
+  description: string | null,
 ): BookingItemInput | null {
   if (cargo.cargoType === 'CONTAINER' || cargo.unit === 'PER_CONTAINER') return null;
   const counted = ['PER_PIECE', 'PER_PALLET', 'PER_BARREL'].includes(cargo.unit);
@@ -1580,6 +1610,7 @@ function bookingLineOf(
     cargoType: cargo.cargoType,
     quantity: count,
     priceCategoryCode: cargo.category,
+    description,
     lengthCm: sized ? decimal(item.lengthCm) : null,
     widthCm: sized ? decimal(item.widthCm) : null,
     heightCm: sized ? decimal(item.heightCm) : null,

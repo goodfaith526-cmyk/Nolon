@@ -475,6 +475,7 @@ export class BookingRequestsService {
             priceCategoryCode: matchCategory(item.kind, active),
             botKind: { ...item.kind },
             quantity: dec(String(item.quantity)),
+            description: item.description ?? null,
             ...measuresOf(item),
           },
     );
@@ -1388,6 +1389,7 @@ export class BookingRequestsService {
         priceCategoryCode: category.code,
         quantity: dec(item.quantity),
         quoteRef: item.quoteRef ?? null,
+        description: item.description ?? null,
         ...measuresOf(item),
       });
     }

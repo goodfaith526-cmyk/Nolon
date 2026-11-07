@@ -200,6 +200,8 @@ const measures = {
 const otherItem = z
   .object({ kind: z.literal(CS_OTHER_KIND), description: requiredText(500), ...measures })
   .strict();
+/** What a standard item holds, in the customer's words ("clothes"): the waybill's description. */
+const contents = requiredText(500).optional();
 const quoteRefField = z.string().regex(/^q_[A-Za-z0-9_-]{32}$/);
 const idsItem = z.union([
   z
@@ -207,6 +209,7 @@ const idsItem = z.union([
       category: z.string().trim().min(1).max(20),
       quantity: bodyQuantity,
       quoteRef: quoteRefField.optional(),
+      description: contents,
       ...measures,
     })
     .strict(),
@@ -214,7 +217,7 @@ const idsItem = z.union([
 ]);
 const botName = z.object({ ar: requiredText(200), en: requiredText(200) }).strict();
 const namesItem = z.union([
-  z.object({ kind: botName, quantity: bodyQuantity, ...measures }).strict(),
+  z.object({ kind: botName, quantity: bodyQuantity, description: contents, ...measures }).strict(),
   otherItem,
 ]);
 /**
