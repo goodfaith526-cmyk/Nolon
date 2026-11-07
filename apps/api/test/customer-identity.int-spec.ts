@@ -386,7 +386,7 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       },
     }).expect(400);
   });
-  it('a conflicting value is a proposal, not a destructive last-write-wins update; stale version and null cannot erase', async () => {
+  it('a conflicting value is a warning, not a destructive last-write-wins update; stale version and null cannot erase', async () => {
     const input = capture({
       fields: { name: { value: 'Original', source: 'CUSTOMER_STATEMENT' } },
     });
@@ -399,11 +399,13 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     const proposal = result(
       await call('patch', `/cs/customer-profiles/${r.profileId}`, update).expect(200),
     );
-    expect(proposal.outcome).toBe('NEEDS_REVIEW');
+    // Owner, 2026-11-07: the bot keeps its profile; staff get a warning, the value stays.
+    expect(proposal.outcome).toBe('UPDATED');
+    expect(proposal.profileId).toBe(r.profileId);
     expect(proposal.profileVersion).toBe(2);
     expect(
-      (await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: r.profileId! } })).name,
-    ).toBe('Original');
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: r.profileId! } }),
+    ).toMatchObject({ name: 'Original', needsReview: true });
     expect(
       (await call('patch', `/cs/customer-profiles/${r.profileId}`, update).expect(409)).body,
     ).toMatchObject({ code: 'VERSION_CONFLICT', currentVersion: 2 });
@@ -417,17 +419,44 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
         .profileVersion,
     ).toBe(2);
   });
-  it('phone matches need review without exposing or linking another customer; scope is separate from transaction reads', async () => {
+  it('a fuller name completing the one on file is applied, with no warning', async () => {
+    const input = capture({
+      fields: { name: { value: 'عبدالرحيم يوسف النعيم', source: 'CUSTOMER_STATEMENT' } },
+    });
+    const r = result(await post(input).expect(201));
+    const done = result(
+      await call('patch', `/cs/customer-profiles/${r.profileId}`, {
+        ...input,
+        expectedVersion: 1,
+        fields: { name: { value: 'عبدالرحيم  يوسف النعيم تجربة', source: 'CUSTOMER_STATEMENT' } },
+      }).expect(200),
+    );
+    expect(done.outcome).toBe('UPDATED');
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: r.profileId! } }),
+    ).toMatchObject({ name: 'عبدالرحيم  يوسف النعيم تجربة', needsReview: false });
+  });
+  it('a phone another file has gives the sender their own file with a warning, never linking or exposing the other; scope is separate from transaction reads', async () => {
     const phone = uniquePhone();
     const a = capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } });
     const ar = result(await post(a).expect(201));
     const b = capture({ fields: a.fields });
-    const br = result(await post(b).expect(200));
-    expect(br.outcome).toBe('NEEDS_REVIEW');
-    expect(br.profileId).toBeNull();
+    const br = result(await post(b).expect(201));
+    // Owner, 2026-11-07: two people may share a phone: each has a file, the phone stays with A.
+    expect(br.outcome).toBe('CREATED');
+    expect(br.profileId).not.toBeNull();
+    expect(br.profileId).not.toBe(ar.profileId);
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: br.profileId! } }),
+    ).toMatchObject({ phone: null, needsReview: true });
+    expect(
+      await t.prisma.customerProfileEvidence.count({
+        where: { profileId: br.profileId!, field: 'phone', value: phone, applied: false },
+      }),
+    ).toBe(1);
     expect(result(await post({ ...b, fields: {} }).expect(200))).toMatchObject({
-      outcome: 'NEEDS_REVIEW',
-      profileId: null,
+      outcome: 'RESTORED',
+      profileId: br.profileId,
     });
     expect(JSON.stringify(br)).not.toContain(ar.profileId!);
     await t
@@ -778,7 +807,7 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       customerId: null,
     });
   });
-  it('legacy matching remains pending until an explicitly authorised human proves the link', async () => {
+  it('a phone an old branch account has gives a new file with a warning, never a link to that account', async () => {
     const phone = uniquePhone();
     const old = await t.prisma.customer.create({
       data: {
@@ -790,55 +819,17 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       },
     });
     const input = capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } });
-    const r = result(await post(input).expect(200));
-    expect(r.profileId).toBeNull();
-    const identity = await t.prisma.customerChannelIdentity.findUniqueOrThrow({
-      where: {
-        companyId_channel_subjectId: {
-          companyId,
-          channel: 'TELEGRAM',
-          subjectId: input.sender.subjectId,
-        },
-      },
-    });
-    const body = {
-      accountId: old.id,
-      proofNote: 'Customer ownership verified by an authorised human',
-    };
-    await t
-      .http()
-      .post(`/api/v1/customer-profiles/intake/${identity.id}/resolve`)
-      .set('Origin', APP_ORIGIN)
-      .set('Cookie', ordinaryCookie)
-      .send(body)
-      .expect(403);
-    await t
-      .http()
-      .post(`/api/v1/customer-profiles/intake/${identity.id}/resolve`)
-      .set('Origin', APP_ORIGIN)
-      .set('Cookie', staffCookie)
-      .send(body)
-      .expect(201);
-    // Legacy branch-local accounts may share a phone. A proved existing link is not a new claim.
-    await t.prisma.customer.create({
-      data: {
-        number: `OLD${randomUUID().slice(0, 12)}`,
-        name: 'Other legacy branch account',
-        phone,
-        kind: 'INDIVIDUAL',
-        createdById: creatorId,
-      },
-    });
-    const restored = result(await post(input).expect(200));
-    expect(restored.outcome).toBe('RESTORED');
-    expect((await t.prisma.customer.findUniqueOrThrow({ where: { id: old.id } })).profileId).toBe(
-      restored.profileId,
-    );
+    const r = result(await post(input).expect(201));
+    expect(r.outcome).toBe('CREATED');
     expect(
-      await t.prisma.customerProfileReview.count({
-        where: { entityId: identity.id, action: 'IDENTITY_LINK' },
-      }),
-    ).toBe(1);
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: r.profileId! } }),
+    ).toMatchObject({ phone: null, needsReview: true });
+    // Owner, 2026-11-07: the old account is never linked or changed by a typed phone.
+    expect(await t.prisma.customer.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({
+      profileId: null,
+      name: 'Existing customer',
+    });
+    expect(result(await post(input).expect(200)).profileId).toBe(r.profileId);
   });
   it('backfill is explicit, resumable, preserves account ids/numbers, and never links a channel by name or phone', async () => {
     const before = await t.prisma.customer.findMany({
@@ -880,7 +871,7 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     expect(limited.headers['retry-after']).toBe('3600');
   });
 
-  it('disputed fields stay pending across restores until a version-bound human rejection; history cannot be edited', async () => {
+  it('disputed fields stay a warning across restores until a version-bound human rejection; history cannot be edited', async () => {
     const input = capture({
       fields: { name: { value: 'Original explicit name', source: 'CUSTOMER_STATEMENT' } },
     });
@@ -893,7 +884,12 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     const pending = result(
       await call('patch', `/cs/customer-profiles/${first.profileId}`, proposal).expect(200),
     );
-    expect(result(await post({ ...input, fields: {} }).expect(200)).outcome).toBe('NEEDS_REVIEW');
+    // A warning keeps the bot's profile bound (owner, 2026-11-07); staff see it until they mark it.
+    expect(result(await post({ ...input, fields: {} }).expect(200)).outcome).toBe('RESTORED');
+    expect(
+      (await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: first.profileId! } }))
+        .needsReview,
+    ).toBe(true);
     const resolve = (cookie: string, version: number) =>
       t
         .http()
@@ -910,8 +906,8 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
     await resolve(staffCookie, pending.profileVersion!).expect(201);
     expect(result(await post({ ...input, fields: {} }).expect(200)).outcome).toBe('RESTORED');
     expect(
-      (await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: first.profileId! } })).name,
-    ).toBe('Original explicit name');
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: first.profileId! } }),
+    ).toMatchObject({ name: 'Original explicit name', needsReview: false });
     await expect(
       t.prisma.customerProfileOperation.update({
         where: { id: first.operationId },
@@ -1152,19 +1148,25 @@ describe('Unified customer identity: trusted channel capture, not a read grant',
       ).toBe(0);
     });
 
-    it('returns an opaque review error for ambiguous identities without candidates or pending input', async () => {
+    it('a sender whose phone another file has reads their own file, without that phone', async () => {
       const phone = uniquePhone();
-      await post(
-        capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } }),
-      ).expect(201);
+      const first = result(
+        await post(
+          capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } }),
+        ).expect(201),
+      );
       const input = capture({ fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } } });
-      expect(result(await post(input).expect(200)).profileId).toBeNull();
-      const response = await read(input).expect(409);
-      expect(response.body as unknown).toEqual({
-        statusCode: 409,
-        code: 'IDENTITY_REVIEW_REQUIRED',
-        message: 'IDENTITY_REVIEW_REQUIRED',
-      });
+      const own = result(await post(input).expect(201));
+      expect(own.profileId).not.toBe(first.profileId);
+      const view = (await read(input).expect(200)).body as {
+        profileId: string;
+        fields: { phone: { value: string | null; verification: string } };
+        needsReview: boolean;
+      };
+      expect(view.profileId).toBe(own.profileId);
+      expect(view.fields.phone).toMatchObject({ value: null, verification: 'MISSING' });
+      expect(view.needsReview).toBe(true);
+      expect(JSON.stringify(view)).not.toContain(first.profileId!);
     });
 
     it.each(['scope', 'key'] as const)(

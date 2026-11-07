@@ -392,28 +392,57 @@ describe('Instant branch account from a signed bot booking request', () => {
     expect(fourth).toMatchObject({ instantAccount: 'ACCOUNT_INACTIVE', instantCustomerId: null });
   });
 
-  it('a profile with proposals to review gets no account (4)', async () => {
+  it('a profile with chat warnings still gets its account (4)', async () => {
+    // Owner, 2026-11-07: warnings are staff's to look at, never a reason to make no customer.
     const p = await profile(t);
     await t.prisma.customerProfile.update({
       where: { id: p.profileId },
       data: { needsReview: true },
     });
     const row = await requestOf(await book(t, p, body(p)).expect(201));
-    expect(row).toMatchObject({
-      status: 'PENDING',
-      instantAccount: 'PROFILE_REVIEW',
-      instantCustomerId: null,
-    });
-    expect(await accountsOf(p.profileId)).toHaveLength(0);
+    expect(row).toMatchObject({ status: 'PENDING', instantAccount: 'CREATED' });
+    expect(await accountsOf(p.profileId)).toHaveLength(1);
+    // Staff see the warning and approve: it never blocks.
     const detail = await t
       .http()
       .get(`/api/v1/cs-booking-requests/${row.id}`)
       .set('Cookie', staffCookie)
       .expect(200);
-    expect((detail.body as { instantAccount: unknown }).instantAccount).toEqual({
-      outcome: 'PROFILE_REVIEW',
-      customerId: null,
-    });
+    const staff = detail.body as {
+      version: number;
+      profile: { version: number; needsReview: boolean; nameDiffersFromSender: boolean };
+    };
+    expect(staff.profile).toMatchObject({ needsReview: true });
+    expect(typeof staff.profile.nameDiffersFromSender).toBe('boolean');
+    const pricing = {
+      originId: originDxb,
+      destinationId,
+      mode: 'ROAD',
+      category,
+      quantity: '2',
+      currency: 'USD',
+    };
+    const price = await t
+      .http()
+      .get(`/api/v1/cs-booking-requests/${row.id}/price`)
+      .query(pricing)
+      .set('Cookie', staffCookie)
+      .expect(200);
+    await t
+      .http()
+      .post(`/api/v1/cs-booking-requests/${row.id}/approve`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', staffCookie)
+      .send({
+        version: staff.version,
+        profileVersion: staff.profile.version,
+        pricing,
+        pricingFingerprint: (price.body as { pricingFingerprint: string | null })
+          .pricingFingerprint,
+        paymentCurrency: 'USD',
+        booking: { services: [] },
+      })
+      .expect(201);
   });
 
   it('a profile without an explicit name gets no account (5)', async () => {

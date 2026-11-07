@@ -13,6 +13,7 @@ import { useCreditBlock, useCustomerCredit } from '../finance/CustomerCredit';
 import { can, useMe } from '../StaffShell';
 import { CustomerForm } from './Customers';
 import { Notice, type NoticeState, useFailureText } from './Notice';
+import { CustomerChatWarnings } from './CustomerChatWarnings';
 import { PartyForm } from './PartyForm';
 import { PartnerName } from '../partners/PartnerSelect';
 import { PrintLink } from '../print/PrintLink';
@@ -144,6 +145,7 @@ export function CustomerDetail({ id }: { id: string }) {
         )}
       </div>
       <Notice notice={notice} />
+      <CustomerChatWarnings customerId={customer.id} canEdit={canEdit} />
 
       {mode === 'edit' ? (
         <CustomerForm

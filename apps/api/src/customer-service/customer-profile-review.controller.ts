@@ -75,6 +75,27 @@ export class CustomerProfileReviewController {
     return this.review.resolve(user, id, parse(proof, body));
   }
 
+  /** Owner, 2026-11-07: the chat's warnings on a customer's file (its page reads them). */
+  @Get('customer/:customerId/warnings')
+  @RequirePermission('customers:view')
+  customerWarnings(
+    @CurrentUser() user: AuthUser,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+  ) {
+    return this.review.customerWarnings(user, customerId);
+  }
+
+  @Post('customer/:customerId/warnings/seen')
+  @RequirePermission('customers:update')
+  dismissCustomerWarnings(
+    @CurrentUser() user: AuthUser,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+    @Body() body: unknown,
+  ) {
+    const input = parse(z.object({ expectedVersion: z.number().int().min(1) }).strict(), body);
+    return this.review.dismissCustomerWarnings(user, customerId, input.expectedVersion);
+  }
+
   @Get(':id')
   @RequirePermission('customer_profiles:view')
   get(@Param('id', ParseUUIDPipe) id: string) {
