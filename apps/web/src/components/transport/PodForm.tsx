@@ -13,6 +13,7 @@ import { field } from '@/lib/form';
 import { Notice, type NoticeState, useFailureText } from '../commercial/Notice';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 import { toIso } from './common';
+import { FileInput } from '../FileInput';
 
 /** Sends a POD as multipart: its fields, the signature PNG and the photos. */
 async function sendPod(shipmentId: string, form: FormData): Promise<PodDto> {
@@ -178,9 +179,8 @@ export function PodForm({
       </div>
       <label className="field">
         <span>{t('photos')}</span>
-        <input
+        <FileInput
           name="photos"
-          type="file"
           multiple
           accept="image/jpeg,image/png,image/webp"
           capture="environment"

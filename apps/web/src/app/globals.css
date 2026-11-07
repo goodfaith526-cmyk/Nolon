@@ -4190,3 +4190,19 @@ span.capacity-full {
     display: none;
   }
 }
+
+/* File picker in the page's language (screen review 2026-11-06, FileInput.tsx). */
+.file-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  cursor: pointer;
+}
+.file-input-name {
+  overflow-wrap: anywhere;
+}
+.file-input input:focus-visible + .button {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
