@@ -197,13 +197,16 @@ export class CustomerIdentityService {
         if ('expectedVersion' in input && profile?.version !== input.expectedVersion)
           identityError(409, 'VERSION_CONFLICT', { currentVersion: profile?.version ?? null });
         const beforeBranchId = profile?.followUpBranchId ?? null;
+        const beforeName = profile?.name ?? null;
         const operationId = randomUUID();
-        const candidates = phone ? await this.phoneTaken(tx, companyId, phone, profile?.id) : false;
         let created = false;
-        let review = profile?.needsReview ?? false;
-        let identityReview = review;
+        // Owner, 2026-11-07: a doubtful value is a warning for staff (needsReview), never a lock.
+        // The file is always made and filled; nothing here refuses the chat or the approval.
+        let warning = profile?.needsReview ?? false;
         let changed = false;
-        if (!profile && !identity.blocked && !candidates && identity.pending === null) {
+        // Owner, 2026-11-07: every unblocked sender gets a file, also when the phone they bring is
+        // another file's (a shared or mistyped phone): that phone stays a warning, never linked.
+        if (!profile && !identity.blocked) {
           const number = `CP${(await nextSequenceValue(tx, 'CUSTOMER_PROFILE')).toString().padStart(6, '0')}`;
           profile = await tx.customerProfile.create({ data: { companyId, number } });
           identity = await tx.customerChannelIdentity.update({
@@ -214,31 +217,6 @@ export class CustomerIdentityService {
         }
         const evidence: Prisma.CustomerProfileEvidenceCreateManyInput[] = [];
         let reason: string | null = null;
-        if (!profile && !identity.blocked) {
-          review = true;
-          // Kept for a privileged review, never exposes the candidate or treats the match as proof.
-          if (identity.pending === null)
-            await tx.customerChannelIdentity.update({
-              where: { id: identity.id },
-              data: {
-                pending: json({ fields, phoneEvidence: phoneEvidence ?? null }),
-              },
-            });
-          await tx.customerProfileReview.create({
-            data: {
-              companyId,
-              actor: 'ai_agent',
-              entityId: identity.id,
-              action: 'PENDING_CAPTURE',
-              reason: 'Ownership requires a human review',
-              snapshot: json({
-                operationId,
-                fields,
-                phoneEvidence: phoneEvidence ?? null,
-              }),
-            },
-          });
-        }
         if (profile && !identity.blocked) {
           const data: Prisma.CustomerProfileUncheckedUpdateInput = {};
           for (const field of ['name', 'phone', 'residenceCityId', 'address'] as const) {
@@ -249,14 +227,16 @@ export class CustomerIdentityService {
             if (field === 'residenceCityId' && profile.residenceCityId !== value)
               await requireCity(tx, value);
             const current = profile[field];
+            // Owner, 2026-11-07: a fuller name that starts with the one on file (three names, then
+            // four) is the same name completed, not a doubt.
+            const completes = field === 'name' && current !== null && completesName(current, value);
             const conflict =
-              (current !== null && current !== value) ||
+              (current !== null && current !== value && !completes) ||
               (field === 'phone' &&
                 current !== value &&
                 (await this.phoneTaken(tx, companyId, value, profile.id)));
             const applied = !conflict;
-            review ||= conflict;
-            identityReview ||= conflict;
+            warning ||= conflict;
             changed ||=
               conflict ||
               current !== value ||
@@ -283,8 +263,7 @@ export class CustomerIdentityService {
               stated?.value &&
               stated.value !== verifiedPhone
             ) {
-              review = true;
-              identityReview = true;
+              warning = true;
               changed = true;
               evidence.push({
                 profileId: profile.id,
@@ -358,25 +337,20 @@ export class CustomerIdentityService {
               data.followUpBranchId = selected;
               data.residenceCityId = input.residenceCityId;
             }
-            review ||= !selected;
             changed = true;
           }
-          data.needsReview = identityReview;
+          data.needsReview = warning;
           if (changed && !created) data.version = { increment: 1 };
           profile = await tx.customerProfile.update({ where: { id: profile.id }, data });
         }
         // Plan 09d section 4a (owner, 2026-11-04): a profile ready to use gets its one central
         // customer from the first message, named from the channel until a name is given. No
         // booking, invoice or entry; the answer to the bot is unchanged.
-        if (
-          this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED &&
-          profile &&
-          !identity.blocked &&
-          !review &&
-          !profile.needsReview
-        ) {
+        // Owner, 2026-11-07: also with warnings: they never stop the file from filling.
+        if (this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED && profile && !identity.blocked) {
           await this.customers.channelAccountInTx(tx, {
             profile,
+            previousName: created ? null : beforeName,
             // A website visitor's file waits for the name they give (owner, 2026-11-06).
             channelName:
               identity.channel === 'WEB'
@@ -388,9 +362,10 @@ export class CustomerIdentityService {
         const body: IdentityResult = {
           schemaVersion: IDENTITY_VERSION,
           operationId,
+          // A warning is staff's: the bot gets its profile and keeps it bound (owner, 2026-11-07).
           outcome: identity.blocked
             ? 'REJECTED'
-            : review
+            : !profile
               ? 'NEEDS_REVIEW'
               : created
                 ? 'CREATED'
@@ -409,7 +384,7 @@ export class CustomerIdentityService {
               ? 'NEEDS_REVIEW'
               : profile?.followUpBranchId
                 ? 'ASSIGNED'
-                : review
+                : !profile
                   ? 'NEEDS_REVIEW'
                   : 'UNASSIGNED',
             branchId: profile?.followUpBranchId ?? null,
@@ -615,6 +590,16 @@ export class CustomerIdentityService {
       };
     });
   }
+}
+
+/**
+ * Owner, 2026-11-07: `next` completes `current` when it is the same words with more after them
+ * (spaces collapsed), e.g. a three-part name then the four-part ID name.
+ */
+export function completesName(current: string, next: string): boolean {
+  const a = current.trim().replace(/\s+/g, ' ');
+  const b = next.trim().replace(/\s+/g, ' ');
+  return a !== '' && b.length > a.length && b.startsWith(`${a} `);
 }
 
 function sameSender(

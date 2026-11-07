@@ -171,11 +171,12 @@ describe('the approval, as the form sends it', () => {
       /outside/,
     );
     expect(approvalPlan(request({ category: null }), 'SAR')).toMatch(/category/);
+    // Owner, 2026-11-07: chat warnings on the profile are no reason to skip.
     expect(
       approvalPlan(
         request({ profile: { id: 'p', version: 1, name: 'x', needsReview: true } as never }),
         'SAR',
       ),
-    ).toMatch(/review/);
+    ).not.toBeTypeOf('string');
   });
 });

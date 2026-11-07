@@ -1,16 +1,18 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import type { CsQuotationSaved, CsQuotesDto } from '@nolon/shared';
+import type { CsQuotationSaved, CsQuotesDto, CustomerChatWarningsDto } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newApiKey } from '../src/customer-service/api-key.js';
 import { sha256 } from '../src/customer-service/customer-identity-auth.js';
 import type { IdentityResult } from '../src/customer-service/customer-identity.contract.js';
 import { WEB_NEW_VISITORS_PER_DAY } from '../src/customer-service/customer-identity.service.js';
 import {
+  APP_ORIGIN,
   LEDGER_PREFIX,
   type TestApp,
   branchId,
   createTestApp,
   createUser,
+  signIn,
 } from './auth-test-app.js';
 
 /**
@@ -226,7 +228,7 @@ describe('Customer Service website identity', () => {
     expect(other.profileId).not.toBe(first.profileId);
   });
 
-  it('never links a typed phone another file holds: staff review it', async () => {
+  it('never links a typed phone another file holds: the claimer gets a file with a warning', async () => {
     const phone = `+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
     const holder = (
       await capture(visitor(), {
@@ -238,12 +240,16 @@ describe('Customer Service website identity', () => {
       await capture(visitor(), {
         ...named('Phone claimer'),
         phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
-      }).expect(200)
+      }).expect(201)
     ).body as IdentityResult;
-    expect(claimer.outcome).toBe('NEEDS_REVIEW');
+    expect(claimer.outcome).toBe('CREATED');
     expect(claimer.profileId).not.toBe(holder.profileId);
     // Owner, 2026-11-05: the typed phone is in the holder's file, marked unverified.
     expect(await accountsOf(holder.profileId!)).toMatchObject([{ phone, phoneUnverified: true }]);
+    // Owner, 2026-11-07: the claimer has their own file, named, without that phone; staff see the
+    // phone as a warning naming the holder's file.
+    const [own] = await accountsOf(claimer.profileId!);
+    expect(own).toMatchObject({ name: 'Phone claimer', phone: null });
   });
 
   it('adds a phone given later to the file, from the chat or from a booking request', async () => {
@@ -462,6 +468,182 @@ describe('Customer Service website identity', () => {
     expect(code(await call(t, '/cs/quotations', { quoteRefs: [ref] }, nameless).expect(409))).toBe(
       'CUSTOMER_NOT_READY',
     );
+  });
+
+  it('fills the file with the address and city given, follows a completed name, and shows doubtful values to staff as warnings', async () => {
+    // Owner, 2026-11-07: the file is always made and filled; a doubtful value is a warning only.
+    const phone = `+97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    const holder = (
+      await capture(visitor(), {
+        ...named('Warn holder'),
+        phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
+      }).expect(201)
+    ).body as IdentityResult;
+    const [held] = await accountsOf(holder.profileId!);
+    const who = visitor();
+    const claimer = (
+      await capture(who, {
+        ...named('Warn claimer'),
+        phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
+        address: { value: 'Street 1', source: 'CUSTOMER_STATEMENT' },
+        residenceCityId: { value: originId, source: 'CUSTOMER_STATEMENT' },
+      }).expect(201)
+    ).body as IdentityResult;
+    const [file] = await accountsOf(claimer.profileId!);
+    expect(file).toMatchObject({
+      name: 'Warn claimer',
+      phone: null,
+      address: 'Street 1',
+      city: 'مدينة اختبار',
+      countryCode: 'AE',
+    });
+    // A completed name follows into the file; a different one is a warning and changes nothing.
+    await capture({ ...who, eventId: randomUUID() }, named('Warn claimer Full')).expect(200);
+    await capture({ ...who, eventId: randomUUID() }, named('Somebody Else')).expect(200);
+    expect((await accountsOf(claimer.profileId!))[0]).toMatchObject({ name: 'Warn claimer Full' });
+
+    // Their review record is append-only: the users stay, as the ledger tests' (LEDGER_PREFIX).
+    const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const driver = await createUser(t.prisma, ['DRIVER'], ['DXB'], LEDGER_PREFIX);
+    const cookie = await signIn(t, admin.email);
+    const path = `/api/v1/customer-profiles/customer/${file!.id}/warnings`;
+    const read = async () =>
+      (await t.http().get(path).set('Cookie', cookie).expect(200)).body as CustomerChatWarningsDto;
+    const warned = await read();
+    expect(warned.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'phone', value: phone, heldBy: [held!.number] }),
+        expect.objectContaining({ field: 'name', value: 'Somebody Else', heldBy: [] }),
+      ]),
+    );
+    expect(warned.warnings.some((w) => w.value === 'Warn claimer Full')).toBe(false);
+    // Missing permission, a stale version, then seen: only newer warnings show.
+    const driverCookie = await signIn(t, driver.email);
+    await t.http().get(path).set('Cookie', driverCookie).expect(403);
+    await t
+      .http()
+      .post(`${path}/seen`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', cookie)
+      .send({ expectedVersion: warned.profileVersion! - 1 })
+      .expect(409);
+    await t
+      .http()
+      .post(`${path}/seen`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', cookie)
+      .send({ expectedVersion: warned.profileVersion })
+      .expect(201);
+    expect((await read()).warnings).toEqual([]);
+    await capture({ ...who, eventId: randomUUID() }, named('Third Name')).expect(200);
+    expect((await read()).warnings).toEqual([
+      expect.objectContaining({ field: 'name', value: 'Third Name' }),
+    ]);
+    // The holder's file shows nothing: their own values were all taken.
+    expect(
+      (
+        (
+          await t
+            .http()
+            .get(`/api/v1/customer-profiles/customer/${held!.id}/warnings`)
+            .set('Cookie', cookie)
+            .expect(200)
+        ).body as CustomerChatWarningsDto
+      ).warnings,
+    ).toEqual([]);
+  });
+  it('never overwrites an address, city or name staff put in the file (F227-1, F227-3)', async () => {
+    const staff = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const who = visitor();
+    const made = (await capture(who, named('Staff Kept')).expect(201)).body as IdentityResult;
+    const [file] = await accountsOf(made.profileId!);
+    // Staff typed the address and city, and the file is a staff-made account linked to the profile.
+    await t.prisma.customer.update({
+      where: { id: file!.id },
+      data: {
+        address: 'Staff street',
+        city: 'Staff city',
+        createdById: staff.id,
+        createdViaApiClientId: null,
+      },
+    });
+    await capture(
+      { ...who, eventId: randomUUID() },
+      {
+        ...named('Staff Kept Completed'),
+        address: { value: 'Chat street', source: 'CUSTOMER_STATEMENT' },
+        residenceCityId: { value: originId, source: 'CUSTOMER_STATEMENT' },
+      },
+    ).expect(200);
+    expect((await accountsOf(made.profileId!))[0]).toMatchObject({
+      name: 'Staff Kept',
+      address: 'Staff street',
+      city: 'Staff city',
+    });
+    // The profile took them (it had none); a different address later is a warning on it.
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: made.profileId! } }),
+    ).toMatchObject({ name: 'Staff Kept Completed', address: 'Chat street', needsReview: false });
+    await capture(
+      { ...who, eventId: randomUUID() },
+      { address: { value: 'Another street', source: 'CUSTOMER_STATEMENT' } },
+    ).expect(200);
+    expect(
+      await t.prisma.customerProfile.findUniqueOrThrow({ where: { id: made.profileId! } }),
+    ).toMatchObject({ address: 'Chat street', needsReview: true });
+    expect(
+      await t.prisma.customerProfileEvidence.count({
+        where: {
+          profileId: made.profileId!,
+          field: 'address',
+          value: 'Another street',
+          applied: false,
+        },
+      }),
+    ).toBe(1);
+    expect((await accountsOf(made.profileId!))[0]?.address).toBe('Staff street');
+  });
+
+  it('names every holder of a warned phone, as the phone check counts them, never the file itself (F227-2)', async () => {
+    const admin = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
+    const digits = `97150${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    const phone = `+${digits}`;
+    // An old account holding the number only as its WhatsApp.
+    const legacy = await t.prisma.customer.create({
+      data: {
+        number: `OLD${randomUUID().slice(0, 12)}`,
+        name: 'Legacy holder',
+        kind: 'INDIVIDUAL',
+        whatsapp: phone,
+        createdById: admin.id,
+      },
+    });
+    const claimer = (
+      await capture(visitor(), {
+        ...named('Legacy claimer'),
+        phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
+      }).expect(201)
+    ).body as IdentityResult;
+    const [own] = await accountsOf(claimer.profileId!);
+    const cookie = await signIn(t, admin.email);
+    const warned = (
+      await t
+        .http()
+        .get(`/api/v1/customer-profiles/customer/${own!.id}/warnings`)
+        .set('Cookie', cookie)
+        .expect(200)
+    ).body as CustomerChatWarningsDto;
+    const warning = warned.warnings.find((w) => w.field === 'phone');
+    expect(warning?.heldBy).toEqual([legacy.number]);
+    expect(warning?.heldBy).not.toContain(own!.number);
+    // Outlet staff never reach the warnings.
+    const outlet = await createUser(t.prisma, ['OUTLET_STAFF'], ['DXB'], LEDGER_PREFIX);
+    const outletCookie = await signIn(t, outlet.email);
+    const refused = await t
+      .http()
+      .get(`/api/v1/customer-profiles/customer/${own!.id}/warnings`)
+      .set('Cookie', outletCookie);
+    expect([403, 404]).toContain(refused.status);
   });
 
   it(`starts at most ${WEB_NEW_VISITORS_PER_DAY} new visitors a key a day`, async () => {

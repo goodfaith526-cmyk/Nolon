@@ -142,8 +142,7 @@ export function BotRequestApprove({
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const customerOk =
-      (!!customerId || !!r.otherSender || useRegistered || !!r.profile?.name || newCustomer) &&
-      (!!r.otherSender || !r.profile?.needsReview);
+      !!customerId || !!r.otherSender || useRegistered || !!r.profile?.name || newCustomer;
     if (!hasOther && (!priced || !customerOk)) return;
     if (hasOther) {
       if (!estimateAccepted || !customerOk) return;
@@ -196,7 +195,6 @@ export function BotRequestApprove({
 
   const ready =
     (hasOther ? estimateAccepted : priced !== null && linesReady) &&
-    (!!r.otherSender || !r.profile?.needsReview) &&
     (customerId !== null || !!r.otherSender || useRegistered || !!r.profile?.name || newCustomer) &&
     paymentCurrency !== '' &&
     inputs.originId !== '' &&
@@ -227,7 +225,10 @@ export function BotRequestApprove({
             <strong>
               {r.profile.name ?? t('profileNameRequired')}
               {r.profile.needsReview ? (
-                <span className="error"> {t('profileReviewRequired')}</span>
+                <span className="muted"> {t('profileReviewRequired')}</span>
+              ) : null}
+              {r.profile.nameDiffersFromSender ? (
+                <span className="muted"> {t('profileNameDiffers', { name: r.senderName })}</span>
               ) : null}
               {r.profile.phone && !r.profile.phoneVerified ? (
                 <span className="muted"> {t('profilePhoneUnverified')}</span>

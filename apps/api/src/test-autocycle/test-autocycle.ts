@@ -105,7 +105,7 @@ export function approvalPlan(
     ? r.items.map((i) => ({ category: i.category ?? '', quantity: i.quantity ?? '' }))
     : [{ category: r.category ?? '', quantity: r.quantity }];
   if (lines.some((l) => l.category === '' || l.quantity === '')) return 'a line with no category';
-  if (!r.otherSender && r.profile?.needsReview) return 'the customer profile awaits review';
+  // Owner, 2026-11-07: a profile's chat warnings never stop an approval.
   const registered =
     !r.profile && !r.customerId && !r.otherSender ? (r.instantAccount?.customerId ?? null) : null;
   const newCustomer = !r.profile && !r.customerId && !r.otherSender && registered === null;
