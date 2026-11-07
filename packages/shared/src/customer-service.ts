@@ -466,12 +466,19 @@ export type CsRequestItemInput =
       quantity: DecimalString;
       /** A quote (R2) of the same key for this item. */
       quoteRef?: string;
+      /** What the item holds, in the customer's words: the booking line's description. */
+      description?: string;
     })
   | (CsItemMeasures & { kind: typeof CS_OTHER_KIND; description: string });
 
 /** One item of a request by names: the kind the customer saw, or an OTHER item. */
 export type CsNamesItemInput =
-  | (CsItemMeasures & { kind: CsName; quantity: number | DecimalString })
+  | (CsItemMeasures & {
+      kind: CsName;
+      quantity: number | DecimalString;
+      /** What the item holds, in the customer's words: the booking line's description. */
+      description?: string;
+    })
   | (CsItemMeasures & { kind: typeof CS_OTHER_KIND; description: string });
 
 /**

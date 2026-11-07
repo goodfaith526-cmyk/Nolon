@@ -346,6 +346,61 @@ describe('Customer Service booking request items (plan 09 section 4)', () => {
     await confirm(approved.bookingId!).expect(200);
   });
 
+  it("describes the booking line in the customer's words, for the waybill (trial BK00070)", async () => {
+    const id = await request([
+      { category: cat.box, quantity: '3', description: 'ملابس' },
+      { category: cat.barrel, quantity: '1' },
+    ]);
+    const approved = (
+      await approve(
+        id,
+        await approveBody(id, [await line(id, cat.box, '3'), await line(id, cat.barrel, '1')]),
+      ).expect(201)
+    ).body as CsBookingRequestStaffDto;
+    const made = await t.prisma.bookingItem.findMany({
+      where: { id: { in: approved.items.map((i) => i.bookingItemId!) } },
+    });
+    const byId = new Map(made.map((m) => [m.id, m.description]));
+    expect(byId.get(approved.items[0]!.bookingItemId!)).toBe('ملابس');
+    // A request by ids has no kind name: an item the bot did not describe keeps none.
+    expect(byId.get(approved.items[1]!.bookingItemId!)).toBeNull();
+
+    // By names (the website chat): the kind the customer named, unless the bot sent the contents.
+    const phone = uniquePhone();
+    const named = (
+      await botPost('/cs/booking-requests', {
+        idempotencyKey: randomUUID().replaceAll('-', ''),
+        channel: 'whatsapp',
+        origin: { ar: `Items ${tag}ORG`, en: `Items ${tag}ORG` },
+        destination: { ar: `Items ${tag}DES`, en: `Items ${tag}DES` },
+        items: [
+          { kind: { ar: cat.box, en: cat.box }, quantity: 2 },
+          { kind: { ar: cat.barrel, en: cat.barrel }, quantity: 1, description: 'زيت' },
+        ],
+        senderName: 'Sender',
+        senderPhone: phone,
+        receiverName: 'Receiver',
+        receiverPhone: '0912345678',
+        handover: 'dropoff',
+      }).expect(201)
+    ).body as CsBookingRequestCreated;
+    senders.set(named.requestId, `whatsapp:${phone}`);
+    const byNames = (
+      await approve(
+        named.requestId,
+        await approveBody(named.requestId, [
+          await line(named.requestId, cat.box, '2'),
+          await line(named.requestId, cat.barrel, '1'),
+        ]),
+      ).expect(201)
+    ).body as CsBookingRequestStaffDto;
+    const lines = await t.prisma.bookingItem.findMany({
+      where: { bookingId: byNames.bookingId! },
+      orderBy: { lineNo: 'asc' },
+    });
+    expect(lines.map((l) => l.description)).toEqual([cat.box, 'زيت']);
+  });
+
   it('books what staff priced: a corrected count, volume, weight or category (Codex F167-1)', async () => {
     const booked = async (items: object[], lines: (id: string) => Promise<object[]>) => {
       const id = await request(items);
