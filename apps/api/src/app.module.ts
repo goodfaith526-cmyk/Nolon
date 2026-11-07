@@ -22,6 +22,7 @@ import { PartnerContractsModule } from './partners/partner-contracts.module.js';
 import { CommissionsModule } from './commissions/commissions.module.js';
 import { PartnersModule } from './partners/partners.module.js';
 import { WindowDeskModule } from './window-desk/window-desk.module.js';
+import { TestAutocycleModule } from './test-autocycle/test-autocycle.module.js';
 import { PayablesModule } from './payables/payables.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
@@ -49,6 +50,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     CustomersModule,
     PartnersModule,
     WindowDeskModule,
+    TestAutocycleModule,
     PartnerContractsModule,
     CommissionsModule,
     RatesModule,

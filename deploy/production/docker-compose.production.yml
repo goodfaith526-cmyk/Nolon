@@ -85,6 +85,9 @@ services:
       CS_TELEGRAM_TOKENS_ENABLED: ${CS_TELEGRAM_TOKENS_ENABLED:-false}
       CS_STATEMENT_ENABLED: ${CS_STATEMENT_ENABLED:-false}
       CS_DOCUMENTS_ENABLED: ${CS_DOCUMENTS_ENABLED:-false}
+      # This is production: the staging-only test autocycle never runs here (its switch is not
+      # passed either).
+      DEPLOY_STACK: production
       CS_WEBHOOK_SECRET: ${CS_WEBHOOK_SECRET:-}
       CS_WEBHOOK_ALLOWED_HOSTS: ${CS_WEBHOOK_ALLOWED_HOSTS:-}
       CS_WEBHOOK_WORKER_ENABLED: ${CS_WEBHOOK_WORKER_ENABLED:-false}

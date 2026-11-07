@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { hasAllBranchAccess, type AuthMeResponse, type Role } from '@nolon/shared';
 import { mayHoldDelegation } from '../access-control/access.js';
@@ -140,6 +141,18 @@ export class AuthService {
       await this.prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
     }
     return this.toAuthUser(session.user, session.id, version);
+  }
+
+  /**
+   * A user's access as a signed-in request builds it, for a system user acting without a session
+   * (the staging test autocycle): the same roles, branches and outlets, read now. Null for an
+   * unknown or inactive user.
+   */
+  async actorFor(userId: string): Promise<AuthUser | null> {
+    const version = await readAccessVersion(this.prisma);
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, include: USER_ACCESS });
+    if (!user?.isActive) return null;
+    return this.toAuthUser(user, randomUUID(), version);
   }
 
   /**

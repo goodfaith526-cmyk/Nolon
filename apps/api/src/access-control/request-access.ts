@@ -39,3 +39,12 @@ export function runInTransaction<R>(fn: () => Promise<R>): Promise<R> {
   if (!holder) return fn();
   return storage.run({ ...holder, inTransaction: true }, fn);
 }
+
+/**
+ * Runs `fn` as a request authorized at `version`, for work started outside HTTP by a system user
+ * (the staging test autocycle): its transactions lock access_state as a signed-in request's do,
+ * and refuse to run (409) once that user's access has changed.
+ */
+export function runWithRequestAccess<R>(version: string, fn: () => Promise<R>): Promise<R> {
+  return storage.run({ version, inTransaction: false }, fn);
+}

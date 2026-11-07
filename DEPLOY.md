@@ -231,6 +231,15 @@ and refuses the deploy if the file holds anything other than `CS_*` settings, th
 change, run `./deploy.sh`. Start the stack only through `deploy.sh`: a plain `docker compose up`
 does not read `switches.env`, and every switch falls back to off.
 
+**Test autocycle (staging only, owner 2026-11-07).** `CS_TEST_AUTOCYCLE_ENABLED=true` completes, with
+no sign-in, every bot request whose sender's name holds «اختبار»: approval as the system user «Test
+Autocycle», goods received at the booking's window and its invoice paid there as «Test Autocycle
+(window)», `CS_TEST_AUTOCYCLE_DELAY_S` seconds apart (default 30). It goes through the ordinary
+approve, window receipt and window payment services, so it needs `CS_APPROVE_CONFIRMS_ENABLED`,
+`WINDOW_DESK_ENABLED` and `WINDOW_COLLECT_ENABLED` on, and a window cash account for the invoice's
+currency. Only the staging compose file passes it (with `DEPLOY_STACK=staging`); production sets
+`DEPLOY_STACK=production` and never runs it (CI checks this). Turn it off after the trial.
+
 ## Backups
 
 Staging holds the client's trial data and the staff assistant's drafts, so it is backed up the
