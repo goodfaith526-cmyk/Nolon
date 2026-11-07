@@ -8,6 +8,7 @@ import { lockActiveBranches } from '../common/branch-locks.js';
 import { CustomerIdentityAuth, identityError } from './customer-identity-auth.js';
 import { CustomerIdentityService, identityLock } from './customer-identity.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import type { CustomerChatWarningsDto } from '@nolon/shared';
 
 /** Explicit, opt-in global identity permissions. No account balances/documents in these replies. */
 @Injectable()
@@ -89,6 +90,94 @@ export class CustomerProfileReviewService {
       return { profileId: id, profileVersion: after.version };
     });
   }
+  /**
+   * Owner, 2026-11-07: the chat's doubtful values on a customer's file, for staff: each value the
+   * chat brought that was not put in the file (another name, a phone another file has or a second
+   * phone, another address or city) since staff last marked the warnings seen. Values only; the
+   * file is unchanged. A customer the user may not see is a 404, as its page.
+   */
+  async customerWarnings(user: AuthUser, customerId: string): Promise<CustomerChatWarningsDto> {
+    await this.customers.get(user, customerId);
+    const customer = await this.prisma.customer.findUniqueOrThrow({
+      where: { id: customerId },
+      select: { profileId: true },
+    });
+    const profile = customer.profileId
+      ? await this.prisma.customerProfile.findFirst({
+          where: { id: customer.profileId, companyId: this.auth.companyId },
+          select: { id: true, version: true, needsReview: true },
+        })
+      : null;
+    if (!profile?.needsReview)
+      return {
+        profileId: profile?.id ?? null,
+        profileVersion: profile?.version ?? null,
+        warnings: [],
+      };
+    const seen = await this.prisma.customerProfileReview.findFirst({
+      where: { companyId: this.auth.companyId, entityId: profile.id, action: 'REJECT_PROPOSALS' },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    const rows = await this.prisma.customerProfileEvidence.findMany({
+      where: {
+        profileId: profile.id,
+        applied: false,
+        ...(seen ? { createdAt: { gt: seen.createdAt } } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 50,
+      select: { field: true, value: true, observedAt: true },
+    });
+    const warnings: CustomerChatWarningsDto['warnings'] = [];
+    for (const row of rows) {
+      if (warnings.some((w) => w.field === row.field && w.value === row.value)) continue;
+      if (warnings.length === 20) break;
+      let value = row.value;
+      let heldBy: string[] = [];
+      if (row.field === 'residenceCityId') {
+        const city = await this.prisma.location.findUnique({
+          where: { id: row.value },
+          select: { nameAr: true },
+        });
+        value = city?.nameAr ?? row.value;
+      }
+      if (row.field === 'phone')
+        heldBy = (
+          await this.prisma.customer.findMany({
+            where: { phone: row.value, id: { not: customerId } },
+            orderBy: { number: 'asc' },
+            take: 3,
+            select: { number: true },
+          })
+        ).map((c) => c.number);
+      warnings.push({
+        field:
+          row.field === 'residenceCityId' ? 'city' : (row.field as 'name' | 'phone' | 'address'),
+        value,
+        heldBy,
+        observedAt: row.observedAt.toISOString(),
+      });
+    }
+    return { profileId: profile.id, profileVersion: profile.version, warnings };
+  }
+
+  /** Staff saw the chat warnings: the file stays as it is, and only newer warnings show. */
+  async dismissCustomerWarnings(user: AuthUser, customerId: string, expectedVersion: number) {
+    await this.customers.get(user, customerId);
+    const customer = await this.prisma.customer.findUniqueOrThrow({
+      where: { id: customerId },
+      select: { profileId: true },
+    });
+    if (!customer.profileId) identityError(409, 'PROFILE_NOT_AWAITING_REVIEW');
+    return this.keepCurrent(
+      user,
+      customer.profileId,
+      expectedVersion,
+      'Staff saw the chat warnings on the customer file',
+    );
+  }
+
   async rules() {
     this.auth.enabled('followup');
     return this.prisma.customerFollowUpRule.findMany({

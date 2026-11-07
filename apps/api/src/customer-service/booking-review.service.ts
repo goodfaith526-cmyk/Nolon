@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CustomersService } from '../customers/customers.service.js';
-import { CustomerIdentityService } from './customer-identity.service.js';
+import { CustomerIdentityService, completesName } from './customer-identity.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -281,7 +281,18 @@ export class BookingReviewService {
           },
         })
       : null;
-    return { ...dto, profile };
+    return {
+      ...dto,
+      profile: profile && {
+        ...profile,
+        // Owner, 2026-11-07: a warning, for staff only, when the file is named for someone other
+        // than this request's sender (a receiver's name saved as the sender's, CS00015).
+        nameDiffersFromSender:
+          row.otherSenderName === null &&
+          profile.name !== null &&
+          !sameName(profile.name, row.senderName),
+      },
+    };
   }
 
   /** Plan 04a section 3: AWAITING_ROUTING to PENDING, at one of its branches the key still serves. */
@@ -733,11 +744,7 @@ export class BookingReviewService {
             message: 'The customer profile changed: reopen the request',
           });
         if (!prepareProfile) throw new ConflictException('The request changed: reopen it');
-        if (profile.needsReview)
-          throw new ConflictException({
-            code: 'PROFILE_REVIEW_REQUIRED',
-            message: 'Resolve customer identity proposals before approval',
-          });
+        // Owner, 2026-11-07: the profile's warnings never stop an approval; staff see them.
         const accountId = await this.customers.profileAccountInTx(tx, user, profile, row.branchId);
         if (booking.customerId && booking.customerId !== accountId)
           throw new BadRequestException('A linked request uses its own customer');
@@ -1865,4 +1872,11 @@ function staffDto(
         user.access.has('bookings:create', r.branchId),
     },
   };
+}
+
+/** The same name, or one completing the other (three names and then four). */
+function sameName(a: string, b: string): boolean {
+  const x = a.trim().replace(/\s+/g, ' ');
+  const y = b.trim().replace(/\s+/g, ' ');
+  return x === y || completesName(x, y) || completesName(y, x);
 }

@@ -104,6 +104,7 @@
 - POST `/customer-invoices/:id/cancel` · `InvoicesController.cancel` · `billing/billing.controller.ts` · customer_invoices:cancel
 - POST `/customer-invoices/opening` · `InvoicesController.createOpeningItem` · `billing/billing.controller.ts` · customer_invoices:view, manual_journals:create, manual_journals:approve
 - POST `/customer-profiles/:id/reject-proposals` · `CustomerProfileReviewController.keepCurrent` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
+- POST `/customer-profiles/customer/:customerId/warnings/seen` · `CustomerProfileReviewController.dismissCustomerWarnings` · `customer-service/customer-profile-review.controller.ts` · customers:update
 - PUT `/customer-profiles/follow-up-rules/:id` · `CustomerProfileReviewController.rule` · `customer-service/customer-profile-review.controller.ts` · customer_profile_followup:update
 - POST `/customer-profiles/intake/:id/resolve` · `CustomerProfileReviewController.resolve` · `customer-service/customer-profile-review.controller.ts` · customer_profile_intake:update
 - PUT `/customer-stages/:code` · `CustomerStagesController.setStage` · `customer-service/customer-stages.controller.ts` · master_data:update

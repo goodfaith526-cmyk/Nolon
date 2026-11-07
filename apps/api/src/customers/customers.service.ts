@@ -359,6 +359,8 @@ export class CustomersService {
         name: string | null;
         phone: string | null;
         phoneVerified: boolean;
+        address?: string | null;
+        residenceCityId?: string | null;
       };
       expectedVersion: number | undefined;
       apiClientId: string;
@@ -368,7 +370,8 @@ export class CustomersService {
     const skip = (outcome: CsInstantAccountOutcome) => ({ outcome, customerId: null });
     if (input.expectedVersion !== undefined && input.expectedVersion !== profile.version)
       return skip('PROFILE_CHANGED');
-    if (profile.needsReview) return skip('PROFILE_REVIEW');
+    // Owner, 2026-11-07: a profile's warnings are staff's to look at, never a reason to make no
+    // customer (PROFILE_REVIEW is no longer given).
     // Plan 09d: one account per profile, in whichever branch it was made.
     const existing = await tx.customer.findFirst({
       where: { profileId: profile.id },
@@ -396,6 +399,7 @@ export class CustomersService {
         ? profile.phone
         : null;
     const phoneUnverified = phone !== null && !profile.phoneVerified;
+    const place = await profilePlaceInTx(tx, profile);
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
     const customer = await tx.customer.create({
       data: {
@@ -404,6 +408,7 @@ export class CustomersService {
         name,
         phone,
         phoneUnverified,
+        ...place,
         profileId: profile.id,
         createdViaApiClientId: input.apiClientId,
       },
@@ -420,6 +425,8 @@ export class CustomersService {
         { field: 'createdViaApiClientId', before: null, after: input.apiClientId },
         { field: 'phoneCopied', before: null, after: phone === null ? 'no' : 'yes' },
         ...(phoneUnverified ? [{ field: 'phoneUnverified', before: null, after: 'true' }] : []),
+        ...(place.address ? [{ field: 'addressCopied', before: null, after: 'yes' }] : []),
+        ...(place.city ? [{ field: 'cityCopied', before: null, after: 'yes' }] : []),
       ],
     });
     return { outcome: 'CREATED', customerId: customer.id };
@@ -601,8 +608,12 @@ export class CustomersService {
         name: string | null;
         phone: string | null;
         phoneVerified: boolean;
+        address?: string | null;
+        residenceCityId?: string | null;
       };
       channelName: string | null;
+      /** The profile's name before this message (null for a new profile). */
+      previousName?: string | null;
       apiClientId: string;
     },
   ): Promise<void> {
@@ -629,16 +640,42 @@ export class CustomersService {
     await tx.$queryRaw`SELECT 1 FROM "customers" WHERE "id" = ${found.id}::uuid FOR NO KEY UPDATE`;
     const existing = await tx.customer.findUniqueOrThrow({
       where: { id: found.id },
-      select: { id: true, number: true, name: true, phone: true, isActive: true },
+      select: {
+        id: true,
+        number: true,
+        name: true,
+        phone: true,
+        isActive: true,
+        address: true,
+        city: true,
+        countryCode: true,
+      },
     });
     // An inactive customer is staff's to bring back: the channel never changes it.
     if (!existing.isActive) return;
     const changes: { field: string; before: string | null; after: string | null }[] = [];
     const data: Prisma.CustomerUpdateInput = {};
     const given = profile.name?.trim() || null;
-    if (given && channelName && existing.name === channelName && given !== existing.name) {
+    // The file follows the chat's name while it still carries the name the chat gave before
+    // (the channel's, or the profile's previous one, owner 2026-11-07); a name staff typed stays.
+    const previous = input.previousName?.trim() || null;
+    const chatNamed =
+      (channelName !== null && existing.name === channelName) ||
+      (previous !== null && existing.name === previous);
+    if (given && chatNamed && given !== existing.name) {
       data.name = given;
       changes.push({ field: 'name', before: existing.name, after: given });
+    }
+    // Owner, 2026-11-07: the address and city the customer gave fill a file that has none.
+    const place = await profilePlaceInTx(tx, profile);
+    if (place.address && existing.address === null) {
+      data.address = place.address;
+      changes.push({ field: 'addressCopied', before: null, after: 'yes' });
+    }
+    if (place.city && existing.city === null) {
+      data.city = place.city;
+      if (existing.countryCode === null && place.countryCode) data.countryCode = place.countryCode;
+      changes.push({ field: 'cityCopied', before: null, after: 'yes' });
     }
     // Owner, 2026-11-05: new information is added to the file. A phone the customer typed is
     // copied too, marked unverified (it grants nothing, plan 14), when no customer holds it.
@@ -1596,4 +1633,24 @@ function phoneChanged(): ConflictException {
     code: 'CUSTOMER_PHONE_CHANGED',
     message: 'A customer with this phone changed meanwhile: try again',
   });
+}
+
+/**
+ * Owner, 2026-11-07: the address and residence city a customer gave in the chat, as the customer
+ * file keeps them (the city by its Arabic name, with its country). Nothing when not given.
+ */
+async function profilePlaceInTx(
+  tx: Prisma.TransactionClient,
+  profile: { address?: string | null; residenceCityId?: string | null },
+): Promise<{ address?: string; city?: string; countryCode?: string }> {
+  const address = profile.address?.trim() || undefined;
+  if (!profile.residenceCityId) return address ? { address } : {};
+  const city = await tx.location.findUnique({
+    where: { id: profile.residenceCityId },
+    select: { nameAr: true, countryCode: true },
+  });
+  return {
+    ...(address ? { address } : {}),
+    ...(city ? { city: city.nameAr.slice(0, 100), countryCode: city.countryCode } : {}),
+  };
 }

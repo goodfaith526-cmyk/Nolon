@@ -1003,6 +1003,19 @@ export interface CsRequestPriceCheck {
   loadType: LoadType | null;
 }
 
+/** Owner, 2026-11-07: values a chat brought that the customer file did not take, for staff. */
+export interface CustomerChatWarningsDto {
+  profileId: string | null;
+  profileVersion: number | null;
+  warnings: {
+    field: 'name' | 'phone' | 'address' | 'city';
+    value: string;
+    /** For a phone: the other customers (numbers) whose file has it. */
+    heldBy: string[];
+    observedAt: string;
+  }[];
+}
+
 export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
   /** Volume requests: pieces and one piece's dimensions (cm) behind the billable CBM quantity. */
   pieces: number | null;
@@ -1013,7 +1026,10 @@ export interface CsBookingRequestStaffDto extends CsBookingRequestSummaryDto {
     name: string | null;
     phone: string | null;
     phoneVerified?: boolean;
+    /** Owner, 2026-11-07: the profile has chat warnings for staff; it never blocks approval. */
     needsReview?: boolean;
+    /** The profile's name is not the sender name on this request (e.g. a receiver's name). */
+    nameDiffersFromSender?: boolean;
     version: number;
   } | null;
   version: number;
