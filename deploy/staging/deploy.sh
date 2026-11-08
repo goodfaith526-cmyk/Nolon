@@ -143,6 +143,11 @@ if [ "$backups" = 1 ]; then
   ./backup.sh install-cron
 fi
 
+# The 5-minute alert check (alerts.sh), once a push URL is stored with `./alerts.sh set-url`.
+if [ -s "$HOME/.config/nolon-alerts/push-url" ]; then
+  ./alerts.sh install-cron
+fi
+
 echo "==> Removing old NOLON images (other projects' images are left alone)"
 docker image prune -af --filter label=com.nolon.stack=staging >/dev/null
 

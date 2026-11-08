@@ -112,6 +112,11 @@ if [ "$backups" = 1 ]; then
   ./backup.sh install-cron
 fi
 
+# The 5-minute alert check (alerts.sh), once a push URL is stored with `./alerts.sh set-url`.
+if [ -s "$HOME/.config/nolon-alerts/push-url" ]; then
+  ./alerts.sh install-cron
+fi
+
 # Old images are removed by the staging deploy (label com.nolon.stack=staging, shared images);
 # images in use by this stack are never removed by that.
 compose ps
