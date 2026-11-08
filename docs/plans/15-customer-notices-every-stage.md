@@ -46,6 +46,8 @@ customs start, or when the driver leaves with them. ⭐ Three stages are added (
 
 - ON_HOLD, PARTIALLY_DELIVERED and CANCELLED keep sending the customer to staff (no stage), as today. ⭐ A notice for
   "on hold" is a later step (15-4): the bot is told to say a staff member will call, never the internal reason.
+- 15-2 also gives AT_ORIGIN_HUB and AT_PORT the names above (F229-3). Stage names are editable by the Administrator,
+  so the migration renames a row only while it still carries its seed name; an edited name is left as it is.
 - The bot is given the stage name, the city and the shipment number as facts; **it writes the words itself**. The
   stage names above are what the customer sees in a read and on the tracking page, not a fixed message.
 - ⭐ A stage is announced once: two statuses that map to the same stage make one notice (as today).
@@ -69,19 +71,52 @@ A pallet (طبلية) is a group of shipments wrapped together in a warehouse, t
 - Number: the warehouse's branch code, `P` and a serial, e.g. `JED-P0001`. It belongs to the warehouse's branch
   (branch-scoped like containers; a shipment of another branch is added only by its own branch, as in containers).
 - Pallet states: `OPEN` (shipments added and removed, by typing the number or scanning the shipment sheet's QR),
-  `CLOSED` (wrapped: contents fixed), `UNPACKED` (opened at the destination, each shipment goes on by itself),
-  `CANCELLED` (only while nothing moved because of it).
-- **Put a pallet in a container or on a trip**: one action adds all its shipments to the container or trip, in one
-  transaction, with the container's capacity and branch rules. From then on the container or trip moves them.
-- **Move a pallet** (when it travels without a NOLON container, e.g. as loose cargo with a carrier): the staff picks the
-  next step (loaded, departed, arrived, received at the warehouse, ...); every shipment on it moves to that status
-  through the state machine, **all or nothing**: if one cannot take the step, nothing moves and the screen names it.
-  Each shipment's event carries the pallet number in its note.
+  `CLOSED` (wrapped: contents fixed), `UNPACKED` (opened, each shipment goes on by itself), `CANCELLED` (only while it
+  was never moved and never carried). There is no reopening: a pallet built wrong is unpacked and a new one made.
+- **One live pallet per shipment** (F229-4): `pallet_shipments.active` is true while the pallet is OPEN or CLOSED, with
+  a partial unique index on `(shipment_id) WHERE active`; unpacking or cancelling the pallet sets it false (the rows
+  stay as history), removing a shipment from an OPEN pallet deletes its row. The service also checks it under the
+  shipment's lock, as containers do.
+
+**Carriers: one mover at a time** (F229-1). A pallet is _carried_ while it is in a container that is not unpacked or
+cancelled (OPEN, CLOSED, LOADED, DEPARTED, ARRIVED), or on a trip that is PLANNED or DEPARTED. The pallet keeps its
+carrier (`consolidation_id`, `trip_id`, nullable).
+
+- **Put a pallet in a container or on a trip**: CLOSED pallets only, and only while not carried. One action adds all
+  its shipments to the container (OPEN) or the trip (PLANNED) in one transaction, with the container's capacity and
+  branch rules or the trip's branch rules, and records the carrier. From then on the container or trip moves them;
+  the pallet's own move is **refused** while it is carried (409 `PALLET_CARRIED`).
+- **Take a pallet out**: only the whole pallet, while the container is OPEN or the trip PLANNED, in one action. Taking
+  one shipment of a CLOSED pallet out of the container or off the trip is refused (409 `SHIPMENT_ON_PALLET`, naming
+  the pallet): a hook in `ShipmentLinksRegistry` that the container's and the trip's remove and move-to-another-container
+  call. No part of a pallet leaves a container.
+- **When the carrier is done**: the container unpacked (DECONSOLIDATED) or the trip ARRIVED or COMPLETED (or either
+  cancelled) ends the carrying; the pallet stays CLOSED, free to go in the next container or trip, to move by itself,
+  or to be unpacked.
+- **A shipment on a CLOSED pallet**: it cannot be removed from the pallet (unpack the pallet instead) and cannot be
+  cancelled (the cancel blocker of `ShipmentLinksRegistry` names the pallet, as containers under way do); a step the
+  pallet recorded cannot be undone from the shipment page (the revert blocker, by the pallet number in the event's
+  note). A forward move by hand stays possible, as in containers: the next pallet move leaves a shipment already at
+  that step or beyond it on the same leg as it is, and moves the others.
+- **Unpack**: only while not carried. Each shipment then goes on by itself.
+
+**Move a pallet** (F229-2), when it travels without a NOLON container or trip (e.g. loose cargo handed to a carrier):
+only **transit steps**: LOADED, DEPARTED, IN_TRANSIT, ARRIVED_PORT. Every shipment on it moves to that status through
+the state machine, **all or nothing**: if one cannot take the step, nothing moves and the screen names it. Each
+shipment's event carries the pallet number in its note. Receiving goods (RECEIVED_ORIGIN_WAREHOUSE,
+RECEIVED_DESTINATION_WAREHOUSE) is never a pallet move: it stays the warehouse receipt (GRN) per shipment, which
+writes the stock movement. ⭐ A "receive the whole pallet" that runs one GRN per shipment, all or nothing, is a later
+step if the warehouse asks for it.
+
 - The pallet label prints with a QR that opens the pallet's page on a phone (no camera library: the phone's camera app
   opens the link).
-- Permissions: the warehouse permissions (`warehouse:create` to make and fill pallets, `shipments:update` to move
-  them), branch-scoped. Behind the switch `PALLETS_ENABLED` (off by default).
-- Database: new tables `pallets` and `pallet_shipments` (additive), audit on every change.
+- Permissions, branch-scoped to the pallet's branch: `warehouse:view` to see pallets; `warehouse:create` to make one;
+  `warehouse:update` to fill, close, move and unpack; `warehouse:cancel` to cancel. Putting a pallet in or out of a
+  container also needs `consolidation:update`; on or off a trip, `transport_trips:update`. Each shipment move still
+  needs the stage's own permission (`ShipmentsService.advanceInTx`). Behind the switch `PALLETS_ENABLED` (off by
+  default: every pallet route is 404 and the menu item is hidden).
+- Database: new tables `pallets` and `pallet_shipments` (additive). Each pallet keeps who and when for every step
+  (created, closed, carried, unpacked, cancelled with its reason); the shipments' own events record every move.
 
 ## 4. Turning notices on
 
