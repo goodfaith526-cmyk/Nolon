@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   HttpStatus,
   Inject,
   Injectable,
@@ -309,6 +310,11 @@ export class PalletsService implements OnModuleInit {
       if (!carrier || !carries(carrier.state)) {
         throw new NotFoundException('No container or trip carries this pallet');
       }
+      // F231-1: taking the pallet out changes the container or trip, so it needs that carrier's
+      // own permission in the carrier's branch, as putting it in does.
+      if (!user.access.has(carrierPermission(carrier), carrier.branchId)) {
+        throw new ForbiddenException(`You cannot change ${carrier.number}`);
+      }
       if (!canLeave(carrier.state)) throw carriedRefusal(pallet, carrier.number);
       const ids = await activeShipmentIds(tx, id);
       if (pallet.consolidationId) {
@@ -411,18 +417,24 @@ export class PalletsService implements OnModuleInit {
   private async carrierOf(
     tx: Tx,
     pallet: Pick<Pallet, 'consolidationId' | 'tripId'>,
-  ): Promise<{ id: string; number: string; state: CarrierState } | null> {
+  ): Promise<Carrier | null> {
     if (pallet.consolidationId) {
       const c = await this.consolidations.carrierInTx(tx, pallet.consolidationId);
       return {
         id: pallet.consolidationId,
         number: c.number,
+        branchId: c.branchId,
         state: { kind: 'CONTAINER', status: c.status },
       };
     }
     if (pallet.tripId) {
       const t = await this.trips.carrierInTx(tx, pallet.tripId);
-      return { id: pallet.tripId, number: t.number, state: { kind: 'TRIP', status: t.status } };
+      return {
+        id: pallet.tripId,
+        number: t.number,
+        branchId: t.branchId,
+        state: { kind: 'TRIP', status: t.status },
+      };
     }
     return null;
   }
@@ -472,18 +484,30 @@ export class PalletsService implements OnModuleInit {
         can: {
           update: inBranch && user.access.has('warehouse:update', p.branchId),
           cancel: inBranch && user.access.has('warehouse:cancel', p.branchId),
-          container: holds('consolidation:update'),
-          trip: holds('transport_trips:update'),
+          container: carrier
+            ? user.access.has('consolidation:update', carrier.branchId)
+            : holds('consolidation:update'),
+          trip: carrier
+            ? user.access.has('transport_trips:update', carrier.branchId)
+            : holds('transport_trips:update'),
         },
       }),
     };
   }
 }
 
-function summaryOf(
-  p: PalletWithDetails,
-  carrier: { id: string; number: string; state: CarrierState } | null,
-): PalletSummaryDto {
+interface Carrier {
+  id: string;
+  number: string;
+  branchId: string;
+  state: CarrierState;
+}
+
+function carrierPermission(carrier: Carrier): 'consolidation:update' | 'transport_trips:update' {
+  return carrier.state.kind === 'CONTAINER' ? 'consolidation:update' : 'transport_trips:update';
+}
+
+function summaryOf(p: PalletWithDetails, carrier: Carrier | null): PalletSummaryDto {
   return {
     id: p.id,
     number: p.number,

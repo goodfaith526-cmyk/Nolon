@@ -312,6 +312,13 @@ describe('pallets (plan 15-3)', () => {
       ),
     ).toBe('PALLET_CARRIED');
 
+    // Taking it out changes the container: the warehouse role cannot (F231-1).
+    await post(`/pallets/${pallet.id}/take-out`, cookies.warehouseJed).expect(403);
+    expect(
+      ((await get(`/pallets/${pallet.id}`, cookies.warehouseJed).expect(200)).body as PalletDto)
+        .actions.takeOut,
+    ).toBe(false);
+
     // The whole pallet comes out of the open container.
     const out = (await post(`/pallets/${pallet.id}/take-out`, cookies.managerJed).expect(200))
       .body as PalletDto;
@@ -393,6 +400,15 @@ describe('pallets (plan 15-3)', () => {
       }).expect(201)
     ).body as TripDto;
 
+    // A shipment on a live pallet does not go on a trip alone.
+    expect(
+      code(
+        await post(`/trips/${trip.id}/shipments`, cookies.managerPts, { shipmentId: a }).expect(
+          409,
+        ),
+      ),
+    ).toBe('SHIPMENT_ON_PALLET');
+
     const on = (
       await post(`/pallets/${pallet.id}/trip`, cookies.managerPts, { tripId: trip.id }).expect(200)
     ).body as PalletDto;
@@ -402,6 +418,8 @@ describe('pallets (plan 15-3)', () => {
       code(await del(`/trips/${trip.id}/shipments/${a}`, cookies.managerPts).expect(409)),
     ).toBe('SHIPMENT_ON_PALLET');
 
+    // Taking it off changes the trip: the warehouse role cannot (F231-1).
+    await post(`/pallets/${pallet.id}/take-out`, cookies.warehousePts).expect(403);
     await post(`/pallets/${pallet.id}/take-out`, cookies.managerPts).expect(200);
     const after = (await get(`/trips/${trip.id}`, cookies.managerPts).expect(200)).body as TripDto;
     expect(after.shipments.map((s) => s.shipmentId)).toEqual([c]);

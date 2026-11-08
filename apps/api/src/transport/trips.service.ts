@@ -522,8 +522,14 @@ export class TripsService implements OnModuleInit {
   }
 
   /** Plan 15-3: a trip's number and status, for a pallet it may carry. */
-  async carrierInTx(tx: Tx, id: string): Promise<{ number: string; status: TripStatus }> {
-    return tx.trip.findUniqueOrThrow({ where: { id }, select: { number: true, status: true } });
+  async carrierInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ number: string; status: TripStatus; branchId: string }> {
+    return tx.trip.findUniqueOrThrow({
+      where: { id },
+      select: { number: true, status: true, branchId: true },
+    });
   }
 
   /** Departs, arrives or completes the trip, moving its shipments (see the class comment). */

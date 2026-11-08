@@ -782,12 +782,14 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
   }
 
   /** Plan 15-3: a container's number and status, for a pallet it may carry. */
-  async carrierInTx(tx: Tx, id: string): Promise<{ number: string; status: ConsolidationStatus }> {
-    const c = await tx.consolidation.findUniqueOrThrow({
+  async carrierInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ number: string; status: ConsolidationStatus; branchId: string }> {
+    return tx.consolidation.findUniqueOrThrow({
       where: { id },
-      select: { number: true, status: true },
+      select: { number: true, status: true, branchId: true },
     });
-    return c;
   }
 
   /** Closes, loads, departs, arrives or unpacks the container (see the class comment). */
