@@ -168,6 +168,8 @@ jobs:
         run: deploy/production/test-backup.sh staging
       - name: switches.env guard refuses anything but CS_* settings and the plan 12 and 13 switches (deploy/production/test-switches.sh)
         run: deploy/production/test-switches.sh
+      - name: Alert check pushes site down, full disk and stale backups once (deploy/production/test-alerts.sh)
+        run: deploy/production/test-alerts.sh
       - name: Production takes the commit staging deployed (deploy/production/test-staging-deployed.sh)
         run: deploy/production/test-staging-deployed.sh
       - name: One deploy at a time, registry login inside the lock (deploy/test-deploy-lock.sh)

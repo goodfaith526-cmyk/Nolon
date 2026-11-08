@@ -232,3 +232,30 @@ host.
 - Backups hidden by someone with the server's key stay in the bucket as older versions: from any
   machine with the storage keys, `rclone lsl --s3-versions` lists them and
   `rclone copyto --s3-version-at <time>` brings one back.
+
+## Alerts
+
+Every 5 minutes, `alerts.sh` (cron, as the `deploy` user) checks the stack from the server itself
+and pushes to your phone when something is wrong:
+
+- `https://<PRODUCTION_DOMAIN>/api/v1/health` does not answer within 10 seconds (host nginx,
+  certificate, Caddy, API or database down);
+- the server's disk, or Docker's if it is on another disk, is `ALERT_DISK_PERCENT` (default 85)
+  percent full or more;
+- once backups are set up: no successful backup in the last 26 hours (`backup.sh` records each one
+  in `last-backup`), or no passed restore test in the last 35 days (`last-restore-test`).
+
+The same alerts are pushed once, not every 5 minutes, and one "cleared" message follows when they
+clear. A push that fails is tried again on the next run. Alerts carry the stack, the domain and
+numbers only. Tested in `test-alerts.sh` (CI).
+
+### Setup, once (server, in `~/nolon-production`)
+
+1. Install the **ntfy** app on your phone and subscribe to a topic with a long random name (anyone
+   who knows the name can read it), e.g. `nolon-` followed by `openssl rand -hex 12`. The push URL
+   is `https://ntfy.sh/<topic>`. The erp-agents server can use the same topic.
+2. `./alerts.sh set-url` and paste the URL (hidden as you type). It is stored in
+   `~/.config/nolon-alerts/push-url` (mode 600), shared by production and staging.
+3. `./alerts.sh test`: a test message must reach your phone.
+4. `./alerts.sh install-cron` (every later deploy reinstalls it). Log:
+   `~/nolon-production-alerts.log`. Staging the same way from `~/nolon-staging`, if wanted.

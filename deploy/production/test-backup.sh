@@ -104,7 +104,9 @@ for _ in $(seq 1 50); do s3_call -o /dev/null "$s3/" 2> /dev/null && break; slee
 s3_call -fo /dev/null -X PUT -H 'x-amz-bucket-object-lock-enabled: true' "$s3/backups"
 s3_call -fo /dev/null -X PUT "$s3/unlocked"
 
+[ ! -e last-backup ] || fail "last-backup exists before any backup"
 out="$(./backup.sh 2>&1)" || fail "backup failed: $out"
+[ -s last-backup ] || fail "a successful backup was not recorded in last-backup (alerts.sh reads it)"
 name="$(./backup.sh list | awk '{ print $NF }')"
 [[ "$name" =~ ^nolon-$stack-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || fail "expected one backup: $name"
 s3_call -fo "$work/object" "$s3/backups/$stack/$name"
@@ -122,7 +124,9 @@ version="$(s3_call -I "$s3/backups/$stack/$name" | tr -d '\r' | awk 'tolower($1)
 pass "the backup is locked in COMPLIANCE mode, and the server's key cannot delete it"
 
 set_env BACKUP_S3_BUCKET unlocked
+rm last-backup
 out="$(./backup.sh 2>&1)" && fail "backup succeeded into a bucket without Object Lock"
+[ ! -e last-backup ] || fail "a failed backup was recorded in last-backup"
 [[ "$out" == *"is Object Lock enabled on the bucket"* ]] || fail "unexpected failure without Object Lock: $out"
 set_env BACKUP_S3_BUCKET backups
 pass "a backup that cannot be locked fails"
@@ -187,8 +191,10 @@ set_env BACKUP_AGE_RECIPIENT "$(printf '%s\n' "$backup_key" | age_public)"
 count_backups() { ./backup.sh list | wc -l; }
 before_count="$(count_backups)"
 sleep 1 # backup names are per second
+rm -f last-backup
 out="$(./backup.sh pre-migrate 2>&1)" || fail "pre-migrate failed with backups set up: $out"
 [ "$(count_backups)" = $((before_count + 1)) ] || fail "pre-migrate took no backup: $out"
+[ -s last-backup ] || fail "pre-migrate's backup was not recorded in last-backup"
 set_env BACKUP_S3_BUCKET unlocked
 ./backup.sh pre-migrate > /dev/null 2>&1 && fail "pre-migrate passed although the backup failed"
 pass "pre-migrate takes a backup, and fails when the backup fails"

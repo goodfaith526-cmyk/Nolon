@@ -286,7 +286,7 @@ jobs:
           remote "umask 077 && mkdir -p $dir && chmod 700 $dir"
           remote "umask 077 && cat > $dir/.env.tmp && mv $dir/.env.tmp $dir/.env" < deploy/production/.env
           (cd deploy/production && scp docker-compose.production.yml Caddyfile deploy.sh backup.sh \
-            backup-job.sh backup.Dockerfile "$SSH_TARGET:$dir/")
+            backup-job.sh backup.Dockerfile alerts.sh "$SSH_TARGET:$dir/")
           # The job token can pull this repo's images only while the job runs; log out afterwards.
           # deploy.sh logs in and out inside its server-wide lock (Codex F183-1).
           printf '%s' "$GHCR_TOKEN" | remote "bash $dir/deploy.sh --registry-login '${{ github.actor }}'"

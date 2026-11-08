@@ -69,6 +69,7 @@ case "${1:-}" in
       exit 0
     fi
     compose run --rm -T backup < /dev/null
+    date -u +%FT%TZ > last-backup
     exit 0
     ;;
   restore | restore-test)
@@ -90,4 +91,10 @@ case "${1:-}" in
     ;;
 esac
 
-compose run --rm -T backup "$@" < /dev/null
+status=0
+compose run --rm -T backup "$@" < /dev/null || status=$?
+# A backup that succeeded is recorded for the alert check (alerts.sh: none in 26 hours alerts).
+if [ "$status" = 0 ] && [ -z "${1:-}" ]; then
+  date -u +%FT%TZ > last-backup
+fi
+exit "$status"
