@@ -993,6 +993,24 @@ export const FORM_REFUSALS = [
   'WINDOW_NOTHING_TO_COLLECT',
   'WINDOW_OVER_BALANCE',
   'WINDOW_CASH_ACCOUNT_TAKEN',
+  // Plan 15-3: pallets (params `pallet`, `shipment`, `carrier`: numbers). The pallet is not open
+  // or not closed for that action; a container or trip carries it; it is empty or full; it was
+  // carried, so it is unpacked rather than cancelled. A shipment already on another live pallet,
+  // in a container or on a trip, finished, or of another branch than the pallet.
+  'PALLET_NOT_OPEN',
+  'PALLET_NOT_CLOSED',
+  'PALLET_CARRIED',
+  'PALLET_EMPTY',
+  'PALLET_FULL',
+  'PALLET_NOT_CANCELLABLE',
+  'PALLET_SHIPMENT_TAKEN',
+  'PALLET_SHIPMENT_CARRIED',
+  'PALLET_SHIPMENT_FINISHED',
+  'PALLET_SHIPMENT_OTHER_BRANCH',
+  // A shipment on a live pallet goes in or out of a container or trip only with its whole pallet,
+  // and is not cancelled while the pallet is live.
+  'SHIPMENT_ON_PALLET',
+  'SHIPMENT_CANCEL_ON_PALLET',
 ] as const;
 export type FormRefusal = (typeof FORM_REFUSALS)[number];
 

@@ -659,10 +659,17 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
    * one. A shipment shared with the container's branch for it stays shared.
    */
   async removeShipment(user: AuthUser, id: string, shipmentId: string): Promise<ConsolidationDto> {
-    await this.findOwn(user, id);
+    const own = await this.findOwn(user, id);
+    const numbers = await this.shipmentNumbers(user, own);
     await this.prisma.$transaction(async (tx) => {
       const container = await lockContainer(tx, id);
       requireOpen(container);
+      // Plan 15-3: a shipment on a live pallet comes out only with its whole pallet.
+      await this.shipmentLinks.requireNotOnPalletInTx(
+        tx,
+        shipmentId,
+        numbers.get(shipmentId) ?? shipmentId,
+      );
       await takeOut(tx, id, shipmentId);
       // F215-3: a BL copied from this container's master BL leaves with it.
       await this.shipments.replaceMasterBlInTx(tx, [shipmentId], container.masterBlNumber, null);
@@ -702,12 +709,85 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
       requireOpen(source);
       requireOpen(target);
       await requireRoom(tx, target);
+      // Plan 15-3: a shipment on a live pallet moves only with its whole pallet.
+      await this.shipmentLinks.requireNotOnPalletInTx(
+        tx,
+        shipmentId,
+        numbers.get(shipmentId) ?? shipmentId,
+      );
       await takeOut(tx, id, shipmentId);
       // F215-3: a BL copied from this container's master BL leaves with it.
       await this.shipments.replaceMasterBlInTx(tx, [shipmentId], source.masterBlNumber, null);
       await this.addShipments(tx, user, target, [shipmentId], numbers, { moving: true });
     });
     return this.get(user, id);
+  }
+
+  /**
+   * Plan 15-3: puts a closed pallet's shipments in an open container, inside the pallet's
+   * transaction (the pallet row is locked first, then the container, then each shipment), with
+   * every rule of adding a shipment. Returns the container.
+   */
+  async putPalletInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    palletId: string,
+    shipmentIds: readonly string[],
+  ): Promise<{ id: string; number: string }> {
+    await this.findViewable(user, id);
+    const numbers = await this.requireVisibleShipments(user, shipmentIds);
+    const container = await lockContainer(tx, id);
+    requireOpen(container);
+    const count = await tx.consolidationShipment.count({ where: { consolidationId: id } });
+    if (count + shipmentIds.length > MAX_CONTAINER_SHIPMENTS) throw full(container);
+    await this.addShipments(tx, user, container, shipmentIds, numbers, { palletId });
+    return { id: container.id, number: container.number };
+  }
+
+  /**
+   * Plan 15-3: takes a whole pallet's shipments out of an open container (the container's branch
+   * only), inside the pallet's transaction.
+   */
+  async takePalletOutInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    shipmentIds: readonly string[],
+  ): Promise<void> {
+    await this.findOwn(user, id);
+    const container = await lockContainer(tx, id);
+    requireOpen(container);
+    for (const shipmentId of [...shipmentIds].sort()) {
+      await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      await takeOut(tx, id, shipmentId);
+    }
+    // F215-3: a BL copied from this container's master BL leaves with it.
+    await this.shipments.replaceMasterBlInTx(tx, shipmentIds, container.masterBlNumber, null);
+  }
+
+  /**
+   * Plan 15-3: the container still holding the shipment (not unpacked or cancelled), or null: a
+   * shipment in one goes on a pallet only after it is taken out.
+   */
+  async liveContainerOfInTx(tx: Tx, shipmentId: string): Promise<{ number: string } | null> {
+    const link = await tx.consolidationShipment.findFirst({
+      where: {
+        shipmentId,
+        consolidation: { status: { notIn: ['DECONSOLIDATED', 'CANCELLED'] } },
+      },
+      select: { consolidation: { select: { number: true } } },
+    });
+    return link?.consolidation ?? null;
+  }
+
+  /** Plan 15-3: a container's number and status, for a pallet it may carry. */
+  async carrierInTx(tx: Tx, id: string): Promise<{ number: string; status: ConsolidationStatus }> {
+    const c = await tx.consolidation.findUniqueOrThrow({
+      where: { id },
+      select: { number: true, status: true },
+    });
+    return c;
   }
 
   /** Closes, loads, departs, arrives or unpacks the container (see the class comment). */
@@ -1123,13 +1203,15 @@ export class ConsolidationsService implements ContainerBookingHandler, OnModuleI
     container: Consolidation,
     shipmentIds: readonly string[],
     numbers: ReadonlyMap<string, string>,
-    options: { moving?: boolean } = {},
+    options: { moving?: boolean; palletId?: string } = {},
   ): Promise<void> {
     // The container's lock keeps its shipments as read: the load before the write is exact.
     const before = containerLoad(await cargoOf(tx, container.id));
     for (const shipmentId of [...shipmentIds].sort()) {
       const label = numbers.get(shipmentId) ?? shipmentId;
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      // Plan 15-3: a shipment on a live pallet goes in only with its whole pallet.
+      await this.shipmentLinks.requireNotOnPalletInTx(tx, shipmentId, label, options.palletId);
       if (!isActive(status) || !BEFORE_CONSOLIDATION.includes(status)) {
         throw codedRefusal(
           HttpStatus.CONFLICT,

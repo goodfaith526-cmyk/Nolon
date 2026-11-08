@@ -85,7 +85,8 @@
     "paymentInstructions": "تعليمات الدفع",
     "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة.",
     "agentAdmin": "إدارة الوكلاء الذكيين",
-    "windowDesk": "طلبات الاستلام"
+    "windowDesk": "طلبات الاستلام",
+    "pallets": "الطبالي"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -503,7 +504,11 @@
     "journalSource_COMMISSION_ACCRUAL": "عمولة شريك",
     "paymentInstruction_DRAFT": "مسودة",
     "paymentInstruction_APPROVED": "معتمدة",
-    "paymentInstruction_RETIRED": "متقاعدة"
+    "paymentInstruction_RETIRED": "متقاعدة",
+    "pallet_OPEN": "مفتوحة",
+    "pallet_CLOSED": "مغلقة",
+    "pallet_UNPACKED": "مفكوكة",
+    "pallet_CANCELLED": "ملغاة"
   },
   "Quotations": {
     "fromBot": "من البوت",
@@ -2199,7 +2204,8 @@
     "kind_ADVANCE_APPLICATION_REVERSAL": "عكس تطبيق دفعة مقدمة",
     "waybillTitle": "بوليصة الشحن",
     "waybillNote": "رقم البوليصة هو رقم الشحنة. هذه البوليصة إثبات استلام الطرود المذكورة للشحن، ولا تتضمن أسعاراً.",
-    "phone": "الهاتف"
+    "phone": "الهاتف",
+    "palletLabelTitle": "ملصق طبلية"
   },
   "CreditNotes": {
     "title": "الإشعارات الدائنة",
@@ -2974,7 +2980,19 @@
     "WINDOW_NO_CASH_ACCOUNT": "لا يوجد لهذه النافذة حساب نقدية بعملة {currency}. اطلب من محاسب نولون تحديده.",
     "WINDOW_NOTHING_TO_COLLECT": "لا يوجد مبلغ مستحق على هذا الحجز بعملة {currency}.",
     "WINDOW_OVER_BALANCE": "المستحق على العميل في هذا الحجز {balance} {currency}: لا تستلم أكثر من ذلك.",
-    "WINDOW_CASH_ACCOUNT_TAKEN": "حساب النقدية هذا مرتبط بنافذة أو عملة أخرى. اختر حسابًا آخر."
+    "WINDOW_CASH_ACCOUNT_TAKEN": "حساب النقدية هذا مرتبط بنافذة أو عملة أخرى. اختر حسابًا آخر.",
+    "PALLET_NOT_OPEN": "الطبلية {pallet} مغلقة: شحناتها ثابتة. فكّها وأنشئ طبلية جديدة لتغييرها.",
+    "PALLET_NOT_CLOSED": "يجب إغلاق الطبلية {pallet} (تغليفها) أولاً.",
+    "PALLET_CARRIED": "الطبلية {pallet} محمولة في {carrier}: الحاوية أو الرحلة هي التي تحركها الآن. أخرج الطبلية أولاً، أو انتظر حتى تصل.",
+    "PALLET_EMPTY": "الطبلية {pallet} فارغة: أضف شحنة واحدة على الأقل قبل إغلاقها.",
+    "PALLET_FULL": "الطبلية {pallet} ممتلئة بأقصى عدد من الشحنات.",
+    "PALLET_NOT_CANCELLABLE": "الطبلية {pallet} حُملت في حاوية أو رحلة: فكّها بدلاً من إلغائها.",
+    "PALLET_SHIPMENT_TAKEN": "الشحنة {shipment} موجودة بالفعل على الطبلية {pallet}.",
+    "PALLET_SHIPMENT_CARRIED": "الشحنة {shipment} في الحاوية أو الرحلة {carrier}: أخرجها أولاً ثم ضعها على الطبلية.",
+    "PALLET_SHIPMENT_FINISHED": "الشحنة {shipment} مسلّمة أو مغلقة أو ملغاة ولا يمكن وضعها على طبلية.",
+    "PALLET_SHIPMENT_OTHER_BRANCH": "الشحنة {shipment} تتبع فرعاً غير فرع الطبلية.",
+    "SHIPMENT_ON_PALLET": "الشحنة {shipment} على الطبلية {pallet}: تدخل وتخرج مع الطبلية كاملة، من صفحة الطبلية.",
+    "SHIPMENT_CANCEL_ON_PALLET": "الشحنة {shipment} على الطبلية {pallet}: أزلها من الطبلية (أو فكّ الطبلية) قبل إلغائها."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -3538,5 +3556,47 @@
     "paymentLine": "إيصال {number}: {amount} {currency}",
     "printReceipt": "طباعة الإيصال",
     "printWaybill": "طباعة البوليصة"
+  },
+  "Pallets": {
+    "title": "الطبالي",
+    "hint": "شحنات كاملة مغلفة معاً في المستودع. الطبلية المغلقة تدخل الحاوية أو الرحلة بخطوة واحدة، والحاوية أو الرحلة تحرك كل الشحنات التي عليها.",
+    "new": "طبلية جديدة",
+    "warehouse": "المستودع",
+    "notes": "ملاحظات",
+    "create": "إنشاء الطبلية",
+    "none": "لا توجد طبالي بعد.",
+    "number": "الرقم",
+    "shipmentsCount": "الشحنات",
+    "carrier": "في حاوية / رحلة",
+    "createdBy": "أنشأها",
+    "shipments": "الشحنات على الطبلية",
+    "noShipments": "لا توجد شحنات على هذه الطبلية بعد.",
+    "shipment": "الشحنة",
+    "customer": "العميل",
+    "addShipment": "إضافة شحنة",
+    "shipmentSearch": "رقم الشحنة أو اسم العميل",
+    "searchNoResults": "لا توجد شحنات مطابقة.",
+    "add": "إضافة",
+    "remove": "إزالة",
+    "close": "إغلاق (تغليف) الطبلية",
+    "closeHint": "بعد الإغلاق تصبح شحناتها ثابتة وتتحرك معاً.",
+    "putInContainer": "وضعها في حاوية",
+    "putOnTrip": "وضعها في رحلة",
+    "chooseContainer": "حاوية مفتوحة",
+    "chooseTrip": "رحلة مخططة",
+    "noContainers": "لا توجد حاويات مفتوحة.",
+    "noTrips": "لا توجد رحلات مخططة.",
+    "takeOut": "إخراج الطبلية",
+    "unpack": "فكّ الطبلية",
+    "unpackHint": "بعدها تمضي كل شحنة وحدها.",
+    "cancel": "إلغاء الطبلية",
+    "cancelReason": "السبب",
+    "cancelHint": "تُلغى فقط الطبلية التي لم توضع في حاوية أو رحلة، وتتحرر شحناتها.",
+    "back": "رجوع",
+    "printLabel": "طباعة الملصق",
+    "container": "الحاوية {number}",
+    "trip": "الرحلة {number}",
+    "cancelledReason": "أُلغيت: {reason}",
+    "qrCaption": "امسح الرمز لفتح صفحة الطبلية"
   }
 }

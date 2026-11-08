@@ -12,6 +12,7 @@ export * from './warehouse.js';
 export * from './customs.js';
 export * from './transport.js';
 export * from './consolidation.js';
+export * from './pallets.js';
 export * from './alerts.js';
 export * from './customer-service.js';
 export * from './marketing.js';

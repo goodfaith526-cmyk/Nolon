@@ -220,6 +220,14 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 15-3: pallets (shipments wrapped together and moved as one piece). Off: every pallet route
+   * is 404 and the menu item is hidden.
+   */
+  PALLETS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Owner, 2026-11-07: staging trials only. A bot request whose sender's name holds «اختبار» is
    * approved, received at its window and paid there by the system's Test Autocycle users, through
    * the same services staff and the window use, CS_TEST_AUTOCYCLE_DELAY_S apart. Never runs with

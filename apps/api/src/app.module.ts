@@ -33,6 +33,7 @@ import { TransportModule } from './transport/transport.module.js';
 import { UsersModule } from './users/users.module.js';
 import { AccessControlModule } from './access-control/access-control.module.js';
 import { WarehouseModule } from './warehouse/warehouse.module.js';
+import { PalletsModule } from './pallets/pallets.module.js';
 import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
 
 // Business modules (customers, bookings, shipments, finance...) are added here, one per folder.
@@ -66,6 +67,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     MyDraftsModule,
     CustomsModule,
     TransportModule,
+    PalletsModule,
     PayablesModule,
     ExpensesModule,
     ReportsModule,

@@ -36,7 +36,7 @@ if [ -f switches.env ]; then
   # grep reads the file itself (no pipe, so no SIGPIPE): 1 means no other line; 0 (a line that
   # is not allowed) or 2 (unreadable) stops the deploy.
   status=0
-  grep -Evxq '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*|(BILLING_AUTO_APPROVE_ENABLED|HANDOVER_PAYMENT_GATE_ENABLED|WINDOW_DESK_ENABLED|WINDOW_COLLECT_ENABLED)=(true|false)' switches.env || status=$?
+  grep -Evxq '[[:space:]]*(#.*)?|CS_[A-Z0-9_]+=.*|(BILLING_AUTO_APPROVE_ENABLED|HANDOVER_PAYMENT_GATE_ENABLED|WINDOW_DESK_ENABLED|WINDOW_COLLECT_ENABLED|PALLETS_ENABLED)=(true|false)' switches.env || status=$?
   if [ "$status" -ne 1 ]; then
     echo "switches.env must be readable and hold only CS_* settings, the plan 12 billing switches, the plan 13 window switches and comments" >&2
     exit 1

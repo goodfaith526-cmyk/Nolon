@@ -30,6 +30,7 @@ import { WarehouseReportsService } from './warehouse-reports.service.js';
   ],
   exports: [
     WarehouseReportsService,
+    WarehousesService,
     GoodsReleaseDraftsService,
     GrnDraftsService,
     WarehouseMovementsService,

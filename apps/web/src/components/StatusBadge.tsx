@@ -20,6 +20,7 @@ export function StatusBadge({
     | 'customs'
     | 'trip'
     | 'consolidation'
+    | 'pallet'
     | 'tripExpense'
     | 'creditNote'
     | 'supplierBill'

@@ -171,6 +171,15 @@
 - POST `/new-customer-quotation-drafts/:id/approve` · `NewCustomerQuotationDraftsController.approve` · `quotations/new-customer-quotation-drafts.controller.ts` · quotations:create, customers:create
 - POST `/new-customer-quotation-drafts/:id/reject` · `NewCustomerQuotationDraftsController.reject` · `quotations/new-customer-quotation-drafts.controller.ts` · quotations:create
 - POST `/new-customer-quotation-drafts/check` · `NewCustomerQuotationDraftsController.check` · `quotations/new-customer-quotation-drafts.controller.ts` · quotations:create, customers:create
+- POST `/pallets` · `PalletsController.create` · `pallets/pallets.controller.ts` · warehouse:create
+- POST `/pallets/:id/cancel` · `PalletsController.cancel` · `pallets/pallets.controller.ts` · warehouse:cancel
+- POST `/pallets/:id/close` · `PalletsController.close` · `pallets/pallets.controller.ts` · warehouse:update
+- POST `/pallets/:id/container` · `PalletsController.putInContainer` · `pallets/pallets.controller.ts` · warehouse:update, consolidation:update
+- POST `/pallets/:id/shipments` · `PalletsController.addShipment` · `pallets/pallets.controller.ts` · warehouse:update
+- DELETE `/pallets/:id/shipments/:shipmentId` · `PalletsController.removeShipment` · `pallets/pallets.controller.ts` · warehouse:update
+- POST `/pallets/:id/take-out` · `PalletsController.takeOut` · `pallets/pallets.controller.ts` · warehouse:update
+- POST `/pallets/:id/trip` · `PalletsController.putOnTrip` · `pallets/pallets.controller.ts` · warehouse:update, transport_trips:update
+- POST `/pallets/:id/unpack` · `PalletsController.unpack` · `pallets/pallets.controller.ts` · warehouse:update
 - PATCH `/partner-contracts/:id` · `PartnerContractsController.update` · `partners/partner-contracts.controller.ts` · partner_contracts:update
 - POST `/partner-contracts/:id/approve` · `PartnerContractsController.approve` · `partners/partner-contracts.controller.ts` · partner_contracts:approve
 - POST `/partner-contracts/:id/cancel` · `PartnerContractsController.cancel` · `partners/partner-contracts.controller.ts` · partner_contracts:cancel

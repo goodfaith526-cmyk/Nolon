@@ -85,7 +85,8 @@
     "paymentInstructions": "Payment instructions",
     "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
     "agentAdmin": "AI Agents Management",
-    "windowDesk": "Goods to receive"
+    "windowDesk": "Goods to receive",
+    "pallets": "Pallets"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -503,7 +504,11 @@
     "journalSource_COMMISSION_ACCRUAL": "Partner commission",
     "paymentInstruction_DRAFT": "Draft",
     "paymentInstruction_APPROVED": "Approved",
-    "paymentInstruction_RETIRED": "Retired"
+    "paymentInstruction_RETIRED": "Retired",
+    "pallet_OPEN": "Open",
+    "pallet_CLOSED": "Closed",
+    "pallet_UNPACKED": "Unpacked",
+    "pallet_CANCELLED": "Cancelled"
   },
   "Quotations": {
     "fromBot": "From the bot",
@@ -2199,7 +2204,8 @@
     "kind_ADVANCE_APPLICATION_REVERSAL": "Advance application reversed",
     "waybillTitle": "Waybill",
     "waybillNote": "The waybill number is the shipment number. This waybill proves the packages above were received for shipping; it carries no prices.",
-    "phone": "Phone"
+    "phone": "Phone",
+    "palletLabelTitle": "Pallet label"
   },
   "CreditNotes": {
     "title": "Credit notes",
@@ -2974,7 +2980,19 @@
     "WINDOW_NO_CASH_ACCOUNT": "This window has no cash account for {currency}. Ask NOLON's accountant to set one.",
     "WINDOW_NOTHING_TO_COLLECT": "Nothing is owed on this booking in {currency}.",
     "WINDOW_OVER_BALANCE": "The customer owes {balance} {currency} on this booking: take no more than that.",
-    "WINDOW_CASH_ACCOUNT_TAKEN": "This cash account already serves another window or currency. Choose another account."
+    "WINDOW_CASH_ACCOUNT_TAKEN": "This cash account already serves another window or currency. Choose another account.",
+    "PALLET_NOT_OPEN": "Pallet {pallet} is closed: its shipments are fixed. Unpack it and make a new one to change them.",
+    "PALLET_NOT_CLOSED": "Pallet {pallet} must be closed (wrapped) first.",
+    "PALLET_CARRIED": "Pallet {pallet} is carried by {carrier}: that container or trip moves it now. Take the pallet out first, or wait until it arrives.",
+    "PALLET_EMPTY": "Pallet {pallet} has no shipments: add at least one before closing it.",
+    "PALLET_FULL": "Pallet {pallet} already holds the most shipments a pallet can.",
+    "PALLET_NOT_CANCELLABLE": "Pallet {pallet} was carried in a container or on a trip: unpack it instead of cancelling it.",
+    "PALLET_SHIPMENT_TAKEN": "Shipment {shipment} is already on pallet {pallet}.",
+    "PALLET_SHIPMENT_CARRIED": "Shipment {shipment} is in container or on trip {carrier}: take it out first, then put it on the pallet.",
+    "PALLET_SHIPMENT_FINISHED": "Shipment {shipment} is delivered, closed or cancelled and cannot go on a pallet.",
+    "PALLET_SHIPMENT_OTHER_BRANCH": "Shipment {shipment} belongs to another branch than the pallet.",
+    "SHIPMENT_ON_PALLET": "Shipment {shipment} is on pallet {pallet}: it goes in or out with its whole pallet, from the pallet's page.",
+    "SHIPMENT_CANCEL_ON_PALLET": "Shipment {shipment} is on pallet {pallet}: remove it from the pallet (or unpack the pallet) before cancelling it."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -3538,5 +3556,47 @@
     "paymentLine": "Receipt {number}: {amount} {currency}",
     "printReceipt": "Print receipt",
     "printWaybill": "Print waybill"
+  },
+  "Pallets": {
+    "title": "Pallets",
+    "hint": "Whole shipments wrapped together in a warehouse. A closed pallet goes in a container or on a trip in one step, and that container or trip moves every shipment on it.",
+    "new": "New pallet",
+    "warehouse": "Warehouse",
+    "notes": "Notes",
+    "create": "Create pallet",
+    "none": "No pallets yet.",
+    "number": "Number",
+    "shipmentsCount": "Shipments",
+    "carrier": "In container / on trip",
+    "createdBy": "Created by",
+    "shipments": "Shipments on the pallet",
+    "noShipments": "No shipments on this pallet yet.",
+    "shipment": "Shipment",
+    "customer": "Customer",
+    "addShipment": "Add a shipment",
+    "shipmentSearch": "Shipment number or customer",
+    "searchNoResults": "No matching shipments.",
+    "add": "Add",
+    "remove": "Remove",
+    "close": "Close (wrap) the pallet",
+    "closeHint": "Once closed, its shipments are fixed and move together.",
+    "putInContainer": "Put in a container",
+    "putOnTrip": "Put on a trip",
+    "chooseContainer": "Open container",
+    "chooseTrip": "Planned trip",
+    "noContainers": "No open containers.",
+    "noTrips": "No planned trips.",
+    "takeOut": "Take the pallet out",
+    "unpack": "Unpack",
+    "unpackHint": "Each shipment then goes on by itself.",
+    "cancel": "Cancel pallet",
+    "cancelReason": "Reason",
+    "cancelHint": "Only a pallet never put in a container or on a trip is cancelled; its shipments are freed.",
+    "back": "Back",
+    "printLabel": "Print label",
+    "container": "Container {number}",
+    "trip": "Trip {number}",
+    "cancelledReason": "Cancelled: {reason}",
+    "qrCaption": "Scan to open the pallet's page"
   }
 }
