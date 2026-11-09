@@ -81,9 +81,12 @@ and in USD. The local book is the book of record.**
   - a **local-only** adjustment is a line in the entity's currency, amount > 0, USD = 0 (through `amountUsd`);
   - a **USD-only** adjustment is a USD line, amount > 0, local = 0 (through `amountLocal`).
     In an entity whose currency is USD, local and USD never differ, so neither is needed.
-  - Only `JournalService` writes them, and only on the accounts mapped to FX_GAIN, FX_LOSS or ROUNDING (group
-    mapping or the entity's override). A CHECK cannot read mappings, so the **`journal_lines_guard` trigger**
-    enforces it: a line with USD = 0 and amount > 0, or local = 0 and USD > 0, must be on one of those accounts.
+  - Each line gets `line_kind` (`NORMAL` by default, or `ADJUSTMENT`), set only by `JournalService`. Ordinary
+    lines can legitimately reach 0.00 USD today (`toUsd` rounds to cents: 0.01 SAR, or a few SDG, is 0.00 USD,
+    for example a small share in `containerCostAllocated`), so a line is never recognised by its zeros.
+  - The **`journal_lines_guard` trigger** checks that an `ADJUSTMENT` line is on an account mapped to FX_GAIN,
+    FX_LOSS or ROUNDING (group mapping or the entity's override). A CHECK cannot read mappings, hence the trigger.
+    `NORMAL` lines keep today's rules, zeros included.
 - **New CHECKs on the local columns**, like `journal_lines_rate_check` does for USD: local amounts are ≥ 0 and
   on the same side as the line (a debit line has `credit_local = 0`, and the reverse); `local_fx_rate > 0`; and
   `currency = local_currency` ⇒ `debit_local = debit AND credit_local = credit`, exactly.
@@ -167,7 +170,8 @@ owner decided.**
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
   account limited to another entity; entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
-  adjustment line (USD = 0 or local = 0) on a non-FX account (refused by the lines trigger); local amounts on the
+  `ADJUSTMENT` line on a non-FX account (refused by the lines trigger); a `NORMAL` line worth 0.00 USD on a
+  cost or revenue account (still posts); local amounts on the
   wrong side, or different from the amount on a line in the entity's currency (refused by the CHECKs); a line in
   a branch of another entity (refused by the posting trigger); reversing a pre-plan entry (posts, local NULL);
   a new entry with NULL local that is not such a reversal (refused); reversing a post-plan entry (local columns
