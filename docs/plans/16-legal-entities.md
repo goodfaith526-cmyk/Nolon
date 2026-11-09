@@ -73,16 +73,33 @@ and in USD. The local book is the book of record.**
   `entity_fx_rate` (nullable) on customer invoices, receipts, credit notes, supplier bills, supplier payments,
   expenses, trip expenses. Allocation rows read it the way they read `invoiceFxRate` today.
 - **Rounding.** Today a few cents of USD rounding go to the ROUNDING account. The same happens in local, on the
-  same rule (at most one minor unit per line).
+  same rule: at most one minor unit per line, where the minor unit comes from the entity currency's decimals in
+  the currencies master (never a constant like today's USD `ROUNDING_PER_LINE = 0.01`).
 - **Realised FX difference in two books.** A receipt can make a gain in USD and none in SAR (or the reverse).
-  Today a gain or loss is a line with an amount. ⭐ The journal service may add **adjustment lines**: zero in the
-  transaction currency, non-zero in local and/or USD, only on the FX_GAIN, FX_LOSS and ROUNDING accounts, only
-  written by `JournalService` (never by a request). The `journal_lines` check constraint widens to allow exactly
-  this case and nothing else.
-- **The trigger** (posting) also checks: every line has local amounts, `local_currency` is the entity's
-  currency, local debits = local credits, and the entry's entity equals its branch's entity.
+  ⭐ The journal service adds **adjustment lines** that fit the existing `journal_lines_side_check` as it is (no
+  widening; rule 3 checks are never loosened):
+  - a **local-only** adjustment is a line in the entity's currency, amount > 0, USD = 0 (through `amountUsd`);
+  - a **USD-only** adjustment is a USD line, amount > 0, local = 0 (through `amountLocal`).
+    In an entity whose currency is USD, local and USD never differ, so neither is needed.
+  - Only `JournalService` writes them, and only on the accounts mapped to FX_GAIN, FX_LOSS or ROUNDING (group
+    mapping or the entity's override). A CHECK cannot read mappings, so the **`journal_lines_guard` trigger**
+    enforces it: a line with USD = 0 and amount > 0, or local = 0 and USD > 0, must be on one of those accounts.
+- **New CHECKs on the local columns**, like `journal_lines_rate_check` does for USD: local amounts are ≥ 0 and
+  on the same side as the line (a debit line has `credit_local = 0`, and the reverse); `local_fx_rate > 0`; and
+  `currency = local_currency` ⇒ `debit_local = debit AND credit_local = credit`, exactly.
+- **The trigger** (posting) also checks: the entry's entity equals its branch's entity; **every line's branch
+  belongs to the entry's entity** (today `LineSpec.branchId` is per line and only service code keeps it equal to
+  the entry's branch, for example the trip accrual clearing line in `auto-journal.service.ts:1119`, guarded by
+  `supplier-bills.service.ts:916`); every line has local amounts and its `local_currency` is the entity's
+  currency; and local debits = local credits. `JournalService.balance` checks the same before writing, for a 400
+  instead of the database error.
+- **Reversals copy, never recompute.** `JournalService.reverse` mirrors the original's lines with their local
+  columns exactly (debit and credit swapped), never at today's rate, so a reversal cancels the original in all
+  three amounts.
 - **Old lines** (posted before this plan, staging trial data) keep local = NULL. They are never touched (rule
-  3). A report in local currency that would include them refuses with «entries before legal entities: report in
+  3). ⭐ The posting trigger allows NULL local on exactly one kind of entry: one whose `reversal_of_id` points to
+  an entry whose lines have NULL local, and then on all its lines. So cancelling a pre-plan invoice, receipt,
+  bill or payment on staging still works, and nothing new can be posted without local amounts. A report in local currency that would include them refuses with «entries before legal entities: report in
   USD». Production must reach this plan before its first real entry (section 8).
 
 ## 3. Periods per entity
@@ -123,7 +140,18 @@ owner decided.**
   holds only some of its branches shows those branches and says so.
 - Excel exports gain the entity and the currency in the title row.
 
-## 6. What does not change
+## 6. What does not change, and what is out of scope
+
+- **Intercompany is out of scope (⭐, a later plan).** Shared shipments cross branches and, with this plan,
+  entities. For example `containerCostAllocated` (`auto-journal.service.ts:908-955`) books a container's cost in
+  the container's branch against every shipment in it, including other branches' shipments; revenue billed in one
+  entity for a leg done by another is the same. With one entity per entry every book balances, but a JED
+  container carrying PTS shipments leaves Sudan's shipment costs in SA's profit and loss with no recharge. A
+  later plan adds due-to and due-from accounts and recharges (also review finding م7, paying in another
+  country). Until then, profit per shipment stays a group report in USD.
+- **Unrealised FX revaluation is out of scope (a later plan, review finding م9).** Open USD receivables and
+  payables in an SAR or AED book need revaluing at month end under IFRS (IAS 21). The accountant should know it
+  is not covered yet.
 
 - Rule 3 triggers are extended, never dropped, disabled or bypassed. Posted rows are never updated; the new
   columns are filled for new entries only.
@@ -134,11 +162,16 @@ owner decided.**
 
 ## 7. Tests (rule 7)
 
-- Unit: `journal-math` local rule, local rounding line, adjustment lines, clearing with `amountLocal`.
+- Unit: `journal-math` local rule, local rounding line with the master's decimals, local-only and USD-only
+  adjustment lines, clearing with `amountLocal`, reversal copying local columns.
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
   account limited to another entity; entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
-  adjustment line on a non-FX account (refused by the constraint); local report over pre-plan lines (refused);
+  adjustment line (USD = 0 or local = 0) on a non-FX account (refused by the lines trigger); local amounts on the
+  wrong side, or different from the amount on a line in the entity's currency (refused by the CHECKs); a line in
+  a branch of another entity (refused by the posting trigger); reversing a pre-plan entry (posts, local NULL);
+  a new entry with NULL local that is not such a reversal (refused); reversing a post-plan entry (local columns
+  mirrored exactly); local report over pre-plan lines (refused);
   wrong-branch user on an entity report; numbering per entity under two concurrent transactions.
 
 ## 8. Production gate
@@ -150,11 +183,11 @@ data).
 
 ## 9. Build, in order
 
-| PR   | Content                                                                                                                                                     | Migration                                                                         |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 16-1 | `legal_entities`, `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings       | **Non-additive** (branches NOT NULL, accounting table): owner OK + label          |
-| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, widened check, trigger balance in local, every auto rule passes it | **Non-additive** (accounting tables, check constraint, trigger): owner OK + label |
-| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                              | **Non-additive** (trigger on journal entries): owner OK + label                   |
+| PR   | Content                                                                                                                                                                                       | Migration                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 16-1 | `legal_entities`, `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings                                         | **Non-additive** (branches NOT NULL, accounting table): owner OK + label     |
+| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label |
+| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label              |
 
 Owner OK is needed once per PR for its migration (AGENTS.md rule 4). Backups: trial data only, so no backup
 ceremony (owner rule 2026-10-28); production must take its backup before 16-1 if it already holds anything real.
