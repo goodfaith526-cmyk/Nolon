@@ -8,7 +8,6 @@ import { AuditService } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { todayIn } from '../common/dates.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
-import { sha256 } from '../customer-service/customer-identity-auth.js';
 import { CustomersService } from '../customers/customers.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -132,8 +131,8 @@ export class ReferrerPortalService {
 
   /**
    * Plan 18, 3.3: a new customer of this broker. Refused (409 CUSTOMER_EXISTS, saying nothing of
-   * whose) when the phone is already a customer's or a profile's; each refusal is recorded (the
-   * phone hashed) and audited, and after REFERRER_DAILY_REFUSALS in his branch's day every add is
+   * whose) when the phone is already a customer's or a profile's; each refusal is recorded and
+   * audited with the phone's last 3 digits only, and after REFERRER_DAILY_REFUSALS in his branch's day every add is
    * refused with 429 TOO_MANY_ATTEMPTS until the next day. The broker's row is locked first, so his
    * attempts are counted one at a time.
    */
@@ -163,10 +162,11 @@ export class ReferrerPortalService {
       const today = todayIn(partner.timezone, now);
       const refusedToday = recent.filter((r) => todayIn(partner.timezone, r.createdAt) === today);
       if (refusedToday.length >= REFERRER_DAILY_REFUSALS) return 'TOO_MANY' as const;
-      const phoneHash = sha256(input.phone);
+      // F239-4: never a hash of the phone (easily reversed): its last 3 digits only.
+      const phoneEnd = input.phone.slice(-3);
       const made = await this.customers.referrerCustomerInTx(tx, user, partnerId, input);
       await tx.referrerCustomerAttempt.create({
-        data: { partnerId, userId: user.id, phoneHash, refused: made === 'TAKEN' },
+        data: { partnerId, userId: user.id, phoneEnd, refused: made === 'TAKEN' },
       });
       if (made !== 'TAKEN') return 'ADDED' as const;
       await this.audit.record(tx, user, {
@@ -175,9 +175,7 @@ export class ReferrerPortalService {
         entityId: partnerId,
         reference: `${partner.number} ${partner.name}`,
         action: 'UPDATED',
-        changes: [
-          { field: 'customerAddRefused', before: null, after: `phone sha256 ${phoneHash}` },
-        ],
+        changes: [{ field: 'customerAddRefused', before: null, after: `phone ending ${phoneEnd}` }],
       });
       return 'TAKEN' as const;
     });

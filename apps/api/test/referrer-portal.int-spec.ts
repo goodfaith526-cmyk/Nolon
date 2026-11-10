@@ -1,7 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { REFERRER_DAILY_REFUSALS, type PartnerDto, type ReferrerPortalDto } from '@nolon/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sha256 } from '../src/customer-service/customer-identity-auth.js';
 import {
   APP_ORIGIN,
   type TestApp,
@@ -16,7 +15,7 @@ import { deleteCommercialTestData, uniquePhone } from './test-data.js';
 /**
  * Plan 18-4: the referral broker's own login (REFERRER_STAFF). It reaches only his screen, sees
  * only the customers he registered and adds one by name and phone; a phone already a customer's
- * is refused without saying whose, recorded hashed, audited and limited to 20 a day.
+ * is refused without saying whose, recorded with its last digits only, audited and limited to 20 a day.
  */
 describe('Referral broker screen (plan 18-4)', () => {
   let t: TestApp;
@@ -133,7 +132,7 @@ describe('Referral broker screen (plan 18-4)', () => {
       .expect(400);
   });
 
-  it('refuses a phone already a customer’s, hashed and audited, 20 times a day at most', async () => {
+  it('refuses a phone already a customer’s, audited without the phone, 20 times a day at most', async () => {
     const phone = uniquePhone();
     await as(cookies.sales)
       .post('/customers', { kind: 'INDIVIDUAL', name: 'ZZ existing', phone })
@@ -156,11 +155,11 @@ describe('Referral broker screen (plan 18-4)', () => {
       where: { partnerId: otherPartner },
     });
     expect(attempts).toEqual([
-      expect.objectContaining({ refused: true, phoneHash: sha256(phone) }),
+      expect.objectContaining({ refused: true, phoneEnd: phone.slice(-3) }),
     ]);
     const audit = await t.prisma.auditEvent.findMany({ where: { entityId: otherPartner } });
     const logged = JSON.stringify(audit.map((a) => a.changes));
-    expect(logged).toContain(sha256(phone));
+    expect(logged).toContain(`phone ending ${phone.slice(-3)}`);
     expect(logged).not.toContain(phone);
 
     // The rest of today's refusals, then the limit.
@@ -169,7 +168,7 @@ describe('Referral broker screen (plan 18-4)', () => {
       data: Array.from({ length: REFERRER_DAILY_REFUSALS - 1 }, () => ({
         partnerId: otherPartner,
         userId: user,
-        phoneHash: '0'.repeat(64),
+        phoneEnd: '000',
         refused: true,
       })),
     });

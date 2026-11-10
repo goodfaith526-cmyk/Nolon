@@ -5596,12 +5596,13 @@ model WindowCashAccount {
 }
 
 /// Plan 18, 8: a customer a broker tried to add from his own screen. A refused one (the phone
-/// already a customer's) counts toward his 20 a day; the phone is kept only as a hash.
+/// already a customer's) counts toward his 20 a day. Only the phone's last 3 digits are kept: a
+/// hash of a phone number is easily reversed (F239-4).
 model ReferrerCustomerAttempt {
   id        String   @id @default(uuid()) @db.Uuid
   partnerId String   @map("partner_id") @db.Uuid
   userId    String   @map("user_id") @db.Uuid
-  phoneHash String   @map("phone_hash") @db.Char(64)
+  phoneEnd  String   @map("phone_end") @db.VarChar(3)
   refused   Boolean
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 

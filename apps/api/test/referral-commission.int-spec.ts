@@ -326,6 +326,61 @@ describe('Referral broker commission (plan 18-2)', () => {
       expect(await earned(alone.shipment)).toEqual({ [b.id]: '25' });
     });
 
+    it('takes the first only at the shipment’s first approved invoice', async () => {
+      const a = await broker('Second invoice');
+      const c = await customer();
+      const s = await proForma(c);
+      await pay(s.booking).expect(201);
+      await as(cookies.admin!)
+        .post(`/customers/${c}/referrer`, { partnerId: a.id, reason: 'Linked late' })
+        .expect(200);
+      const finance = as(cookies.finance!);
+      const second = (
+        await finance
+          .post('/customer-invoices', { shipmentId: s.shipment, kind: 'ADDITIONAL' })
+          .expect(201)
+      ).body as CustomerInvoiceDto;
+      await finance
+        .patch(`/customer-invoices/${second.id}`, {
+          currency: 'USD',
+          invoiceDate: today,
+          dueDate: today,
+          repriced: true,
+          lines: [{ chargeTypeCode: 'DOCS', quantity: '1', unitPrice: '10' }],
+        })
+        .expect(200);
+      await finance.post(`/customer-invoices/${second.id}/approve`).expect(200);
+      expect(await referralOf(s.shipment)).toBeNull();
+      expect(await earned(s.shipment)).toEqual({});
+      // His customer's next shipment takes it.
+      const next = await proForma(c);
+      await pay(next.booking).expect(201);
+      expect(await earned(next.shipment)).toEqual({ [a.id]: '25' });
+    });
+
+    it('counts the expiry in whole days of the branch, the last day included', async () => {
+      const edge = await broker('Edge');
+      await as(cookies.admin!).patch(`/partners/${edge.id}`, { referralWindowDays: 3 }).expect(200);
+      // Noon in Port Sudan, N days before the invoice date.
+      const daysBefore = (n: number) => new Date(Date.parse(`${today}T10:00:00Z`) - n * 86_400_000);
+      const onTime = await customer(edge);
+      const tooLate = await customer(edge);
+      await t.prisma.customer.update({
+        where: { id: onTime },
+        data: { referredAt: daysBefore(3) },
+      });
+      await t.prisma.customer.update({
+        where: { id: tooLate },
+        data: { referredAt: daysBefore(4) },
+      });
+      const x = await proForma(onTime);
+      await pay(x.booking).expect(201);
+      expect((await referralOf(x.shipment))?.referrerReason).toBe('FIRST_SHIPMENT');
+      const y = await proForma(tooLate);
+      await pay(y.booking).expect(201);
+      expect(await referralOf(y.shipment)).toBeNull();
+    });
+
     it('takes no first past the broker’s expiry, nor for an inactive broker', async () => {
       const late = await broker('Late');
       await as(cookies.admin!).patch(`/partners/${late.id}`, { referralWindowDays: 3 }).expect(200);

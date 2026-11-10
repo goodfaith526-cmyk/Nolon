@@ -7,7 +7,7 @@ CREATE TABLE "referrer_customer_attempts" (
     "id" UUID NOT NULL,
     "partner_id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
-    "phone_hash" CHAR(64) NOT NULL,
+    "phone_end" VARCHAR(3) NOT NULL,
     "refused" BOOLEAN NOT NULL,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

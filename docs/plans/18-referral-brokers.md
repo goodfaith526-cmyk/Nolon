@@ -68,7 +68,10 @@ access to the customer file and changes nothing about who can see the customer.
   3. **The broker himself**, from his own screen (18-4): name and phone only. Refused when the phone already
      belongs to a customer (`CUSTOMER_EXISTS`, without saying whose). Because that answer tells whether a phone is
      a Nolon customer, each broker has at most 20 refused attempts a day (then `TOO_MANY_ATTEMPTS` until the next
-     day in his branch), and every refusal is audited with the phone hashed (F237-5).
+     day in his branch), and every refusal is audited with only the phone's last 3 digits (F237-5; a hash of a phone is easily reversed, F239-4).
+     Known limit (F239-5, accepted): the file a broker adds holds the phone with no chat profile, like any file
+     staff add. If that person later writes to the bot, the capture finds the phone taken and makes no file of
+     its own, so staff match his bookings to the broker's file, as they do for any file they made.
 - The customer file shows «جابه: المندوب فلان» to staff who can view customers.
 
 ## 4. Commission
