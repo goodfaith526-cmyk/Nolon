@@ -1,3 +1,4 @@
+import { ReferrerChannelsModule } from '../partners/referrer-channels.module.js';
 import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module.js';
 import { AuditModule } from '../audit/audit.module.js';
@@ -25,6 +26,7 @@ import { PartnerStatementsService } from './partner-statements.service.js';
     CurrenciesModule,
     PartnerContractsModule,
     PayablesModule,
+    ReferrerChannelsModule,
     ShipmentsModule,
     TransportModule,
   ],

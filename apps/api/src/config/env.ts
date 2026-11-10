@@ -167,6 +167,25 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * Plan 18, 6: a REFERRER_FIRST_SHIPMENT_PAID notice to a broker's bound chat when his customer's
+   * first shipment is paid. Off (default): none is queued (plan 12 rule for every notice).
+   */
+  CS_REFERRER_NOTICES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
+   * Plan 18, 5: the bot address a broker's private link opens (`<url>?start=ag_...`), e.g.
+   * https://t.me/nolonbot. Unset: the partner screen shows the token alone.
+   */
+  CS_REFERRER_BOT_URL: emptyAsUnset(
+    z
+      .string()
+      .url()
+      .refine((v) => v.startsWith('https://'))
+      .optional(),
+  ),
+  /**
    * Plan 14-2: GET /cs/me/statement, the customer's requests, bookings and invoices for a period.
    * Off (default): 503 STATEMENT_UNAVAILABLE, logged, until the bot calls it (consumer first).
    */

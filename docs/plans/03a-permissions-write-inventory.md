@@ -93,6 +93,7 @@
 - POST `/cs/customer-tokens` · `CustomerTokensController.issue` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/quotations` · `QuotationSaveController.save` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/quotes` · `QuotesController.quote` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/referrers/link` · `ReferrerLinkController.link` · `customer-service/referrer-link.controller.ts` · —
 - POST `/customer-drafts` · `CustomerDraftsController.create` · `customers/customer-drafts.controller.ts` · customers:create
 - PATCH `/customer-drafts/:id` · `CustomerDraftsController.update` · `customers/customer-drafts.controller.ts` · customers:create
 - POST `/customer-drafts/:id/approve` · `CustomerDraftsController.approve` · `customers/customer-drafts.controller.ts` · customers:create
@@ -179,6 +180,8 @@
 - POST `/partner-statements/:id/cancel` · `CommissionsController.cancelStatement` · `commissions/commissions.controller.ts` · partner_commissions:update
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/chat-link` · `PartnersController.issueChatLink` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/chat-link/revoke` · `PartnersController.revokeChatLink` · `partners/partners.controller.ts` · partners:update
 - POST `/partners/:id/referral-code` · `PartnersController.issueReferralCode` · `partners/partners.controller.ts` · partners:update
 - POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create

@@ -45,6 +45,7 @@ export const CS_SCOPES = [
   'cs:customer_profiles:write',
   'cs:marketing:read',
   'cs:marketing:revenue:read',
+  'cs:referrers:link',
 ] as const;
 export type CsScope = (typeof CS_SCOPES)[number];
 

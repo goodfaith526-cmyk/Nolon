@@ -34,6 +34,12 @@ export interface PartnerFilters extends PageQuery {
 const details = {
   supplier: { select: { name: true } },
   referralCodes: { where: { retiredAt: null }, select: { code: true } },
+  channelBindings: {
+    where: { revokedAt: null },
+    select: { createdAt: true },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+  },
 } satisfies Prisma.PartnerInclude;
 
 type PartnerWithDetails = Prisma.PartnerGetPayload<{ include: typeof details }>;
@@ -288,6 +294,7 @@ function toDto(p: PartnerWithDetails, user: AuthUser): PartnerDto {
     notes: p.notes,
     referralCode: p.referralCodes[0]?.code ?? null,
     referralWindowDays: p.referralWindowDays,
+    chatLinkedAt: p.channelBindings[0]?.createdAt.toISOString() ?? null,
     actions: {
       canEdit: user.access.has('partners:update', p.branchId),
       canIssueReferralCode: p.kind === 'REFERRER' && user.access.has('partners:update', p.branchId),

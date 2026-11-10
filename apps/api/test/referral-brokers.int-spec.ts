@@ -1,4 +1,9 @@
-import { REFERRAL_CODE_PATTERN, type CustomerDto, type PartnerDto } from '@nolon/shared';
+import {
+  REFERRAL_CODE_PATTERN,
+  type CustomerDto,
+  type PartnerChatLinkDto,
+  type PartnerDto,
+} from '@nolon/shared';
 import { createHmac, randomInt, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newApiKey } from '../src/customer-service/api-key.js';
@@ -79,8 +84,14 @@ describe('Referral brokers (plan 18-1)', () => {
     ...extra,
   });
   function postCapture(body: { sender: Sender }) {
+    return signedPost('/api/v1/cs/customer-profiles/capture', body, body.sender);
+  }
+  /** Plan 18, 5: the bot binds the account `from` with a broker's private link. */
+  const postLink = (token: string, from: Sender) =>
+    signedPost('/api/v1/cs/referrers/link', { token, identity: from }, from);
+  function signedPost(path: string, body: object, from: Sender) {
     const rawBody = JSON.stringify(body);
-    const { channel, subjectId, channelAccountId, eventId, observedAt } = body.sender;
+    const { channel, subjectId, channelAccountId, eventId, observedAt } = from;
     const rawContext = JSON.stringify({
       channel,
       subjectId,
@@ -89,7 +100,6 @@ describe('Referral brokers (plan 18-1)', () => {
       observedAt,
     });
     const issued = Math.floor(Date.now() / 1000).toString();
-    const path = '/api/v1/cs/customer-profiles/capture';
     const idem = randomUUID();
     const payload = [
       'v1',
@@ -153,7 +163,12 @@ describe('Referral brokers (plan 18-1)', () => {
         createdById: keyOwner.id,
         customersRead: false,
         branches: { create: [{ branchId: jed }] },
-        scopes: { create: [{ scope: 'CUSTOMER_PROFILES_WRITE', grantedById: keyOwner.id }] },
+        scopes: {
+          create: [
+            { scope: 'CUSTOMER_PROFILES_WRITE', grantedById: keyOwner.id },
+            { scope: 'REFERRERS_LINK', grantedById: keyOwner.id },
+          ],
+        },
       },
     });
   });
@@ -506,6 +521,132 @@ describe('Referral brokers (plan 18-1)', () => {
         { partnerId: broker.id, reason: 'x' },
         cookies.warehouse,
       ).expect(403);
+    });
+  });
+
+  describe('the broker’s Telegram account (plan 18-3)', () => {
+    const issue = async (brokerId: string, cookie = cookies.jedManager) =>
+      (await post(`/partners/${brokerId}/chat-link`, cookie).expect(201))
+        .body as PartnerChatLinkDto;
+
+    it('links the account that opens the private link, once, for 7 days', async () => {
+      const broker = await newPartner({ name: `Ahmed ZZ ${suffix()}` });
+      const link = await issue(broker.id);
+      expect(link.token).toMatch(/^ag_[A-Za-z0-9]{32}$/);
+      const stored = await t.prisma.referrerLinkToken.findFirstOrThrow({
+        where: { partnerId: broker.id },
+      });
+      // Only the hash is kept.
+      expect(stored.tokenHash).toBe(sha256(link.token));
+      expect(stored.expiresAt.getTime() - Date.now()).toBeGreaterThan(6.9 * 24 * 3600 * 1000);
+      const phone = sender();
+      const res = await postLink(link.token, phone).expect(200);
+      expect(res.body).toEqual({
+        status: 'LINKED',
+        firstName: 'Ahmed',
+      });
+      // The same account opening it again: still linked, not an error.
+      await postLink(link.token, again(phone)).expect(200);
+      // Another account: used.
+      expect(refusal((await postLink(link.token, sender()).expect(409)).body).code).toBe(
+        'REFERRER_LINK_USED',
+      );
+      const shown = (await get(`/partners/${broker.id}`, cookies.jedManager).expect(200))
+        .body as PartnerDto;
+      expect(shown.chatLinkedAt).not.toBeNull();
+      const binding = await t.prisma.partnerChannelBinding.findFirstOrThrow({
+        where: { partnerId: broker.id, revokedAt: null },
+      });
+      expect(binding).toMatchObject({ channel: 'TELEGRAM', subjectId: phone.subjectId });
+    });
+
+    it('refuses an unknown, revoked or expired link, and an account already another broker’s', async () => {
+      await postLink(`ag_${'x'.repeat(32)}`, sender()).expect(404);
+      await postLink('not-a-token', sender()).expect(404);
+      const broker = await newPartner();
+      const first = await issue(broker.id);
+      // A new link revokes the open one.
+      const second = await issue(broker.id);
+      expect(refusal((await postLink(first.token, sender()).expect(404)).body).code).toBe(
+        'REFERRER_LINK_UNKNOWN',
+      );
+      await t.prisma.referrerLinkToken.updateMany({
+        where: { tokenHash: sha256(second.token) },
+        data: { expiresAt: new Date(Date.now() - 1000) },
+      });
+      expect(refusal((await postLink(second.token, sender()).expect(410)).body).code).toBe(
+        'REFERRER_LINK_EXPIRED',
+      );
+      // An account bound to broker A cannot become broker B's.
+      const a = await newPartner();
+      const b = await newPartner();
+      const phone = sender();
+      await postLink((await issue(a.id)).token, phone).expect(200);
+      await postLink((await issue(b.id)).token, again(phone)).expect(409);
+      // An inactive broker's link no longer works.
+      const c = await newPartner();
+      const cLink = await issue(c.id);
+      await patch(`/partners/${c.id}`, cookies.jedManager, { isActive: false }).expect(200);
+      await postLink(cLink.token, sender()).expect(404);
+    });
+
+    it('replaces the broker’s earlier account, and staff can unlink it', async () => {
+      const broker = await newPartner();
+      const one = sender();
+      const two = sender();
+      await postLink((await issue(broker.id)).token, one).expect(200);
+      await postLink((await issue(broker.id)).token, two).expect(200);
+      const live = await t.prisma.partnerChannelBinding.findMany({
+        where: { partnerId: broker.id, revokedAt: null },
+      });
+      expect(live.map((b) => b.subjectId)).toEqual([two.subjectId]);
+      const after = (
+        await post(`/partners/${broker.id}/chat-link/revoke`, cookies.jedManager).expect(200)
+      ).body as PartnerDto;
+      expect(after.chatLinkedAt).toBeNull();
+      await post(`/partners/${broker.id}/chat-link/revoke`, cookies.jedManager).expect(409);
+      // The unlinked account may now be linked again, to anyone.
+      await postLink((await issue(broker.id)).token, again(two)).expect(200);
+    });
+
+    it('lets only a manager of the broker’s branch issue links, and only for referrers', async () => {
+      const broker = await newPartner();
+      await post(`/partners/${broker.id}/chat-link`, cookies.jedSales).expect(403);
+      await post(`/partners/${broker.id}/chat-link`, cookies.dxbManager).expect(404);
+      const outlet = await newPartner({ kind: 'SALES_OUTLET' });
+      expect(
+        refusal(
+          (await post(`/partners/${outlet.id}/chat-link`, cookies.jedManager).expect(400)).body,
+        ).code,
+      ).toBe('NOT_A_REFERRER');
+    });
+
+    it('keeps one live account per broker and channel, and per chat account, in the database', async () => {
+      const broker = await newPartner();
+      const phone = sender();
+      await postLink((await issue(broker.id)).token, phone).expect(200);
+      const live = await t.prisma.partnerChannelBinding.findFirstOrThrow({
+        where: { partnerId: broker.id, revokedAt: null },
+      });
+      await expect(
+        t.prisma.partnerChannelBinding.create({
+          data: {
+            partnerId: broker.id,
+            apiClientId: clientId,
+            channel: 'TELEGRAM',
+            subjectId: 'other',
+            livePartnerChannel: live.livePartnerChannel,
+            liveSubject: 'TELEGRAM:other',
+          },
+        }),
+      ).rejects.toThrow();
+      // A revoked row keeps no live key.
+      await expect(
+        t.prisma.partnerChannelBinding.update({
+          where: { id: live.id },
+          data: { revokedAt: new Date() },
+        }),
+      ).rejects.toThrow();
     });
   });
 });

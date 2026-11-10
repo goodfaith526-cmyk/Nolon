@@ -1637,6 +1637,7 @@
     "scope_tracking_lookup": "التتبّع برقم الشحنة والهاتف",
     "scope_marketing_read": "ملخص التسويق: أرقام مجمّعة فقط بدون بيانات عملاء",
     "scope_marketing_revenue_read": "ملخص التسويق: مع الإيراد (يحتاج صلاحية ملخص التسويق)",
+    "scope_referrers_link": "المناديب: ربط حساب المندوب في المحادثة برابطه الخاص",
     "editScopes": "تغيير الصلاحيات",
     "saveScopes": "حفظ الصلاحيات",
     "cancel": "إلغاء",
@@ -2290,7 +2291,15 @@
     "referralNoLimit": "بدون حد",
     "referralDays": "{days, plural, one {يوم واحد} two {يومان} few {# أيام} other {# يوماً}}",
     "newReferralCode": "كود عملاء جديد",
-    "newReferralCodeConfirm": "إصدار كود جديد؟ الكود القديم لن يربط عملاء جدد، والعملاء المربوطون يبقون كما هم."
+    "newReferralCodeConfirm": "إصدار كود جديد؟ الكود القديم لن يربط عملاء جدد، والعملاء المربوطون يبقون كما هم.",
+    "chatLinkIssue": "رابط بوت جديد",
+    "chatLinkOnce": "أرسل هذا الرابط الخاص للوسيط. يظهر الآن فقط، ويعمل مرة واحدة لمدة 7 أيام. فتحه في البوت يربط حسابه في تيليجرام.",
+    "chatLinkExpires": "ينتهي {date}",
+    "chatLinked": "تيليجرام",
+    "chatLinkedSince": "مربوط منذ {date}",
+    "chatNotLinked": "غير مربوط",
+    "chatRevoke": "فك ربط تيليجرام",
+    "chatRevokeConfirm": "فك ربط حساب تيليجرام للوسيط؟ لن تصله إشعارات حتى يفتح رابطاً جديداً."
   },
   "PartnerContracts": {
     "title": "عقود العمولة",

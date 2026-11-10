@@ -18,6 +18,10 @@ import {
   createUser,
   signIn,
 } from './auth-test-app.js';
+import { newApiKey } from '../src/customer-service/api-key.js';
+import { CsOutboxWorker } from '../src/customer-service/cs-outbox.worker.js';
+import type { DeliveryResult } from '../src/customer-service/webhook-delivery.js';
+import type { AppEnv } from '../src/config/env.js';
 import { uniquePhone, waitForLockWaiter } from './test-data.js';
 
 /**
@@ -162,7 +166,11 @@ describe('Referral broker commission (plan 18-2)', () => {
   }
 
   beforeAll(async () => {
-    t = await createTestApp({ WINDOW_DESK_ENABLED: true, WINDOW_COLLECT_ENABLED: true });
+    t = await createTestApp({
+      WINDOW_DESK_ENABLED: true,
+      WINDOW_COLLECT_ENABLED: true,
+      CS_REFERRER_NOTICES_ENABLED: true,
+    });
     pts = await branchId(t.prisma, 'PTS');
     jed = await branchId(t.prisma, 'JED');
     const loc = async (code: string) =>
@@ -508,6 +516,155 @@ describe('Referral broker commission (plan 18-2)', () => {
       await as(cookies.warehouse!)
         .post(`/shipments/${s.shipment}/referrer`, { partnerId: a.id, reason: 'x' })
         .expect(403);
+    });
+  });
+
+  describe('the notice to the broker’s Telegram (plan 18-3)', () => {
+    const HOST = 'bot.example.test';
+    const SECRET = 's'.repeat(32);
+    let botKey = '';
+
+    /** The bot's key with the link scope and an approved endpoint (once), and `p` bound to it. */
+    async function bind(p: PartnerDto, subjectId = `${Date.now()}${randomUUID().slice(0, 4)}`) {
+      if (!botKey) {
+        const key = newApiKey();
+        botKey = (
+          await t.prisma.apiClient.create({
+            data: {
+              name: `${tag} bot`,
+              keyPrefix: key.prefix,
+              keyHash: key.hash,
+              createdById: ids.admin!,
+              scopes: { create: [{ scope: 'REFERRERS_LINK', grantedById: ids.admin! }] },
+            },
+          })
+        ).id;
+        await t.prisma.csWebhookEndpoint.create({
+          data: {
+            apiClientId: botKey,
+            url: `https://${HOST}/nolon`,
+            audience: 'bot',
+            status: 'APPROVED',
+            approvedKey: botKey,
+            createdById: ids.admin!,
+            // Another administrator approves (four eyes).
+            approvedById: (await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX)).id,
+          },
+        });
+      }
+      await t.prisma.partnerChannelBinding.create({
+        data: {
+          partnerId: p.id,
+          apiClientId: botKey,
+          channel: 'TELEGRAM',
+          subjectId,
+          livePartnerChannel: `${p.id}:TELEGRAM`,
+          liveSubject: `TELEGRAM:${subjectId}`,
+        },
+      });
+      return subjectId;
+    }
+    const noticesOf = (partnerId: string) =>
+      t.prisma.csPartnerNotice.findMany({ where: { partnerId } });
+    const worker = (answer: () => DeliveryResult, enabled = true) => {
+      const sent: { url: string; body: Record<string, unknown> }[] = [];
+      const w = new CsOutboxWorker(
+        t.prisma,
+        {
+          CS_WEBHOOK_SECRET: SECRET,
+          CS_WEBHOOK_ALLOWED_HOSTS: [HOST],
+          CS_REFERRER_NOTICES_ENABLED: enabled,
+        } as AppEnv,
+        {
+          send(url, _headers, raw) {
+            sent.push({ url, body: JSON.parse(raw.toString('utf8')) as Record<string, unknown> });
+            return Promise.resolve(answer());
+          },
+        },
+      );
+      return { w, sent };
+    };
+
+    it('queues one notice for a bound broker’s first shipment, and none after', async () => {
+      const a = await broker('Notice A');
+      const chat = await bind(a);
+      const c = await customer(a);
+      const first = await proForma(c);
+      await pay(first.booking).expect(201);
+      const [notice, ...more] = await noticesOf(a.id);
+      expect(more).toEqual([]);
+      expect(notice).toMatchObject({
+        shipmentId: first.shipment,
+        type: 'REFERRER_FIRST_SHIPMENT_PAID',
+        status: 'PENDING',
+        apiClientId: botKey,
+      });
+      expect(notice!.payload).toMatchObject({
+        eventId: notice!.id,
+        type: 'REFERRER_FIRST_SHIPMENT_PAID',
+        referrer: { channel: 'telegram', externalId: chat },
+        customerFirstName: tag,
+        commission: { amount: '25.00', currency: 'USD', decimalPlaces: 2 },
+      });
+      const next = await proForma(c);
+      await pay(next.booking).expect(201);
+      expect(await noticesOf(a.id)).toHaveLength(1);
+    });
+
+    it('queues none for an unbound broker, nor for a shipment brought in person', async () => {
+      const unbound = await broker('Unbound');
+      await pay((await proForma(await customer(unbound))).booking).expect(201);
+      expect(await noticesOf(unbound.id)).toEqual([]);
+      const walker = await broker('Walker');
+      await bind(walker);
+      const s = await proForma(await customer());
+      await receive(s.booking, walker.id).expect(201);
+      await pay(s.booking).expect(201);
+      expect(await earned(s.shipment)).toEqual({ [walker.id]: '25' });
+      expect(await noticesOf(walker.id)).toEqual([]);
+    });
+
+    it('sends it once, records a bot’s “not delivered”, and cancels it once unbound', async () => {
+      const a = await broker('Sent');
+      await bind(a);
+      await pay((await proForma(await customer(a))).booking).expect(201);
+      // Switched off: nothing leased.
+      const off = worker(() => ({ status: 200, error: null }), false);
+      expect(await off.w.runPartnerNoticesOnce()).toMatchObject({ leased: 0 });
+      expect(off.sent).toEqual([]);
+      const on = worker(() => ({ status: 200, error: null, body: '{"delivered":true}' }));
+      await on.w.runPartnerNoticesOnce();
+      expect(await noticesOf(a.id)).toMatchObject([{ status: 'SENT', undeliveredReason: null }]);
+      expect(on.sent.find((x) => x.body.eventId === undefined)).toBeUndefined();
+
+      const b = await broker('Blocked');
+      await bind(b);
+      await pay((await proForma(await customer(b))).booking).expect(201);
+      const blocked = worker(() => ({
+        status: 200,
+        error: null,
+        body: JSON.stringify({ delivered: false, reason: 'BLOCKED' }),
+      }));
+      await blocked.w.runPartnerNoticesOnce();
+      const [row] = await noticesOf(b.id);
+      expect(row).toMatchObject({ status: 'SENT', undeliveredReason: 'BLOCKED', attempts: 1 });
+      expect(blocked.sent.map((x) => x.body.eventId)).toContain(row!.id);
+      // Never sent again.
+      const again = worker(() => ({ status: 200, error: null }));
+      await again.w.runPartnerNoticesOnce();
+      expect(again.sent.map((x) => x.body.eventId)).not.toContain(row!.id);
+
+      const u = await broker('Unbound later');
+      await bind(u);
+      await pay((await proForma(await customer(u))).booking).expect(201);
+      await t.prisma.partnerChannelBinding.updateMany({
+        where: { partnerId: u.id },
+        data: { revokedAt: new Date(), livePartnerChannel: null, liveSubject: null },
+      });
+      const late = worker(() => ({ status: 200, error: null }));
+      await late.w.runPartnerNoticesOnce();
+      expect(await noticesOf(u.id)).toMatchObject([{ status: 'CANCELLED_BY_POLICY' }]);
+      expect(late.sent.map((x) => x.body.eventId)).not.toContain((await noticesOf(u.id))[0]!.id);
     });
   });
 });

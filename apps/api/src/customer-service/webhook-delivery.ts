@@ -12,7 +12,12 @@ import { BlockList, isIP, type LookupFunction } from 'node:net';
 export interface DeliveryResult {
   status: number | null;
   error: string | null;
+  /** The answer's body, at most 2 KB (read only for notices whose answer carries a result). */
+  body?: string;
 }
+
+/** The most of an answer's body kept. */
+const MAX_ANSWER_BYTES = 2048;
 
 export interface NoticeTransport {
   send(url: string, headers: Record<string, string>, body: Buffer): Promise<DeliveryResult>;
@@ -166,7 +171,7 @@ export function guardedLookup(resolve: Resolve = systemResolve): LookupFunction 
   };
 }
 
-/** The HTTPS POST: no redirect is followed, the answer's body is discarded, 10 s in all. */
+/** The HTTPS POST: no redirect is followed, at most 2 KB of the answer is kept, 10 s in all. */
 export function httpsTransport(resolve?: Resolve): NoticeTransport {
   const lookup = guardedLookup(resolve);
   return {
@@ -187,8 +192,17 @@ export function httpsTransport(resolve?: Resolve): NoticeTransport {
             signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
           },
           (res) => {
-            res.resume();
-            res.on('end', () => finish({ status: res.statusCode ?? null, error: null }));
+            const chunks: Buffer[] = [];
+            let kept = 0;
+            res.on('data', (chunk: Buffer) => {
+              if (kept >= MAX_ANSWER_BYTES) return;
+              chunks.push(chunk.subarray(0, MAX_ANSWER_BYTES - kept));
+              kept += Math.min(chunk.length, MAX_ANSWER_BYTES - kept);
+            });
+            const answer = () => Buffer.concat(chunks).toString('utf8');
+            res.on('end', () =>
+              finish({ status: res.statusCode ?? null, error: null, body: answer() }),
+            );
             res.on('error', () => finish({ status: res.statusCode ?? null, error: null }));
           },
         );

@@ -1637,6 +1637,7 @@
     "scope_tracking_lookup": "Track by shipment number and phone",
     "scope_marketing_read": "Marketing summary: aggregate numbers only, no customer data",
     "scope_marketing_revenue_read": "Marketing summary: include revenue (needs the marketing summary scope)",
+    "scope_referrers_link": "Referral brokers: link a broker's chat account through his private link",
     "editScopes": "Change scopes",
     "saveScopes": "Save scopes",
     "cancel": "Cancel",
@@ -2290,7 +2291,15 @@
     "referralNoLimit": "No limit",
     "referralDays": "{days, plural, one {# day} other {# days}}",
     "newReferralCode": "New customer code",
-    "newReferralCodeConfirm": "Issue a new code? The old code stops linking new customers; customers already linked stay linked."
+    "newReferralCodeConfirm": "Issue a new code? The old code stops linking new customers; customers already linked stay linked.",
+    "chatLinkIssue": "New bot link",
+    "chatLinkOnce": "Send this private link to the broker. It is shown only now, works once and for 7 days. Opening it in the bot links his Telegram account.",
+    "chatLinkExpires": "Expires {date}",
+    "chatLinked": "Telegram",
+    "chatLinkedSince": "Linked since {date}",
+    "chatNotLinked": "Not linked",
+    "chatRevoke": "Unlink Telegram",
+    "chatRevokeConfirm": "Unlink the broker’s Telegram account? He gets no more notices until he opens a new link."
   },
   "PartnerContracts": {
     "title": "Commission contracts",

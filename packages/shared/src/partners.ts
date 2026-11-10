@@ -53,6 +53,8 @@ export interface PartnerDto extends PartnerSummaryDto {
   notes: string | null;
   /** Referrers only: his live customer code (null for other kinds). */
   referralCode: string | null;
+  /** Plan 18, 5: when the broker's chat account was linked (null: none). */
+  chatLinkedAt: string | null;
   /** Referrers only: the optional expiry of a customer's first shipment, in days; null: none. */
   referralWindowDays: number | null;
   actions: { canEdit: boolean; canIssueReferralCode: boolean };
@@ -77,4 +79,12 @@ export interface PartnerInput {
 /** An edit: anything but the branch, which owns the partner's records. */
 export interface PartnerUpdateRequest extends Partial<Omit<PartnerInput, 'branchId'>> {
   isActive?: boolean;
+}
+
+/** POST /partners/:id/chat-link (plan 18, 5): the broker's private link, shown once. */
+export interface PartnerChatLinkDto {
+  token: string;
+  /** The bot address with the token, when the bot's address is configured. */
+  url: string | null;
+  expiresAt: string;
 }
