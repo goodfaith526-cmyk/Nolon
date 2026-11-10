@@ -264,6 +264,15 @@ export interface ShipmentDto extends ShipmentSummaryDto {
   /** The partner consolidating the cargo at origin, and the one distributing it in Sudan. */
   originConsolidator: PartnerRefDto | null;
   distributor: PartnerRefDto | null;
+  /**
+   * Plan 18, 4: the broker who brought it in person (picked at the window receipt) and who earns
+   * the referral commission on it, and why (FIRST_SHIPMENT: the customer's first paid shipment).
+   */
+  referral: {
+    broughtBy: PartnerRefDto | null;
+    referrer: PartnerRefDto | null;
+    reason: 'FIRST_SHIPMENT' | 'BROUGHT_IN_PERSON' | null;
+  };
   /** Packages on all cargo lines (the sum of their quantities): what the labels number up to. */
   packages: number;
   items: ShipmentItemDto[];
@@ -418,4 +427,10 @@ export interface PublicTrackingLookupRequest {
 
 export interface PublicTrackingLookupResponse {
   token: string;
+}
+
+/** POST /shipments/:id/referrer (plan 18, 4.3): staff correct the broker who brought it. */
+export interface ShipmentReferrerRequest {
+  partnerId: string | null;
+  reason: string;
 }

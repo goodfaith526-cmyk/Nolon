@@ -777,7 +777,13 @@
     "stoppedCancelled": "أُلغيت الشحنة عند هذه المرحلة.",
     "lastUpdate": "آخر تحديث",
     "nextStep": "الخطوة التالية",
-    "drawerClose": "إغلاق"
+    "drawerClose": "إغلاق",
+    "referralBroker": "عمولة المندوب",
+    "referrerReason_FIRST_SHIPMENT": "أول شحنة للعميل",
+    "referrerReason_BROUGHT_IN_PERSON": "جابها بنفسه",
+    "broughtBy": "جابها",
+    "changeBroughtBy": "تغيير المندوب",
+    "broughtByReason": "سبب التغيير"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -3434,6 +3440,7 @@
     "role_SALES_OUTLET": "منفذ بيع",
     "role_ORIGIN_CONSOLIDATOR": "مجمّع في المنشأ",
     "role_DISTRIBUTOR": "موزّع",
+    "role_REFERRER": "المندوب",
     "currency": "العملة",
     "amountSigned": "المبلغ (السالب يخفّض)",
     "reason": "السبب",
@@ -3550,6 +3557,11 @@
     "collectSubmit": "تسجيل الدفع",
     "paymentLine": "إيصال {number}: {amount} {currency}",
     "printReceipt": "طباعة الإيصال",
-    "printWaybill": "طباعة البوليصة"
+    "printWaybill": "طباعة البوليصة",
+    "broughtByBroker": "جابها مندوب بنفسه (اختياري)",
+    "brokerSearch": "اسم المندوب أو رقمه",
+    "brokerFind": "بحث",
+    "brokerNone": "بدون مندوب",
+    "brokerNotFound": "ما لقينا مندوب"
   }
 }

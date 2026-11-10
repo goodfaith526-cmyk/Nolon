@@ -3,7 +3,12 @@ import type { CurrencyCode, DecimalString } from './currencies.js';
 import type { SupplierBillStatus } from './payables.js';
 
 /** A partner's place on a shipment that earns a commission (plan 07, 3.2). */
-export const COMMISSION_ROLES = ['SALES_OUTLET', 'ORIGIN_CONSOLIDATOR', 'DISTRIBUTOR'] as const;
+export const COMMISSION_ROLES = [
+  'SALES_OUTLET',
+  'ORIGIN_CONSOLIDATOR',
+  'DISTRIBUTOR',
+  'REFERRER',
+] as const;
 export type CommissionRole = (typeof COMMISSION_ROLES)[number];
 
 /**

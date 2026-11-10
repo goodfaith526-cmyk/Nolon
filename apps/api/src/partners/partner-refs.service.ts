@@ -93,6 +93,20 @@ export class PartnerRefsService {
     return rows[0]?.id ?? null;
   }
 
+  /**
+   * Plan 18, 4.3: a broker picked at a window receipt: an active referrer of the booking's branch
+   * (400 on `field` otherwise, the same for one that does not exist). Share-locked until commit.
+   */
+  async requireBranchReferrerInTx(tx: Tx, partnerId: string, branchId: string, field: string) {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id"::text AS "id" FROM "partners"
+      WHERE "id" = ${partnerId}::uuid AND "kind" = 'REFERRER' AND "is_active"
+        AND "branch_id" = ${branchId}::uuid FOR SHARE`;
+    if (rows.length === 0) {
+      throw fieldRefusal('PARTNER_NOT_USABLE', 'Not an active referrer of this branch', [field]);
+    }
+  }
+
   /** Plan 18, 3: whether the partner is an active referrer now (share-locked until commit). */
   async activeReferrerInTx(tx: Tx, partnerId: string): Promise<boolean> {
     const rows = await tx.$queryRaw<{ id: string }[]>`

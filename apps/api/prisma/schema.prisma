@@ -841,6 +841,8 @@ model Customer {
   csAccessEvents CsAccessEvent[]
   csRequests     CsBookingRequest[]
 
+  referralFirst ShipmentReferral? @relation("ShipmentFirstForCustomer")
+
   @@index([profileId])
   @@index([phone])
   @@index([acquiredViaOutletId])
@@ -954,6 +956,8 @@ model Partner {
   staff                 UserPartner[]
   customersAcquired     Customer[]
   customersReferred     Customer[]          @relation("CustomerReferredBy")
+  shipmentsBrought      ShipmentReferral[]  @relation("ShipmentBroughtBy")
+  shipmentsReferred     ShipmentReferral[]  @relation("ShipmentReferrer")
   profilesReferred      CustomerProfile[]   @relation("CustomerProfileReferral")
   referralCodes         ReferralCode[]
   quotationsSold        Quotation[]
@@ -988,6 +992,37 @@ model ReferralCode {
 
   @@index([partnerId])
   @@map("referral_codes")
+}
+
+enum ReferrerReason {
+  FIRST_SHIPMENT
+  BROUGHT_IN_PERSON
+
+  @@map("referrer_reason")
+}
+
+/// Plan 18, 4.1: a shipment's two referral facts and the commission slot derived from them
+/// (ShipmentReferralsService.decideReferrerInTx is its only writer). `firstForCustomerId` is unique:
+/// at most one shipment holds a customer's first paid shipment.
+model ShipmentReferral {
+  shipmentId         String          @id @map("shipment_id") @db.Uuid
+  /// The broker the window clerk (or staff, correcting) picked as having brought the goods.
+  broughtByPartnerId String?         @map("brought_by_partner_id") @db.Uuid
+  /// The commission slot: who earns the REFERRER role's commission on this shipment, and why.
+  referrerId         String?         @map("referrer_id") @db.Uuid
+  referrerReason     ReferrerReason? @map("referrer_reason")
+  /// Set while this shipment holds its customer's first paid shipment.
+  firstForCustomerId String?         @unique @map("first_for_customer_id") @db.Uuid
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  shipment         Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  broughtBy        Partner?  @relation("ShipmentBroughtBy", fields: [broughtByPartnerId], references: [id], onDelete: Restrict)
+  referrer         Partner?  @relation("ShipmentReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
+  firstForCustomer Customer? @relation("ShipmentFirstForCustomer", fields: [firstForCustomerId], references: [id], onDelete: Restrict)
+
+  @@index([broughtByPartnerId])
+  @@index([referrerId])
+  @@map("shipment_referrals")
 }
 
 /// Carton/parcel, barrel, pallet, special... The categories a fixed published price is set for
@@ -1046,6 +1081,7 @@ enum CommissionRole {
   SALES_OUTLET
   ORIGIN_CONSOLIDATOR
   DISTRIBUTOR
+  REFERRER
 
   @@map("commission_role")
 }
@@ -1674,6 +1710,7 @@ model Shipment {
   events             ShipmentEvent[]
   commissionAccruals CommissionAccrual[]
   commissionHolds    CommissionHold[]
+  referral           ShipmentReferral?
   documents          Document[]
   journalLines       JournalLine[]
   invoices           CustomerInvoice[]

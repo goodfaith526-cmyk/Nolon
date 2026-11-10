@@ -86,6 +86,18 @@ export interface WindowDeskReceiptRequest {
   occurredAt?: string;
   /** Confirms more packages than the cargo lines have; a note is then required. */
   extraPackagesConfirmed?: boolean;
+  /**
+   * Plan 18, 4.3: the referral broker who brought the goods in person (an active referrer of the
+   * booking's branch), from GET window-desk/bookings/:id/referrers.
+   */
+  broughtByReferrerId?: string | null;
+}
+
+/** Plan 18, 4.3: a referral broker the window can pick at receipt (no phone is shown). */
+export interface WindowDeskReferrerDto {
+  id: string;
+  number: string;
+  name: string;
 }
 
 /** A customer's payment taken at the window: a posted receipt into the window's cash account. */

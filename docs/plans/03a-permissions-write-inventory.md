@@ -248,6 +248,7 @@
 - PUT `/shipments/:id/containers/:containerId` · `ShipmentsController.updateContainer` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/hold` · `ShipmentsController.hold` · `shipments/shipments.controller.ts` · shipments:update
 - PUT `/shipments/:id/items` · `ShipmentsController.correctCargo` · `shipments/shipments.controller.ts` · shipments:update
+- POST `/shipments/:id/referrer` · `ShipmentsController.setReferrer` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/resume` · `ShipmentsController.resume` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/revert` · `ShipmentsController.revert` · `shipments/shipments.controller.ts` · shipments:approve
 - POST `/shipments/:id/status` · `ShipmentsController.changeStatus` · `shipments/shipments.controller.ts` · shipments:view

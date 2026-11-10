@@ -777,7 +777,13 @@
     "stoppedCancelled": "The shipment was cancelled at this step.",
     "lastUpdate": "Last update",
     "nextStep": "Next step",
-    "drawerClose": "Close"
+    "drawerClose": "Close",
+    "referralBroker": "Referral commission",
+    "referrerReason_FIRST_SHIPMENT": "customer's first shipment",
+    "referrerReason_BROUGHT_IN_PERSON": "brought in person",
+    "broughtBy": "Brought by",
+    "changeBroughtBy": "Change broker",
+    "broughtByReason": "Reason for the change"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -3434,6 +3440,7 @@
     "role_SALES_OUTLET": "Sales outlet",
     "role_ORIGIN_CONSOLIDATOR": "Origin consolidator",
     "role_DISTRIBUTOR": "Distributor",
+    "role_REFERRER": "Referral broker",
     "currency": "Currency",
     "amountSigned": "Amount (negative reduces)",
     "reason": "Reason",
@@ -3550,6 +3557,11 @@
     "collectSubmit": "Record the payment",
     "paymentLine": "Receipt {number}: {amount} {currency}",
     "printReceipt": "Print receipt",
-    "printWaybill": "Print waybill"
+    "printWaybill": "Print waybill",
+    "broughtByBroker": "Brought in person by a referral broker (optional)",
+    "brokerSearch": "Broker name or phone",
+    "brokerFind": "Find",
+    "brokerNone": "No broker",
+    "brokerNotFound": "No broker found"
   }
 }
