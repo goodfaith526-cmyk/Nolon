@@ -232,8 +232,8 @@ owner decided.**
 
 ## 6. What does not change, and what is out of scope
 
-- **Intercompany between the holding and the agents, and between agents, is plan 17, the next plan after this
-  one (⭐).** With a holding and five agents it is no longer a side case: each agent owes the holding its share
+- **Intercompany between the holding and the agents, and between agents, is plan 17
+  (`docs/plans/17-agent-network.md`, the next plan after this one, ⭐).** With a holding and five agents it is no longer a side case: each agent owes the holding its share
   of the business, and shipments cross agents. Shared shipments cross branches and, with this plan,
   entities. For example `containerCostAllocated` (`auto-journal.service.ts:908-955`) books a container's cost in
   the container's branch against every shipment in it, including other branches' shipments; revenue billed in one
