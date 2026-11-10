@@ -1058,6 +1058,20 @@ footer a:hover {
   padding: 5px 12px;
   cursor: pointer;
 }
+.chip:hover {
+  border-color: var(--blue);
+}
+.chip:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 92%;
+}
 .chat form {
   display: flex;
   gap: 8px;
