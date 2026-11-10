@@ -28,7 +28,8 @@ OK.
 
 - ⭐ **The agent where the customer pays issues the invoice**, in its own entity, currency, VAT and numbers.
   Usually the sender pays at origin (prepaid). When the receiver pays on arrival (collect), the destination agent
-  invoices. This also closes review finding م7 (paying in another country): the paying side is just the other
+  invoices. The booking has no such field today: 17-2 adds `bookings.payment_terms` (`PREPAID` by default, or
+  `COLLECT`), carried to the shipment, and invoicing checks the invoicing branch against it. This also closes review finding م7 (paying in another country): the paying side is just the other
   agent.
 - The invoicing agent books the **whole** revenue. The split (section 3) then moves the other agent's share to it
   through HK.
@@ -38,8 +39,14 @@ OK.
 - `lane_splits(origin_country, destination_country, basis, origin_pct, per_unit_amount, currency, valid_from,
 valid_to)`, with `basis` `PCT_OF_FREIGHT` (the origin keeps `origin_pct`, the destination gets the rest) or
   `PER_UNIT` (the destination gets a fixed amount per chargeable unit: barrel, carton, CBM, kg). Periods do not
-  overlap per lane (exclusion constraint). ⭐ A group default row (no countries) applies to any lane without its
-  own: **60% origin / 40% destination of the freight revenue** until the owner sets real lanes.
+  overlap per lane: an exclusion constraint on `(coalesce(origin_country, '**'), coalesce(destination_country,
+'**'), daterange(valid_from, valid_to))`, so the default rows (no countries, sentinel `**`) cannot overlap each
+  other either. CHECKs: `origin_pct` from 0 to 100, set only for `PCT_OF_FREIGHT`; `per_unit_amount > 0` and
+  `currency` set only for `PER_UNIT`; both countries set or both null. ⭐ A group default row applies to any lane
+  without its own: **60% origin / 40% destination of the freight revenue** until the owner sets real lanes.
+- ⭐ A `PER_UNIT` share is **capped at the freight** of that invoice: the destination never gets more than the
+  freight it shares, and the origin's share never goes below zero. The invoice approval shows a warning when the
+  cap applies.
 - **What is split:** freight charges only. Charges that one side alone performs stay with it (customs fees at
   destination, packing at origin, storage where it happens), by charge type: `charge_types.split_side` =
   `SPLIT`, `ORIGIN` or `DESTINATION`.
@@ -51,14 +58,33 @@ valid_to)`, with `basis` `PCT_OF_FREIGHT` (the origin keeps `origin_pct`, the de
   - invoicing agent: Dr «other agent's share» (cost), Cr «due to HK»;
   - HK: Dr «due from invoicing agent», Cr «due to other agent»;
   - other agent: Dr «due from HK», Cr «network share revenue».
+- **Which branches carry the entries:** the invoicing branch, the `HKG` branch of the holding, and the
+  shipment's other branch from `ShipmentBranch` (its destination branch for a prepaid shipment, its origin branch
+  for a collect one).
+- **System postings, the one rule 2 exception (⭐).** The user who approves an invoice in Jeddah cannot write in
+  `HKG` or in a Sudan branch. The split, fee and settlement entries in those branches are system postings from the
+  auto-journal rules: recorded with the real user as actor and `posted_by_system = true` (a new column on
+  `journal_entries`). They are never reachable from a user-facing write; the manual journal and every document
+  route keep the plain rule 2 check.
+- **A closed month in the other entity never blocks the payment (⭐).** Since 13-4, invoice approval is the window
+  taking the customer's cash. If the month is closed in HK or in the other agent, that entity's split entry posts
+  on the first day of its next open month (dated there, same `network_event_id`), and the invoicing agent's entry
+  posts on the invoice date as usual. The statement shows the pair as «in transit» until both are posted. Nothing
+  is refused.
+- **One lock order across entities.** A split transaction locks per-entity numbering counters, period rows and
+  intercompany balances in three entities. They are always taken in one global order, by `legal_entity_id`
+  ascending, whatever the direction of the shipment, so an SA→SD and an SD→SA approval at the same moment cannot
+  deadlock. The posting engine (17-1) takes all of them up front through one helper, as `lockActiveBranches` does
+  for branches today.
 - **Domestic shipments** (origin and destination in one agent) have no split.
 
 ## 4. The network fee to HK
 
 From plan 16's `agency_agreements`, per agent:
 
-- `REVENUE_SHARE_PCT`: the agent owes HK a percentage of its **net** revenue for the month (its own revenue minus
-  shares it paid out, plus shares it received).
+- `REVENUE_SHARE_PCT`: the agent owes HK a percentage of its **net** revenue for the month, named by account:
+  customer revenue (the charge types' revenue accounts) minus «other agent's share» (cost) plus «network share
+  revenue». «Network share revenue» is not customer revenue, so it is counted once.
 - `COMMISSION_PCT`: HK owes the agent a percentage (for an agent that only sells for the network).
 - `FIXED_FEE`: a fixed monthly amount.
 
@@ -134,12 +160,12 @@ window.
 **Step 5. Netting and settlement.** HK's statement: SA owes 26.67 + 4.00 = **30.67 USD**; HK owes SD
 26.67 − 2.67 = **24.00 USD**. HK keeps 30.67 − 24.00 = **6.67 USD**, its fees.
 
-| Book     | Debit     | Credit      | Amount                      |
-| -------- | --------- | ----------- | --------------------------- |
-| SA (SAR) | Due to HK | Bank        | 30.67 USD (115 SAR at 3.75) |
-| HK (USD) | Bank      | Due from SA | 30.67 USD                   |
-| HK (USD) | Due to SD | Bank        | 24.00 USD                   |
-| SD (USD) | Bank      | Due from HK | 24.00 USD                   |
+| Book     | Debit     | Credit      | Amount                         |
+| -------- | --------- | ----------- | ------------------------------ |
+| SA (SAR) | Due to HK | Bank        | 30.67 USD (115.01 SAR at 3.75) |
+| HK (USD) | Bank      | Due from SA | 30.67 USD                      |
+| HK (USD) | Due to SD | Bank        | 24.00 USD                      |
+| SD (USD) | Bank      | Due from HK | 24.00 USD                      |
 
 **Result.** Every intercompany account is back to zero.
 
@@ -168,7 +194,10 @@ only the customer's 66.67 USD and the 18.67 USD paid to outsiders.
   not the origin agent's invoice or books.
 - Tests (AGENTS.md rule 7), including negatives: split posted in all three books or none; credit note reverses
   in proportion; a lane with no rule uses the default; a charge with `split_side = DESTINATION` goes whole to the
-  destination; a manual journal on an intercompany account is refused; an agent user cannot read HK's or another
+  destination; a manual journal on an intercompany account is refused; a split when HK or the other agent has closed the month
+  (the payment posts, the closed side posts on the first day of its next open month, the pair shows in transit);
+  SA→SD and SD→SA approvals at the same moment (no deadlock); overlapping default lane rows (refused); a `PER_UNIT`
+  share above the freight (capped); an agent user cannot read HK's or another
   agent's entries; the worked example above as an integration test, every number in it checked.
 
 ## 9. Build, in order (after plan 16)
