@@ -49,6 +49,10 @@
   var dot = document.getElementById('fab-dot');
   var seenIds = {};
   var lastAt = null;
+  // The newest line shown and the answer buttons it offers (docs/web-chat.md in erp-agents: the
+  // buttons of the newest reply only; a press sends the button's text as the visitor's message).
+  var latest = null;
+  var answersEl = null;
   var loaded = false;
   var waiting = false;
   var timer = null;
@@ -200,6 +204,8 @@
     if (seenIds[line.id]) {
       var mine = msgs.querySelector('[data-id="' + line.id + '"]');
       if (mine) mine.classList.remove('pending', 'failed');
+      if (mine && (!latest || line.at >= latest.at))
+        latest = { at: line.at, el: mine, buttons: [] };
       return false;
     }
     seenIds[line.id] = true;
@@ -209,7 +215,33 @@
     if (typingEl && typingEl.parentNode) msgs.insertBefore(el, typingEl);
     else msgs.appendChild(el);
     if (!lastAt || line.at > lastAt) lastAt = line.at;
+    if (!latest || line.at >= latest.at) {
+      var offered = line.from === 'visitor' || !Array.isArray(line.buttons) ? [] : line.buttons;
+      latest = { at: line.at, el: el, buttons: offered };
+    }
     return line.from !== 'visitor';
+  }
+  // The newest reply's answer buttons, right under it; none once the visitor has answered.
+  function renderAnswers() {
+    if (answersEl) {
+      answersEl.remove();
+      answersEl = null;
+    }
+    if (!latest || !latest.buttons.length || !latest.el.parentNode) return;
+    answersEl = document.createElement('div');
+    answersEl.className = 'answers';
+    latest.buttons.slice(0, 12).forEach(function (label) {
+      if (typeof label !== 'string' || !label.trim()) return;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = label;
+      b.addEventListener('click', function () {
+        sendText(label.trim());
+      });
+      answersEl.appendChild(b);
+    });
+    latest.el.parentNode.insertBefore(answersEl, latest.el.nextSibling);
   }
   function setTyping(on) {
     if (on && !typingEl) {
@@ -246,6 +278,7 @@
           });
         waiting = !!b.waiting;
         setTyping(waiting);
+        renderAnswers();
         if (fresh && chat.hidden && loaded) dot.hidden = false;
         loaded = true;
         if (!chat.hidden) {
@@ -314,17 +347,23 @@
       showStatus(T[L()].e400);
       return;
     }
+    input.value = '';
+    grow();
+    sendText(text);
+  });
+  // A message from the visitor (typed, or an answer button): shown at once, then sent.
+  function sendText(text) {
+    if (latest) latest.buttons = [];
+    renderAnswers();
     var id = newId();
     seenIds[id] = true;
     var el = makeBubble(text, 'me');
     el.setAttribute('data-id', id);
     if (typingEl) msgs.insertBefore(el, typingEl);
     else msgs.appendChild(el);
-    input.value = '';
-    grow();
     scrollDown();
     send(text, el, id);
-  });
+  }
   function grow() {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
