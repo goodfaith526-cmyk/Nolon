@@ -93,6 +93,14 @@ export const captureIdentityBody = z
     conversationId: text(128),
     sender: identitySender,
     fields: identityFields,
+    /**
+     * Plan 18, 3: the referrer's customer code the chat began with (first capture only). Optional,
+     * so the contract stays /1; an unknown or old code, or one on a later capture, is ignored.
+     */
+    referral: z
+      .object({ code: text(64) })
+      .strict()
+      .optional(),
   })
   .strict();
 export const updateIdentityBody = captureIdentityBody.extend({

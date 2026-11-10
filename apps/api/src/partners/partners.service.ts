@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   Page,
@@ -30,7 +31,10 @@ export interface PartnerFilters extends PageQuery {
   isActive?: boolean;
 }
 
-const details = { supplier: { select: { name: true } } } satisfies Prisma.PartnerInclude;
+const details = {
+  supplier: { select: { name: true } },
+  referralCodes: { where: { retiredAt: null }, select: { code: true } },
+} satisfies Prisma.PartnerInclude;
 
 type PartnerWithDetails = Prisma.PartnerGetPayload<{ include: typeof details }>;
 
@@ -45,6 +49,7 @@ const AUDITED_FIELDS = [
   'supplierId',
   'currency',
   'notes',
+  'referralWindowDays',
   'isActive',
 ] as const;
 
@@ -110,6 +115,7 @@ export class PartnersService {
       }
       await requireBranchMemberInTx(tx, user, input.branchId);
       await this.checkReferences(tx, input);
+      checkReferralFields(input.kind, input.referralWindowDays);
       const number = formatDocumentNumber('PTR', await nextSequenceValue(tx, 'PARTNER'));
       const partner = await tx.partner.create({
         data: {
@@ -124,9 +130,11 @@ export class PartnersService {
           supplierId: input.supplierId ?? null,
           currency: input.currency,
           notes: input.notes ?? null,
+          referralWindowDays: input.referralWindowDays ?? null,
           createdById: user.id,
         },
       });
+      if (partner.kind === 'REFERRER') await newReferralCodeInTx(tx, partner.id);
       await this.log(tx, user, 'CREATED', null, partner);
       return partner;
     });
@@ -147,8 +155,50 @@ export class PartnersService {
         supplierId: input.supplierId === before.supplierId ? undefined : input.supplierId,
         currency: input.currency === before.currency ? undefined : input.currency,
       });
+      // Plan 18: a referrer stays a referrer (its codes and customers), and no other kind becomes one.
+      if (
+        input.kind !== undefined &&
+        (input.kind === 'REFERRER') !== (before.kind === 'REFERRER')
+      ) {
+        throw fieldRefusal('REFERRER_KIND_FIXED', 'A referrer cannot change kind', ['kind']);
+      }
+      if (input.referralWindowDays !== undefined) {
+        checkReferralFields(before.kind, input.referralWindowDays);
+      }
       const after = await tx.partner.update({ where: { id }, data: input });
       await this.log(tx, user, 'UPDATED', before, after);
+    });
+    return this.get(user, id);
+  }
+
+  /**
+   * Plan 18, 3: a new customer code for a referrer; the live one is retired (it stops linking new
+   * customers, and customers it linked stay linked). Audited.
+   */
+  async issueReferralCode(user: AuthUser, id: string): Promise<PartnerDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const partner = await lockScoped(tx, user, id);
+      await requireBranchMemberInTx(tx, user, partner.branchId);
+      if (partner.kind !== 'REFERRER') {
+        throw fieldRefusal('NOT_A_REFERRER', 'Only a referrer has a customer code', ['kind']);
+      }
+      const retired = await tx.referralCode.findFirst({
+        where: { partnerId: id, retiredAt: null },
+        select: { code: true },
+      });
+      await tx.referralCode.updateMany({
+        where: { partnerId: id, retiredAt: null },
+        data: { retiredAt: new Date(), livePartnerId: null },
+      });
+      const code = await newReferralCodeInTx(tx, id);
+      await this.audit.record(tx, user, {
+        branchId: partner.branchId,
+        entity: 'PARTNER',
+        entityId: partner.id,
+        reference: `${partner.number} ${partner.name}`,
+        action: 'UPDATED',
+        changes: [{ field: 'referralCode', before: retired?.code ?? null, after: code }],
+      });
     });
     return this.get(user, id);
   }
@@ -236,6 +286,45 @@ function toDto(p: PartnerWithDetails, user: AuthUser): PartnerDto {
     supplierName: p.supplier?.name ?? null,
     currency: p.currency,
     notes: p.notes,
-    actions: { canEdit: user.access.has('partners:update', p.branchId) },
+    referralCode: p.referralCodes[0]?.code ?? null,
+    referralWindowDays: p.referralWindowDays,
+    actions: {
+      canEdit: user.access.has('partners:update', p.branchId),
+      canIssueReferralCode: p.kind === 'REFERRER' && user.access.has('partners:update', p.branchId),
+    },
   };
+}
+
+/** Only a referrer has an expiry (plan 18, 4.2). */
+function checkReferralFields(kind: PartnerKind, windowDays: number | null | undefined): void {
+  if (windowDays !== undefined && windowDays !== null && kind !== 'REFERRER') {
+    throw fieldRefusal('NOT_A_REFERRER', 'Only a referrer has a first-shipment expiry', [
+      'referralWindowDays',
+    ]);
+  }
+}
+
+const CODE_LETTERS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+/** `r_` + 8 random [a-z0-9] (plan 18, 3). */
+export function randomReferralCode(): string {
+  let code = 'r_';
+  for (let i = 0; i < 8; i++) code += CODE_LETTERS[randomInt(CODE_LETTERS.length)];
+  return code;
+}
+
+/**
+ * Inserts a new live code for the partner. A clash with an existing code (36^8 of them) inserts
+ * nothing (ON CONFLICT, so the transaction is not aborted) and draws again.
+ */
+async function newReferralCodeInTx(tx: Tx, partnerId: string): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    const code = randomReferralCode();
+    const [row] = await tx.$queryRaw<{ code: string }[]>`
+      INSERT INTO "referral_codes" ("code", "partner_id", "live_partner_id")
+      VALUES (${code}, ${partnerId}::uuid, ${partnerId}::uuid)
+      ON CONFLICT ("code") DO NOTHING RETURNING "code"`;
+    if (row) return row.code;
+    if (attempt >= 5) throw new Error('Could not draw a free referral code');
+  }
 }

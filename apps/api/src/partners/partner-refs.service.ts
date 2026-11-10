@@ -78,4 +78,44 @@ export class PartnerRefsService {
     }
     return requested;
   }
+
+  /**
+   * Plan 18, 3: the referrer a customer code names, for a capture. Only a live code of an active
+   * referrer counts; anything else (unknown, retired, inactive) is null, and the caller ignores it
+   * silently. The partner is share-locked until the caller commits.
+   */
+  async liveReferrerByCodeInTx(tx: Tx, code: string): Promise<string | null> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT p."id" FROM "referral_codes" c JOIN "partners" p ON p."id" = c."partner_id"
+      WHERE c."code" = ${code} AND c."retired_at" IS NULL
+        AND p."kind" = 'REFERRER' AND p."is_active"
+      FOR SHARE OF p`;
+    return rows[0]?.id ?? null;
+  }
+
+  /** Plan 18, 3: whether the partner is an active referrer now (share-locked until commit). */
+  async activeReferrerInTx(tx: Tx, partnerId: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id"::text AS "id" FROM "partners"
+      WHERE "id" = ${partnerId}::uuid AND "kind" = 'REFERRER' AND "is_active" FOR SHARE`;
+    return rows.length > 0;
+  }
+
+  /**
+   * Plan 18, 3: a referrer staff name on a customer file: active, of the user's branches
+   * (400 on `field` otherwise, the same for one that does not exist). Share-locked until commit.
+   */
+  async requireReferrerInTx(tx: Tx, user: AuthUser, partnerId: string, field: string) {
+    const rows = await tx.$queryRaw<{ kind: string; branch_id: string; is_active: boolean }[]>`
+      SELECT "kind"::text AS "kind", "branch_id", "is_active" FROM "partners"
+      WHERE "id" = ${partnerId}::uuid FOR SHARE`;
+    const partner = rows[0];
+    if (
+      !partner?.is_active ||
+      partner.kind !== 'REFERRER' ||
+      !canAccessBranch(user, partner.branch_id)
+    ) {
+      throw fieldRefusal('PARTNER_NOT_USABLE', 'Not an active referrer of your branches', [field]);
+    }
+  }
 }

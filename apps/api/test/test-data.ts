@@ -98,6 +98,16 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
   await prisma.partyDraft.deleteMany({ where: { customer: createdBy } });
   await prisma.party.deleteMany({ where: customers });
   await prisma.customer.deleteMany({ where: createdBy });
+  // Plan 18: customers a test referrer brought (some made by a bot capture) and its codes.
+  await prisma.customer.updateMany({
+    where: { referredBy: createdBy },
+    data: { referredByPartnerId: null, referredAt: null },
+  });
+  await prisma.customerProfile.updateMany({
+    where: { referralPartner: createdBy },
+    data: { referralPartnerId: null },
+  });
+  await prisma.referralCode.deleteMany({ where: { partner: createdBy } });
   await prisma.userPartner.deleteMany({ where: { partner: createdBy } });
   await prisma.partnerContract.deleteMany({ where: { partner: createdBy } });
   await prisma.partner.deleteMany({ where: createdBy });

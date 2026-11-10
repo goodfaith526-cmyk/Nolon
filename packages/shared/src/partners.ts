@@ -11,8 +11,16 @@ export const PARTNER_KINDS = [
   'ORIGIN_CONSOLIDATOR',
   'OVERSEAS_AGENT',
   'DISTRIBUTOR',
+  /** A person who brings customers (plan 18): paid per shipment, never per registration. */
+  'REFERRER',
 ] as const;
 export type PartnerKind = (typeof PARTNER_KINDS)[number];
+
+/** A referrer's public customer code (plan 18, 3): `r_` + 8 of [a-z0-9]. */
+export const REFERRAL_CODE_PATTERN = /^r_[a-z0-9]{8}$/;
+
+/** The longest optional expiry of a referrer's first-shipment commission, in days. */
+export const REFERRAL_WINDOW_MAX_DAYS = 3650;
 
 /** A partner as a customer, quotation, booking or shipment names it. */
 export interface PartnerRefDto {
@@ -43,7 +51,11 @@ export interface PartnerDto extends PartnerSummaryDto {
   supplierName: string | null;
   currency: CurrencyCode;
   notes: string | null;
-  actions: { canEdit: boolean };
+  /** Referrers only: his live customer code (null for other kinds). */
+  referralCode: string | null;
+  /** Referrers only: the optional expiry of a customer's first shipment, in days; null: none. */
+  referralWindowDays: number | null;
+  actions: { canEdit: boolean; canIssueReferralCode: boolean };
 }
 
 export interface PartnerInput {
@@ -58,6 +70,8 @@ export interface PartnerInput {
   supplierId?: string | null;
   currency: CurrencyCode;
   notes?: string | null;
+  /** Referrers only (1 to REFERRAL_WINDOW_MAX_DAYS, or null for no limit). */
+  referralWindowDays?: number | null;
 }
 
 /** An edit: anything but the branch, which owns the partner's records. */

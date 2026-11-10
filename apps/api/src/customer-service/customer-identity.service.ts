@@ -6,6 +6,8 @@ import { Prisma, type CustomerProfile } from '../generated/prisma/client.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import { PartnerRefsService } from '../partners/partner-refs.service.js';
+import { REFERRAL_CODE_PATTERN } from '@nolon/shared';
 import {
   CustomerIdentityAuth,
   identityError,
@@ -46,6 +48,7 @@ export class CustomerIdentityService {
     private readonly prisma: PrismaService,
     private readonly auth: CustomerIdentityAuth,
     private readonly customers: CustomersService,
+    private readonly partnerRefs: PartnerRefsService,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -333,6 +336,29 @@ export class CustomerIdentityService {
         // customer from the first message, named from the channel until a name is given. No
         // booking, invoice or entry; the answer to the bot is unchanged.
         // Owner, 2026-11-07: also with warnings: they never stop the file from filling.
+        // Plan 18, 3 (F238-1): the customer code of the capture that made the profile is kept on
+        // it, and links the customer file when that is made (now, or on a later message once a
+        // name comes, or by a booking). Only a live code of an active referrer, and only when no
+        // other customer or profile holds a phone the person brings: he may be known already. A
+        // phone like that brought later, before the file is made, drops it.
+        if (profile && !identity.blocked) {
+          const code = created ? input.referral?.code : undefined;
+          const referrerId =
+            code && REFERRAL_CODE_PATTERN.test(code)
+              ? await this.partnerRefs.liveReferrerByCodeInTx(tx, code)
+              : (profile.referralPartnerId ?? null);
+          let known = false;
+          for (const p of referrerId ? phones : []) {
+            if (await this.phoneTaken(tx, companyId, p, profile.id)) known = true;
+          }
+          const keep = known ? null : referrerId;
+          if (keep !== profile.referralPartnerId) {
+            profile = await tx.customerProfile.update({
+              where: { id: profile.id },
+              data: { referralPartnerId: keep },
+            });
+          }
+        }
         if (this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED && profile && !identity.blocked) {
           await this.customers.channelAccountInTx(tx, {
             profile,

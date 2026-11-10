@@ -45,6 +45,10 @@ const contactBody = z
   })
   .strict();
 
+const referrerBody = z
+  .object({ partnerId: z.uuid().nullable(), reason: requiredText(500) })
+  .strict();
+
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
@@ -81,6 +85,18 @@ export class CustomersController {
     @Body() body: unknown,
   ): Promise<CustomerDto> {
     return this.customers.update(user, id, parse(updateCustomerBody, body));
+  }
+
+  /** Plan 18, 3: set, change or clear the customer's referral broker, with a reason. */
+  @Post(':id/referrer')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('customers:update')
+  setReferrer(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<CustomerDto> {
+    return this.customers.setReferrer(user, id, parse(referrerBody, body));
   }
 
   @OutletScoped()

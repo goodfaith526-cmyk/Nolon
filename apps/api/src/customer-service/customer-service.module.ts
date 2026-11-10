@@ -1,3 +1,4 @@
+import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { CustomerStagesController } from './customer-stages.controller.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import { CustomerProfileReviewController } from './customer-profile-review.controller.js';
@@ -59,6 +60,7 @@ import { QuoteService } from './quote.service.js';
     BookingsModule,
     CurrenciesModule,
     MasterDataModule,
+    PartnerRefsModule,
     QuotationsModule,
     RatesModule,
     ShipmentsModule,

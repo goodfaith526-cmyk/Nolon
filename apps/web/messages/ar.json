@@ -280,7 +280,10 @@
     "country": "الدولة",
     "segment": "شريحة العميل",
     "noSegment": "بدون شريحة",
-    "acquiredViaOutlet": "منفذ الاستقطاب"
+    "acquiredViaOutlet": "منفذ الاستقطاب",
+    "referredBy": "جابه المندوب",
+    "changeReferrer": "تغيير",
+    "referrerReason": "سبب التغيير"
   },
   "Rates": {
     "title": "الأسعار",
@@ -2273,7 +2276,15 @@
     "inactivePartner": "موقوف",
     "salesOutlet": "منفذ البيع",
     "originConsolidator": "المجمّع في المنشأ",
-    "distributor": "الموزّع داخل السودان"
+    "distributor": "الموزّع داخل السودان",
+    "kind_REFERRER": "مندوب",
+    "referralCode": "كود العملاء",
+    "referralWindowDays": "مدة أول شحنة (أيام)",
+    "referralWindowHint": "فارغ: بدون حد. أول شحنة للعميل تُحسب للمندوب فقط خلال هذه المدة من ربطه.",
+    "referralNoLimit": "بدون حد",
+    "referralDays": "{days, plural, one {يوم واحد} two {يومان} few {# أيام} other {# يوماً}}",
+    "newReferralCode": "كود عملاء جديد",
+    "newReferralCodeConfirm": "إصدار كود جديد؟ الكود القديم لن يربط عملاء جدد، والعملاء المربوطون يبقون كما هم."
   },
   "PartnerContracts": {
     "title": "عقود العمولة",
@@ -2904,6 +2915,8 @@
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها.",
     "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة.",
     "PARTNER_NOT_USABLE": "هذا الشريك غير معروف، أو موقوف، أو ليس من فروع هذا السجل.",
+    "REFERRER_KIND_FIXED": "المندوب يبقى مندوباً، ولا يتحول نوع شريك آخر إلى مندوب.",
+    "NOT_A_REFERRER": "كود العملاء ومدة أول شحنة للمندوب فقط.",
     "QUOTED_OUTLET_FIXED": "الحجز المُنشأ من عرض سعر يحتفظ بمنفذ البيع الخاص بالعرض.",
     "CUSTOMER_SEGMENT_NOT_USABLE": "شريحة العملاء هذه غير معروفة أو لم تعد مستخدمة.",
     "CONTRACT_OVERLAP": "يوجد عقد معتمد آخر لهذا الشريك يغطي الفئة نفسها في بعض هذه التواريخ. ألغه أولاً أو غيّر التواريخ.",

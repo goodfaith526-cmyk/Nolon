@@ -793,6 +793,12 @@ model Customer {
   isActive              Boolean          @default(true) @map("is_active")
   /// The partner sales outlet that brought the customer (plan 3.3); Outlet Staff see only theirs.
   acquiredViaOutletId   String?          @map("acquired_via_outlet_id") @db.Uuid
+  /// The referral broker who registered the customer (plan 18, 3): the first one wins; only staff
+  /// change it, with a reason. It grants the broker nothing on the customer file.
+  referredByPartnerId   String?          @map("referred_by_partner_id") @db.Uuid
+  /// When the broker was linked (or last changed): the start of his optional expiry window.
+  referredAt            DateTime?        @map("referred_at") @db.Timestamptz(3)
+  /// The shipment that consumed the customer's first paid shipment for his broker (plan 18, 4.2).
   /// The customer's segment (plan 3.3), from the customer_segments master.
   segmentCode           String?          @map("segment_code") @db.VarChar(20)
   /// The staff member who made it; null only for an account the shipping bot's key made from a
@@ -804,6 +810,7 @@ model Customer {
 
   createdViaApiClient    ApiClient?         @relation("CustomerCreatedViaApiClient", fields: [createdViaApiClientId], references: [id], onDelete: Restrict)
   acquiredViaOutlet      Partner?           @relation(fields: [acquiredViaOutletId], references: [id], onDelete: Restrict)
+  referredBy             Partner?           @relation("CustomerReferredBy", fields: [referredByPartnerId], references: [id], onDelete: Restrict)
   segment                CustomerSegment?   @relation(fields: [segmentCode], references: [code], onDelete: Restrict)
   preferredCurrencyRef   Currency?          @relation("CustomerPreferredCurrency", fields: [preferredCurrency], references: [code], onDelete: Restrict)
   creditLimitCurrencyRef Currency?          @relation("CustomerCreditLimitCurrency", fields: [creditLimitCurrency], references: [code], onDelete: Restrict)
@@ -837,6 +844,7 @@ model Customer {
   @@index([profileId])
   @@index([phone])
   @@index([acquiredViaOutletId])
+  @@index([referredByPartnerId])
   @@index([segmentCode])
   @@map("customers")
 }
@@ -902,6 +910,8 @@ enum PartnerKind {
   ORIGIN_CONSOLIDATOR
   OVERSEAS_AGENT
   DISTRIBUTOR
+  /// A person who brings customers (plan 18): paid per shipment, never per registration.
+  REFERRER
 
   @@map("partner_kind")
 }
@@ -910,27 +920,30 @@ enum PartnerKind {
 /// staff see the partners of their branches only. Its commissions, settlements and payments come
 /// in later batches; the supplier link is for paying it then. Deactivate, never delete.
 model Partner {
-  id          String      @id @default(uuid()) @db.Uuid
+  id                 String      @id @default(uuid()) @db.Uuid
   /// NOL-PTR-000001
-  number      String      @unique @db.VarChar(30)
-  kind        PartnerKind
-  branchId    String      @map("branch_id") @db.Uuid
-  name        String      @db.VarChar(200)
+  number             String      @unique @db.VarChar(30)
+  kind               PartnerKind
+  branchId           String      @map("branch_id") @db.Uuid
+  name               String      @db.VarChar(200)
   /// E.164.
-  phone       String?     @db.VarChar(20)
-  email       String?     @db.VarChar(254)
+  phone              String?     @db.VarChar(20)
+  email              String?     @db.VarChar(254)
   /// ISO 3166-1 alpha-2: any country.
-  countryCode String      @map("country_code") @db.Char(2)
+  countryCode        String      @map("country_code") @db.Char(2)
   /// The partner's city or port.
-  locationId  String?     @map("location_id") @db.Uuid
-  supplierId  String?     @map("supplier_id") @db.Uuid
+  locationId         String?     @map("location_id") @db.Uuid
+  supplierId         String?     @map("supplier_id") @db.Uuid
   /// ISO 4217, in the currencies master: the currency it usually deals in.
-  currency    String      @db.Char(3)
-  notes       String?
-  isActive    Boolean     @default(true) @map("is_active")
-  createdById String      @map("created_by_id") @db.Uuid
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  currency           String      @db.Char(3)
+  notes              String?
+  /// Referrers only (plan 18, 4.2): a customer's first shipment counts only this many days after
+  /// the customer was linked to him; null is no limit.
+  referralWindowDays Int?        @map("referral_window_days")
+  isActive           Boolean     @default(true) @map("is_active")
+  createdById        String      @map("created_by_id") @db.Uuid
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
   location    Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
@@ -940,6 +953,9 @@ model Partner {
 
   staff                 UserPartner[]
   customersAcquired     Customer[]
+  customersReferred     Customer[]          @relation("CustomerReferredBy")
+  profilesReferred      CustomerProfile[]   @relation("CustomerProfileReferral")
+  referralCodes         ReferralCode[]
   quotationsSold        Quotation[]
   bookingsSold          Booking[]
   shipmentsSold         Shipment[]
@@ -955,6 +971,23 @@ model Partner {
   @@index([locationId])
   @@index([supplierId])
   @@map("partners")
+}
+
+/// A referrer's public customer code (plan 18, 3): `r_` + 8 of [a-z0-9], in his bot and website
+/// links. One live code per partner; a retired code is kept so it is recognized, and links no one.
+model ReferralCode {
+  code          String    @id @db.VarChar(16)
+  partnerId     String    @map("partner_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  retiredAt     DateTime? @map("retired_at") @db.Timestamptz(3)
+  /// The partner while this code is live, null once retired: unique, so a partner has at most one
+  /// live code (a CHECK ties it to `partner_id` and `retired_at`).
+  livePartnerId String?   @unique @map("live_partner_id") @db.Uuid
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId])
+  @@map("referral_codes")
 }
 
 /// Carton/parcel, barrel, pallet, special... The categories a fixed published price is set for
@@ -5222,32 +5255,37 @@ model PaymentInstruction {
 
 /// Unified person, independent of branch dealing accounts (plan 08). No transaction-read grant.
 model CustomerProfile {
-  residenceCity    Location?                 @relation("CustomerProfileResidence", fields: [residenceCityId], references: [id], onDelete: Restrict)
-  followUpBranch   Branch?                   @relation("CustomerProfileFollowUp", fields: [followUpBranchId], references: [id], onDelete: Restrict)
-  needsReview      Boolean                   @default(false) @map("needs_review")
-  id               String                    @id @default(uuid()) @db.Uuid
-  companyId        String                    @map("company_id") @db.VarChar(100)
-  number           String                    @db.VarChar(40)
-  version          Int                       @default(1)
-  name             String?                   @db.VarChar(200)
-  phone            String?                   @db.VarChar(20)
-  phoneVerified    Boolean                   @default(false) @map("phone_verified")
-  residenceCityId  String?                   @map("residence_city_id") @db.Uuid
-  address          String?                   @db.VarChar(1000)
-  followUpBranchId String?                   @map("follow_up_branch_id") @db.Uuid
-  followUpReview   Boolean                   @default(false) @map("follow_up_review")
-  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
-  accounts         Customer[]
-  requests         CsBookingRequest[]
-  identities       CustomerChannelIdentity[]
-  evidence         CustomerProfileEvidence[]
-  history          CustomerFollowUpHistory[]
+  residenceCity     Location?                 @relation("CustomerProfileResidence", fields: [residenceCityId], references: [id], onDelete: Restrict)
+  followUpBranch    Branch?                   @relation("CustomerProfileFollowUp", fields: [followUpBranchId], references: [id], onDelete: Restrict)
+  needsReview       Boolean                   @default(false) @map("needs_review")
+  id                String                    @id @default(uuid()) @db.Uuid
+  companyId         String                    @map("company_id") @db.VarChar(100)
+  number            String                    @db.VarChar(40)
+  version           Int                       @default(1)
+  name              String?                   @db.VarChar(200)
+  phone             String?                   @db.VarChar(20)
+  phoneVerified     Boolean                   @default(false) @map("phone_verified")
+  residenceCityId   String?                   @map("residence_city_id") @db.Uuid
+  address           String?                   @db.VarChar(1000)
+  followUpBranchId  String?                   @map("follow_up_branch_id") @db.Uuid
+  followUpReview    Boolean                   @default(false) @map("follow_up_review")
+  /// Plan 18, 3 (F238-1): the referrer of the customer code the capture that made this profile
+  /// came with, kept until its customer file is made (which links him then); null otherwise.
+  referralPartnerId String?                   @map("referral_partner_id") @db.Uuid
+  referralPartner   Partner?                  @relation("CustomerProfileReferral", fields: [referralPartnerId], references: [id], onDelete: Restrict)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  accounts          Customer[]
+  requests          CsBookingRequest[]
+  identities        CustomerChannelIdentity[]
+  evidence          CustomerProfileEvidence[]
+  history           CustomerFollowUpHistory[]
 
   @@unique([companyId, number])
   @@unique([companyId, id])
   @@index([companyId, needsReview, createdAt, id])
   @@index([companyId, phone])
+  @@index([referralPartnerId])
   @@map("customer_profiles")
 }
 

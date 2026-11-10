@@ -49,6 +49,21 @@ export function PartnerDetail({ id }: { id: string }) {
     }
   }
 
+  /** Plan 18, 3: the old code stops linking new customers; ask first. */
+  async function newCode() {
+    if (!window.confirm(t('newReferralCodeConfirm'))) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      setRecord(await api<PartnerDto>(`/partners/${id}/referral-code`, { method: 'POST' }));
+      setNotice({ ok: true, text: tc('saved') });
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     void run(partnerFields(new FormData(e.currentTarget)));
@@ -76,6 +91,11 @@ export function PartnerDetail({ id }: { id: string }) {
           {!editing && (
             <button type="button" onClick={() => setEditing(true)}>
               {tc('edit')}
+            </button>
+          )}
+          {p.actions.canIssueReferralCode && (
+            <button type="button" disabled={busy} onClick={() => void newCode()}>
+              {t('newReferralCode')}
             </button>
           )}
           <button type="button" disabled={busy} onClick={() => void run({ isActive: !p.isActive })}>
@@ -112,6 +132,18 @@ export function PartnerDetail({ id }: { id: string }) {
           <dd>{p.locationId ? locationName(p.locationId) : '—'}</dd>
           <dt>{t('currency')}</dt>
           <dd dir="ltr">{p.currency}</dd>
+          {p.kind === 'REFERRER' && (
+            <>
+              <dt>{t('referralCode')}</dt>
+              <dd dir="ltr">{p.referralCode ?? '—'}</dd>
+              <dt>{t('referralWindowDays')}</dt>
+              <dd>
+                {p.referralWindowDays === null
+                  ? t('referralNoLimit')
+                  : t('referralDays', { days: p.referralWindowDays })}
+              </dd>
+            </>
+          )}
           {p.notes && (
             <>
               <dt>{tc('notes')}</dt>

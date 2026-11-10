@@ -14,6 +14,7 @@ import type {
   CustomerDto,
   CustomerPartyAddedDto,
   CustomerInput,
+  CustomerReferrerInput,
   CustomerKind,
   CustomerSummaryDto,
   Page,
@@ -189,6 +190,7 @@ export type CustomerWithDetails = Customer & {
   contacts: CustomerContact[];
   parties: Party[];
   acquiredViaOutlet: { id: string; number: string; name: string; isActive: boolean } | null;
+  referredBy: { id: string; number: string; name: string; isActive: boolean } | null;
 };
 
 /**
@@ -416,6 +418,19 @@ export class CustomersService {
     const phoneUnverified = phone !== null && !profile.phoneVerified;
     const place = await profilePlaceInTx(tx, profile);
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
+    // Plan 18, 3 (F238-1): the referrer kept on the profile is linked to the file made now, while
+    // he is still an active referrer, unless the profile's phone was left off (another customer
+    // holds it now: the person may be known already).
+    const pending = (
+      await tx.customerProfile.findUniqueOrThrow({
+        where: { id: profile.id },
+        select: { referralPartnerId: true },
+      })
+    ).referralPartnerId;
+    const referrerId =
+      pending && phone === profile.phone && (await this.partnerRefs.activeReferrerInTx(tx, pending))
+        ? pending
+        : null;
     const customer = await tx.customer.create({
       data: {
         number,
@@ -426,6 +441,7 @@ export class CustomersService {
         ...place,
         profileId: profile.id,
         createdViaApiClientId: input.apiClientId,
+        ...(referrerId ? { referredByPartnerId: referrerId, referredAt: new Date() } : {}),
       },
     });
     await this.audit.recordApi(tx, {
@@ -442,6 +458,7 @@ export class CustomersService {
         ...(phoneUnverified ? [{ field: 'phoneUnverified', before: null, after: 'true' }] : []),
         ...(place.address ? [{ field: 'addressCopied', before: null, after: 'yes' }] : []),
         ...(place.city ? [{ field: 'cityCopied', before: null, after: 'yes' }] : []),
+        ...(referrerId ? [{ field: 'referredByPartnerId', before: null, after: referrerId }] : []),
       ],
     });
     return { outcome: 'CREATED', customerId: customer.id };
@@ -1052,6 +1069,58 @@ export class CustomersService {
     return maskCredit(user, toDto(updated));
   }
 
+  /**
+   * Plan 18, 3: staff set, change or clear the customer's referral broker, always with a reason
+   * (audited). A change restarts the broker's expiry window (`referredAt`); it never moves a
+   * commission already accrued nor frees a first shipment already consumed (F237-4).
+   */
+  async setReferrer(
+    user: AuthUser,
+    id: string,
+    input: CustomerReferrerInput,
+  ): Promise<CustomerDto> {
+    const read = await this.findScoped(user, id);
+    const changed = await this.prisma.$transaction(async (tx) => {
+      await lockRecordOutletInTx(
+        tx,
+        user,
+        'customers',
+        read.id,
+        'Customer not found',
+        'NO KEY UPDATE',
+      );
+      const before = await tx.customer.findUniqueOrThrow({ where: { id: read.id } });
+      if (input.partnerId === before.referredByPartnerId) {
+        return tx.customer.findUniqueOrThrow({ where: { id: read.id }, include: details });
+      }
+      if (input.partnerId !== null) {
+        await this.partnerRefs.requireReferrerInTx(tx, user, input.partnerId, 'partnerId');
+      }
+      const after = await tx.customer.update({
+        where: { id: read.id },
+        data: {
+          referredByPartnerId: input.partnerId,
+          referredAt: input.partnerId === null ? null : new Date(),
+        },
+        include: details,
+      });
+      await this.audit.record(
+        tx,
+        user,
+        auditRecord(after, 'UPDATED', [
+          {
+            field: 'referredByPartnerId',
+            before: before.referredByPartnerId,
+            after: input.partnerId,
+          },
+          { field: 'referrerReason', before: null, after: input.reason },
+        ]),
+      );
+      return after;
+    });
+    return maskCredit(user, toDto(changed));
+  }
+
   async setActive(user: AuthUser, id: string, isActive: boolean): Promise<CustomerDto> {
     const existing = await this.findScoped(user, id);
     return maskCredit(
@@ -1469,6 +1538,7 @@ const details = {
   contacts: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
   parties: { orderBy: { createdAt: 'asc' } },
   acquiredViaOutlet: partnerRefSelect,
+  referredBy: partnerRefSelect,
 } satisfies Prisma.CustomerInclude;
 
 function toData<T extends Partial<CustomerWriteFields>>(
@@ -1639,6 +1709,8 @@ function toDto(c: CustomerWithDetails): CustomerDto {
     notes: c.notes,
     segmentCode: c.segmentCode,
     acquiredViaOutlet: toPartnerRef(c.acquiredViaOutlet),
+    referredBy: toPartnerRef(c.referredBy),
+    referredAt: c.referredAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
     contacts: c.contacts.map(toContactDto),
     parties: c.parties.map(toPartyDto),
