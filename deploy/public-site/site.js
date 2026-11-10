@@ -257,7 +257,7 @@
       if (typeof label !== 'string' || !label.trim() || label.length > 1000) return;
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'chip';
+      b.className = 'answer';
       b.textContent = label;
       var sizes = sizesLanguage(label);
       b.addEventListener('click', function () {

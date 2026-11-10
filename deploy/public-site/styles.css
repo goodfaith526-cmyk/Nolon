@@ -1065,15 +1065,45 @@ footer a:hover {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
+/* The bot's answer buttons: two in a row under its reply, wide enough to tap, like Telegram's. */
 .answers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
   align-self: flex-start;
-  max-width: 92%;
+  inline-size: min(92%, 380px);
+}
+.answer {
+  font: 600 14px var(--font);
+  min-block-size: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--blue);
+  border-radius: 12px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  cursor: pointer;
+  text-align: center;
+  overflow-wrap: anywhere;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.answer:hover,
+.answer[aria-expanded='true'] {
+  background: var(--blue);
+  color: #fff;
+}
+.answer:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+/* A lone button, or the last of an odd count, takes the whole row. */
+.answer:last-of-type:nth-of-type(odd) {
+  grid-column: 1 / -1;
 }
 .chat .sizes {
   display: block;
+  grid-column: 1 / -1;
   flex-basis: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
