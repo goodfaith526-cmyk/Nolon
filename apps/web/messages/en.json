@@ -280,7 +280,10 @@
     "country": "Country",
     "segment": "Customer segment",
     "noSegment": "No segment",
-    "acquiredViaOutlet": "Brought by outlet"
+    "acquiredViaOutlet": "Brought by outlet",
+    "referredBy": "Brought by broker",
+    "changeReferrer": "Change",
+    "referrerReason": "Reason for the change"
   },
   "Rates": {
     "title": "Rates",
@@ -2273,7 +2276,15 @@
     "inactivePartner": "no longer active",
     "salesOutlet": "Sales outlet",
     "originConsolidator": "Origin consolidator",
-    "distributor": "Distributor in Sudan"
+    "distributor": "Distributor in Sudan",
+    "kind_REFERRER": "Referral broker",
+    "referralCode": "Customer code",
+    "referralWindowDays": "First-shipment limit (days)",
+    "referralWindowHint": "Empty: no limit. A customer's first shipment pays the broker only within this many days of linking.",
+    "referralNoLimit": "No limit",
+    "referralDays": "{days, plural, one {# day} other {# days}}",
+    "newReferralCode": "New customer code",
+    "newReferralCodeConfirm": "Issue a new code? The old code stops linking new customers; customers already linked stay linked."
   },
   "PartnerContracts": {
     "title": "Commission contracts",
@@ -2904,6 +2915,8 @@
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} is the base currency every journal entry balances in: it cannot be deactivated.",
     "PARTNER_LOCATION_OTHER_COUNTRY": "The location {location} is in {country}: choose a place in the partner's country, or change the country.",
     "PARTNER_NOT_USABLE": "This partner is unknown, no longer active, or not one of this record's branches.",
+    "REFERRER_KIND_FIXED": "A referral broker stays a referral broker, and another kind of partner cannot become one.",
+    "NOT_A_REFERRER": "Only a referral broker has a customer code and a first-shipment expiry.",
     "QUOTED_OUTLET_FIXED": "A booking made from a quotation keeps the quotation's sales outlet.",
     "CUSTOMER_SEGMENT_NOT_USABLE": "This customer segment is unknown or no longer in use.",
     "CONTRACT_OVERLAP": "Another approved contract of this partner covers the same category for some of these dates. Cancel it first, or change the dates.",

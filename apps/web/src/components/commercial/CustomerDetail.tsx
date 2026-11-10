@@ -16,6 +16,7 @@ import { Notice, type NoticeState, useFailureText } from './Notice';
 import { CustomerChatWarnings } from './CustomerChatWarnings';
 import { PartyForm } from './PartyForm';
 import { PartnerName } from '../partners/PartnerSelect';
+import { CustomerReferrer } from './CustomerReferrer';
 import { PrintLink } from '../print/PrintLink';
 
 type Mode = 'view' | 'edit' | 'contact' | 'party';
@@ -229,6 +230,10 @@ export function CustomerDetail({ id }: { id: string }) {
           <dt>{t('acquiredViaOutlet')}</dt>
           <dd>
             <PartnerName partner={customer.acquiredViaOutlet} />
+          </dd>
+          <dt>{t('referredBy')}</dt>
+          <dd>
+            <CustomerReferrer customer={customer} canEdit={canEdit} onChanged={setCustomer} />
           </dd>
           <dt>{tc('status')}</dt>
           <dd>{customer.isActive ? tc('active') : tc('inactive')}</dd>

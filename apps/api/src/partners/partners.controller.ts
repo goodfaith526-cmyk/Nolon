@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { PARTNER_KINDS, type Page, type PartnerDto, type PartnerSummaryDto } from '@nolon/shared';
+import {
+  PARTNER_KINDS,
+  REFERRAL_WINDOW_MAX_DAYS,
+  type Page,
+  type PartnerDto,
+  type PartnerSummaryDto,
+} from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
@@ -32,6 +38,7 @@ const partnerFields = {
   supplierId: z.uuid().nullish(),
   currency: currencyCode,
   notes: optionalText(2000),
+  referralWindowDays: z.number().int().min(1).max(REFERRAL_WINDOW_MAX_DAYS).nullish(),
 };
 
 const createBody = z.object({ branchId: z.uuid(), ...partnerFields }).strict();
@@ -78,5 +85,15 @@ export class PartnersController {
     @Body() body: unknown,
   ): Promise<PartnerDto> {
     return this.partners.update(user, id, parse(updateBody, body));
+  }
+
+  /** Plan 18, 3: a new customer code for a referrer (the old one stops linking). */
+  @Post(':id/referral-code')
+  @RequirePermission('partners:update')
+  issueReferralCode(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<PartnerDto> {
+    return this.partners.issueReferralCode(user, id);
   }
 }

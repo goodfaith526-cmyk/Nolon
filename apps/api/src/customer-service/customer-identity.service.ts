@@ -6,6 +6,8 @@ import { Prisma, type CustomerProfile } from '../generated/prisma/client.js';
 import { nextSequenceValue } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import { PartnerRefsService } from '../partners/partner-refs.service.js';
+import { REFERRAL_CODE_PATTERN } from '@nolon/shared';
 import {
   CustomerIdentityAuth,
   identityError,
@@ -46,6 +48,7 @@ export class CustomerIdentityService {
     private readonly prisma: PrismaService,
     private readonly auth: CustomerIdentityAuth,
     private readonly customers: CustomersService,
+    private readonly partnerRefs: PartnerRefsService,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -334,7 +337,20 @@ export class CustomerIdentityService {
         // booking, invoice or entry; the answer to the bot is unchanged.
         // Owner, 2026-11-07: also with warnings: they never stop the file from filling.
         if (this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED && profile && !identity.blocked) {
+          // Plan 18, 3: a code counts only on the capture that made this profile; the customer file
+          // it makes now is then new too (botAccountInTx links only a file it creates).
+          // A phone the person brings that another customer or profile holds means he may be
+          // known already: no link (the file is still made, the phone a warning).
+          const code = created ? input.referral?.code : undefined;
+          let referrerId =
+            code && REFERRAL_CODE_PATTERN.test(code)
+              ? await this.partnerRefs.liveReferrerByCodeInTx(tx, code)
+              : null;
+          for (const p of referrerId ? phones : []) {
+            if (await this.phoneTaken(tx, companyId, p, profile.id)) referrerId = null;
+          }
           await this.customers.channelAccountInTx(tx, {
+            referrerId,
             profile,
             previousName: created ? null : beforeName,
             // A website visitor's file waits for the name they give (owner, 2026-11-06).

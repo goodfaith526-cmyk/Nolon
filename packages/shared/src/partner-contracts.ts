@@ -27,6 +27,8 @@ export const DEFAULT_COMMISSION_EVENT: Readonly<Record<PartnerKind, CommissionEv
   ORIGIN_CONSOLIDATOR: 'DEPARTED',
   OVERSEAS_AGENT: 'INVOICED',
   DISTRIBUTOR: 'DELIVERED',
+  // Plan 18, 4.4: a broker is paid when the customer pays.
+  REFERRER: 'INVOICED',
 };
 
 export interface PartnerContractDto {

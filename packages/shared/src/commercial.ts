@@ -328,6 +328,9 @@ export interface CustomerDto extends CustomerSummaryDto {
   segmentCode: string | null;
   /** The sales outlet that brought the customer. */
   acquiredViaOutlet: PartnerRefDto | null;
+  /** The referral broker who registered the customer (plan 18), and since when. */
+  referredBy: PartnerRefDto | null;
+  referredAt: string | null;
   createdAt: string;
   contacts: CustomerContactDto[];
   parties: PartyDto[];
@@ -885,6 +888,10 @@ export const FORM_REFUSALS = [
   // A sales outlet, origin consolidator or distributor named on a customer, quotation, booking or
   // shipment is not an active partner of that kind in its branches.
   'PARTNER_NOT_USABLE',
+  // Plan 18: a referrer stays a referrer and no other kind becomes one; only a referrer has a
+  // customer code or a first-shipment expiry.
+  'REFERRER_KIND_FIXED',
+  'NOT_A_REFERRER',
   // A booking made from a quotation keeps the quotation's sales outlet.
   'QUOTED_OUTLET_FIXED',
   // A customer segment that is unknown or no longer in use.
@@ -1025,4 +1032,11 @@ export function cbmOf(
   const tenThousandths = (product + 50_000_000n) / 100_000_000n;
   const text = tenThousandths.toString().padStart(5, '0');
   return `${text.slice(0, -4)}.${text.slice(-4)}`;
+}
+
+/** Plan 18, 3: staff set, change or clear a customer's referral broker, always with a reason. */
+export interface CustomerReferrerInput {
+  /** A referrer partner, or null to clear. */
+  partnerId: string | null;
+  reason: string;
 }

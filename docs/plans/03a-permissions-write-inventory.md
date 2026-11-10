@@ -117,6 +117,7 @@
 - POST `/customers/:id/deactivate` · `CustomersController.deactivate` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/:id/parties` · `CustomersController.addParty` · `customers/customers.controller.ts` · customers:update
 - PATCH `/customers/:id/parties/:partyId` · `CustomersController.updateParty` · `customers/customers.controller.ts` · customers:update
+- POST `/customers/:id/referrer` · `CustomersController.setReferrer` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/import` · `CustomersImportController.commit` · `customers/customers-import.controller.ts` · customers:create
 - POST `/customers/import/preview` · `CustomersImportController.preview` · `customers/customers-import.controller.ts` · customers:create
 - POST `/expenses` · `ExpensesController.create` · `expenses/expenses.controller.ts` · expenses:create
@@ -178,6 +179,7 @@
 - POST `/partner-statements/:id/cancel` · `CommissionsController.cancelStatement` · `commissions/commissions.controller.ts` · partner_commissions:update
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/referral-code` · `PartnersController.issueReferralCode` · `partners/partners.controller.ts` · partners:update
 - POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create
 - POST `/partners/:partnerId/statements` · `CommissionsController.createStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
