@@ -5,6 +5,10 @@ The owner asked on 2026-11-09 for a review that makes Nolon ready for «a compan
 findings (م1 to م3) are about the books, and the owner said «ابدا» (2026-11-09 23:33). This is the plan. The
 build comes in the PRs of section 9, each one after this plan has the reviewer's OK.
 
+**Group structure (owner correction, 2026-11-10 02:12):** «الشركة الام القابضة حتكون مسجلة في هونغ كونغ،
+السعودية حتكون وكيل، الصين فيها وكيل، والامارات وكيل، ومصر والسودان». The parent is a holding company registered
+in Hong Kong. Saudi Arabia, China, the UAE, Egypt and Sudan are its agents (وكلاء). Section 1 models that.
+
 **Why now.** Posted journal entries never change (AGENTS.md rule 3). Whatever structure the first real entry is
 posted in, it stays in forever. So this lands **before the opening balances and the first real entry in
 production**, not after go-live.
@@ -23,11 +27,22 @@ production**, not after go-live.
 ## 1. Legal entities
 
 **⭐ A new master `legal_entities`. Every branch belongs to exactly one. The entity is the unit of books:
-currency, periods, numbering and, later, tax.**
+currency, periods, numbering and, later, tax. The Hong Kong holding is the group's parent entity, and every
+country agent that runs branches in Nolon is an entity of its own, with its own books.**
+
+**Why agents are entities and not partners (decision ⭐).** An agent here runs whole branches. It receives the
+goods, collects cash in its own currency, pays local costs, has its own staff, and closes its own months. That
+needs a ledger, periods and its own invoice numbers, which a partner record does not have (`Partner` holds
+commission terms and a statement, and no books). Modelling agents as entities also keeps one agent's books apart
+from another's, while the holding sees the whole group in USD. The holding's own share of each agent's business
+(agency fee, profit share or recharge) is a movement between two entities: plan 17 (section 6) builds it. If one
+day an agent is a small third party that keeps its books outside Nolon and only sends shipments, it stays a
+`Partner` with commissions, as outlets and consolidators are today. The choice is per agent.
 
 - `legal_entities`: `id`, `code` (2 to 4 capitals, unique, used in numbers), `name_en`, `name_ar`,
-  `country_code` (ISO 3166-1), `functional_currency` (FK to `currencies`), `tax_registration_no` (nullable, for
-  plan 17 tax), `is_active`, timestamps.
+  `country_code` (ISO 3166-1), `kind` (`HOLDING` or `AGENT`), `parent_id` (the holding, null only on the
+  holding; one level, checked), `functional_currency` (FK to `currencies`), `tax_registration_no` (nullable, for
+  a later tax plan), `is_active`, timestamps. Exactly one active `HOLDING` (partial unique index).
 - `branches.legal_entity_id` (FK, NOT NULL after the migration fills it).
 - `journal_entries.legal_entity_id`: copied from the branch when the draft is written, and checked by the
   trigger to equal the branch's entity. Reports filter on it without a join, and the history keeps the entity it
@@ -44,17 +59,23 @@ currency, periods, numbering and, later, tax.**
 - Screen: Settings → Legal entities (list, add, edit), and the entity on the branch form. Permission
   `legal_entities:manage` (Administrator by default), in `ar.json` and `en.json`.
 
-**Default entities made by the migration** (the accountant can change them until the first real posting):
+**Entities** (the accountant can change currencies and names until the first real posting):
 
-| Code | Country | Branches      | Functional currency                                                                                                       |
-| ---- | ------- | ------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| AE   | AE      | DXB           | AED                                                                                                                       |
-| SA   | SA      | JED           | SAR                                                                                                                       |
-| SD   | SD      | PTS, ATB, KRT | **USD ⭐** (SDG loses value fast and Nolon already prices Sudan in USD; the accountant decides, before the first posting) |
+| Code | Kind    | Country | Branches today | Functional currency                                                                             | Made by       |
+| ---- | ------- | ------- | -------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| HK   | HOLDING | HK      | none yet       | **USD ⭐** (the group reports in USD already; HKD is pegged to USD; the accountant decides)     | the migration |
+| SA   | AGENT   | SA      | JED            | SAR                                                                                             | the migration |
+| AE   | AGENT   | AE      | DXB            | AED                                                                                             | the migration |
+| SD   | AGENT   | SD      | PTS, ATB, KRT  | **USD ⭐** (SDG loses value fast and Nolon already prices Sudan in USD; the accountant decides) | the migration |
+| EG   | AGENT   | EG      | none yet       | EGP                                                                                             | the screen    |
+| CN   | AGENT   | CN      | none yet       | CNY                                                                                             | the screen    |
 
-The migration makes one entity per distinct `branches.country_code`, named after the country, with the currency
-above (AED, SAR, else the branch's default currency, except SD = USD). It is plain data, so a test database with
-other branches still migrates.
+The migration makes the HK holding, then one agent entity per distinct `branches.country_code`, named after the
+country, with its parent set to HK and the currency above (AED, SAR, else the branch's default currency, except
+SD = USD). It is plain data, so a test database with other branches still migrates. Egypt and China have no
+branch yet: their entities are added on the screen together with their first branch (a branch needs an entity),
+and their currencies must exist in the currencies master. The holding posts only once it has a branch of its own
+(for example `HKG`), added on the screen when the holding starts to book; entries stay branch-owned (rule 2).
 
 ## 2. Three amounts per line: transaction, local, USD
 
@@ -145,13 +166,16 @@ owner decided.**
 
 ## 6. What does not change, and what is out of scope
 
-- **Intercompany is out of scope (⭐, a later plan).** Shared shipments cross branches and, with this plan,
+- **Intercompany between the holding and the agents, and between agents, is plan 17, the next plan after this
+  one (⭐).** With a holding and five agents it is no longer a side case: each agent owes the holding its share
+  of the business, and shipments cross agents. Shared shipments cross branches and, with this plan,
   entities. For example `containerCostAllocated` (`auto-journal.service.ts:908-955`) books a container's cost in
   the container's branch against every shipment in it, including other branches' shipments; revenue billed in one
   entity for a leg done by another is the same. With one entity per entry every book balances, but a JED
-  container carrying PTS shipments leaves Sudan's shipment costs in SA's profit and loss with no recharge. A
-  later plan adds due-to and due-from accounts and recharges (also review finding م7, paying in another
-  country). Until then, profit per shipment stays a group report in USD.
+  container carrying PTS shipments leaves Sudan's shipment costs in SA's profit and loss with no recharge. Plan
+  17 adds due-to and due-from accounts between entities, the agent's share to the holding, recharges, paying in
+  another country (review finding م7), and the eliminations that a consolidated group report in USD needs.
+  Until then, each entity's books balance on their own and profit per shipment stays a group report in USD.
 - **Unrealised FX revaluation is out of scope (a later plan, review finding م9).** Open USD receivables and
   payables in an SAR or AED book need revaluing at month end under IFRS (IAS 21). The accountant should know it
   is not covered yet.
@@ -168,7 +192,8 @@ owner decided.**
 - Unit: `journal-math` local rule, local rounding line with the master's decimals, local-only and USD-only
   adjustment lines, clearing with `amountLocal`, reversal copying local columns.
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
-  account limited to another entity; entity currency change after a posting (refused); branch moved to another
+  account limited to another entity; a second active HOLDING, or an agent with no parent or with an agent as
+  parent (refused); entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
   `ADJUSTMENT` line on a non-FX account (refused by the lines trigger); a `NORMAL` line worth 0.00 USD on a
   cost or revenue account (still posts); local amounts on the
@@ -189,7 +214,7 @@ data).
 
 | PR   | Content                                                                                                                                                                                       | Migration                                                                    |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 16-1 | `legal_entities`, `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings                                         | **Non-additive** (branches NOT NULL, accounting table): owner OK + label     |
+| 16-1 | `legal_entities` (HK holding + agents), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings                   | **Non-additive** (branches NOT NULL, accounting table): owner OK + label     |
 | 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label |
 | 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label              |
 
@@ -198,6 +223,10 @@ ceremony (owner rule 2026-10-28); production must take its backup before 16-1 if
 
 ## 10. Questions for the NOLON accountant (they override the ⭐ choices)
 
-1. How many legal companies are there (UAE, KSA, Sudan: one each, or fewer)?
-2. In which currency is each company's official book kept (Sudan especially: USD or SDG)?
-3. Does any company need a fiscal year that does not start in January?
+1. Is each agent a company owned by the Hong Kong holding (a subsidiary), or an independent company under an
+   agency agreement? (The books are the same in Nolon; plan 17's share rule and the group report depend on it.)
+2. Who invoices the customer: the agent in its country (⭐ assumed), or the holding?
+3. What does each agent owe the holding: a fixed fee, a percentage of revenue, or the profit?
+4. In which currency is each company's official book kept (Hong Kong: USD or HKD; Sudan: USD or SDG)?
+5. Does any company need a fiscal year that does not start in January? (Hong Kong companies often close on
+   31 March.)
