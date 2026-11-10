@@ -38,64 +38,108 @@ access to the customer file and changes nothing about who can see the customer.
 
 - `PartnerKind` gains `REFERRER`. A referrer partner is a person: name, phone, country, currency (of his
   commission), and the supplier its payable goes to, as for other partners.
-- Each referrer gets a **customer code** `r_` + 8 characters `[a-z0-9]` (random, unique, kept on the partner,
-  `partners.referral_code`, null for other kinds). It is what goes in his public links:
-  `t.me/<bot>?start=r_k7m2x9qa` and `nolon.dev/?ref=r_k7m2x9qa`. Staff can issue a new code (the old one stops
-  working; customers already linked stay linked).
-- `customers.referred_by_partner_id` (nullable, FK to a `REFERRER` partner) and `customers.referred_at`.
+- Each referrer gets a **customer code** `r_` + 8 characters `[a-z0-9]` (random). Codes live in a new table,
+  `referral_codes(code PK, partner_id, created_at, retired_at)`, one live code per partner (unique partial index
+  on `partner_id` where `retired_at` is null). A new table keeps the unique indexes off the existing `partners`
+  table (F237-3) and keeps old codes recognizable. It is what goes in his public links:
+  `t.me/<bot>?start=r_k7m2x9qa` and `nolon.dev/?ref=r_k7m2x9qa`. Staff can issue a new code (the old one is
+  retired and stops linking; customers already linked stay linked).
+- `customers.referred_by_partner_id` (nullable, FK to a `REFERRER` partner), `customers.referred_at`, and
+  `customers.referral_first_shipment_id` (nullable, FK to `shipments`): the shipment that consumed the customer's
+  "first" (4.1). All three nullable, no CHECK on the existing table.
 - **Who sets it**, and when it is refused:
   1. **The bot**, on the customer's first capture: an optional `referral: { code }` beside `fields`. Nolon links
      only when this capture **created** the customer file and no other customer or profile already held the
      phone or the channel identity. An unknown, inactive or old code, a capture that found an existing customer,
      or a code on a later capture: ignored silently (the capture answers as without it, no new outcome).
+     A website chat with no signed identity creates no customer file at capture, so its `ref` is dropped; the
+     customer can still be linked by staff (F237-5).
   2. **Staff**, from the customer file, with `customers:update` and a written reason (audited): set, change or
      clear the broker. This is the owner's "only by my decision" path; the change does not move any commission
-     already accrued.
+     already accrued. A change sets `referred_at` to the time of the change (the expiry window restarts for the
+     new broker); it never touches `referral_first_shipment_id`, so a "first" already consumed stays consumed
+     and the new broker earns only on what he brings in person (F237-4).
   3. **The broker himself**, from his own screen (18-4): name and phone only. Refused when the phone already
-     belongs to a customer (`CUSTOMER_EXISTS`, without saying whose).
+     belongs to a customer (`CUSTOMER_EXISTS`, without saying whose). Because that answer tells whether a phone is
+     a Nolon customer, each broker has at most 20 refused attempts a day (then `TOO_MANY_ATTEMPTS` until the next
+     day in his branch), and every refusal is audited with the phone hashed (F237-5).
 - The customer file shows «جابه: المندوب فلان» to staff who can view customers.
 
 ## 4. Commission
 
-### 4.1 The first paid shipment
+### 4.1 Two facts, one decision (independent of the order of receipt and payment)
 
-- `CommissionRole` gains `REFERRER`, and `shipments` gains `referrer_id` (nullable, FK to a `REFERRER` partner)
-  and `referrer_reason` (`FIRST_SHIPMENT` | `BROUGHT_IN_PERSON`), both null or both set.
-- **When it is decided:** at the approval of the shipment's first customer invoice (since 13-4, the window taking
-  the customer's cash; the `INVOICED` event). In that transaction, before the commission sync: if the shipment has
-  no referrer yet, its customer has a broker, and no **other** shipment of that customer holds
-  `referrer_reason = FIRST_SHIPMENT` and is not cancelled, the shipment gets the broker with `FIRST_SHIPMENT`.
-  The customer row is locked (`FOR UPDATE`) first, so two invoices approved at the same moment cannot both be
-  first.
-- **Expiry (optional):** `partners.referral_window_days` (nullable, default null = no limit), edited on the
-  partner screen. When set, the first shipment counts only if its invoice date is within that many days of
-  `customers.referred_at`.
-- A first shipment that is later **cancelled** gives its commission back (the existing sync reverses the slot),
-  and the customer's next paid shipment becomes the first.
+At the window, goods receipt and payment (`collect`, which approves the invoice since 13-4) are separate steps,
+in either order (F237-1). So a shipment keeps two separate facts, and the commission slot is **derived** from
+them by one function, whatever happened first:
+
+- New table `shipment_referrals(shipment_id PK FK, brought_by_partner_id, referrer_id, referrer_reason,
+first_for_customer_id, updated_at)`, with a CHECK that `referrer_id` and `referrer_reason`
+  (`FIRST_SHIPMENT` | `BROUGHT_IN_PERSON`) are both null or both set. A new table, so its CHECK and FKs are
+  additive (F237-3); nothing is added to `shipments`.
+  - `brought_by_partner_id`: the broker the clerk picked at receipt (4.3). Always kept, even when he does not get
+    the commission.
+  - `first_for_customer_id`: set when this shipment consumed its customer's "first".
+  - `referrer_id`, `referrer_reason`: the commission slot, the output of `decideReferrerInTx`.
+- `CommissionRole` gains `REFERRER`; `ShipmentCommissionFacts.partners.REFERRER` is `shipment_referrals.referrer_id`.
+
+### 4.2 The first paid shipment
+
+- **"First" is consumed at the approval of the shipment's first customer invoice** (the `INVOICED` event, the
+  window taking the cash), whether or not the shipment already has a broker picked at receipt. In that
+  transaction: if the customer has a broker, `referral_first_shipment_id` is null (or points to a cancelled
+  shipment), and the expiry allows it, then `customers.referral_first_shipment_id` = this shipment and
+  `shipment_referrals.first_for_customer_id` = the customer. Then `decideReferrerInTx` runs, then the commission
+  sync.
+- **`decideReferrerInTx`** (the only writer of the slot), called at receipt, at first invoice approval, at
+  cancellation and at a staff correction:
+  1. this shipment consumed its customer's first → the customer's broker, `FIRST_SHIPMENT`;
+  2. else a broker was picked at receipt → that broker, `BROUGHT_IN_PERSON`;
+  3. else no slot.
+- **Both on one shipment:** same broker → `FIRST_SHIPMENT` (counts as both, one commission). Different brokers
+  → ⭐ the customer's broker gets it (`FIRST_SHIPMENT`), because the owner's rule gives the first paid shipment to
+  whoever registered the customer; the carrier stays recorded in `brought_by_partner_id`, earns nothing on it, and
+  the first is consumed either way. The owner can flip this precedence; it is one line in `decideReferrerInTx`.
+- **Expiry (optional):** `partners.referral_window_days` (nullable, default null = no limit; a nullable column,
+  no index), edited on the partner screen. When set, the first is consumed only if the invoice date is within
+  that many days of `customers.referred_at`; past it, the customer's first is never paid (the shipment can still
+  be in person).
+- **Cancelled first:** cancelling the shipment that consumed the first frees it (`referral_first_shipment_id`
+  pointing to a cancelled shipment counts as free; the cancellation clears it in the same transaction) and
+  re-runs `decideReferrerInTx` on it, so the sync reverses the commission. The **next shipment whose first
+  invoice is approved after that** becomes first; shipments already approved before are not re-examined (F237-4).
+- **Fully credited (returned) first:** it keeps the first. Its commission nets to zero through the credit note
+  (plan 07), and no later shipment becomes first. ⭐ A return is not a new chance at the first (F237-4).
 - Only the customer who **sends** counts (the shipment's customer), never the receiver.
+- **Lock order (F237-2).** In `collectOnce` the locks are taken as today (window, invoice, booking, shipment), and
+  the **customer row is the last lock**, taken only when the customer has a broker (read without a lock, then
+  `FOR UPDATE` and re-read). Cancellation takes it after the shipment too. The capture and profile writes in
+  `customers.service.ts` lock the customer and never take a window, invoice, booking or shipment lock after it,
+  so no cycle exists; 18-2 adds a test that runs a capture and an approval for the same customer at once, and
+  a code comment at each lock naming this order.
 
-### 4.2 A shipment the broker brings in person
+### 4.3 A shipment the broker brings in person
 
-- The window receipt body gains an optional `broughtByReferrerId` (a `REFERRER` partner, active). It sets the
-  shipment's referrer with `BROUGHT_IN_PERSON`. The clerk picks from active referrers by name or phone.
+- The window receipt body gains an optional `broughtByReferrerId` (a `REFERRER` partner, active). It sets
+  `shipment_referrals.brought_by_partner_id` and runs `decideReferrerInTx`. The clerk picks from active referrers
+  by name or phone.
 - It works for any customer, the broker's own or not (the owner's rule is "he carried it"), and does not link the
-  customer to him.
-- If the shipment already has `FIRST_SHIPMENT` for the same broker, nothing changes. If it has another broker's
-  `FIRST_SHIPMENT`, the receipt is refused (`REFERRER_ALREADY_SET`): one shipment, one broker commission.
-- Staff with `shipments:update` can correct the referrer on a shipment with a reason (a wrong pick); the sync gives
-  the commission to the right broker by difference, as for the consolidator today (`SHIPMENT_PARTNERS`).
+  customer to him. It never refuses: precedence (4.2) decides who is paid.
+- Staff with `shipments:update` can correct the picked broker with a reason (a wrong pick); `decideReferrerInTx`
+  runs and the sync moves the commission by difference, as for the consolidator today (`SHIPMENT_PARTNERS`).
+- Tests for both orders: receipt then payment, payment then receipt, each with the same broker, a different
+  broker, and no broker at receipt.
 
-### 4.3 Amount
+### 4.4 Amount
 
 - The referrer's **contracts** on the existing partner contracts screen: percentage of price or fixed per unit,
   per category or for every category, valid dates, approval. Default `accrual_event` for a referrer contract:
   `INVOICED` (paid). Nothing new to build here beyond allowing the kind.
 - No contract on the day of the event: nothing accrues, and the existing hold says so on the shipment.
 
-### 4.4 Posting and payment
+### 4.5 Posting and payment
 
 - The REFERRER slot posts through rule 16 like the other roles: a cost and a payable to the broker's supplier.
-  `ShipmentCommissionFacts.partners.REFERRER` is the shipment's `referrer_id`.
 - The partner statement and settlement are unchanged: monthly, after approval, credit notes reduce it.
 
 ## 5. The broker's Telegram account
@@ -118,14 +162,18 @@ created_at)`: staff issue one from the partner screen; the token `ag_` + 32 char
 
 ## 6. The message to the broker
 
-- When the REFERRER slot of a `FIRST_SHIPMENT` shipment first accrues a positive amount (an `ACCRUAL` row), the
+- When the REFERRER slot of a `FIRST_SHIPMENT` shipment accrues a positive amount (an `ACCRUAL` row), the
   same transaction queues one notice: `REFERRER_FIRST_SHIPMENT_PAID` with `eventId`, `occurredAt`,
   `referrer: { channel: 'telegram', externalId }` (his live binding), `customerFirstName` (first word of the
   customer's name), `commission: { amount, currency, currencyNameAr, decimalPlaces }` (amount as a decimal
   string; name and places from the currencies table), and `shipmentRef` (the shipment number, for tracing).
 - No binding, or the switch off: no notice is queued.
+- **At most one notice per (shipment, broker):** a unique key on `cs_partner_notices(type, shipment_id,
+partner_id)`; the insert uses `ON CONFLICT DO NOTHING`, so a later positive re-accrual (after a credit note and a
+  new invoice) sends nothing (F237-5).
 - The current outbox is per booking request (`request_id`, a sequence per request). Broker notices go in their
-  own table, `cs_partner_notices` (same columns as `cs_outbox_events` without the request, plus `partner_id` and
+  own table, `cs_partner_notices` (same columns as `cs_outbox_events` without the request, plus `partner_id`,
+  `shipment_id` and
   `payload`), sent by the same worker to the same approved endpoint of the bot's key, signed the same way.
 - The receiver answers 200 for a valid event with `{ delivered: true }` or
   `{ delivered: false, reason: 'NO_CHAT' | 'BLOCKED' | 'NOTICES_OFF' }`; Nolon records the reason and does not
@@ -155,21 +203,24 @@ The capture field is optional, so the bot can send it only after Nolon has it: 1
   his own commissions and statements. He sees no shipment detail, price, invoice or other broker. No export.
 - Every write is audited (who linked whom, the reason). Commission rows only come from the sync (rule 16).
 - Tests (AGENTS.md rule 7), including negatives: a code on an existing customer is ignored; two brokers, first
-  wins; a phone already held is refused on the broker screen; two first invoices at the same moment, one wins; a
-  cancelled first shipment passes the first to the next; expiry; in-person on a shipment with another broker's
-  first is refused; a broker user cannot read another broker's customers or commissions; link token expired,
+  wins; a phone already held is refused on the broker screen, rate-limited and audited; two first invoices at
+  the same moment, one wins; receipt then payment and payment then receipt, with the same broker, another broker
+  and none (same result either order); a cancelled first frees it for the next approved shipment only; a fully
+  credited first keeps it; a broker change resets `referred_at` and keeps a consumed first; expiry; a capture and
+  an approval for the same customer at once (no deadlock); a notice queued once per shipment and broker; a broker
+  user cannot read another broker's customers or commissions; link token expired,
   used, unknown, reused by the same subject; a subject bound to another partner; a notice not queued without a
   binding or with the switch off; the notice carries no phone and no full name.
 
 ## 9. Build, in order
 
-| PR   | Content                                                                                                                                                                                        | Migration                                                                                          |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 18-1 | `REFERRER` partner kind, `referral_code`, `referral_window_days`, `customers.referred_by_partner_id/referred_at`, capture `referral`, staff set/clear with reason, «جابه» on the customer file | Additive (enum value, nullable columns, index)                                                     |
-| 18-2 | `REFERRER` commission role, `shipments.referrer_id/referrer_reason`, first-shipment rule at invoice approval, broker at window receipt, correction                                             | Enum value on `commission_role` (a commission type): reviewer + owner OK + label if the check asks |
-| 18-3 | Broker Telegram link (tokens, bindings, endpoint, partner screen), `cs_partner_notices`, notice on first shipment, switch                                                                      | Additive (new tables)                                                                              |
-| 18-4 | Broker's own screen: `REFERRER_STAFF` role, add a customer, his customers and commissions                                                                                                      | Additive (enum value on roles) or none                                                             |
-| 18-5 | Public site: read `?ref=`, keep it, send `ref` with the first chat message (site.tgz, owner deploys)                                                                                           | None                                                                                               |
+| PR   | Content                                                                                                                                                                                                                    | Migration                                                                                                                              |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 18-1 | `REFERRER` partner kind, `referral_codes`, `referral_window_days`, `customers.referred_by_partner_id/referred_at/referral_first_shipment_id`, capture `referral`, staff set/clear with reason, «جابه» on the customer file | Additive: enum value, new table with its unique indexes, nullable columns and FKs on existing tables, no CHECK or unique index on them |
+| 18-2 | `REFERRER` commission role, `shipment_referrals`, `decideReferrerInTx`, first consumed at invoice approval, broker at window receipt, cancellation and correction, lock order                                              | New table (additive) + enum value on `commission_role` (a commission sub-ledger type): owner OK + label                                |
+| 18-3 | Broker Telegram link (tokens, bindings, endpoint, partner screen), `cs_partner_notices`, notice on first shipment, switch                                                                                                  | Additive (new tables)                                                                                                                  |
+| 18-4 | Broker's own screen: `REFERRER_STAFF` role, add a customer, his customers and commissions                                                                                                                                  | Additive (enum value on roles) or none                                                                                                 |
+| 18-5 | Public site: read `?ref=`, keep it, send `ref` with the first chat message (site.tgz, owner deploys)                                                                                                                       | None                                                                                                                                   |
 
 Each PR goes to the reviewer thread; the agent project builds its side after 18-1 (capture) and 18-3 (link and
 event) are on main and deployed. Every switch starts off; nothing is entered in production (owner rule,
@@ -180,6 +231,8 @@ event) are on main and deployed. Every switch starts off; nothing is entered in 
 - The first shipment is decided at invoice approval (paid), not at booking, so a cancelled booking never counts.
 - A broker's customer link and his private Telegram link are different, so a notice never reaches a customer.
 - In-person shipments earn for any customer, and need the clerk's pick at receipt.
-- One broker commission per shipment.
+- One broker commission per shipment. When the customer's first and another broker's in-person pick fall on one
+  shipment, the customer's broker is paid (the carrier is recorded, not paid).
+- A fully credited (returned) first shipment keeps the first; only a cancellation frees it.
 - Expiry off by default; a setting per broker.
 - Staff can change a customer's broker only with a written reason; it never moves commission already accrued.
