@@ -16,6 +16,13 @@
       retry: 'اضغط على الرسالة عشان تعيد إرسالها.',
       file: 'افتح الملف',
       image: 'صورة',
+      sizes: 'مقاس القطعة الواحدة (سم)',
+      length: 'الطول',
+      width: 'العرض',
+      height: 'الارتفاع',
+      count: 'عدد القطع',
+      send: 'إرسال',
+      fix: 'اكتب كل مقاس رقم صحيح بالسنتي (من 1 لـ 1000)، وعدد القطع (من 1 لـ 999).',
     },
     en: {
       hello:
@@ -32,6 +39,13 @@
       retry: 'Tap the message to send it again.',
       file: 'Open the file',
       image: 'Image',
+      sizes: 'Size of one piece (cm)',
+      length: 'Length',
+      width: 'Width',
+      height: 'Height',
+      count: 'Pieces',
+      send: 'Send',
+      fix: 'Write each size as a whole number of cm (1 to 1000), and the pieces (1 to 999).',
     },
   };
   function L() {
@@ -245,12 +259,102 @@
       b.type = 'button';
       b.className = 'chip';
       b.textContent = label;
+      var sizes = sizesLanguage(label);
       b.addEventListener('click', function () {
-        sendText(label.trim());
+        if (sizes) toggleSizes(b, sizes);
+        else sendText(label.trim());
       });
       answersEl.appendChild(b);
     });
     latest.el.parentNode.insertBefore(answersEl, latest.el.nextSibling);
+  }
+  // The agent's sizes button (erp-agents sizes-page.ts, SIZES_BUTTON): on Telegram it opens a
+  // window with four boxes; here the same boxes open under it. «إرسال» sends the same one line the
+  // Telegram window sends, as the visitor's own message: the agent reads it as if typed.
+  var SIZES_LABELS = { '📏 اكتب المقاسات': 'ar', '📏 Enter the sizes': 'en' };
+  function sizesLanguage(label) {
+    return Object.prototype.hasOwnProperty.call(SIZES_LABELS, label.trim())
+      ? SIZES_LABELS[label.trim()]
+      : null;
+  }
+  function toggleSizes(chip, lang) {
+    var open = answersEl && answersEl.querySelector('.sizes');
+    if (open) {
+      open.remove();
+      chip.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    var t = T[lang];
+    var f = document.createElement('form');
+    f.className = 'sizes';
+    f.noValidate = true;
+    f.setAttribute('dir', lang === 'en' ? 'ltr' : 'rtl');
+    var title = document.createElement('p');
+    title.className = 'sizes-title';
+    title.textContent = t.sizes;
+    f.appendChild(title);
+    var row = document.createElement('div');
+    row.className = 'sizes-row';
+    var boxes = {};
+    ['length', 'width', 'height', 'count'].forEach(function (id) {
+      var lab = document.createElement('label');
+      lab.className = 'sizes-box' + (id === 'count' ? ' sizes-count' : '');
+      var span = document.createElement('span');
+      span.textContent = t[id];
+      var inp = document.createElement('input');
+      inp.inputMode = 'numeric';
+      inp.autocomplete = 'off';
+      inp.maxLength = 4;
+      if (id === 'count') inp.value = '1';
+      lab.appendChild(span);
+      lab.appendChild(inp);
+      row.appendChild(lab);
+      boxes[id] = inp;
+    });
+    f.appendChild(row);
+    var note = document.createElement('p');
+    note.className = 'sizes-note';
+    note.setAttribute('role', 'status');
+    var send = document.createElement('button');
+    send.type = 'submit';
+    send.className = 'sizes-send';
+    send.textContent = t.send;
+    f.appendChild(send);
+    f.appendChild(note);
+    function whole(inp, max) {
+      var v = inp.value.trim().replace(/[٠-٩]/g, function (d) {
+        return String(d.charCodeAt(0) - 0x660);
+      });
+      return /^[0-9]{1,4}$/.test(v) && Number(v) >= 1 && Number(v) <= max ? Number(v) : null;
+    }
+    f.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var l = whole(boxes.length, 1000);
+      var w = whole(boxes.width, 1000);
+      var h = whole(boxes.height, 1000);
+      var n = whole(boxes.count, 999);
+      if (l === null || w === null || h === null || n === null) {
+        note.textContent = t.fix;
+        return;
+      }
+      sendText(
+        lang === 'en'
+          ? 'Sizes: length ' +
+              l +
+              ' cm, width ' +
+              w +
+              ' cm, height ' +
+              h +
+              ' cm, ' +
+              n +
+              (n === 1 ? ' piece' : ' pieces')
+          : 'المقاسات: الطول ' + l + ' سم، العرض ' + w + ' سم، الارتفاع ' + h + ' سم، العدد ' + n,
+      );
+    });
+    answersEl.appendChild(f);
+    chip.setAttribute('aria-expanded', 'true');
+    boxes.length.focus();
+    scrollDown();
   }
   function setTyping(on) {
     if (on && !typingEl) {
