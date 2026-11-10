@@ -68,7 +68,8 @@ valid_to, settlement_day)`, with `basis` one of `COMMISSION_PCT` (the agent earn
   its own books, and HK has the mirror account per agent (`intercompany_accounts(legal_entity_id,
 counterparty_entity_id, account_id)`, set up on the screen), with: unique `(legal_entity_id,
   counterparty_entity_id)`; `counterparty_entity_id <> legal_entity_id`; and the account usable in
-  `legal_entity_id` (`accounts.legal_entity_id` null or equal, checked by trigger). A network statement shows, per
+  `legal_entity_id` (`accounts.legal_entity_id` null or equal), checked by triggers on both sides: on the mapping,
+  and on `accounts` when `legal_entity_id` of an account that is already mapped changes. A network statement shows, per
   agent, the balance on both sides and whether they agree. **They are compared in USD**, never in local amounts
   (SA books in SAR, HK in USD, so local amounts differ by design): the agent's USD balance on its HK account
   against HK's USD balance on that agent's account, with opposite signs, flagged when the difference is more
@@ -78,11 +79,18 @@ counterparty_entity_id, account_id)`, set up on the screen), with: unique `(lega
   «العملاء والعلامة التجارية مفروض يظلو مملوكين للشركة الام والشركة المحلية وكيل»).
   - The customer file is group-level, owned by HK (it stays central, rule 2 exception): no customer-to-agent tie,
     and an agent never owns a customer or takes one along.
-  - ⭐ «Agent staff» do **not** get the network-wide customer list. They see a customer **they work with**: one
-    that has a booking, shipment, invoice or receipt in their branches. To start a booking for anyone else they
-    look a customer up by exact phone number or customer number (CS00001), which opens that one record, the same
-    lookup the bot and the windows use. No browse, search by name or export of the network's customers for agent
-    staff (`customers:export` is not in their matrix). HK staff see every customer.
+  - ⭐ «Agent staff» do **not** hold `customers:view`. They hold a new, narrower permission
+    `customers:view_served`: they see a customer **they work with**, one that has a booking, shipment, invoice or
+    receipt in their branches. To start a booking for anyone else they look the customer up **by phone number
+    only** (exact, normalised E.164; a customer number alone opens nothing, since CS numbers are sequential and
+    could be walked; a customer number is accepted only together with the matching phone). Each lookup outside the
+    worked-with scope is written to the audit log (user, customer, time). No browse, search by name or export
+    (`customers:export` is not in their matrix). HK staff keep `customers:view` and see every customer.
+  - The scope is enforced in the customers service, not in the controllers (rule 5), on every endpoint that reads a
+    customer: the list and search, `GET /customers/:id`, the customer statement, the customer picker of the booking
+    and quotation forms, and the CS/agent read routes that return customer details. 16-4 also updates the rule 2
+    exception in AGENTS.md: `customers:view` sees any customer; `customers:view_served` sees worked-with customers
+    plus phone lookup.
   - When an agent is replaced or leaves, its users are deactivated and its branches move (the move below); the
     customers, their history and their documents stay with HK and the next agent.
   - Each agent invoices the customers it serves, in its own entity (its VAT, its invoice numbers).
@@ -260,8 +268,9 @@ owner decided.**
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
   account limited to another entity; a second active HOLDING, an agent with no parent or with an agent as parent, an ownership
   outside 0 to 100, or overlapping agreement periods (refused); an agent user who cannot see another agent's
-  bookings, invoices or receipts; who sees a customer only after working with them or by exact phone or customer
-  number lookup, and cannot list, search by name or export the network's customers; a branch move that breaks any of its conditions, including a posted entry dated on or after
+  bookings, invoices or receipts; who sees a customer only after working with them or by exact phone lookup (logged), gets nothing
+  from a customer number alone or from `GET /customers/:id` of a customer outside the scope, and cannot list,
+  search by name or export the network's customers; a branch move that breaks any of its conditions, including a posted entry dated on or after
   the move date and each named open clearing balance (refused); a reversal of a pre-move entry whose lines are in
   the moved branch (posts in the original's entity, local currency of the original's entity); the network statement flagging an
   intercompany balance that does not agree on both sides; an intercompany account pair that repeats, points to
