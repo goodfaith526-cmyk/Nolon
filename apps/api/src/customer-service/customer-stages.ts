@@ -22,6 +22,13 @@ export interface PlaceRow {
   city: { nameAr: string; nameEn: string } | null;
 }
 
+/** A container as the stage reader needs it: its vessel and its two ports (plan 15-2). */
+export interface ContainerRow {
+  vesselName: string | null;
+  origin: { nameAr: string; nameEn: string };
+  destination: { nameAr: string; nameEn: string };
+}
+
 export interface TrackInput {
   state: CsBookingRequestState;
   booking: {
@@ -33,6 +40,10 @@ export interface TrackInput {
       currentLocation: PlaceRow | null;
       /** The latest status event's time, or the shipment's creation when it has none. */
       updatedAt: Date;
+      /** Plan 15-2: the shipment's own vessel; left out by a reader that shows none. */
+      vesselName?: string | null;
+      /** Plan 15-2: the container it is in (none cancelled), the newest one; null when none. */
+      container?: ContainerRow | null;
     } | null;
   } | null;
 }
@@ -60,6 +71,24 @@ function cityOf(place: PlaceRow | null): { ar: string; en: string } | null {
   if (!place) return null;
   if (place.kind === 'CITY') return { ar: place.nameAr, en: place.nameEn };
   return place.city ? { ar: place.city.nameAr, en: place.city.nameEn } : null;
+}
+
+/**
+ * Plan 15-2: the vessel (the shipment's own, else its container's) and the container's ports, for
+ * the bot to name at sea and at the ports. Blank vessel names count as none.
+ */
+function voyageOf(
+  own: string | null,
+  container: ContainerRow | null,
+): Pick<CsShipmentTrackDto, 'vessel' | 'loadingPort' | 'arrivalPort'> {
+  const vessel = own?.trim() || container?.vesselName?.trim() || null;
+  return {
+    vessel,
+    loadingPort: container ? { ar: container.origin.nameAr, en: container.origin.nameEn } : null,
+    arrivalPort: container
+      ? { ar: container.destination.nameAr, en: container.destination.nameEn }
+      : null,
+  };
 }
 
 /**
@@ -98,6 +127,7 @@ export function trackOf(
           ? cityOf(shipment.destination)
           : cityOf(shipment.currentLocation),
     updatedAt: shipment.updatedAt.toISOString(),
+    ...voyageOf(shipment.vesselName ?? null, shipment.container ?? null),
   };
   return stage === null
     ? { stage: null, attention: 'staff', shipment: track }

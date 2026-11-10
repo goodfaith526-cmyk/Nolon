@@ -153,3 +153,27 @@ The bot's polling stays the fallback for decisions; stage notices come only from
 Order: 15-3 does not depend on the bot and is built first. 15-2 merges after the agent project deploys the new stage
 codes (rule: the agent compat change goes first). Turning notices on (section 4) can happen at any time; it is a
 switch, not code.
+
+## 7. Amendment for 15-2 (owner, 2026-11-10)
+
+The owner approved the bookings bot's customer journey step by step on 2026-11-10. It names the stages the bot tells
+the customer about: collection hub, port of loading, on board (the vessel's name), port of arrival (its name), customs,
+distribution hub, road, city office, delivery. 15-2 follows it:
+
+- **Two new stages, not three**:
+  - `LOADED` «في ميناء الإرسال» (status LOADED), right after AT_ORIGIN_HUB;
+  - `IN_CUSTOMS` «تحت التخليص الجمركي» (status CUSTOMS_IN_PROGRESS), right after AT_PORT.
+  - OUT_FOR_DELIVERY stays inside AT_DESTINATION_HUB, as today.
+- AT_PORT is renamed «وصلت ميناء الوصول» / "Arrived at the port of arrival", since customs now has its own stage.
+  As in section 2, the rename applies only while the row still carries its seed name. A status moves only while it
+  still maps to its seed stage, so an Administrator's own mapping is kept.
+- **The vessel and the ports in the read**: a request's `shipment` gains three fields:
+  - `vessel`: the shipment's own vessel, else its container's;
+  - `loadingPort` and `arrivalPort`: the container's port of loading and port of discharge, by their own names.
+
+  The container is the newest one the shipment is in that is not cancelled. Any field without a value is null. The
+  bot names them as facts and writes its own words.
+
+- Agent impact, unchanged in kind: add `LOADED` to `BEFORE_LEAVING_STAGES` and `IN_CUSTOMS` to `LEFT_ORIGIN_STAGES` in
+  `request-facts.ts`. This goes first, before 15-2 reaches the servers. The three new fields are optional for the
+  bot: its schema ignores fields it does not know.

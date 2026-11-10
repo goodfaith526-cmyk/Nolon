@@ -821,6 +821,17 @@ export interface CsShipmentTrackDto {
   /** When its status last changed (the latest status event). */
   updatedAt: string;
   /**
+   * Plan 15-2: the vessel carrying it, as staff recorded it (the shipment's own, else its
+   * container's); null when none is recorded. A fact for the bot to name, not a promise.
+   */
+  vessel: string | null;
+  /**
+   * Plan 15-2: its container's port of loading and port of arrival (the places' own names, not
+   * their cities); null when it is in no container.
+   */
+  loadingPort: { ar: string; en: string } | null;
+  arrivalPort: { ar: string; en: string } | null;
+  /**
    * Plan 09 amendment 4: the public tracking page (what the shipment's QR opens), for the bot to
    * show or draw as a QR; null when NOLON has no public address configured.
    */
