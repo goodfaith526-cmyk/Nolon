@@ -102,7 +102,7 @@ describe('the permissions screen (plan 03, P-2 and P-3)', () => {
     }).expect(403);
     const catalog = (await get(admin, '/access-control/catalog').expect(200))
       .body as AccessCatalogDto;
-    expect(catalog.teams.filter((team) => team.systemRole)).toHaveLength(11);
+    expect(catalog.teams.filter((team) => team.systemRole)).toHaveLength(12);
     expect(catalog.grantable).not.toContain('users:view');
     expect(catalog.grantable).not.toContain('access_control:update');
     expect(catalog.branches.map((b) => b.code)).toContain('KRT');
