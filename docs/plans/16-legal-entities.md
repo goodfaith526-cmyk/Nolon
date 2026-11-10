@@ -47,6 +47,9 @@ same branches, bookings and screens; only the books behind them differ.
 agent layer: the branch record itself carries the agent fields.
 
 - `branches.agent_mode`: `OWNED` or `INDEPENDENT`, the mode of the table above, per branch.
+- **Both kinds can sit side by side, even in one country** (owner, 2026-11-10 02:16): for example an owned
+  branch in Jeddah (in the SA subsidiary) and an independent agent in Riyadh (under HK). Each branch switches
+  kind later through the move below.
 - An `OWNED` branch belongs to a subsidiary entity. Several owned branches of one country may share one entity
   (for example PTS, ATB and KRT in one Sudan company), because the statutory books are per company, not per
   branch.
