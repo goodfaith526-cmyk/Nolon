@@ -336,21 +336,31 @@ export class CustomerIdentityService {
         // customer from the first message, named from the channel until a name is given. No
         // booking, invoice or entry; the answer to the bot is unchanged.
         // Owner, 2026-11-07: also with warnings: they never stop the file from filling.
-        if (this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED && profile && !identity.blocked) {
-          // Plan 18, 3: a code counts only on the capture that made this profile; the customer file
-          // it makes now is then new too (botAccountInTx links only a file it creates).
-          // A phone the person brings that another customer or profile holds means he may be
-          // known already: no link (the file is still made, the phone a warning).
+        // Plan 18, 3 (F238-1): the customer code of the capture that made the profile is kept on
+        // it, and links the customer file when that is made (now, or on a later message once a
+        // name comes, or by a booking). Only a live code of an active referrer, and only when no
+        // other customer or profile holds a phone the person brings: he may be known already. A
+        // phone like that brought later, before the file is made, drops it.
+        if (profile && !identity.blocked) {
           const code = created ? input.referral?.code : undefined;
-          let referrerId =
+          const referrerId =
             code && REFERRAL_CODE_PATTERN.test(code)
               ? await this.partnerRefs.liveReferrerByCodeInTx(tx, code)
-              : null;
+              : (profile.referralPartnerId ?? null);
+          let known = false;
           for (const p of referrerId ? phones : []) {
-            if (await this.phoneTaken(tx, companyId, p, profile.id)) referrerId = null;
+            if (await this.phoneTaken(tx, companyId, p, profile.id)) known = true;
           }
+          const keep = known ? null : referrerId;
+          if (keep !== profile.referralPartnerId) {
+            profile = await tx.customerProfile.update({
+              where: { id: profile.id },
+              data: { referralPartnerId: keep },
+            });
+          }
+        }
+        if (this.env.CS_CUSTOMER_IDENTITY_ACCOUNT_ENABLED && profile && !identity.blocked) {
           await this.customers.channelAccountInTx(tx, {
-            referrerId,
             profile,
             previousName: created ? null : beforeName,
             // A website visitor's file waits for the name they give (owner, 2026-11-06).

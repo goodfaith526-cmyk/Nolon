@@ -65,6 +65,12 @@ describe('Referral brokers (plan 18-1)', () => {
     ...extra,
   });
   type Sender = ReturnType<typeof sender>;
+  /** The same person's next message. */
+  const again = (from: Sender) => ({
+    ...from,
+    eventId: randomUUID(),
+    observedAt: new Date().toISOString(),
+  });
   const capture = (from: Sender, extra: object = {}) => ({
     schemaVersion: 'nolon.customer-identity/1',
     conversationId: randomUUID(),
@@ -312,6 +318,96 @@ describe('Referral brokers (plan 18-1)', () => {
         );
         expect(customer.referredByPartnerId).toBeNull();
       }
+    });
+
+    it('keeps the code of a capture with no name and links the file a later message makes (F238-1)', async () => {
+      const broker = await newPartner();
+      const from = sender();
+      const first = (
+        await postCapture(capture(from, { referral: { code: broker.referralCode } })).expect(201)
+      ).body as IdentityResult;
+      expect(await t.prisma.customer.count({ where: { profileId: first.profileId! } })).toBe(0);
+      const later = await captured(
+        capture(again(from), {
+          fields: { name: { value: 'Named Later', source: 'CUSTOMER_STATEMENT' } },
+        }),
+      );
+      expect(later.referredByPartnerId).toBe(broker.id);
+      // A code that comes only with a later message, before any file, is ignored too.
+      const other = await newPartner();
+      const quiet = sender();
+      await postCapture(capture(quiet)).expect(201);
+      const named = await captured(
+        capture(again(quiet), {
+          fields: { name: { value: 'Code Too Late', source: 'CUSTOMER_STATEMENT' } },
+          referral: { code: other.referralCode },
+        }),
+      );
+      expect(named.referredByPartnerId).toBeNull();
+    });
+
+    it('links no one once the broker is inactive when the file is made', async () => {
+      const broker = await newPartner();
+      const from = sender();
+      await postCapture(capture(from, { referral: { code: broker.referralCode } })).expect(201);
+      await patch(`/partners/${broker.id}`, cookies.jedManager, { isActive: false }).expect(200);
+      const customer = await captured(
+        capture(again(from), {
+          fields: { name: { value: 'Broker Gone', source: 'CUSTOMER_STATEMENT' } },
+        }),
+      );
+      expect(customer.referredByPartnerId).toBeNull();
+    });
+
+    it('links no one when another customer took the profile’s phone before the file (F238-2)', async () => {
+      const broker = await newPartner();
+      const phone = uniquePhone();
+      const from = sender();
+      const first = (
+        await postCapture(
+          capture(from, {
+            fields: { phone: { value: phone, source: 'CUSTOMER_STATEMENT' } },
+            referral: { code: broker.referralCode },
+          }),
+        ).expect(201)
+      ).body as IdentityResult;
+      const profile = await t.prisma.customerProfile.findUniqueOrThrow({
+        where: { id: first.profileId! },
+      });
+      expect(profile).toMatchObject({ phone, referralPartnerId: broker.id });
+      await post('/customers', cookies.jedSales, {
+        kind: 'INDIVIDUAL',
+        name: 'Took The Phone',
+        phone,
+      }).expect(201);
+      const customer = await captured(
+        capture(again(from), {
+          fields: { name: { value: 'Phone Taken Meanwhile', source: 'CUSTOMER_STATEMENT' } },
+        }),
+      );
+      expect(customer.phone).toBeNull();
+      expect(customer.referredByPartnerId).toBeNull();
+    });
+
+    it('drops a kept code when a later message brings a phone another customer holds', async () => {
+      const broker = await newPartner();
+      const phone = uniquePhone();
+      await post('/customers', cookies.jedSales, {
+        kind: 'INDIVIDUAL',
+        name: 'Holds The Phone',
+        phone,
+      }).expect(201);
+      const from = sender();
+      await postCapture(capture(from, { referral: { code: broker.referralCode } })).expect(201);
+      const customer = await captured(
+        capture(again(from), {
+          fields: {
+            name: { value: 'Known After All', source: 'CUSTOMER_STATEMENT' },
+            phone: { value: phone, source: 'CUSTOMER_STATEMENT' },
+          },
+        }),
+      );
+      expect(customer.referredByPartnerId).toBeNull();
     });
 
     it('links no one whose typed phone another customer already holds', async () => {

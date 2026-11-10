@@ -1,11 +1,12 @@
--- Plan 18-1 (referral brokers): a partner kind, a code table, and nullable links on customers.
-
+-- Plan 18-1 (referral brokers): a partner kind, a code table, and nullable links on customers and profiles.
 -- AlterEnum
 ALTER TYPE "partner_kind" ADD VALUE 'REFERRER';
 
 -- AlterTable
-ALTER TABLE "customers" ADD COLUMN     "referral_first_shipment_id" UUID,
-ADD COLUMN     "referred_at" TIMESTAMPTZ(3),
+ALTER TABLE "customer_profiles" ADD COLUMN     "referral_partner_id" UUID;
+
+-- AlterTable
+ALTER TABLE "customers" ADD COLUMN     "referred_at" TIMESTAMPTZ(3),
 ADD COLUMN     "referred_by_partner_id" UUID;
 
 -- AlterTable
@@ -23,25 +24,25 @@ CREATE TABLE "referral_codes" (
 );
 
 -- CreateIndex
-CREATE INDEX "referral_codes_partner_id_idx" ON "referral_codes"("partner_id");
-
--- CreateIndex
 CREATE UNIQUE INDEX "referral_codes_live_partner_id_key" ON "referral_codes"("live_partner_id");
 
 -- CreateIndex
-CREATE INDEX "customers_referred_by_partner_id_idx" ON "customers"("referred_by_partner_id");
+CREATE INDEX "referral_codes_partner_id_idx" ON "referral_codes"("partner_id");
 
 -- CreateIndex
-CREATE INDEX "customers_referral_first_shipment_id_idx" ON "customers"("referral_first_shipment_id");
+CREATE INDEX "customer_profiles_referral_partner_id_idx" ON "customer_profiles"("referral_partner_id");
+
+-- CreateIndex
+CREATE INDEX "customers_referred_by_partner_id_idx" ON "customers"("referred_by_partner_id");
 
 -- AddForeignKey
 ALTER TABLE "customers" ADD CONSTRAINT "customers_referred_by_partner_id_fkey" FOREIGN KEY ("referred_by_partner_id") REFERENCES "partners"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "customers" ADD CONSTRAINT "customers_referral_first_shipment_id_fkey" FOREIGN KEY ("referral_first_shipment_id") REFERENCES "shipments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "referral_codes" ADD CONSTRAINT "referral_codes_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "referral_codes" ADD CONSTRAINT "referral_codes_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "customer_profiles" ADD CONSTRAINT "customer_profiles_referral_partner_id_fkey" FOREIGN KEY ("referral_partner_id") REFERENCES "partners"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- Plan 18, 3: one live code per referrer (live_partner_id is unique and set exactly while the code
 -- is live, to its own partner); a code is `r_` + 8 of [a-z0-9].

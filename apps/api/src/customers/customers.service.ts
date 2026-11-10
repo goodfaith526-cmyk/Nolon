@@ -381,12 +381,6 @@ export class CustomersService {
       };
       expectedVersion: number | undefined;
       apiClientId: string;
-      /**
-       * Plan 18, 3: the referrer of the customer code this new profile came with. Linked only
-       * when this call creates the file and keeps the profile's phone (one another customer holds
-       * means the person may be known already: no link).
-       */
-      referrerId?: string | null;
     },
   ): Promise<{ outcome: CsInstantAccountOutcome; customerId: string | null }> {
     const { profile } = input;
@@ -424,7 +418,19 @@ export class CustomersService {
     const phoneUnverified = phone !== null && !profile.phoneVerified;
     const place = await profilePlaceInTx(tx, profile);
     const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
-    const referrerId = input.referrerId && phone === profile.phone ? input.referrerId : null;
+    // Plan 18, 3 (F238-1): the referrer kept on the profile is linked to the file made now, while
+    // he is still an active referrer, unless the profile's phone was left off (another customer
+    // holds it now: the person may be known already).
+    const pending = (
+      await tx.customerProfile.findUniqueOrThrow({
+        where: { id: profile.id },
+        select: { referralPartnerId: true },
+      })
+    ).referralPartnerId;
+    const referrerId =
+      pending && phone === profile.phone && (await this.partnerRefs.activeReferrerInTx(tx, pending))
+        ? pending
+        : null;
     const customer = await tx.customer.create({
       data: {
         number,
@@ -641,8 +647,6 @@ export class CustomersService {
       /** The profile's name before this message (null for a new profile). */
       previousName?: string | null;
       apiClientId: string;
-      /** Plan 18, 3: the referrer of a new profile's customer code (botAccountInTx decides). */
-      referrerId?: string | null;
     },
   ): Promise<void> {
     const { profile } = input;
@@ -659,7 +663,6 @@ export class CustomersService {
         profile: { ...profile, name },
         expectedVersion: undefined,
         apiClientId: input.apiClientId,
-        referrerId: input.referrerId ?? null,
       });
       return;
     }
