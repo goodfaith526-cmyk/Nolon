@@ -93,10 +93,6 @@ export class PartnerRefsService {
     return rows[0]?.id ?? null;
   }
 
-  /**
-   * Plan 18, 3: a referrer staff name on a customer file: active, of the user's branches
-   * (400 on `field` otherwise, the same for one that does not exist). Share-locked until commit.
-   */
   /** Plan 18, 3: whether the partner is an active referrer now (share-locked until commit). */
   async activeReferrerInTx(tx: Tx, partnerId: string): Promise<boolean> {
     const rows = await tx.$queryRaw<{ id: string }[]>`
@@ -105,6 +101,10 @@ export class PartnerRefsService {
     return rows.length > 0;
   }
 
+  /**
+   * Plan 18, 3: a referrer staff name on a customer file: active, of the user's branches
+   * (400 on `field` otherwise, the same for one that does not exist). Share-locked until commit.
+   */
   async requireReferrerInTx(tx: Tx, user: AuthUser, partnerId: string, field: string) {
     const rows = await tx.$queryRaw<{ kind: string; branch_id: string; is_active: boolean }[]>`
       SELECT "kind"::text AS "kind", "branch_id", "is_active" FROM "partners"
