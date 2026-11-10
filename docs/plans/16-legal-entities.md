@@ -67,7 +67,7 @@ valid_to, settlement_day)`, with `basis` one of `COMMISSION_PCT` (the agent earn
 - **Intercompany current account per agent, in both books.** Each agent has a «due to / due from HK» account in
   its own books, and HK has the mirror account per agent (`intercompany_accounts(legal_entity_id,
 counterparty_entity_id, account_id)`, set up on the screen), with: unique `(legal_entity_id,
-  counterparty_entity_id)`; `counterparty_entity_id <> legal_entity_id`; and the account usable in
+counterparty_entity_id)`; `counterparty_entity_id <> legal_entity_id`; and the account usable in
   `legal_entity_id` (`accounts.legal_entity_id` null or equal), checked by triggers on both sides: on the mapping,
   and on `accounts` when `legal_entity_id` of an account that is already mapped changes. A network statement shows, per
   agent, the balance on both sides and whether they agree. **They are compared in USD**, never in local amounts
