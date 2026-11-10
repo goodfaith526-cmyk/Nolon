@@ -27,55 +27,77 @@ production**, not after go-live.
 ## 1. Legal entities
 
 **⭐ A new master `legal_entities`. Every branch belongs to exactly one. The entity is the unit of books:
-currency, periods, numbering and, later, tax. The Hong Kong holding is the group's parent entity, and every
-country agent that runs branches in Nolon is an entity of its own, with its own books.**
+currency, periods, numbering and, later, tax. The Hong Kong holding is the group's parent entity, with its own
+books. Each country is run in one of two modes, chosen per country as a setting, not as a question to the
+owner:**
 
-**Why agents are entities and not partners (decision ⭐).** An agent here runs whole branches. It receives the
-goods, collects cash in its own currency, pays local costs, has its own staff, and closes its own months. That
-needs a ledger, periods and its own invoice numbers, which a partner record does not have (`Partner` holds
-commission terms and a statement, and no books). Modelling agents as entities also keeps one agent's books apart
-from another's, while the holding sees the whole group in USD. The holding's own share of each agent's business
-(agency fee, profit share or recharge) is a movement between two entities: plan 17 (section 6) builds it. If one
-day an agent is a small third party that keeps its books outside Nolon and only sends shipments, it stays a
-`Partner` with commissions, as outlets and consolidators are today. The choice is per agent.
+| Mode                               | When                                                   | Its branches belong to      | Books                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Subsidiary**                     | The group owns the company in that country             | a `SUBSIDIARY` entity       | Its own books in its own currency, numbers and periods (needed for VAT in Saudi Arabia and the UAE)                                                                                                                                                     |
+| **Independent agent** (وكيل مستقل) | A company the group does not own, under an agency deal | the **HK holding** directly | No books in Nolon. The agent is a `Partner` of kind `OVERSEAS_AGENT` (already in the enum) on those branches, with a current account in the HK books for what it collects for HK, its commission and settlements, the way outlet windows work (plan 13) |
+
+**Why this split (decision ⭐, agreed with the coordinator's advice to the owner on 2026-11-10).** A company the
+group owns must keep its own statutory books, in its currency, with its own invoice numbers, and that is what an
+entity gives. An independent agent's own costs, staff and profit are its business, not the group's: putting them
+in Nolon would mix another company's money into the group's books. What the group needs from an independent
+agent is the money it holds for HK and what HK owes it, which is a partner current account. Both modes use the
+same branches, bookings and screens; only the books behind them differ.
 
 - `legal_entities`: `id`, `code` (2 to 4 capitals, unique, used in numbers), `name_en`, `name_ar`,
-  `country_code` (ISO 3166-1), `kind` (`HOLDING` or `AGENT`), `parent_id` (the holding, null only on the
+  `country_code` (ISO 3166-1), `kind` (`HOLDING` or `SUBSIDIARY`), `parent_id` (the holding, null only on the
   holding; one level, checked), `functional_currency` (FK to `currencies`), `tax_registration_no` (nullable, for
   a later tax plan), `is_active`, timestamps. Exactly one active `HOLDING` (partial unique index).
-- `branches.legal_entity_id` (FK, NOT NULL after the migration fills it).
+- `branches.legal_entity_id` (FK, NOT NULL after the migration fills it). Putting a country's branches under HK or
+  under its subsidiary **is** the mode setting.
+- **Independent agent current account (16-4).** `agent_accounts(partner_id, currency, account_id)`, like
+  `window_cash_accounts`: an HK account per agent and currency. Cash the agent collects for an HK invoice posts to
+  that account (a receipt whose cash side is the agent's account), the agent's commission accrues through the
+  existing partner contracts and commissions (rule 16), and a settlement (the agent pays HK the net, or HK pays
+  the agent) clears it. An agent statement shows the balance.
 - `journal_entries.legal_entity_id`: copied from the branch when the draft is written, and checked by the
   trigger to equal the branch's entity. Reports filter on it without a join, and the history keeps the entity it
   was posted in.
 - **Locks, in the database (trigger):** an entity's `functional_currency` cannot change once it has a posted
-  entry; a branch's `legal_entity_id` cannot change once the branch has a posted entry. Before that, both are
-  free, so the accountant can fix the setup.
+  entry. A branch's `legal_entity_id` is free until the branch has a posted entry; after that it changes only
+  through **the move below**.
+- **Moving a country from independent agent to subsidiary (or back) later.** Posted entries keep the entity they
+  were posted in (`journal_entries.legal_entity_id`), so history never moves. The move is a checked procedure,
+  `POST /legal-entities/branches/:id/move` with `legal_entities:manage`, refused unless: the date is the first day
+  of a month; that month and every later month are open in the target entity and every earlier month is closed
+  for the branch's current entity; and the branch has no open documents (unpaid invoices, unapplied receipts,
+  unpaid bills, open accruals, draft entries). Open balances are settled, or carried over by an entity-to-entity
+  transfer once plan 17 exists. A reversal keeps its original's entity even after the move (the trigger checks
+  `legal_entity_id` against the original's for `source = 'REVERSAL'`, not against the branch's current entity).
 - One chart of accounts stays shared by the group (one code per account, as today). An account may be limited to
   one entity (`accounts.legal_entity_id`, nullable, like `branch_id` today); a line refuses an account limited to
   another entity.
 - Posting roles: `entity_account_mappings(legal_entity_id, role, account_id)` overrides `account_mappings` for
   one entity; a role with no override uses the group account, as today. Same for charge type postings later,
   only if the accountant asks.
-- Screen: Settings → Legal entities (list, add, edit), and the entity on the branch form. Permission
-  `legal_entities:manage` (Administrator by default), in `ar.json` and `en.json`.
+- Screen: Settings → Legal entities (list, add, edit, the mode of each country, the move), and the entity on the
+  branch form. Permission `legal_entities:manage` (Administrator by default), in `ar.json` and `en.json`.
 
-**Entities** (the accountant can change currencies and names until the first real posting):
+**Starting setup** (a setting: the owner or accountant changes it on the screen, freely until the first real
+posting, then only by the move):
 
-| Code | Kind    | Country | Branches today | Functional currency                                                                             | Made by       |
-| ---- | ------- | ------- | -------------- | ----------------------------------------------------------------------------------------------- | ------------- |
-| HK   | HOLDING | HK      | none yet       | **USD ⭐** (the group reports in USD already; HKD is pegged to USD; the accountant decides)     | the migration |
-| SA   | AGENT   | SA      | JED            | SAR                                                                                             | the migration |
-| AE   | AGENT   | AE      | DXB            | AED                                                                                             | the migration |
-| SD   | AGENT   | SD      | PTS, ATB, KRT  | **USD ⭐** (SDG loses value fast and Nolon already prices Sudan in USD; the accountant decides) | the migration |
-| EG   | AGENT   | EG      | none yet       | EGP                                                                                             | the screen    |
-| CN   | AGENT   | CN      | none yet       | CNY                                                                                             | the screen    |
+| Code | Kind       | Country | Branches today | Functional currency                                                                             | Made by       |
+| ---- | ---------- | ------- | -------------- | ----------------------------------------------------------------------------------------------- | ------------- |
+| HK   | HOLDING    | HK      | none yet       | **USD ⭐** (the group reports in USD already; HKD is pegged to USD; the accountant decides)     | the migration |
+| SA   | SUBSIDIARY | SA      | JED            | SAR                                                                                             | the migration |
+| AE   | SUBSIDIARY | AE      | DXB            | AED                                                                                             | the migration |
+| SD   | SUBSIDIARY | SD      | PTS, ATB, KRT  | **USD ⭐** (SDG loses value fast and Nolon already prices Sudan in USD; the accountant decides) | the migration |
 
-The migration makes the HK holding, then one agent entity per distinct `branches.country_code`, named after the
-country, with its parent set to HK and the currency above (AED, SAR, else the branch's default currency, except
-SD = USD). It is plain data, so a test database with other branches still migrates. Egypt and China have no
-branch yet: their entities are added on the screen together with their first branch (a branch needs an entity),
-and their currencies must exist in the currencies master. The holding posts only once it has a branch of its own
-(for example `HKG`), added on the screen when the holding starts to book; entries stay branch-owned (rule 2).
+⭐ Every country with branches starts as a subsidiary. Nobody has said yet which agents the group owns, and
+starting with separate books is the safe side: for Saudi Arabia and the UAE, VAT needs a local company's books,
+and switching a country to independent agent before the first real posting is one change on the screen. Egypt
+and China have no branch yet. Their mode is chosen on the screen when their first branch is added: a new
+subsidiary entity (EGP, CNY), or the branch under HK with an `OVERSEAS_AGENT` partner.
+
+The migration makes the HK holding, then one subsidiary entity per distinct `branches.country_code`, named after
+the country, with its parent set to HK and the currency above (AED, SAR, else the branch's default currency,
+except SD = USD). It is plain data, so a test database with other branches still migrates. The holding posts
+only through branches of its own: a country in independent agent mode, or an `HKG` branch added on the screen
+when the holding starts to book; entries stay branch-owned (rule 2).
 
 ## 2. Three amounts per line: transaction, local, USD
 
@@ -192,8 +214,10 @@ owner decided.**
 - Unit: `journal-math` local rule, local rounding line with the master's decimals, local-only and USD-only
   adjustment lines, clearing with `amountLocal`, reversal copying local columns.
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
-  account limited to another entity; a second active HOLDING, or an agent with no parent or with an agent as
-  parent (refused); entity currency change after a posting (refused); branch moved to another
+  account limited to another entity; a second active HOLDING, or a subsidiary with no parent or with a subsidiary
+  as parent (refused); a branch move that breaks any of its conditions (refused), and a reversal of a pre-move
+  entry after the move (posts in the original's entity); an independent agent's collection, commission and
+  settlement clearing its current account; entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
   `ADJUSTMENT` line on a non-FX account (refused by the lines trigger); a `NORMAL` line worth 0.00 USD on a
   cost or revenue account (still posts); local amounts on the
@@ -212,21 +236,22 @@ data).
 
 ## 9. Build, in order
 
-| PR   | Content                                                                                                                                                                                       | Migration                                                                    |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 16-1 | `legal_entities` (HK holding + agents), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings                   | **Non-additive** (branches NOT NULL, accounting table): owner OK + label     |
-| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label |
-| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label              |
+| PR   | Content                                                                                                                                                                                       | Migration                                                                                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 16-1 | `legal_entities` (HK holding + subsidiaries), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings             | **Non-additive** (branches NOT NULL, accounting table): owner OK + label                             |
+| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label                         |
+| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label                                      |
+| 16-4 | Independent agent mode: `agent_accounts`, collection, commission and settlement through it, agent statement; the branch move procedure                                                        | **Additive** (new table) unless the reversal-entity trigger change lands here: then owner OK + label |
 
 Owner OK is needed once per PR for its migration (AGENTS.md rule 4). Backups: trial data only, so no backup
 ceremony (owner rule 2026-10-28); production must take its backup before 16-1 if it already holds anything real.
 
 ## 10. Questions for the NOLON accountant (they override the ⭐ choices)
 
-1. Is each agent a company owned by the Hong Kong holding (a subsidiary), or an independent company under an
-   agency agreement? (The books are the same in Nolon; plan 17's share rule and the group report depend on it.)
-2. Who invoices the customer: the agent in its country (⭐ assumed), or the holding?
-3. What does each agent owe the holding: a fixed fee, a percentage of revenue, or the profit?
+1. Which countries does the group own (subsidiary) and which are independent agents? This is a setting on the
+   screen, so the answer changes the setup, not the code; until then every country starts as a subsidiary.
+2. Who invoices the customer in a subsidiary country: the subsidiary (⭐ assumed), or the holding?
+3. What does each subsidiary owe the holding, and what commission does each independent agent earn: a fixed fee, a percentage of revenue, or the profit?
 4. In which currency is each company's official book kept (Hong Kong: USD or HKD; Sudan: USD or SDG)?
 5. Does any company need a fiscal year that does not start in January? (Hong Kong companies often close on
    31 March.)
