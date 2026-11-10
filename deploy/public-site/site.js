@@ -204,7 +204,9 @@
     if (seenIds[line.id]) {
       var mine = msgs.querySelector('[data-id="' + line.id + '"]');
       if (mine) mine.classList.remove('pending', 'failed');
-      if (mine && (!latest || line.at >= latest.at))
+      // The server's copy of the visitor's own message (shown when sent): it answers the
+      // buttons above it. A reply seen before keeps its buttons.
+      if (mine && line.from === 'visitor' && (!latest || line.at >= latest.at))
         latest = { at: line.at, el: mine, buttons: [] };
       return false;
     }
@@ -223,6 +225,11 @@
   }
   // The newest reply's answer buttons, right under it; none once the visitor has answered.
   function renderAnswers() {
+    // Polls repeat every few seconds: keep the chips (and a keyboard user's focus) while the
+    // newest line and its buttons are unchanged.
+    var key = latest && latest.buttons.length ? latest.el.getAttribute('data-id') : null;
+    if (answersEl && answersEl.getAttribute('data-for') === key) return;
+    if (!answersEl && !key) return;
     if (answersEl) {
       answersEl.remove();
       answersEl = null;
@@ -230,8 +237,10 @@
     if (!latest || !latest.buttons.length || !latest.el.parentNode) return;
     answersEl = document.createElement('div');
     answersEl.className = 'answers';
+    answersEl.setAttribute('data-for', key);
     latest.buttons.slice(0, 12).forEach(function (label) {
-      if (typeof label !== 'string' || !label.trim()) return;
+      // A label is sent as the visitor's message, which has the same 1000-character limit.
+      if (typeof label !== 'string' || !label.trim() || label.length > 1000) return;
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'chip';
