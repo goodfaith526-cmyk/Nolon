@@ -173,14 +173,14 @@ only the customer's 66.67 USD and the 18.67 USD paid to outsiders.
 
 ## 9. Build, in order (after plan 16)
 
-| PR   | Content                                                                                                 | Migration                                       |
-| ---- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| 17-1 | `HKG` branch, cross-entity posting engine (one transaction, `network_event_id`), intercompany guard     | Non-additive (journal tables): owner OK + label |
-| 17-2 | `lane_splits`, `charge_types.split_side`, split on invoice approval, reversal on credit note and cancel | Non-additive (charge types, triggers): owner OK |
-| 17-3 | Monthly network fee run (draft, then post)                                                              | Additive unless it touches journal triggers     |
-| 17-4 | Network statement, settlement documents, period lock after netting                                      | Additive                                        |
-| 17-5 | Group report in USD with eliminations; effective-dated ownership for consolidation by share             | Additive                                        |
-| 17-6 | VAT per entity: rates by charge type and destination, tax account, VAT on invoices, reverse charge      | Non-additive (invoice lines): owner OK + label  |
+| PR   | Content                                                                                                                                    | Migration                                                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| 17-1 | `HKG` branch, cross-entity posting engine (one transaction, global lock order, `network_event_id`, `posted_by_system`), intercompany guard | Non-additive (journal tables): owner OK + label                   |
+| 17-2 | `lane_splits`, `charge_types.split_side`, `bookings.payment_terms`, split on invoice approval, reversal on credit note and cancel          | Non-additive (charge types, bookings, triggers): owner OK + label |
+| 17-3 | Monthly network fee run (draft, then post)                                                                                                 | Additive unless it touches journal triggers                       |
+| 17-4 | Network statement, settlement documents, period lock after netting                                                                         | Non-additive (lock trigger on journal postings): owner OK + label |
+| 17-5 | Group report in USD with eliminations; effective-dated ownership for consolidation by share                                                | Additive                                                          |
+| 17-6 | VAT per entity: rates by charge type and destination, tax account, VAT on invoices, reverse charge                                         | Non-additive (invoice lines): owner OK + label                    |
 
 ## 10. Choices made ⭐ (the owner or accountant can change them)
 

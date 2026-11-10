@@ -62,7 +62,7 @@ valid_to, settlement_day)`, with `basis` one of `COMMISSION_PCT` (the agent earn
   and collections count for that agent automatically.
 - **Agent staff see only their own company's documents.** They are ordinary users whose branches are their
   agent's branches; branch scoping (rule 2) already limits them to those branches' bookings, shipments, invoices,
-  receipts and journals. Customers follow the rule below (they belong to HK). A team «Agent staff» with a narrow default matrix is added in the permissions screen. **HK staff**
+  receipts and journals. Customers are shared across the network (rule below). A team «Agent staff» with a narrow default matrix is added in the permissions screen. **HK staff**
   hold all branches (or the cross-branch permissions that exist today) and see the whole network.
 - **Intercompany current account per agent, in both books.** Each agent has a «due to / due from HK» account in
   its own books, and HK has the mirror account per agent (`intercompany_accounts(legal_entity_id,
