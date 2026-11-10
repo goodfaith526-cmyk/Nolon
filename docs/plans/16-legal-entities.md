@@ -46,23 +46,38 @@ books.
   `country_code` (ISO 3166-1), `kind` (`HOLDING` or `AGENT`), `parent_id` (the holding; null only on the
   holding; one level, checked), `functional_currency` (FK to `currencies`), `tax_registration_no` (nullable, for
   a later tax plan), `group_ownership_pct` (`Decimal(5,2)`, 0 to 100, CHECK; null on the holding), `is_active`,
-  timestamps. Exactly one active `HOLDING` (partial unique index). Ownership changes are kept in the audit log.
+  timestamps. Exactly one active `HOLDING` (partial unique index). Ownership changes are kept in the audit log; plan 17 adds
+  effective-dated ownership, since consolidation by share needs the ownership as of a date.
 - **Agency agreement per agent:** `agency_agreements(legal_entity_id, basis, rate, currency, valid_from,
 valid_to, settlement_day)`, with `basis` one of `COMMISSION_PCT` (the agent earns a percentage of the revenue
   it handles for the network), `REVENUE_SHARE_PCT` (the agent pays HK a percentage of its revenue) or `FIXED_FEE`
-  (monthly), and `rate` a `Decimal`. Periods do not overlap (exclusion constraint). This plan stores the terms
-  and shows them; plan 17 posts them (section 6).
+  (monthly), and `rate` a `Decimal`. CHECKs: `rate` from 0 to 100 for the two `*_PCT` bases and > 0 for
+  `FIXED_FEE`; `currency` set for `FIXED_FEE` and null otherwise (a percentage has no currency); `settlement_day`
+  from 1 to 28 (it exists in every month); `valid_to` nullable (open-ended), the period being
+  `[valid_from, valid_to)`. Periods of one agent do not overlap: an exclusion constraint on
+  `(legal_entity_id, daterange(valid_from, valid_to))`, which needs the `btree_gist` extension (16-4). This plan
+  stores the terms and shows them; plan 17 posts them (section 6).
 - `branches.legal_entity_id` (FK, NOT NULL after the migration fills it). One agent may run several branches
   (Sudan: PTS, ATB and KRT in one agent company). Windows (plan 13) stay under their branch, so their bookings
   and collections count for that agent automatically.
-- **Agent staff see only their own company.** They are ordinary users whose branches are their agent's
-  branches; branch scoping (rule 2) already limits them to those branches' bookings, shipments, invoices and
-  collections. A team «Agent staff» with a narrow default matrix is added in the permissions screen. **HK staff**
+- **Agent staff see only their own company's documents.** They are ordinary users whose branches are their
+  agent's branches; branch scoping (rule 2) already limits them to those branches' bookings, shipments, invoices,
+  receipts and journals. **Customers are the exception, on purpose (⭐):** the customer record is central (rule 2
+  exception, owner 2026-11-04), so the «Agent staff» default matrix includes `customers:view`, and agent staff can
+  find any network customer, as a sender in Jeddah books to a receiver served in Khartoum. They never see another
+  agent's documents for that customer. If the owner later wants a 0%-owned agent kept away from network customer
+  details, that is a narrower permission in a later plan, not a change to the central customer. A team «Agent staff» with a narrow default matrix is added in the permissions screen. **HK staff**
   hold all branches (or the cross-branch permissions that exist today) and see the whole network.
 - **Intercompany current account per agent, in both books.** Each agent has a «due to / due from HK» account in
   its own books, and HK has the mirror account per agent (`intercompany_accounts(legal_entity_id,
-counterparty_entity_id, account_id)`, set up on the screen). A network statement shows, per agent, the balance
-  on both sides and whether they agree. Monthly settlement entries are posted by plan 17.
+counterparty_entity_id, account_id)`, set up on the screen), with: unique `(legal_entity_id,
+  counterparty_entity_id)`; `counterparty_entity_id <> legal_entity_id`; and the account usable in
+  `legal_entity_id` (`accounts.legal_entity_id` null or equal, checked by trigger). A network statement shows, per
+  agent, the balance on both sides and whether they agree. **They are compared in USD**, never in local amounts
+  (SA books in SAR, HK in USD, so local amounts differ by design): the agent's USD balance on its HK account
+  against HK's USD balance on that agent's account, with opposite signs, flagged when the difference is more
+  than 0.01 USD per intercompany entry in the period (each side rounds to cents once per entry). Plan 17 pairs
+  entries and then also compares each pair in its transaction currency. Monthly settlement entries are posted by plan 17.
 - **Customers stay central** (rule 2 exception): there is no customer-to-agent tie. Each agent invoices the
   customers it serves, in its own entity.
 - `journal_entries.legal_entity_id`: copied from the branch when the draft is written, and checked by the
@@ -235,11 +250,12 @@ owner decided.**
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
   account limited to another entity; a second active HOLDING, an agent with no parent or with an agent as parent, an ownership
   outside 0 to 100, or overlapping agreement periods (refused); an agent user who cannot see another agent's
-  bookings or invoices; a branch move that breaks any of its conditions, including a posted entry dated on or after
+  bookings, invoices or receipts, but finds a network customer with `customers:view`; a branch move that breaks any of its conditions, including a posted entry dated on or after
   the move date and each named open clearing balance (refused); a reversal of a pre-move entry whose lines are in
   the moved branch (posts in the original's entity, local currency of the original's entity); the network statement flagging an
-  intercompany balance that does not agree on both sides; an independent agent's collection, commission and
-  settlement clearing its current account; entity currency change after a posting (refused); branch moved to another
+  intercompany balance that does not agree on both sides; an intercompany account pair that repeats, points to
+  its own entity, or uses an account of another entity (refused); agreement CHECKs (rate by basis, currency only
+  with a fixed fee, settlement day 1 to 28); entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
   `ADJUSTMENT` line on a non-FX account (refused by the lines trigger); a `NORMAL` line worth 0.00 USD on a
   cost or revenue account (still posts); local amounts on the
@@ -258,12 +274,12 @@ data).
 
 ## 9. Build, in order
 
-| PR   | Content                                                                                                                                                                                       | Migration                                                                                                                     |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 16-1 | `legal_entities` (HK holding; branches under it), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings         | **Non-additive** (branches NOT NULL, accounting table): owner OK + label                                                      |
-| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label                                                  |
-| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label                                                               |
-| 16-4 | Ownership and agency agreements, «Agent staff» team, intercompany accounts per agent and the network statement, the branch move procedure                                                     | **Non-additive** (`legal_entities` columns added after 16-1, exclusion constraint, `branches` move trigger): owner OK + label |
+| PR   | Content                                                                                                                                                                                       | Migration                                                                                                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 16-1 | `legal_entities` (HK holding; branches under it), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings         | **Non-additive** (branches NOT NULL, accounting table): owner OK + label                                                                                     |
+| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label                                                                                 |
+| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label                                                                                              |
+| 16-4 | Ownership and agency agreements, «Agent staff» team, intercompany accounts per agent and the network statement, the branch move procedure                                                     | **Non-additive** (`legal_entities` columns added after 16-1, `CREATE EXTENSION btree_gist`, exclusion constraint, `branches` move trigger): owner OK + label |
 
 Owner OK is needed once per PR for its migration (AGENTS.md rule 4). Backups: trial data only, so no backup
 ceremony (owner rule 2026-10-28); production must take its backup before 16-1 if it already holds anything real.
