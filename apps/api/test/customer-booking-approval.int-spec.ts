@@ -382,6 +382,60 @@ describe('Customer Service booking request approval (R3c2)', () => {
       stage: { code: 'ON_ROAD' },
       city: { en: shipment.destination.nameEn },
     });
+
+    // Plan 15-2: loading and customs have their own stages (seeded by the migration), and the
+    // read names the vessel and the container's ports.
+    await t.prisma.shipment.update({ where: { id: shipment.id }, data: { status: 'LOADED' } });
+    expect((await read(first.made)).shipment).toMatchObject({
+      stage: { code: 'LOADED', ar: 'في ميناء الإرسال' },
+      vessel: null,
+      loadingPort: null,
+      arrivalPort: null,
+    });
+    const box = async (vesselName: string, status: 'OPEN' | 'CANCELLED') =>
+      t.prisma.consolidation.create({
+        data: {
+          number: `${tag}-C${vesselName.length}${status[0]}`,
+          branchId: shipment.branchId,
+          originLocationId: shipment.originLocationId,
+          destinationLocationId: shipment.destinationLocationId,
+          containerTypeCode: '40HC',
+          vesselName,
+          status,
+          ...(status === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: 'test' } : {}),
+          createdById: shipment.createdById,
+          shipments: { create: { shipmentId: shipment.id, branchId: shipment.branchId } },
+        },
+        include: { origin: true, destination: true },
+      });
+    const live = await box('MSC Aurora', 'OPEN');
+    // A cancelled container added later is not where the shipment is.
+    await box('Cancelled Line', 'CANCELLED');
+    expect((await read(first.made)).shipment).toMatchObject({
+      vessel: 'MSC Aurora',
+      loadingPort: { ar: live.origin.nameAr, en: live.origin.nameEn },
+      arrivalPort: { ar: live.destination.nameAr, en: live.destination.nameEn },
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'CUSTOMS_IN_PROGRESS', vesselName: 'Nile Star' },
+    });
+    expect((await read(first.made)).shipment).toMatchObject({
+      stage: { code: 'IN_CUSTOMS', ar: 'تحت التخليص الجمركي' },
+      vessel: 'Nile Star',
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ARRIVED_PORT' },
+    });
+    expect((await read(first.made)).stage).toMatchObject({
+      code: 'AT_PORT',
+      ar: 'وصلت ميناء الوصول',
+    });
+    await t.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { status: 'ROAD_DEPARTED' },
+    });
     await t.prisma.shipment.update({
       where: { id: shipment.id },
       data: { status: 'ON_HOLD', statusBeforeHold: 'ROAD_DEPARTED', holdReason: 'test' },
