@@ -14,6 +14,7 @@ export const AGENT_DRAFT_WRITABLE = 'auth:agentDraftWritable';
 export const AGENT_DRAFT_DECIDABLE = 'auth:agentDraftDecidable';
 export const AGENT_DRAFT_CHECKABLE = 'auth:agentDraftCheckable';
 export const OUTLET_SCOPED = 'auth:outletScoped';
+export const REFERRER_SCOPED = 'auth:referrerScoped';
 
 /** Opts a route out of the session guard. Every other route requires a signed-in user. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -60,6 +61,12 @@ export const AgentDraftCheckable = () => SetMetadata(AGENT_DRAFT_CHECKABLE, true
  * read and write to the user's outlets (auth/outlet-scope.ts); outlet-scoped.spec.ts lists them.
  */
 export const OutletScoped = () => SetMetadata(OUTLET_SCOPED, true);
+
+/**
+ * Opens a route to Referrer Staff (plan 18, 8): a broker's own login reaches only these, each
+ * narrowed to his own referrer (referrer-scoped.spec.ts lists them).
+ */
+export const ReferrerScoped = () => SetMetadata(REFERRER_SCOPED, true);
 
 /** The user the guard attached. Only valid on routes that are not @Public(). */
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

@@ -184,6 +184,8 @@ enum Role {
   SALES_MARKETING_MANAGER
   /// Staff of a partner sales outlet: their own outlets' records only (business model plan 4.2).
   OUTLET_STAFF
+  /// A referral broker's own login: his customers and commissions only (plan 18, 8).
+  REFERRER_STAFF
 
   @@map("role")
 }
@@ -333,8 +335,9 @@ model User {
   paymentInstructionsApproved PaymentInstruction[] @relation("PaymentInstructionApprovedBy")
   paymentInstructionsRetired  PaymentInstruction[] @relation("PaymentInstructionRetiredBy")
 
-  referrerLinkTokensCreated ReferrerLinkToken[]     @relation("ReferrerLinkTokenCreatedBy")
-  partnerBindingsRevoked    PartnerChannelBinding[] @relation("PartnerChannelBindingRevokedBy")
+  referrerLinkTokensCreated ReferrerLinkToken[]       @relation("ReferrerLinkTokenCreatedBy")
+  partnerBindingsRevoked    PartnerChannelBinding[]   @relation("PartnerChannelBindingRevokedBy")
+  referrerCustomerAttempts  ReferrerCustomerAttempt[]
 
   @@map("users")
 }
@@ -977,6 +980,7 @@ model Partner {
   referrerLinkTokens ReferrerLinkToken[]
   channelBindings    PartnerChannelBinding[]
   csNotices          CsPartnerNotice[]
+  customerAttempts   ReferrerCustomerAttempt[]
 
   @@index([branchId, kind])
   @@index([locationId])
@@ -5589,4 +5593,21 @@ model WindowCashAccount {
 
   @@unique([warehouseId, currency])
   @@map("window_cash_accounts")
+}
+
+/// Plan 18, 8: a customer a broker tried to add from his own screen. A refused one (the phone
+/// already a customer's) counts toward his 20 a day; the phone is kept only as a hash.
+model ReferrerCustomerAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  partnerId String   @map("partner_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  phoneHash String   @map("phone_hash") @db.Char(64)
+  refused   Boolean
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, createdAt])
+  @@map("referrer_customer_attempts")
 }

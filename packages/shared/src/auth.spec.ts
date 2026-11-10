@@ -29,9 +29,9 @@ function can(role: Role, permission: Permission): boolean {
 describe('permission matrix (annex A)', () => {
   it('has one cell per role for every module, each a known level', () => {
     for (const module of PERMISSION_MODULES) {
-      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{11}$/);
+      expect(PERMISSION_MATRIX[module]).toMatch(/^[FAEVN]{12}$/);
     }
-    expect(ROLES).toHaveLength(11);
+    expect(ROLES).toHaveLength(12);
   });
 
   it('expands every cell to exactly the actions of its level', () => {
@@ -49,64 +49,66 @@ describe('permission matrix (annex A)', () => {
 
   // Spot checks against the annex table, row by row in its own words.
   const rows: [PermissionModule, string][] = [
-    ['customer_profiles', '— — — — — — — — — — —'],
-    ['customer_profile_intake', '— — — — — — — — — — —'],
-    ['customer_profile_followup', '— — — — — — — — — — —'],
-    ['customers', 'ك ع ك ك ع ع ع ع — ك إ'],
+    ['customer_profiles', '— — — — — — — — — — — —'],
+    ['customer_profile_intake', '— — — — — — — — — — — —'],
+    ['customer_profile_followup', '— — — — — — — — — — — —'],
+    ['customers', 'ك ع ك ك ع ع ع ع — ك إ —'],
     // Changed after the annex (owner, 2026-10-19): rate cards belong to the Sales & Marketing
     // Manager, the tenth column (Sales' cells elsewhere). The eleventh column is Outlet Staff
     // (business model plan 4.2, owner 2026-10-21).
-    ['rates', 'ك ع ع ع ع ع — — — ك ع'],
+    ['rates', 'ك ع ع ع ع ع — — — ك ع —'],
     // Business model plan 4.1: reference costs and the expected margin, apart from the rates so
     // Sales and Operations see a price without its cost.
-    ['rate_costs', 'ك ع ع — — ع — — — ك —'],
-    ['quotations', 'ك ع م ك ع ع — — — ك إ'],
-    ['bookings', 'ك ع م ك ك ع ع ع — ك إ'],
-    ['shipments', 'ك ع ك ع ك ع ع ع ع ع ع'],
-    ['consolidation', 'ك ع ك — ك ع ع — — — —'],
+    ['rate_costs', 'ك ع ع — — ع — — — ك — —'],
+    ['quotations', 'ك ع م ك ع ع — — — ك إ —'],
+    ['bookings', 'ك ع م ك ك ع ع ع — ك إ —'],
+    ['shipments', 'ك ع ك ع ك ع ع ع ع ع ع —'],
+    ['consolidation', 'ك ع ك — ك ع ع — — — — —'],
     // Added after the annex (owner, 2026-10-14): booking into an open container.
-    ['container_booking', 'ك — — إ إ — — — — إ —'],
-    ['warehouse', 'ك ع ك ع ع ع ك ع — ع —'],
-    ['customs', 'ك ع ك ع ع ع — ك — ع —'],
-    ['transport_fleet', 'ك ع ك — ك ع — — — — —'],
-    ['transport_trips', 'ك ع ك ع ك ع ع — إ ع —'],
-    ['pod', 'ك ع ك ع ك ع ك — إ ع —'],
-    ['documents', 'ك ع ك إ إ إ إ إ إ إ إ'],
-    ['customer_invoices', 'ك ع م ع ع ك — — — ع —'],
-    ['credit_notes', 'ك ع م — — إ — — — — —'],
-    ['receipts', 'ك ع ع ع — ك — — — ع —'],
-    ['suppliers', 'ك ع م — إ ك — — — — —'],
+    ['container_booking', 'ك — — إ إ — — — — إ — —'],
+    ['warehouse', 'ك ع ك ع ع ع ك ع — ع — —'],
+    ['customs', 'ك ع ك ع ع ع — ك — ع — —'],
+    ['transport_fleet', 'ك ع ك — ك ع — — — — — —'],
+    ['transport_trips', 'ك ع ك ع ك ع ع — إ ع — —'],
+    ['pod', 'ك ع ك ع ك ع ك — إ ع — —'],
+    ['documents', 'ك ع ك إ إ إ إ إ إ إ إ —'],
+    ['customer_invoices', 'ك ع م ع ع ك — — — ع — —'],
+    ['credit_notes', 'ك ع م — — إ — — — — — —'],
+    ['receipts', 'ك ع ع ع — ك — — — ع — —'],
+    ['suppliers', 'ك ع م — إ ك — — — — — —'],
     // Business model plan 4.1 (owner, 2026-10-21): partners of the network.
-    ['partners', 'ك ع ك ع ع ع — — — ك ع'],
-    ['partner_contracts', 'ك ع ع — — ع — — — ك —'],
+    ['partners', 'ك ع ك ع ع ع — — — ك ع —'],
+    ['partner_contracts', 'ك ع ع — — ع — — — ك — —'],
     // Plan 07 section 8: create = a statement, update = cancelling a draft one, approve = a manual
     // adjustment. Finance makes statements, the Branch Manager adjusts.
-    ['partner_commissions', 'ك ع م — — إ — — — ع —'],
-    ['supplier_payments', 'ك ع م — — ك — — — — —'],
-    ['expenses', 'ك ع م — إ ك إ إ إ — —'],
-    ['manual_journals', 'ك ع — — — ك — — — — —'],
-    ['chart_of_accounts', 'ك ع — — — م — — — — —'],
-    ['fx_rates', 'ك ع — — — ك — — — — —'],
-    ['shipment_profitability', 'ك ع ع — — ع — — — — —'],
-    ['financial_reports', 'ك ع ع — — ع — — — — —'],
-    ['operational_reports', 'ك ع ع ع ع ع ع ع — ع —'],
-    ['dashboards', 'ك ع ع ع ع ع — — — ع —'],
-    ['alert_settings', 'ك — — — — — — — — — —'],
-    ['master_data', 'ك ع ع ع ع ع ع ع ع ع ع'],
-    ['users', 'ك — — — — — — — — — —'],
-    ['audit_log', 'ع ع ع — — — — — — — —'],
+    ['partner_commissions', 'ك ع م — — إ — — — ع — —'],
+    ['supplier_payments', 'ك ع م — — ك — — — — — —'],
+    ['expenses', 'ك ع م — إ ك إ إ إ — — —'],
+    ['manual_journals', 'ك ع — — — ك — — — — — —'],
+    ['chart_of_accounts', 'ك ع — — — م — — — — — —'],
+    ['fx_rates', 'ك ع — — — ك — — — — — —'],
+    ['shipment_profitability', 'ك ع ع — — ع — — — — — —'],
+    ['financial_reports', 'ك ع ع — — ع — — — — — —'],
+    ['operational_reports', 'ك ع ع ع ع ع ع ع — ع — —'],
+    ['dashboards', 'ك ع ع ع ع ع — — — ع — —'],
+    ['alert_settings', 'ك — — — — — — — — — — —'],
+    ['master_data', 'ك ع ع ع ع ع ع ع ع ع ع —'],
+    ['users', 'ك — — — — — — — — — — —'],
+    ['audit_log', 'ع ع ع — — — — — — — — —'],
     // Plan 03 (owner, 2026-10-27): the permissions screen, the Administrator only.
-    ['access_control', 'ك — — — — — — — — — —'],
+    ['access_control', 'ك — — — — — — — — — — —'],
     // Plan 04a section 2 (2026-10-28): staff review of the shipping bot's requests.
-    ['cs_booking_requests', 'ك ع ك ك ع — — — — ك —'],
+    ['cs_booking_requests', 'ك ع ك ك ع — — — — ك — —'],
     // Plan 04 section 4.1 (2026-10-28): payment instructions, two people per approval.
-    ['payment_instructions', 'ك م ك ع — إ — — — — —'],
+    ['payment_instructions', 'ك م ك ع — إ — — — — — —'],
     // The agent's request (2026-11-03): the Administrator sees the agent admin panel's menu item.
-    ['agent_admin', 'ع — — — — — — — — — —'],
+    ['agent_admin', 'ع — — — — — — — — — — —'],
     // Plan 12 section 3: the handover gate's override, granted by hand only.
-    ['handover_payment', '— — — — — — — — — — —'],
+    ['handover_payment', '— — — — — — — — — — — —'],
     // Plan 13 sections 2 and 3: the window desk, Outlet Staff only (create: receive the goods).
-    ['window_desk', '— — — — — — — — — — إ'],
+    ['window_desk', '— — — — — — — — — — إ —'],
+    // Plan 18, 8: the broker's own screen; the twelfth column is Referrer Staff.
+    ['referrer_portal', '— — — — — — — — — — — إ'],
   ];
   const arabicToLevel: Record<string, string> = { ك: 'F', م: 'A', إ: 'E', ع: 'V', '—': 'N' };
 
@@ -119,6 +121,17 @@ describe('permission matrix (annex A)', () => {
         .join('');
       expect(PERMISSION_MATRIX[module], module).toBe(levels);
     }
+  });
+
+  it('gives Referrer Staff their own screen and nothing else (plan 18, 8)', () => {
+    expect([...ROLE_PERMISSIONS.REFERRER_STAFF].sort()).toEqual([
+      'referrer_portal:create',
+      'referrer_portal:update',
+      'referrer_portal:view',
+    ]);
+    expect(ROLES.filter((r) => r !== 'REFERRER_STAFF' && can(r, 'referrer_portal:view'))).toEqual(
+      [],
+    );
   });
 
   it('keeps the key negative cases', () => {

@@ -36,6 +36,12 @@ export interface AuthUser {
    */
   allowedOutletIds?: readonly string[] | null;
   /**
+   * Referrer Staff (plan 18, 8): the referral broker this login acts for (null: none active).
+   * Absent for every other role. The guard refuses such a user on any route not marked
+   * @ReferrerScoped().
+   */
+  referrerPartnerId?: string | null;
+  /**
    * Set when the staff AI assistant acts for this user with a delegated token (agent-auth): the
    * same roles and branches, on read-only routes marked @AgentReadable() only.
    */

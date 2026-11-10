@@ -537,6 +537,53 @@ export class CustomersService {
   }
 
   /**
+   * Plan 18, 3.3: a referral broker adds a new customer from his own screen, name and phone only,
+   * linked to him (first broker wins: he registered it). Refused (`TAKEN`, nothing written) when
+   * any customer holds the phone (or WhatsApp) or any customer profile holds it: an existing
+   * customer is never linked. Under the customer-key lock, like every customer create.
+   */
+  async referrerCustomerInTx(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    partnerId: string,
+    input: { name: string; phone: string },
+  ): Promise<{ customerId: string; number: string } | 'TAKEN'> {
+    await lockCustomerKeys(tx);
+    const holders = await this.profilePhoneOwnersInTx(tx, input.phone);
+    const profiles = await tx.customerProfile.count({ where: { phone: input.phone } });
+    if (holders.length > 0 || profiles > 0) return 'TAKEN';
+    const number = formatShortNumber('CS', await nextSequenceValue(tx, 'CUSTOMER'));
+    const now = new Date();
+    const customer = await tx.customer.create({
+      data: {
+        number,
+        kind: 'INDIVIDUAL',
+        name: input.name.trim().slice(0, 200),
+        phone: input.phone,
+        // Typed by the broker, not the customer: grants no customer token until staff confirm it.
+        phoneUnverified: true,
+        referredByPartnerId: partnerId,
+        referredAt: now,
+        createdById: user.id,
+      },
+    });
+    await this.audit.record(tx, user, {
+      branchId: null,
+      entity: 'CUSTOMER',
+      entityId: customer.id,
+      reference: customer.number,
+      action: 'CREATED',
+      changes: [
+        { field: 'kind', before: null, after: 'INDIVIDUAL' },
+        { field: 'phoneUnverified', before: null, after: 'true' },
+        { field: 'referredByPartnerId', before: null, after: partnerId },
+        { field: 'referrerReason', before: null, after: 'Added by the broker' },
+      ],
+    });
+    return { customerId: customer.id, number: customer.number };
+  }
+
+  /**
    * Owner, 2026-11-05: a phone a booking request brings fills the requesting profile's customer
    * when it has none yet (as `addMissingPhoneInTx`, marked unverified). No customer, no change.
    */

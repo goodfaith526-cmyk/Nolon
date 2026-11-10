@@ -21,6 +21,7 @@ import { MasterDataModule } from './master-data/master-data.module.js';
 import { PartnerContractsModule } from './partners/partner-contracts.module.js';
 import { CommissionsModule } from './commissions/commissions.module.js';
 import { PartnersModule } from './partners/partners.module.js';
+import { ReferrerPortalModule } from './referrer-portal/referrer-portal.module.js';
 import { WindowDeskModule } from './window-desk/window-desk.module.js';
 import { TestAutocycleModule } from './test-autocycle/test-autocycle.module.js';
 import { PayablesModule } from './payables/payables.module.js';
@@ -49,6 +50,7 @@ import { MyDraftsModule } from './my-drafts/my-drafts.module.js';
     MasterDataModule,
     CustomersModule,
     PartnersModule,
+    ReferrerPortalModule,
     WindowDeskModule,
     TestAutocycleModule,
     PartnerContractsModule,

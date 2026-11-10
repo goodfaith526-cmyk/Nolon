@@ -232,6 +232,7 @@
 - POST `/receipts/:id/applications` · `ReceiptsController.apply` · `billing/billing.controller.ts` · receipts:create
 - POST `/receipts/:id/applications/:applicationId/reverse` · `ReceiptsController.reverseApplication` · `billing/billing.controller.ts` · receipts:cancel
 - POST `/receipts/:id/cancel` · `ReceiptsController.cancel` · `billing/billing.controller.ts` · receipts:cancel
+- POST `/referrer-portal/customers` · `ReferrerPortalController.addCustomer` · `referrer-portal/referrer-portal.controller.ts` · referrer_portal:create
 - POST `/release-drafts` · `GoodsReleaseDraftsController.create` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create
 - PATCH `/release-drafts/:id` · `GoodsReleaseDraftsController.update` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create
 - POST `/release-drafts/:id/approve` · `GoodsReleaseDraftsController.approve` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create

@@ -164,7 +164,9 @@
     "assistantApprovals": "الاعتماد من المساعد",
     "assistantApprovalsTitle": "الاعتماد من المساعد: {name}",
     "assistantApprovalsHint": "المسودات التي يجهّزها المساعد لهذا المستخدم ويمكنه اعتمادها أو رفضها من داخل محادثة المساعد. تظل الصلاحية المعتادة لكل إدخال مطلوبة. إيصالات الاستلام تُعتمد دائماً من شاشة المراجعة.",
-    "permissionsChanged": "تغيّرت الصلاحيات أثناء عملك. أعد تحميل الصفحة وحاول مرة ثانية."
+    "permissionsChanged": "تغيّرت الصلاحيات أثناء عملك. أعد تحميل الصفحة وحاول مرة ثانية.",
+    "referrer": "المندوب",
+    "referrerHint": "المندوب الذي يعمل له هذا الحساب: يرى عملاءه وعمولاته فقط، ولا يأخذ أي دور آخر."
   },
   "Roles": {
     "ADMINISTRATOR": "مدير النظام",
@@ -177,7 +179,8 @@
     "CUSTOMS": "الجمارك",
     "DRIVER": "سائق / نقل",
     "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق",
-    "OUTLET_STAFF": "موظف منفذ"
+    "OUTLET_STAFF": "موظف منفذ",
+    "REFERRER_STAFF": "مندوب (شاشته فقط)"
   },
   "Common": {
     "openStandalone": "افتح في نافذة مستقلة",
@@ -3002,7 +3005,10 @@
     "WINDOW_NO_CASH_ACCOUNT": "لا يوجد لهذه النافذة حساب نقدية بعملة {currency}. اطلب من محاسب نولون تحديده.",
     "WINDOW_NOTHING_TO_COLLECT": "لا يوجد مبلغ مستحق على هذا الحجز بعملة {currency}.",
     "WINDOW_OVER_BALANCE": "المستحق على العميل في هذا الحجز {balance} {currency}: لا تستلم أكثر من ذلك.",
-    "WINDOW_CASH_ACCOUNT_TAKEN": "حساب النقدية هذا مرتبط بنافذة أو عملة أخرى. اختر حسابًا آخر."
+    "WINDOW_CASH_ACCOUNT_TAKEN": "حساب النقدية هذا مرتبط بنافذة أو عملة أخرى. اختر حسابًا آخر.",
+    "CUSTOMER_EXISTS": "هذا الرقم عميل لدى نولون بالفعل، فلا يمكن إضافته لك.",
+    "TOO_MANY_ATTEMPTS": "محاولات مرفوضة كثيرة اليوم. حاول غداً.",
+    "NO_BROKER": "هذا الحساب غير مربوط بمندوب بعد. تواصل مع نولون."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -3236,7 +3242,8 @@
     "module_payment_instructions": "تعليمات الدفع",
     "module_agent_admin": "لوحة إدارة وكيل الحجوزات",
     "module_handover_payment": "تسليم البضاعة بدون الدفع (بسبب مكتوب)",
-    "module_window_desk": "مكتب النافذة (طلبات الاستلام)"
+    "module_window_desk": "مكتب النافذة (طلبات الاستلام)",
+    "module_referrer_portal": "شاشة المندوب الخاصة"
   },
   "BotRequests": {
     "title": "طلبات الحجز من البوت",
@@ -3572,5 +3579,36 @@
     "brokerFind": "بحث",
     "brokerNone": "بدون مندوب",
     "brokerNotFound": "ما لقينا مندوب"
+  },
+  "ReferrerPortal": {
+    "title": "{name}: عملاؤك",
+    "linkHint": "شارك هذا الرابط مع من تجلبهم لنولون. من يسجّل عن طريقه يصبح عميلك.",
+    "addTitle": "إضافة عميل",
+    "name": "الاسم",
+    "phone": "الهاتف (مع رمز الدولة)",
+    "add": "إضافة",
+    "added": "تمت إضافة العميل.",
+    "customers": "عملاؤك",
+    "noCustomers": "لا يوجد عملاء بعد.",
+    "phoneEnd": "الهاتف",
+    "registered": "تاريخ التسجيل",
+    "shipments": "الشحنات",
+    "commissions": "عمولاتك",
+    "pending": "لم تدخل كشفاً بعد:",
+    "noCommissions": "لا توجد عمولات بعد.",
+    "date": "التاريخ",
+    "customer": "العميل",
+    "reason": "السبب",
+    "reason_FIRST_SHIPMENT": "أول شحنة",
+    "reason_BROUGHT_IN_PERSON": "أحضرها بنفسه",
+    "amount": "المبلغ",
+    "statements": "كشوفك",
+    "noStatements": "لا توجد كشوف بعد.",
+    "statement": "الكشف",
+    "periodTo": "حتى",
+    "status": "الحالة",
+    "status_BILLED": "مستحق",
+    "status_SETTLED": "مدفوع",
+    "noBroker": "هذا الحساب غير مربوط بمندوب بعد. تواصل مع نولون."
   }
 }

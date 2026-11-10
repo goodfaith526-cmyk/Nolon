@@ -9,6 +9,7 @@ import { formatAmount } from '@/lib/money';
 import { useLocationName, useMasterData } from '@/lib/master-data';
 import { icons } from './Icons';
 import { MoreMenu } from './MoreMenu';
+import { ReferrerPortal } from './referrer-portal/ReferrerPortal';
 import { can, useMe } from './StaffShell';
 import { StatusBadge } from './StatusBadge';
 
@@ -67,7 +68,13 @@ const ALERT_TONE: Record<AlertKind, ActionItem['tone']> = {
 };
 const TONE_ORDER: Record<ActionItem['tone'], number> = { bad: 0, warn: 1, info: 2 };
 
+/** Plan 18, 8: a broker's own login sees only his screen. */
 export function Dashboard() {
+  const me = useMe();
+  return me.roles.includes('REFERRER_STAFF') ? <ReferrerPortal /> : <StaffDashboard />;
+}
+
+function StaffDashboard() {
   const t = useTranslations('Dashboard');
   const tc = useTranslations('Common');
   const tShell = useTranslations('Shell');

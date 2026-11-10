@@ -18,6 +18,7 @@ import {
   AGENT_READABLE,
   IS_PUBLIC,
   OUTLET_SCOPED,
+  REFERRER_SCOPED,
   REQUIRED_PERMISSIONS,
 } from './decorators.js';
 import { outletLimited } from './outlet-scope.js';
@@ -67,6 +68,13 @@ export class AuthGuard implements CanActivate {
     ) {
       throw new ForbiddenException('Not available to outlet staff');
     }
+    // Referrer Staff (plan 18, 8): only their own screen.
+    if (
+      user.roles.includes('REFERRER_STAFF') &&
+      this.reflector.getAllAndOverride<boolean>(REFERRER_SCOPED, targets) !== true
+    ) {
+      throw new ForbiddenException('Not available to referrer staff');
+    }
     return true;
   }
 
@@ -92,7 +100,11 @@ export class AuthGuard implements CanActivate {
           marked(AGENT_DRAFT_DECIDABLE) ||
           marked(AGENT_DRAFT_CHECKABLE)));
     // Outlet Staff cannot use the assistant in this batch (plan 4.2 item 5).
-    const scoped = user && !outletLimited(user) ? forRoute(user, required) : null;
+    // Nor Referrer Staff (plan 18, 8).
+    const scoped =
+      user && !outletLimited(user) && !user.roles.includes('REFERRER_STAFF')
+        ? forRoute(user, required)
+        : null;
     const permitted = scoped !== null;
     await this.auth.recordAgentAccess(
       tokenId,
