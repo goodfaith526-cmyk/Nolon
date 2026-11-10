@@ -43,6 +43,25 @@ in Nolon would mix another company's money into the group's books. What the grou
 agent is the money it holds for HK and what HK owes it, which is a partner current account. Both modes use the
 same branches, bookings and screens; only the books behind them differ.
 
+**How an agent shows in Nolon (both modes, one record).** ⭐ A master `agents`: `name_en`, `name_ar`,
+`country_code`, `currency`, `mode` (`OWNED` or `INDEPENDENT`), `legal_entity_id` (set when `OWNED`: its
+subsidiary), `partner_id` (set when `INDEPENDENT`: its `OVERSEAS_AGENT` partner, which carries the commission
+contract and rate through the existing partner contracts), `is_active`. A CHECK keeps exactly one of the two set,
+to match the mode.
+
+- `branches.agent_id` (nullable: the HK branch has none). A branch of an agent belongs to that agent's entity:
+  its subsidiary when `OWNED`, the HK holding when `INDEPENDENT`. Windows (plan 13) sit in branches, so their
+  bookings and collections are attributed to the agent through the branch, with nothing to pick by hand.
+- **Agent staff** are ordinary users whose branches are the agent's branches. Branch scoping (rule 2) already
+  shows them only those branches' bookings, shipments and collections; no new access mechanism is needed. A
+  team «Agent staff» with a narrow default matrix is added in the permissions screen.
+- **Current account and statement:** for an `INDEPENDENT` agent, its `agent_accounts` (16-4) show collections,
+  commission and what is due to HK. For an `OWNED` agent, the same screen shows what it owes the holding, once
+  plan 17 posts it.
+- **Changing the mode** (`INDEPENDENT` ↔ `OWNED`) is the branch move below, done for all the agent's branches
+  together: owned gives it its own books from the first day of a month.
+- **Customers stay central** (rule 2 exception): there is no customer-to-agent tie anywhere.
+
 - `legal_entities`: `id`, `code` (2 to 4 capitals, unique, used in numbers), `name_en`, `name_ar`,
   `country_code` (ISO 3166-1), `kind` (`HOLDING` or `SUBSIDIARY`), `parent_id` (the holding, null only on the
   holding; one level, checked), `functional_currency` (FK to `currencies`), `tax_registration_no` (nullable, for
@@ -236,12 +255,12 @@ data).
 
 ## 9. Build, in order
 
-| PR   | Content                                                                                                                                                                                       | Migration                                                                                            |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 16-1 | `legal_entities` (HK holding + subsidiaries), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings             | **Non-additive** (branches NOT NULL, accounting table): owner OK + label                             |
-| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label                         |
-| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                | **Non-additive** (trigger on journal entries): owner OK + label                                      |
-| 16-4 | Independent agent mode: `agent_accounts`, collection, commission and settlement through it, agent statement; the branch move procedure                                                        | **Additive** (new table) unless the reversal-entity trigger change lands here: then owner OK + label |
+| PR   | Content                                                                                                                                                                                            | Migration                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 16-1 | `legal_entities` (HK holding + subsidiaries), `branches.legal_entity_id` filled + NOT NULL, `journal_entries.legal_entity_id`, locks, screen, permission, entity account mappings                  | **Non-additive** (branches NOT NULL, accounting table): owner OK + label                             |
+| 16-2 | Local amounts: columns, `journal-math`, `entity_fx_rate` on documents, adjustment lines, local CHECKs, trigger: line entities + local balance + pre-plan reversals, every auto rule passes it      | **Non-additive** (accounting tables, new CHECKs, triggers): owner OK + label                         |
+| 16-3 | Periods per entity (closure table, trigger, close screen), numbering per entity, reports LOCAL/USD + entity filter, agent note                                                                     | **Non-additive** (trigger on journal entries): owner OK + label                                      |
+| 16-4 | `agents` master + `branches.agent_id` + «Agent staff» team; independent agent mode: `agent_accounts`, collection, commission and settlement through it, agent statement; the branch move procedure | **Additive** (new table) unless the reversal-entity trigger change lands here: then owner OK + label |
 
 Owner OK is needed once per PR for its migration (AGENTS.md rule 4). Backups: trial data only, so no backup
 ceremony (owner rule 2026-10-28); production must take its backup before 16-1 if it already holds anything real.
