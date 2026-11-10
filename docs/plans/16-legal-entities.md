@@ -82,14 +82,27 @@ agent layer: the branch record itself carries the agent fields.
 - **Locks, in the database (trigger):** an entity's `functional_currency` cannot change once it has a posted
   entry. A branch's `legal_entity_id` is free until the branch has a posted entry; after that it changes only
   through **the move below**.
-- **Moving a country from independent agent to subsidiary (or back) later.** Posted entries keep the entity they
+- **Mode and entity always agree (database).** A trigger on `branches` keeps `agent_mode`, `agent_partner_id`
+  and `legal_entity_id` consistent: `OWNED` ⇒ the entity's kind is `SUBSIDIARY` and no agent partner;
+  `INDEPENDENT` ⇒ the entity is the `HOLDING` and the agent partner is set. Any other combination is refused, and
+  a mode change sets all three in one update, in one transaction with the move checks.
+- **Moving a branch from independent agent to subsidiary (or back) later.** Posted entries keep the entity they
   were posted in (`journal_entries.legal_entity_id`), so history never moves. The move is a checked procedure,
-  `POST /legal-entities/branches/:id/move` with `legal_entities:manage`, refused unless: the date is the first day
-  of a month; that month and every later month are open in the target entity and every earlier month is closed
-  for the branch's current entity; and the branch has no open documents (unpaid invoices, unapplied receipts,
-  unpaid bills, open accruals, draft entries). Open balances are settled, or carried over by an entity-to-entity
-  transfer once plan 17 exists. A reversal keeps its original's entity even after the move (the trigger checks
-  `legal_entity_id` against the original's for `source = 'REVERSAL'`, not against the branch's current entity).
+  `POST /legal-entities/branches/:id/move` with `legal_entities:manage`, refused unless:
+  - the date is the first day of a month, and the branch has **no posted entry dated on or after it** (a move is
+    never back-dated over posted history);
+  - that month and every later month are open in the target entity, and every earlier month is closed for the
+    branch's current entity;
+  - the branch has no open documents: unpaid invoices, unapplied receipts, unpaid bills, draft entries, and no open
+    clearing balance, by name: container costs in the consolidation clearing account not yet allocated (1400),
+    trips accrued in accrued transport not yet billed (2300), and commission accruals not yet billed.
+
+  Open balances are settled first, or carried over by an entity-to-entity transfer once plan 17 exists.
+
+- **Reversals after a move stay in the original's entity.** For `source = 'REVERSAL'`, the posting trigger checks
+  the entry's `legal_entity_id`, **every line's entity and every line's `local_currency` against the original
+  entry's entity**, not against the branch's current entity. The mirrored lines keep the moved branch, so without
+  this a pre-move entry could never be reversed.
 - One chart of accounts stays shared by the group (one code per account, as today). An account may be limited to
   one entity (`accounts.legal_entity_id`, nullable, like `branch_id` today); a line refuses an account limited to
   another entity.
@@ -237,8 +250,10 @@ owner decided.**
   adjustment lines, clearing with `amountLocal`, reversal copying local columns.
 - Integration, against PostgreSQL, including negative cases: unbalanced in local (trigger refuses); line with an
   account limited to another entity; a second active HOLDING, or a subsidiary with no parent or with a subsidiary
-  as parent (refused); a branch move that breaks any of its conditions (refused), and a reversal of a pre-move
-  entry after the move (posts in the original's entity); an independent agent's collection, commission and
+  as parent (refused); a branch move that breaks any of its conditions, including a posted entry dated on or after
+  the move date and each named open clearing balance (refused); a reversal of a pre-move entry whose lines are in
+  the moved branch (posts in the original's entity, local currency of the original's entity); a branch whose mode,
+  agent partner and entity disagree (refused by the branches trigger); an independent agent's collection, commission and
   settlement clearing its current account; entity currency change after a posting (refused); branch moved to another
   entity after a posting (refused); posting into a period closed for that entity while another entity is open;
   `ADJUSTMENT` line on a non-FX account (refused by the lines trigger); a `NORMAL` line worth 0.00 USD on a
