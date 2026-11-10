@@ -11,6 +11,7 @@ import {
   createTestApp,
   createUser,
   deleteTestUsers,
+  LEDGER_PREFIX,
   signIn,
 } from './auth-test-app.js';
 import { deleteCommercialTestData, uniquePhone } from './test-data.js';
@@ -135,24 +136,25 @@ describe('Referral brokers (plan 18-1)', () => {
     );
     cookies.jedSales = await signIn(t, (await createUser(t.prisma, ['SALES'], ['JED'])).email);
     cookies.warehouse = await signIn(t, (await createUser(t.prisma, ['WAREHOUSE'], ['JED'])).email);
+    // The key's owner is not an `it-` user: the customers its captures make keep the key.
+    const keyOwner = await createUser(t.prisma, ['ADMINISTRATOR'], [], LEDGER_PREFIX);
     await t.prisma.apiClient.create({
       data: {
         id: clientId,
         name: 'Referral test',
         keyPrefix: key.prefix,
         keyHash: key.hash,
-        createdById: jedManager.id,
+        createdById: keyOwner.id,
         customersRead: false,
         branches: { create: [{ branchId: jed }] },
-        scopes: { create: [{ scope: 'CUSTOMER_PROFILES_WRITE', grantedById: jedManager.id }] },
+        scopes: { create: [{ scope: 'CUSTOMER_PROFILES_WRITE', grantedById: keyOwner.id }] },
       },
     });
   });
 
   afterAll(async () => {
     await deleteCommercialTestData(t.prisma);
-    await t.prisma.apiClient.deleteMany({ where: { id: clientId } }).catch(() => undefined);
-    await deleteTestUsers(t.prisma).catch(() => undefined);
+    await deleteTestUsers(t.prisma);
     await t.close();
   });
 
@@ -217,6 +219,20 @@ describe('Referral brokers (plan 18-1)', () => {
         const res = await patch(`/partners/${id}`, cookies.jedManager, { kind }).expect(400);
         expect(refusal(res.body)).toMatchObject({ code: 'REFERRER_KIND_FIXED', fields: ['kind'] });
       }
+    });
+
+    it('keeps one live code per broker in the database itself', async () => {
+      const broker = await newPartner();
+      const insert = (code: string, live: string | null, retired: boolean) =>
+        t.prisma.$executeRaw`
+          INSERT INTO "referral_codes" ("code", "partner_id", "live_partner_id", "retired_at")
+          VALUES (${code}, ${broker.id}::uuid, ${live}::uuid, ${retired ? new Date() : null})`;
+      // A second live code, a live code with no live mark, a retired one still marked, a bad code.
+      await expect(insert('r_zz000001', broker.id, false)).rejects.toThrow();
+      await expect(insert('r_zz000002', null, false)).rejects.toThrow();
+      await expect(insert('r_zz000003', broker.id, true)).rejects.toThrow();
+      await expect(insert('R_BAD', null, true)).rejects.toThrow();
+      await insert(`r_${suffix().toLowerCase()}zzz`, null, true);
     });
 
     it('issues a new code and retires the old one, audited; refused elsewhere', async () => {

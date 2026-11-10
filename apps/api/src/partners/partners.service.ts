@@ -188,7 +188,7 @@ export class PartnersService {
       });
       await tx.referralCode.updateMany({
         where: { partnerId: id, retiredAt: null },
-        data: { retiredAt: new Date() },
+        data: { retiredAt: new Date(), livePartnerId: null },
       });
       const code = await newReferralCodeInTx(tx, id);
       await this.audit.record(tx, user, {
@@ -321,7 +321,8 @@ async function newReferralCodeInTx(tx: Tx, partnerId: string): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     const code = randomReferralCode();
     const [row] = await tx.$queryRaw<{ code: string }[]>`
-      INSERT INTO "referral_codes" ("code", "partner_id") VALUES (${code}, ${partnerId}::uuid)
+      INSERT INTO "referral_codes" ("code", "partner_id", "live_partner_id")
+      VALUES (${code}, ${partnerId}::uuid, ${partnerId}::uuid)
       ON CONFLICT ("code") DO NOTHING RETURNING "code"`;
     if (row) return row.code;
     if (attempt >= 5) throw new Error('Could not draw a free referral code');

@@ -978,10 +978,13 @@ model Partner {
 /// A referrer's public customer code (plan 18, 3): `r_` + 8 of [a-z0-9], in his bot and website
 /// links. One live code per partner; a retired code is kept so it is recognized, and links no one.
 model ReferralCode {
-  code      String    @id @db.VarChar(16)
-  partnerId String    @map("partner_id") @db.Uuid
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  retiredAt DateTime? @map("retired_at") @db.Timestamptz(3)
+  code          String    @id @db.VarChar(16)
+  partnerId     String    @map("partner_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  retiredAt     DateTime? @map("retired_at") @db.Timestamptz(3)
+  /// The partner while this code is live, null once retired: unique, so a partner has at most one
+  /// live code (a CHECK ties it to `partner_id` and `retired_at`).
+  livePartnerId String?   @unique @map("live_partner_id") @db.Uuid
 
   partner Partner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
 
