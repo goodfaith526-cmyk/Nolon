@@ -15,6 +15,7 @@ import { type FormEvent, useState } from 'react';
 import { Link } from '@/i18n/navigation';
 import { can, useMe } from '../StaffShell';
 import { Notice, type NoticeState } from './Notice';
+import { FileInput } from '../FileInput';
 
 /** What an import call answered: a body to show, or a refusal with its status and code. */
 type Outcome<T> =
@@ -171,9 +172,8 @@ export function ExcelImport({ kind }: { kind: ImportKind }) {
       <form className="card row" onSubmit={(e) => void onPreview(e)}>
         <label className="field">
           {t('chooseFile')}
-          <input
+          <FileInput
             name="file"
-            type="file"
             required
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           />
